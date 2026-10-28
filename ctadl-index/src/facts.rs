@@ -7,7 +7,6 @@ use std::str::FromStr;
 
 use ctadl_ir::Symbol;
 use derive_builder::Builder;
-use immortal::StringRef;
 use internment::ArcIntern;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -22,41 +21,12 @@ pub mod schema;
 
 pub use query_endpoint::{QueryEndpoint, QueryEndpointDisplay};
 
-use elsa::sync::FrozenVec;
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-lazy_static::lazy_static! {
-    static ref STRING_TABLE: StringTable = StringTable::default();
+immortal::id_handle! {
+    /// An interned string: a 4-byte handle into a process-wide interner that never frees.
+    /// Ordered by id, so sort by content wherever the order is printed. Serde writes the
+    /// string and interns it on reading.
+    pub struct Str(str);
 }
-
-#[derive(Default)]
-struct StringTable {
-    map: Mutex<HashMap<StringRef, u64>>,
-    vec: FrozenVec<Box<StringRef>>,
-}
-
-impl StringTable {
-    fn intern(&self, s: &str) -> u64 {
-        let string_ref = StringRef::new(s);
-        let mut map = self.map.lock().unwrap();
-        if let Some(&idx) = map.get(&string_ref) {
-            return idx;
-        }
-        let idx = self.vec.len() as u64;
-        self.vec.push(Box::new(string_ref));
-        map.insert(string_ref, idx);
-        idx
-    }
-
-    fn get(&self, idx: u64) -> &str {
-        self.vec.get(idx as usize).unwrap().as_str()
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Str(u64);
 
 impl Default for Str {
     fn default() -> Self {
@@ -72,25 +42,47 @@ impl Display for Str {
 
 impl From<&str> for Str {
     fn from(s: &str) -> Self {
-        Str(STRING_TABLE.intern(s))
+        Str::intern(s)
     }
 }
 
 impl From<String> for Str {
     fn from(s: String) -> Self {
-        Str(STRING_TABLE.intern(&s))
+        Str::intern(&s)
     }
 }
 
 impl From<ArcIntern<str>> for Str {
     fn from(s: ArcIntern<str>) -> Self {
-        Str(STRING_TABLE.intern(&s))
+        Str::intern(&s)
     }
 }
 
 impl Str {
     pub fn as_str(&self) -> &'static str {
-        STRING_TABLE.get(self.0)
+        self.get()
+    }
+}
+
+impl Serialize for Str {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Str {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StrVisitor;
+        impl serde::de::Visitor<'_> for StrVisitor {
+            type Value = Str;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Str, E> {
+                Ok(Str::intern(s))
+            }
+        }
+        deserializer.deserialize_str(StrVisitor)
     }
 }
 
@@ -719,8 +711,7 @@ pub struct ImportId(pub u32);
 /// A variable with metadata that relates it to functions and call sites
 ///
 /// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to
-/// represent. The Local variable is represented with a string ID, a compact index into a string
-/// table, which will be under 62 bits. The Formal is an i16. And the Packed Call Arg similarly only
+/// represent. The Local variable is represented with its [`Str`]'s 32-bit id. The Formal is an i16. And the Packed Call Arg similarly only
 /// requires 62 bits.
 #[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Default)]
 pub struct FlowVariable(u64);
@@ -744,11 +735,7 @@ impl From<FlowVariableKind> for FlowVariable {
     fn from(kind: FlowVariableKind) -> Self {
         match kind {
             FlowVariableKind::Uninit => FlowVariable(TAG_UNINIT),
-            FlowVariableKind::Local(s) => {
-                let val = s.0;
-                debug_assert!((val & TAG_MASK) == 0, "Local top bits must be 0");
-                FlowVariable(val | TAG_LOCAL)
-            }
+            FlowVariableKind::Local(s) => FlowVariable(s.raw() as u64 | TAG_LOCAL),
             FlowVariableKind::Formal(f) => {
                 let val = (*f as u16) as u64;
                 FlowVariable(val | TAG_FORMAL)
@@ -787,12 +774,12 @@ impl FlowVariable {
     }
 
     pub fn as_local(&self) -> Option<Str> {
-        if self.is_local() {
-            let idx = self.0 & DATA_MASK;
-            Some(Str(idx))
-        } else {
-            None
-        }
+        self.is_local().then(|| self.local_str())
+    }
+
+    /// The `Str` of a `Local`, whose payload is the id `local` put there.
+    fn local_str(&self) -> Str {
+        Str::from_raw((self.0 & DATA_MASK) as u32).expect("a Local holds a Str's id")
     }
 
     pub fn as_formal(&self) -> Option<FormalIndex> {
@@ -811,10 +798,7 @@ impl FlowVariable {
     pub fn kind(&self) -> FlowVariableKind {
         match self.0 & TAG_MASK {
             TAG_UNINIT => FlowVariableKind::Uninit,
-            TAG_LOCAL => {
-                let idx = self.0 & DATA_MASK;
-                FlowVariableKind::Local(Str(idx))
-            }
+            TAG_LOCAL => FlowVariableKind::Local(self.local_str()),
             TAG_FORMAL => {
                 let val = (self.0 & DATA_MASK) as i16;
                 FlowVariableKind::Formal(FormalIndex::from(val))
@@ -1448,6 +1432,25 @@ mod tests {
     /// bind `p`, `q`, `r` as paths and a `let p` would shadow the helper.
     fn parse_path(s: &str) -> Path {
         Path::parse(s).unwrap_or_else(|e| panic!("test path {s:?} does not parse: {e}"))
+    }
+
+    #[test]
+    fn str_is_a_four_byte_handle_serialized_by_content() {
+        assert_eq!(std::mem::size_of::<Str>(), 4);
+        assert_eq!(std::mem::size_of::<Option<Str>>(), 4);
+
+        let s = Str::from("str serde round trip");
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"str serde round trip\"");
+        assert_eq!(serde_json::from_str::<Str>(&json).unwrap(), s);
+        let f = Function(s);
+        assert_eq!(serde_json::to_string(&f).unwrap(), json);
+
+        let local = FlowVariable::local(s);
+        assert_eq!(local.as_local(), Some(s));
+        let back: FlowVariable =
+            serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
+        assert_eq!(back, local);
     }
 
     #[test]

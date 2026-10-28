@@ -1330,7 +1330,6 @@ dependencies = [
  "datafusion-common",
  "derive_builder",
  "dex-reader",
- "elsa",
  "hashbrown 0.16.1",
  "immortal",
  "internment",
