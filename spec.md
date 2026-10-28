@@ -149,13 +149,9 @@ Whether a miss is an ordinary answer or a bug depends on the call site, and each
 call site must state which.
 
 **D3. The R1 types are handles.**
-- `Eq`, `Hash`, `PartialOrd` and `Ord` work on the handle alone and never read
-  the value.
-- The exception is `DecisionSet`:
-  - `Eq` and `Hash` work on the handle.
-  - `PartialOrd` stays its lattice order (R10), which it may cache.
-  - It has no `Ord`, as on `main`, because Rust requires `Ord` to agree with
-    `PartialOrd`.
+- `Eq` and `Hash` work on the handle alone and never read the value.
+- Each type has either an `Ord` that works on the handle alone, or, if it is a
+  lattice, a `PartialOrd` that is its lattice order (R10).
 - Every operation the rules perform on a path (split, concat, tail, offsets,
   prefixes) works within D2.
 
