@@ -155,7 +155,7 @@ const EMPTY_PATH_HASH: u32 = 0;
 
 /// The suffix hash of `head · tail`, given `tail`'s.
 #[inline]
-fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
+pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     head.hash(&mut h);
@@ -244,10 +244,22 @@ impl Path {
         self.id().map(PathId::get)
     }
 
-    /// The hash [`PathNode`] stores for this path.
+    /// The hash [`PathNode`] stores for this path: [`suffix_hash`] folded over its segments.
     #[inline]
-    fn suffix_hash(self) -> u32 {
+    pub(crate) fn suffix_hash(self) -> u32 {
         self.node().map_or(EMPTY_PATH_HASH, |n| n.hash)
+    }
+
+    /// The handle's bits. Distinct paths have distinct bits, and [`Path::EMPTY`]'s are 1.
+    #[inline]
+    pub(crate) fn bits(self) -> u32 {
+        self.0.get()
+    }
+
+    /// The first segment and the rest, in one arena read. `None` for the empty path.
+    #[inline]
+    pub(crate) fn uncons(self) -> Option<(&'static mir::PathSegment, Path)> {
+        self.node().map(|n| (&n.head, Path::from_id(n.tail)))
     }
 
     /// Creates access path from a sequences of accesses
@@ -1693,12 +1705,23 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
 /// the suffix is `.[1]`.
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<Path> {
-    use mir::{Offset, PathSegment};
+    match_prefix_split(ap, prefix).map(|(adjust, rest)| match adjust {
+        Some(adj) => Path::cons(mir::PathSegment::Offset(Offset(adj)), rest),
+        None => rest,
+    })
+}
+
+/// [`match_prefix`]'s suffix without building it: `(adjust, rest)` for the suffix
+/// `[adjust] · rest`, where `rest` is a tail of `ap` and `[adjust]` is a nonzero offset segment,
+/// present only when `adjust` is `Some`. Interns nothing.
+#[inline]
+pub fn match_prefix_split(ap: &Path, prefix: &Path) -> Option<(Option<i64>, Path)> {
+    use mir::PathSegment;
     let mut ap_seq = *ap;
     let mut prefix_seq = *prefix;
 
     if prefix_seq.is_empty() {
-        return Some(ap_seq);
+        return Some((None, ap_seq));
     }
 
     // Check that all components except the last one match exactly
@@ -1723,12 +1746,11 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<Path> {
         // (`.x` and `.x.[0]` are distinct paths that concatenate identically), letting a
         // backward walk pick a preimage whose forward image was a different path.
         (PathSegment::Offset(Offset(an)), PathSegment::Offset(Offset(pn))) if an != pn => {
-            let adjust = an - pn;
-            Some(ap_seq.with_head(PathSegment::Offset(Offset(adjust))))
+            Some((Some(an - pn), ap_seq.tail()))
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some(ap_seq.tail())
+            Some((None, ap_seq.tail()))
         }
         _ => None,
     }
