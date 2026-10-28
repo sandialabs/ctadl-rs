@@ -135,6 +135,21 @@ What is left of P1:
   under budget without that.
 - **The other apps in the table above** have not been run with `full`.
 
+### Two more firmware binaries
+
+The runner's other over-budget binaries (How to reproduce), run the same way as `uclited`: the
+sweep's model, a 16 GiB memguard cap, peaks from `time -l`, on this branch at `0145608b`.
+
+| Binary | IR | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget |
+|---|---|---|---|---|---|---|
+| Netgear MBM621 `bin/chat` (MIPS32 BE, static, not stripped) | 1.2 MB | `off` | 12.9 M | 17.1 s | 1.34 GiB | 12.1x over |
+| | | `window:8` (default) | 18.4 M | 16.8 s | 1.48 GiB | 13.4x over |
+| | | `full` | 18.2 M | 17.7 s | 1.46 GiB | 13.2x over |
+
+- **`chat` is not a P1 shape.** `full` promotes one function (`_fpmaxtostr`, notified) and moves
+  nothing; promotion of any kind *adds* rows (`off` has 30% fewer than `window:8`). What holds its
+  rows was not checked. The import takes 23 s.
+
 ## S5: full stack-slot promotion, behind a flag
 
 `--mem2reg full` (off by default; the default stays `window:8`) promotes every directly accessed
