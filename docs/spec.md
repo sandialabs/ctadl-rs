@@ -172,10 +172,10 @@ separately.
 
 ### 4.3 Models
 
-A model generator has a `find` (element kind), `in` (imports), `where` (names, signatures, structure) and `model`
-(sources, sinks, propagation, bridge, dispatch). Propagation, bridge and dispatch models are
-consumed at index time; sources and sinks at query time. Per-language defaults ship in
-`ctadl-ascent/src/models/defaults`.
+A model generator has a `find` (element kind), `in` (imports), `where` (names, signatures,
+structure) and `model` (sources, sinks, propagation, bridge, dispatch). Propagation, bridge and
+dispatch models are consumed at index time; sources and sinks at query time. Per-language
+defaults ship in `ctadl-ascent/src/models/defaults`.
 
 ### 4.4 Output
 
