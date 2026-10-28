@@ -1,3 +1,7 @@
+mod id;
+
+pub use id::{Id, IdInterner, Internable, Stats};
+
 use hashbrown::HashTable;
 use parking_lot::RwLock;
 use rustc_hash::FxBuildHasher;
