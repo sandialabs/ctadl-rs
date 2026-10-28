@@ -286,7 +286,15 @@ call site must state which.
   with `ps.contains` and `paths(&p)`, respectively.
 - **Risk.** D2 treats a miss as "not in the set". That is only correct if the
   `paths` relation and the `PathSet` contain exactly the same paths.
-- **Action.** Confirm that before relying on it.
+- **Checked.** They are the same set, by construction:
+  - `EngineInput::new` builds the `PathSet` (`mod.rs:2267`) from the same
+    `compute_paths` vector that seeds `paths` (`mod.rs:2449`)
+  - no rule adds to `paths` during the fixpoint
+- **Decision.**
+  - Both rules test their candidates through the path set (R8).
+  - The `paths` relation stays, for output (`IndexResult.paths`).
+  - Debug builds assert at seeding that `paths` and the path set hold the same
+    paths.
 
 **C10. Benchmark baseline vs. workspace policy (R2 vs. R17).**
 - **Constraint.** The glxy and udpbus inputs live in machine-local directories,
