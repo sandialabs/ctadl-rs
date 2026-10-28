@@ -20,7 +20,7 @@ analysis ideas count for more than a stable interface.
 
 In scope:
 
-- Compositional, hole-program, interprocedural, field-sensitive taint analysis over many input
+- Compositional, whole-program, interprocedural, field-sensitive taint analysis over many input
   languages, bytecode and binaries included.
 - Multi-language analysis. Crosses language boundaries (JNI) and Android inter-component
   communication.
