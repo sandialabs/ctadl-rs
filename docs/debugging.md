@@ -139,15 +139,11 @@ while the finding did not.
 
 Consequences for measurement:
 
-- Endpoint-level counters are reproducible: sources and sinks matched, result
-  counts, per-file/per-plugin attribution, which sinks a given source reaches.
-- Flow-rendering counters are not: distinct source->sink pairs, how many results
-  anchor on the last code-flow step, per-result step and alternative-flow totals.
-  Expect a few counts of drift between indexes of identical input.
-- To attribute a moved number to a code change, compare the stable counters, or
-  hold the index fixed and vary only the model. Never diff two SARIFs byte-wise.
-- Regression cases must assert set-level properties --- reached lines, whether a
-  code flow connects a source and a sink --- never the shape of a rendered flow.
+- Endpoint-level and flow-rendering counters are both reproducible: two indexes
+  of identical input give the same SARIF, timestamps aside.
+- Regression cases must still assert set-level properties --- reached lines,
+  whether a code flow connects a source and a sink --- never the shape of a
+  rendered flow.
   The `nightly` harness does this today; keep it that way.
 
 Check that two indexes agree as sets (0/0 means order-only difference):
