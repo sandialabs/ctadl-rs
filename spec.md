@@ -103,8 +103,14 @@ naming the type. Handles are never truncated silently.
 **R15. All engines.** serial, par and lsm build and pass every test. lsm must not
 regress; it need not shrink (C8).
 
-**R16. Several indexes per process.** More than one index can be built, in
-parallel, in one process (as the tests do), and each meets R4–R8.
+**R16. Indexes per process.**
+- **Production.** Production builds exactly one index per process, and the
+  implementation may rely on that.
+- **Tests.** `cargo test` may build several indexes in parallel in one process.
+  - Each must still meet R4 and R5, and nothing may be unsound.
+  - R2, R3 and the lock-free, no-allocation parts of R6–R8 need hold only for
+    one index per process.
+  - Tests may serialize index construction to get there.
 
 **R17. Workspace policy.** Nothing committed names a machine-specific path. That
 includes build directories, benchmark directories and data directories, in code,
@@ -166,17 +172,23 @@ call site must state which.
 
 **C1. Rule bodies have no context (R6 vs. R16).**
 - **Constraint.** Rules can only resolve handles through something global.
-- **Conflict.** One process may hold several indexes that are each in a
-  different phase, so one global "frozen" state can't express D2.
-- **What the plan must do.** Find a way to scope lock-free lookup to each index
-  that satisfies both requirements. R6 may then have to be enforced by tests
-  rather than at runtime.
+- **In production.** There is one index per process, so a single global phase
+  ("seeding" or "frozen") can express D2.
+- **Conflict, in tests only.** Parallel tests can hold several indexes at once,
+  each in a different phase, and one global phase can't describe them all.
+- **What the plan must do.** Choose one of these:
+  - scope lookups to each index
+  - use a global phase, and have tests either serialize index construction or
+    fall back to a slower path that still gives correct results when indexes
+    overlap
+
+  Either way, an overlap in tests must never produce wrong results.
 
 **C2. Values are never freed vs. the memory goal (R2).**
 - **Constraint.** Interned values live for the whole process, across every index
   in it.
-- **Consequence.** R2 is measured for one index per process. A long-lived process
-  that builds many indexes keeps growing, and this spec accepts that.
+- **Consequence.** In production there is one index per process (R16), so the pool
+  grows across indexes only in test runs. This spec accepts that.
 - **Effect of D2.** It removes today's interning, during the fixpoint, of
   candidate paths that are then rejected.
 
