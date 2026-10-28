@@ -143,6 +143,45 @@ Main-loop iterations are unchanged. The `dex`/`jvm` regression families pass (`C
 included) with `com.noto`'s report counts re-pinned, since the emptied bodies drop their calls. Not
 seen: an object of a merged class built by reflection.
 
+**Detector coverage.** Three layers, measured on `cpuinfo` 6.6.1, `com.noto`, NewPipe and CENO:
+
+- *Recognized but not split*: only classes with a single id (4-19 per app), which have no union.
+  No class reaches the 64-id cap.
+- *Split but not closed* (S30 cannot apply): this was 6-15% of split classes, nearly all for
+  allocations whose constructor call the analysis did not find. Inside a `try`, a `new-instance`
+  ends its basic block, and the analysis dropped a block's last result at the block's end (right
+  for an instruction whose result a handler could see, but a handler never sees an uninitialized
+  object), so the `<init>` in the next block, and the constant id it passes, was lost (96
+  allocations in `cpuinfo`, 229 in NewPipe). Fixed: the allocated object now reaches every
+  successor. An interprocedural constant propagation, the first idea, would have found nothing:
+  only 2-7 allocations per app have an id the analysis does not know, none of them a parameter.
+  After the fix 96-98% of split classes are closed (`cpuinfo` 609 of 624, `com.noto` 137 of 140,
+  NewPipe 929 of 965, CENO 993 of 1,011), a few more classes reach two ids and are split, and the
+  premise holds for all of them (no allocation of a plain emptied class).
+- *Never recognized*: a scan of every class for a virtual method that compares an `int` field of
+  `this`, written only in constructors, against constants (by `switch` or `if`), with at least two
+  constant ids passed at construction sites, finds 98-99% of what S10 splits, plus 3, 3 and 12
+  classes it does not. None is a merged lambda: an abstract base class whose subclasses pass the
+  id to `super(..)`, a bit-flags field, and named library classes testing a mode or type field
+  (`ExoPlaybackException.type`, `FocusTargetNode.focusability`, `jsoup`'s `Token.type`). Shapes
+  outside the scan's rule (an id derived by arithmetic, or kept in a non-`int` field) were not
+  looked for.
+
+With the fix, beyond S30 (only losses, iterations unchanged):
+
+| App | Tainted-instruction locations | Sinks |
+|---|---|---|
+| `cpuinfo` 6.6.1 | 617 → 617 | 47 → 47 |
+| `com.noto` | identical | identical |
+| CENO | 14,863 → 10,237 | 165 → 161 |
+| NewPipe | 16,868 → 7,553 | 346 → 341 |
+
+Four traced NewPipe losses all run through two merged lambdas,
+`Recomposer$$ExternalSyntheticLambda4` and `ComponentRegistry$Builder$$ExternalSyntheticLambda0`,
+into Rhino's `ScriptRuntime`; the allocations of those lambdas now build clones. Overall, on
+`main` → this branch, the broad query's tainted instructions go from 20,904 to 617 on `cpuinfo`
+6.6.1, 33,177 to 7,553 on NewPipe and 29,728 to 10,237 on CENO, with no result gained.
+
 **What this means for the branch.** The split is now mainly a precision fix (about half of the
 tainted results on merge-heavy apps are union artifacts) and a cost reduction where merging is
 heavy (CENO, `cpuinfo`), rather than a fix for non-convergence: on `cpuinfo` 91% of the tainted

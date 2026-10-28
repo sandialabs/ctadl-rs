@@ -341,6 +341,16 @@ impl MergedClasses {
                 let facts = analyze_items(parser, &code, &items, own_field);
                 let mi = parser.get_method(enc.method_idx as usize).unwrap();
                 let sig = parser.method_signature(mi)?;
+                if log::log_enabled!(log::Level::Debug) {
+                    for it in &items {
+                        if let DecodedCodeItem::Instruction { inst, offset } = it
+                            && allocates_merged(inst)
+                            && !facts.inits.iter().any(|i| i.new_pc == *offset)
+                        {
+                            log::debug!("merged classes: no constructor call found in {sig} at {offset}");
+                        }
+                    }
+                }
                 for init in facts.inits {
                     let Some(class) = self.classes.get(&init.class) else {
                         continue;
@@ -350,9 +360,24 @@ impl MergedClasses {
                         Some(IdArg::Slot(n)) => match init.args.get(*n).copied().flatten() {
                             Some(Val::Const(k)) => SiteId::Known(k),
                             Some(Val::ClassId) => SiteId::Own,
-                            _ => continue,
+                            other => {
+                                log::debug!(
+                                    "merged classes: unknown id for {} in {sig} at {}: {other:?}",
+                                    init.class,
+                                    init.new_pc
+                                );
+                                continue;
+                            }
                         },
-                        None => continue,
+                        None => {
+                            log::debug!(
+                                "merged classes: unrecognized constructor {} for {} in {sig} at {}",
+                                init.ctor,
+                                init.class,
+                                init.new_pc
+                            );
+                            continue;
+                        }
                     };
                     found.push((sig.clone(), init.new_pc, Site { class: init.class, id }));
                 }
@@ -480,13 +505,24 @@ fn analyze_items(
     while let Some(b) = work.pop_front() {
         let mut state = ins[b].clone().unwrap();
         let mut before_last = state.clone();
+        let mut last_allocates = false;
         for it in &items[blocks[b].start..blocks[b].end] {
             if let DecodedCodeItem::Instruction { offset, inst } = it {
                 before_last = state.clone();
+                last_allocates = matches!(inst, Instruction::NewInstance(_));
                 step(parser, items, inst, *offset, &mut state, field, None);
             }
         }
-        let out = meet(&before_last, &state);
+        // A block's last instruction may throw, and then its result never reaches a handler, so
+        // a successor sees only what holds either way. A `new-instance` is the exception: inside
+        // a `try` it ends its block, and the handler can never see the object, since the verifier
+        // invalidates uninitialized references on exception edges. Dropping it would lose the
+        // constructor call in the next block, and with it the site's id.
+        let out = if last_allocates {
+            state.clone()
+        } else {
+            meet(&before_last, &state)
+        };
         for &s in &succs[b] {
             let next = match &ins[s] {
                 None => out.clone(),
