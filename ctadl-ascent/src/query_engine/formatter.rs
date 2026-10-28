@@ -1549,7 +1549,7 @@ impl FormatFactsBuilder {
             facts
                 .into_iter()
                 .map(|(id, i, vx)| {
-                    let FlowVertex(var, path) = vx;
+                    let FlowVertex(var, path, ..) = vx;
                     (id, i, var, path)
                 })
                 .collect(),
@@ -3688,7 +3688,7 @@ mod tests {
     ) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label(label.into()),
             direction: dir,
             call_site: None,

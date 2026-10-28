@@ -118,13 +118,13 @@ order ever matters; the third is not.
    the seed relations. Ascent relations are `Vec`s, so a randomized seed order
    propagates into derivation order. Sorting these two makes `paths.parquet`
    byte-stable, and nothing else.
-3. Interned keys hash by heap address: `Symbol = ArcIntern<str>`
-   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `tailshare::Seq`
-   --- what `Path` wraps --- uses `std::ptr::hash`. Every hash container keyed by
-   an access path or a field symbol therefore iterates in heap-address order, and
-   addresses move per process. This is hasher-independent: ascent's relation
-   indices and the BYODS tries both use `FxHasher` and are still address-ordered.
-   Hashing `Seq` by contents does not help, because that recurses into
+3. Interned keys hash by address or id: `Symbol = ArcIntern<str>`
+   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
+   interner id, which depends on the order paths were first interned. Every hash
+   container keyed by an access path or a field symbol therefore iterates in an
+   order that moves per process. This is hasher-independent: ascent's relation
+   indices and the BYODS tries both use `FxHasher` and are still id-ordered.
+   Hashing `Path` by contents does not help, because that recurses into
    `PathSegment::Symbol(ArcIntern<str>)`, which hashes the pointer again.
 
 How this reaches the SARIF: `query` is deterministic *given an index*, but

@@ -104,7 +104,7 @@ impl QueryEndpoint {
             };
             out.push(QueryEndpoint {
                 infunc: insn_site.func_id,
-                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                vertex: FlowVertex::new(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),
@@ -150,7 +150,7 @@ impl QueryEndpoint {
             };
             out.push(QueryEndpoint {
                 infunc: insn_site.func_id,
-                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                vertex: FlowVertex::new(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),

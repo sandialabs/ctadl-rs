@@ -22,7 +22,7 @@ fn test_absorbing_functions() {
 
     let endpoint = QueryEndpoint {
         infunc: main_id,
-        vertex: FlowVertex(call_arg, Path::empty()),
+        vertex: FlowVertex::new(call_arg, Path::empty()),
         label: Label("Net".into()),
         direction: TaintDirection::Forward,
         call_site: None,

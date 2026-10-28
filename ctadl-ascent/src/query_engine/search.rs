@@ -762,7 +762,7 @@ mod tests {
     fn source(func: u32, var: FlowVariable, saturating: bool) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label("argv_input".into()),
             direction: TaintDirection::Forward,
             call_site: None,
@@ -774,7 +774,7 @@ mod tests {
     fn sink(func: u32, var: FlowVariable) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label("cmdi".into()),
             direction: TaintDirection::Backward,
             call_site: None,
@@ -848,7 +848,7 @@ mod tests {
             let src = source(f, base, saturating);
             // Sink on the same vertex, at the extended path `.field`.
             let mut sink_ep = sink(f, base);
-            sink_ep.vertex = FlowVertex(base, deref);
+            sink_ep.vertex = FlowVertex::new(base, deref);
             let facts = QueryFacts {
                 assign: assign.clone(),
                 paths: paths.clone(),

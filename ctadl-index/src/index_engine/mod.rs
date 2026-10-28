@@ -63,15 +63,20 @@ pub mod profile;
 pub mod source_info;
 
 // Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
-// them are `Copy`, fixed-width and free of padding; `Path` is an interned `&'static` pointer
-// whose interner is never freed, so its bits stay valid for the whole process, which is as long
-// as the provider's run files live.
-lsm::lsm_col!(FunctionId, 1);
-lsm::lsm_col!(FlowVariable, 1);
-lsm::lsm_col!(Path, 1);
-lsm::lsm_col!(FormalIndex, 1);
-lsm::lsm_col!(PackedInsnSiteId, 1);
-lsm::lsm_col!(FlowVertex, 2);
+// them are `Copy`, fixed-width and free of padding. `Path` and a local `FlowVariable`'s `Str` are
+// 4-byte ids into interners that never free, so their bits stay valid for the whole process,
+// which is as long as the provider's run files live. Debug builds check every id read back.
+lsm::lsm_col!(FunctionId, 1, [u32]);
+lsm::lsm_col!(FlowVariable, 1, [u64], valid = FlowVariable::is_valid);
+lsm::lsm_col!(Path, 1, [std::num::NonZeroU32], valid = Path::is_valid);
+lsm::lsm_col!(FormalIndex, 1, [i16]);
+lsm::lsm_col!(PackedInsnSiteId, 1, [[u8; 8]]);
+lsm::lsm_col!(
+    FlowVertex,
+    2,
+    [FlowVariable, Path, crate::facts::VertexPad],
+    valid = FlowVertex::is_valid
+);
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
@@ -150,7 +155,7 @@ impl IndexFacts {
                 .map(|(site_id, formal_index, vertex)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
+                    let FlowVertex(variable, path, ..) = vertex;
                     (func_id, insn_id, *formal_index, *variable, *path)
                 }),
         )?;
@@ -169,7 +174,7 @@ impl IndexFacts {
                 .map(|(site_id, vertex, target)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
+                    let FlowVertex(variable, path, ..) = vertex;
                     (func_id, insn_id, *variable, *path, *target)
                 }),
         )?;
@@ -180,7 +185,7 @@ impl IndexFacts {
                 .map(|(site_id, vertex, dispatch_key)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
+                    let FlowVertex(variable, path, ..) = vertex;
                     (func_id, insn_id, *variable, *path, *dispatch_key)
                 }),
         )?;
@@ -211,7 +216,7 @@ impl IndexFacts {
                         (
                             site_id.try_into().expect("error packing site_id"),
                             formal_index,
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                         )
                     })
                     .collect(),
@@ -232,7 +237,7 @@ impl IndexFacts {
                         let site_id = InsnSiteId { func_id, insn_id };
                         (
                             site_id.try_into().expect("error packing site_id"),
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                             target,
                         )
                     })
@@ -245,7 +250,7 @@ impl IndexFacts {
                         let site_id = InsnSiteId { func_id, insn_id };
                         (
                             site_id.try_into().expect("error packing site_id"),
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                             context,
                         )
                     })
@@ -1559,7 +1564,7 @@ ascent_source! {
         actual_param(call_site_slice, n, vx),
         let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
         let cv = call_arg!(insn_id, *n),
-        let FlowVertex(v, p) = vx;
+        let FlowVertex(v, p, ..) = vx;
 
     // Compute assignments from summaries
     assign_like(func_id, v1, p1, v2, p2) <--
@@ -2027,7 +2032,7 @@ ascent_source! {
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
     // downstream, where the call is actually resolved.
     call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-        call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+        call_target_assign(func_id, vx, tgt), let FlowVertex(v, p, ..) = vx,
         tag_closure_func(func_id);
 
     call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
@@ -2253,7 +2258,7 @@ impl<'a> EngineInput<'a> {
             facts
                 .actual_param
                 .iter()
-                .map(|(_, _, FlowVertex(_, p))| (*p,)),
+                .map(|(_, _, FlowVertex(_, p, ..))| (*p,)),
         );
         // The receiver access path of an indirect / virtual call is also a syntactic program path.
         // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
@@ -2265,7 +2270,7 @@ impl<'a> EngineInput<'a> {
             facts
                 .callee_info
                 .iter()
-                .map(|(_, FlowVertex(_, p), _)| (*p,)),
+                .map(|(_, FlowVertex(_, p, ..), _)| (*p,)),
         );
         let paths = compute_paths(
             all_program_paths.into_iter().collect(),

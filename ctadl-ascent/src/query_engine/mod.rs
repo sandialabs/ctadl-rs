@@ -257,7 +257,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
             sources(s),
             let QueryEndpoint { infunc, vertex, label, direction, call_site: _, saturating: _ } = s,
-            let FlowVertex(v, p) = vertex;
+            let FlowVertex(v, p, ..) = vertex;
 
         // Propagate taint locally onto fields
         taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),

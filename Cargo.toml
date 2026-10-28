@@ -24,7 +24,6 @@ members = [
     "immortal",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
-    "tailshare",
     "trie",
     "xtask",
 ]

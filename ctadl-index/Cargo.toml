@@ -37,7 +37,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
 source-info = { path = "../source-info", features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
-tailshare = { path = "../tailshare", features = ["serde"] }
 thiserror = "2"
 
 [dev-dependencies]

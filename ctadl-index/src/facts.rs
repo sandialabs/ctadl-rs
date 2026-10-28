@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Display};
+use std::num::NonZeroU32;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -106,11 +107,68 @@ lazy_static::lazy_static! {
     pub static ref EMPTY_STR: Str = Str::from("");
 }
 
+/// One cons cell of an interned [`Path`]: its first segment and the handle of the rest.
+///
+/// Every suffix of an interned path is itself interned, so a path's tail is one arena read.
+/// Equality reads `head` and `tail` only, and hashing reads `hash` only, which is a function of
+/// them.
+#[derive(Clone, Debug)]
+pub struct PathNode {
+    head: mir::PathSegment,
+    tail: Option<PathId>,
+    /// The suffix hash `mix(head, tail's hash)`, so the hash of `segments · rest` folds from
+    /// `rest`'s without walking it.
+    hash: u32,
+}
+
+impl PartialEq for PathNode {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.tail == other.tail && self.head == other.head
+    }
+}
+
+impl Eq for PathNode {}
+
+impl std::hash::Hash for PathNode {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.hash);
+    }
+}
+
+immortal::id_handle! {
+    /// A handle to an interned, non-empty [`PathNode`]. [`Path`] wraps it.
+    pub struct PathId(PathNode);
+}
+
+/// The suffix hash of the empty path.
+const EMPTY_PATH_HASH: u32 = 0;
+
+/// The suffix hash of `head · tail`, given `tail`'s.
+#[inline]
+fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    head.hash(&mut h);
+    h.write_u32(tail_hash);
+    // FxHash mixes its low output bits poorly; fold a full multiply over it.
+    let m = (h.finish() as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    ((m >> 64) as u64 ^ m as u64) as u32
+}
+
 /// A sequence of field/array accesses
 ///
 /// The access path is represented as a stack of accesses, innermost first. So an access path like
-/// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. This representation allows
-/// common suffix sharing, something provided by the [`tailshare::Seq`] datatype.
+/// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. Each cons cell is a
+/// [`PathNode`] interned in a process-wide interner that never frees, so common suffixes are
+/// shared and a `Path` is a 4-byte handle: a [`PathId`]'s bits, or for the empty path a reserved
+/// value no `PathId` has, so [`Path::EMPTY`] is a compile-time constant and `Option<Path>` is 4
+/// bytes too.
+///
+/// `Eq` and `Hash` act on the handle. So does `Ord`, which is therefore not reproducible across
+/// runs: sort with [`Path::content_cmp`] wherever the order is printed. serde, `Display` and
+/// [`Path::parse`] go through the content.
 ///
 /// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are
@@ -121,12 +179,69 @@ lazy_static::lazy_static! {
 /// spellings of one address miss each other -- a callee that derefs a pointer parameter yields
 /// `Argument(0).[0].deref`, while the caller's own storage for that object is `.[k].deref`, and the
 /// summary would never match.
-#[derive(
-    Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
-)]
-pub struct Path(pub tailshare::Seq<mir::PathSegment>);
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Path(NonZeroU32);
+
+impl std::hash::Hash for Path {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.0.get());
+    }
+}
+
+impl Default for Path {
+    fn default() -> Self {
+        Path::EMPTY
+    }
+}
+
+impl Debug for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Path({:?})", self.to_dot_string())
+    }
+}
 
 impl Path {
+    /// The empty path. Its bits are no `PathId`'s: an interner with more than one shard never
+    /// issues an id whose local bits are zero.
+    pub const EMPTY: Path = Path(NonZeroU32::MIN);
+
+    #[inline]
+    fn from_id(id: Option<PathId>) -> Path {
+        id.map_or(Path::EMPTY, |id| Path(NonZeroU32::new(id.raw()).unwrap()))
+    }
+
+    #[inline]
+    fn id(self) -> Option<PathId> {
+        // SAFETY: a `Path` other than `EMPTY` holds the bits of a `PathId` that `from_id` was
+        // given, or that the LSM provider copied out of such a `Path` (C6).
+        (self != Path::EMPTY).then(|| unsafe { PathId::from_raw_unchecked(self.0.get()) })
+    }
+
+    /// `head · tail`, which the caller has normalized: `head` and `tail`'s head are not both
+    /// offsets, and `head` is not a zero offset.
+    #[inline]
+    fn cons(head: mir::PathSegment, tail: Path) -> Path {
+        let hash = suffix_hash(&head, tail.suffix_hash());
+        Path::from_id(Some(PathId::intern(&PathNode {
+            head,
+            tail: tail.id(),
+            hash,
+        })))
+    }
+
+    #[inline]
+    fn node(self) -> Option<&'static PathNode> {
+        self.id().map(PathId::get)
+    }
+
+    /// The hash [`PathNode`] stores for this path.
+    #[inline]
+    fn suffix_hash(self) -> u32 {
+        self.node().map_or(EMPTY_PATH_HASH, |n| n.hash)
+    }
+
     /// Creates access path from a sequences of accesses
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
         let mut items = Vec::new();
@@ -145,24 +260,53 @@ impl Path {
         // A zero offset is the identity on addresses. Runs are already summed, so each survivor is
         // isolated between non-offsets and dropping it cannot make two offsets adjacent.
         items.retain(|item| !matches!(item, mir::PathSegment::Offset(Offset(0))));
-        Path(items.into_iter().collect())
+        items
+            .into_iter()
+            .rev()
+            .fold(Path::EMPTY, |tail, head| Path::cons(head, tail))
     }
 
     /// Creates an empty path
     #[inline]
-    pub fn empty() -> Self {
-        Path(tailshare::Seq::new())
+    pub const fn empty() -> Self {
+        Path::EMPTY
     }
 
     /// Denotes the empty path
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        *self == Path::EMPTY
     }
 
     /// Len is O(n)
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.iter().count()
+    }
+
+    /// Whether this handle was handed out by the interner, for handles read back from storage
+    /// that bypassed it (C6). Always true for a `Path` made by safe code.
+    pub fn is_valid(&self) -> bool {
+        self.is_empty() || PathId::from_raw(self.0.get()).is_some()
+    }
+
+    /// Orders by content, as `main`'s `Path` did: segment by segment from the innermost, a
+    /// proper prefix first. Walks both paths through the arena, and stops at a shared suffix.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let (mut a, mut b) = (*self, *other);
+        loop {
+            if a == b {
+                return Ordering::Equal;
+            }
+            match (a.node(), b.node()) {
+                (None, _) => return Ordering::Less,
+                (_, None) => return Ordering::Greater,
+                (Some(x), Some(y)) => match x.head.cmp(&y.head) {
+                    Ordering::Equal => (a, b) = (Path::from_id(x.tail), Path::from_id(y.tail)),
+                    unequal => return unequal,
+                },
+            }
+        }
     }
 
     /// Creates a path from a sequence of *field names*, every one of which becomes a
@@ -193,12 +337,12 @@ impl Path {
     /// Returns the canonical string representation, e.g. `.foo.bar`, `.foo.[8]`, `.\[_elem_]`.
     /// The exact inverse of [`Path::parse`], modulo that parse's documented normalization.
     pub fn to_dot_string(&self) -> String {
-        mir::path_to_string(self.0.iter())
+        mir::path_to_string(self.iter())
     }
 
     /// Iterates from the innermost access out
-    pub fn iter(&self) -> tailshare::Iter<mir::PathSegment> {
-        self.0.iter()
+    pub fn iter(&self) -> PathIter {
+        PathIter(*self)
     }
 
     /// Concatenates self onto other, returning new path
@@ -209,7 +353,7 @@ impl Path {
     /// Substitutes given prefix of path with new_prefix and returns the new path.
     #[inline(always)]
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Path> {
-        match_prefix(self, prefix).map(|suffix| Path(prepend_onto(new_prefix, suffix)))
+        match_prefix(self, prefix).map(|suffix| prepend_onto(new_prefix, suffix))
     }
 
     /// Same as substitute_prefix but only returns a new path if the suffix after prefix matching
@@ -222,7 +366,7 @@ impl Path {
     ) -> Option<Path> {
         match_prefix(self, prefix)
             .filter(|s| !s.is_empty())
-            .map(|suffix| Path(prepend_onto(new_prefix, suffix)))
+            .map(|suffix| prepend_onto(new_prefix, suffix))
     }
 
     /// True iff `self` starts with `port` structurally: `self` is `port` followed
@@ -256,11 +400,11 @@ impl Path {
         let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::with_capacity(comps.len() + 1);
         // `rest` is `comps[k..]`, a tail of this path.
-        let mut rest = self.0;
+        let mut rest = *self;
         for k in 0..=comps.len() {
             let key = Path::from_accesses(comps[..k].iter().cloned());
-            out.push((key, rest_path(rest)));
-            rest = rest.tail().unwrap_or_default();
+            out.push((key, rest));
+            rest = rest.tail();
         }
         out
     }
@@ -275,13 +419,13 @@ impl Path {
         let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::new();
         // `rest` is `comps[k..]`, a tail of this path.
-        let mut rest = self.0;
+        let mut rest = *self;
         for k in 0..comps.len() {
             if matches!(comps[k], mir::PathSegment::Offset(_)) {
                 let key = Path::from_accesses(comps[..k].iter().cloned());
-                out.push((key, rest_path(rest)));
+                out.push((key, rest));
             }
-            rest = rest.tail().unwrap_or_default();
+            rest = rest.tail();
         }
         out
     }
@@ -300,10 +444,16 @@ impl Path {
         }
     }
 
+    /// The first component. `None` for the empty path.
+    #[inline]
+    pub fn head(&self) -> Option<&'static mir::PathSegment> {
+        self.node().map(|n| &n.head)
+    }
+
     /// The value of the first component if it is an offset.
     #[inline]
     pub fn head_offset(&self) -> Option<i64> {
-        match self.0.head() {
+        match self.head() {
             Some(mir::PathSegment::Offset(mir::Offset(n))) => Some(*n),
             _ => None,
         }
@@ -312,7 +462,87 @@ impl Path {
     /// This path without its first component. The empty path for the empty path.
     #[inline]
     pub fn tail(&self) -> Path {
-        Path(self.0.tail().unwrap_or_default())
+        self.node().map_or(Path::EMPTY, |n| Path::from_id(n.tail))
+    }
+
+    /// This path with its first component replaced by `head`, which the caller has normalized
+    /// against the tail as [`Path::cons`] requires. Not for the empty path.
+    #[inline]
+    fn with_head(&self, head: mir::PathSegment) -> Path {
+        debug_assert!(!self.is_empty());
+        Path::cons(head, self.tail())
+    }
+}
+
+/// Iterates a [`Path`]'s segments from the innermost out.
+#[derive(Clone)]
+pub struct PathIter(Path);
+
+impl Iterator for PathIter {
+    type Item = &'static mir::PathSegment;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.0.node()?;
+        self.0 = Path::from_id(node.tail);
+        Some(&node.head)
+    }
+}
+
+// serde writes the cons list as `main`'s `tailshare::Seq` did, node by node from the head:
+// `Nil`, or a struct `Node { head, tail }`, inside a newtype `Path` (R11).
+impl Serialize for Path {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        struct Node(Path);
+        impl Serialize for Node {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeStruct;
+                match self.0.node() {
+                    None => serializer.serialize_unit_variant("Node", 0, "Nil"),
+                    Some(node) => {
+                        let mut state = serializer.serialize_struct("Node", 2)?;
+                        state.serialize_field("head", &node.head)?;
+                        state.serialize_field("tail", &Node(Path::from_id(node.tail)))?;
+                        state.end()
+                    }
+                }
+            }
+        }
+        serializer.serialize_newtype_struct("Path", &Node(*self))
+    }
+}
+
+impl<'de> Deserialize<'de> for Path {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Node(Path);
+        impl<'de> Deserialize<'de> for Node {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                // `Nil` is written as a unit variant, which a self-describing format such as
+                // JSON reads back as the string.
+                #[derive(Deserialize)]
+                #[serde(untagged)]
+                enum NodeData {
+                    Nil,
+                    Name(String),
+                    Cons { head: mir::PathSegment, tail: Node },
+                }
+                Ok(Node(match NodeData::deserialize(deserializer)? {
+                    NodeData::Nil => Path::EMPTY,
+                    NodeData::Name(name) if name == "Nil" => Path::EMPTY,
+                    NodeData::Name(name) => {
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Str(&name),
+                            &"Nil or a path node",
+                        ));
+                    }
+                    NodeData::Cons { head, tail } => Path::cons(head, tail.0),
+                }))
+            }
+        }
+        #[derive(Deserialize)]
+        #[serde(rename = "Path")]
+        struct Repr(Node);
+        Ok(Repr::deserialize(deserializer)?.0.0)
     }
 }
 
@@ -344,7 +574,7 @@ impl Heap {
 impl Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = String::new();
-        mir::write_path(&mut out, self.0.iter());
+        mir::write_path(&mut out, self.iter());
         f.write_str(&out)
     }
 }
@@ -827,6 +1057,12 @@ impl FlowVariable {
     pub fn is_call_arg(&self) -> bool {
         (self.0 & TAG_MASK) == TAG_CALL_ARG
     }
+
+    /// Whether a `Local`'s [`Str`] was handed out, for variables read back from storage that
+    /// bypassed the interner (C6). True for every other variant.
+    pub fn is_valid(&self) -> bool {
+        !self.is_local() || Str::from_raw((self.0 & DATA_MASK) as u32).is_some()
+    }
 }
 
 impl Debug for FlowVariable {
@@ -955,14 +1191,50 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
 }
 
 /// Variable and access path
-#[derive(
-    Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize,
-)]
-pub struct FlowVertex(pub FlowVariable, pub Path);
+///
+/// The third field is padding: it makes the 4-byte [`Path`] fill the vertex's 16 bytes, so the
+/// LSM provider, which stores and compares a value's raw bytes, never reads an uninitialized one.
+/// Build a vertex with [`FlowVertex::new`]; patterns skip the pad with `..`.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Default, Serialize, Deserialize)]
+pub struct FlowVertex(pub FlowVariable, pub Path, #[serde(skip)] pub VertexPad);
+
+/// [`FlowVertex`]'s padding: four bytes that are always zero.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub struct VertexPad(u32);
+
+impl FlowVertex {
+    #[inline]
+    pub const fn new(var: FlowVariable, path: Path) -> Self {
+        FlowVertex(var, path, VertexPad(0))
+    }
+
+    /// Whether the handles in this vertex were handed out, for vertices read back from storage
+    /// that bypassed the interners (C6).
+    pub fn is_valid(&self) -> bool {
+        self.0.is_valid() && self.1.is_valid() && self.2 == VertexPad(0)
+    }
+}
+
+impl std::hash::Hash for FlowVertex {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        self.1.hash(state);
+    }
+}
+
+impl Debug for FlowVertex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("FlowVertex")
+            .field(&self.0)
+            .field(&self.1)
+            .finish()
+    }
+}
 
 impl Display for FlowVertex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let FlowVertex(var, path) = self;
+        let FlowVertex(var, path, ..) = self;
         write!(f, "{var}{path}")
     }
 }
@@ -1340,13 +1612,10 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// identical to that rebuild while doing O(|new_prefix|) interns instead of
 /// O(|new_prefix| + |suffix|) (and zero when `new_prefix` is empty, the common copy/load case).
 #[inline]
-fn prepend_onto(
-    new_prefix: &Path,
-    suffix: tailshare::Seq<mir::PathSegment>,
-) -> tailshare::Seq<mir::PathSegment> {
+fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     use mir::{Offset, PathSegment};
     // `new_prefix` is a short program access-path prefix (usually 0–2 components).
-    let comps: Vec<PathSegment> = new_prefix.0.iter().cloned().collect();
+    let comps: Vec<PathSegment> = new_prefix.iter().cloned().collect();
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
@@ -1357,9 +1626,9 @@ fn prepend_onto(
         (Some(PathSegment::Offset(Offset(a))), Some(PathSegment::Offset(Offset(b)))) => {
             let sum = a + b;
             let rest = if sum == 0 {
-                suffix.tail().unwrap_or_default()
+                suffix.tail()
             } else {
-                suffix.map_head(|_| PathSegment::Offset(Offset(sum)))
+                suffix.with_head(PathSegment::Offset(Offset(sum)))
             };
             (rest, comps.len() - 1)
         }
@@ -1367,7 +1636,7 @@ fn prepend_onto(
     };
     // Prepend the remaining `new_prefix` components so iteration yields them head-first.
     for comp in comps[..upto].iter().rev() {
-        acc = acc.push_front(comp.clone());
+        acc = Path::cons(comp.clone(), acc);
     }
     acc
 }
@@ -1378,10 +1647,10 @@ fn prepend_onto(
 /// This supports offset arithmetic. For example, if `ap = .x.[2]` and `prefix = .x.[1]`,
 /// the suffix is `.[1]`.
 #[inline]
-pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::PathSegment>> {
+pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<Path> {
     use mir::{Offset, PathSegment};
-    let mut ap_seq = ap.0;
-    let mut prefix_seq = prefix.0;
+    let mut ap_seq = *ap;
+    let mut prefix_seq = *prefix;
 
     if prefix_seq.is_empty() {
         return Some(ap_seq);
@@ -1389,12 +1658,12 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::Path
 
     // Check that all components except the last one match exactly
     // Invariant: prefix_seq.tail() is a non-empty seq
-    while prefix_seq.tail().unwrap_or_default().head().is_some() {
+    while !prefix_seq.tail().is_empty() {
         if prefix_seq.head() != ap_seq.head() {
             return None;
         }
-        prefix_seq = prefix_seq.tail().unwrap();
-        ap_seq = ap_seq.tail().unwrap_or_default();
+        prefix_seq = prefix_seq.tail();
+        ap_seq = ap_seq.tail();
     }
     // unwrap() safety follows from while condition
     let prefix_last = prefix_seq.head().unwrap();
@@ -1410,11 +1679,11 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::Path
         // backward walk pick a preimage whose forward image was a different path.
         (PathSegment::Offset(Offset(an)), PathSegment::Offset(Offset(pn))) if an != pn => {
             let adjust = an - pn;
-            Some(ap_seq.map_head(|_| PathSegment::Offset(Offset(adjust))))
+            Some(ap_seq.with_head(PathSegment::Offset(Offset(adjust))))
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some(ap_seq.tail().unwrap())
+            Some(ap_seq.tail())
         }
         _ => None,
     }
@@ -1549,6 +1818,100 @@ mod tests {
         let c = CallDispatchKey::c();
         assert_eq!(c, CallDispatchKeyKind::C.into());
         assert_eq!(c.to_string(), "c_call");
+    }
+
+    #[test]
+    fn path_handles_are_four_bytes() {
+        assert_eq!(std::mem::size_of::<Path>(), 4);
+        assert_eq!(std::mem::size_of::<Option<Path>>(), 4);
+        assert_eq!(std::mem::size_of::<(Path, FormalIndex, Path)>(), 12);
+        assert_eq!(std::mem::size_of::<FlowVertex>(), 16);
+        assert_eq!(
+            std::mem::size_of::<FlowVertex>(),
+            std::mem::size_of::<FlowVariable>()
+                + std::mem::size_of::<Path>()
+                + std::mem::size_of::<VertexPad>()
+        );
+        // The empty path's bits are never a `PathId`'s.
+        assert_eq!(PathId::from_raw(Path::EMPTY.0.get()), None);
+        assert!(Path::EMPTY.is_valid());
+        assert_eq!(Path::default(), Path::EMPTY);
+    }
+
+    #[test]
+    fn path_suffixes_are_shared_and_hashes_fold() {
+        let p = Path::parse(".a.b.[4].c").unwrap();
+        let q = Path::parse(".x.b.[4].c").unwrap();
+        assert_eq!(p.tail(), q.tail());
+        assert_eq!(p.tail(), Path::parse(".b.[4].c").unwrap());
+        assert_eq!(p.tail().tail().tail().tail(), Path::EMPTY);
+        assert_eq!(p.len(), 4);
+        let node = p.node().unwrap();
+        assert_eq!(node.hash, suffix_hash(&node.head, p.tail().suffix_hash()));
+        assert_eq!(Path::EMPTY.suffix_hash(), EMPTY_PATH_HASH);
+    }
+
+    #[test]
+    fn path_content_cmp_ignores_intern_order() {
+        // Interned longest-last and in reverse content order, so ids and content disagree.
+        let names = ["path_cmp/z", "path_cmp/y", "path_cmp/x"];
+        let paths: Vec<Path> = names
+            .iter()
+            .map(|n| Path::from_symbol_names([n]))
+            .chain([
+                Path::from_symbol_names(["path_cmp/x", "path_cmp/y"]),
+                Path::from_accesses([
+                    mir::PathSegment::symbol("path_cmp/x"),
+                    mir::PathSegment::offset(3),
+                ]),
+                Path::EMPTY,
+            ])
+            .collect();
+        let mut by_content = paths.clone();
+        by_content.sort_by(Path::content_cmp);
+        let mut by_segments = paths.clone();
+        by_segments.sort_by(|a, b| a.iter().cmp(b.iter()));
+        assert_eq!(by_content, by_segments);
+        assert_eq!(by_content[0], Path::EMPTY);
+        assert_eq!(
+            by_content.iter().map(Path::to_string).collect::<Vec<_>>(),
+            [
+                "",
+                ".path_cmp/x",
+                ".path_cmp/x.path_cmp/y",
+                ".path_cmp/x.[3]",
+                ".path_cmp/y",
+                ".path_cmp/z",
+            ]
+        );
+    }
+
+    #[test]
+    fn path_serde_writes_the_cons_list() {
+        let path = Path::parse(".foo.[8]").unwrap();
+        let json = serde_json::to_string(&path).unwrap();
+        assert_eq!(
+            json,
+            r#"{"head":{"Symbol":"foo"},"tail":{"head":{"Offset":8},"tail":"Nil"}}"#
+        );
+        assert_eq!(serde_json::from_str::<Path>(&json).unwrap(), path);
+        assert_eq!(serde_json::to_string(&Path::EMPTY).unwrap(), r#""Nil""#);
+        assert_eq!(
+            serde_json::from_str::<Path>(r#""Nil""#).unwrap(),
+            Path::EMPTY
+        );
+        assert!(serde_json::from_str::<Path>(r#""Cons""#).is_err());
+
+        let vertex = FlowVertex::new(FlowVariable::formal_index(FormalIndex::new(1)), path);
+        let json = serde_json::to_string(&vertex).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                "[{{\"Formal\":1}},{}]",
+                serde_json::to_string(&path).unwrap()
+            )
+        );
+        assert_eq!(serde_json::from_str::<FlowVertex>(&json).unwrap(), vertex);
     }
 
     #[test]
@@ -1706,9 +2069,8 @@ mod tests {
     fn test_substitute_prefix_matches_rebuild() {
         // Reference: flatten new_prefix ++ suffix and rebuild.
         fn rebuild(ap: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
-            match_prefix(ap, prefix).map(|suffix| {
-                Path::from_accesses(new_prefix.0.iter().chain(suffix.iter()).cloned())
-            })
+            match_prefix(ap, prefix)
+                .map(|suffix| Path::from_accesses(new_prefix.iter().chain(suffix.iter()).cloned()))
         }
         // A spread of prefixes/new-prefixes exercising: empty new_prefix (zero-intern path),
         // junction offset+offset merge, offset-next-to-symbol (no merge), empty suffix, and
@@ -1974,11 +2336,6 @@ mod tests {
     }
 }
 
-#[inline]
-fn rest_path(seq: tailshare::Seq<mir::PathSegment>) -> Path {
-    Path(seq)
-}
-
 #[cfg(test)]
 mod prefix_key_tests {
     use super::*;
@@ -2016,7 +2373,7 @@ mod prefix_key_tests {
             let keys = ap.prefix_keys();
             let wild_keys = ap.prefix_keys_wild();
             for prefix in &paths {
-                let expected = match_prefix(ap, prefix).map(Path);
+                let expected = match_prefix(ap, prefix);
                 // Reconstruct from the keys: an exact key equal to `prefix`, or a wild key whose
                 // `prefix` is `key.[m]`.
                 let mut found: Vec<Path> = Vec::new();

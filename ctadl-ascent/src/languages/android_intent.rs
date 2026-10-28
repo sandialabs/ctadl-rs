@@ -164,7 +164,7 @@ fn emit_send_sites(
         };
         for (formal, dst_path) in ports {
             let dst = call_arg_var(bridge.insn_id, FormalIndex::new(*formal));
-            assigns.insert((bridge_site, FlowVertex(dst, *dst_path), intent));
+            assigns.insert((bridge_site, FlowVertex::new(dst, *dst_path), intent));
         }
     }
     stats.intent_frames += frames.len();
@@ -474,14 +474,14 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
         if !field_path.is_empty() {
             paths.insert((field_path,));
         }
-        let rooted = FlowVertex(recv.0, recv.1.concat(&field_path));
+        let rooted = FlowVertex::new(recv.0, recv.1.concat(&field_path));
         let row = match op.kind {
             ExtrasKind::Put => (*site, rooted, value),
             ExtrasKind::Get => (*site, value, rooted),
         };
         assigns.insert(row);
         if matches!(op.kind, ExtrasKind::Get) && matches!(op.owner, ExtrasOwner::Intent) {
-            let lumped = FlowVertex(
+            let lumped = FlowVertex::new(
                 recv.0,
                 recv.1.concat(&Path::from_symbol_names(["<extras>"])),
             );
@@ -492,7 +492,7 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
             && matches!(op.owner, ExtrasOwner::Intent)
             && key.is_some()
         {
-            let lumped = FlowVertex(
+            let lumped = FlowVertex::new(
                 recv.0,
                 recv.1.concat(&Path::from_symbol_names(["<extras>"])),
             );
@@ -506,7 +506,7 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
 }
 
 fn call_arg_vertex(insn_id: InsnId, formal: FormalIndex) -> FlowVertex {
-    FlowVertex(call_arg_var(insn_id, formal), Path::empty())
+    FlowVertex::new(call_arg_var(insn_id, formal), Path::empty())
 }
 
 fn call_arg_var(insn_id: InsnId, formal: FormalIndex) -> FlowVariable {
@@ -765,8 +765,16 @@ mod tests {
                 Str::from("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
             )],
             actual_param: vec![
-                (site, FormalIndex::new(0), FlowVertex(recv, Path::empty())),
-                (site, FormalIndex::new(2), FlowVertex(value, Path::empty())),
+                (
+                    site,
+                    FormalIndex::new(0),
+                    FlowVertex::new(recv, Path::empty()),
+                ),
+                (
+                    site,
+                    FormalIndex::new(2),
+                    FlowVertex::new(value, Path::empty()),
+                ),
             ],
             const_str_assign: vec![(site, key_arg, Str::from("secret"))],
             ..Default::default()
@@ -777,8 +785,8 @@ mod tests {
         assert_eq!(stats.keyed_extra_sites, 1);
         assert!(facts.assign.iter().any(|(assign_site, dst, src)| {
             *assign_site == site
-                && *dst == FlowVertex(recv, Path::from_symbol_names(["<extras>", "secret"]))
-                && *src == FlowVertex(value, Path::empty())
+                && *dst == FlowVertex::new(recv, Path::from_symbol_names(["<extras>", "secret"]))
+                && *src == FlowVertex::new(value, Path::empty())
         }));
     }
 
@@ -802,8 +810,16 @@ mod tests {
                 Str::from("(Ljava/lang/String;Ljava/lang/String;)V"),
             )],
             actual_param: vec![
-                (site, FormalIndex::new(0), FlowVertex(bundle, Path::empty())),
-                (site, FormalIndex::new(2), FlowVertex(value, Path::empty())),
+                (
+                    site,
+                    FormalIndex::new(0),
+                    FlowVertex::new(bundle, Path::empty()),
+                ),
+                (
+                    site,
+                    FormalIndex::new(2),
+                    FlowVertex::new(value, Path::empty()),
+                ),
             ],
             const_str_assign: vec![(site, key_arg, Str::from("secret"))],
             ..Default::default()
@@ -814,8 +830,8 @@ mod tests {
         assert_eq!(stats.keyed_extra_sites, 1);
         assert!(facts.assign.iter().any(|(assign_site, dst, src)| {
             *assign_site == site
-                && *dst == FlowVertex(bundle, Path::from_symbol_names(["secret"]))
-                && *src == FlowVertex(value, Path::empty())
+                && *dst == FlowVertex::new(bundle, Path::from_symbol_names(["secret"]))
+                && *src == FlowVertex::new(value, Path::empty())
         }));
         assert!(
             !facts
@@ -838,7 +854,11 @@ mod tests {
                 Str::from("startActivity"),
                 Str::from("(Landroid/content/Intent;)V"),
             )],
-            actual_param: vec![(site, FormalIndex::new(1), FlowVertex(intent, Path::empty()))],
+            actual_param: vec![(
+                site,
+                FormalIndex::new(1),
+                FlowVertex::new(intent, Path::empty()),
+            )],
             ..Default::default()
         };
         let mut source_info = IndexSourceInfo::default();
@@ -891,7 +911,11 @@ mod tests {
                     Str::from(name),
                     Str::from(descriptor),
                 )],
-                actual_param: vec![(site, FormalIndex::new(1), FlowVertex(intent, Path::empty()))],
+                actual_param: vec![(
+                    site,
+                    FormalIndex::new(1),
+                    FlowVertex::new(intent, Path::empty()),
+                )],
                 ..Default::default()
             };
             let mut source_info = IndexSourceInfo::default();

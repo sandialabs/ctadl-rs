@@ -19,15 +19,15 @@
 //!
 //! Reads from `MmapLsmMultiMap` hand back `&T` references straight into the
 //! mapping, so keys and values must be fixed-width `bytemuck::Pod`. Relation
-//! columns generally are *not* `Pod` (e.g. interned `&'static` pointers such as
-//! `immortal::StringRef` or `tailshare::Seq`). Each column type implements [`LsmCol`], which encodes a
+//! columns generally are *not* `Pod` (e.g. interned handles whose ids are only
+//! meaningful to their interner). Each column type implements [`LsmCol`], which encodes a
 //! value into a fixed number of `u64` "slots" and reinterprets those slots back
 //! as a `&Column`.
 //!
-//! For pointer-backed interned types the slot holds the raw pointer bits. This is
-//! only valid **within a single process run** (the run files are per-process temp
-//! files, and the pointees must outlive them) and assumes a **little-endian**
-//! target so that the value's bytes occupy the low end of each slot.
+//! For interned types the slot holds the handle's raw bits. This is only valid
+//! **within a single process run** (the run files are per-process temp files, and
+//! the interned values must outlive them) and assumes a **little-endian** target
+//! so that the value's bytes occupy the low end of each slot.
 
 use std::iter::{Once, once};
 use std::marker::PhantomData;
@@ -103,9 +103,11 @@ unsafe impl<A: Zeroable, B: Zeroable> Zeroable for Cat<A, B> {}
 ///   `Slots = [u64; N]`;
 /// * the target is little-endian, so the value's bytes written by `to_slots`
 ///   occupy the low bytes that `ref_from` reinterprets;
+/// * every byte of the slots `to_slots` returns is initialized, and equal
+///   values give equal slots: the stores sort and deduplicate by slot bits;
 /// * any slot blob produced by `to_slots` from a live value remains a valid
 ///   `Self` for as long as the slots are read back (process lifetime for
-///   pointer-backed interned types).
+///   interned types).
 ///
 /// Use the [`lsm_col!`](crate::lsm_col) macro to implement this safely for a
 /// `Copy` type small enough to fit.
@@ -121,17 +123,45 @@ pub unsafe trait LsmCol: Copy + 'static {
     /// # Safety
     /// `s` must have been produced by [`LsmCol::to_slots`] of a still-live value.
     unsafe fn ref_from(s: &Self::Slots) -> &Self;
+
+    /// Whether every interned handle in this value was handed out by its interner.
+    /// `ref_from` asserts it in debug builds, since the slots bypassed the
+    /// interners' checked conversions.
+    #[inline]
+    fn is_valid(&self) -> bool {
+        true
+    }
 }
 
 /// Implements [`LsmCol`] for a `Copy` type that fits in `$n` eight-byte slots.
 ///
 /// `$n` must satisfy `size_of::<$t>() <= 8 * $n` and `align_of::<$t>() <= 8`
 /// (both are checked at compile time). The target must be little-endian.
+///
+/// The bracketed list names the types of `$t`'s fields, or `$t` itself for a
+/// primitive. Their sizes must sum to `size_of::<$t>()`, which is checked at
+/// compile time: a value's bytes are copied into the slots and compared there,
+/// so a padding byte, which is uninitialized, must not exist.
+///
+/// `valid = f` names a `fn(&$t) -> bool` that becomes [`LsmCol::is_valid`], for
+/// a type that holds interned handles: [`LsmCol::ref_from`] asserts it, in debug
+/// builds, on every value it reads back.
+///
+/// ```
+/// # #[derive(Clone, Copy)] struct Pair(u32, u32);
+/// lsm::lsm_col!(Pair, 1, [u32, u32]);
+/// ```
+///
+/// ```compile_fail
+/// # #[derive(Clone, Copy)] struct Padded(u64, u32);
+/// lsm::lsm_col!(Padded, 2, [u64, u32]);
+/// ```
 #[macro_export]
 macro_rules! lsm_col {
-    ($t:ty, $n:literal) => {
-        // SAFETY: the asserts below enforce the size/alignment invariants; the
-        // caller is responsible for little-endianness and process-local validity.
+    ($t:ty, $n:literal, [$($field:ty),+ $(,)?] $(, valid = $valid:expr)? $(,)?) => {
+        // SAFETY: the asserts below enforce the size/alignment invariants and that
+        // every byte is initialized; the caller is responsible for little-endianness
+        // and process-local validity.
         unsafe impl $crate::ascent_provider::LsmCol for $t {
             type Slots = [u64; $n];
 
@@ -144,6 +174,10 @@ macro_rules! lsm_col {
                 const _: () = assert!(
                     ::core::mem::align_of::<$t>() <= 8,
                     "lsm_col!: type alignment exceeds 8",
+                );
+                const _: () = assert!(
+                    ::core::mem::size_of::<$t>() == 0 $(+ ::core::mem::size_of::<$field>())+,
+                    "lsm_col!: type has padding, or the field list is incomplete",
                 );
                 let mut slots = [0u64; $n];
                 // SAFETY: `slots` has `8*$n >= size_of::<$t>()` bytes and is
@@ -162,50 +196,69 @@ macro_rules! lsm_col {
             unsafe fn ref_from(s: &[u64; $n]) -> &$t {
                 // SAFETY: `s` is 8-aligned (>= align of `$t`) and its leading
                 // `size_of::<$t>()` bytes hold a valid `$t` written by `to_slots`.
-                unsafe { &*(s.as_ptr() as *const $t) }
+                let value = unsafe { &*(s.as_ptr() as *const $t) };
+                debug_assert!(
+                    $crate::ascent_provider::LsmCol::is_valid(value),
+                    "lsm_col!: read back a {} holding a handle that was never handed out",
+                    ::core::stringify!($t),
+                );
+                value
             }
+            $(
+                #[inline]
+                fn is_valid(&self) -> bool {
+                    ($valid)(self)
+                }
+            )?
         }
     };
 }
 
 // Column encodings for the primitive integer types.
-lsm_col!(u8, 1);
-lsm_col!(u16, 1);
-lsm_col!(u32, 1);
-lsm_col!(u64, 1);
-lsm_col!(i8, 1);
-lsm_col!(i16, 1);
-lsm_col!(i32, 1);
-lsm_col!(i64, 1);
+lsm_col!(u8, 1, [u8]);
+lsm_col!(u16, 1, [u16]);
+lsm_col!(u32, 1, [u32]);
+lsm_col!(u64, 1, [u64]);
+lsm_col!(i8, 1, [i8]);
+lsm_col!(i16, 1, [i16]);
+lsm_col!(i32, 1, [i32]);
+lsm_col!(i64, 1, [i64]);
 
 // A pair of columns, for a relation that carries two values in one column. Its
-// slots are the pair's own bytes, so a reference into them is a `&(A, B)`; that
-// needs the pair to have no padding, which would otherwise be copied in as
-// uninitialized bytes.
+// slots are laid out as the pair itself, so a reference into them is a
+// `&(A, B)`. The pair may have padding: each field is written from its own
+// `to_slots` encoding into zeroed slots, so the padding bytes are zeros, never
+// uninitialized bytes copied from the value.
 //
-// SAFETY: `to_slots` asserts the pair has no padding, fits the slots and is at
-// most 8-aligned; validity of the reinterpreted bytes is inherited from `A`/`B`.
+// SAFETY: `to_slots` asserts the pair fits the slots and is at most 8-aligned.
+// Every byte of the slots is initialized: zeroed, then overwritten with the
+// fields' initialized encodings, so equal pairs give equal slots. Validity of
+// the reinterpreted fields is inherited from `A`/`B`.
 unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
     type Slots = Cat<A::Slots, B::Slots>;
 
     #[inline]
     fn to_slots(self) -> Self::Slots {
         const {
-            assert!(
-                size_of::<(A, B)>() == size_of::<A>() + size_of::<B>(),
-                "LsmCol for (A, B): the pair has padding",
-            );
             assert!(size_of::<(A, B)>() <= size_of::<Cat<A::Slots, B::Slots>>());
             assert!(align_of::<(A, B)>() <= 8);
         }
         let mut slots = Cat(A::Slots::zeroed(), B::Slots::zeroed());
+        let pair = &mut slots as *mut Self::Slots as *mut (A, B);
+        let (a, b) = (self.0.to_slots(), self.1.to_slots());
         // SAFETY: the asserts above: `slots` is large enough and aligned for a
-        // `(A, B)`, and every byte of a padding-free pair is initialized.
+        // `(A, B)`, so each field's place is in bounds. A field's encoding begins
+        // with its `size_of` value bytes (little-endian, `LsmCol`'s contract).
         unsafe {
             std::ptr::copy_nonoverlapping(
-                &self as *const (A, B) as *const u8,
-                &mut slots as *mut Self::Slots as *mut u8,
-                size_of::<(A, B)>(),
+                &a as *const A::Slots as *const u8,
+                std::ptr::addr_of_mut!((*pair).0) as *mut u8,
+                size_of::<A>(),
+            );
+            std::ptr::copy_nonoverlapping(
+                &b as *const B::Slots as *const u8,
+                std::ptr::addr_of_mut!((*pair).1) as *mut u8,
+                size_of::<B>(),
             );
         }
         slots
@@ -213,9 +266,19 @@ unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
 
     #[inline]
     unsafe fn ref_from(s: &Self::Slots) -> &Self {
-        // SAFETY: `s` is 8-aligned and holds the bytes `to_slots` copied out of a
+        // SAFETY: `s` is 8-aligned and holds the fields `to_slots` wrote from a
         // live `(A, B)`.
-        unsafe { &*(s as *const Self::Slots as *const (A, B)) }
+        let pair = unsafe { &*(s as *const Self::Slots as *const (A, B)) };
+        debug_assert!(
+            pair.is_valid(),
+            "LsmCol for (A, B): read back a handle that was never handed out"
+        );
+        pair
+    }
+
+    #[inline]
+    fn is_valid(&self) -> bool {
+        self.0.is_valid() && self.1.is_valid()
     }
 }
 

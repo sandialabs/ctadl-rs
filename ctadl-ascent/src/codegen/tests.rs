@@ -413,7 +413,7 @@ fn string_constant_call_argument_emits_const_fact_without_actual_param() {
             .iter()
             .all(|(_, formal, _)| **formal != 0)
     );
-    let FlowVertex(var, path) = &facts.const_str_assign[0].1;
+    let FlowVertex(var, path, ..) = &facts.const_str_assign[0].1;
     assert!(path.is_empty());
     assert_eq!(
         var.as_call_arg()
@@ -564,13 +564,13 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let ss = SourceSinkQuery {
         source: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
+            vertex: FlowVertex::new(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Forward,
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(
+            vertex: FlowVertex::new(
                 FlowVariable::formal_index(RETURN_INDEX.into()),
                 fx::Path::empty(),
             ),
