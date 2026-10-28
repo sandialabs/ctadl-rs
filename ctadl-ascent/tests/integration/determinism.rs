@@ -7,12 +7,12 @@
 //! interns, then one that pre-interns them in content order and one in reverse. It asserts that
 //! both render byte-identical graphviz, relation dumps and SARIF.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ctadl_ascent::cli;
-use ctadl_ascent::facts::Str;
+use ctadl_ascent::facts::{Path as AccessPath, PathId, Str};
 use ctadl_ascent::project::*;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 
@@ -28,74 +28,134 @@ const VALUES_ENV: &str = "CTADL_TEST_INTERN_VALUES";
 #[derive(Clone, Copy, Debug)]
 enum Kind {
     Str,
+    Path,
 }
 
-const PRE_INTERN: &[Kind] = &[Kind::Str];
+const PRE_INTERN: &[Kind] = &[Kind::Str, Kind::Path];
 
 impl Kind {
     fn name(self) -> &'static str {
         match self {
             Kind::Str => "Str",
+            Kind::Path => "Path",
         }
     }
 }
 
-/// `Str` ids are `((local + 1) << 8) | shard`, `local` being the value's position in its shard
-/// (`immortal::id`), so ids order by position first and shard second.
-const STR_SHARD_BITS: u32 = 8;
-const STR_SHARD_MASK: u32 = (1 << STR_SHARD_BITS) - 1;
+/// `Str` and `Path` ids are `((local + 1) << 8) | shard`, `local` being the value's position in
+/// its shard (`immortal::id`), so ids order by position first and shard second.
+const SHARD_BITS: u32 = 8;
+const SHARD_MASK: u32 = (1 << SHARD_BITS) - 1;
 
-/// One interned value, as text, and the shard it hashes to. The shard depends on the value
-/// alone, so it is the same in every process.
-type Value = (String, u32);
+fn shard(raw: u32) -> usize {
+    (raw & SHARD_MASK) as usize
+}
+
+fn position(raw: u32) -> u32 {
+    (raw >> SHARD_BITS) - 1
+}
+
+/// Raises each shard's entry in `depth` to the number of values in it, `issued` telling which
+/// raw ids the interner handed out.
+fn read_depths(depth: &mut [u32], issued: impl Fn(u32) -> bool) {
+    for (shard, d) in depth.iter_mut().enumerate() {
+        while issued(((*d + 1) << SHARD_BITS) | shard as u32) {
+            *d += 1;
+        }
+    }
+}
+
+/// Whether `raw` is a `PathId` the interner handed out.
+fn path_issued(raw: u32) -> bool {
+    PathId::from_raw(raw).is_some()
+}
 
 /// Every value of `kind` this process has interned, in content order.
-fn collect_values(kind: Kind) -> Vec<Value> {
+///
+/// A `Str` comes with the shard it hashes to, which depends on the string alone. A `Path`
+/// comes alone, and only if it is no other path's tail: interning it interns its suffixes, and
+/// its shard hashes its segments' `ArcIntern` pointers, which differ between processes.
+fn collect_values(kind: Kind) -> Vec<serde_json::Value> {
     match kind {
         Kind::Str => {
             let entries = Str::stats().entries;
-            let mut values: Vec<Value> = (1..=u32::MAX)
+            let mut values: Vec<(String, usize)> = (1..=u32::MAX)
                 .filter_map(Str::from_raw)
                 .take(entries)
-                .map(|s| (s.as_str().to_owned(), s.raw() & STR_SHARD_MASK))
+                .map(|s| (s.as_str().to_owned(), shard(s.raw())))
                 .collect();
             values.sort();
-            values
+            values.iter().map(|v| serde_json::json!(v)).collect()
+        }
+        Kind::Path => {
+            let entries = PathId::stats().entries;
+            let paths: Vec<AccessPath> = (1..=u32::MAX)
+                .filter(|&raw| path_issued(raw))
+                .filter_map(AccessPath::from_raw)
+                .take(entries)
+                .collect();
+            let tails: HashSet<AccessPath> = paths.iter().map(|p| p.tail()).collect();
+            let mut whole: Vec<AccessPath> =
+                paths.into_iter().filter(|p| !tails.contains(p)).collect();
+            whole.sort_unstable_by(|a, b| a.content_cmp(b));
+            whole
+                .iter()
+                .map(|p| serde_json::to_value(p).unwrap())
+                .collect()
         }
     }
 }
 
 /// Interns `values` so that their ids come out in exactly this order. Interning them one after
 /// another is not enough: most share no shard, so their ids would order by shard in every
-/// process. Before each value, filler strings go in until the value's shard is deeper than the
+/// process. Before each value, filler values go in until the value's shard is deeper than the
 /// position of every value before it.
-fn pre_intern(kind: Kind, values: &[Value]) {
+///
+/// A `Str`'s shard is known before it is interned, so only that shard is filled. A `Path`'s is
+/// not, so every shard is. The suffixes a path brings with it land where they land; the order
+/// asserted is the whole paths'.
+fn pre_intern(kind: Kind, values: &[serde_json::Value]) {
+    let mut depth = vec![0u32; 1 << SHARD_BITS];
+    let mut fillers = 0u64;
+    let mut floor = 0u32;
     match kind {
         Kind::Str => {
-            let position = |s: Str| (s.raw() >> STR_SHARD_BITS) - 1;
-            let mut depth = vec![0u32; 1 << STR_SHARD_BITS];
-            for (shard, d) in depth.iter_mut().enumerate() {
-                while Str::from_raw(((*d + 1) << STR_SHARD_BITS) | shard as u32).is_some() {
-                    *d += 1;
-                }
-            }
-            let mut fillers = 0u64;
-            let mut floor = 0u32;
+            read_depths(&mut depth, |raw| Str::from_raw(raw).is_some());
             let mut last: Option<Str> = None;
-            for (v, shard) in values {
-                while depth[*shard as usize] < floor {
+            for value in values {
+                let (v, v_shard): (String, usize) = serde_json::from_value(value.clone()).unwrap();
+                while depth[v_shard] < floor {
                     let f = Str::intern(&format!("\u{1}filler{fillers}"));
                     fillers += 1;
-                    depth[(f.raw() & STR_SHARD_MASK) as usize] = position(f) + 1;
+                    depth[shard(f.raw())] = position(f.raw()) + 1;
                 }
-                let s = Str::intern(v);
-                assert_eq!(s.raw() & STR_SHARD_MASK, *shard, "{v:?} changed shard");
-                depth[*shard as usize] = depth[*shard as usize].max(position(s) + 1);
-                floor = floor.max(position(s) + 1);
+                let s = Str::intern(&v);
+                assert_eq!(shard(s.raw()), v_shard, "{v:?} changed shard");
+                depth[v_shard] = depth[v_shard].max(position(s.raw()) + 1);
+                floor = floor.max(position(s.raw()) + 1);
                 if let Some(prev) = last {
                     assert!(prev < s, "{v:?} was interned before {:?}", prev.as_str());
                 }
                 last = Some(s);
+            }
+        }
+        Kind::Path => {
+            read_depths(&mut depth, path_issued);
+            let mut last: Option<AccessPath> = None;
+            for value in values {
+                while depth.iter().any(|&d| d < floor) {
+                    let f = AccessPath::from_symbol_names([format!("\u{1}filler{fillers}")]);
+                    fillers += 1;
+                    depth[shard(f.raw())] = position(f.raw()) + 1;
+                }
+                let p: AccessPath = serde_json::from_value(value.clone()).unwrap();
+                // The suffixes `p` brought with it went into shards of their own.
+                read_depths(&mut depth, path_issued);
+                floor = floor.max(position(p.raw()) + 1);
+                if let Some(prev) = last {
+                    assert!(prev < p, "{p} was interned before {prev}");
+                }
+                last = Some(p);
             }
         }
     }
@@ -140,14 +200,14 @@ fn child(role: &str) {
     let values_path = PathBuf::from(std::env::var(VALUES_ENV).unwrap());
     if role == "collect" {
         run_pipeline(&out);
-        let values: BTreeMap<&str, Vec<Value>> = PRE_INTERN
+        let values: BTreeMap<&str, Vec<serde_json::Value>> = PRE_INTERN
             .iter()
             .map(|&k| (k.name(), collect_values(k)))
             .collect();
         std::fs::write(&values_path, serde_json::to_string(&values).unwrap()).unwrap();
         return;
     }
-    let mut values: BTreeMap<String, Vec<Value>> =
+    let mut values: BTreeMap<String, Vec<serde_json::Value>> =
         serde_json::from_str(&std::fs::read_to_string(&values_path).unwrap()).unwrap();
     for &kind in PRE_INTERN {
         let mut vs = values.remove(kind.name()).unwrap();

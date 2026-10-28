@@ -30,3 +30,29 @@ void aa_fanin(void) {
   sink_beta(y + b);
   sink_omega(b + y);
 }
+
+/* Several access paths under one variable, so the order paths are printed in hangs on how
+ * they compare. */
+struct inner {
+  int ii;
+  int *ip;
+};
+struct pair {
+  int zz;
+  int aa;
+  struct inner in;
+  int mm;
+};
+
+void put_zz(struct pair *p, int v) { p->zz = v; }
+void put_in(struct pair *p, int v) { p->in.ii = v; *p->in.ip = v; }
+int get_mm(struct pair *p) { return p->mm + p->in.ii; }
+
+void mm_fields(struct pair *r) {
+  put_zz(r, src_zeta());
+  put_in(r, src_alpha());
+  r->aa = *r->in.ip;
+  r->mm = r->zz + r->aa;
+  sink_beta(get_mm(r));
+  sink_omega(r->zz + *r->in.ip);
+}

@@ -297,6 +297,20 @@ impl Path {
         self.is_empty() || PathId::from_raw(self.0.get()).is_some()
     }
 
+    /// The handle's bits: [`Path::EMPTY`]'s, or the [`PathId`]'s.
+    #[inline]
+    pub fn raw(self) -> u32 {
+        self.0.get()
+    }
+
+    /// The path whose bits are `raw`, if it is the empty path's or a handed-out [`PathId`]'s.
+    pub fn from_raw(raw: u32) -> Option<Path> {
+        if raw == Path::EMPTY.raw() {
+            return Some(Path::EMPTY);
+        }
+        PathId::from_raw(raw).map(|id| Path::from_id(Some(id)))
+    }
+
     /// Orders by content, as `main`'s `Path` did: segment by segment from the innermost, a
     /// proper prefix first. Walks both paths through the arena, and stops at a shared suffix.
     pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
