@@ -1,15 +1,19 @@
 //! What the fixpoint did, in machine-readable form: every relation's tuple count and every SCC's
-//! iterations and time, with each rule's time. `IndexResult::try_save` writes it next to the
-//! index as `profile.json`, so runs can be compared relation by relation (across commits, or
-//! against a run stopped by `CTADL_INDEX_TIMEOUT_SECS`) without rerunning them with logging on.
+//! iterations and time, with each rule's time, and the heap bytes of the `locals` store and of
+//! every interner. `IndexResult::try_save` writes it next to the index as `profile.json`, so runs
+//! can be compared relation by relation (across commits, or against a run stopped by
+//! `CTADL_INDEX_TIMEOUT_SECS`) without rerunning them with logging on.
 //!
-//! The numbers come from the summaries ascent generates (`relation_sizes_summary`,
+//! The counts and times come from the summaries ascent generates (`relation_sizes_summary`,
 //! `scc_times_summary`), which are the only form in which ascent exposes them; this module
 //! parses that text.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+
+use crate::facts::Str;
+use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
 
@@ -24,6 +28,27 @@ pub struct IndexProfile {
     /// Tuple count of every relation, by name.
     pub relations: BTreeMap<String, usize>,
     pub sccs: Vec<SccProfile>,
+    pub memory: MemoryProfile,
+}
+
+/// Where the index's bytes are, so a memory regression can be traced to a store (C2).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MemoryProfile {
+    /// The `locals` store's heap report at the fixpoint. `None` under `Storage::Lsm`, whose
+    /// store is not on the heap.
+    pub locals: Option<HeapReport>,
+    /// Entries and heap bytes of each store of interned values, by name. See
+    /// [`MemoryProfile::read_interned`].
+    pub interned: BTreeMap<&'static str, immortal::Stats>,
+}
+
+impl MemoryProfile {
+    /// Reads the size of every store of interned values: each `id_handle!` interner, and any
+    /// table frozen from them for the fixpoint to read. Interned values are never freed, so the
+    /// sizes cover every index this process has built, up to the moment of the call.
+    pub fn read_interned(&mut self) {
+        self.interned = BTreeMap::from([("Str", Str::stats())]);
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -147,6 +172,18 @@ mod tests {
         assert!((parse_debug_duration("3.2µs").unwrap() - 3.2e-6).abs() < 1e-12);
         assert_eq!(parse_debug_duration("0ns"), Some(0.0));
         assert_eq!(parse_debug_duration("soon"), None);
+    }
+
+    #[test]
+    fn memory_reports_each_interner() {
+        Str::intern("memory_reports_each_interner");
+        let mut p = IndexProfile::default();
+        p.memory.read_interned();
+        let json = serde_json::to_value(&p).unwrap();
+        let s = &json["memory"]["interned"]["Str"];
+        assert!(s["entries"].as_u64().unwrap() >= 1);
+        assert!(s["bytes"].as_u64().unwrap() > 0);
+        assert!(json["memory"]["locals"].is_null());
     }
 
     #[test]

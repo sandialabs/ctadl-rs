@@ -17,7 +17,7 @@ datafusion-common = "55"
 derive_builder = "0.20"
 dex-reader = { path = "../readers/dex-reader" }
 hashbrown = "0.16"
-immortal = { path = "../immortal" }
+immortal = { path = "../immortal", features = ["serde"] }
 internment = { version = "0.8", features = ["arc", "serde"] }
 itertools = "0.14"
 json5 = "1.3"

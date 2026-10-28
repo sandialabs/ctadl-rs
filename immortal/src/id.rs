@@ -112,6 +112,7 @@ impl<B> fmt::Debug for Id<B> {
 
 /// An interner's size, for the profile (C2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Stats {
     pub entries: usize,
     /// Heap bytes: hash tables, slot buckets and bump-arena chunks.

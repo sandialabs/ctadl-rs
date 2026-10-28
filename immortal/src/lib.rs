@@ -162,7 +162,6 @@ impl<'de> serde::Deserialize<'de> for StringRef {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::Deserialize;
         let s = String::deserialize(deserializer)?;
         Ok(StringRef::intern(&s))
     }

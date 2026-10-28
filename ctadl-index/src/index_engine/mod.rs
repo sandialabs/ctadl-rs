@@ -639,10 +639,13 @@ impl IndexResult {
         external_function::try_save(&dir, self.external_function)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         intent_pair::try_save(&dir, self.intent_pair)?;
+        // After the tables, since writing them interns each path's string.
+        let mut profile = self.stats.profile;
+        profile.memory.read_interned();
         let profile_path = dir.as_ref().join(profile::PROFILE_FILE);
         let file = std::fs::File::create(&profile_path)
             .err_context(|| format!("creating {}", profile_path.display()))?;
-        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &self.stats.profile)
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &profile)
             .err_context(|| format!("writing {}", profile_path.display()))?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
@@ -980,7 +983,9 @@ pub trait EngineStores {
     fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
     /// Row counts of the store-backed relations.
     fn store_sizes(&self) -> StoreSizes;
-    /// One line per store about the heap it holds, where the storage reports one.
+    /// The `locals` store's heap report, where the storage keeps one.
+    fn locals_heap_report(&self) -> Option<locals_trie::HeapReport>;
+    /// One line per other store about the heap it holds, where the storage reports one.
     fn heap_reports(&self) -> Vec<String>;
     /// The distinct `(f, v)` that `locals` reaches.
     fn num_reached_variables(&self) -> usize;
@@ -2359,11 +2364,11 @@ macro_rules! trie_stores {
                     ext_dst: self.__ext_dst_ind_common.len(),
                 }
             }
+            fn locals_heap_report(&self) -> Option<$crate::index_engine::locals_trie::HeapReport> {
+                Some(self.__locals_ind_common.heap_report())
+            }
             fn heap_reports(&self) -> Vec<String> {
-                vec![
-                    self.__locals_ind_common.heap_report().to_string(),
-                    self.__assign_like_ind_common.heap_report().to_string(),
-                ]
+                vec![self.__assign_like_ind_common.heap_report().to_string()]
             }
             fn num_reached_variables(&self) -> usize {
                 self.__locals_ind_common.num_reached_variables()
@@ -2507,7 +2512,8 @@ macro_rules! run_engine {
             sizes.locals_key,
             sizes.ext_dst
         );
-        let profile = $crate::index_engine::profile::IndexProfile {
+        let locals_heap = prog.locals_heap_report();
+        let mut profile = $crate::index_engine::profile::IndexProfile {
             reached_fixpoint,
             timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
             fixpoint_secs,
@@ -2540,9 +2546,13 @@ macro_rules! run_engine {
             sizes.ext_dst,
             prog.ext_fml.len()
         );
+        if let Some(report) = &locals_heap {
+            log::debug!("{report}");
+        }
         for report in prog.heap_reports() {
             log::debug!("{report}");
         }
+        profile.memory.locals = locals_heap;
         if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);

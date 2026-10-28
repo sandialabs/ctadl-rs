@@ -367,7 +367,7 @@ where
 
 /// Byte estimate for the `locals` store, broken down per structure. See
 /// [`LocalsIndCommon::heap_report`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HeapReport {
     /// Logical row count. Equals the size of `locals`.
     pub rows: usize,

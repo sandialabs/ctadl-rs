@@ -14,6 +14,7 @@
 
 use ascent::ascent;
 use ctadl_index::index_engine::dump::RelationDump;
+use ctadl_index::index_engine::locals_trie::HeapReport;
 use ctadl_index::index_engine::rules_prelude::*;
 use ctadl_index::index_engine::{
     AssignLikeRow, EngineInput, EngineStores, IndexResult, LocalsProbe, StoreSizes,
@@ -80,6 +81,9 @@ impl EngineStores for LsmIndexProg {
             locals_key: self.locals_key.len(),
             ext_dst: self.ext_dst.len(),
         }
+    }
+    fn locals_heap_report(&self) -> Option<HeapReport> {
+        None
     }
     fn heap_reports(&self) -> Vec<String> {
         Vec::new()
