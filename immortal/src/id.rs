@@ -63,6 +63,20 @@ impl<B> Id<B> {
     pub fn raw(self) -> u32 {
         self.0.get()
     }
+
+    /// The id whose bits are `raw`, unchecked: for bits this process took from an `Id<B>`
+    /// itself and never let leave it (R13), where [`IdInterner::from_raw`]'s check would
+    /// cost an atomic load on every read.
+    ///
+    /// # Safety
+    ///
+    /// `raw` is [`raw`](Self::raw) of an `Id<B>` the caller holds or held, so the caller
+    /// happens after that id was issued.
+    #[inline]
+    pub unsafe fn from_raw_unchecked(raw: u32) -> Self {
+        // SAFETY: an issued id is never 0 (the caller's contract).
+        Id(unsafe { NonZeroU32::new_unchecked(raw) }, PhantomData)
+    }
 }
 
 impl<B> Clone for Id<B> {
@@ -624,6 +638,18 @@ macro_rules! id_handle {
             #[inline]
             $vis fn from_raw(raw: u32) -> ::std::option::Option<Self> {
                 Self::interner().from_raw(raw).map($name)
+            }
+
+            /// The handle whose bits are `raw`, unchecked, for bits taken from a handle
+            /// this process holds.
+            ///
+            /// # Safety
+            ///
+            /// `raw` is `raw()` of a handle of this type that the caller holds or held.
+            #[inline]
+            $vis unsafe fn from_raw_unchecked(raw: u32) -> Self {
+                // SAFETY: the caller's contract is `Id::from_raw_unchecked`'s.
+                $name(unsafe { $crate::Id::from_raw_unchecked(raw) })
             }
 
             /// Whether this handle was handed out, for handles read back from storage
