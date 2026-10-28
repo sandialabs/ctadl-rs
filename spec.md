@@ -208,9 +208,18 @@ call site must state which.
 **C3. Handle order vs. reproducibility (R9).**
 - **Constraint.** Under `par`, handles depend on the order in which threads first
   intern a value, so anything sorted by `Ord` and printed changes between runs.
-- **What the plan must do.** Audit every sort that feeds printed output.
 - **Risk.** A sort that was missed shows up as flaky output, not as a wrong
   answer, so tests may not catch it.
+- **Not affected.**
+  - parquet, which is already unordered
+  - the LSM seed sort
+  - tests that sort both sides within one process
+- **Decision.**
+  - Every sort that feeds printed output uses content order. That includes
+    graphviz (`graphviz.rs:240`), dumps and debugging output.
+  - A test renders graphviz and the dumps for a fixture in two processes, with
+    the fixture's values pre-interned in opposite orders, and asserts that the
+    outputs are byte-identical. A missed or future sort then fails that test.
 
 **C4. `CallTargetObject` and `CallDispatchKey` change order (R1 vs. R9).**
 - **Change.** Both derive `Ord` over their content today. Ordering by handle
