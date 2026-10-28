@@ -235,10 +235,18 @@ call site must state which.
 **C5. `DecisionSet` mid-run interning vs. R3.**
 - **Change.** The join's union cache is keyed by the set's address today, and has
   to be rekeyed by handle.
-- **Constraint.** The `collapse` flag and the ⊤ marker must still be expressible
-  in 4 bytes.
-- **What the plan must do.** Show the join and interning cost stays within R3
-  on a contextual (Android) benchmark, where the decision lattices are large.
+- **Constraint.** The two ⊤ values (exact and collapsing) and the empty set must
+  still be expressible in 4 bytes.
+- **Fact.** The kind of set, exact or collapsing, is fixed once per run, and
+  `Eq` and `Hash` already ignore `collapse`. So the handle need not carry a
+  `collapse` bit.
+- **Cost.** Reading a set's members (`contains`, `is_subset`, `ids()`) gains a
+  handle-to-arena load on the contextual closure's hot path.
+- **Gain.** Lattice tuples shrink. The union cache can shrink too, from about
+  40 MB.
+- **Decision.** `DecisionSet` stays in R1. R3's 5% budget also applies to a
+  contextual Android benchmark, where the decision lattices are large, and the
+  plan must show it is met there as well as on glxy.
 
 **C6. Opaque handles vs. LSM storage (R13).**
 - **Constraint.** LSM run files hold raw bits, which must become handles again.
