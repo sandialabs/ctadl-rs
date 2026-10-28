@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::facts::{CallDispatchKey, CallTargetObject, Str};
+use crate::facts::{CallDispatchKey, CallTargetObject, PathId, Str};
 use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
@@ -51,6 +51,7 @@ impl MemoryProfile {
             ("Str", Str::stats()),
             ("CallTargetObject", CallTargetObject::stats()),
             ("CallDispatchKey", CallDispatchKey::stats()),
+            ("Path", PathId::stats()),
         ]);
     }
 }
@@ -185,10 +186,11 @@ mod tests {
             "memory_reports_each_interner".into(),
         ));
         CallDispatchKey::c();
+        crate::facts::Path::from_symbol_names(["memory_reports_each_interner"]);
         let mut p = IndexProfile::default();
         p.memory.read_interned();
         let json = serde_json::to_value(&p).unwrap();
-        for name in ["Str", "CallTargetObject", "CallDispatchKey"] {
+        for name in ["Str", "CallTargetObject", "CallDispatchKey", "Path"] {
             let s = &json["memory"]["interned"][name];
             assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");
             assert!(s["bytes"].as_u64().unwrap() > 0, "{name}");
