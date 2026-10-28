@@ -224,7 +224,13 @@ call site must state which.
 **C4. `CallTargetObject` and `CallDispatchKey` change order (R1 vs. R9).**
 - **Change.** Both derive `Ord` over their content today. Ordering by handle
   changes how any collection sorted by them iterates.
-- **What the plan must do.** Include them in the C3 audit.
+- **Knock-on.** `Decision` (`decision.rs:33`) derives `Ord` from `Path` and
+  `CallTargetObject`, so its order becomes handle order too.
+- **Use today.** The rules and stores only hash these types and compare them for
+  equality. Tests sort them only within one process.
+- **Decision.** This is covered by C3. These two types, and every type that
+  derives `Ord` from them (including `Decision`), have a content comparison.
+  Printed output sorts by it, and C3's determinism test covers them.
 
 **C5. `DecisionSet` mid-run interning vs. R3.**
 - **Change.** The join's union cache is keyed by the set's address today, and has
