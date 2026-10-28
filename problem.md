@@ -506,6 +506,72 @@ query's SARIF. A slot a returned address reaches stays in memory (the pcode fron
 stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
 forbid it for one function. See Current state for what it does to the apps.
 
+**Proposed, not started: the pcode frontend emits `Update` for the frame, and passes coarsen it.**
+A frontend should emit the most precise IR, since a later pass can drop information but not
+recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
+frame for the whole function, and mem2reg has to rebuild the order of stack accesses and guess
+how far an escaped address reaches (`window:8`). `Update` (restored in #118, emitted today only by
+flowy) defines its destination. A frame write emitted as `st = update (st.[k].deref := v)` makes
+the frame a value SSA can version: each write becomes a fresh `st_n`, each load and call reads
+the version that reaches it, and joins get `st_k = phi(...)`. The pipeline:
+
+1. The pcode frontend emits `Update` for every write to `__stack_top`.
+2. Optionally, per function, coarsen to `Store`: `st = update (st.[k].deref := v)` becomes
+   `store st.[k].deref := v`, a syntactic rewrite. It must run before SSA, after which the versions
+   are separate variables. This replaces `full:N`'s threshold as the cost valve: keep `Update` where
+   it is affordable, coarsen in a hub if the versions cost too much. Model modes can force either.
+3. Optionally, promote the slots no escape reaches (mem2reg). With a versioned frame an escape is a
+   use of one `st_n`, so no window is guessed; promotion only saves cost, since a scalar is
+   cheaper than a frame version. mem2reg skips any function that defines `__stack_top` today, so
+   it has to learn `Update` first.
+4. SSA conversion.
+5. The index lowers `Update` with an overwrite rule. Today it lowers `x = update (y.f := v)` to the
+   copy `x <- y` plus the write `x.f <- v`, so a slot's old value rides the copy into every later
+   version. The copy has to leave out the written path (a constant, so a fixed filter on the copy
+   rule, not general negation). Without it a loop-head phi merges every value a slot ever held, and
+   the frame mixes again.
+
+What each form finds in
+
+```c
+void f(void) {
+  int x, y;           // x at frame offset -8, y at -4
+  x = source_a();
+  sink1(x);           // truly reached by: a
+  x = 0;
+  sink2(x);           // truly reached by: nothing
+  y = source_c();
+  use(&y);            // use reads *p; truly reached by: c
+  x = source_b();     // truly reaches nothing
+}
+```
+
+| | `sink1` (a) | `sink2` (none) | `use` (c) | Escape guess |
+|---|---|---|---|---|
+| `Store` (today) | a, **b** | **a, b** | c | none |
+| `Update` + SSA, lowered as today | a | **a** | c | none |
+| `Update` + SSA, with the overwrite rule | a | none | c | none |
+| promoted, `window:8` | a | none | c | right here; silently wrong if `use` read `p[-1]` |
+| promoted, `full` | a | none | **none** (notified) | none, but loses inputs passed by pointer |
+
+With `Store`, every load of a slot sees every store to it, earlier or later. Under `Update` and
+SSA, `use` is handed the exact version `st_3` that holds `y`, and a callee or a copied address
+that writes through it writes into `st_3`, which the later copies carry forward.
+
+What it would and would not do:
+
+- **Precision and soundness, not memory, are what it buys.** It replaces `window:8`'s guess and
+  `full`'s lost flows. It does not fix the hubs: `inflate` and `ntfs-3g`'s `FUN_0001f97c` hold over
+  90% of `locals` with every slot promoted, so what is left there is not the stack.
+- **The cost is unknown.** Every frame write makes a version that carries the frame's paths; in a
+  function with about 900 stack stores that could add rows rather than remove them. Step 2 is the
+  valve, but it has to be measured.
+- **To try it without touching the frontend:** an experimental mem2reg mode that rewrites
+  `__stack_top` stores into `Update`s before SSA, plus the overwrite rule in the index. Compare its
+  flows on the regression suite (`pcode`, `jni`) and its `locals` and peak on `uclited`,
+  `androidudpbus` and `ntfs-3g` against `window:8` and `full`. If it pays, move it into the pcode
+  frontend.
+
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
 fit in RAM can finish, more slowly. It changes where the rows live, not how many there are, and it
