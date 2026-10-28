@@ -28,6 +28,20 @@ use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, Cod
 use dex_reader::{APKParser, DexParser};
 
 mod merged;
+
+/// A body that returns at once, with no flows: what a merged method of a class with no object of
+/// its own gets (see `MergedClass::empties_union`). It stays in the dispatch table, so a call's
+/// targets, and with them whether the index resolves it by class hierarchy or by its call-target
+/// tags, are as before; it only no longer contributes the union of every arm.
+fn empty_body(fdat: &mut FunctionData) {
+    fdat.return_type = ReturnType { arity: 2 };
+    let block = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+    let empty = Exp::new_bytes(Vec::new());
+    fdat.blocks[block].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+        args: smallvec![empty.clone(), empty],
+    }));
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -313,14 +327,22 @@ impl Context {
                     }
 
                     self.retag = self.merged.retags(&sig, None);
-                    self.lower_code(
-                        parser,
-                        &code,
-                        &artifact_key,
-                        &mut builders.source_info_builder,
-                        fdat,
-                        &HashMap::new(),
-                    )?;
+                    if self
+                        .merged
+                        .class(&class_name)
+                        .is_some_and(|c| c.empties_union(&sig))
+                    {
+                        empty_body(fdat);
+                    } else {
+                        self.lower_code(
+                            parser,
+                            &code,
+                            &artifact_key,
+                            &mut builders.source_info_builder,
+                            fdat,
+                            &HashMap::new(),
+                        )?;
+                    }
                     let params = fdat.params.clone();
                     self.split_merged(
                         parser,

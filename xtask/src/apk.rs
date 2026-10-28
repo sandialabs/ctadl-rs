@@ -322,10 +322,10 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 /// by running `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk` followed by
 /// `ctadl report app --format json` and reading the four numbers back out, and say in the
 /// commit message which frontend change moved them.
-const REPORT_TOTAL_SITES: u64 = 181_441;
-const REPORT_VIRTUAL_SITES: u64 = 101_263;
-const REPORT_CHA_EDGES: u64 = 2_141_436;
-const REPORT_RTA_EDGES: u64 = 2_075_579;
+const REPORT_TOTAL_SITES: u64 = 179_034;
+const REPORT_VIRTUAL_SITES: u64 = 99_880;
+const REPORT_CHA_EDGES: u64 = 2_122_077;
+const REPORT_RTA_EDGES: u64 = 2_057_221;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.
@@ -348,9 +348,9 @@ const REPORT_SECTIONS: &[&str] = &[
 /// instruction, and every other assertion here would still pass. The three sum to
 /// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
 const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
-    ("virtual", 78_106),
-    ("interface", 21_532),
-    ("super", 1_625),
+    ("virtual", 77_056),
+    ("interface", 21_210),
+    ("super", 1_614),
     ("unknown", 0),
 ];
 

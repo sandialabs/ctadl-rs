@@ -118,11 +118,36 @@ entries into a crash report's `Log.w`; CENO: `BrowserState.tabs` into a reader-v
 or ASM here), 0 failed, including the Dex `ClassIdMergedFlow` fixture, which asserts the split keeps
 only its two real flows. (`dx` came from Ubuntu's `dalvik-exchange` package, symlinked as `dx`.)
 
+**S30 (P25), on this branch.** A merged class is *closed* when it is `final` and every
+`new-instance` of it in the program allocates a clone (a known id, or the method's own id inside a
+cloned method): then no object is ever the class itself, and its merged methods never run. Their
+bodies are lowered empty (they return at once). They stay in the dispatch table, so a call's
+targets, and so whether the index resolves it by class hierarchy or by call-target tags, do not
+change; a call resolved by class hierarchy just no longer takes on the union of every arm. A first
+version left the merged methods out of the table instead: a merged class with 4 ids then fell to
+4 targets, so its calls moved from call-target tags to the coarser class-hierarchy resolution, and
+CENO and NewPipe gained 146 and 207 tainted locations.
+
+85-94% of merged classes are closed (`cpuinfo` 544 of 620, `com.noto` 129 of 137, NewPipe 818 of
+955, CENO 848 of 996). The S10+S29 index has no allocation of the plain class for any of them,
+which is the premise. S10+S29 → S10+S29+S30:
+
+| App | Tainted-instruction locations | Sinks | Gained | `locals` | Call-target tags | Peak |
+|---|---|---|---|---|---|---|
+| `cpuinfo` 6.6.1 | 1,850 → 617 | 65 → 47 | 0 | −9% | −16% | 1.94 → 1.74 GB |
+| `com.noto` | identical | identical | 0 | −1% | −1% | 2.20 → 2.19 GB |
+| CENO | 15,316 → 14,863 | 204 → 165 | 0 | −4% | −8% | 3.56 → 3.49 GB |
+| NewPipe | 17,019 → 16,868 | 358 → 346 | 0 | −2% | −4% | 4.17 → 4.09 GB |
+
+Main-loop iterations are unchanged. The `dex`/`jvm` regression families pass (`ClassIdMergedFlow`
+included) with `com.noto`'s report counts re-pinned, since the emptied bodies drop their calls. Not
+seen: an object of a merged class built by reflection.
+
 **What this means for the branch.** The split is now mainly a precision fix (about half of the
 tainted results on merge-heavy apps are union artifacts) and a cost reduction where merging is
 heavy (CENO, `cpuinfo`), rather than a fix for non-convergence: on `cpuinfo` 91% of the tainted
 instructions are union artifacts. Open: which `main` change defused the non-convergence (a bisect
-is cheap: `cpuinfo` 6.6.1 indexes in under a minute); P25/S30 (union methods left for unknown ids); classes the detector does not split
+is cheap: `cpuinfo` 6.6.1 indexes in under a minute); P25/S30 for the classes that are not closed (union methods left for unknown ids); classes the detector does not split
 (`merged classes: not splitting` at debug level).
 
 ## The problem

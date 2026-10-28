@@ -59,6 +59,27 @@ pub(crate) struct MergedClass {
     switched: HashMap<String, Vec<Switch>>,
     /// Every id an object of the class is built with, or a switch has an arm for.
     pub(crate) ids: BTreeSet<i64>,
+    /// Whether the class is `final`: then nothing but its own clones subclass it, and no
+    /// `invoke-super` reaches its methods.
+    final_class: bool,
+    /// Every `new-instance` of the class in the program, and those that allocate a clone.
+    allocs: usize,
+    known_allocs: usize,
+    /// Whether no object of the class itself can exist; see [`MergedClass::empties_union`].
+    closed: bool,
+}
+
+impl MergedClass {
+    /// Whether `method`, a merged method of this class, is lowered with an empty body. When the
+    /// class is `final` and every `new-instance` of it allocates a clone, no object is ever the
+    /// class itself, so the merged method never runs; only the clones' do. Emptying it keeps a
+    /// call resolved by class hierarchy, which reaches the merged method beside the clones,
+    /// from taking on the union of every arm (P25 in things-to-improve.md). It stays a target,
+    /// so which calls the index resolves by class hierarchy does not change. An object built by
+    /// reflection is not seen.
+    pub(crate) fn empties_union(&self, method: &str) -> bool {
+        self.closed && self.switched.contains_key(method)
+    }
 }
 
 /// Where a constructor gets the id it stores.
@@ -131,6 +152,24 @@ impl MergedClasses {
             sites.retain(|_, s| classes.contains_key(&s.class));
         }
         this.sites.retain(|_, s| !s.is_empty());
+        for (name, c) in this.classes.iter_mut() {
+            c.closed = c.final_class && c.allocs == c.known_allocs;
+            if !c.closed {
+                log::debug!(
+                    "merged classes: keeping {name}'s merged methods: final={}, {} of {} allocations \
+                     allocate a clone",
+                    c.final_class,
+                    c.known_allocs,
+                    c.allocs
+                );
+            }
+        }
+        log::info!(
+            "merged classes: {} of {} have no object of their own, so their merged methods get empty \
+             bodies",
+            this.classes.values().filter(|c| c.closed).count(),
+            this.classes.len()
+        );
         log::info!(
             "merged classes: {} split into {} ids, {} switching methods cloned into {} clones, {} \
              construction sites in {} methods",
@@ -197,6 +236,10 @@ impl MergedClasses {
                     ctors: HashMap::new(),
                     switched: HashMap::new(),
                     ids: BTreeSet::new(),
+                    final_class: ACC_FINAL.is_set_in(class_def.access_flags),
+                    allocs: 0,
+                    known_allocs: 0,
+                    closed: false,
                 };
                 for enc in &class_data.direct_methods {
                     let Some(code) = parser.method_code(enc)? else {
@@ -260,6 +303,7 @@ impl MergedClasses {
             _ => false,
         };
         let mut found = Vec::new();
+        let mut allocs: HashMap<String, usize> = HashMap::new();
         for class_def in parser.classes() {
             let class_data = parser.class_data(class_def)?;
             let own_field = self
@@ -275,9 +319,23 @@ impl MergedClasses {
                     continue;
                 };
                 let items = decode_code_item(&code);
-                if !items.iter().any(|it| {
-                    matches!(it, DecodedCodeItem::Instruction { inst, .. } if allocates_merged(inst))
-                }) {
+                let mut any = false;
+                for it in &items {
+                    if let DecodedCodeItem::Instruction {
+                        inst: inst @ Instruction::NewInstance(f),
+                        ..
+                    } = it
+                        && allocates_merged(inst)
+                        && let Some(d) = cp
+                            .type_ids
+                            .get(f.idx.0 as usize)
+                            .and_then(|t| t.descriptor(&cp.strings).ok())
+                    {
+                        *allocs.entry(d).or_default() += 1;
+                        any = true;
+                    }
+                }
+                if !any {
                     continue;
                 }
                 let facts = analyze_items(parser, &code, &items, own_field);
@@ -300,9 +358,22 @@ impl MergedClasses {
                 }
             }
         }
+        for (class, n) in allocs {
+            self.classes.get_mut(&class).unwrap().allocs += n;
+        }
         for (sig, pc, site) in found {
+            let class = self.classes.get_mut(&site.class).unwrap();
+            // An object built with its enclosing method's own id is a clone only where that
+            // method is cloned: a switching method of the class (`switched` holds only those).
+            let known = match site.id {
+                SiteId::Known(_) => true,
+                SiteId::Own => class.switched.contains_key(&sig),
+            };
+            if known {
+                class.known_allocs += 1;
+            }
             if let SiteId::Known(k) = site.id {
-                self.classes.get_mut(&site.class).unwrap().ids.insert(k);
+                class.ids.insert(k);
             }
             self.sites.entry(sig).or_default().insert(pc, site);
         }
