@@ -6,8 +6,8 @@ because the stack frame acts as one function-wide mixing pool. Apps with this sh
 the memory budget (100x the imported IR), and before any fix they did not finish at all.
 
 This branch is off `main` (merged up to `7c98b73e`). It has S3 (stack-slot promotion, `window:8`
-by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`);
-`design.md` has S5's design and measurements. `improve-native-handling` has the earlier record:
+by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`); S5's
+design and first measurements are under S5 below. `improve-native-handling` has the earlier record:
 `things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
@@ -108,7 +108,7 @@ the imported IR, as in the table above (`uclited` 2.0 MB, `androidudpbus` 28.2 M
 | | `full` | 83.7 M | 38 s | 3.64 GiB | 2.6x over | `FUN_0010b408` 88.8% |
 | | `full:0` | 83.1 M | 37 s | 3.64 GiB | 2.6x over | |
 
-The shares are from the census build before the merge (`design.md`), on row counts within 5% of
+The shares are from the census build before the merge (S5 below), on row counts within 5% of
 these. `uclited`'s `window:8` row is from before the merge too; its `full` row was re-run after.
 The `exact` and `full:0` rows were run after the merge without the census, so they have no share.
 
@@ -134,6 +134,106 @@ What is left of P1:
   `window:8`. Promoting every function fully (`full:0`) cuts the app a further 25%; it is already
   under budget without that.
 - **The other apps in the table above** have not been run with `full`.
+
+## S5: full stack-slot promotion, behind a flag
+
+`--mem2reg full` (off by default; the default stays `window:8`) promotes every directly accessed
+slot, whatever escapes. Direct stores go only to the local, so memory holds only what callees and
+copies of the address write. After a call that is passed an address reaching slot `k` (under
+`window:8`), the local is reloaded from the slot: `__stack_mK = load __stack_top.[k].deref`.
+
+**Scope.** A function is promoted fully only when it has more than N direct stack accesses
+(`--mem2reg full:N`, default 1,000; mem2reg already counts them), and gets `window:8` otherwise.
+The functions that hold most of `locals` (`inflate`, about 3.5 k accesses; `FUN_00144f04`, about
+160 k) are far above any function of ordinary size, so the unsoundness stays confined to them. A
+model mode overrides the threshold for one function: `mem2reg-full` forces full promotion,
+`mem2reg-window` forbids it.
+
+The reload costs little (memory holds only callee writes, not every direct store) and keeps the
+common out-parameter case, which is `example.c`:
+
+```c
+struct foo x; transfer(&x.b, source()); sink(x.b.d);   // transfer writes out->d; the reload brings it back
+```
+
+**What it loses.** The callee, or anything else holding the escaped address, can no longer see
+values the function stored directly:
+
+- **Inputs passed by pointer:** `s.a = source(); f(&s);`, where `f` reads `s->a`.
+- **Stored or copied addresses** (`p = &buf; ...; *p`): reads see only writes through the address,
+  not direct stores, and the reverse.
+
+There is no write-back before calls, by choice. It would restore the inputs-by-pointer case, but
+memory is flow-insensitive, so a value written back before one call reaches every read of the
+slot. That is S4's write-through again, and it would bring back S4's cost (P24).
+
+**Notifications.** The notifications log is high signal and low noise, like
+`log_once::warn_once!` (already used for unsupported pcode mnemonics): each fact is stated once,
+never once per site.
+
+- **One line per function, and only when it matters:** the function was promoted fully *and* some
+  promoted slot is reached (under `window:8`) by an escape that full promotion stops modeling:
+  a call input, a stored or copied address, a return. Escapes that the reload covers (callee
+  writes) are not reported.
+- **A fixed message key,** for example `mem2reg full: <function>: frame address escapes (call
+  input, stored); flows through those slots may be missed`. The kinds are a sorted set, with no
+  counts or sites in the key, so it dedupes like `warn_once!`. Counts and sample sites go in
+  the debug log only.
+- **Written to `index/notifications.log`** next to `profile.json`, and copied by `ctadl query`
+  into SARIF's `toolExecutionNotifications` at warning level. A missing flow can then be traced
+  to a function the analysis treated unsoundly, without reading through noise.
+
+**The bar it had to clear:** `uclited` within about 1.5x of `exact`'s 15 M `locals` rows, and
+`androidudpbus` well below S3's 15.8 GB peak. `glxy` was only reported (its suspect is P6, not the
+stack).
+
+### First measurements, before merging `main` `7c98b73e`
+
+Measured on `main` `076f6a60` with S3 (`b1b52de8`) cherry-picked, on macOS (arm64, 128 GB), one
+run at a time. Peaks are `time -l`'s peak memory footprint. Fixpoint times are from runs with the
+machine to themselves. The share of `locals` comes from a separate build that adds `b47ed139`'s
+`CTADL_LOCALS_CENSUS`, which is not on this branch. `glxy` and `androidudpbus` are the F-Droid
+APKs in Samples, imported whole, with the default models.
+
+| App | `--mem2reg` | `locals` | Fixpoint | Peak | Largest function |
+|---|---|---|---|---|---|
+| `uclited` | `off` | 188.8 M | 35.4 s | 10.89 GiB | `inflate` 99.8% |
+| | `window:8` | 41.4 M | 10.2 s | 1.26 GiB | `inflate` 99.3% |
+| | `exact` | 14.9 M | 3.7 s | 0.63 GiB | `inflate` 98.1% |
+| | `full` | 12.1 M | 3.1 s | 0.54 GiB | `inflate` 97.7% |
+| | `full:0` | 11.5 M | 3.0 s | 0.52 GiB | |
+| `androidudpbus` | `window:8` | 339.5 M | 187 s | 13.25 GiB | `FUN_00144f04` 71.7% |
+| | `full` | 31.6 M | 21 s | 2.26 GiB | `FUN_00156cb8` 35.8% |
+| `glxy` | `window:8` | 105.0 M | 45 s | 4.31 GiB | `FUN_0010b408` 90.2% |
+| | `full` | 88.3 M | 37 s | 3.78 GiB | `FUN_0010b408` 88.8% |
+
+- **It cleared the bar.** `uclited` comes in below `exact` (`exact` still keeps the slot an
+  address escapes from, and that slot takes every direct store). `androidudpbus` falls 5.9x in
+  peak and 10.7x in `locals`. Its hub `FUN_00144f04` goes from 243.4 M rows to 0.21 M.
+- **The baseline moved.** On `076f6a60`, `window:8` peaks at 13.25 GiB on `androidudpbus` (15.8 GB
+  in Measurements) and 4.31 GiB on `glxy` (21.5 GB).
+- **Scope.** `full` (threshold 1000) promotes 2 functions fully in `uclited`, 27 in
+  `androidudpbus` and 3 in `glxy`. Every one of them gets a notification, mostly `(call input,
+  copied, stored)`. The query's SARIF carries them as `CTADL0104.index-notification` warnings.
+
+After merging `7c98b73e` (SSA passes per function on threads, mem2reg among them), mem2reg's
+counts are identical; the rows fall 1-5% from `main`'s own changes. Current state has those runs.
+
+**Regression suite** (`cargo xtask regression --frontend pcode,jni`): the default passes 46 of 46.
+Under `full:0`, the first version lost one flow, `Jni:JniWide+summary`, and no notification the
+query could see named it. Two causes, both fixed:
+
+- **A returned slot.** The pcode frontend returns a value held in a stack slot as the slot's
+  address (`keep` ends in `return %__stack_top.[4]`). Promoting that slot dropped `keep`'s
+  argument-to-return flow, and with it `Java_JniWide_nativeHigh`'s summary. Full promotion now
+  leaves a slot that a returned address reaches in memory, as `window:8` does. None of the
+  large functions above returns a frame address, so their numbers do not change.
+- **A summary project's notifications.** `keep`'s notification was in the summary project's
+  `notifications.log`, but the query runs on the app's index. An index now carries the
+  notifications of each summary project it loads, prefixed `summary project '<name>':`.
+
+After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function (`main` or
+`handler`).
 
 ## Analysis: `uclited` has three causes, not one
 
