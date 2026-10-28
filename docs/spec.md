@@ -16,7 +16,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 
 ### Principles
 
-- **Compositional, throughout.** Each function is analyzed once into a summary that is reused
+- **Compositional throughout.** Each function is analyzed once into a summary that is reused
   at every call site, never reanalyzed per calling context. Every other part of the analysis
   follows suit: call resolution (hybrid inlining, §4.2) and separately indexed libraries
   (`--summary`).
