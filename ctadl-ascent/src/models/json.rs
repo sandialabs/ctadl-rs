@@ -1426,7 +1426,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Records the functions a `modes` directive applies to.
     ///
     /// `mem2reg-full` and `mem2reg-window` force and forbid full stack-slot promotion for the
-    /// matched function, whatever its size (see `ctadl_ir::ssa::FullMode`).
+    /// matched function, whatever its size (see `ctadl_ir::ssa::FullMode`). `frame-store` and
+    /// `frame-update` coarsen or keep its frame updates (see `ctadl_ir::ssa::FrameWrites`).
     ///
     /// `skip-analysis`: codegen never lowers the matched function's
     /// body, so whatever the same generator's `propagation` list says is that function's entire
@@ -1458,6 +1459,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         }
         let mut skip = false;
         let mut mem2reg = None;
+        let mut frame = None;
         for item in items {
             let Some(text) = item.as_str() else {
                 self.add_json_error(crate::error::JsonModelError::FieldNotString {
@@ -1470,23 +1472,28 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 "skip-analysis" => skip = true,
                 "mem2reg-full" => mem2reg = Some(ctadl_ir::ssa::FullMode::Force),
                 "mem2reg-window" => mem2reg = Some(ctadl_ir::ssa::FullMode::Forbid),
+                "frame-store" => frame = Some(ctadl_ir::ssa::FrameWrites::Store),
+                "frame-update" => frame = Some(ctadl_ir::ssa::FrameWrites::Update),
                 other => self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                     index: n,
                     field_name: "modes".to_string(),
                     message: format!(
                         "unknown mode '{other}'; the defined values are 'skip-analysis', \
-                         'mem2reg-full' and 'mem2reg-window'"
+                         'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'"
                     ),
                 }),
             }
         }
-        if !skip && mem2reg.is_none() {
+        if !skip && mem2reg.is_none() && frame.is_none() {
             return;
         }
         for func in matched_functions(&self.methods[n], self.index.vmt) {
             let func = facts::Str::from(func.as_str());
             if let Some(mode) = mem2reg {
                 self.out.mem2reg_modes.insert(func, mode);
+            }
+            if let Some(mode) = frame {
+                self.out.frame_modes.insert(func, mode);
             }
             if skip {
                 self.out.skip_analysis.insert(func);

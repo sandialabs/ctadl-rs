@@ -316,6 +316,10 @@ pub struct ProgramModelMatches {
     /// SSA pipeline reads this before codegen, to force or forbid full stack-slot promotion.
     /// When generators disagree on a function, the last one read wins.
     pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
+    /// Functions a `modes: ["frame-store"]` or `["frame-update"]` generator matched. The SSA
+    /// pipeline reads this before codegen, to coarsen or keep the function's frame updates.
+    /// When generators disagree on a function, the last one read wins.
+    pub frame_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FrameWrites>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
@@ -372,6 +376,7 @@ impl ProgramModelMatches {
             && self.access_paths.is_empty()
             && self.skip_analysis.is_empty()
             && self.mem2reg_modes.is_empty()
+            && self.frame_modes.is_empty()
             && self.bridges.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()

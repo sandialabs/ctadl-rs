@@ -606,7 +606,7 @@ but not its fields".
 ### `modes`
 
 Analysis directives, index time only; `ctadl query` reports them as ignored,
-like a `propagation`. Three defined values:
+like a `propagation`. Five defined values:
 
 - `"skip-analysis"`: don't analyze the body of the matched function. The rest of
   this section is about it.
@@ -620,6 +620,12 @@ like a `propagation`. Three defined values:
   `notifications.log`, and `ctadl query` repeats it in the SARIF. A
   `mem2reg-full` model works without `--mem2reg full`. When generators
   disagree on a function, the last one read wins.
+- `"frame-store"` and `"frame-update"`: coarsen or keep the matched native
+  function's frame updates, whatever `ctadl index --frame` says. With
+  `frame-update`, SSA versions the stack frame, so a load sees only the writes
+  that reach it; with `frame-store` (the default), every load of a slot sees
+  every store to it. When generators disagree on a function, the last one read
+  wins.
 
 **A model without it ADDS to a body; a model with it REPLACES the body.** That is
 the whole feature, and it is not obvious from the outside: `summary` is both an

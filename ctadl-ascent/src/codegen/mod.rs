@@ -1411,6 +1411,11 @@ impl Visitor for CodegenVisitor<'_> {
                         .call_target_assign
                         .push((site, dest_vertex, object));
                 }
+                if let Exp::Str(value) = value {
+                    self.facts
+                        .const_str_assign
+                        .push((site, dest_vertex, Str::from(value.clone())));
+                }
                 // whole-aggregate copy: dest <- source
                 self.facts.assign.push((
                     site,

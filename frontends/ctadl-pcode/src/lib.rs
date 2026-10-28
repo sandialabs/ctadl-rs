@@ -200,6 +200,11 @@ impl Context {
     /// means writing the memory *at* that address. That dereference is a pcode-level detail, so we
     /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
     /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
+    ///
+    /// A write into the frame itself, `__stack_top.[k].deref := src`, is a functional update,
+    /// `__stack_top = update (__stack_top.[k].deref := src)`, so that SSA can version the frame.
+    /// The pipeline coarsens it into a store unless told otherwise (see
+    /// `ctadl_ir::ssa::FrameWrites`).
     fn push_assign_or_store(
         &mut self,
         stmts: &mut Vec<Statement>,
@@ -209,6 +214,21 @@ impl Context {
     ) {
         if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
             dest.push_deref();
+        }
+        if let Variable::Local(base) = dest.base.variable
+            && locals.name(base) == ssa::STACK_TOP
+            && let Some((PathSegment::Symbol(field), offsets)) = dest.segments.split_last()
+            && offsets.iter().all(PathSegment::is_offset)
+        {
+            let field = FieldRef::new(field.clone());
+            let addr =
+                mir::load_access_path(dest.base.clone(), offsets.iter().cloned(), stmts, || {
+                    unreachable!("an offset-only address loads nothing")
+                });
+            stmts.push(Statement::new_kind(StatementKind::update(
+                addr, dest.base, field, src,
+            )));
+            return;
         }
         mir::store_access_path(dest.base, dest.segments, src, stmts, || {
             self.create_temp(locals)

@@ -269,6 +269,36 @@ mod modes {
         assert!(matches.skip_analysis.is_empty());
     }
 
+    /// The frame modes go to their own map, and without `skip-analysis` the body stays.
+    #[test]
+    fn frame_modes_record_the_matched_functions() {
+        let generator = |name: &str, mode: &str| {
+            serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": name}],
+                "model": {"modes": [mode]},
+            })
+        };
+        let matches = matches_of(
+            &["f", "g"],
+            vec![
+                generator("f", "frame-update"),
+                generator("g", "frame-store"),
+            ],
+        );
+        assert_eq!(
+            matches.frame_modes,
+            [
+                (facts::Str::from("f"), ctadl_ir::ssa::FrameWrites::Update),
+                (facts::Str::from("g"), ctadl_ir::ssa::FrameWrites::Store),
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(matches.mem2reg_modes.is_empty());
+        assert!(matches.skip_analysis.is_empty());
+    }
+
     /// An unknown mode errors. Ignoring it would produce a model file that loads clean and
     /// analyzes the body anyway -- the one failure this directive cannot afford.
     #[test]

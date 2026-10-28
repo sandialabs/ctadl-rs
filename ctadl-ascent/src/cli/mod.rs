@@ -92,6 +92,8 @@ pub struct IndexOptions {
     pub storage: Storage,
     /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
     pub mem2reg: Option<ssa::Mem2Reg>,
+    /// How native code's frame writes reach SSA; see [`ssa::FrameWrites`].
+    pub frame: ssa::FrameWrites,
 }
 
 impl Default for IndexOptions {
@@ -108,6 +110,7 @@ impl Default for IndexOptions {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
+            frame: ssa::Pipeline::index_default().frame,
         }
     }
 }
@@ -138,6 +141,7 @@ pub fn index(
         parallelism,
         storage,
         mem2reg,
+        frame,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -265,21 +269,29 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        let mem2reg_modes: HashMap<String, ssa::FullMode> = model_matches
-            .mem2reg_modes
-            .iter()
-            .map(|(f, mode)| (f.to_string(), *mode))
-            .collect();
+        let modes = ssa::FunctionModes {
+            mem2reg: model_matches
+                .mem2reg_modes
+                .iter()
+                .map(|(f, mode)| (f.to_string(), *mode))
+                .collect(),
+            frame: model_matches
+                .frame_modes
+                .iter()
+                .map(|(f, mode)| (f.to_string(), *mode))
+                .collect(),
+        };
         if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
             ssa::Pipeline::index_default()
                 .prune(prune_unreachable_cfg_nodes)
-                .mem2reg(mem2reg),
+                .mem2reg(mem2reg)
+                .frame(frame),
             match parallelism {
                 Parallelism::Serial => 1,
                 Parallelism::Threads(n) => n.get(),
             },
-            &mem2reg_modes,
+            &modes,
         ) {
             notifications.extend(report.notes.iter().map(ssa::EscapeNote::message));
         }
