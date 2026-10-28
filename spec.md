@@ -299,4 +299,6 @@ call site must state which.
 **C10. Benchmark baseline vs. workspace policy (R2 vs. R17).**
 - **Constraint.** The glxy and udpbus inputs live in machine-local directories,
   and R17 forbids committing those paths.
-- **Consequence.** Each engineer reproduces the baseline locally.
+- **Decision.** One engineer, who has the inputs locally, does this work and
+  checks R2, R3 and C5 against them. The absolute targets stand. The spec and
+  scripts name benchmarks only, never where they live.
