@@ -45,7 +45,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
 | **Summary** | How data flows between a function's formals (and return), as pairs of access paths. |
 | **Access path** | A variable followed by fields or offsets (`x.f.g`, `p.[8].deref`); the unit of taint. |
-| **Model generator** | A JSON/JSON5/JSONL rule that finds program elements and attaches sources, sinks, propagations or bridges. See [model-generators.md](model-generators.md). |
+| **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [model-generators.md](model-generators.md). |
 
 ## 3. Requirements
 
@@ -172,8 +172,7 @@ separately.
 
 ### 4.3 Models
 
-A model generator (schema: `ctadl-ascent/src/models/ctadl-model-generator.schema.json`) has a
-`find` (element kind), `in` (imports), `where` (names, signatures, structure) and `model`
+A model generator has a `find` (element kind), `in` (imports), `where` (names, signatures, structure) and `model`
 (sources, sinks, propagation, bridge, dispatch). Propagation, bridge and dispatch models are
 consumed at index time; sources and sinks at query time. Per-language defaults ship in
 `ctadl-ascent/src/models/defaults`.
@@ -224,4 +223,4 @@ See [limitations.md](limitations.md). Also:
 
 - Only context-free summaries cross a `--summary` boundary.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
-- The `taint` and `forward_self` models are schema-only, not yet implemented.
+- The `taint` and `forward_self` models are declared but not yet implemented.
