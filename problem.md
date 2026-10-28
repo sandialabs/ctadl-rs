@@ -135,10 +135,13 @@ What is left of P1:
   under budget without that.
 - **The other apps in the table above** have not been run with `full`.
 
-### Two more firmware binaries
+### Other firmware binaries
 
-The runner's other over-budget binaries (How to reproduce), run the same way as `uclited`: the
-sweep's model, a 16 GiB memguard cap, peaks from `time -l`, on this branch at `0145608b`.
+Over-budget binaries from the same runner (How to reproduce), run the same way as `uclited`: the
+sweep's model, a memguard cap (16 GiB for `chat` and `nginx`, 24 GiB for the rest), peaks from
+`time -l`, on this branch at `0145608b`. The last three are `firmware-sweep` benchmarks
+`d586b9453407b65a`, `fb2ce71d346450a4` and `25c31637a1f58427`, chosen as the most over budget
+of those that finished in the runner (64x, 57x and 44x at `dfccbcab`), one per shape.
 
 | Binary | IR | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget |
 |---|---|---|---|---|---|---|
@@ -147,6 +150,15 @@ sweep's model, a 16 GiB memguard cap, peaks from `time -l`, on this branch at `0
 | | | `full` | 18.2 M | 17.7 s | 1.46 GiB | 13.2x over |
 | Tenda AC15 `usr/bin/nginx` (ARM, stripped) | 11.4 MB | `window:8` (default) | | killed at 106 s | 16 GiB cap | 15x or more |
 | | | `full` | | killed at 108 s | 16 GiB cap | 15x or more |
+| D-Link DAP-2690 `usr/sbin/captival_usockc` (MIPS32 BE, static, debug info) | 2.1 MB | `off` | 41.7 M | 94.1 s | 13.15 GiB | 65.9x over |
+| | | `window:8` (default) | 28.3 M | 56.8 s | 6.87 GiB | 34.4x over |
+| | | `full` | 27.3 M | 57.2 s | 6.85 GiB | 34.3x over |
+| Netgear MVBR1210C `usr/sbin/sdkmips` (MIPS32 LE, static, stripped) | 2.9 MB | `off` | 19.8 M | 80.0 s | 9.05 GiB | 34.1x over |
+| | | `window:8` (default) | 8.6 M | 37.6 s | 6.79 GiB | 25.6x over |
+| | | `full` | 8.6 M | 44.2 s | 6.73 GiB | 25.3x over |
+| D-Link DPH-128MS `usr/sbin/pppd` (MIPS BE, dynamic, stripped) | 3.5 MB | `off` | 31.4 M | 107.5 s | 14.32 GiB | 43.5x over |
+| | | `window:8` (default) | 4.4 M | 2.0 s | 0.55 GiB | 1.7x over |
+| | | `full` | 4.4 M | 1.9 s | 0.56 GiB | 1.7x over |
 
 - **`chat` is not a P1 shape.** `full` promotes one function (`_fpmaxtostr`, notified) and moves
   nothing; promotion of any kind *adds* rows (`off` has 30% fewer than `window:8`). What holds its
@@ -159,6 +171,17 @@ sweep's model, a 16 GiB memguard cap, peaks from `time -l`, on this branch at `0
   relations it does have are small (`reach_vp` 0.62 M, `locals_key_wild` 0.56 M,
   `edge_split_wild` 0.44 M, `call_target_assign_like` 0.23 M). Finding what grows needs the
   patched `ascent_macro` (`b47ed139`) or a dump. The import takes 40 s.
+- **S3 already does the work on the other three; `full` adds nothing.** `window:8` halves
+  `captival_usockc`'s and `sdkmips`'s peaks and takes `pppd` from 14.3 GiB and 108 s to 0.55 GiB
+  and 2 s, nearly to budget. `full` promotes 5, 3 and 1 functions fully (all notified:
+  `_vfprintf_internal`, `__dns_lookup` and others from uClibc, `vslprintf` in `pppd`) and moves
+  `locals` by at most 3.5%: under `window:8` they keep only 937, 1,289 and 1,804 accesses in
+  memory.
+- **What is left of `captival_usockc` and `sdkmips` is not the stack.** Both still peak near 7 GiB,
+  25-35x over budget. In `captival_usockc` `locals` (28 M) and `edge_split` (15 M) lead; in
+  `sdkmips` `edge_split` (14 M) outgrows `locals` (8.6 M), with `ctx_edge_split` and
+  `context_locals` next. The `locals` and `context_locals` joins on `edge_split` take the most rule
+  time in both. Which functions hold the rows was not checked. Each import takes 22-25 s.
 
 ## S5: full stack-slot promotion, behind a flag
 
@@ -355,7 +378,7 @@ target/release/ctadl --store tmp/p1/store inspect uclited --dump-ir --function i
 Other over-budget binaries from the same runner, if one more native shape is needed:
 `firmware7/AC15-usr-bin-nginx` (Tenda, ARM; at least 15x the budget, killed at the 16 GiB cap
 after about 2 minutes) and `firmware-sweep` `4bbd3a7ad4b4484f` (Netgear MBM621 `bin/chat`; 1.9 GiB,
-17x, 30 s; `locals` 23 M rows). Neither looks like a stack problem; see Two more firmware binaries. The runner's
+17x, 30 s; `locals` 23 M rows). Neither looks like a stack problem; see Other firmware binaries. The runner's
 `over-budget` events (`events` table of `bench.db`, or `./run.sh report`) list the rest.
 
 ### Full apps
