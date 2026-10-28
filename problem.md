@@ -203,14 +203,39 @@ each indexed under `window:8` and `full` for 30 s, six at a time, against `uclit
 | | | `full` | 15.0 M | 6.7 s | 1.05 GiB | 1.9x over |
 
 - **`ntfs-3g` is the best new sample:** the largest stack effect in absolute terms (85 M rows,
-  4.8 GiB, 131 s) and still 20x over budget under `full`, so a hub remains. `full` promotes 5
-  functions fully (`FUN_00016d24`, `FUN_0001f97c`, `FUN_0002aa84`, `FUN_0003c4f4`,
-  `FUN_00042810`); which of them holds the rows was not checked. `firmware-sweep` benchmark
-  `46ad36214ff2f30b`.
+  4.8 GiB, 131 s) and still 20x over budget under `full`. `firmware-sweep` benchmark
+  `46ad36214ff2f30b`. Its hub is `FUN_0001f97c` (below).
 - **The Linksys ntfs-3g tools share the shape on a smaller scale:** `ntfslabel` halves under `full`
   (11 functions promoted fully), as do EA6350v4 `ntfsdebug` (21.8 M to 11.5 M) and EA6900v2
   `ntfslabel` (19.6 M to 11.1 M) in the 30 s screen.
 - **`wifitool` falls 24%:** `full` promotes `FUN_0040d740` and three uClibc functions.
+
+#### `ntfs-3g`'s hub: `FUN_0001f97c`
+
+`full` promotes 5 functions fully. Skipping each one's body in turn (a `skip-analysis` model, as
+for `inflate` in How to reproduce) finds the hub:
+
+| Skipped | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget |
+|---|---|---|---|---|---|
+| nothing | `window:8` | 283.8 M | 227 s | 15.04 GiB | 29.9x over |
+| `FUN_0001f97c` | `window:8` | 18.3 M | 23 s | 1.79 GiB | 3.6x over |
+| nothing | `full` | 199.3 M | 96 s | 10.22 GiB | 20.3x over |
+| `FUN_0001f97c` | `full` | 17.9 M | 18 s | 1.72 GiB | 3.4x over |
+| `FUN_0003c4f4` | `full` | 195.3 M | 97 s | 9.93 GiB | |
+| `FUN_00016d24`, `FUN_0002aa84` or `FUN_00042810` | `full` | 199.2-199.3 M | 96-98 s | 10.2 GiB | |
+
+The skip runs ran five at a time, so their times are loose.
+
+- **One function holds 94% of `locals` under `window:8` and 91% under `full`.** Without it the
+  binary is 3.4-3.6x over budget, whatever the policy.
+- **Its shape is `inflate`'s:** 293 blocks, 7 parameters (three passed on the stack), calls itself
+  twice, and 2,509 direct stack accesses (901 stores, 1,608 loads). Six adjacent 4-byte slots,
+  `__stack_top.[-64]` through `[-44]`, take 2,301 of them (830 stores, 1,471 loads, about 380
+  each), and their addresses are never taken.
+- **So, as in `inflate`, promotion is not enough.** `full` promotes those slots (they escape
+  nowhere, so no reloads) and the function still holds 181 M rows. What remains is not the stack;
+  `inflate`'s causes 2 and 3 (Analysis) are the first suspects. Not yet checked.
+- **To look at it:** `ctadl inspect <project> --dump-ir --function FUN_0001f97c`.
 
 ## S5: full stack-slot promotion, behind a flag
 
