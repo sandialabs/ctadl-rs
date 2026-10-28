@@ -34,8 +34,9 @@ rows in 2.04 GB. Each row's leaf is `(Path, FormalIndex, Path)`, 24 B, so
 - A tuple of `(Path, FormalIndex, Path)` is at most 12 B.
 - Cloning any of them touches no reference count.
 
-**R2. Memory.** On glxy, with the serial and par engines, the `locals` store uses
-at least 0.8 GB less than on `main`, and peak RSS falls by about as much.
+**R2. Memory.** On glxy, with `Storage::Memory` (the default, on the serial and
+par engines), the `locals` store uses at least 0.8 GB less than on `main`, and
+peak RSS falls by about as much.
 
 **R3. Time.** Wall time on the regression suite and on glxy rises by no more than
 5% on any engine.
@@ -273,8 +274,12 @@ call site must state which.
   R11 makes this an explicit exception to "byte-for-byte as on `main`".
 
 **C8. LSM gains nothing (R2 vs. R15).**
-- **Constraint.** The provider stores every column in a 64-bit slot.
-- **Consequence.** R2 applies to serial and par only.
+- **Constraint.** `Storage::Lsm` is opt-in and serial-only. It keeps the largest
+  relations in memory-mapped run files, and stores every column in whole 8-byte
+  slots (`LsmCol::Slots = [u64; N]`). A 4-byte handle is padded, so neither RSS
+  nor run-file bytes nor merge I/O shrink.
+- **Decision.** R2 applies to `Storage::Memory` only. LSM mode must not regress
+  (R15). Packing LSM columns stays a non-goal.
 
 **C9. D2 depends on two path filters being the same.**
 - **The rules.** Rules `mod.rs:1573` and `mod.rs:2030` filter candidate paths
