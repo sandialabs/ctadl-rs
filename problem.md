@@ -145,10 +145,20 @@ sweep's model, a 16 GiB memguard cap, peaks from `time -l`, on this branch at `0
 | Netgear MBM621 `bin/chat` (MIPS32 BE, static, not stripped) | 1.2 MB | `off` | 12.9 M | 17.1 s | 1.34 GiB | 12.1x over |
 | | | `window:8` (default) | 18.4 M | 16.8 s | 1.48 GiB | 13.4x over |
 | | | `full` | 18.2 M | 17.7 s | 1.46 GiB | 13.2x over |
+| Tenda AC15 `usr/bin/nginx` (ARM, stripped) | 11.4 MB | `window:8` (default) | | killed at 106 s | 16 GiB cap | 15x or more |
+| | | `full` | | killed at 108 s | 16 GiB cap | 15x or more |
 
 - **`chat` is not a P1 shape.** `full` promotes one function (`_fpmaxtostr`, notified) and moves
   nothing; promotion of any kind *adds* rows (`off` has 30% fewer than `window:8`). What holds its
   rows was not checked. The import takes 23 s.
+- **Nor, by the evidence so far, is `nginx`.** `window:8` already promotes 77,878 of its 81,135
+  stack accesses (1,125 functions); `full` promotes 15 functions fully, keeps 701 accesses in
+  memory, and reaches the cap at the same time. A run stopped at 60 s
+  (`CTADL_INDEX_TIMEOUT_SECS=60`) peaked at 10.6 GB, but on this branch a timed-out run loses the
+  running scc's contents, so its `profile.json` has no `locals` count and no rule times; the
+  relations it does have are small (`reach_vp` 0.62 M, `locals_key_wild` 0.56 M,
+  `edge_split_wild` 0.44 M, `call_target_assign_like` 0.23 M). Finding what grows needs the
+  patched `ascent_macro` (`b47ed139`) or a dump. The import takes 40 s.
 
 ## S5: full stack-slot promotion, behind a flag
 
