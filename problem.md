@@ -506,9 +506,9 @@ query's SARIF. A slot a returned address reaches stays in memory (the pcode fron
 stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
 forbid it for one function. See Current state for what it does to the apps.
 
-**Proposed, not started: the pcode frontend emits `Update` for the frame, and passes coarsen it.**
-A frontend should emit the most precise IR, since a later pass can drop information but not
-recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
+**S29, proposed, not started: the pcode frontend emits `Update` for the frame, and passes
+coarsen it.** A frontend should emit the most precise IR, since a later pass can drop information
+but not recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
 frame for the whole function, and mem2reg has to rebuild the order of stack accesses and guess
 how far an escaped address reaches (`window:8`). `Update` (restored in #118, emitted today only by
 flowy) defines its destination. A frame write emitted as `st = update (st.[k].deref := v)` makes
