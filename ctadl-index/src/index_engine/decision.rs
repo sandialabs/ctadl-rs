@@ -232,6 +232,10 @@ fn union_cache_put(a: usize, b: usize, result: &'static [DecisionId]) {
     {
         return;
     }
+    // Pairs with the reader's acquire fence: a reader that sees any of the stores below also
+    // sees the odd sequence, so its second load of `seq` rejects the slot. The Acquire on the
+    // claim orders these stores after the previous writer's.
+    std::sync::atomic::fence(Ordering::Release);
     slot.a.store(a, Ordering::Relaxed);
     slot.b.store(b, Ordering::Relaxed);
     slot.ptr.store(result.as_ptr() as usize, Ordering::Relaxed);
@@ -571,5 +575,50 @@ mod tests {
         assert_eq!(x, u);
         assert!(!x.join_mut(a));
         assert_eq!(a.intersection(b).ids().collect::<Vec<_>>(), vec![d(3)]);
+    }
+
+    /// Two keys that share a union-cache slot, written in turn while readers look both up: a
+    /// hit must return the result stored for the key it matched, never fields of the other.
+    /// The keys are odd, so no interned set (16-byte aligned) meets them in the shared cache.
+    #[test]
+    fn union_cache_never_returns_a_torn_entry() {
+        use std::sync::atomic::AtomicBool;
+
+        // Both results, and any mix of one's address with the other's length, stay in bounds.
+        static IDS: [DecisionId; 8] = [DecisionId(0); 8];
+        let results: [&'static [DecisionId]; 2] = [&IDS[0..2], &IDS[4..8]];
+        let mut by_slot = HashMap::new();
+        let keys = (0usize..)
+            .map(|i| (1, 2 * i + 1))
+            .find_map(|k| {
+                let slot = std::ptr::from_ref(union_slot(k.0, k.1)) as usize;
+                by_slot.insert(slot, k).map(|other| [other, k])
+            })
+            .unwrap();
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            for w in 0..2 {
+                let stop = &stop;
+                s.spawn(move || {
+                    for i in 0..1_000_000 {
+                        let j = (i + w) % 2;
+                        union_cache_put(keys[j].0, keys[j].1, results[j]);
+                    }
+                    stop.store(true, Ordering::Relaxed);
+                });
+            }
+            for _ in 0..2 {
+                let stop = &stop;
+                s.spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        for (j, &(a, b)) in keys.iter().enumerate() {
+                            if let Some(r) = union_cache_get(a, b) {
+                                assert!(std::ptr::eq(r, results[j]), "key {j}: torn entry");
+                            }
+                        }
+                    }
+                });
+            }
+        });
     }
 }
