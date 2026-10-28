@@ -20,9 +20,10 @@ analysis ideas count for more than a stable interface.
 
 In scope:
 
-- Whole-program, interprocedural, field-sensitive taint analysis over many input languages,
-  bytecode and binaries included.
-- Analysis that crosses language boundaries (JNI) and Android inter-component communication.
+- Compositional, hole-program, interprocedural, field-sensitive taint analysis over many input
+  languages, bytecode and binaries included.
+- Multi-language analysis. Crosses language boundaries (JNI) and Android inter-component
+  communication.
 - Declarative, user-written models for sources, sinks and code the analyzer cannot see.
 - Results in a standard, tool-consumable format (SARIF).
 
