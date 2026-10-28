@@ -70,8 +70,10 @@ fn number_vertices<N: Ord>(vertices: impl IntoIterator<Item = N>) -> BTreeMap<N,
 
 /// A wrapper around the (oriented) taint edges to implement Graphviz traits.
 pub struct TaintGraphViz<'a> {
-    /// Every node, mapped to its cone membership. Also the node set for the walk.
+    /// Every node, mapped to its cone membership.
     node_cone: BTreeMap<TaintNode, Cone>,
+    /// The keys of `node_cone` in [`index_vertex_cmp`] order: the walk's nodes.
+    nodes: Vec<TaintNode>,
     /// Data-flow-oriented, deduplicated edges.
     edges: &'a [ConeEdge],
     /// Declared source vertices (drawn as diamonds).
@@ -91,8 +93,10 @@ impl<'a> TaintGraphViz<'a> {
         sinks: &'a BTreeSet<TaintNode>,
         id_map: &'a crate::facts::IdMap,
     ) -> Self {
+        let mut nodes: Vec<TaintNode> = node_cone.keys().copied().collect();
+        nodes.sort_unstable_by(index_vertex_cmp);
         let node_ids = number_vertices(
-            node_cone.keys().copied().chain(
+            nodes.iter().copied().chain(
                 edges
                     .iter()
                     .flat_map(|e| [(e.0, e.1, e.2), (e.3, e.4, e.5)]),
@@ -100,6 +104,7 @@ impl<'a> TaintGraphViz<'a> {
         );
         Self {
             node_cone,
+            nodes,
             edges,
             sources,
             sinks,
@@ -193,7 +198,7 @@ impl<'a> dot::GraphWalk<'a> for TaintGraphViz<'a> {
     type Edge = &'a ConeEdge;
 
     fn nodes(&'a self) -> dot::Nodes<'a, Self::Node> {
-        self.node_cone.keys().cloned().collect()
+        self.nodes.iter().cloned().collect()
     }
 
     fn edges(&'a self) -> dot::Edges<'a, Self::Edge> {
@@ -216,6 +221,8 @@ impl<'a> dot::GraphWalk<'a> for TaintGraphViz<'a> {
 /// Renders the (cone-classified, data-flow-oriented) taint graph into Graphviz
 /// DOT format. `node_cone` maps every node to its cone; `edges` must already be
 /// oriented src→dst in data-flow direction.
+///
+/// Nodes come out in [`index_vertex_cmp`] order. Edges come out in slice order.
 pub fn render_taint_graph<W: Write>(
     node_cone: BTreeMap<TaintNode, Cone>,
     edges: &[ConeEdge],
@@ -235,11 +242,12 @@ pub type IndexVertex = (FunctionId, FlowVariable, Path);
 /// edge `src -> dst`.
 pub type AssignRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
 
-/// Orders two index-graph vertices by what they denote, so a rendering is reproducible.
+/// Orders two index- or taint-graph vertices by what they denote, so a rendering is
+/// reproducible.
 pub fn index_vertex_cmp(a: &IndexVertex, b: &IndexVertex) -> Ordering {
     a.0.cmp(&b.0)
         .then_with(|| a.1.content_cmp(&b.1))
-        .then_with(|| a.2.cmp(&b.2))
+        .then_with(|| a.2.content_cmp(&b.2))
 }
 
 /// Orders two `assign` rows by their drawn edge: destination vertex first, then source.
