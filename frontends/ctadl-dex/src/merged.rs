@@ -351,10 +351,45 @@ impl MergedClasses {
                         }
                     }
                 }
+                // The class each `new-instance` allocates, by pc, and how many constructor calls
+                // initialize it.
+                let allocated: HashMap<usize, String> = items
+                    .iter()
+                    .filter_map(|it| match it {
+                        DecodedCodeItem::Instruction {
+                            inst: Instruction::NewInstance(f),
+                            offset,
+                        } => cp
+                            .type_ids
+                            .get(f.idx.0 as usize)
+                            .and_then(|t| t.descriptor(&cp.strings).ok())
+                            .map(|d| (*offset, d)),
+                        _ => None,
+                    })
+                    .collect();
+                let mut inits_at: HashMap<usize, usize> = HashMap::new();
+                for init in &facts.inits {
+                    *inits_at.entry(init.new_pc).or_default() += 1;
+                }
                 for init in facts.inits {
                     let Some(class) = self.classes.get(&init.class) else {
                         continue;
                     };
+                    // A constructor call is a site of its class only when the object is of that
+                    // class: R8 drops a subclass's constructor and initializes the subclass's
+                    // object with its superclass's (`new-instance S; invoke-direct S's super
+                    // <init>`), and retagging that object would make it a clone of the
+                    // superclass. An object two constructor calls could initialize is not a site
+                    // either.
+                    if allocated.get(&init.new_pc) != Some(&init.class) || inits_at[&init.new_pc] > 1 {
+                        log::debug!(
+                            "merged classes: {} in {sig} at {} is not a site of {}",
+                            allocated.get(&init.new_pc).map_or("?", String::as_str),
+                            init.new_pc,
+                            init.class
+                        );
+                        continue;
+                    }
                     let id = match class.ctors.get(&init.ctor) {
                         Some(IdArg::Const(c)) => SiteId::Known(*c),
                         Some(IdArg::Slot(n)) => match init.args.get(*n).copied().flatten() {
