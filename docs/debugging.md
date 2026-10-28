@@ -127,12 +127,15 @@ order ever matters; the third is not.
    Hashing `Path` by contents does not help, because that recurses into
    `PathSegment::Symbol(ArcIntern<str>)`, which hashes the pointer again.
 
-How this reaches the SARIF: `query` is deterministic *given an index*, but
-`TaintSearchGraph::new` (`query_engine/search.rs`) builds its adjacency lists by
-pushing `assign` rows in stored order, and the search is breadth-first-shortest.
-Among equal-length paths the tie-break is adjacency order, i.e. index row order.
-A different index picks a different *witness* path for the same source/sink pair,
-so the rendered code flow changes while the finding does not.
+How this reaches the SARIF: the search is breadth-first-shortest, and among
+equal-length paths the tie-break is adjacency order. `TaintSearchGraph::new`
+(`query_engine/search.rs`) sorts each adjacency list by content, so that order is
+not the index's row order, and the query's output is sorted by content too (spec
+C3). `tests/integration/determinism.rs` checks that the graphviz, the relation
+dumps and the SARIF come out byte-identical, timestamps aside, whatever order
+values were interned in. Before that sort, a different index picked a different
+*witness* path for the same source/sink pair, so the rendered code flow changed
+while the finding did not.
 
 Consequences for measurement:
 

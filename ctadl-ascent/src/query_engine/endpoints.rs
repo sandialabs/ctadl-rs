@@ -260,6 +260,9 @@ pub fn build_query_endpoints(
                 let mut seeded_port = false;
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
+                    // In content order: endpoint order is the order of the query's seed rows.
+                    let mut paths: Vec<&facts::Path> = paths.iter().collect();
+                    paths.sort_unstable_by(|a, b| a.content_cmp(b));
                     for p in paths {
                         if !p.is_extension_of(&ap) {
                             continue;

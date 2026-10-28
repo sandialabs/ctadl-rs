@@ -53,6 +53,7 @@ use crate::facts::{
 };
 
 use super::{QueryEndpoint, QueryFacts, QueryResult};
+use crate::graphviz::index_vertex_cmp;
 
 /// Which objects a taint on a *non-empty* access path `v.p` is about.
 ///
@@ -225,6 +226,27 @@ impl TaintSearchGraph {
             }
         }
 
+        // The search tries successors in list order, so it breaks ties between equal-length
+        // paths by it. The index's row order depends on handles, so sort by content.
+        for succs in assign_by_src.values_mut() {
+            succs.sort_unstable_by(|a, b| {
+                a.0.content_cmp(&b.0)
+                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.2.content_cmp(&b.2))
+            });
+        }
+        for succs in loads_by_dst.values_mut().chain(loads_by_src.values_mut()) {
+            succs
+                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
+        }
+        for succs in addrs_by_src.values_mut() {
+            succs.sort_unstable_by(|a, b| {
+                a.0.content_cmp(&b.0)
+                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.2.content_cmp(&b.2))
+            });
+        }
+
         let formal_ty: HashMap<_, _> = facts
             .formal_param
             .iter()
@@ -247,6 +269,16 @@ impl TaintSearchGraph {
             }
         }
 
+        for sites in callers_by_callee.values_mut() {
+            sites.sort_unstable();
+        }
+        for callees in callee_by_site.values_mut() {
+            callees.sort_unstable();
+        }
+        for calls in heap_calls_by_caller.values_mut() {
+            calls.sort_unstable();
+        }
+
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
 
         let mut copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
@@ -263,8 +295,10 @@ impl TaintSearchGraph {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
             }
         }
+        // In content order: the search tries them in this order, so it breaks ties between
+        // equal-length paths.
         for srcs in copies_by_dst.values_mut() {
-            srcs.sort_unstable();
+            srcs.sort_unstable_by(|a, b| a.content_cmp(b));
             srcs.dedup();
         }
 
@@ -279,6 +313,9 @@ impl TaintSearchGraph {
                     .or_default()
                     .push(ep.vertex.1);
             }
+        }
+        for paths in sink_ext_by_var.values_mut() {
+            paths.sort_unstable_by(|a, b| a.content_cmp(b));
         }
 
         TaintSearchGraph {
@@ -591,6 +628,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     let mut sink_tags: BTreeSet<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> =
         BTreeSet::new();
 
+    // One search per label, in content order: it is the order of their `taint` rows.
+    let mut source_sets: Vec<_> = source_sets.into_iter().collect();
+    source_sets.sort_unstable_by(|(a, _), (b, _)| a.content_cmp(b));
+
     let mut states_total = 0usize;
     for (label, endpoints) in &source_sets {
         // The start set: each distinct vertex once, attributed to the first
@@ -692,6 +733,8 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             paths_found,
         );
     }
+    let mut sink_tags: Vec<_> = sink_tags.into_iter().collect();
+    sink_tags.sort_unstable_by(taint_row_cmp);
     taint.extend(sink_tags);
 
     // Instruction-level projections of the taint rows, mirroring the closure
@@ -738,12 +781,44 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         }
     );
 
+    // The sets iterate in handle order; the result is in content order (see `QueryResult`).
+    let mut taint_edge: Vec<_> = taint_edge.into_iter().collect();
+    taint_edge.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| index_vertex_cmp(&(a.1, a.2, a.3), &(b.1, b.2, b.3)))
+            .then_with(|| index_vertex_cmp(&(a.4, a.5, a.6), &(b.4, b.5, b.6)))
+    });
+    let mut tainted_insn: Vec<_> = tainted_insn.into_iter().collect();
+    tainted_insn.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.content_cmp(&b.1))
+            .then_with(|| a.2.content_cmp(&b.2))
+            .then_with(|| a.3.content_cmp(&b.3))
+    });
+    let mut absorbing_functions: Vec<_> = absorbing.into_iter().collect();
+    absorbing_functions.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.content_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
     QueryResult {
         taint,
-        taint_edge: taint_edge.into_iter().collect(),
-        tainted_insn: tainted_insn.into_iter().collect(),
-        absorbing_functions: absorbing.into_iter().collect(),
+        taint_edge,
+        tainted_insn,
+        absorbing_functions,
     }
+}
+
+/// Orders `taint` rows by content.
+fn taint_row_cmp(
+    a: &(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint),
+    b: &(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint),
+) -> std::cmp::Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| a.1.cmp(&b.1))
+        .then_with(|| a.2.content_cmp(&b.2))
+        .then_with(|| a.3.content_cmp(&b.3))
+        .then_with(|| a.4.content_cmp(&b.4))
 }
 
 #[cfg(test)]

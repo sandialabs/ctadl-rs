@@ -1769,17 +1769,18 @@ pub fn find_endpoint_paths(
     // The source/sink endpoints actually present on tainted nodes -- the same
     // endpoint set the SARIF formatter draws on. Forward endpoints are sources,
     // backward endpoints are sinks.
-    let mut sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
-    let mut sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    let mut sources: Vec<&QueryEndpoint> = Vec::new();
+    let mut sinks: Vec<&QueryEndpoint> = Vec::new();
     for (_, _, _, _, ep) in &facts.taint {
         match ep.direction {
-            TaintDirection::Forward => {
-                sources.insert(ep);
-            }
-            TaintDirection::Backward => {
-                sinks.insert(ep);
-            }
+            TaintDirection::Forward => sources.push(ep),
+            TaintDirection::Backward => sinks.push(ep),
         }
+    }
+    // In content order, the order of the paths returned.
+    for eps in [&mut sources, &mut sinks] {
+        eps.sort_unstable_by(|a, b| a.content_cmp(b));
+        eps.dedup();
     }
 
     let mut paths = Vec::new();
@@ -2009,6 +2010,13 @@ async fn async_format_sarif(
                 ));
             }
         }
+    }
+    // In content order, since the pairing in `format_source_info_results` walks them in this order.
+    for details in details_by_span.values_mut() {
+        details.sort_by(|a, b| {
+            a.0.content_cmp(&b.0)
+                .then_with(|| crate::graphviz::index_vertex_cmp(&(a.1, a.2, a.3), &(b.1, b.2, b.3)))
+        });
     }
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
@@ -2631,8 +2639,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .or_default()
             .push(src.clone());
     }
-    // All unique endpoints
-    let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
+    // A node's endpoints in content order, since the pairing below walks them in this order.
+    for eps in node_to_endpoint.values_mut() {
+        eps.sort_by(|a, b| a.content_cmp(b));
+    }
+    // All unique endpoints, in content order: the order of their results.
+    let mut endpoints: Vec<&QueryEndpoint> =
+        node_to_endpoint.values().flat_map(|v| v.iter()).collect();
+    endpoints.sort_unstable_by(|a, b| a.content_cmp(b));
+    endpoints.dedup();
 
     // Map each node to an instruction for location info
     let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
@@ -3304,7 +3319,7 @@ fn endpoint_callee(
 
 fn format_source_sink_results(
     sarif_data: &mut SarifData,
-    endpoints: &BTreeSet<&QueryEndpoint>,
+    endpoints: &[&QueryEndpoint],
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
     site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
