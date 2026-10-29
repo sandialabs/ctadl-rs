@@ -93,7 +93,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | `subclass(Sub, Super)` | two classes, direct edge | — |
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
 | `subclass+(Sub, Super)` | transitive closure | — |
-| `uses_field(F, Fld)` | function, field it loads or stores | — |
+| `uses_field(F, Fld)` | function, field it loads, stores or updates | — |
 
 Notes worth having:
 

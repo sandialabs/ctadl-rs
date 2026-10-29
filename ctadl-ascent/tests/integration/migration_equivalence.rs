@@ -1337,7 +1337,6 @@ faithful! {
 faithful! {
     /// A field written through an `Update` statement is a use to the JSON matcher.
     uses_field_update = methods(json!([{"constraint": "uses_field", "name": "flag"}]));
-    #[ignore = "migrator divergence: DSL `uses_field` reads Load/Store, not Update"]
     java,
 }
 
