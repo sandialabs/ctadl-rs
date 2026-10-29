@@ -1227,7 +1227,7 @@ fn emit_bridge(
         facts.actual_param.push((
             site,
             *native_index,
-            FlowVertex(
+            FlowVertex::new(
                 FlowVariable::formal_index(*java_index),
                 facts::Path::empty(),
             ),

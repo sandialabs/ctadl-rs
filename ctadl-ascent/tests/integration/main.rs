@@ -8,6 +8,7 @@ mod bridging_end_to_end;
 mod bridging_models;
 mod cli;
 mod default_models;
+mod determinism;
 mod dispatch_models;
 mod flowy_tests;
 mod jni_summary;

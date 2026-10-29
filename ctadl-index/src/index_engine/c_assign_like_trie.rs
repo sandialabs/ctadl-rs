@@ -271,6 +271,15 @@ where
         )
     }
 
+    /// Visits every row.
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &Vd, &Pd, &Vs, &Ps))) {
+        self.fwd.for_each(|(fk, vs), group| {
+            for (ps, vd, pd) in group.iter() {
+                f((fk, vd, pd, vs, ps));
+            }
+        });
+    }
+
     /// Rebuild the logical relation as full tuples, consuming the store.
     ///
     /// This is the saved `assign_like` output; the physical relation holds no tuples. Draining as

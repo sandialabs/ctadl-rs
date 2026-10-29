@@ -51,6 +51,8 @@ pub struct QueryFacts {
     pub endpoints: Vec<(QueryEndpoint,)>,
 }
 
+/// Every relation is in content order, never handle order: the formatter numbers graph nodes
+/// and orders results by row order.
 #[derive(Default, Debug, Clone)]
 pub struct QueryResult {
     pub taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)>,
@@ -257,7 +259,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
             sources(s),
             let QueryEndpoint { infunc, vertex, label, direction, call_site: _, saturating: _ } = s,
-            let FlowVertex(v, p) = vertex;
+            let FlowVertex(v, p, ..) = vertex;
 
         // Propagate taint locally onto fields
         taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),

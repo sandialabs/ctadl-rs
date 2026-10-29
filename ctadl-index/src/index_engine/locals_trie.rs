@@ -266,6 +266,15 @@ where
         self.len == 0
     }
 
+    /// Visits every row.
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
+        for ((fk, v), group) in &self.fwd {
+            for (p, m, fp) in group.iter() {
+                f((fk, v, p, m, fp));
+            }
+        }
+    }
+
     /// Number of distinct `(F, V)` groups. That is the number of distinct variables reached by
     /// some formal, because `fwd`'s outer key is exactly the subject of a `locals` row. It
     /// costs O(1): the trie already keys on the prefix that a scan of the rows would have to
@@ -358,7 +367,7 @@ where
 
 /// Byte estimate for the `locals` store, broken down per structure. See
 /// [`LocalsIndCommon::heap_report`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HeapReport {
     /// Logical row count. Equals the size of `locals`.
     pub rows: usize,

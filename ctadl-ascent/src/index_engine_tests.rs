@@ -238,6 +238,92 @@ fn context_joins_agree() {
     }
 }
 
+/// Offsets: arrays in a struct and pointer arithmetic, so paths end in offsets and the wild
+/// splits, the trailing-offset splits and the offset adjustments of the candidate test all run.
+const SRC_OFFSETS: &str = r"
+    struct buf { int len; int data[4]; struct buf *next; };
+    int get(struct buf *b, int i) { return b->data[1] + b->data[i]; }
+    void put(struct buf *b, int v) { b->data[2] = v; b->next->data[1] = v; }
+    int walk(struct buf *b, int v) {
+        int *p = &b->data[0];
+        p[3] = v;
+        put(b, v);
+        struct buf *c = b + 1;
+        put(c, get(b, v));
+        return get(c, 2) + *(p + 1);
+    }";
+
+/// A call target that crosses copies of the aggregates that hold it, so the call-target rules
+/// test candidates that are not paths of the program.
+const SRC_NESTED_TARGET: &str = r"
+    struct ops { int (*f)(int); int tag; };
+    struct box { struct ops o; struct ops *p; struct box *up; };
+    int id(int x) { return x; }
+    int call(struct box *b, int x) { return b->o.f(x) + b->p->f(x) + b->up->o.f(x); }
+    int run(int x) {
+        struct box b, c;
+        b.o.f = id;
+        c.o = b.o;
+        c.p = &b.o;
+        c.up = &b;
+        b.up = &c;
+        return call(&c, x) + call(&b, x);
+    }";
+
+/// The fixpoint interns no `Path`, `Str`, `CallTargetObject` or `CallDispatchKey`, on every
+/// engine. The interners are process-wide and the other tests in this binary intern into them
+/// from other threads, so the test re-runs itself as a child process that runs nothing else,
+/// and the child does the checking.
+#[test]
+fn fixpoint_interns_nothing() {
+    const CHILD_ENV: &str = "CTADL_TEST_FIXPOINT_INTERNS_NOTHING";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "index_engine_tests::fixpoint_interns_nothing",
+                "--test-threads",
+                "1",
+            ])
+            .env(CHILD_ENV, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "the child failed");
+        return;
+    }
+    for src in [SRC, SRC_OFFSETS, SRC_NESTED_TARGET] {
+        let (program, _) = program_from_string(src);
+        let (facts, source_info) = index_program(program);
+        for config in [
+            IndexConfig::default(),
+            IndexConfig {
+                parallelism: Parallelism::Threads(NonZeroUsize::new(8).unwrap()),
+                ..IndexConfig::default()
+            },
+            IndexConfig {
+                storage: Storage::Lsm,
+                ..IndexConfig::default()
+            },
+        ] {
+            let what = format!("{:?} {:?}", config.parallelism, config.storage);
+            let result = taint_index_with_config(facts.clone(), config, Some(&source_info.sites));
+            let profile = &result.stats.profile;
+            assert!(profile.reached_fixpoint, "{what}");
+            assert_eq!(profile.split_misses, 0, "{what}: split misses");
+            let interned = &profile.memory.fixpoint_interned;
+            assert_eq!(
+                interned.keys().copied().collect::<Vec<_>>(),
+                ["CallDispatchKey", "CallTargetObject", "Path", "Str"],
+                "{what}"
+            );
+            assert!(
+                interned.values().all(|&n| n == 0),
+                "{what}: the fixpoint interned {interned:?}"
+            );
+        }
+    }
+}
+
 /// The id codegen gave `name`. An exact lookup rather than a search: these programs are
 /// built here, so the name in the fixture is the name in the id map.
 fn func_id(id_map: &IdMap, name: &str) -> FunctionId {

@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "ascent-tc-lsm-bench"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "ascent-byods-rels",
@@ -852,14 +852,14 @@ dependencies = [
 
 [[package]]
 name = "cil-dump"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "cil-reader",
 ]
 
 [[package]]
 name = "cil-reader"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "flate2",
  "memmap2",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ascent"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1199,7 +1199,6 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "tailshare",
  "tempfile",
  "test-log",
  "thiserror",
@@ -1215,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-c"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "ctadl-ascent",
@@ -1236,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-cil"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "cil-reader",
  "ctadl-import",
@@ -1250,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-dex"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1264,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-flowy"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
@@ -1279,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-frontends"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "bitcode",
  "ctadl-c",
@@ -1297,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-import"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "bitcode",
  "cil-reader",
@@ -1318,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "arrow",
  "ascent",
@@ -1330,7 +1329,6 @@ dependencies = [
  "datafusion-common",
  "derive_builder",
  "dex-reader",
- "elsa",
  "hashbrown 0.16.1",
  "immortal",
  "internment",
@@ -1352,14 +1350,13 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "tailshare",
  "tempfile",
  "thiserror",
 ]
 
 [[package]]
 name = "ctadl-index-lsm"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1370,7 +1367,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index-par"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1379,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index-serial"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1388,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ir"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "bit-set",
  "bitcode",
@@ -1408,7 +1405,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-jvm"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1422,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-lua"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1438,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-pcode"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -2263,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "dex-reader"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "log",
  "smallvec",
@@ -2872,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "immortal"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "hashbrown 0.15.5",
  "parking_lot 0.12.5",
@@ -3018,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "jvm-reader"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "zip 8.2.0",
 ]
@@ -3174,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "lsm"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "bytemuck",
@@ -3527,7 +3524,7 @@ dependencies = [
 
 [[package]]
 name = "pcode-reader"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "ascent",
  "ascent_base",
@@ -3933,7 +3930,7 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_graphviz"
-version = "0.1.4"
+version = "0.1.6"
 
 [[package]]
 name = "rustc_version"
@@ -4205,7 +4202,7 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "source-info"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "arrow",
  "datafusion",
@@ -4338,15 +4335,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "tailshare"
-version = "0.1.4"
-dependencies = [
- "immortal",
- "parking_lot 0.12.5",
- "serde",
 ]
 
 [[package]]
@@ -4636,7 +4624,7 @@ dependencies = [
 
 [[package]]
 name = "trie"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "criterion",
  "parking_lot 0.12.5",
@@ -5291,7 +5279,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "boon",

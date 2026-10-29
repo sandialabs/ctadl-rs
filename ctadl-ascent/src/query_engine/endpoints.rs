@@ -234,7 +234,7 @@ pub fn build_query_endpoints(
             // port path; wildcard expansion (if any) then happens per anchored vertex.
             let base = crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var, ap),
+                vertex: FlowVertex::new(var, ap),
                 label: lbl.clone(),
                 direction,
                 call_site: None,
@@ -260,6 +260,9 @@ pub fn build_query_endpoints(
                 let mut seeded_port = false;
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
+                    // In content order: endpoint order is the order of the query's seed rows.
+                    let mut paths: Vec<&facts::Path> = paths.iter().collect();
+                    paths.sort_unstable_by(|a, b| a.content_cmp(b));
                     for p in paths {
                         if !p.is_extension_of(&ap) {
                             continue;
@@ -268,7 +271,7 @@ pub fn build_query_endpoints(
                             seeded_port = true;
                         }
                         out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
+                            vertex: FlowVertex::new(ep.vertex.0, *p),
                             ..ep.clone()
                         },));
                     }

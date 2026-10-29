@@ -220,10 +220,18 @@ impl BridgeSideMatches {
     /// The cross product of the two sides. There is no `cardinality` key: every matched A pairs
     /// with every matched B, and a pairing that is not singleton x singleton is reported through
     /// `on-ambiguous` rather than restricted.
+    ///
+    /// Each side goes in name order, so the warnings about pairs come out in a reproducible order.
     pub fn pairs(&self) -> impl Iterator<Item = (facts::Str, facts::Str)> + '_ {
-        self.from
-            .iter()
-            .flat_map(|a| self.to.iter().map(move |b| (*a, *b)))
+        let by_name = |set: &BTreeSet<facts::Str>| {
+            let mut names: Vec<facts::Str> = set.iter().copied().collect();
+            names.sort_unstable_by(|a, b| a.content_cmp(b));
+            names
+        };
+        let to = by_name(&self.to);
+        by_name(&self.from)
+            .into_iter()
+            .flat_map(move |a| to.clone().into_iter().map(move |b| (a, b)))
     }
 
     /// Singleton x singleton -- the unambiguous case `on-ambiguous` exists to distinguish.
@@ -280,7 +288,7 @@ impl BridgeMatches {
 /// Everything a models file matched, accumulated across every (import x model file) pair.
 ///
 /// Accumulation is append-only and its *order* is only required to be deterministic, not
-/// specific: the SARIF writer sorts endpoints into `BTreeSet`s before writing anything, so
+/// specific: the SARIF writer sorts endpoints by content before writing anything, so
 /// insertion order does not reach the output. The natural loop order (import outer, model file
 /// inner, visit order within a file) is deterministic and is what accumulation gets for free;
 /// the one rule is never to route it through unordered iteration.
@@ -488,9 +496,12 @@ pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(S
     None
 }
 
-/// The functions a set of matches names, for a diagnostic that has to list a few of them.
+/// The functions a set of matches names, for a diagnostic that has to list a few of them. The
+/// first few by name, since the set iterates in handle order.
 pub(crate) fn sample(names: &BTreeSet<facts::Str>, limit: usize) -> String {
-    let shown: Vec<&str> = names.iter().take(limit).map(|s| s.as_str()).collect();
+    let mut shown: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    shown.sort_unstable();
+    shown.truncate(limit);
     if names.len() > limit {
         format!("{}, … and {} more", shown.join(", "), names.len() - limit)
     } else {

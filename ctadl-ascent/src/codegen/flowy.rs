@@ -469,7 +469,7 @@ fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
     use fx::*;
     let vertex = {
         let (var, fields) = &e.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
     };
     TaintEndpoint {
         infunc: Function(e.infunc.clone().into()),
@@ -492,7 +492,7 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
         .unwrap();
     let vertex = {
         let (var, fields) = &endpoint.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
     };
     QueryEndpoint {
         infunc,

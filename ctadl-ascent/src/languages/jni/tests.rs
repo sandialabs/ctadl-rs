@@ -330,7 +330,7 @@ fn actuals(facts: &IndexFacts, site: PackedInsnSiteId) -> Vec<(i16, i16)> {
         .actual_param
         .iter()
         .filter(|(s, _, _)| *s == site)
-        .map(|(_, index, FlowVertex(var, path))| {
+        .map(|(_, index, FlowVertex(var, path, ..))| {
             assert!(path.is_empty(), "bridge vertices carry no path");
             (**index, *var.as_formal().expect("a formal-index vertex"))
         })

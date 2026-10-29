@@ -24,7 +24,7 @@ pub mod stats;
 ///
 /// The default filter is `warn,ctadl=info` -- warnings from every crate, plus this
 /// project's status output. Crates that aren't `ctadl*` (the readers, `trie`,
-/// `tailshare`, ...) stay at `warn` because they have no status to report. `RUST_LOG`
+/// `immortal`, ...) stay at `warn` because they have no status to report. `RUST_LOG`
 /// overrides the whole thing, so `RUST_LOG=warn,ctadl=debug` is how to get more and
 /// `RUST_LOG=warn` is how to get less.
 ///
