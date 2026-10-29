@@ -684,12 +684,11 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
         }
         "parent" => {
             let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
-            class_predicate(inner, subject, None, fresh, ctx)
+            class_predicate(inner, subject, false, fresh, ctx)
         }
         "extends" => {
             let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
-            let sup = fresh.next("Sup");
-            class_predicate(inner, subject, Some(sup), fresh, ctx)
+            class_predicate(inner, subject, true, fresh, ctx)
         }
         "in_function" => {
             if !ctx.callsites {
@@ -808,106 +807,246 @@ fn int_expr(inner: &Value, var: &str) -> Option<IntExpr> {
     }
 }
 
+/// The method tables a JSON `parent` / `extends` reads classes from.
+///
+/// The JSON constraints take each method's class from the Java or CIL method table and match
+/// nothing on any other frontend. The DSL's `parent` and `subclass` also cover Lua's
+/// metatable-recovered classes, so a migrated class predicate names the tables it means, in the
+/// atom that binds the class: the positive form then fails on Lua, and a negated one succeeds,
+/// which is exactly the JSON's `not` complementing an empty match. It is `method_table` and not
+/// `language` because the JSON keys off the table, which is known even for an import whose
+/// scope is not.
+const CLASS_TABLES: &str = r#"method_table in {"java", "cil"}"#;
+
 /// The `inner` of `parent` / `extends`, against the subject's owning class.
 ///
-/// `via_super` turns it into `extends`: the class the predicate applies to is a *direct*
-/// supertype of the owning class, which is exactly what the JSON constraint tests (it reads the
-/// hierarchy table, not its closure).
+/// The inner is a boolean tree over *one* class, so it is compiled as one formula over one
+/// class variable, bound once: to the owning class for `parent`, to one *direct* supertype of
+/// it for `extends`, which is what the JSON tests (it reads the hierarchy table, not its
+/// closure). Spreading the tree through the rule-level DNF instead would bind a class per leaf,
+/// and `extends{all_of[A, B]}` would hold for a class with one supertype named `A` and another
+/// named `B`.
+///
+/// A `find: dispatch` generator's `parent` is not guarded: the JSON reads the call site's class
+/// there, on any frontend, and so does `callsig`. Its `extends` is not either, because a
+/// `callsig` key exists only for a Java or CIL call, whose class no Lua hierarchy names.
 fn class_predicate(
     inner: &Value,
     subject: &str,
-    via_super: Option<String>,
+    extends: bool,
     fresh: &mut Fresh,
     ctx: &Ctx<'_>,
 ) -> Result<Dnf, JsonModelError> {
+    let formula = class_formula(inner, ctx)?;
+    if matches!(formula, ClassFormula::Const(false)) {
+        return Ok(Vec::new());
+    }
+    // A predicate that holds of every class still requires there to be one.
+    let any = matches!(formula, ClassFormula::Const(true));
+    let mut attrs = Vec::new();
+    let mut atoms = Vec::new();
+    let class_var = if extends {
+        let owner = fresh.next("P");
+        let sup = if any {
+            "_".to_string()
+        } else {
+            fresh.next("Sup")
+        };
+        attrs.push(format!("parent = {owner}"));
+        atoms.push(format!("subclass({owner}, {sup})"));
+        sup
+    } else {
+        let owner = if any {
+            "_".to_string()
+        } else {
+            fresh.next("P")
+        };
+        attrs.push(format!("parent = {owner}"));
+        owner
+    };
+    if ctx.relation == "fun" {
+        attrs.push(CLASS_TABLES.to_string());
+    }
+    atoms.insert(0, atom(ctx.relation, subject, &attrs));
+    if !any {
+        formula.conjuncts(&class_var, &mut atoms);
+    }
+    Ok(vec![atoms])
+}
+
+/// A `parent` / `extends` inner, as a formula over one class.
+enum ClassFormula {
+    Const(bool),
+    /// Equal to one of these names.
+    Is(Vec<String>),
+    /// Matches this pattern anywhere: the JSON uses `is_match`, and so does `regex_match`.
+    Matches(String),
+    Not(Box<ClassFormula>),
+    And(Vec<ClassFormula>),
+    Or(Vec<ClassFormula>),
+}
+
+/// Reads a class predicate the way the JSON's `eval_predicate` does, folding what it can decide
+/// without a class. Every error is one the JSON loader's `validate_predicate` raises too.
+fn class_formula(inner: &Value, ctx: &Ctx<'_>) -> Result<ClassFormula, JsonModelError> {
+    let index = ctx.index;
     let kind = inner
         .get("constraint")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     match kind {
         "any_of" | "all_of" => {
-            // Wrap each inner back into a `parent` / `extends` constraint of its own and
-            // re-enter the shared machinery. That keeps one code path for the leaf shapes and
-            // lets a class-level `any_of` fan out into rules as every other one does.
-            let wrapper = if via_super.is_some() {
-                "extends"
-            } else {
-                "parent"
-            };
-            let rewritten: Vec<Value> = inner
+            let inners = inner
                 .get("inners")
                 .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .map(|i| serde_json::json!({ "constraint": wrapper, "inner": i.clone() }))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let exprs: Vec<Expr<'_>> = rewritten.iter().map(Expr::Prim).collect();
-            let expr = if kind == "all_of" {
-                Expr::And(exprs)
+                .ok_or_else(|| JsonModelError::FieldNotArray {
+                    index,
+                    field_name: "inners".to_string(),
+                })?;
+            let parts = inners
+                .iter()
+                .map(|i| class_formula(i, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(if kind == "all_of" {
+                ClassFormula::and(parts)
             } else {
-                Expr::Or(exprs)
-            };
-            // `rewritten` owns what `exprs` borrows, so the compile has to finish before it
-            // goes out of scope; the explicit `return` is what makes that ordering visible.
-            return compile(&expr, false, ctx, fresh);
+                ClassFormula::or(parts)
+            })
         }
-        _ => {}
-    }
-    let class_var = via_super.clone().unwrap_or_else(|| fresh.next("P"));
-    let mut atoms: Vec<String> = Vec::new();
-    match via_super {
-        Some(sup) => {
-            let owner = fresh.next("P");
-            atoms.push(atom(ctx.relation, subject, &[format!("parent = {owner}")]));
-            atoms.push(format!("subclass({owner}, {sup})"));
+        "not" => {
+            let i = inner
+                .get("inner")
+                .ok_or_else(|| JsonModelError::MissingField {
+                    index,
+                    field_name: "inner".to_string(),
+                })?;
+            Ok(ClassFormula::not(class_formula(i, ctx)?))
         }
-        None => atoms.push(atom(
-            ctx.relation,
-            subject,
-            &[format!("parent = {class_var}")],
-        )),
-    }
-    match kind {
+        // The subject is already a class, so only `name` / `names` mean anything; the JSON
+        // loader rejects any other key, and a predicate with neither.
         "signature_match" => {
-            let names = collect_strings(inner, "name", "names");
-            if names.is_empty() {
-                // No class has no name, so this matches nothing, as in the JSON loader.
-                return Ok(Vec::new());
-            }
-            if names.len() == 1 {
-                atoms.push(format!("{class_var} = {}", quote(&names[0])));
-            } else {
-                atoms.push(format!(
-                    "{class_var} in {{{}}}",
-                    names
-                        .iter()
-                        .map(|n| quote(n))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-        "name" => match inner.get("pattern").and_then(|v| v.as_str()) {
-            Some(pattern) => atoms.push(format!("regex_match({class_var}, {})", quote(pattern))),
-            None => {
-                return Err(JsonModelError::FieldNotString {
-                    index: ctx.index,
-                    field_name: "pattern".to_string(),
+            let other = inner
+                .as_object()
+                .into_iter()
+                .flat_map(|o| o.keys())
+                .find(|k| !matches!(k.as_str(), "constraint" | "name" | "names"));
+            if let Some(key) = other {
+                return Err(JsonModelError::UnexpectedField {
+                    index,
+                    field_name: key.clone(),
+                    message: "not a recognized field of the 'signature_match' constraint; \
+                              expected one of 'name', 'names'"
+                        .to_string(),
                 });
             }
+            if inner.get("name").is_none() && inner.get("names").is_none() {
+                return Err(JsonModelError::MissingField {
+                    index,
+                    field_name: "name' / 'names".to_string(),
+                });
+            }
+            // Present and naming nothing: no class is equal to it, as in the JSON loader.
+            let names = collect_strings(inner, "name", "names");
+            Ok(if names.is_empty() {
+                ClassFormula::Const(false)
+            } else {
+                ClassFormula::Is(names)
+            })
+        }
+        "name" => match inner.get("pattern").and_then(|v| v.as_str()) {
+            Some(pattern) => Ok(ClassFormula::Matches(pattern.to_string())),
+            None => Err(JsonModelError::FieldNotString {
+                index,
+                field_name: "pattern".to_string(),
+            }),
         },
-        other => {
-            return Err(untranslatable(
-                ctx.index,
-                &format!("'{other}' as a class predicate"),
-                "only 'signature_match', 'name', 'any_of' and 'all_of' are translated under \
-                 'parent' and 'extends'",
-            ));
+        other => Err(JsonModelError::UnexpectedConstraint {
+            index,
+            constraint_type: if other.is_empty() { "<missing>" } else { other }.to_string(),
+        }),
+    }
+}
+
+impl ClassFormula {
+    fn and(parts: Vec<Self>) -> Self {
+        Self::fold(parts, true)
+    }
+
+    fn or(parts: Vec<Self>) -> Self {
+        Self::fold(parts, false)
+    }
+
+    /// `and` when `unit` is true, `or` when it is false: `unit` is the empty case, and its
+    /// opposite absorbs the rest. So an empty `all_of` holds and an empty `any_of` does not,
+    /// as `Iterator::all` / `any` decide them in the JSON.
+    fn fold(parts: Vec<Self>, unit: bool) -> Self {
+        let mut kept = Vec::new();
+        for part in parts {
+            match part {
+                Self::Const(b) if b == unit => {}
+                Self::Const(_) => return Self::Const(!unit),
+                other => kept.push(other),
+            }
+        }
+        match kept.len() {
+            0 => Self::Const(unit),
+            1 => kept.pop().expect("checked len"),
+            _ if unit => Self::And(kept),
+            _ => Self::Or(kept),
         }
     }
-    Ok(vec![atoms])
+
+    fn not(inner: Self) -> Self {
+        match inner {
+            Self::Const(b) => Self::Const(!b),
+            Self::Not(x) => *x,
+            other => Self::Not(Box::new(other)),
+        }
+    }
+
+    /// Appends the formula to a body as conjuncts over `var`; a top-level `all_of` is several.
+    fn conjuncts(&self, var: &str, out: &mut Vec<String>) {
+        match self {
+            Self::And(parts) => {
+                for p in parts {
+                    p.conjuncts(var, out);
+                }
+            }
+            other => out.push(other.text(var)),
+        }
+    }
+
+    /// One self-delimiting operand: a compound is parenthesized, so it can stand in a `&&`
+    /// group or under a `!` as written. Constants are folded away before this is reached.
+    fn text(&self, var: &str) -> String {
+        match self {
+            Self::Const(_) => unreachable!("constants are folded before a formula is written"),
+            Self::Is(names) if names.len() == 1 => format!("{var} = {}", quote(&names[0])),
+            Self::Is(names) => format!(
+                "{var} in {{{}}}",
+                names
+                    .iter()
+                    .map(|n| quote(n))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Matches(pattern) => format!("regex_match({var}, {})", quote(pattern)),
+            Self::Not(inner) => match &**inner {
+                Self::Is(names) if names.len() == 1 => {
+                    format!("{var} != {}", quote(&names[0]))
+                }
+                Self::Matches(_) | Self::And(_) | Self::Or(_) => format!("!{}", inner.text(var)),
+                other => format!("!({})", other.text(var)),
+            },
+            Self::And(parts) => Self::join(parts, var, " && "),
+            Self::Or(parts) => Self::join(parts, var, " || "),
+        }
+    }
+
+    fn join(parts: &[Self], var: &str, sep: &str) -> String {
+        let parts: Vec<String> = parts.iter().map(|p| p.text(var)).collect();
+        format!("({})", parts.join(sep))
+    }
 }
 
 // ---------------------------------------------------------------------------
