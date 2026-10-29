@@ -106,7 +106,7 @@ derived summary, so testing it needs a frontend or IR change.
 
 `uclited` (TP-Link TL-WPA8630P) is the studied case: 3.6x over budget under the default (40.7 M
 `locals`, 0.67 GiB). zlib's `inflate` holds 98% of `locals` even with every slot promoted
-(`--mem2reg full`: 11.8 M rows, still 2.9x over). P1's Analysis took it apart; its causes 2 and 3
+(`--mem2reg full`: 11.8 M rows, 0.29 GiB, still 1.55x over; re-measured on this branch). P1's Analysis took it apart; its causes 2 and 3
 are what remain:
 
 - **The state-machine loop is one cycle through most of the function.** With every slot promoted,
@@ -202,21 +202,38 @@ under budget, and the rest sort into the shapes above.
 ### 7. Escaped stack slots: sound, but not affordable
 
 Not a blowup at the default, but the gap P1 leaves. `window:8` guesses that an escaped address
-reaches 8 slots; it loses nothing on the suite, but nothing bounds it. `--mem2reg above`, which
-keeps every slot at or above an escape, is the only policy that cannot lose a flow, and under
-`--frame update` it costs what skipping mem2reg cost: `androidudpbus` 266.9 M `locals`, 680 s and
-13.77 GiB (5.2x over) against 41.9 M, 44 s and 2.25 GiB under `window:8`. Making it affordable
-needs a better bound on what an escaped address reaches than "every slot above it" (S4's escape
-counts in P1's Ideas are the starting data: in `androidudpbus`, 1,714 frame addresses passed to
-calls, 3,118 stored to memory, 1,291 copied).
+reaches 8 slots; it loses nothing on the suite, but nothing bounds it. `--mem2reg above` keeps every
+slot at or above an escape. It is the only policy that cannot lose a flow, and on `androidudpbus` it
+costs 268.5 M `locals`, 699 s and 14.3 GiB, against 42.5 M, 58 s and 2.26 GiB under `window:8`
+(re-measured on this branch).
 
-### 8. Path concatenation slows `ntfs-3g` with `--mem2reg off`
+- **Five functions hold 96% of the 226 M extra rows:** `FUN_00156cb8` 36%, `FUN_001517cc` 29%,
+  `FUN_0014c94c` 19%, `FUN_00144f04` 7%, `FUN_00124804` 5%.
+- **The rows are on the frame's versions.** In four of the five, 90-99% of the rows sit on the
+  frame's versions. Every write to a kept slot makes a new version, and each version carries every
+  kept slot's contents, so the rows grow as writes x contents. In `FUN_00156cb8` the escape is a
+  stack array indexed by a counter (`&buf[i]`).
+- **A bound by escape position cannot help.** In all five the lowest escape is at or near the
+  bottom of the frame, so `above` keeps 90-100% of slots, the same as `off`. What could help: a
+  size for each escaped address (the array or struct it points into), or versioning kept slots
+  apart instead of the whole frame.
 
-Since #170 (interning), `ntfs-3g` (D-Link COVR-2600R `sbin/ntfs-3g`) under `--frame store
---mem2reg off` takes 230 s against 147 s (and 223 against 142 on a second pair), with the same
-rows. All of it is the formal-side `locals` rule, the `edge_split` join that concatenates
-`p4 · rest` through the path set: 83 s to 157 s. The rule is the same on `main`. No default run
-shows it, but any shape with many long paths will.
+### 8. `call_target_assign_like` joins on the function alone
+
+The propagation rule for `call_target_assign_like` joins on the function and tests the path prefix
+afterwards. That is the pattern the `locals` rules replaced with `edge_split`. It costs time, not
+memory:
+
+- **It is the top rule at the default on `androidudpbus`:** 11.6 s of 58 s.
+- **It dominates under `above`:** 446 s of 699 s on `androidudpbus`.
+- **Unchecked:** no firmware sweep run shows it. It should be checked on the apps.
+
+(The old problem 8, path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`, is not
+independent. It is the 44x row growth from turning promotion off (188.6 M rows, 8.0 GiB, against
+4.3 M at the default), which is the stack problem P1 fixed. The formal-side `locals` rule makes
+2.16 billion concatenation probes there, 82% of them misses, at about 70 ns each through 3-4
+linked path segments: about 150 s of 237 s. One probe per `(path, rest)` instead of per pair
+would cut it.)
 
 ## Benchmarks
 
@@ -278,7 +295,9 @@ Every binary at 1.5x or more under the default (`--frame update`, `window:8`), w
 | Linksys EA6350v4 `bin/ntfsdebug` | `120cca2b628a34d5` | 5.5 MB | 12.8 M | 0.92 GiB | 1.8x | 1,188 | |
 | Linksys EA6900v2 `bin/ntfslabel` | `d9bd68cc9006e841` | 5.1 MB | 12.1 M | 0.83 GiB | 1.7x | 1,110 | |
 
-Binaries with an empty Problem column have not been sorted: check their `profile.json` in the
+Re-indexing `fw-chat`, `fw-sdkmips` and `gzip` on this branch gives the same `locals` and
+`edge_split` and peaks within 1%, so the table still stands. Binaries with an empty Problem column
+have not been sorted: check their `profile.json` in the
 sweep's `runs/<id>-update/`.
 
 ### `uclited`
