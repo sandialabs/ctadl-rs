@@ -29,6 +29,11 @@ number below was measured; this file keeps only what is still open.
 
 ### 1. The context relations dominate most over-budget firmware
 
+**Mostly problem 4.** With only `malloc` skipped: `GpioForCrond` 0.13 GB (0.46x, whole allocator
+skipped; was 104x), `sdkmips` 0.24 GB (0.84x; was 16x), `KC_BONJOUR` 0.59 GB (1.6x; was 36x),
+`mxcam` 1.18 GB (2.9x; was 58x). The rest is being checked. What follows is the record before
+that finding.
+
 The largest group. In the 45-binary sweep (Benchmarks), 26 binaries are still at least 10x over
 budget under the default. In most of them the largest relations are not `locals` alone but the
 context-sensitive ones: `edge_split`, `ctx_edge_split` and `context_locals`, together about
@@ -110,16 +115,39 @@ Binaries where `locals` leads by far, not yet checked for this shape:
   than `window:8`, measured before P1's fix).
 - **`wifitool`:** `full` cut it 24% before P1's fix (`FUN_0040d740` and three uClibc functions).
 
-### 4. Two binaries do not finish under 32 GiB
+### 4. The statically linked allocator writes `$globals` from `malloc`'s size, and every caller inherits it
 
-| Binary | IR | Result | Stack accesses kept |
-|---|---|---|---|
-| D-Link DSP-W115 `bin/hnapserver-combo` | 5.2 MB | killed at the 32 GiB cap, both `--frame` settings | 1,242 |
-| TP-Link Archer MR200 `usr/bin/adb` | 6.1 MB | killed at the 32 GiB cap, both `--frame` settings | 484 |
+`hnapserver-combo` (DSP-W115) and `adb` (MR200) were killed at 32 GiB. Both link uClibc's dlmalloc.
+Skipping `malloc` alone (`skip-analysis`) lets both finish: `hnapserver` 2.20 GB (4.2x) in 56 s,
+`adb` 2.05 GB (3.4x) in 27 s. Skipping the whole allocator (malloc, realloc, calloc, free,
+`__malloc_consolidate`, `malloc_trim`) gets 0.62 GB (1.2x) and 0.57 GB (0.94x). Skipping `free` or
+`realloc` alone does nothing.
 
-Nothing is known about what grows: a killed run leaves no `profile.json`. Run with
-`CTADL_INDEX_TIMEOUT_SECS` well before the cap, with the patched `ascent_macro` so the running scc
-is kept.
+- **Shape** (300 s timed-out runs, `hnapserver`, 20.4 GB partial): `edge_split` 93 M, `locals`
+  45 M, `assign_like` 25 M, `summary` 12.6 M. 97% of `edge_split`, 96% of `assign_like` and 97%
+  of `summary` have `$globals` as their destination. The rows are spread over callers (the top
+  function holds 9% of `assign_like`), so there is no hub function: there is a hub *variable*
+  (`$globals`) and a hub *callee* (`malloc`). Rule time goes to the `locals`/`context_locals`
+  joins on `edge_split`, so `profile.json` points at problem 1's rules, not at the cause.
+- **Mechanism.** `malloc`'s size goes through arithmetic that is lowered as a merge
+  (`nb = size + 11 & ~7` becomes `assign nb = size, 11`), and a bin address is the size class
+  with the bin array's absolute address as an offset (`%u = %idx.[4824424]`). The allocator's
+  state (`av->top`, bins, fastbins) is `$globals.[addr]`. So `malloc`'s summary is nearly a
+  complete bipartite graph, `$globals.<138 paths> <- p0.<38 paths>` (5,230 rows). `$globals` is an
+  implicit in/out formal of every function. At each call site, what reaches the size argument
+  (`strlen(s) + 24`, a struct field) reaches 138 global paths and becomes the caller's summary,
+  and so on up the call graph. `context_assign` (99% `$globals` in `adb`) instantiates the same
+  summaries along resolved indirect calls, which is why the context relations grow too.
+- **It is also most of problem 1** (below).
+- **Not run:** the query on the skipped indexes. There is no baseline, since the full index never
+  finishes. Taint through the allocator's free lists is spurious anyway: `malloc`'s return should
+  carry nothing from its size.
+- **On `main` a timed-out run reads 0** for `locals`, `edge_split`, `assign_like`, `locals_key`
+  and `ext_dst`, and dumps them empty. The patched `ascent_macro` (`b47ed139`) is needed to see
+  them.
+- **Stripped binaries:** malloc is recognizable by shape: one parameter, about 5,200
+  instructions, about 1,550 stores to `$globals`, and the most call sites among such functions.
+  (`adb` `FUN_0042d400`: 5,456 instructions, 1,568 global stores, 70 call sites.)
 
 ### 5. `libgdx`: `glxy` and its siblings
 
@@ -188,7 +216,7 @@ Every binary at 1.5x or more under the default (`--frame update`, `window:8`), w
 
 | Binary | Id | IR | `locals` | Peak | Against budget | Kept | Problem |
 |---|---|---|---|---|---|---|---|
-| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 4 |
+| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 4 (allocator) |
 | TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 4 |
 | D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 74.9 M | 27.30 GiB | 104x | 367 | 1 |
 | D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 69.5 M | 23.65 GiB | 94x | 357 | 1 |
