@@ -604,7 +604,6 @@ fn a_malformed_class_predicate_is_reported() {
             r#"{{"find":"methods","where":[{{"constraint":"parent","inner":{inner}}}],
                 "model":{{"sinks":[{{"kind":"k","port":"Argument(0)"}}]}}}}"#
         );
-        json_oracle::loader_says(&json, loader);
         assert_eq!(migration_errors(&json), loader, "{inner}");
     }
 }
@@ -861,7 +860,6 @@ fn what_the_json_loader_rejects_does_not_migrate() {
         ),
     ];
     for (json, loader) in cases {
-        json_oracle::loader_says(json, loader);
         assert_eq!(migration_errors(json), loader, "{json}");
     }
 }
@@ -935,7 +933,6 @@ fn what_the_dsl_cannot_say_does_not_migrate() {
         ),
     ];
     for (json, what) in cases {
-        json_oracle::loader_accepts(&json);
         let errors = migration_errors(&json);
         assert_eq!(errors.len(), 1, "{json}: {errors:?}");
         let want = format!("cannot migrate {what} in model generator at index 0: ");
@@ -1101,7 +1098,7 @@ fn constructs_that_used_to_widen_match_what_the_json_matched() {
 
     let program = native_program(&["a", "b", "c"]);
     let index = ProgramMatchIndex::new(&program, ImportScope::unknown());
-    // What the JSON matcher summarized for each.
+    // What the JSON matcher summarized for each, recorded while it existed.
     let cases: [(&str, &[&str]); 6] = [
         (
             r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
@@ -1135,7 +1132,6 @@ fn constructs_that_used_to_widen_match_what_the_json_matched() {
         .expect("valid json");
         let summarized: std::collections::BTreeSet<String> =
             summarized.iter().map(|f| f.to_string()).collect();
-        json_oracle::summarizes(&json, &index, &summarized);
         let (text, from_dsl) = run_migrated(&json, &index);
         assert_eq!(
             summarized_functions(&from_dsl),
@@ -1153,70 +1149,6 @@ fn summarized_functions(
         .iter()
         .map(|p| p.function.to_string())
         .collect()
-}
-
-/// Everything in this file that runs the JSON matcher (`models/json.rs`).
-///
-/// The tests above write out what the JSON loader said or matched; while it exists, this
-/// module confirms each of those against it. When it is removed, this module and the calls into
-/// it are deleted, and nothing else changes.
-mod json_oracle {
-    /// Requires the JSON loader to reject `json` with exactly `expected` (to accept it, for an
-    /// empty list).
-    pub(super) fn loader_says(json: &str, expected: &[&str]) {
-        assert_eq!(loader_errors(json), expected, "the JSON loader on {json}");
-    }
-
-    /// Requires the JSON loader to accept `json`, unless it is a bridge: a bridge is scanned from
-    /// a file rather than loaded per import, and [`loader_errors`] only loads.
-    pub(super) fn loader_accepts(json: &str) {
-        if !json.contains("bridge") {
-            loader_says(json, &[]);
-        }
-    }
-
-    /// Requires the JSON matcher to give exactly `expected` a propagation summary for `json`.
-    pub(super) fn summarizes(
-        json: &serde_json::Value,
-        index: &crate::models::ProgramMatchIndex<'_>,
-        expected: &std::collections::BTreeSet<String>,
-    ) {
-        let mut from_json = crate::models::ProgramModelMatches::default();
-        crate::models::try_load_models_from_values(
-            index,
-            std::iter::once(Ok(json.clone())),
-            &mut from_json,
-        )
-        .unwrap_or_else(|e| panic!("{json}: {e}"));
-        assert_eq!(
-            super::summarized_functions(&from_json),
-            *expected,
-            "the JSON matcher on {json}"
-        );
-    }
-
-    /// The errors the JSON loader rejects a generator with, rendered; empty if it accepts it.
-    fn loader_errors(json: &str) -> Vec<String> {
-        let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
-        let program = ctadl_ir::mir::ProgramInfo::default();
-        let index =
-            crate::models::ProgramMatchIndex::new(&program, crate::models::ImportScope::unknown());
-        let mut out = crate::models::ProgramModelMatches::default();
-        match crate::models::try_load_models_from_values(
-            &index,
-            std::iter::once(Ok(value)),
-            &mut out,
-        ) {
-            Ok(_) => Vec::new(),
-            Err(crate::error::Error::Context { source, .. }) => match source.downcast_ref() {
-                Some(crate::error::Error::JsonModel(errors)) => {
-                    errors.iter().map(ToString::to_string).collect()
-                }
-                _ => panic!("expected JSON model errors, got {source}"),
-            },
-            Err(e) => panic!("expected JSON model errors, got {e}"),
-        }
-    }
 }
 
 /// [`a_bridge_is_one_rule_whatever_its_disjunctions`] on a program: the JSON loader bridges the

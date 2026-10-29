@@ -1,8 +1,7 @@
-# What the JSON model matcher (models/json.rs) matched for each test in
+# What the retired JSON model matcher matched for each test in
 # migration_equivalence.rs, which compares the migrated DSL against it.
-# Recorded by `MIGRATION_GOLDEN_BLESS=1 cargo test -p ctadl-ascent --test integration
-# migration_equivalence`, which works only while the JSON matcher exists. Do not
-# edit by hand.
+# A frozen record, made while the matcher existed; it cannot be regenerated.
+# Do not edit by hand.
 
 == all_of_empty::java
 generator: {"find":"methods","where":[{"constraint":"all_of","inners":[]}],"model":{"sources":[{"kind":"Src","port":"Return"}],"sinks":[{"kind":"Snk","port":"Argument(0)"}],"propagation":[{"input":"Argument(0)","output":"Return"}]}}

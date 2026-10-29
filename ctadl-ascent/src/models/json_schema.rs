@@ -28,9 +28,6 @@ use crate::error::JsonModelError;
 use ctadl_ir::mir;
 use ctadl_ir::mir::PathSegment;
 
-#[cfg(test)]
-mod loader_equivalence;
-
 /// A generator's `find`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FindMethod {

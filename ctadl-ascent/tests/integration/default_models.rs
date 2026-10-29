@@ -9,8 +9,8 @@
 //! *every* index of the language that selects it.
 //!
 //! The `.ctadl` defaults an index loads are also pinned to the `.jsonl` originals they were
-//! migrated from: textually, and by what they match, against the JSON matcher's answers frozen
-//! in `default_models.golden`.
+//! migrated from: textually, and by what they match, against what the retired JSON matcher
+//! matched for the `.jsonl`, frozen in `default_models.golden`.
 
 use ctadl_ascent::models::{
     DEFAULT_MODEL_FILES, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
@@ -576,8 +576,9 @@ fn the_dsl_defaults_are_the_migration_of_the_json_defaults() {
     }
 }
 
-/// What each shipped `.ctadl` default matched on each fixture program, recorded from the JSON
-/// matcher running the `.jsonl` it was migrated from. See [`json_oracle`].
+/// What the retired JSON matcher matched for each shipped `.jsonl` default on each fixture
+/// program, keyed by the `.ctadl` migrated from it. A frozen record, made while the matcher
+/// existed.
 const DEFAULTS_GOLDEN_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/integration/default_models.golden"
@@ -597,10 +598,10 @@ fn default_fixtures() -> [(&'static str, ProgramInfo); 5] {
 /// What a load matched, as the rows [`DEFAULTS_GOLDEN_PATH`] records: propagations, access
 /// paths, dispatch dispositions, closure-shaped keys and skipped bodies.
 ///
-/// Sets, because the two loaders visit in different orders and a duplicate row is inert
-/// (codegen pushes the same summary twice). A disposition's port list keeps its order. Dispatch
-/// models are compared by disposition only: provenance records which file and which generator
-/// or rule a model came from, so two loaders *must* differ there.
+/// Sets, because the golden was recorded from a loader that visited in its own order, and a
+/// duplicate row is inert (codegen pushes the same summary twice). A disposition's port list
+/// keeps its order. Dispatch models are compared by disposition only: provenance records which
+/// file and which generator or rule a model came from, so two loaders *must* differ there.
 fn default_rows(m: &ProgramModelMatches) -> BTreeSet<String> {
     use ctadl_ascent::models::matches::{Disposition, ModelPort};
     let port = |p: &ModelPort| {
@@ -692,7 +693,8 @@ fn parse_defaults_golden(text: &str) -> BTreeMap<String, BTreeSet<String>> {
 }
 
 /// Each `.ctadl` default an index loads matches, on every fixture program, exactly what the
-/// JSON matcher matched for the `.jsonl` original.
+/// retired JSON matcher matched for the `.jsonl` original, as [`DEFAULTS_GOLDEN_PATH`]
+/// records it.
 ///
 /// This is the check the design asks for by name: a migrated model file has to produce
 /// semantically equivalent matching results. The fixtures include Java call sites for every
@@ -723,8 +725,8 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
             let key = default_key(dsl_name, program_name);
             let Some(expected) = golden.get(&key) else {
                 panic!(
-                    "`{key}` has no entry in {DEFAULTS_GOLDEN_PATH}; record it with \
-                     {DEFAULTS_BLESS_VAR}=1 (only possible while the JSON matcher exists)"
+                    "`{key}` has no entry in {DEFAULTS_GOLDEN_PATH}, which is a frozen record \
+                     of what the retired JSON matcher matched and cannot be extended"
                 );
             };
             let actual = default_rows(&from_dsl);
@@ -751,84 +753,6 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
         stale.is_empty(),
         "{DEFAULTS_GOLDEN_PATH} has entries no default and program produce: {stale:?}"
     );
-}
-
-/// Set to regenerate [`DEFAULTS_GOLDEN_PATH`] from the JSON matcher; see [`json_oracle`].
-const DEFAULTS_BLESS_VAR: &str = "DEFAULT_MODELS_GOLDEN_BLESS";
-
-/// Everything that runs the JSON matcher as the oracle for the `.ctadl` defaults.
-///
-/// It exists only to produce and check [`DEFAULTS_GOLDEN_PATH`] while the matcher does: when the
-/// matcher is removed, this module is deleted and nothing else changes.
-///
-/// `DEFAULT_MODELS_GOLDEN_BLESS=1 cargo test -p ctadl-ascent --test integration
-/// the_json_defaults_match_the_golden` re-records the whole file; run the tests again afterwards,
-/// since [`the_dsl_defaults_match_what_the_json_defaults_matched`] may have read the old one.
-mod json_oracle {
-    use super::*;
-
-    /// What the JSON matcher matches for each `.jsonl` default on each fixture program, keyed
-    /// by the `.ctadl` migrated from it.
-    fn json_answers() -> BTreeMap<String, BTreeSet<String>> {
-        use ctadl_ascent::models::DEFAULT_DSL_MODELS;
-        let mut out = BTreeMap::new();
-        for ((json_name, json_contents), (dsl_name, _)) in
-            DEFAULT_MODEL_FILES.iter().zip(DEFAULT_DSL_MODELS)
-        {
-            for (program_name, program) in &default_fixtures() {
-                let keys = DispatchKeys::from_program(&program.program);
-                let index = default_index(program, &keys);
-                let mut from_json = ProgramModelMatches::default();
-                try_load_jsonl_models(&index, BufReader::new(*json_contents), &mut from_json)
-                    .unwrap_or_else(|e| panic!("{json_name} on {program_name}: {e}"));
-                out.insert(
-                    default_key(dsl_name, program_name),
-                    default_rows(&from_json),
-                );
-            }
-        }
-        out
-    }
-
-    fn render(answers: &BTreeMap<String, BTreeSet<String>>) -> String {
-        let mut out = String::from(
-            "# What the JSON model matcher (models/json.rs) matched for each shipped .jsonl\n\
-             # default on each fixture program in default_models.rs, keyed by the .ctadl\n\
-             # migrated from it. Recorded by `DEFAULT_MODELS_GOLDEN_BLESS=1 cargo test -p\n\
-             # ctadl-ascent --test integration the_json_defaults_match_the_golden`, which works\n\
-             # only while the JSON matcher exists. Do not edit by hand.\n",
-        );
-        for (key, rows) in answers {
-            out.push_str(&format!("\n== {key}\n"));
-            if rows.is_empty() {
-                out.push_str("    (nothing)\n");
-            }
-            for row in rows {
-                assert!(!row.contains('\n'), "{key}: a row spans lines: {row}");
-                out.push_str(&format!("    {row}\n"));
-            }
-        }
-        out
-    }
-
-    /// The golden is what the JSON matcher matches for the `.jsonl` defaults today. With
-    /// [`DEFAULTS_BLESS_VAR`] set, re-records it instead.
-    #[test]
-    fn the_json_defaults_match_the_golden() {
-        let answers = json_answers();
-        if std::env::var_os(DEFAULTS_BLESS_VAR).is_some() {
-            std::fs::write(DEFAULTS_GOLDEN_PATH, render(&answers))
-                .unwrap_or_else(|e| panic!("writing {DEFAULTS_GOLDEN_PATH}: {e}"));
-            return;
-        }
-        let text = std::fs::read_to_string(DEFAULTS_GOLDEN_PATH)
-            .unwrap_or_else(|e| panic!("reading {DEFAULTS_GOLDEN_PATH}: {e}"));
-        assert!(
-            parse_defaults_golden(&text) == answers,
-            "the JSON matcher no longer matches what {DEFAULTS_GOLDEN_PATH} records for the \
-             .jsonl defaults; re-bless with {DEFAULTS_BLESS_VAR}=1"
-        );
-    }
 }
 
 /// The native defaults keep the ARM unwinders' bodies out of the index, and it is the `.ctadl`

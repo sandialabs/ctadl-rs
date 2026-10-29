@@ -9,8 +9,8 @@
 //! `parent` sees and the JSON's did not. On Lua the migration takes the DSL's meaning, so the two
 //! are compared everywhere else and the Lua results are pinned on their own.
 //!
-//! The expectations are the JSON matcher's answers, recorded from it; [`json_oracle`] confirms
-//! them against it for as long as it exists.
+//! The expectations are the answers of the JSON matcher that used to run these generators,
+//! recorded from it while it existed.
 
 use ctadl_ascent::models::dsl::migrate::migrate_generators;
 use ctadl_ascent::models::{
@@ -324,39 +324,6 @@ fn run_dsl(generator: &Value, info: &ProgramInfo, scope: &ImportScope) -> (Selec
     (selected(&from_dsl), text)
 }
 
-/// Everything in this file that runs the JSON matcher (`models/json.rs`).
-///
-/// The expectations below are what the JSON matcher selected, written out. While the matcher
-/// exists, [`check`] confirms each of them against it. When it is removed, this module and the
-/// calls to [`check`] are deleted, and nothing else changes.
-mod json_oracle {
-    use super::*;
-    use ctadl_ascent::models::try_load_models_from_values;
-
-    /// Requires the JSON matcher to select `expected` for `generator` on `info`.
-    pub(super) fn check(
-        generator: &Value,
-        info: &ProgramInfo,
-        scope: &ImportScope,
-        expected: &Selected,
-    ) {
-        let keys = DispatchKeys::from_program(&info.program);
-        let index = ProgramMatchIndex::new_with_dispatch(info, scope.clone(), Some(&keys));
-        let mut from_json = ProgramModelMatches::default();
-        try_load_models_from_values(
-            &index,
-            std::iter::once(Ok(generator.clone())),
-            &mut from_json,
-        )
-        .unwrap_or_else(|e| panic!("JSON load of {generator}: {e}"));
-        assert_eq!(
-            selected(&from_json),
-            *expected,
-            "the JSON matcher no longer selects what is recorded for {generator} on {scope:?}"
-        );
-    }
-}
-
 /// The Java program `generator` is checked against: [`java_program_with_sites`] for a generator
 /// that ranges over call sites or signature keys, which only the caller there has.
 fn java_for(generator: &Value) -> fn() -> ProgramInfo {
@@ -407,7 +374,6 @@ fn selects(generator: Value, expected: Selects) {
             Some("native") => expected.native.iter().map(|f| f.to_string()).collect(),
             _ => continue,
         };
-        json_oracle::check(&generator, &info, &scope, &want);
         let (dsl, text) = run_dsl(&generator, &info, &scope);
         assert_eq!(
             dsl, want,
@@ -531,7 +497,6 @@ fn parent_and_extends_see_lua_classes() {
             } else {
                 Selected::new()
             };
-            json_oracle::check(&generator, &lua, &scope, &json_expected);
             assert_ne!(dsl, json_expected, "{generator}");
         }
     }
@@ -764,7 +729,6 @@ fn class_predicates_on_call_sites() {
             ImportScope::unknown(),
         ] {
             let program = java_program_with_sites();
-            json_oracle::check(&generator, &program, &scope, &expected);
             let (dsl, text) = run_dsl(&generator, &program, &scope);
             assert_eq!(dsl, expected, "{generator}\nmigrated:\n{text}");
         }
