@@ -84,7 +84,7 @@ cil virtual method table
 [exec]Exec.Disk::.ctor has signature ()->System.Void: [exec]Exec.Disk::.ctor()->System.Void
 [exec]Exec.Disk::Area has signature ()->System.Int32: [exec]Exec.Disk::Area()->System.Int32
 [exec]Exec.Disk::Exec.IGrow.Grow has signature (System.Int32)->System.Void: [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void
-[exec]Exec.Disk::Grow has signature (System.Int32)->System.Void: [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void
+[exec]Exec.Disk::Grow has signature (System.Int32)->System.Void: [exec]Exec.Disk::Grow(System.Int32)->System.Void
 [exec]Exec.Exc::BreakThroughFinally has signature (System.Int32)->System.Int32: [exec]Exec.Exc::BreakThroughFinally(System.Int32)->System.Int32
 [exec]Exec.Exc::CatchAll has signature (System.Int32)->System.Int32: [exec]Exec.Exc::CatchAll(System.Int32)->System.Int32
 [exec]Exec.Exc::CatchBase has signature (System.Int32)->System.Int32: [exec]Exec.Exc::CatchBase(System.Int32)->System.Int32
@@ -120,12 +120,9 @@ cil virtual method table
 [exec]Exec.Inst::Twice has signature (System.Int32)->System.Int32: [exec]Exec.Inst::Twice(System.Int32)->System.Int32
 [exec]Exec.IntFn::.ctor has signature (System.Object,System.IntPtr)->System.Void: [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void
 [exec]Exec.IntFn::BeginInvoke has signature (System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult: [exec]Exec.IntFn::BeginInvoke(System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult
-[exec]Exec.IntFn::Clone has signature ()->System.Object: [System.Private.CoreLib]System.Delegate::Clone()->System.Object
 [exec]Exec.IntFn::EndInvoke has signature (System.IAsyncResult)->System.Int32: [exec]Exec.IntFn::EndInvoke(System.IAsyncResult)->System.Int32
-[exec]Exec.IntFn::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.MulticastDelegate::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [exec]Exec.IntFn::Invoke has signature (System.Int32)->System.Int32: [exec]Exec.IntFn::Invoke(System.Int32)->System.Int32
 [exec]Exec.MyEx::.ctor has signature (System.Int32)->System.Void: [exec]Exec.MyEx::.ctor(System.Int32)->System.Void
-[exec]Exec.MyEx::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [exec]Exec.Node::.ctor has signature ()->System.Void: [exec]Exec.Node::.ctor()->System.Void
 [exec]Exec.Obj::Aliasing has signature (Exec.Bag,Exec.Bag)->System.Int32: [exec]Exec.Obj::Aliasing(Exec.Bag,Exec.Bag)->System.Int32
 [exec]Exec.Obj::AsCast has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::AsCast(Exec.Shape)->System.Int32
@@ -148,7 +145,6 @@ cil virtual method table
 [exec]Exec.Obj::Unboxing has signature (System.Object)->System.Int32: [exec]Exec.Obj::Unboxing(System.Object)->System.Int32
 [exec]Exec.Obj::Virt has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32
 [exec]Exec.OtherEx::.ctor has signature (System.Int32)->System.Void: [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void
-[exec]Exec.OtherEx::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [exec]Exec.Plate::.ctor has signature ()->System.Void: [exec]Exec.Plate::.ctor()->System.Void
 [exec]Exec.Plate::Area has signature ()->System.Int32: [exec]Exec.Plate::Area()->System.Int32
 [exec]Exec.Pt::.ctor has signature (System.Int32,System.Int32)->System.Void: [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void
@@ -5332,6 +5328,13 @@ assign %s1 = @p0 [2904]
 %s1 = load %s1.<[exec]Exec\.Dels/<>c__DisplayClass3_0::b> [2905]
 assign %s0 = %s0, %s1 [2906]
 return %s0, %excout
+end block_0
+
+define [exec]Exec.Disk::Grow(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=retval %L1=throwval
+begin block_0 [start]:
+%retval, %throwval = direct-call [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void(@p0, @p1)
+return %retval, %throwval
 end block_0
 
 define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[shared]) -> 2:

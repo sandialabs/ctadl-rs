@@ -2,7 +2,6 @@ cil virtual method table
 [System.Private.CoreLib]System.Exception::.ctor has signature ()->System.Void: [System.Private.CoreLib]System.Exception::.ctor()->System.Void
 [exec]Cell2::.ctor has signature (System.Int32,System.Int32)->System.Void: [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void
 [exec]Err::.ctor has signature (System.Int32)->System.Void: [exec]Err::.ctor(System.Int32)->System.Void
-[exec]Err::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [exec]IL::Blocks has signature (System.Int32,System.Int64)->System.Int64: [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64
 [exec]IL::DupBranch has signature (System.Object)->System.Object: [exec]IL::DupBranch(System.Object)->System.Object
 [exec]IL::Fault has signature (System.Int32)->System.Int32: [exec]IL::Fault(System.Int32)->System.Int32

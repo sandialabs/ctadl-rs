@@ -29,8 +29,6 @@ cil virtual method table
 [flow]Flow::Twice has signature (System.Int32)->System.Int32: [flow]Flow::Twice(System.Int32)->System.Int32
 [flow]Flow::VarArgs has signature (System.Int32,...)->System.Void: [flow]Flow::VarArgs(System.Int32,...)->System.Void
 [flow]Fn::.ctor has signature (System.Object,System.IntPtr)->System.Void: [flow]Fn::.ctor(System.Object,System.IntPtr)->System.Void
-[flow]Fn::Clone has signature ()->System.Object: [System.Private.CoreLib]System.Delegate::Clone()->System.Object
-[flow]Fn::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.MulticastDelegate::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [flow]Fn::Invoke has signature (System.Int32)->System.Int32: [flow]Fn::Invoke(System.Int32)->System.Int32
 [flow]Holder::.ctor has signature ()->System.Void: [flow]Holder::.ctor()->System.Void
 [flow]Holder::.ctor has signature (System.Object,System.Int32)->System.Void: [flow]Holder::.ctor(System.Object,System.Int32)->System.Void

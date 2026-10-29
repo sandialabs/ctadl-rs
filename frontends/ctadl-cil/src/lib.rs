@@ -316,7 +316,20 @@ pub struct Collected {
     pub ext: BTreeMap<String, (MethodKey, Vec<ParameterType>)>,
     /// Thunk function id -> the static method it calls.
     pub thunks: BTreeMap<String, String>,
+    /// Override bridges to define, in the order their types were processed.
+    pub bridges: Vec<Bridge>,
     pub stats: Stats,
+}
+
+/// An override bridge (see `hierarchy.rs`): a function under `key` that calls `target`.
+#[derive(Debug)]
+pub struct Bridge {
+    pub key: MethodKey,
+    /// The class declaring the base or interface method, which names the bridge when `key`'s
+    /// own function id is taken.
+    pub decl_cls: String,
+    pub target: String,
+    pub params: Vec<ParameterType>,
 }
 
 impl Collected {
@@ -345,7 +358,9 @@ pub struct Stats {
     pub methods: usize,
     pub bodies: usize,
     pub stubs: usize,
-    pub override_aliases: usize,
+    pub bridges: usize,
+    /// Bridges whose key is a different method the class declares, so whose row shares it.
+    pub shared_key_bridges: usize,
     /// `Opaque` effects lowered conservatively.
     pub opaque_effects: usize,
     /// Addresses merged at a join, whose writes reach only their cell (`ptr.rs`).
@@ -441,13 +456,26 @@ impl Context {
         }
 
         let aliases = hierarchy::aliases(namer, module, td);
-        self.out.stats.override_aliases += aliases.rows.len();
         self.out
             .stats
             .missing_metadata
             .extend(aliases.missing_metadata);
-        for (simple, desc, fid) in aliases.rows {
-            self.table.methods.push((cls.clone(), simple, desc, fid));
+        for alias in aliases.rows {
+            // CHA reaches an implementation under its own key, inherited or not.
+            if (&alias.simple, &alias.desc) == (&alias.target.simple, &alias.target.desc) {
+                continue;
+            }
+            let target = self.out.callee(&alias.target, alias.params.clone());
+            self.out.bridges.push(Bridge {
+                key: MethodKey {
+                    cls: cls.clone(),
+                    simple: alias.simple,
+                    desc: alias.desc,
+                },
+                decl_cls: alias.decl_cls,
+                target,
+                params: alias.params,
+            });
         }
 
         for md in td.methods()? {
@@ -509,13 +537,34 @@ impl Context {
         Ok(())
     }
 
-    /// Stubs every callee nothing defined, adds the delegate thunks, and builds the table.
+    /// Defines the override bridges, stubs every callee nothing defined, adds the delegate
+    /// thunks, and builds the table.
     pub fn finish(self) -> Result<ProgramInfo, Error> {
         Ok(self.finish_with_stats()?.0)
     }
 
     /// [`Context::finish`], with the import's counts.
     pub fn finish_with_stats(mut self) -> Result<(ProgramInfo, Stats), Error> {
+        // Before the stubs: a call naming a bridge's key calls the bridge.
+        for bridge in std::mem::take(&mut self.out.bridges) {
+            let mut fid = bridge.key.fid();
+            if self.defined.contains_key(&fid) {
+                fid = format!("{fid}#{}", bridge.decl_cls);
+                if self.defined.contains_key(&fid) {
+                    log::debug!("cil: bridge {fid} is defined twice; keeping the first");
+                    continue;
+                }
+                self.out.stats.shared_key_bridges += 1;
+            }
+            let fidx = self.program.new_function();
+            self.defined.insert(fid.clone(), fidx);
+            let arity = bridge.params.len();
+            method::shape(&mut self.program[fidx], fid.clone(), bridge.params);
+            method::bridge_body(&mut self.program[fidx], &bridge.target, arity);
+            let MethodKey { cls, simple, desc } = bridge.key;
+            self.table.methods.push((cls, simple, desc, fid));
+            self.out.stats.bridges += 1;
+        }
         let ext = std::mem::take(&mut self.out.ext);
         for (fid, (key, params)) in &ext {
             if self.defined.contains_key(fid) {
@@ -618,14 +667,15 @@ impl Context {
         let s = &self.out.stats;
         log::info!(
             "cil: {} assembl{}, {} types, {} methods ({} bodies), {} extern stubs, {} override \
-             aliases",
+             bridges ({} sharing a key)",
             s.assemblies,
             if s.assemblies == 1 { "y" } else { "ies" },
             s.types,
             s.methods,
             s.bodies,
             s.stubs,
-            s.override_aliases
+            s.bridges,
+            s.shared_key_bridges
         );
         if s.unresolved_address_writes > 0 {
             log::info!(

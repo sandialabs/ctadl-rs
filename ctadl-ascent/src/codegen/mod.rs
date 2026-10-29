@@ -1628,23 +1628,18 @@ impl ClassHierarchyAnalysis {
                     interfaces: Default::default(),
                 }
             }
-            // CIL is the Java arm over its own table. Override aliases (rows under a class with a
-            // base or interface method's key) are ordinary `method_implemented` rows here: a
-            // class "implementing" the base key is exactly what makes CHA find its override.
+            // CIL is the Java arm over its own table, override bridges included.
             VirtualMethodTable::Cil {
                 methods,
                 hierarchy,
                 interfaces,
                 ..
             } => {
-                let mut method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
+                let method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
                     .iter()
                     .cloned()
                     .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
                     .collect();
-                // An exact override and its alias are the same row.
-                method_implemented.sort_unstable();
-                method_implemented.dedup();
                 let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.0.clone(), sub.0.clone())))
