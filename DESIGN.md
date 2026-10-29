@@ -309,7 +309,7 @@ Everything the design specifies is in:
 
 | | |
 | --- | --- |
-| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`, `method_table`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
+| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
 | **Output relations** | `source` (`kind`, `saturating`), `sink` (`kind`, `wildcard`), `propagation`, `bridge`, `access_paths` |
 | **Ports** | `return`, `arg(0)`, `arg(_)`, `arg(I)`, `arg(0).foo[2]`, `arg(4)."weird.field[0]"`, anchored as `F::port` |
 | **Flows** | `A -> B`, `A <- B`, `A <-> B` |
@@ -421,6 +421,27 @@ the DSL engine, the same as a `.ctadl` file; there is no second matcher behind i
 draws a deprecation warning: JSON model files will be removed in a future release, and
 `ctadl migrate-models` converts one to the DSL.
 
+A migrated file means what the JSON meant, with one exception: where the JSON matcher had a bug
+or a limitation, the migration takes the DSL's meaning rather than reproducing it.
+`tests/integration/migration_equivalence.rs` checks every other case against the JSON matcher,
+and pins each of these differences exactly:
+
+- **Universe.** A generator with no `where`, or a top-level `not`, ranged over the method table
+  in the JSON, so it missed a lowered function the table does not name and matched nothing on a
+  program with no table (flowy). `fun(F)` is every function.
+- **Full names.** `name`, `signature` and `signature_match` also accept a function's full name,
+  because the DSL publishes it as a spelling of every function.
+- **Lua classes.** `parent` and `extends` matched nothing on Lua in the JSON; the DSL's `parent`
+  and `subclass` include metatable-recovered classes.
+- **`in_function` under `not` or `any_of`.** The JSON matcher narrowed the callee set by the
+  caller's constraint there. The DSL tests the caller, as the constraint says.
+- **`find: callsites` anchors at the callee a site names.** The JSON attached the endpoint to
+  every matching callee and let the resolved call graph find its sites, so a call naming
+  `Base.run` also picked up a model on the override `Mid.run`. `callsite` joins on the static
+  `callee_string`. Expressing the resolved form needs a relation over resolved targets — a
+  `resolves_to(Site, Callee)` or similar, fed from the call graph rather than the program text
+  — which is future work.
+
 The interesting case is disjunction. A `where` is a conjunction, but a constraint may be an
 `any_of` or a `not`, so the constraint tree is pushed into negation normal form and then into
 DNF, and **each disjunct becomes one rule with the same heads**. That is how Datalog spells "or",
@@ -435,7 +456,7 @@ which makes the translation exact: `any_of` was already a union over the matched
 | `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)` |
 | `has_code`, `number_parameters` | `fun(F, has_code = …)`, `fun(F, arity <op> …)` |
 | `uses_field` | `uses_field(F, …)` |
-| `parent` / `extends` | `fun(F, parent = P, method_table in {"java", "cil"})` and one formula over `P`, plus `subclass(P, S)` for `extends`, over `S` |
+| `parent` / `extends` | `fun(F, parent = P)` and one formula over `P` (`!`, `&&`, `\|\|` for a nested `not` / `all_of` / `any_of`), plus `subclass(P, S)` for `extends`, over `S` |
 | `any_of` | several rules with the same head |
 | `not` | `!atom`, or `!(a && b)` when the constraint needs two atoms |
 | `in_function` | constraints on `C`, the caller column of `callsite` |

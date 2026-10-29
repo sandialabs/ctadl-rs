@@ -769,17 +769,6 @@ fn int_expr(inner: &Value, var: &str) -> Option<IntExpr> {
     }
 }
 
-/// The method tables a JSON `parent` / `extends` reads classes from.
-///
-/// The JSON constraints take each method's class from the Java or CIL method table and match
-/// nothing on any other frontend. The DSL's `parent` and `subclass` also cover Lua's
-/// metatable-recovered classes, so a migrated class predicate names the tables it means, in the
-/// atom that binds the class: the positive form then fails on Lua, and a negated one succeeds,
-/// which is exactly the JSON's `not` complementing an empty match. It is `method_table` and not
-/// `language` because the JSON keys off the table, which is known even for an import whose
-/// scope is not.
-const CLASS_TABLES: &str = r#"method_table in {"java", "cil"}"#;
-
 /// The `inner` of `parent` / `extends`, against the subject's owning class.
 ///
 /// The inner is a boolean tree over *one* class, so it is compiled as one formula over one
@@ -789,9 +778,8 @@ const CLASS_TABLES: &str = r#"method_table in {"java", "cil"}"#;
 /// and `extends{all_of[A, B]}` would hold for a class with one supertype named `A` and another
 /// named `B`.
 ///
-/// A `find: dispatch` generator's `parent` is not guarded: the JSON reads the call site's class
-/// there, on any frontend, and so does `callsig`. Its `extends` is not either, because a
-/// `callsig` key exists only for a Java or CIL call, whose class no Lua hierarchy names.
+/// On Lua the class is a metatable-recovered one, which the DSL's `parent` and `subclass` cover
+/// and the JSON's did not (it matched nothing there): a migrated rule takes the DSL's meaning.
 fn class_predicate(
     inner: &Value,
     subject: &str,
@@ -826,9 +814,6 @@ fn class_predicate(
         attrs.push(format!("parent = {owner}"));
         owner
     };
-    if ctx.relation == "fun" {
-        attrs.push(CLASS_TABLES.to_string());
-    }
     atoms.insert(0, atom(ctx.relation, subject, &attrs));
     if !any {
         formula.conjuncts(&class_var, &mut atoms);

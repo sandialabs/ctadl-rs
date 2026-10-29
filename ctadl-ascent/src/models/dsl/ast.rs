@@ -403,7 +403,6 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
             "has_code",
             "qualified-id",
             "import",
-            "method_table",
         ],
         // A signature key has no body, so `arity` and `has_code` are absent rather than
         // always-false. `language` and `import` are those of the import whose call site the

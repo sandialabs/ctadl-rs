@@ -86,14 +86,14 @@ optional **attributes**; an attribute you do not mention is not constrained.
 
 | relation | columns | attributes |
 | --- | --- | --- |
-| `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`, `method_table` |
+| `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import` |
 | `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id` |
 | `param(F, Index)` | function, parameter index | — |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
 | `subclass(Sub, Super)` | two classes, direct edge | — |
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
 | `subclass+(Sub, Super)` | transitive closure | — |
-| `uses_field(F, Fld)` | function, field it loads or stores | — |
+| `uses_field(F, Fld)` | function, field it loads, stores or updates | — |
 
 Notes worth having:
 
@@ -104,12 +104,8 @@ Notes worth having:
 - `arity`, `has_code` and `param` read the IR, so they match nothing for a function with no body:
   an external, a dex/jvm `ext` stub. `name` / `signature` / `qualified-id` are the supported shape
   for a bodyless callee.
-- `parent` exists where the frontend has a class hierarchy (Java, CIL, Lua). Elsewhere it
-  matches nothing, which is fail-closed.
-- `method_table` is the kind of method table the program came from: `"java"` (jvm, jar, dex,
-  apk, xapk), `"cil"`, `"native"` (c, pcode) or `"lua"`, and absent where there is none
-  (flowy). Unlike `language`, which is the import's declared scope, it is read off the program,
-  so it is known even when the scope is not.
+- `parent` exists where the frontend has a class hierarchy (Java, Lua). Elsewhere it matches
+  nothing, which is fail-closed.
 - `callee_string` is the fully qualified callee (joinable with `fun`) or, for an indirect call,
   the variable the program text calls through.
 - `callsig` is a **different universe from `fun`**, not a view of it. `fun` is built from the
@@ -350,7 +346,7 @@ How the JSON constructs map:
 | `has_code` | `fun(F, has_code = …)` |
 | `number_parameters` | `fun(F, arity <op> …)` |
 | `uses_field` | `uses_field(F, …)` |
-| `parent` / `extends` | `fun(F, parent = P, method_table in {"java", "cil"})` and a test of `P` — `!`, `&&`, `\|\|` for a nested `not` / `all_of` / `any_of` — plus `subclass(P, S)` for `extends`, tested on `S` |
+| `parent` / `extends` | `fun(F, parent = P)` and one formula over `P` (`!`, `&&`, `\|\|` for a nested `not` / `all_of` / `any_of`), plus `subclass(P, S)` for `extends`, over `S` |
 | `any_of` | **several rules with the same head** — that is how Datalog spells "or" |
 | `all_of` | more atoms in one body |
 | `not` | `!atom`, or `!(a && b)` when the constraint needs two atoms |
