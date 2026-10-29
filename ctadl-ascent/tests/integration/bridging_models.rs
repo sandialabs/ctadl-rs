@@ -412,8 +412,12 @@ fn a_malformed_declared_access_path_fails_the_load() {
 // Index-time-only model accounting
 // ---------------------------------------------------------------------------
 
-/// `ctadl query` reads these counts to say once that it is ignoring index-time constructs
+/// A load counts the index-time constructs it saw, so a caller that ignores them can say so
 /// instead of dropping them in silence.
+///
+/// The bridge carries an `arguments` map: without one the JSON loader pairs the arguments
+/// the two sides share, which needs the fact base, and the migration a JSON file now goes
+/// through refuses to guess it.
 #[test]
 fn index_time_constructs_are_counted_for_the_query_side_warning() {
     let mut file = tempfile::Builder::new()
@@ -428,7 +432,10 @@ fn index_time_constructs_are_counted_for_the_query_side_warning() {
         }),
         serde_json::json!({
             "find": "methods",
-            "model": {"bridge": {"to": {"where": []}}}
+            "model": {"bridge": {
+                "to": {"where": []},
+                "arguments": [{"from": "Argument(0)", "to": "Argument(0)", "direction": "in"}]
+            }}
         }),
     ] {
         writeln!(file, "{}", serde_json::to_string(&g).unwrap()).expect("write");

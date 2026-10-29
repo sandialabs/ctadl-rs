@@ -54,6 +54,24 @@ pub enum JsonModelError {
     },
 }
 
+impl JsonModelError {
+    /// The index of the generator the error is about.
+    pub fn index(&self) -> usize {
+        match self {
+            JsonModelError::MissingField { index, .. }
+            | JsonModelError::FieldNotString { index, .. }
+            | JsonModelError::FieldNotArray { index, .. }
+            | JsonModelError::InvalidRegex { index, .. }
+            | JsonModelError::InvalidArgumentFormat { index, .. }
+            | JsonModelError::InvalidAccessPath { index, .. }
+            | JsonModelError::InvalidInteger { index, .. }
+            | JsonModelError::UnexpectedConstraint { index, .. }
+            | JsonModelError::UnexpectedField { index, .. }
+            | JsonModelError::Untranslatable { index, .. } => *index,
+        }
+    }
+}
+
 impl std::fmt::Display for JsonModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

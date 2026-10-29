@@ -23,7 +23,8 @@ ctadl index my-app --models propagations.ctadl
 ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
 ```
 
-The older JSON format still works; see [§9](#9-migrating-from-the-json-format).
+The older JSON format is deprecated, and still works by being migrated to this one as it is
+loaded; see [§9](#9-migrating-from-the-json-format).
 
 ---
 
@@ -332,6 +333,10 @@ source(F::return), propagation(F::return <- F::arg(0)) :- fun(F, name = "openCon
 
 is live in both phases and warned about in neither.
 
+`ctadl index` does match the `source` / `sink` heads too, without reporting on them: a matched
+endpoint in a call signature's targets refuses that signature's `dispatch` model, so a file with
+both kinds of rule belongs on both commands.
+
 ---
 
 ## 9. Migrating from the JSON format
@@ -345,7 +350,16 @@ ctadl migrate-models my-models.jsonl --dry-run  # check only
 ```
 
 The migration is checked by loading it, so a file that translates but does not check is a failure
-rather than a surprise on the next index. The shipped defaults in
+rather than a surprise on the next index.
+
+A JSON file passed to `--models` goes through the same translation, in memory, every time it is
+loaded: `ctadl index`, `ctadl query`, the model check and `ctadl report` run the migration on the
+DSL engine, exactly as they run a `.ctadl` file. Each JSON file draws one warning per run that the
+format is deprecated, and the migration's own warnings are logged with it. A generator that does
+not translate fails the command with the errors below, each naming its generator; the model check
+reports it and checks the rest of the file. Diagnostics about a migrated file name the JSON file
+and the generator index — in provenance, `CTADL0004`, the dead-rule warning and engine errors —
+not a line of a translation the author has never seen. The shipped defaults in
 `ctadl-ascent/src/models/defaults/` are this tool's output, checked in next to the `.jsonl` they
 came from; a test loads both against the same program and requires identical matches.
 

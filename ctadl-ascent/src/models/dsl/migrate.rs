@@ -52,6 +52,9 @@ pub struct MigrationReport {
     pub generators: usize,
     /// Rules written. More than `generators` when a `where` had a disjunction in it.
     pub rules: usize,
+    /// Parallel to the rules written, in file order: the generator each came from. What lets a
+    /// diagnostic about a migrated rule name the generator the user wrote.
+    pub rule_generators: Vec<usize>,
 }
 
 impl MigrationReport {
@@ -249,6 +252,7 @@ fn migrate_generator(
             body.extend(with_subject(disjunct.clone(), relation, subject, &scope));
             write_rule(out, &heads.plain, &body);
             report.rules += 1;
+            report.rule_generators.push(index);
         }
     }
     // A bridge is written as its own rule: side B has a whole match block of its own, and
@@ -264,6 +268,7 @@ fn migrate_generator(
         body.extend(side_b);
         write_rule(out, &bridge.heads, &body);
         report.rules += 1;
+        report.rule_generators.push(index);
     }
     Ok(())
 }

@@ -509,10 +509,12 @@ where
     }
 }
 
-/// Scans every `--models` file for the specs that need no program: bridges, and whether any
+/// Scans JSON model files for the specs that need no program: bridges, and whether any
 /// generator uses `find: "dispatch"`.
 ///
-/// Run once, before the import loop. Errors carry the file they came from.
+/// The JSON matcher's half of bridging, with [`super::matches::observe_import`]. No command
+/// runs it any more — a JSON file's bridges are DSL rules once migrated — and it stays as the
+/// oracle the migration's bridges are checked against. Errors carry the file they came from.
 pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
     let mut specs = ModelFileSpecs::default();
     for path in paths {

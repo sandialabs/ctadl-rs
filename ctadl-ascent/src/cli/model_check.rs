@@ -14,24 +14,24 @@ Two passes are joined into one [`ModelCheck`]:
 
 - **Inventory**, per model file and needing no program at all: what each generator declares
   (`find`, its `model` keys) and what its `in` clause says. This is what makes the report honest
-  about scope -- [`crate::models::json::ModelGeneratorIngest::visit_model_generator`] returns
-  early for a generator whose scope excludes the import, leaving *no* stats entry, which is
-  indistinguishable from "matched nothing" if you only look at the matching pass.
-- **Matching**, per import: the ordinary Stage-1 pass with the per-generator capture turned on.
+  about scope. A JSON file is matched as its DSL migration, where `in` is an ordinary attribute
+  test, so a generator whose scope excludes every import runs and matches nothing --
+  indistinguishable from a dead one if you only look at the matching pass.
+- **Matching**, per import: the DSL engine, over every file, a JSON one migrated first.
 
 # What it deliberately cannot tell you
 
 Each of these is stated once, in the `CTADL0008` notification, rather than left implicit: a
 count that looks like a match but is not is worse than no count.
 
-- **`find: callsites`** -- Stage 1 matches the callee, and the caller for `in_function`. The
-  call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
+- **`find: callsites`** -- Stage 1 counts the callees some call site names, not the sites, so
+  "3 callees" says nothing about how many sites the endpoints land on.
 - **`Argument(*)`** -- expands over an arity computed from actual parameters and call sites
   across every import, which only the fact base has.
 - **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
   contain.
-- **Bridge pair counts.** [`diagnose`] settles unmatched and ambiguous sides without an index;
-  the pair count needs the fact base, so none is reported.
+- **Bridge pair counts.** A bridge that paired no functions is reported; the count of call
+  pairs needs the fact base, so none is.
 - **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
   only meaningful over every import the real project will index.
 */
@@ -41,8 +41,7 @@ use std::path::PathBuf;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
-use crate::models::matches::diagnose;
-use crate::models::spec::{self, BridgeSpec, ProgramScope, Severity};
+use crate::models::spec::{self, ProgramScope};
 use crate::models::{
     self, EndpointStats, ImportScope, MatchedFunctions, ModelCheckError, ProgramMatchIndex,
     ProgramModelMatches, PropagationStats,
@@ -176,8 +175,7 @@ pub fn check_programs(
 ) -> Result<ModelCheckOutcome, Error> {
     let mut outcome = ModelCheckOutcome::default();
     let mut files: Vec<FileState> = Vec::new();
-    let mut bridges: Vec<BridgeSpec> = Vec::new();
-    // The DSL files that parsed, matched by one matcher across every import exactly as
+    // Every file that loaded, matched by one matcher across every import exactly as
     // `cli::index` matches them: finishing per import would report a bridging rule whose
     // components match in two different imports as matching nothing. `dsl_owners[i]` is the
     // position in `files` of `dsl.files[i]`.
@@ -187,38 +185,43 @@ pub fn check_programs(
     // Inventory: program-independent, so it runs once, before any IR is loaded.
     for path in models {
         let mut state = FileState::new(path.clone());
-        if models::is_dsl_path(path) {
-            // A DSL file declares no unevaluated bridge sides, so there is nothing to scan.
-            match models::dsl::DslFile::read(path) {
-                Ok(file) => {
-                    state.take_dsl_inventory(&file);
-                    dsl_owners.push(files.len());
-                    dsl.files.push(file);
+        let loaded = if models::is_dsl_path(path) {
+            models::dsl::DslFile::read(path).map(|file| {
+                state.take_dsl_inventory(&file);
+                (file, None)
+            })
+        } else {
+            // A JSON file is matched as its migration, but inventoried as the JSON: its `in`
+            // clauses are what `CTADL0009` reports, and only the JSON still has them. A
+            // generator that does not migrate is reported and left out, as the JSON loader
+            // left out a malformed one, so it does not cost the rest of the file.
+            let readable = state.take_inventory();
+            match models::dsl::DslFile::read_json_lenient(path) {
+                // Skipped when the inventory could not read the file: the migration fails on
+                // the same thing, and saying it twice is noise.
+                Err(_) if !readable => {
+                    files.push(state);
+                    continue;
                 }
-                Err(e) => state.record_error(render_chain(&e)),
+                loaded => loaded,
             }
-            files.push(state);
-            continue;
-        }
-        let readable = state.take_inventory();
-        // Scanned per file so a malformed bridge names the file it is in. One rejected bridge
-        // costs that file's bridges, not the run's. Skipped when the inventory could not read
-        // the file: the scan would fail on the same thing and say it twice.
-        if readable {
-            match spec::scan_model_files(std::slice::from_ref(path)) {
-                Ok(specs) => bridges.extend(specs.bridges),
-                Err(e) => state.record_error(render_chain(&e)),
+        };
+        match loaded {
+            Ok((file, rejected)) => {
+                if let Some(e) = rejected {
+                    state.record_error(render_chain(&e));
+                }
+                dsl_owners.push(files.len());
+                dsl.files.push(file);
             }
+            Err(e) => state.record_error(render_chain(&e)),
         }
         files.push(state);
     }
 
-    // Matching, per import. The gate is `cli::index`'s: a `find: "dispatch"` JSON generator, or
-    // a DSL rule reading `callsig`.
-    let wants_dispatch = files
-        .iter()
-        .any(|f| !models::is_dsl_path(&f.path) && f.generators.iter().any(|g| g.declares_dispatch))
-        || dsl.uses_callsig();
+    // Matching, per import. The gate is `cli::index`'s: some rule reading `callsig`, which a
+    // migrated `find: "dispatch"` generator does.
+    let wants_dispatch = dsl.uses_callsig();
     let mut dsl_matcher = models::DslMatcher::new(&dsl, models::DslPhase::All);
     let mut matches = ProgramModelMatches::default();
     let mut imports_checked = 0usize;
@@ -253,32 +256,7 @@ pub fn check_programs(
         }
         // The built-in default models are deliberately not loaded: `ctadl query` does not load
         // them either, and this is `ctadl query` reporting on the files it was given.
-        for file in &mut files {
-            if models::is_dsl_path(&file.path) {
-                continue;
-            }
-            let (load, errors) =
-                models::try_check_models(&match_index, &file.path, SAMPLE_CAP, &mut matches);
-            file.absorb(load, errors);
-        }
         dsl_matcher.observe_import(&match_index, &mut matches);
-
-        // Bridge sides, matched exactly as indexing matches them. An evaluator error here is
-        // about the run rather than about one file: the spec it came from is not identified.
-        if let Err(e) = models::matches::observe_import(&match_index, &bridges, &mut matches) {
-            let message = render_chain(&e);
-            if !outcome
-                .check
-                .file_errors
-                .iter()
-                .any(|error| error.message == message)
-            {
-                outcome.check.file_errors.push(ModelFileError {
-                    file: None,
-                    message,
-                });
-            }
-        }
 
         outcome.check.imports.push((
             scope.import.clone().unwrap_or_else(|| scope.describe()),
@@ -305,28 +283,6 @@ pub fn check_programs(
                 ),
             };
             files[owner].absorb(load, errors);
-        }
-    }
-
-    // Bridge verdicts, once, over every import: "unmatched" means not matched anywhere. With no
-    // import at all there is nothing to diagnose, and saying "matched nothing" would be a lie
-    // about a pass that never ran.
-    if imports_checked > 0 {
-        for (i, spec) in bridges.iter().enumerate() {
-            let Some((severity, message)) = diagnose(spec, matches.bridges.get(i)) else {
-                continue;
-            };
-            // `Severity::Ignore` is silence, exactly as it is at index time; see
-            // `codegen::model_matches::classify`.
-            if severity == Severity::Ignore {
-                continue;
-            }
-            outcome.check.bridges.push(BridgeDiagnosis {
-                file: spec.source.clone(),
-                index: spec.index,
-                error: severity == Severity::Error,
-                message,
-            });
         }
     }
 
@@ -374,6 +330,8 @@ struct GeneratorState {
     matched: Option<MatchedFunctions>,
     endpoint_stats: BTreeMap<TaintDirection, EndpointStats>,
     propagation_stats: PropagationStats,
+    /// Bridges the generator's rules made, over every import.
+    bridge_rows: usize,
 }
 
 impl FileState {
@@ -423,6 +381,7 @@ impl FileState {
                 matched: None,
                 endpoint_stats: BTreeMap::new(),
                 propagation_stats: PropagationStats::default(),
+                bridge_rows: 0,
             };
             self.positions.insert(n, self.generators.len());
             self.generators.push(state);
@@ -481,6 +440,7 @@ impl FileState {
                 matched: None,
                 endpoint_stats: BTreeMap::new(),
                 propagation_stats: PropagationStats::default(),
+                bridge_rows: 0,
             };
             self.positions.insert(rule.index, self.generators.len());
             self.generators.push(state);
@@ -494,8 +454,15 @@ impl FileState {
         }
     }
 
-    /// Folds in one import's load of this file.
+    /// Folds in the load of this file, over every import.
     fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<ModelCheckError>) {
+        for file in load.dsl.iter().flat_map(|report| &report.files) {
+            for (label, stats) in file.labels.iter().zip(&file.rules) {
+                if let Some(generator) = self.generator_mut(*label) {
+                    generator.bridge_rows += stats.bridges;
+                }
+            }
+        }
         for error in errors {
             self.record_error(render_chain(&error));
         }
@@ -510,10 +477,13 @@ impl FileState {
         }
         for (index, matched) in &load.matched {
             if let Some(generator) = self.generator_mut(*index) {
-                match &mut generator.matched {
-                    Some(existing) => existing.merge(matched, SAMPLE_CAP),
-                    slot @ None => *slot = Some(matched.clone()),
-                }
+                generator
+                    .matched
+                    .get_or_insert(MatchedFunctions::Some {
+                        total: 0,
+                        names: Default::default(),
+                    })
+                    .merge(matched, SAMPLE_CAP);
             }
         }
         for (index, stats) in &load.propagation_stats {
@@ -539,8 +509,11 @@ impl FileState {
         for generator in self.generators {
             // Re-keyed by file here, and only here: `ModelLoadReport` is keyed by (generator
             // index, direction) alone, which would conflate two model files that number their
-            // generators the same.
-            for (direction, stats) in &generator.endpoint_stats {
+            // generators the same. A generator no import's scope admits has none: the rules
+            // migrated from it ran and matched nothing, which is not the same thing as never
+            // being attempted, and `CTADL0009` says which it was.
+            let attempted = generator.applicable || !matched_against_a_program;
+            for (direction, stats) in generator.endpoint_stats.iter().filter(|_| attempted) {
                 outcome
                     .endpoint_stats
                     .entry((self.path.clone(), generator.index, *direction))
@@ -575,6 +548,18 @@ impl FileState {
                     file: self.path.clone(),
                     index: generator.index,
                     kind: "propagation".to_string(),
+                });
+            }
+            // A bridge that paired nothing, over every import: its two sides may live in two
+            // of them, so this is only a verdict about the imports checked. Which side failed
+            // is not known here; the rule's dead-rule warning at index time says the same.
+            if generator.has_bridge && generator.bridge_rows == 0 {
+                outcome.check.bridges.push(BridgeDiagnosis {
+                    file: self.path.clone(),
+                    index: generator.index,
+                    error: false,
+                    message: "the bridge matched no pair of functions in the checked import(s)"
+                        .to_string(),
                 });
             }
             // A `modes` directive that matched no function. Reported off the match set rather

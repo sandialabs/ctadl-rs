@@ -423,8 +423,18 @@ being approximated or skipped.
 
 A `.json` / `.json5` / `.jsonl` file passed to `--models` is migrated in memory and run through
 the DSL engine, the same as a `.ctadl` file; there is no second matcher behind it. Each such file
-draws a deprecation warning: JSON model files will be removed in a future release, and
-`ctadl migrate-models` converts one to the DSL.
+draws a deprecation warning, once per run: JSON model files will be removed in a future release,
+and `ctadl migrate-models` converts one to the DSL. `DslFile::read` does the migration, so every
+path-based entry point — `ctadl index`, `ctadl query`, the model check, `ctadl report`, the flowy
+check — takes a JSON file the same way. The value-based JSON matcher (`json.rs` and
+`try_load_models_from_values`) remains only as the oracle the migration tests check against.
+
+Two things the JSON path did came across with it. JSON bridges are DSL rules now, paired by
+the engine's components rather than by `scan_model_files` and `matches::observe_import`, and
+the model check reports one that paired nothing rather than which side failed. And `ctadl index`
+matches the source/sink heads of every file, unreported, because a matched endpoint refuses a
+dispatch model — the JSON matcher loaded the whole file at index time, and a `.ctadl` file's
+endpoints did not gate dispatch until this.
 
 A migrated file means what the JSON meant, with one exception: where the JSON matcher had a bug
 or a limitation, the migration takes the DSL's meaning rather than reproducing it.
@@ -519,6 +529,14 @@ like a clean program.
 `ctadl query` with no index (the model-check path) reports DSL rules through the existing
 `CTADL0004` / `CTADL0011` / `CTADL0100` notifications, with a rule index standing in for a
 generator index.
+
+A migrated JSON file is reported in the JSON's terms, not its translation's. The migrator
+records which generator each rule came from, and every surface uses that: provenance is
+`file:generator` as the JSON matcher recorded it, `CTADL0004` and the dead-rule warning count a
+generator once however many disjuncts it became, and an engine error names the generator rather
+than a line of synthetic text. A generator that does not migrate fails `ctadl index` and
+`ctadl query` with the migrator's error, which names it; the model check reports it and checks
+the rest of the file, as it did for a malformed generator before.
 
 
 ### 6. Testing
