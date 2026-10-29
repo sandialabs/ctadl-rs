@@ -352,26 +352,6 @@ fn migration_errors(json: &str) -> Vec<String> {
     }
 }
 
-/// What the JSON loader says about the same generator, rendered, so a test can require the
-/// migration to fail exactly as loading it would.
-fn loader_errors(json: &str) -> Vec<String> {
-    let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
-    let program = ctadl_ir::mir::ProgramInfo::default();
-    let index =
-        crate::models::ProgramMatchIndex::new(&program, crate::models::ImportScope::unknown());
-    let mut out = crate::models::ProgramModelMatches::default();
-    match crate::models::try_load_models_from_values(&index, std::iter::once(Ok(value)), &mut out) {
-        Ok(_) => Vec::new(),
-        Err(crate::error::Error::Context { source, .. }) => match source.downcast_ref() {
-            Some(crate::error::Error::JsonModel(errors)) => {
-                errors.iter().map(ToString::to_string).collect()
-            }
-            _ => panic!("expected JSON model errors, got {source}"),
-        },
-        Err(e) => panic!("expected JSON model errors, got {e}"),
-    }
-}
-
 /// Everything the migrator writes has to load. This is the property that makes the migrator
 /// usable for backward compatibility at all, so every migration test ends here.
 fn migrate_and_load(json: &str) -> String {
@@ -592,22 +572,39 @@ fn empty_class_combinators_fold() {
 }
 
 /// What the JSON loader rejects inside a class predicate fails the migration with the loader's
-/// own error.
+/// own error, as the loader reported it.
 #[test]
 fn a_malformed_class_predicate_is_reported() {
-    for inner in [
-        r#"{"constraint":">","value":1}"#,
-        r#"{"constraint":"signature_match"}"#,
-        r#"{"constraint":"signature_match","name":"La;","parent":"Lb;"}"#,
-        r#"{"constraint":"name"}"#,
-        r#"{"constraint":"not"}"#,
-    ] {
+    let cases: [(&str, &[&str]); 5] = [
+        (
+            r#"{"constraint":">","value":1}"#,
+            &["unexpected constraint type '>' in model generator at index 0"],
+        ),
+        (
+            r#"{"constraint":"signature_match"}"#,
+            &["missing required field 'name' / 'names' in model generator at index 0"],
+        ),
+        (
+            r#"{"constraint":"signature_match","name":"La;","parent":"Lb;"}"#,
+            &[
+                "unexpected field 'parent' in model generator at index 0: not a recognized field of the 'signature_match' constraint; expected one of 'name', 'names'",
+            ],
+        ),
+        (
+            r#"{"constraint":"name"}"#,
+            &["field 'pattern' must be a string in model generator at index 0"],
+        ),
+        (
+            r#"{"constraint":"not"}"#,
+            &["missing required field 'inner' in model generator at index 0"],
+        ),
+    ];
+    for (inner, loader) in cases {
         let json = format!(
             r#"{{"find":"methods","where":[{{"constraint":"parent","inner":{inner}}}],
                 "model":{{"sinks":[{{"kind":"k","port":"Argument(0)"}}]}}}}"#
         );
-        let loader = loader_errors(&json);
-        assert!(!loader.is_empty(), "the JSON loader accepts {inner}");
+        json_oracle::loader_says(&json, loader);
         assert_eq!(migration_errors(&json), loader, "{inner}");
     }
 }
@@ -692,63 +689,179 @@ fn inert_keys_warn_and_change_nothing() {
     check_ok(&text);
 }
 
-/// A generator the JSON loader rejects fails to migrate with the loader's own errors, rather
+/// A generator the JSON loader rejects fails to migrate with the loader's own errors (as the
+/// loader reported them), rather
 /// than a warning and a rule missing the part that was wrong. The old behavior for every one of
 /// these was a warning and a rule matching every function the rest of the `where` allowed.
 #[test]
 fn what_the_json_loader_rejects_does_not_migrate() {
-    let cases = [
+    let cases: [(&str, &[&str]); 29] = [
         // An unknown constraint, even under `not`.
-        r#"{"find":"methods","where":[{"constraint":"not","inner":{"constraint":"bogus"}}],
+        (
+            r#"{"find":"methods","where":[{"constraint":"not","inner":{"constraint":"bogus"}}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"not"}],
+            &["unexpected constraint type 'bogus' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"not"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"name"}],
+            &["missing required field 'inner' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"name"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"name","pattern":"["}],
+            &["missing required field 'pattern' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"name","pattern":"["}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"signature","name":".*x.*"}],
+            &[
+                "invalid regex pattern '[' in model generator at index 0: regex parse error:\n    [\n    ^\nerror: unclosed character class",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"signature","name":".*x.*"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"signature_match"}],
+            &[
+                "unexpected field 'name' in model generator at index 0: not a recognized field of the 'signature' constraint; expected one of 'pattern'",
+                "missing required field 'pattern' in model generator at index 0",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"signature_match"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"x","extends":"Y"}],
+            &[
+                "missing required field 'name' / 'names' / 'parent' / 'parents' / 'qualified-id' / 'qualified-ids' in model generator at index 0",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"signature_match","name":"x","extends":"Y"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"has_code"}],
+            &[
+                "unexpected field 'extends' in model generator at index 0: not a recognized field of the 'signature_match' constraint; expected one of 'name', 'names', 'parent', 'parents', 'qualified-id', 'qualified-ids'",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"has_code"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"uses_field"}],
+            &["missing required field 'value' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"uses_field"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"any_of"}],
+            &["missing required field 'name' / 'names' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"any_of"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"number_parameters",
+            &["field 'inners' must be an array in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"number_parameters",
                                        "inner":{"constraint":">","value":"2"}}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"parent","inner":{"constraint":"name"}}],
+            &[
+                "invalid integer in argument index in model generator at index 0: cannot parse integer from empty string",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"parent","inner":{"constraint":"name"}}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"in_function",
+            &["field 'pattern' must be a string in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"in_function",
                                        "inner":{"constraint":"name","pattern":"x"}}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"lambdas","model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"where":[],"model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","wehre":[{"constraint":"name","pattern":"x"}],
+            &[
+                "unexpected field 'in_function' in model generator at index 0: 'in_function' is only supported with find: callsites",
+            ],
+        ),
+        (
+            r#"{"find":"lambdas","model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+            &["unexpected constraint type 'lambdas' in model generator at index 0"],
+        ),
+        (
+            r#"{"where":[],"model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+            &["missing required field 'find' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","wehre":[{"constraint":"name","pattern":"x"}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","where":{"constraint":"name","pattern":"x"},
+            &[
+                "unexpected field 'wehre' in model generator at index 0: not a recognized field of the model generator; expected one of 'find', 'where', 'model', 'in', 'on-unmatched'",
+            ],
+        ),
+        (
+            r#"{"find":"methods","where":{"constraint":"name","pattern":"x"},
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","model":{"sinks":[{"kind":"k","port":"Argument(x)"}]}}"#,
-        r#"{"find":"methods","model":{"sinks":[{"kind":"k"}]}}"#,
-        r#"{"find":"methods","model":{"sinks":[{"port":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Return","wildcard":false}]}}"#,
-        r#"{"find":"methods","model":{"propagation":[{"input":"Argument(0)"}]}}"#,
-        r#"{"find":"methods","model":{"propagations":[]}}"#,
-        r#"{"find":"methods","model":{"access_paths":[7]}}"#,
-        r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
-        r#"{"find":"callsites","model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}"#,
-        r#"{"find":"callsites","model":{"sinks":[{"kind":"k","port":"Variable(x)"}]}}"#,
-        r#"{"find":"dispatch","model":{}}"#,
-        r#"{"find":"dispatch","model":{"resolve":"cha"}}"#,
+            &["field 'where' must be an array in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"sinks":[{"kind":"k","port":"Argument(x)"}]}}"#,
+            &["invalid argument format 'Argument(x)' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"sinks":[{"kind":"k"}]}}"#,
+            &["missing required field 'port' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"sinks":[{"port":"Argument(0)"}]}}"#,
+            &["missing required field 'kind' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Return","wildcard":false}]}}"#,
+            &[
+                "unexpected field 'wildcard' in model generator at index 0: 'wildcard' is only valid on sink ports",
+            ],
+        ),
+        (
+            r#"{"find":"methods","model":{"propagation":[{"input":"Argument(0)"}]}}"#,
+            &["missing required field 'output' in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"propagations":[]}}"#,
+            &[
+                "unexpected field 'propagations' in model generator at index 0: not a recognized field of the model; expected one of 'sources', 'sinks', 'taint', 'propagation', 'modes', 'forward_self', 'bridge', 'access_paths'",
+            ],
+        ),
+        (
+            r#"{"find":"methods","model":{"access_paths":[7]}}"#,
+            &["field 'access_paths' must be a string in model generator at index 0"],
+        ),
+        (
+            r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
+            &[
+                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined value is 'skip-analysis'",
+            ],
+        ),
+        (
+            r#"{"find":"callsites","model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}"#,
+            &[
+                "unexpected field 'propagation' in model generator at index 0: 'propagation' is not supported with find: callsites",
+            ],
+        ),
+        (
+            r#"{"find":"callsites","model":{"sinks":[{"kind":"k","port":"Variable(x)"}]}}"#,
+            &[
+                "unexpected field 'port' in model generator at index 0: 'Variable(...)' is not supported with find: callsites",
+            ],
+        ),
+        (
+            r#"{"find":"dispatch","model":{}}"#,
+            &[
+                "missing required field 'propagation' / 'resolve' / 'closure_shaped' in model generator at index 0",
+            ],
+        ),
+        (
+            r#"{"find":"dispatch","model":{"resolve":"cha"}}"#,
+            &[
+                "unexpected field 'resolve' in model generator at index 0: unknown value 'cha'; the defined value is 'inline'",
+            ],
+        ),
     ];
-    for json in cases {
-        let loader = loader_errors(json);
-        assert!(!loader.is_empty(), "the JSON loader accepts {json}");
+    for (json, loader) in cases {
+        json_oracle::loader_says(json, loader);
         assert_eq!(migration_errors(json), loader, "{json}");
     }
 }
@@ -822,11 +935,10 @@ fn what_the_dsl_cannot_say_does_not_migrate() {
         ),
     ];
     for (json, what) in cases {
+        // The JSON loader accepts each of these; a bridge it scans before loading, and the scan
+        // is what rejects it.
         if !json.contains("bridge") {
-            assert!(
-                loader_errors(&json).is_empty(),
-                "the JSON loader rejects {json}"
-            );
+            json_oracle::loader_says(&json, &[]);
         }
         let errors = migration_errors(&json);
         assert_eq!(errors.len(), 1, "{json}: {errors:?}");
@@ -989,46 +1101,117 @@ fn run_migrated(
 /// migrate wider than the original.
 #[test]
 fn constructs_that_used_to_widen_match_what_the_json_matched() {
-    use crate::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
-    use std::collections::BTreeSet;
+    use crate::models::{ImportScope, ProgramMatchIndex};
 
     let program = native_program(&["a", "b", "c"]);
     let index = ProgramMatchIndex::new(&program, ImportScope::unknown());
-    let summarized = |m: &ProgramModelMatches| -> BTreeSet<String> {
-        m.propagations
-            .iter()
-            .map(|p| p.function.to_string())
-            .collect()
-    };
-
-    for where_ in [
-        r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
-        r#"[{"constraint":"signature_match","name":"a","qualified-ids":[1]}]"#,
-        r#"[{"constraint":"uses_field","names":[]}]"#,
-        r#"[{"constraint":"not","inner":{"constraint":"number_parameters",
+    // What the JSON matcher summarized for each.
+    let cases: [(&str, &[&str]); 6] = [
+        (
+            r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
+            &[],
+        ),
+        (
+            r#"[{"constraint":"signature_match","name":"a","qualified-ids":[1]}]"#,
+            &[],
+        ),
+        (r#"[{"constraint":"uses_field","names":[]}]"#, &[]),
+        (
+            r#"[{"constraint":"not","inner":{"constraint":"number_parameters",
              "inner":{"constraint":"all_of","inners":[]}}}]"#,
-        r#"[{"constraint":"not","inner":{"constraint":"any_of","inners":[]}}]"#,
-        r#"[{"constraint":"number_parameters","inner":{"constraint":"any_of","inners":[
+            &[],
+        ),
+        (
+            r#"[{"constraint":"not","inner":{"constraint":"any_of","inners":[]}}]"#,
+            &["a", "b", "c"],
+        ),
+        (
+            r#"[{"constraint":"number_parameters","inner":{"constraint":"any_of","inners":[
              {"constraint":"all_of","inners":[]},{"constraint":"<","value":0}]}}]"#,
-    ] {
+            &["a", "b", "c"],
+        ),
+    ];
+    for (where_, summarized) in cases {
         let json: serde_json::Value = serde_json::from_str(&format!(
             r#"{{"find":"methods","where":{where_},
                 "model":{{"propagation":[{{"input":"Argument(0)","output":"Return"}}]}}}}"#
         ))
         .expect("valid json");
-        let mut from_json = ProgramModelMatches::default();
+        let summarized: std::collections::BTreeSet<String> =
+            summarized.iter().map(|f| f.to_string()).collect();
+        json_oracle::summarizes(&json, &index, &summarized);
+        let (text, from_dsl) = run_migrated(&json, &index);
+        assert_eq!(
+            summarized_functions(&from_dsl),
+            summarized,
+            "{where_}:\n{text}"
+        );
+    }
+}
+
+/// The functions a load gave a propagation summary.
+fn summarized_functions(
+    m: &crate::models::ProgramModelMatches,
+) -> std::collections::BTreeSet<String> {
+    m.propagations
+        .iter()
+        .map(|p| p.function.to_string())
+        .collect()
+}
+
+/// Everything in this file that runs the JSON matcher (`models/json.rs`).
+///
+/// The tests above write out what the JSON loader said or matched; while it exists, this
+/// module confirms each of those against it. When it is removed, this module and the calls into
+/// it are deleted, and nothing else changes.
+mod json_oracle {
+    /// Requires the JSON loader to reject `json` with exactly `expected` (to accept it, for an
+    /// empty list).
+    pub(super) fn loader_says(json: &str, expected: &[&str]) {
+        assert_eq!(loader_errors(json), expected, "the JSON loader on {json}");
+    }
+
+    /// Requires the JSON matcher to give exactly `expected` a propagation summary for `json`.
+    pub(super) fn summarizes(
+        json: &serde_json::Value,
+        index: &crate::models::ProgramMatchIndex<'_>,
+        expected: &std::collections::BTreeSet<String>,
+    ) {
+        let mut from_json = crate::models::ProgramModelMatches::default();
         crate::models::try_load_models_from_values(
-            &index,
+            index,
             std::iter::once(Ok(json.clone())),
             &mut from_json,
         )
-        .unwrap_or_else(|e| panic!("{where_}: {e}"));
-        let (text, from_dsl) = run_migrated(&json, &index);
+        .unwrap_or_else(|e| panic!("{json}: {e}"));
         assert_eq!(
-            summarized(&from_json),
-            summarized(&from_dsl),
-            "{where_}:\n{text}"
+            super::summarized_functions(&from_json),
+            *expected,
+            "the JSON matcher on {json}"
         );
+    }
+
+    /// The errors the JSON loader rejects a generator with, rendered; empty if it accepts it.
+    fn loader_errors(json: &str) -> Vec<String> {
+        let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
+        let program = ctadl_ir::mir::ProgramInfo::default();
+        let index =
+            crate::models::ProgramMatchIndex::new(&program, crate::models::ImportScope::unknown());
+        let mut out = crate::models::ProgramModelMatches::default();
+        match crate::models::try_load_models_from_values(
+            &index,
+            std::iter::once(Ok(value)),
+            &mut out,
+        ) {
+            Ok(_) => Vec::new(),
+            Err(crate::error::Error::Context { source, .. }) => match source.downcast_ref() {
+                Some(crate::error::Error::JsonModel(errors)) => {
+                    errors.iter().map(ToString::to_string).collect()
+                }
+                _ => panic!("expected JSON model errors, got {source}"),
+            },
+            Err(e) => panic!("expected JSON model errors, got {e}"),
+        }
     }
 }
 
