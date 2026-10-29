@@ -151,14 +151,21 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
             INDEX_CHECK.to_string(),
             to_outcome(check_manifest_and_intents(work, &state, &store)),
         ),
-        (MERGED_CHECK.to_string(), to_outcome(check_merged_classes(&log))),
+        (
+            MERGED_CHECK.to_string(),
+            to_outcome(check_merged_classes(&log)),
+        ),
     ])
 }
 
 /// Like [`import`], with the log at `info` returned, for [`check_merged_classes`].
 fn import_logged(work: &Path, state: &Path, apk: &Path) -> Result<String> {
     let apk = apk.to_string_lossy();
-    let mut cmd = command(work, state, &["import", "-l", "apk", "--name", IMPORT, &apk])?;
+    let mut cmd = command(
+        work,
+        state,
+        &["import", "-l", "apk", "--name", IMPORT, &apk],
+    )?;
     cmd.env("RUST_LOG", "info");
     let out = cmd.output().context("running ctadl import")?;
     let log = format!(
@@ -1034,17 +1041,17 @@ fn modified(path: &Path) -> Result<SystemTime> {
 mod tests {
     use super::*;
 
-    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] positionally, so a check added
-    /// to one and not the other would silently drop a result or mislabel one. The count is what a
-    /// compiler cannot catch.
+    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] and [`MERGED_CHECK`]
+    /// positionally, so a check added to one and not the other would silently drop a result or
+    /// mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 7, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 8, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
         assert_eq!(
-            CHECKS.last(),
-            Some(&INDEX_CHECK),
-            "run_index_check's check is last"
+            CHECKS[CHECKS.len() - 2..],
+            [INDEX_CHECK, MERGED_CHECK],
+            "run_index_check's checks are last"
         );
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),
