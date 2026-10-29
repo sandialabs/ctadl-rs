@@ -7,7 +7,10 @@ the memory budget (100x the imported IR), and before any fix they did not finish
 
 This branch is off `main` (merged up to `7c98b73e`). It has S3 (stack-slot promotion, `window:8`
 by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`); S5's
-design and first measurements are under S5 below. `improve-native-handling` has the earlier record:
+design and first measurements are under S5 below. It also has S29's frame updates (steps 1, 2 and
+5) and a pcode frontend fix found through them: taking a frame address no longer writes the
+frame. That fix alone brings `ntfs-3g` from 30x over budget to budget and cuts `androidudpbus`'s
+peak by a quarter at the default (S29). `improve-native-handling` has the earlier record:
 `things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
@@ -16,8 +19,11 @@ design and first measurements are under S5 below. `improve-native-handling` has 
   suite fails on a lost flow instead of skipping on Darwin).
 - **S5** is on this branch. `ctadl index --mem2reg <policy>` (or `CTADL_MEM2REG`) picks the
   policy: `window:N`, `exact`, `above`, `full[:N]` or `off`.
-- **S29 steps 1 and 2** are on this branch: pcode writes the frame as `Update`, and
-  `ctadl index --frame store` (the default; `CTADL_FRAME`) coarsens it back to `Store`. See S29.
+- **S29 steps 1, 2 and 5** are on this branch: pcode writes the frame as `Update`,
+  `ctadl index --frame store` (the default; `CTADL_FRAME`) coarsens it back to `Store`, and
+  under `--frame update` an update overwrites the slot it writes. See S29.
+- **The PTRSUB fix** (`6b0ab678`): the pcode frontend no longer lowers taking a frame address
+  as a write into the frame. It changes the default IR; see S29.
 - **Optional, for native apps that also link libc++abi's demangler** (P4, not P1): `bb9cc766`
   "Model __cxa_demangle and skip the helpers only it reaches" (S6).
 
@@ -92,7 +98,20 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
 
 ## Current state
 
-The table above is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
+**Since the PTRSUB fix** (S29, "Taking a frame address no longer writes the frame"), the
+default (`--frame store`, `window:8`) is, same settings as the table below:
+
+| App | `locals` | Fixpoint | Peak | Against budget | Before the fix |
+|---|---|---|---|---|---|
+| `uclited` | 40.4 M | 10.1 s | 1.24 GiB | 6.7x over | 41.4 M, 1.21 GiB |
+| `ntfs-3g` | 5.0 M | 2.8 s | 0.50 GiB | **at budget (1.0x)** | 283.8 M, 14.93 GiB |
+| `glxy` | 85.0 M | 36 s | 3.79 GiB | 2.7x over | 100.4 M, 4.10 GiB |
+| `androidudpbus` | 289.6 M | 93 s | 9.88 GiB | 3.8x over | 337.9 M, 13.31 GiB |
+
+The rest of this section, and the firmware sections after it, are from before the fix. `exact`,
+`full` and `full:0` have not been re-run with it, nor have the other binaries.
+
+The table above (Measurements) is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
 with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`. The budget is 100x
 the imported IR, as in the table above (`uclited` 2.0 MB, `androidudpbus` 28.2 MB, `glxy` 15.1 MB):
 
@@ -125,19 +144,23 @@ instead of 27), `uclited` 3% and `glxy` 1%. It also names many more functions in
 `notifications.log` (496 in `androidudpbus`, 103 in `uclited`, 34 in `glxy`), so `full`'s threshold
 keeps most of the gain with far fewer functions treated unsoundly.
 
-What is left of P1:
+What is left of P1 (before the fix, except where it says):
 
-- **`uclited`:** `inflate` still holds 98% under `full`. Its stack is done; causes 2 and 3 of the
+- **`ntfs-3g`:** at budget under the default since the fix, so it is no longer a P1 sample.
+- **`uclited`:** the fix hardly moves it. `inflate` still holds 98% under `full`. Its stack is done; causes 2 and 3 of the
   Analysis below (the loop's SCC, the offsets) are what remain.
 - **`glxy`:** promoting `FUN_0010b408` fully cuts only 16%, so its rows are not from the stack.
-  P6 is the suspect.
+  P6 is the suspect. The fix cuts its default 15% (100.4 M to 85.0 M).
 - **`androidudpbus`:** the hub `FUN_00144f04` drops from 243 M rows to 0.2 M. The largest function
   is now `FUN_00156cb8` (11 M rows), below the 1,000-access threshold, so it still runs
   `window:8`. Promoting every function fully (`full:0`) cuts the app a further 25%; it is already
-  under budget without that.
+  under budget without that. The fix takes its default from 5.1x to 3.8x over budget.
 - **The other apps in the table above** have not been run with `full`.
 
 ### Other firmware binaries
+
+Measured before the PTRSUB fix (S29), and not re-run since; it took `ntfs-3g` from 30x over
+budget to budget, so these may move too.
 
 Over-budget binaries from the same runner (How to reproduce), run the same way as `uclited`: the
 sweep's model, a memguard cap (16 GiB for `chat` and `nginx`, 24 GiB for the rest), peaks from
@@ -204,9 +227,10 @@ each indexed under `window:8` and `full` for 30 s, six at a time, against `uclit
 | Linksys MX5300 `bin/ntfslabel` (ARM, dynamic) | 6.0 MB | `window:8` (default) | 28.5 M | 13.7 s | 1.68 GiB | 3.0x over |
 | | | `full` | 15.0 M | 6.7 s | 1.05 GiB | 1.9x over |
 
-- **`ntfs-3g` is the best new sample:** the largest stack effect in absolute terms (85 M rows,
-  4.8 GiB, 131 s) and still 20x over budget under `full`. `firmware-sweep` benchmark
-  `46ad36214ff2f30b`. Its hub is `FUN_0001f97c` (below).
+- **`ntfs-3g` looked like the best new sample:** the largest stack effect in absolute terms (85 M
+  rows, 4.8 GiB, 131 s) and still 20x over budget under `full`. `firmware-sweep` benchmark
+  `46ad36214ff2f30b`. Its hub is `FUN_0001f97c` (below). Since the PTRSUB fix it is at budget
+  under the default: most of what is described here was that artifact.
 - **The Linksys ntfs-3g tools share the shape on a smaller scale:** `ntfslabel` halves under `full`
   (11 functions promoted fully), as do EA6350v4 `ntfsdebug` (21.8 M to 11.5 M) and EA6900v2
   `ntfslabel` (19.6 M to 11.1 M) in the 30 s screen.
@@ -725,14 +749,19 @@ that writes through it writes into `st_3`, which the later copies carry forward.
 What it would and would not do:
 
 - **Precision and soundness, not memory, are what it buys.** It replaces `window:8`'s guess and
-  `full`'s lost flows. It does not fix the hubs: `inflate` and `ntfs-3g`'s `FUN_0001f97c` hold over
-  90% of `locals` with every slot promoted, so what is left there is not the stack.
-- **The cost, before steps 3 and 5, is measured** (S29 above): with every update kept, `locals`
-  is 0.8-1.1x `off`'s and 0.9-5.1x today's default, and `androidudpbus` does not finish in 30
-  minutes and 92 GiB. Step 2 is the valve, and it stays on (coarsen all) until the other steps beat today.
-- **Next:** the overwrite rule (step 5), then mem2reg on `Update` (step 3). Compare flows on the
-  regression suite (`pcode`, `jni`) and `locals` and peak on `uclited`, `ntfs-3g`, `glxy` and
-  `androidudpbus` against the `--frame update` rows above and against `window:8` and `full`.
+  `full`'s lost flows. It does not fix `inflate`, which holds 98% of `uclited`'s `locals` with
+  every slot promoted, so what is left there is not the stack.
+- **It already paid once, indirectly.** The overwrite rule exposed the frontend writing taken
+  frame addresses into the frame, and fixing that brought `ntfs-3g` to budget at the default (S29
+  above).
+- **The cost is measured** (S29 above). With steps 1, 2 and 5 and the PTRSUB fix, `update` beats
+  `off` (its fair comparison while mem2reg skips its functions) everywhere but `uclited`, and ties
+  today's default only on `glxy`; on `androidudpbus` it is 2.3x the default's peak. The cost is
+  the versions × paths of the frame. Step 2 is the valve, and it stays on (coarsen all) until
+  `update` beats today.
+- **Next:** mem2reg on `Update` (step 3). Compare flows on the regression suite (`pcode`, `jni`),
+  under both `--frame` settings, and `locals` and peak on `uclited`, `ntfs-3g`, `glxy` and
+  `androidudpbus` against the `--frame update` rows in S29 and against `window:8` and `full`.
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
@@ -753,8 +782,9 @@ packagings) must keep every flow: `cargo xtask regression --frontend pcode,jni`.
 that may lose flows, `--mem2reg full:0` runs every case under it, and reports a lost flow as an
 XFAIL when an index notification names a function, and as a FAIL when none does. Watch for silent losses: `exact` lost `example.c`'s only flow while the suite still
 passed, because on `main` that case is a SKIP on Darwin ("no tainted instructions on Darwin");
-S28 makes it a FAIL. Then the apps above: peak against budget, `locals` rows, and the share held by the
-largest function.
+S28 makes it a FAIL. For a change to frame updates, run the suite again with `CTADL_FRAME=update`:
+the default coarsens every update, so it cannot see one. Then the apps above: peak against
+budget, `locals` rows, and the share held by the largest function.
 
 ## Samples
 
