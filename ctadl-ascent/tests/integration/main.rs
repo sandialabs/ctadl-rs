@@ -14,6 +14,7 @@ mod flowy_tests;
 mod jni_summary;
 mod json_error_handling;
 mod lua_model_externals;
+mod migration_equivalence;
 mod model_check;
 mod models_loading;
 mod multi_import_sarif;
