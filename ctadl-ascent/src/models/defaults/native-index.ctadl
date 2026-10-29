@@ -90,9 +90,6 @@ propagation(F::arg(0).deref <- F::arg(1).deref) :-
 propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
   fun(F, name in {"mbsrtowcs", "wcsrtombs"});
 
-propagation(F::return.deref <- F::arg(_)) :-
-  fun(F, name in {"malloc", "calloc", "aligned_alloc", "valloc", "memalign", "posix_memalign"});
-
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"realloc", "reallocarray", "reallocf"});
 

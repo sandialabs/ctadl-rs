@@ -45,6 +45,13 @@ pub enum JsonModelError {
         field_name: String,
         message: String,
     },
+    /// A generator the JSON loader accepts but `ctadl migrate-models` cannot carry into the
+    /// model DSL without changing what it means. `what` names the construct.
+    Untranslatable {
+        index: usize,
+        what: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for JsonModelError {
@@ -117,6 +124,16 @@ impl std::fmt::Display for JsonModelError {
                 write!(
                     f,
                     "unexpected field '{field_name}' in model generator at index {index}: {message}"
+                )
+            }
+            JsonModelError::Untranslatable {
+                index,
+                what,
+                message,
+            } => {
+                write!(
+                    f,
+                    "cannot migrate {what} in model generator at index {index}: {message}"
                 )
             }
         }

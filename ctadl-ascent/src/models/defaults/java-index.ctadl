@@ -252,12 +252,6 @@ propagation(F::return <- F::arg(_)) :-
 propagation(F::return <- F::arg(0)) :-
   fun(F, name = "name", parent = "Ljava/lang/Enum;");
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"getStringExtra", "getData", "getAction"}, parent = "Landroid/content/Intent;");
-
-propagation(F::arg(0) <- F::arg(2)) :-
-  fun(F, name = "putExtra", parent = "Landroid/content/Intent;");
-
 propagation(F::return <- F::arg(_)) :-
   fun(F, name in {"parse", "toString", "getQueryParameter", "buildUpon", "build"}, parent in {"Landroid/net/Uri;", "Landroid/net/Uri$Builder;"});
 

@@ -551,7 +551,7 @@ pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
 
 /// Parses one generator's `model.bridge`. Returns `None` when anything was rejected; the reason
 /// is in `errors`.
-fn parse_bridge(
+pub(crate) fn parse_bridge(
     source: &FsPath,
     index: usize,
     generator: &serde_json::Value,

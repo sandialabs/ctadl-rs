@@ -12,15 +12,24 @@ A `where` is a conjunction of constraints, and a constraint may be an `any_of` o
 is no disjunction *inside* a Datalog body, so the constraint tree is pushed into negation normal
 form and then into disjunctive normal form, and **each disjunct becomes one rule** with the same
 heads. That is how Datalog spells "or", and it means the translation is exact rather than
-approximate: `any_of` was already a union over the matched set.
+approximate: `any_of` was already a union over the matched set. The empty disjunction is
+"false": a generator whose `where` can never match writes no rule, as it derives nothing.
 
 # What does not translate
 
-`taint`, `modes` and `forward_self` are schema-only in the JSON loader — a model using them
-parses and has no effect. They are reported rather than translated, because translating a
-construct into something that *looks* like it works would be worse than saying it does nothing.
-`Variable(...)` ports and a bridge with no `arguments` map are reported for the opposite reason:
-they mean something the DSL does not (yet) spell.
+A migration either says exactly what the JSON loader would have done or fails; it never writes
+a rule that matches more or less. Three cases:
+
+- **The loader rejects the generator.** The migration fails with the loader's own error, because
+  the loader itself is run over each generator first (see [`json_loader_errors`]).
+- **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, a
+  `modes` list without `skip-analysis` does nothing, and `on-unmatched` / `on-ambiguous` other
+  than `"error"` change only what is logged. These are warnings.
+- **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, the
+  `skip-analysis` mode, a bridge with no `arguments` map (or an empty one), a scoped dispatch
+  generator, `resolve: "inline"` with a `propagation` list, an `"error"` severity, and an
+  `in_function` under `any_of` / `not`. Each is a [`JsonModelError::Untranslatable`] that says
+  why.
 */
 
 use std::fmt::Write as _;
@@ -28,11 +37,16 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use ctadl_ir::mir::PathSegment;
+use ctadl_ir::mir::call::VirtualMethodTable;
 
-/// What a migration could not carry across, and what it produced.
+use crate::error::{Error, JsonModelError, JsonModelErrors};
+use crate::models::spec;
+
+/// What a migration produced, and what it left out because the JSON loader ignores it too.
 #[derive(Clone, Debug, Default)]
 pub struct MigrationReport {
-    /// One line per construct that was dropped or approximated, in generator order.
+    /// One line per construct that was not translated because it has no effect, in generator
+    /// order. Nothing that changes what a generator matches or derives is ever only a warning.
     pub warnings: Vec<String>,
     /// Generators read.
     pub generators: usize,
@@ -47,12 +61,17 @@ impl MigrationReport {
 }
 
 /// Translates a whole `model_generators` list into DSL source.
+///
+/// Fails with every generator's errors if any generator cannot be translated exactly: either
+/// the JSON loader rejects it, and the error is the one the loader raises, or it means something
+/// the DSL cannot say, which is a [`JsonModelError::Untranslatable`].
 pub fn migrate_generators<'a>(
     generators: impl IntoIterator<Item = &'a Value>,
     header: Option<&str>,
-) -> (String, MigrationReport) {
+) -> Result<(String, MigrationReport), Error> {
     let mut out = String::new();
     let mut report = MigrationReport::default();
+    let mut errors = JsonModelErrors::default();
     if let Some(header) = header {
         for line in header.lines() {
             let _ = writeln!(out, "// {line}");
@@ -61,20 +80,97 @@ pub fn migrate_generators<'a>(
     }
     for (i, value) in generators.into_iter().enumerate() {
         report.generators += 1;
+        let loader_errors = json_loader_errors(i, value);
+        if !loader_errors.is_empty() {
+            errors.extend(loader_errors);
+            continue;
+        }
         let before = out.len();
-        migrate_generator(i, value, &mut out, &mut report);
+        if let Err(e) = migrate_generator(i, value, &mut out, &mut report) {
+            errors.push(e);
+            continue;
+        }
         if out.len() == before {
+            // Every way of losing a head is an error, so what reaches here derives nothing in
+            // the JSON loader either: no `model`, empty lists, only inert keys.
             let _ = writeln!(out, "// generator {i}: produced no rule");
         }
         out.push('\n');
     }
-    (out, report)
+    if !errors.is_empty() {
+        return Err(Error::JsonModel(errors));
+    }
+    Ok((out, report))
+}
+
+/// What the JSON loader reports against generator `index`, in the order it reports it.
+///
+/// The loader is run rather than re-implemented: its checks are interleaved with matching, and a
+/// copy of them would be a second set of rules to keep in step. A bridge is scanned first, as
+/// [`spec::scan_model_files`] does before any import is loaded. A clean scan is followed by the
+/// ordinary match pass, plus side B's `where`, which the loader evaluates once a bridge's scope
+/// admits an import.
+///
+/// The program is empty, so nothing matches and no per-function check fires. Its method table
+/// is an empty Java one rather than none, so that `parent` and `extends` do not log that the
+/// frontend has no class hierarchy. The import is made up from the generator's own `in`, so the
+/// scope never hides an error. That is stricter than the loader, which skips the rest of a
+/// generator its scope excludes, but a migrated file is not tied to one import.
+fn json_loader_errors(index: usize, generator: &Value) -> Vec<JsonModelError> {
+    use crate::models::json::{ModelGeneratorIngest, ModelGeneratorVisitor};
+    use crate::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
+
+    let mut errors = Vec::new();
+    let bridge = match generator.pointer("/model/bridge") {
+        Some(bridge) => {
+            let path = std::path::Path::new("<migrate>");
+            let spec = spec::parse_bridge(path, index, generator, bridge, &mut errors);
+            if !errors.is_empty() {
+                return errors;
+            }
+            spec
+        }
+        None => None,
+    };
+    let scope = spec::ProgramScope::parse(generator.get("in"), index, &mut errors);
+    if !errors.is_empty() {
+        return errors;
+    }
+    let program = ctadl_ir::mir::ProgramInfo {
+        vmt: VirtualMethodTable::Java {
+            methods: Vec::new(),
+            hierarchy: Default::default(),
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
+            natives: Vec::new(),
+        },
+        ..Default::default()
+    };
+    let import = ImportScope {
+        language: scope.languages.first().copied(),
+        import: scope.import,
+    };
+    let match_index = ProgramMatchIndex::new(&program, import);
+    let mut out = ProgramModelMatches::default();
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+    ingest.visit_model_generator(index, generator);
+    if let Some(bridge) = bridge {
+        ingest.match_where(index, &bridge.to.where_);
+    }
+    ingest.drain_errors()
+}
+
+/// A construct the JSON loader accepts and the DSL cannot express.
+fn untranslatable(index: usize, what: &str, message: impl Into<String>) -> JsonModelError {
+    JsonModelError::Untranslatable {
+        index,
+        what: what.to_string(),
+        message: message.into(),
+    }
 }
 
 /// Reads a `.json` / `.json5` / `.jsonl` model file and returns the DSL source for it.
-pub fn migrate_file(
-    path: &std::path::Path,
-) -> Result<(String, MigrationReport), crate::error::Error> {
+pub fn migrate_file(path: &std::path::Path) -> Result<(String, MigrationReport), Error> {
     use crate::error::ErrorContext;
     let generators: Vec<Value> = match path.extension().and_then(|e| e.to_str()) {
         Some("jsonl") => {
@@ -106,7 +202,7 @@ pub fn migrate_file(
             match root.get("model_generators").and_then(|v| v.as_array()) {
                 Some(arr) => arr.clone(),
                 None => {
-                    return Err(crate::error::Error::from(std::io::Error::new(
+                    return Err(Error::from(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "missing or invalid 'model_generators' array",
                     )));
@@ -118,7 +214,7 @@ pub fn migrate_file(
         "Migrated from {} by `ctadl migrate-models`. Edit this file, not the original.",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
     );
-    Ok(migrate_generators(generators.iter(), Some(&header)))
+    migrate_generators(generators.iter(), Some(&header))
 }
 
 // ---------------------------------------------------------------------------
@@ -142,18 +238,16 @@ fn migrate_generator(
     generator: &Value,
     out: &mut String,
     report: &mut MigrationReport,
-) {
-    let find = generator
-        .get("find")
-        .and_then(|v| v.as_str())
-        .unwrap_or("methods");
-    let (callsites, dispatch) = match find {
-        "methods" => (false, false),
-        "callsites" => (true, false),
-        "dispatch" => (false, true),
+) -> Result<(), JsonModelError> {
+    let (callsites, dispatch) = match generator.get("find").and_then(|v| v.as_str()) {
+        Some("methods") => (false, false),
+        Some("callsites") => (true, false),
+        Some("dispatch") => (false, true),
         other => {
-            report.warn(index, format!("'find: {other}' is not supported; skipped"));
-            return;
+            return Err(JsonModelError::UnexpectedConstraint {
+                index,
+                constraint_type: other.unwrap_or("<missing>").to_string(),
+            });
         }
     };
     // `fun` for a method or call-site generator, `callsig` for a dispatch one. The subject is
@@ -166,12 +260,21 @@ fn migrate_generator(
 
     let scope = scope_attrs(generator.get("in"));
     if dispatch && !scope.is_empty() {
-        // A signature key is composed from a call site, not read out of an import's method
-        // table, so it carries no `language` or `import` of its own to narrow on.
+        // The loader skips the whole generator for an import its scope excludes. A signature
+        // key is composed from a call site rather than read out of an import's method table, so
+        // it has no `language` or `import` to narrow on, and a second atom naming the import's
+        // language would be a component of its own, joined across *every* import.
+        return Err(untranslatable(
+            index,
+            "'in'",
+            "a 'callsig' key carries no language or import, so a scoped dispatch generator has \
+             no DSL counterpart; drop the scope, or narrow on 'parent' instead",
+        ));
+    }
+    if generator.get("on-unmatched").is_some() && generator.pointer("/model/bridge").is_none() {
         report.warn(
             index,
-            "'in' has no counterpart on a 'callsig' key, which carries no language or import; \
-             not translated",
+            "'on-unmatched' is read only for a bridge, so it has no effect here either",
         );
     }
     let mut fresh = Fresh::default();
@@ -183,60 +286,104 @@ fn migrate_generator(
         ));
     }
 
-    let where_ = generator.get("where").and_then(|v| v.as_array());
-    let expr = match where_ {
-        Some(items) => Expr::And(items.iter().map(Expr::Prim).collect()),
-        None => Expr::And(Vec::new()),
-    };
+    let expr = where_expr(index, generator.get("where"), "where")?;
     let ctx = Ctx {
         index,
         subject,
         callsites,
         relation,
+        nested: false,
     };
-    let disjuncts = compile(&expr, false, &ctx, &mut fresh, report);
+    let disjuncts = compile(&expr, false, &ctx, &mut fresh)?;
 
     let anchor = if callsites { SITE } else { subject };
     let heads = if dispatch {
-        migrate_dispatch_model(index, generator, anchor, report)
+        Heads {
+            plain: migrate_dispatch_model(index, generator, anchor)?,
+            bridge: None,
+        }
     } else {
-        migrate_model(index, generator, anchor, &mut fresh, report)
+        migrate_model(index, generator, anchor, &mut fresh, report)?
     };
-    if heads.is_empty() {
-        return;
+    if heads.plain.is_empty() && heads.bridge.is_none() {
+        return Ok(());
     }
+    if disjuncts.is_empty() {
+        let _ = writeln!(out, "// generator {index}: its 'where' can never match");
+        return Ok(());
+    }
+    let subject_scope: &[String] = if dispatch { &[] } else { &scope };
 
+    if !heads.plain.is_empty() {
+        for disjunct in &disjuncts {
+            let mut body = base.clone();
+            body.extend(with_subject(
+                disjunct.clone(),
+                relation,
+                subject,
+                subject_scope,
+            ));
+            write_rule(out, &heads.plain, &body);
+            report.rules += 1;
+        }
+    }
     // A bridge is written as its own rule: side B has a whole match block of its own, and
-    // folding it into the shared body would make every other head depend on it.
-    for disjunct in &disjuncts {
-        let mut body = base.clone();
-        let subject_scope: &[String] = if dispatch { &[] } else { &scope };
+    // folding it into the shared body would make every other head depend on it. It is *one*
+    // rule, with any disjunction kept inside it: the engine makes one bridge per (rule, from,
+    // to), so a rule per port would split the port map across several bridges, and a rule per
+    // disjunct would bridge a pair twice when it satisfied two of them.
+    if let Some(bridge) = heads.bridge
+        && let Some(side_b) = bridge.side_b
+    {
+        let mut body = base;
         body.extend(with_subject(
-            disjunct.clone(),
+            one_of(&disjuncts),
             relation,
             subject,
             subject_scope,
         ));
-        let (bridge_heads, plain_heads): (Vec<_>, Vec<_>) =
-            heads.iter().partition(|h| h.needs_side_b);
-        if !plain_heads.is_empty() {
-            write_rule(
-                out,
-                &plain_heads
-                    .iter()
-                    .map(|h| h.text.clone())
-                    .collect::<Vec<_>>(),
-                &body,
-            );
-            report.rules += 1;
-        }
-        for head in bridge_heads {
-            let mut body = body.clone();
-            body.extend(head.extra_body.iter().cloned());
-            write_rule(out, std::slice::from_ref(&head.text), &body);
-            report.rules += 1;
-        }
+        body.extend(side_b);
+        write_rule(out, &bridge.heads, &body);
+        report.rules += 1;
     }
+    Ok(())
+}
+
+/// A `where` list, as a conjunction. An absent one is the empty conjunction, which matches
+/// everything, as it does in the JSON loader.
+fn where_expr<'a>(
+    index: usize,
+    value: Option<&'a Value>,
+    field: &str,
+) -> Result<Expr<'a>, JsonModelError> {
+    match value {
+        None => Ok(Expr::And(Vec::new())),
+        Some(v) => match v.as_array() {
+            Some(items) => Ok(Expr::And(items.iter().map(Expr::Prim).collect())),
+            None => Err(JsonModelError::FieldNotArray {
+                index,
+                field_name: field.to_string(),
+            }),
+        },
+    }
+}
+
+/// A non-empty DNF as body atoms: its one conjunction when it has one, otherwise one filter that
+/// holds when any conjunction does.
+///
+/// The filter is spelled `!(!a && !b)` rather than `a || b` because only a negated group may have
+/// locals of its own, and a conjunction usually has some (the `N` a `name` regex binds). It
+/// binds nothing, so the subject must be bound before it, which [`with_subject`] sees to. That
+/// makes it the same union as one rule per conjunction, without the duplicate groundings.
+fn one_of(disjuncts: &Dnf) -> Vec<String> {
+    if disjuncts.len() == 1 {
+        return disjuncts[0].clone();
+    }
+    if disjuncts.iter().any(|d| d.is_empty()) {
+        return Vec::new();
+    }
+    let negated: Vec<String> = disjuncts.iter().map(|d| negate(d)).collect();
+    vec![format!("!({})", negated.join(" && "))]
 }
 
 fn write_rule(out: &mut String, heads: &[String], body: &[String]) {
@@ -307,6 +454,7 @@ enum Expr<'a> {
     Or(Vec<Expr<'a>>),
 }
 
+#[derive(Clone, Copy)]
 struct Ctx<'a> {
     index: usize,
     subject: &'a str,
@@ -315,9 +463,13 @@ struct Ctx<'a> {
     /// `callsig` for `find: dispatch`. The attribute names are the same in both, which is what
     /// lets one constraint compiler serve them.
     relation: &'a str,
+    /// Under an `any_of` or a `not`, which the JSON loader evaluates against a scratch set of
+    /// its own. See the `in_function` arm of [`leaf_atoms`] for why that matters.
+    nested: bool,
 }
 
-/// A disjunction of conjunctions of body atoms, as text.
+/// A disjunction of conjunctions of body atoms, as text. The empty disjunction is false, and a
+/// disjunction holding the empty conjunction is true.
 type Dnf = Vec<Vec<String>>;
 
 fn dnf_and(a: Dnf, b: Dnf) -> Dnf {
@@ -337,30 +489,25 @@ fn compile(
     negated: bool,
     ctx: &Ctx<'_>,
     fresh: &mut Fresh,
-    report: &mut MigrationReport,
-) -> Dnf {
+) -> Result<Dnf, JsonModelError> {
     match (expr, negated) {
         // De Morgan: the negation is pushed to the leaves, where a single atom can carry it.
         (Expr::And(items), false) | (Expr::Or(items), true) => {
             let mut acc: Dnf = vec![Vec::new()];
             for item in items {
-                acc = dnf_and(acc, compile(item, negated, ctx, fresh, report));
+                acc = dnf_and(acc, compile(item, negated, ctx, fresh)?);
             }
-            acc
+            Ok(acc)
         }
         (Expr::Or(items), false) | (Expr::And(items), true) => {
             let mut acc: Dnf = Vec::new();
             for item in items {
-                acc.extend(compile(item, negated, ctx, fresh, report));
+                acc.extend(compile(item, negated, ctx, fresh)?);
             }
-            if acc.is_empty() {
-                // An empty `any_of` matches nothing. There is no "false" atom, so say so and
-                // emit an unsatisfiable equality rather than silently matching everything.
-                acc.push(vec!["\"\" = \"unsatisfiable\"".to_string()]);
-            }
-            acc
+            // Empty for an empty `any_of`, which matches nothing in the JSON loader too.
+            Ok(acc)
         }
-        (Expr::Prim(value), n) => compile_prim(value, n, ctx, fresh, report),
+        (Expr::Prim(value), n) => compile_prim(value, n, ctx, fresh),
     }
 }
 
@@ -369,8 +516,7 @@ fn compile_prim(
     negated: bool,
     ctx: &Ctx<'_>,
     fresh: &mut Fresh,
-    report: &mut MigrationReport,
-) -> Dnf {
+) -> Result<Dnf, JsonModelError> {
     let kind = value
         .get("constraint")
         .and_then(|v| v.as_str())
@@ -382,180 +528,204 @@ fn compile_prim(
             let inners: Vec<Expr<'_>> = value
                 .get("inners")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().map(Expr::Prim).collect())
-                .unwrap_or_default();
-            let expr = if kind == "all_of" {
-                Expr::And(inners)
+                .ok_or_else(|| JsonModelError::FieldNotArray {
+                    index: ctx.index,
+                    field_name: "inners".to_string(),
+                })?
+                .iter()
+                .map(Expr::Prim)
+                .collect();
+            let (expr, ctx) = if kind == "all_of" {
+                (Expr::And(inners), *ctx)
             } else {
-                Expr::Or(inners)
+                (
+                    Expr::Or(inners),
+                    Ctx {
+                        nested: true,
+                        ..*ctx
+                    },
+                )
             };
-            return compile(&expr, negated, ctx, fresh, report);
+            return compile(&expr, negated, &ctx, fresh);
         }
         "not" => {
-            let Some(inner) = value.get("inner") else {
-                report.warn(ctx.index, "'not' with no 'inner'; skipped");
-                return vec![Vec::new()];
+            let inner = value
+                .get("inner")
+                .ok_or_else(|| JsonModelError::MissingField {
+                    index: ctx.index,
+                    field_name: "inner".to_string(),
+                })?;
+            let ctx = Ctx {
+                nested: true,
+                ..*ctx
             };
-            return compile(&Expr::Prim(inner), !negated, ctx, fresh, report);
+            return compile(&Expr::Prim(inner), !negated, &ctx, fresh);
         }
         _ => {}
     }
-    let alternatives = leaf_atoms(value, ctx, fresh, report);
-    if alternatives.is_empty() {
-        return vec![Vec::new()];
-    }
+    let alternatives = leaf_atoms(value, ctx, fresh)?;
     if !negated {
-        return alternatives;
+        return Ok(alternatives);
     }
-    // `!(a || b)` is `!a && !b`; each alternative contributes one negated conjunct.
+    // `!(a || b)` is `!a && !b`; each alternative contributes one negated conjunct. An
+    // alternative with no atoms is true, so the negation of the whole is false.
     let mut conj: Vec<String> = Vec::new();
     for atoms in alternatives {
+        if atoms.is_empty() {
+            return Ok(Vec::new());
+        }
         conj.push(negate(&atoms));
     }
-    vec![conj]
+    Ok(vec![conj])
 }
 
 /// One leaf constraint's body atoms, as a disjunction (usually of one).
-fn leaf_atoms(
-    value: &Value,
-    ctx: &Ctx<'_>,
-    fresh: &mut Fresh,
-    report: &mut MigrationReport,
-) -> Dnf {
+fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, JsonModelError> {
     let subject = ctx.subject;
+    let index = ctx.index;
+    let missing = |field: &str| JsonModelError::MissingField {
+        index,
+        field_name: field.to_string(),
+    };
     let kind = value
         .get("constraint")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     match kind {
         "signature_match" => {
+            let pairs = [
+                ("name", "names"),
+                ("parent", "parents"),
+                ("qualified-id", "qualified-ids"),
+            ];
             let mut attrs = Vec::new();
-            if let Some(a) = string_attr(value, "name", "names", "name") {
-                attrs.push(a);
-            }
-            if let Some(a) = string_attr(value, "parent", "parents", "parent") {
-                attrs.push(a);
-            }
-            if let Some(a) = string_attr(value, "qualified-id", "qualified-ids", "qualified-id") {
-                attrs.push(a);
+            for (single, plural) in pairs {
+                // A field that is present and names nothing narrows to nothing, as it does in
+                // the JSON loader: leaving it out would match every function.
+                if value.get(single).is_none() && value.get(plural).is_none() {
+                    continue;
+                }
+                match string_attr(value, single, plural, single) {
+                    Some(a) => attrs.push(a),
+                    None => return Ok(Vec::new()),
+                }
             }
             if attrs.is_empty() {
-                report.warn(ctx.index, "'signature_match' with no usable field; skipped");
-                return Vec::new();
+                return Err(missing(
+                    "name' / 'names' / 'parent' / 'parents' / 'qualified-id' / 'qualified-ids",
+                ));
             }
-            vec![vec![atom(ctx.relation, subject, &attrs)]]
+            Ok(vec![vec![atom(ctx.relation, subject, &attrs)]])
         }
-        "name" => match value.get("pattern").and_then(|v| v.as_str()) {
-            Some(pattern) => {
-                let v = fresh.next("N");
-                vec![vec![
-                    atom(ctx.relation, subject, &[format!("name = {v}")]),
-                    format!("regex_match({v}, {})", quote(pattern)),
-                ]]
-            }
-            None => {
-                report.warn(ctx.index, "'name' with no 'pattern'; skipped");
-                Vec::new()
-            }
-        },
-        "signature" | "signature_pattern" => match value.get("pattern").and_then(|v| v.as_str()) {
-            Some(pattern) => {
-                let v = fresh.next("Sig");
-                vec![vec![
-                    atom(ctx.relation, subject, &[format!("signature = {v}")]),
-                    format!("regex_match({v}, {})", quote(pattern)),
-                ]]
-            }
-            None => {
-                report.warn(ctx.index, "'signature' with no 'pattern'; skipped");
-                Vec::new()
-            }
-        },
-        "has_code" => match value.get("value").and_then(|v| v.as_bool()) {
-            Some(b) => vec![vec![atom(
+        "name" => {
+            let pattern = value
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| missing("pattern"))?;
+            let v = fresh.next("N");
+            Ok(vec![vec![
+                atom(ctx.relation, subject, &[format!("name = {v}")]),
+                format!("regex_match({v}, {})", quote(pattern)),
+            ]])
+        }
+        "signature" | "signature_pattern" => {
+            let pattern = value
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| missing("pattern"))?;
+            let v = fresh.next("Sig");
+            Ok(vec![vec![
+                atom(ctx.relation, subject, &[format!("signature = {v}")]),
+                format!("regex_match({v}, {})", quote(pattern)),
+            ]])
+        }
+        "has_code" => {
+            let b = value
+                .get("value")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| missing("value"))?;
+            Ok(vec![vec![atom(
                 ctx.relation,
                 subject,
                 &[format!("has_code = {b}")],
-            )]],
-            None => {
-                report.warn(ctx.index, "'has_code' with no boolean 'value'; skipped");
-                Vec::new()
-            }
-        },
+            )]])
+        }
         "uses_field" => {
-            let names = collect_strings(value, "name", "names");
-            if names.is_empty() {
-                report.warn(ctx.index, "'uses_field' with no field name; skipped");
-                return Vec::new();
+            if value.get("name").is_none() && value.get("names").is_none() {
+                return Err(missing("name' / 'names"));
             }
-            if names.len() == 1 {
-                vec![vec![format!("uses_field({subject}, {})", quote(&names[0]))]]
-            } else {
-                let v = fresh.next("Fld");
-                vec![vec![
-                    format!("uses_field({subject}, {v})"),
-                    format!(
-                        "{v} in {{{}}}",
-                        names
-                            .iter()
-                            .map(|n| quote(n))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                ]]
+            let names = collect_strings(value, "name", "names");
+            match names.len() {
+                // Present and naming nothing: no function matches, as in the JSON loader.
+                0 => Ok(Vec::new()),
+                1 => Ok(vec![vec![format!(
+                    "uses_field({subject}, {})",
+                    quote(&names[0])
+                )]]),
+                _ => {
+                    let v = fresh.next("Fld");
+                    Ok(vec![vec![
+                        format!("uses_field({subject}, {v})"),
+                        format!(
+                            "{v} in {{{}}}",
+                            names
+                                .iter()
+                                .map(|n| quote(n))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    ]])
+                }
             }
         }
-        "number_parameters" => match value.get("inner") {
-            Some(inner) => int_predicate(inner, subject, fresh, ctx, report),
-            None => {
-                report.warn(ctx.index, "'number_parameters' with no 'inner'; skipped");
-                Vec::new()
-            }
-        },
-        "parent" => match value.get("inner") {
-            Some(inner) => class_predicate(inner, subject, None, fresh, ctx, report),
-            None => {
-                report.warn(ctx.index, "'parent' with no 'inner'; skipped");
-                Vec::new()
-            }
-        },
-        "extends" => match value.get("inner") {
-            Some(inner) => {
-                let sup = fresh.next("Sup");
-                class_predicate(inner, subject, Some(sup), fresh, ctx, report)
-            }
-            None => {
-                report.warn(ctx.index, "'extends' with no 'inner'; skipped");
-                Vec::new()
-            }
-        },
+        "number_parameters" => {
+            let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
+            int_predicate(inner, subject, fresh, ctx)
+        }
+        "parent" => {
+            let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
+            class_predicate(inner, subject, None, fresh, ctx)
+        }
+        "extends" => {
+            let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
+            let sup = fresh.next("Sup");
+            class_predicate(inner, subject, Some(sup), fresh, ctx)
+        }
         "in_function" => {
             if !ctx.callsites {
-                report.warn(
-                    ctx.index,
-                    "'in_function' is only meaningful with find: callsites; skipped",
-                );
-                return Vec::new();
+                return Err(JsonModelError::UnexpectedField {
+                    index,
+                    field_name: "in_function".to_string(),
+                    message: "'in_function' is only supported with find: callsites".to_string(),
+                });
             }
-            let Some(inner) = value.get("inner") else {
-                report.warn(ctx.index, "'in_function' with no 'inner'; skipped");
-                return Vec::new();
-            };
+            let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
+            // The JSON loader narrows whatever set is current, and under an `any_of` or a `not`
+            // that is the combinator's scratch copy of the *callee* set: its `inner` ends up
+            // constraining the callee, not the caller. Translating that faithfully would write
+            // a model that does not say what it reads as; translating what it reads as would
+            // match something the JSON never did.
+            if ctx.nested {
+                return Err(untranslatable(
+                    index,
+                    "'in_function'",
+                    "under 'any_of' or 'not' the JSON loader applies its 'inner' to the callee \
+                     rather than the caller; move it to the top level of 'where'",
+                ));
+            }
             let caller_ctx = Ctx {
-                index: ctx.index,
+                index,
                 subject: CALLER,
                 callsites: false,
                 relation: "fun",
+                nested: false,
             };
-            compile(&Expr::Prim(inner), false, &caller_ctx, fresh, report)
+            compile(&Expr::Prim(inner), false, &caller_ctx, fresh)
         }
-        other => {
-            report.warn(
-                ctx.index,
-                format!("'{other}' is not a recognized constraint; skipped"),
-            );
-            Vec::new()
-        }
+        other => Err(JsonModelError::UnexpectedConstraint {
+            index,
+            constraint_type: if other.is_empty() { "<missing>" } else { other }.to_string(),
+        }),
     }
 }
 
@@ -565,8 +735,7 @@ fn int_predicate(
     subject: &str,
     fresh: &mut Fresh,
     ctx: &Ctx<'_>,
-    report: &mut MigrationReport,
-) -> Dnf {
+) -> Result<Dnf, JsonModelError> {
     let kind = inner
         .get("constraint")
         .and_then(|v| v.as_str())
@@ -576,45 +745,65 @@ fn int_predicate(
     {
         // `arity < -1` needs the space: `<-` is the flow arrow. `format!` writes one anyway,
         // but the rule is worth stating where the string is built.
-        return vec![vec![atom(
+        return Ok(vec![vec![atom(
             ctx.relation,
             subject,
             &[format!("arity {op} {v}")],
-        )]];
+        )]]);
     }
     // Anything richer becomes a bound arity plus a boolean expression over it.
     let var = fresh.next("A");
-    let Some(expr) = int_expr(inner, &var) else {
-        report.warn(
-            ctx.index,
-            "'number_parameters' inner is not an integer comparison; skipped",
-        );
-        return Vec::new();
-    };
-    vec![vec![
-        atom(ctx.relation, subject, &[format!("arity = {var}")]),
-        expr,
-    ]]
+    match int_expr(inner, &var) {
+        Some(IntExpr::Const(true)) => Ok(vec![Vec::new()]),
+        Some(IntExpr::Const(false)) => Ok(Vec::new()),
+        Some(IntExpr::Text(expr)) => Ok(vec![vec![
+            atom(ctx.relation, subject, &[format!("arity = {var}")]),
+            expr,
+        ]]),
+        // The loader validates the same tree and rejects every shape that lands here.
+        None => Err(JsonModelError::UnexpectedConstraint {
+            index: ctx.index,
+            constraint_type: kind.to_string(),
+        }),
+    }
 }
 
-fn int_expr(inner: &Value, var: &str) -> Option<String> {
+/// A boolean expression over an arity, with the empty combinators folded away: the DSL has no
+/// `true` or `false` to write for them.
+enum IntExpr {
+    Const(bool),
+    Text(String),
+}
+
+fn int_expr(inner: &Value, var: &str) -> Option<IntExpr> {
     let kind = inner.get("constraint").and_then(|v| v.as_str())?;
     match kind {
         "any_of" | "all_of" => {
-            let sep = if kind == "any_of" { " || " } else { " && " };
-            let parts: Vec<String> = inner
-                .get("inners")?
-                .as_array()?
-                .iter()
-                .map(|i| int_expr(i, var))
-                .collect::<Option<Vec<_>>>()?;
-            Some(format!("({})", parts.join(sep)))
+            // `any_of` is decided by a true part and `all_of` by a false one; the other
+            // constant drops out.
+            let decisive = kind == "any_of";
+            let mut parts = Vec::new();
+            for i in inner.get("inners")?.as_array()? {
+                match int_expr(i, var)? {
+                    IntExpr::Const(b) if b == decisive => return Some(IntExpr::Const(b)),
+                    IntExpr::Const(_) => {}
+                    IntExpr::Text(t) => parts.push(t),
+                }
+            }
+            if parts.is_empty() {
+                return Some(IntExpr::Const(!decisive));
+            }
+            let sep = if decisive { " || " } else { " && " };
+            Some(IntExpr::Text(format!("({})", parts.join(sep))))
         }
-        "not" => Some(format!("!({})", int_expr(inner.get("inner")?, var)?)),
+        "not" => Some(match int_expr(inner.get("inner")?, var)? {
+            IntExpr::Const(b) => IntExpr::Const(!b),
+            IntExpr::Text(t) => IntExpr::Text(format!("!({t})")),
+        }),
         other => {
             let op = dsl_op(other)?;
             let v = inner.get("value")?.as_i64()?;
-            Some(format!("{var} {op} {v}"))
+            Some(IntExpr::Text(format!("{var} {op} {v}")))
         }
     }
 }
@@ -630,8 +819,7 @@ fn class_predicate(
     via_super: Option<String>,
     fresh: &mut Fresh,
     ctx: &Ctx<'_>,
-    report: &mut MigrationReport,
-) -> Dnf {
+) -> Result<Dnf, JsonModelError> {
     let kind = inner
         .get("constraint")
         .and_then(|v| v.as_str())
@@ -663,7 +851,7 @@ fn class_predicate(
             };
             // `rewritten` owns what `exprs` borrows, so the compile has to finish before it
             // goes out of scope; the explicit `return` is what makes that ordering visible.
-            return compile(&expr, false, ctx, fresh, report);
+            return compile(&expr, false, ctx, fresh);
         }
         _ => {}
     }
@@ -685,8 +873,8 @@ fn class_predicate(
         "signature_match" => {
             let names = collect_strings(inner, "name", "names");
             if names.is_empty() {
-                report.warn(ctx.index, "class predicate with no name; skipped");
-                return Vec::new();
+                // No class has no name, so this matches nothing, as in the JSON loader.
+                return Ok(Vec::new());
             }
             if names.len() == 1 {
                 atoms.push(format!("{class_var} = {}", quote(&names[0])));
@@ -704,33 +892,40 @@ fn class_predicate(
         "name" => match inner.get("pattern").and_then(|v| v.as_str()) {
             Some(pattern) => atoms.push(format!("regex_match({class_var}, {})", quote(pattern))),
             None => {
-                report.warn(
-                    ctx.index,
-                    "class 'name' predicate with no 'pattern'; skipped",
-                );
-                return Vec::new();
+                return Err(JsonModelError::FieldNotString {
+                    index: ctx.index,
+                    field_name: "pattern".to_string(),
+                });
             }
         },
         other => {
-            report.warn(
+            return Err(untranslatable(
                 ctx.index,
-                format!("'{other}' is not a class predicate; skipped"),
-            );
-            return Vec::new();
+                &format!("'{other}' as a class predicate"),
+                "only 'signature_match', 'name', 'any_of' and 'all_of' are translated under \
+                 'parent' and 'extends'",
+            ));
         }
     }
-    vec![atoms]
+    Ok(vec![atoms])
 }
 
 // ---------------------------------------------------------------------------
 // Models → heads
 // ---------------------------------------------------------------------------
 
-struct HeadText {
-    text: String,
-    /// A bridge head brings its own side-B atoms.
-    needs_side_b: bool,
-    extra_body: Vec<String>,
+/// The heads one generator derives.
+struct Heads {
+    /// Heads that need nothing but the generator's own body.
+    plain: Vec<String>,
+    bridge: Option<BridgeHeads>,
+}
+
+/// A bridge's port map, as one head per port, and side B's body atoms. `side_b` is `None` when
+/// side B's `where` can never match, so nothing is bridged.
+struct BridgeHeads {
+    heads: Vec<String>,
+    side_b: Option<Vec<String>>,
 }
 
 fn migrate_model(
@@ -739,14 +934,20 @@ fn migrate_model(
     anchor: &str,
     fresh: &mut Fresh,
     report: &mut MigrationReport,
-) -> Vec<HeadText> {
-    let mut heads = Vec::new();
+) -> Result<Heads, JsonModelError> {
+    let mut heads = Heads {
+        plain: Vec::new(),
+        bridge: None,
+    };
     let Some(model) = generator.get("model") else {
-        report.warn(index, "no 'model'; nothing to derive");
-        return heads;
+        report.warn(
+            index,
+            "no 'model'; nothing to derive, as in the JSON loader",
+        );
+        return Ok(heads);
     };
 
-    for key in ["taint", "modes", "forward_self"] {
+    for key in ["taint", "forward_self"] {
         if model.get(key).is_some() {
             report.warn(
                 index,
@@ -754,71 +955,75 @@ fn migrate_model(
             );
         }
     }
+    if let Some(modes) = model.get("modes") {
+        let skip = modes
+            .as_array()
+            .is_some_and(|m| m.iter().any(|m| m.as_str() == Some("skip-analysis")));
+        if skip {
+            return Err(untranslatable(
+                index,
+                "'modes'",
+                "'skip-analysis' drops the matched functions' bodies from the index, and the \
+                 DSL has no head that says so",
+            ));
+        }
+        report.warn(
+            index,
+            "'modes' names no mode, so it has no effect in the JSON loader either",
+        );
+    }
 
     if let Some(items) = model.get("sources").and_then(|v| v.as_array()) {
         for item in items {
-            let Some(port) = port_text(item.get("port"), index, report) else {
-                continue;
-            };
+            let port = port_text(item.get("port"), "port", index)?;
             let mut attrs = vec![format!("kind = {}", quote(kind_of(item)))];
             if item.get("saturating").and_then(|v| v.as_bool()) == Some(true) {
                 attrs.push("saturating = true".to_string());
             }
-            heads.push(HeadText {
-                text: format!("source({anchor}::{port}, {})", attrs.join(", ")),
-                needs_side_b: false,
-                extra_body: Vec::new(),
-            });
+            heads
+                .plain
+                .push(format!("source({anchor}::{port}, {})", attrs.join(", ")));
         }
     }
     if let Some(items) = model.get("sinks").and_then(|v| v.as_array()) {
         for item in items {
-            let Some(port) = port_text(item.get("port"), index, report) else {
-                continue;
-            };
+            let port = port_text(item.get("port"), "port", index)?;
             let mut attrs = vec![format!("kind = {}", quote(kind_of(item)))];
             // `wildcard` defaults to true in both formats, so only `false` is written out.
             if item.get("wildcard").and_then(|v| v.as_bool()) == Some(false) {
                 attrs.push("wildcard = false".to_string());
             }
-            heads.push(HeadText {
-                text: format!("sink({anchor}::{port}, {})", attrs.join(", ")),
-                needs_side_b: false,
-                extra_body: Vec::new(),
-            });
+            heads
+                .plain
+                .push(format!("sink({anchor}::{port}, {})", attrs.join(", ")));
         }
     }
     if let Some(items) = model.get("propagation").and_then(|v| v.as_array()) {
         for item in items {
-            let (Some(input), Some(output)) = (
-                port_text(item.get("input"), index, report),
-                port_text(item.get("output"), index, report),
-            ) else {
-                continue;
-            };
-            heads.push(HeadText {
-                text: format!("propagation({anchor}::{output} <- {anchor}::{input})"),
-                needs_side_b: false,
-                extra_body: Vec::new(),
-            });
+            let input = port_text(item.get("input"), "input", index)?;
+            let output = port_text(item.get("output"), "output", index)?;
+            heads.plain.push(format!(
+                "propagation({anchor}::{output} <- {anchor}::{input})"
+            ));
         }
     }
     if let Some(items) = model.get("access_paths").and_then(|v| v.as_array()) {
         for item in items {
-            match item.as_str() {
-                Some(text) => heads.push(HeadText {
-                    text: format!("access_paths({})", quote(text)),
-                    needs_side_b: false,
-                    extra_body: Vec::new(),
-                }),
-                None => report.warn(index, "'access_paths' entry is not a string; skipped"),
-            }
+            let text = item
+                .as_str()
+                .ok_or_else(|| JsonModelError::FieldNotString {
+                    index,
+                    field_name: "access_paths".to_string(),
+                })?;
+            heads.plain.push(format!("access_paths({})", quote(text)));
         }
     }
     if let Some(bridge) = model.get("bridge") {
-        heads.extend(migrate_bridge(index, bridge, anchor, fresh, report));
+        heads.bridge = Some(migrate_bridge(
+            index, generator, bridge, anchor, fresh, report,
+        )?);
     }
-    heads
+    Ok(heads)
 }
 
 /// The `model` of a `find: "dispatch"` generator.
@@ -832,158 +1037,179 @@ fn migrate_dispatch_model(
     index: usize,
     generator: &Value,
     anchor: &str,
-    report: &mut MigrationReport,
-) -> Vec<HeadText> {
+) -> Result<Vec<String>, JsonModelError> {
     let Some(model) = generator.get("model") else {
-        report.warn(index, "no 'model'; nothing to derive");
-        return Vec::new();
-    };
-    let head = |text: String| HeadText {
-        text,
-        needs_side_b: false,
-        extra_body: Vec::new(),
+        return Err(JsonModelError::MissingField {
+            index,
+            field_name: "model".to_string(),
+        });
     };
     if let Some(value) = model.get("closure_shaped") {
         return match value.as_bool() {
-            Some(true) => vec![head(format!("{anchor}::dispatch(closure_shaped = true)"))],
+            Some(true) => Ok(vec![format!("{anchor}::dispatch(closure_shaped = true)")]),
             // `false` derives nothing, exactly as in the JSON loader.
-            Some(false) => Vec::new(),
-            None => {
-                report.warn(index, "'closure_shaped' is not a boolean; skipped");
-                Vec::new()
-            }
+            Some(false) => Ok(Vec::new()),
+            None => Err(JsonModelError::FieldNotString {
+                index,
+                field_name: "closure_shaped".to_string(),
+            }),
         };
     }
+    let propagation = model.get("propagation").map(|v| {
+        v.as_array().ok_or_else(|| JsonModelError::FieldNotArray {
+            index,
+            field_name: "propagation".to_string(),
+        })
+    });
+    let propagation = propagation.transpose()?;
     if let Some(value) = model.get("resolve") {
         return match value.as_str() {
-            Some("inline") => vec![head(format!("{anchor}::dispatch(resolve = \"inline\")"))],
-            Some(other) => {
-                report.warn(
-                    index,
-                    format!("unknown 'resolve' value {other:?}; the defined value is 'inline'"),
-                );
-                Vec::new()
-            }
-            None => {
-                report.warn(index, "'resolve' is not a string; skipped");
-                Vec::new()
-            }
+            // `resolve` with a `propagation` list is inlining that also carries the summary,
+            // and a DSL `resolve = "inline"` head carries no flows.
+            Some("inline") if propagation.is_some_and(|p| !p.is_empty()) => Err(untranslatable(
+                index,
+                "'resolve' with 'propagation'",
+                "the DSL's 'resolve = \"inline\"' carries no flows, and a separate flow head \
+                 would make the key a model rather than an inlined one",
+            )),
+            Some("inline") => Ok(vec![format!("{anchor}::dispatch(resolve = \"inline\")")]),
+            Some(other) => Err(JsonModelError::UnexpectedField {
+                index,
+                field_name: "resolve".to_string(),
+                message: format!("unknown value '{other}'; the defined value is 'inline'"),
+            }),
+            None => Err(JsonModelError::FieldNotString {
+                index,
+                field_name: "resolve".to_string(),
+            }),
         };
     }
-    let Some(items) = model.get("propagation").and_then(|v| v.as_array()) else {
-        report.warn(
+    let Some(items) = propagation else {
+        return Err(JsonModelError::MissingField {
             index,
-            "a dispatch model carries one of 'propagation', 'resolve' and 'closure_shaped'; \
-             skipped",
-        );
-        return Vec::new();
+            field_name: "propagation' / 'resolve' / 'closure_shaped".to_string(),
+        });
     };
     if items.is_empty() {
-        return vec![head(format!("{anchor}::dispatch(resolve = \"skip\")"))];
+        return Ok(vec![format!("{anchor}::dispatch(resolve = \"skip\")")]);
     }
     let mut heads = Vec::new();
     for item in items {
-        let (Some(input), Some(output)) = (
-            port_text(item.get("input"), index, report),
-            port_text(item.get("output"), index, report),
-        ) else {
-            continue;
-        };
-        heads.push(head(format!("{anchor}::dispatch({output} <- {input})")));
+        let input = port_text(item.get("input"), "input", index)?;
+        let output = port_text(item.get("output"), "output", index)?;
+        heads.push(format!("{anchor}::dispatch({output} <- {input})"));
     }
-    heads
+    Ok(heads)
+}
+
+/// A bridge diagnostic setting. `"ignore"` and `"warn"` change only what is logged; `"error"`
+/// fails the run when a side matches nothing or a pairing is ambiguous, and a DSL rule cannot
+/// fail a run.
+fn bridge_severity(
+    index: usize,
+    owner: &Value,
+    key: &str,
+    report: &mut MigrationReport,
+) -> Result<(), JsonModelError> {
+    match owner.get(key).and_then(|v| v.as_str()) {
+        None => Ok(()),
+        Some("error") => Err(untranslatable(
+            index,
+            &format!("'{key}': \"error\""),
+            "it fails the run when the bridge matches badly, and a DSL rule cannot; use \
+             \"warn\", and read the dead-rule warning",
+        )),
+        Some(_) => {
+            report.warn(
+                index,
+                format!(
+                    "'{key}' only changes what the JSON loader logs about the pairing, and is \
+                     not translated"
+                ),
+            );
+            Ok(())
+        }
+    }
 }
 
 fn migrate_bridge(
     index: usize,
+    generator: &Value,
     bridge: &Value,
     anchor: &str,
     fresh: &mut Fresh,
     report: &mut MigrationReport,
-) -> Vec<HeadText> {
-    let Some(to) = bridge.get("to") else {
-        report.warn(index, "'bridge' with no 'to' block; skipped");
-        return Vec::new();
-    };
-    for key in ["on-ambiguous"] {
-        if bridge.get(key).is_some() {
-            report.warn(
-                index,
-                format!(
-                    "'{key}' is a pairing diagnostic for an unevaluated bridge; a DSL rule is \
-                     already grounded, so it is not translated"
-                ),
-            );
-        }
-    }
+) -> Result<BridgeHeads, JsonModelError> {
+    let to = bridge
+        .get("to")
+        .ok_or_else(|| JsonModelError::MissingField {
+            index,
+            field_name: "to".to_string(),
+        })?;
+    bridge_severity(index, generator, "on-unmatched", report)?;
+    bridge_severity(index, to, "on-unmatched", report)?;
+    bridge_severity(index, bridge, "on-ambiguous", report)?;
 
-    // Side B's own match block, compiled with `G` as its subject.
+    // Side B's own match block, compiled with `G` as its subject. A disjunction in it stays in
+    // one rule, as side A's does; see `migrate_generator`.
     let scope = scope_attrs(to.get("in"));
     let ctx = Ctx {
         index,
         subject: OTHER,
         callsites: false,
         relation: "fun",
+        nested: false,
     };
-    let expr = match to.get("where").and_then(|v| v.as_array()) {
-        Some(items) => Expr::And(items.iter().map(Expr::Prim).collect()),
-        None => Expr::And(Vec::new()),
-    };
-    let disjuncts = compile(&expr, false, &ctx, fresh, report);
-    if disjuncts.len() > 1 {
-        report.warn(
-            index,
-            "the bridge's 'to' block has a disjunction in it; only the first alternative is \
-             carried across. Split the generator instead.",
-        );
-    }
-    let side_b = with_subject(
-        disjuncts.first().cloned().unwrap_or_default(),
-        "fun",
-        OTHER,
-        &scope,
-    );
+    let expr = where_expr(index, to.get("where"), "to.where")?;
+    let disjuncts = compile(&expr, false, &ctx, fresh)?;
+    let side_b =
+        (!disjuncts.is_empty()).then(|| with_subject(one_of(&disjuncts), "fun", OTHER, &scope));
 
+    // Without a map the loader pairs the arguments the two sides share, which needs the fact
+    // base. With an empty one it still bridges the pair, with only the implicit globals port,
+    // and a DSL bridge is made of its port heads.
     let pairs = match bridge.get("arguments").and_then(|v| v.as_array()) {
-        Some(items) => items.clone(),
-        None => {
-            report.warn(
+        Some(items) if !items.is_empty() => items,
+        Some(_) => {
+            return Err(untranslatable(
                 index,
-                "'bridge' with no 'arguments' map: the JSON loader falls back to an identity map \
-                 over the arity the two sides share, which needs the fact base and cannot be \
-                 written as a rule. Only the return value is carried across; write the map.",
-            );
-            vec![serde_json::json!({"from": "Return", "to": "Return", "direction": "both"})]
+                "'bridge'",
+                "an empty 'arguments' map bridges only the globals, and a DSL bridge needs at \
+                 least one port",
+            ));
+        }
+        None => {
+            return Err(untranslatable(
+                index,
+                "'bridge'",
+                "with no 'arguments' map the JSON loader pairs the arguments the two sides \
+                 share, which needs the fact base and cannot be written as a rule; write the map",
+            ));
         }
     };
 
     let mut heads = Vec::new();
-    for pair in &pairs {
-        let (Some(from), Some(to_port)) = (
-            port_text(pair.get("from"), index, report),
-            port_text(pair.get("to"), index, report),
-        ) else {
-            continue;
-        };
+    for pair in pairs {
+        let from = port_text(pair.get("from"), "from", index)?;
+        let to_port = port_text(pair.get("to"), "to", index)?;
+        // An absent direction is both ways, as in the JSON loader.
         let arrow = match pair.get("direction").and_then(|v| v.as_str()) {
-            Some("in") | None => "->",
+            Some("in") => "->",
             Some("out") => "<-",
-            Some("both") => "<->",
+            Some("both") | None => "<->",
             Some(other) => {
-                report.warn(
+                return Err(JsonModelError::UnexpectedField {
                     index,
-                    format!("unknown bridge direction '{other}'; skipped"),
-                );
-                continue;
+                    field_name: "direction".to_string(),
+                    message: format!("'{other}' is not one of 'in', 'out', 'both'"),
+                });
             }
         };
-        heads.push(HeadText {
-            text: format!("bridge({anchor}::{from} {arrow} {OTHER}::{to_port})"),
-            needs_side_b: true,
-            extra_body: side_b.clone(),
-        });
+        heads.push(format!(
+            "bridge({anchor}::{from} {arrow} {OTHER}::{to_port})"
+        ));
     }
-    heads
+    Ok(BridgeHeads { heads, side_b })
 }
 
 fn kind_of(item: &Value) -> &str {
@@ -993,21 +1219,20 @@ fn kind_of(item: &Value) -> &str {
 }
 
 /// `Argument(0).deref` → `arg(0).deref`, `Return` → `return`, `Argument(*)` → `arg(_)`.
-fn port_text(value: Option<&Value>, index: usize, report: &mut MigrationReport) -> Option<String> {
-    let text = match value.and_then(|v| v.as_str()) {
-        Some(t) => t,
+fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String, JsonModelError> {
+    let text = match value {
         None => {
-            report.warn(index, "a port is missing or is not a string; skipped");
-            return None;
+            return Err(JsonModelError::MissingField {
+                index,
+                field_name: field.to_string(),
+            });
         }
+        Some(v) => v.as_str().ok_or_else(|| JsonModelError::FieldNotString {
+            index,
+            field_name: field.to_string(),
+        })?,
     };
-    let parsed = match super::super::json::parse_port(text, index) {
-        Ok(p) => p,
-        Err(e) => {
-            report.warn(index, format!("port {text:?}: {e}"));
-            return None;
-        }
-    };
+    let parsed = super::super::json::parse_port(text, index)?;
     let base = match parsed.tag {
         crate::models::FormalIndexTypeTag::Return => "return".to_string(),
         crate::models::FormalIndexTypeTag::AnyArgument => "arg(_)".to_string(),
@@ -1015,28 +1240,26 @@ fn port_text(value: Option<&Value>, index: usize, report: &mut MigrationReport) 
             format!("arg({})", parsed.index.expect("Index carries one"))
         }
         crate::models::FormalIndexTypeTag::Local => {
-            report.warn(
+            return Err(untranslatable(
                 index,
-                format!(
-                    "port {text:?}: 'Variable(...)' selects a named local, which the DSL does \
-                     not spell; skipped"
-                ),
-            );
-            return None;
+                &format!("port {text:?}"),
+                "'Variable(...)' selects a named local, which the DSL does not spell",
+            ));
         }
+        // `parse_port` never produces it: the globals port has no spelling in either format.
         crate::models::FormalIndexTypeTag::Global => {
-            report.warn(
+            return Err(untranslatable(
                 index,
-                format!("port {text:?}: the globals port is implicit"),
-            );
-            return None;
+                &format!("port {text:?}"),
+                "the globals port is implicit",
+            ));
         }
     };
     let mut out = base;
     for seg in &parsed.ap {
         out.push_str(&segment_text(seg));
     }
-    Some(out)
+    Ok(out)
 }
 
 /// One access-path segment in DSL syntax. A name that is not a plain identifier is quoted, which
@@ -1084,14 +1307,18 @@ fn atom(name: &str, subject: &str, attrs: &[String]) -> String {
     }
 }
 
-/// `!a` for one atom, `!(a && b)` for several.
+/// `!a` for one atom, `!(a && b)` for several. The empty conjunction is true and has no negation
+/// to write; [`compile_prim`] folds it to false before it gets here.
 ///
 /// The parenthesized form is not sugar: negating each atom on its own would test them
 /// independently and lose the variable they share, so `not name{pattern}` — a `fun(F, name = N)`
 /// and a `regex_match(N, …)` — would stop meaning "no name of F matches".
 fn negate(atoms: &[String]) -> String {
+    debug_assert!(
+        !atoms.is_empty(),
+        "the negation of true is folded by the caller"
+    );
     match atoms.len() {
-        0 => "true = true".to_string(),
         1 => format!("!{}", atoms[0]),
         _ => format!("!({})", atoms.join(" && ")),
     }

@@ -337,6 +337,39 @@ fn phases_are_read_off_the_heads() {
 fn migrate_one(json: &str) -> (String, migrate::MigrationReport) {
     let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
     migrate::migrate_generators(std::iter::once(&value), None)
+        .unwrap_or_else(|e| panic!("migrating {json}: {e:?}"))
+}
+
+/// The errors a migration fails with, rendered. Panics if it succeeds.
+fn migration_errors(json: &str) -> Vec<String> {
+    let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
+    match migrate::migrate_generators(std::iter::once(&value), None) {
+        Ok((text, _)) => panic!("expected {json} not to migrate, got:\n{text}"),
+        Err(crate::error::Error::JsonModel(errors)) => {
+            errors.iter().map(ToString::to_string).collect()
+        }
+        Err(e) => panic!("expected JSON model errors, got {e}"),
+    }
+}
+
+/// What the JSON loader says about the same generator, rendered, so a test can require the
+/// migration to fail exactly as loading it would.
+fn loader_errors(json: &str) -> Vec<String> {
+    let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
+    let program = ctadl_ir::mir::ProgramInfo::default();
+    let index =
+        crate::models::ProgramMatchIndex::new(&program, crate::models::ImportScope::unknown());
+    let mut out = crate::models::ProgramModelMatches::default();
+    match crate::models::try_load_models_from_values(&index, std::iter::once(Ok(value)), &mut out) {
+        Ok(_) => Vec::new(),
+        Err(crate::error::Error::Context { source, .. }) => match source.downcast_ref() {
+            Some(crate::error::Error::JsonModel(errors)) => {
+                errors.iter().map(ToString::to_string).collect()
+            }
+            _ => panic!("expected JSON model errors, got {source}"),
+        },
+        Err(e) => panic!("expected JSON model errors, got {e}"),
+    }
 }
 
 /// Everything the migrator writes has to load. This is the property that makes the migrator
@@ -534,17 +567,442 @@ fn migrates_a_bridge_with_its_port_map() {
     );
 }
 
+/// Keys the JSON loader accepts and does nothing with are warnings, and the rest of the generator
+/// is translated as if they were not there: nothing is dropped from the body.
 #[test]
-fn reports_the_constructs_that_do_not_translate() {
-    let (_, report) = migrate_one(
+fn inert_keys_warn_and_change_nothing() {
+    let (text, report) = migrate_one(
         r#"{"find":"methods","where":[{"constraint":"signature_match","name":"x"}],
+            "on-unmatched":"ignore",
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}],
-                     "modes":["skip-analysis"],
+                     "taint":[{"anything":"goes"}],
+                     "modes":[],
                      "forward_self":{"where":[]}}}"#,
     );
-    assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
-    assert!(report.warnings.iter().any(|w| w.contains("'modes'")));
-    assert!(report.warnings.iter().any(|w| w.contains("'forward_self'")));
+    assert_eq!(report.warnings.len(), 4, "{:?}", report.warnings);
+    for key in ["'taint'", "'modes'", "'forward_self'", "'on-unmatched'"] {
+        assert!(
+            report.warnings.iter().any(|w| w.contains(key)),
+            "{key}: {:?}",
+            report.warnings
+        );
+    }
+    assert_eq!(report.rules, 1, "{text}");
+    assert!(
+        text.contains("sink(F::arg(0), kind = \"k\") :-\n  fun(F, name = \"x\");"),
+        "{text}"
+    );
+    check_ok(&text);
+}
+
+/// A generator the JSON loader rejects fails to migrate with the loader's own errors, rather
+/// than a warning and a rule missing the part that was wrong. The old behavior for every one of
+/// these was a warning and a rule matching every function the rest of the `where` allowed.
+#[test]
+fn what_the_json_loader_rejects_does_not_migrate() {
+    let cases = [
+        // An unknown constraint, even under `not`.
+        r#"{"find":"methods","where":[{"constraint":"not","inner":{"constraint":"bogus"}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"not"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"name"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"name","pattern":"["}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature","name":".*x.*"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature_match"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"x","extends":"Y"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"has_code"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"uses_field"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"any_of"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"number_parameters",
+                                       "inner":{"constraint":">","value":"2"}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"parent","inner":{"constraint":"name"}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"in_function",
+                                       "inner":{"constraint":"name","pattern":"x"}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"lambdas","model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"where":[],"model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","wehre":[{"constraint":"name","pattern":"x"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":{"constraint":"name","pattern":"x"},
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","model":{"sinks":[{"kind":"k","port":"Argument(x)"}]}}"#,
+        r#"{"find":"methods","model":{"sinks":[{"kind":"k"}]}}"#,
+        r#"{"find":"methods","model":{"sinks":[{"port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Return","wildcard":false}]}}"#,
+        r#"{"find":"methods","model":{"propagation":[{"input":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","model":{"propagations":[]}}"#,
+        r#"{"find":"methods","model":{"access_paths":[7]}}"#,
+        r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
+        r#"{"find":"callsites","model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}"#,
+        r#"{"find":"callsites","model":{"sinks":[{"kind":"k","port":"Variable(x)"}]}}"#,
+        r#"{"find":"dispatch","model":{}}"#,
+        r#"{"find":"dispatch","model":{"resolve":"cha"}}"#,
+    ];
+    for json in cases {
+        let loader = loader_errors(json);
+        assert!(!loader.is_empty(), "the JSON loader accepts {json}");
+        assert_eq!(migration_errors(json), loader, "{json}");
+    }
+}
+
+/// A bridge is scanned before any import is loaded, and the migration runs that scan too.
+#[test]
+fn a_bridge_the_json_scan_rejects_does_not_migrate() {
+    let cases = [
+        (
+            r#""find":"callsites""#,
+            r#""from":"Argument(0)","to":"Argument(0)""#,
+        ),
+        (
+            r#""find":"methods""#,
+            r#""from":"Argument(*)","to":"Argument(0)""#,
+        ),
+        (
+            r#""find":"methods""#,
+            r#""from":"Argument(0)","to":"Argument(0)","direction":"up""#,
+        ),
+        (
+            r#""find":"methods""#,
+            r#""from":"Variable(x)","to":"Argument(0)""#,
+        ),
+    ];
+    for (find, pair) in cases {
+        let json = format!(
+            r#"{{{find},"where":[{{"constraint":"signature_match","name":"a"}}],
+                "model":{{"bridge":{{"to":{{"where":[{{"constraint":"signature_match","name":"b"}}]}},
+                                     "arguments":[{{{pair}}}]}}}}}}"#
+        );
+        let errors = migration_errors(&json);
+        assert!(
+            errors.iter().all(|e| !e.starts_with("cannot migrate")),
+            "{json}: {errors:?}"
+        );
+    }
+    // Side B's `where` is checked as the generator's own is.
+    let errors = migration_errors(
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],
+            "model":{"bridge":{"to":{"where":[{"constraint":"bogus"}]},
+                               "arguments":[{"from":"Argument(0)","to":"Argument(0)"}]}}}"#,
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("'bogus'"), "{errors:?}");
+}
+
+/// What the JSON loader accepts and the DSL cannot say fails to migrate, naming the generator and
+/// the construct, rather than migrating to something that means less or more.
+#[test]
+fn what_the_dsl_cannot_say_does_not_migrate() {
+    let bridge = |extra: &str| {
+        format!(
+            r#"{{"find":"methods","where":[{{"constraint":"signature_match","name":"a"}}],
+                "model":{{"bridge":{{"to":{{"where":[{{"constraint":"signature_match","name":"b"}}]}}{extra}}}}}}}"#
+        )
+    };
+    let cases: Vec<(String, &str)> = vec![
+        (
+            r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Variable(buf)"}]}}"#
+                .to_string(),
+            "port \"Variable(buf)\"",
+        ),
+        (
+            r#"{"find":"methods","model":{"modes":["skip-analysis"]}}"#.to_string(),
+            "'modes'",
+        ),
+        (
+            r#"{"find":"dispatch","model":{"resolve":"inline",
+                "propagation":[{"input":"Argument(0)","output":"Return"}]}}"#
+                .to_string(),
+            "'resolve' with 'propagation'",
+        ),
+        (
+            r#"{"find":"callsites","where":[{"constraint":"any_of","inners":[
+                {"constraint":"in_function","inner":{"constraint":"name","pattern":"x"}}]}],
+                "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#
+                .to_string(),
+            "'in_function'",
+        ),
+        (
+            r#"{"find":"callsites","where":[{"constraint":"not","inner":
+                {"constraint":"in_function","inner":{"constraint":"name","pattern":"x"}}}],
+                "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#
+                .to_string(),
+            "'in_function'",
+        ),
+        (
+            r#"{"find":"methods","where":[{"constraint":"parent","inner":{"constraint":"not",
+                "inner":{"constraint":"signature_match","name":"LA;"}}}],
+                "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#
+                .to_string(),
+            "'not' as a class predicate",
+        ),
+        (bridge(""), "'bridge'"),
+        (bridge(r#","arguments":[]"#), "'bridge'"),
+        (
+            bridge(
+                r#","arguments":[{"from":"Argument(0)","to":"Argument(0)"}],"on-ambiguous":"error""#,
+            ),
+            "'on-ambiguous': \"error\"",
+        ),
+    ];
+    for (json, what) in cases {
+        if !json.contains("bridge") {
+            assert!(
+                loader_errors(&json).is_empty(),
+                "the JSON loader rejects {json}"
+            );
+        }
+        let errors = migration_errors(&json);
+        assert_eq!(errors.len(), 1, "{json}: {errors:?}");
+        let want = format!("cannot migrate {what} in model generator at index 0: ");
+        assert!(errors[0].starts_with(&want), "{json}: {errors:?}");
+    }
+}
+
+/// Errors accumulate across generators, each naming its own index, and one bad generator does
+/// not hide another.
+#[test]
+fn migration_errors_name_every_bad_generator() {
+    let values: Vec<serde_json::Value> = [
+        r#"{"find":"methods","where":[{"constraint":"name","pattern":"ok"}],"model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"bogus"}],"model":{}}"#,
+        r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Variable(v)"}]}}"#,
+    ]
+    .iter()
+    .map(|l| serde_json::from_str(l).expect("valid json"))
+    .collect();
+    let Err(crate::error::Error::JsonModel(errors)) =
+        migrate::migrate_generators(values.iter(), None)
+    else {
+        panic!("expected the migration to fail");
+    };
+    let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(
+        errors[0].contains("'bogus'") && errors[0].contains("index 1"),
+        "{errors:?}"
+    );
+    assert!(
+        errors[1].contains("Variable") && errors[1].contains("index 2"),
+        "{errors:?}"
+    );
+}
+
+/// A field that is present and names nothing narrows to nothing in the JSON loader. These used
+/// to be "skipped", which kept the rest of the rule and so matched what it alone allowed.
+#[test]
+fn a_where_that_can_never_match_writes_no_rule() {
+    for where_ in [
+        r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
+        r#"[{"constraint":"uses_field","names":[]}]"#,
+        r#"[{"constraint":"any_of","inners":[]}]"#,
+        r#"[{"constraint":"not","inner":{"constraint":"all_of","inners":[]}}]"#,
+        r#"[{"constraint":"number_parameters","inner":{"constraint":"any_of","inners":[]}}]"#,
+        r#"[{"constraint":"not","inner":{"constraint":"number_parameters",
+             "inner":{"constraint":"all_of","inners":[]}}}]"#,
+    ] {
+        let (text, report) = migrate_one(&format!(
+            r#"{{"find":"methods","where":{where_},
+                "model":{{"sinks":[{{"kind":"k","port":"Argument(0)"}}]}}}}"#
+        ));
+        assert_eq!(report.rules, 0, "{where_}:\n{text}");
+        assert!(text.contains("can never match"), "{where_}:\n{text}");
+    }
+    // The other constant, for contrast: it matches everything and keeps the rule.
+    let text = migrate_and_load(
+        r#"{"find":"methods","where":[{"constraint":"not","inner":{"constraint":"any_of","inners":[]}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(text.contains(":-\n  fun(F);"), "{text}");
+}
+
+/// A disjunction in a bridge's `to` block is kept inside the one rule, so a function matching
+/// two alternatives is still bridged once, and every port of the map lands in that rule so the
+/// engine makes one bridge of them.
+#[test]
+fn a_bridge_is_one_rule_whatever_its_disjunctions() {
+    let (text, report) = migrate_one(
+        r#"{"find":"methods",
+            "where":[{"constraint":"any_of","inners":[
+              {"constraint":"signature_match","name":"a1"},
+              {"constraint":"name","pattern":"^a2"}]}],
+            "model":{"bridge":{
+              "to":{"where":[{"constraint":"any_of","inners":[
+                {"constraint":"signature_match","name":"b1"},
+                {"constraint":"name","pattern":"^b2"}]}]},
+              "arguments":[{"from":"Argument(0)","to":"Argument(1)"},
+                           {"from":"Return","to":"Return","direction":"out"}]}}}"#,
+    );
+    check_ok(&text);
+    assert_eq!(report.rules, 1, "{text}");
+    assert!(
+        text.contains(
+            "fun(F),\n  !(!fun(F, name = \"a1\") && !(fun(F, name = N0) && regex_match(N0, \"^a2\")))"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "fun(G),\n  !(!fun(G, name = \"b1\") && !(fun(G, name = N1) && regex_match(N1, \"^b2\")))"
+        ),
+        "{text}"
+    );
+    // An absent direction is both ways, as it is in the JSON loader.
+    assert!(text.contains("bridge(F::arg(0) <-> G::arg(1))"), "{text}");
+    assert!(text.contains("bridge(F::return <- G::return)"), "{text}");
+}
+
+/// A native program of one-parameter functions with bodies, one per name.
+fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
+    use ctadl_ir::mir::call::{
+        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    };
+    use ctadl_ir::mir::{
+        BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
+        StatementKind,
+    };
+
+    let functions = names.iter().map(|name| {
+        let mut f = FunctionData::default();
+        f.set_name(name.to_string());
+        f.params.parameters.push(ParameterType::SharedFields);
+        let blocks = f.blocks.blocks_mut();
+        let body = blocks.push(BasicBlockData::new(None));
+        blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+        f
+    });
+    let methods = names
+        .iter()
+        .map(|n| {
+            (
+                NativeSimpleName((*n).into()),
+                NativeSignature(format!("{n}()").into()),
+                NativeFunction((*n).into()),
+                NativeQualifiedName((*n).into()),
+            )
+        })
+        .collect();
+    ProgramInfo {
+        vmt: VirtualMethodTable::Native { methods },
+        program: Program::new(Functions::new(functions)),
+        ..Default::default()
+    }
+}
+
+/// Migrates `json` and runs the result over one import, as an index would.
+fn run_migrated(
+    json: &serde_json::Value,
+    index: &crate::models::ProgramMatchIndex<'_>,
+) -> (String, crate::models::ProgramModelMatches) {
+    let (text, _) = migrate::migrate_generators(std::iter::once(json), None)
+        .unwrap_or_else(|e| panic!("{json}: {e:?}"));
+    let set = DslModelSet {
+        files: vec![check_ok(&text)],
+    };
+    let mut out = crate::models::ProgramModelMatches::default();
+    let mut matcher = DslMatcher::new(&set, Phase::All);
+    matcher.observe_import(index, &mut out);
+    matcher
+        .finish(&mut out)
+        .unwrap_or_else(|e| panic!("{text}: {e}"));
+    (text, out)
+}
+
+/// The engine-level half of [`a_where_that_can_never_match_writes_no_rule`]: on a real program
+/// the JSON loader and the migrated rules select the same functions, for the shapes that used to
+/// migrate wider than the original.
+#[test]
+fn constructs_that_used_to_widen_match_what_the_json_matched() {
+    use crate::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
+    use std::collections::BTreeSet;
+
+    let program = native_program(&["a", "b", "c"]);
+    let index = ProgramMatchIndex::new(&program, ImportScope::unknown());
+    let summarized = |m: &ProgramModelMatches| -> BTreeSet<String> {
+        m.propagations
+            .iter()
+            .map(|p| p.function.to_string())
+            .collect()
+    };
+
+    for where_ in [
+        r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
+        r#"[{"constraint":"signature_match","name":"a","qualified-ids":[1]}]"#,
+        r#"[{"constraint":"uses_field","names":[]}]"#,
+        r#"[{"constraint":"not","inner":{"constraint":"number_parameters",
+             "inner":{"constraint":"all_of","inners":[]}}}]"#,
+        r#"[{"constraint":"not","inner":{"constraint":"any_of","inners":[]}}]"#,
+        r#"[{"constraint":"number_parameters","inner":{"constraint":"any_of","inners":[
+             {"constraint":"all_of","inners":[]},{"constraint":"<","value":0}]}}]"#,
+    ] {
+        let json: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"find":"methods","where":{where_},
+                "model":{{"propagation":[{{"input":"Argument(0)","output":"Return"}}]}}}}"#
+        ))
+        .expect("valid json");
+        let mut from_json = ProgramModelMatches::default();
+        crate::models::try_load_models_from_values(
+            &index,
+            std::iter::once(Ok(json.clone())),
+            &mut from_json,
+        )
+        .unwrap_or_else(|e| panic!("{where_}: {e}"));
+        let (text, from_dsl) = run_migrated(&json, &index);
+        assert_eq!(
+            summarized(&from_json),
+            summarized(&from_dsl),
+            "{where_}:\n{text}"
+        );
+    }
+}
+
+/// [`a_bridge_is_one_rule_whatever_its_disjunctions`] on a program: the JSON loader bridges the
+/// cross product of the two sides' match *sets*, once per pair, with the whole port map. A
+/// function satisfying both alternatives of a side is in the set once.
+#[test]
+fn a_migrated_bridge_pairs_what_the_json_paired() {
+    use crate::models::{ImportScope, ProgramMatchIndex};
+    use std::collections::BTreeMap;
+
+    let program = native_program(&["a1", "a2", "b1", "b2", "c"]);
+    let index = ProgramMatchIndex::new(&program, ImportScope::unknown());
+    let json: serde_json::Value = serde_json::from_str(
+        r#"{"find":"methods",
+            "where":[{"constraint":"any_of","inners":[
+              {"constraint":"signature_match","name":"a1"},
+              {"constraint":"name","pattern":"^a"}]}],
+            "model":{"bridge":{
+              "to":{"where":[{"constraint":"any_of","inners":[
+                {"constraint":"signature_match","name":"b1"},
+                {"constraint":"name","pattern":"^b"}]}]},
+              "arguments":[{"from":"Argument(0)","to":"Argument(0)"},
+                           {"from":"Return","to":"Return","direction":"out"}]}}}"#,
+    )
+    .expect("valid json");
+    let (text, out) = run_migrated(&json, &index);
+    let mut pairs: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for bridge in &out.resolved_bridges {
+        assert_eq!(bridge.ports.len(), 2, "{text}\n{bridge:?}");
+        *pairs
+            .entry((bridge.from.to_string(), bridge.to.to_string()))
+            .or_default() += 1;
+    }
+    let want: BTreeMap<(String, String), usize> =
+        [("a1", "b1"), ("a1", "b2"), ("a2", "b1"), ("a2", "b2")]
+            .into_iter()
+            .map(|(a, b)| ((a.to_string(), b.to_string()), 1))
+            .collect();
+    assert_eq!(pairs, want, "{text}");
 }
 
 #[test]
@@ -564,8 +1022,23 @@ fn a_java_array_element_segment_survives_the_round_trip() {
     assert_eq!(segments, vec![PathSegment::Symbol(Symbol::from("[]"))]);
 }
 
-/// Every shipped default file must migrate cleanly and load. This is the drift guard: a
-/// keyword added to the JSON loader and used in a default has to be understood here too.
+/// The shipped default generators the DSL cannot yet say, as `(file, generator index, what the
+/// error names)`. Each is a model the checked-in `.ctadl` does not carry.
+///
+/// - `skip-analysis` has no DSL head, so an index loading the `.ctadl` lowers the unwinders'
+///   bodies after all.
+/// - `resolve: "inline"` with a `propagation` list inlines *and* summarizes, and the DSL's
+///   `resolve = "inline"` head carries no flows, so the `.ctadl` inlines without the summary.
+const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] = &[
+    ("native-index.jsonl", 28, "'modes'"),
+    ("cil-index.jsonl", 194, "'resolve' with 'propagation'"),
+    ("cil-index.jsonl", 195, "'resolve' with 'propagation'"),
+];
+
+/// Every shipped default file must migrate and load, but for the generators
+/// [`KNOWN_UNTRANSLATABLE_DEFAULTS`] lists, which must fail exactly as listed. This is the drift
+/// guard: a keyword added to the JSON loader and used in a default has to be understood here
+/// too, and a gap that closes has to come off the list.
 #[test]
 fn every_shipped_default_migrates_and_loads() {
     for (name, contents) in crate::models::DEFAULT_MODEL_FILES {
@@ -576,19 +1049,49 @@ fn every_shipped_default_migrates_and_loads() {
             .filter(|l| !l.is_empty() && !l.starts_with("//"))
             .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{name}: {e}")))
             .collect();
-        let (dsl, report) = migrate::migrate_generators(values.iter(), Some(name));
+        let known: Vec<(usize, &str)> = KNOWN_UNTRANSLATABLE_DEFAULTS
+            .iter()
+            .filter(|(file, _, _)| file == name)
+            .map(|&(_, index, what)| (index, what))
+            .collect();
+        let errors: Vec<String> = match migrate::migrate_generators(values.iter(), Some(name)) {
+            Ok(_) => Vec::new(),
+            Err(crate::error::Error::JsonModel(errors)) => {
+                errors.iter().map(ToString::to_string).collect()
+            }
+            Err(e) => panic!("{name}: {e}"),
+        };
+        let expected: Vec<String> = known
+            .iter()
+            .map(|(index, what)| {
+                format!("cannot migrate {what} in model generator at index {index}")
+            })
+            .collect();
+        assert_eq!(errors.len(), expected.len(), "{name}: {errors:#?}");
+        for (error, expected) in errors.iter().zip(&expected) {
+            assert!(error.starts_with(expected), "{name}: {error}");
+        }
+        // The rest must translate and load.
+        let rest: Vec<&serde_json::Value> = values
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !known.iter().any(|(k, _)| k == i))
+            .map(|(_, v)| v)
+            .collect();
+        let (dsl, report) = migrate::migrate_generators(rest.iter().copied(), Some(name))
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         // The only warnings a shipped default may raise are about keys the JSON loader does
         // not act on either, so nothing is lost by not translating them. Anything else means a
         // construct the defaults use and the migrator does not understand.
         for warning in &report.warnings {
             assert!(
-                ["'taint'", "'modes'", "'forward_self'"]
+                ["'taint'", "'forward_self'"]
                     .iter()
                     .any(|k| warning.contains(k)),
                 "{name}: {warning}"
             );
         }
-        assert_eq!(report.generators, values.len(), "{name}");
+        assert_eq!(report.generators, rest.len(), "{name}");
         if let Err(e) = DslFile::from_text(*name, dsl.clone()) {
             panic!("migrated {name} does not load: {e}\n---\n{dsl}");
         }
@@ -680,7 +1183,8 @@ fn dispatch_generators_migrate() {
     .iter()
     .map(|l| serde_json::from_str(l).expect("valid json"))
     .collect();
-    let (dsl, report) = migrate::migrate_generators(values.iter(), None);
+    let (dsl, report) =
+        migrate::migrate_generators(values.iter(), None).expect("dispatch generators migrate");
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert!(dsl.contains(r#"K::dispatch(return <- arg(_))"#), "{dsl}");
     assert!(dsl.contains(r#"K::dispatch(resolve = "skip")"#), "{dsl}");
@@ -694,17 +1198,14 @@ fn dispatch_generators_migrate() {
 }
 
 /// `in` narrows by language and import, and a signature key is composed from a call site rather
-/// than read out of an import's method table, so it carries neither.
+/// than read out of an import's method table, so it carries neither. Dropping the scope would
+/// apply the model to every import, so the migration refuses.
 #[test]
-fn a_scoped_dispatch_generator_says_its_scope_is_dropped() {
-    let value: serde_json::Value = serde_json::from_str(
+fn a_scoped_dispatch_generator_does_not_migrate() {
+    let errors = migration_errors(
         r#"{"find":"dispatch","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"toString"}],"model":{"resolve":"inline"}}"#,
-    )
-    .expect("valid json");
-    let (_, report) = migrate::migrate_generators(std::iter::once(&value), None);
-    assert!(
-        report.warnings.iter().any(|w| w.contains("'in'")),
-        "{:?}",
-        report.warnings
     );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("cannot migrate 'in'"), "{errors:?}");
+    assert!(errors[0].contains("index 0"), "{errors:?}");
 }

@@ -743,8 +743,19 @@ fn main() -> anyhow::Result<()> {
 fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     use ctadl_ascent::models::dsl;
 
-    let (text, report) = dsl::migrate::migrate_file(&args.input)
-        .with_context(|| format!("migrating {}", args.input.display()))?;
+    // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
+    // writing the rest would silently drop it. Every such generator is listed, not just the
+    // first, so one run is enough to see what needs fixing.
+    let (text, report) = match dsl::migrate::migrate_file(&args.input) {
+        Ok(migrated) => migrated,
+        Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(
+            "{} cannot be migrated exactly; nothing was written:\n{errors}",
+            args.input.display()
+        ),
+        Err(e) => {
+            return Err(e).with_context(|| format!("migrating {}", args.input.display()));
+        }
+    };
 
     // Loading it is part of migrating it. A file that translates but does not check is worse
     // than a failure: it would be discovered on the next index, against an artifact, with the
