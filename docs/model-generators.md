@@ -622,8 +622,8 @@ like a `propagation`. Five defined values:
   disagree on a function, the last one read wins.
 - `"frame-store"` and `"frame-update"`: coarsen or keep the matched native
   function's frame updates, whatever `ctadl index --frame` says. With
-  `frame-update`, SSA versions the stack frame, so a load sees only the writes
-  that reach it; with `frame-store` (the default), every load of a slot sees
+  `frame-update` (the default), SSA versions the stack frame, so a load sees
+  only the writes that reach it; with `frame-store`, every load of a slot sees
   every store to it. When generators disagree on a function, the last one read
   wins.
 

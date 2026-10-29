@@ -33,9 +33,9 @@ mod tests;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FrameWrites {
     /// Coarsen every frame update into a store (see the module documentation).
-    #[default]
     Store,
     /// Keep frame updates, so SSA versions the frame.
+    #[default]
     Update,
 }
 
