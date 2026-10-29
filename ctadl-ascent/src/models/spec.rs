@@ -19,7 +19,6 @@ reads is checked explicitly, at the generator level, the `model` level, and insi
 a misspelling is a hard error. For the same reason a non-array `where` is an error, not a panic.
 */
 
-use std::collections::BTreeSet;
 use std::path::{Path as FsPath, PathBuf};
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
@@ -821,10 +820,6 @@ pub(crate) fn parse_declared_access_path(
     }
     Ok(facts::Path::from_accesses(segments))
 }
-
-/// The declared-access-path registry: paths that occur in no `assign` and no `actual_param`, so
-/// nothing else would ever register them.
-pub type DeclaredAccessPaths = BTreeSet<facts::Path>;
 
 #[cfg(test)]
 mod tests;

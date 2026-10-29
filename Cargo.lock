@@ -1199,7 +1199,6 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "tailshare",
  "tempfile",
  "test-log",
  "thiserror",
@@ -1330,7 +1329,6 @@ dependencies = [
  "datafusion-common",
  "derive_builder",
  "dex-reader",
- "elsa",
  "hashbrown 0.16.1",
  "immortal",
  "internment",
@@ -1352,7 +1350,6 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "tailshare",
  "tempfile",
  "thiserror",
 ]
@@ -4338,15 +4335,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "tailshare"
-version = "0.1.5"
-dependencies = [
- "immortal",
- "parking_lot 0.12.5",
- "serde",
 ]
 
 [[package]]

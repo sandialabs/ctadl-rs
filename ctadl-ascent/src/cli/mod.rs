@@ -988,6 +988,12 @@ fn dump_taint_graph_dot(
             .and_modify(|c| *c = c.join(cone))
             .or_insert(cone);
     }
+    // `oriented` iterates in handle order; the file wants content order.
+    let mut oriented: Vec<_> = oriented.into_iter().collect();
+    oriented.sort_unstable_by(|((s1, d1), _), ((s2, d2), _)| {
+        crate::graphviz::index_vertex_cmp(s1, s2)
+            .then_with(|| crate::graphviz::index_vertex_cmp(d1, d2))
+    });
     let edges: Vec<_> = oriented
         .into_iter()
         .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))

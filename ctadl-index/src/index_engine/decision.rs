@@ -9,13 +9,14 @@
 //! context-free ones (one row per `(f, v, p, a, p4)`) without dropping any decision.
 //!
 //! Decisions are interned to a dense [`DecisionId`] and sets are interned as sorted slices, so
-//! a set is a `Copy` pointer, equality is a pointer compare, and rows that hold the same set
-//! share one allocation. Both interners are process-global and never free: a decision or a set
+//! a set is a 4-byte `Copy` handle, equality is a handle compare, and rows that hold the same
+//! set share one slice. The interners are process-global and never free: a decision or a set
 //! lives as long as the process, which is the price of hash-consing and is measured by
-//! [`stats`].
+//! [`stats`] and [`interner_stats`].
 
 use std::fmt::{self, Display};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, RwLock};
 
 use ascent::Lattice;
@@ -30,11 +31,24 @@ use crate::facts::{CallTargetObject, FormalIndex, Path};
 ///
 /// The key names *what* was decided, never the route it arrived by, so two routes that
 /// establish the same decision share one closure and both get the result.
+///
+/// `Ord` compares the target by handle; sort with [`Decision::content_cmp`] wherever the order
+/// is printed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Decision {
     pub formal: FormalIndex,
     pub path: Path,
     pub target: CallTargetObject,
+}
+
+impl Decision {
+    /// Orders by content, not by handle, so a sort that feeds output is reproducible.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.formal
+            .cmp(&other.formal)
+            .then_with(|| self.path.content_cmp(&other.path))
+            .then_with(|| self.target.content_cmp(&other.target))
+    }
 }
 
 impl Display for Decision {
@@ -113,29 +127,57 @@ impl Display for DecisionId {
     }
 }
 
-/// A set of decisions, interned as a sorted, duplicate-free slice. `Copy`; equal sets are
-/// pointer-equal. The lattice order is inclusion and the join is union.
+/// A set of decisions: a 4-byte handle to a sorted, duplicate-free slice. `Copy`; equal sets
+/// have equal handles. The lattice order is inclusion and the join is union.
 ///
-/// A set is either *exact* or *collapsing*, and the two never meet (one kind per run). An exact
-/// set is what it says. A collapsing set holds at most one decision: joining two different
-/// singletons gives [`DecisionSet::top`], "every decision of this function", which is above
-/// everything and absorbs every join. That is the flat lattice `⊥ < {d} < ⊤` -- a coarser,
-/// parameter-free abstraction under which a row changes at most once after it is created,
-/// where an exact set at a row changes once per decision that reaches the row after it.
-#[derive(Clone, Copy)]
-pub struct DecisionSet {
-    ids: &'static [DecisionId],
-    collapse: bool,
+/// A set is either *exact* or *collapsing*, and the two never meet (one kind per index). An
+/// exact set is what it says. A collapsing set holds at most one decision: joining two
+/// different singletons gives [`DecisionSet::top`], "every decision of this function", which
+/// is above everything and absorbs every join. That is the flat lattice `⊥ < {d} < ⊤` -- a
+/// coarser, parameter-free abstraction under which a row changes at most once after it is
+/// created, where an exact set at a row changes once per decision that reaches the row after
+/// it.
+///
+/// **Encoding.** Each kind has its own interner, whose ids all fit in 31 bits; the top bit,
+/// [`COLLAPSING`], names the kind and so which interner the low bits index. The empty set and
+/// the two ⊤s take raw values below [`FIRST_INTERNED`], which neither interner issues. The kind
+/// is a property of each set, not of the process, so indexes of both kinds can be built side by
+/// side.
+///
+/// `Eq` and `Hash` act on the handle alone. There is no `Ord`: the order is the lattice's
+/// `PartialOrd`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DecisionSet(NonZeroU32);
+
+immortal::id_handle! {
+    /// The members of an exact set with at least one member.
+    struct ExactMembers([DecisionId]) in 256 shards, 31 bits;
 }
 
-/// The address that marks ⊤; never dereferenced as a set of decisions.
-static TOP_MARK: [DecisionId; 1] = [DecisionId(u32::MAX)];
+immortal::id_handle! {
+    /// The members of a collapsing set with at least one member (so exactly one).
+    struct CollapsingMembers([DecisionId]) in 256 shards, 31 bits;
+}
 
-static SETS: LazyLock<immortal::Interner<[DecisionId]>> =
-    LazyLock::new(|| immortal::Interner::new(64));
+/// The bit of a [`DecisionSet`] that marks a collapsing set.
+const COLLAPSING: u32 = 1 << 31;
+const EMPTY: u32 = 1;
+const TOP_EXACT: u32 = 2;
+const TOP: u32 = TOP_EXACT | COLLAPSING;
+/// Raw values below this, with the kind bit cleared, are reserved: the members interners have
+/// 256 shards, and an id is `(local + 1) << 8 | shard`.
+const FIRST_INTERNED: u32 = 256;
+
+/// The interners' entries and heap bytes, for the profile.
+pub fn interner_stats() -> [(&'static str, immortal::Stats); 2] {
+    [
+        ("DecisionSet.exact", ExactMembers::stats()),
+        ("DecisionSet.collapsing", CollapsingMembers::stats()),
+    ]
+}
+
 /// The widening bound on exact sets: an exact union with more members than this is ⊤. `0` is
-/// no bound. Process-global like the interners (one kind of set per run); set by
-/// [`set_widen_bound`] before the run.
+/// no bound. Process-global (one bound per run); set by [`set_widen_bound`] before the run.
 static WIDEN_BOUND: AtomicUsize = AtomicUsize::new(0);
 
 /// Sets the widening bound for exact sets (`HybridContext::Bounded(k)` and `Spill(k)`); `0`
@@ -158,100 +200,128 @@ pub fn spills(ds: DecisionSet) -> bool {
     ds.is_top() && SPILL.load(Ordering::Relaxed)
 }
 
-/// Unions computed (both operands non-trivial), and how many of those produced a new set.
+/// Unions computed (both operands non-trivial), how many of those produced a new set, and how
+/// many missed the union cache.
 static UNIONS: AtomicUsize = AtomicUsize::new(0);
 static UNIONS_GREW: AtomicUsize = AtomicUsize::new(0);
-/// The union memo: a direct-mapped cache from a pair of set addresses to the union's slice,
-/// shared by every thread without a lock. Each slot is a seqlock -- a writer takes the slot
-/// by moving its sequence to odd, fills it, and releases it even; a reader accepts a slot only
-/// if the sequence was even before and unchanged after -- so a torn entry is never returned,
-/// and a writer that loses the race simply does not cache. Sets are interned, so the same two
-/// addresses meet again and again (every row's set against the set of every row that feeds
-/// it), and the lookup is the hot path of the whole contextual closure: a thread-local hash
-/// map here would cost more than the joins around it.
+static UNION_CACHE_MISSES: AtomicUsize = AtomicUsize::new(0);
+/// The union memo: a direct-mapped cache from an unordered pair of set handles to the union's
+/// handle, shared by every thread without a lock. Each slot is a seqlock -- a writer takes the
+/// slot by moving its sequence to odd, fills it, and releases it even; a reader accepts a slot
+/// only if the sequence was even before and unchanged after -- so a torn entry is never
+/// returned, and a writer that loses the race simply does not cache. Sets are interned, so the
+/// same two handles meet again and again (every row's set against the set of every row that
+/// feeds it), and the lookup is the hot path of the whole contextual closure: a thread-local
+/// hash map here would cost more than the joins around it.
+///
+/// The key packs the smaller handle in the low half. No key is 0, so an unwritten slot never
+/// matches.
 struct UnionSlot {
-    seq: AtomicUsize,
-    a: AtomicUsize,
-    b: AtomicUsize,
-    ptr: AtomicUsize,
-    len: AtomicUsize,
+    seq: AtomicU32,
+    key: AtomicU64,
+    result: AtomicU32,
 }
+
+// Rust puts `key` first, so the slot packs into 16 bytes.
+const _: () = assert!(size_of::<UnionSlot>() == 16);
 
 const UNION_CACHE_BITS: u32 = 20;
 static UNION_CACHE: LazyLock<Box<[UnionSlot]>> = LazyLock::new(|| {
     (0..1usize << UNION_CACHE_BITS)
         .map(|_| UnionSlot {
-            seq: AtomicUsize::new(0),
-            a: AtomicUsize::new(0),
-            b: AtomicUsize::new(0),
-            ptr: AtomicUsize::new(0),
-            len: AtomicUsize::new(0),
+            seq: AtomicU32::new(0),
+            key: AtomicU64::new(0),
+            result: AtomicU32::new(0),
         })
         .collect()
 });
 
-fn union_slot(a: usize, b: usize) -> &'static UnionSlot {
-    // Fibonacci hashing of the pair; the addresses are 16-byte aligned so the low bits carry
-    // nothing.
-    let h = (a.rotate_left(17) ^ b).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    &UNION_CACHE[h >> (usize::BITS - UNION_CACHE_BITS)]
+fn union_slot(key: u64) -> &'static UnionSlot {
+    // Fibonacci hashing of the pair. A handle's low bits are its shard, which its interner
+    // took from the set's hash, so every bit of the key carries information; the multiply
+    // carries the high handle into the top bits.
+    let h = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    &UNION_CACHE[(h >> (u64::BITS - UNION_CACHE_BITS)) as usize]
 }
 
-fn union_cache_get(a: usize, b: usize) -> Option<&'static [DecisionId]> {
-    let slot = union_slot(a, b);
+fn union_cache_get(key: u64) -> Option<u32> {
+    let slot = union_slot(key);
     let s1 = slot.seq.load(Ordering::Acquire);
     if s1 & 1 == 1 {
         return None;
     }
-    let (sa, sb) = (
-        slot.a.load(Ordering::Relaxed),
-        slot.b.load(Ordering::Relaxed),
-    );
-    let (ptr, len) = (
-        slot.ptr.load(Ordering::Relaxed),
-        slot.len.load(Ordering::Relaxed),
+    let (k, result) = (
+        slot.key.load(Ordering::Relaxed),
+        slot.result.load(Ordering::Relaxed),
     );
     std::sync::atomic::fence(Ordering::Acquire);
-    if slot.seq.load(Ordering::Relaxed) != s1 || sa != a || sb != b {
+    if slot.seq.load(Ordering::Relaxed) != s1 || k != key {
         return None;
     }
-    // SAFETY: every (ptr, len) stored by `union_cache_put` came from an interned slice, which
-    // lives for the rest of the process; the seqlock protocol guarantees the four fields were
-    // read from one consistent write.
-    Some(unsafe { std::slice::from_raw_parts(ptr as *const DecisionId, len) })
+    Some(result)
 }
 
-fn union_cache_put(a: usize, b: usize, result: &'static [DecisionId]) {
-    let slot = union_slot(a, b);
+fn union_cache_put(key: u64, result: u32) {
+    let slot = union_slot(key);
     let s = slot.seq.load(Ordering::Relaxed);
     if s & 1 == 1
         || slot
             .seq
-            .compare_exchange(s, s + 1, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(s, s.wrapping_add(1), Ordering::Acquire, Ordering::Relaxed)
             .is_err()
     {
         return;
     }
-    slot.a.store(a, Ordering::Relaxed);
-    slot.b.store(b, Ordering::Relaxed);
-    slot.ptr.store(result.as_ptr() as usize, Ordering::Relaxed);
-    slot.len.store(result.len(), Ordering::Relaxed);
-    slot.seq.store(s + 2, Ordering::Release);
+    // Pairs with the reader's acquire fence: a reader that sees either store below also sees
+    // the odd sequence, so its second load of `seq` rejects the slot. The Acquire on the claim
+    // orders these stores after the previous writer's.
+    std::sync::atomic::fence(Ordering::Release);
+    slot.key.store(key, Ordering::Relaxed);
+    slot.result.store(result, Ordering::Relaxed);
+    slot.seq.store(s.wrapping_add(2), Ordering::Release);
 }
 
 impl DecisionSet {
+    const fn reserved(raw: u32) -> DecisionSet {
+        DecisionSet(NonZeroU32::new(raw).unwrap())
+    }
+
     fn intern(sorted: &[DecisionId], collapse: bool) -> DecisionSet {
         debug_assert!(sorted.windows(2).all(|w| w[0] < w[1]));
-        DecisionSet {
-            ids: SETS.intern(sorted),
-            collapse,
+        if sorted.is_empty() {
+            return DecisionSet::empty();
+        }
+        let raw = if collapse {
+            CollapsingMembers::intern(sorted).raw() | COLLAPSING
+        } else {
+            ExactMembers::intern(sorted).raw()
+        };
+        DecisionSet(NonZeroU32::new(raw).expect("ids are never 0"))
+    }
+
+    /// The members of an explicit set, read without a lock; empty for the empty set and ⊤.
+    #[inline]
+    fn members(self) -> &'static [DecisionId] {
+        let raw = self.0.get();
+        let id = raw & !COLLAPSING;
+        if id < FIRST_INTERNED {
+            return &[];
+        }
+        // SAFETY: a set at or above `FIRST_INTERNED` was made by `intern`, which put the bits
+        // of a handle of the kind its top bit names in the low bits, and the set's holder
+        // happens after that.
+        unsafe {
+            if raw & COLLAPSING != 0 {
+                CollapsingMembers::from_raw_unchecked(id).get()
+            } else {
+                ExactMembers::from_raw_unchecked(id).get()
+            }
         }
     }
 
     /// The empty set: the lattice bottom (of either kind; it joins into anything).
-    pub fn empty() -> DecisionSet {
-        static EMPTY: LazyLock<DecisionSet> = LazyLock::new(|| DecisionSet::intern(&[], false));
-        *EMPTY
+    pub const fn empty() -> DecisionSet {
+        DecisionSet::reserved(EMPTY)
     }
 
     /// `{d}`, exact or collapsing.
@@ -262,43 +332,36 @@ impl DecisionSet {
 
     /// ⊤: every decision of the function the row belongs to. A collapsing join makes it, and
     /// so does an exact union that passes the widening bound (`top_exact`).
-    pub fn top() -> DecisionSet {
-        DecisionSet {
-            ids: &TOP_MARK,
-            collapse: true,
-        }
+    pub const fn top() -> DecisionSet {
+        DecisionSet::reserved(TOP)
     }
 
     /// ⊤ of the exact kind: what a bounded exact union widens to. Absorbs every exact join.
-    pub fn top_exact() -> DecisionSet {
-        DecisionSet {
-            ids: &TOP_MARK,
-            collapse: false,
-        }
+    pub const fn top_exact() -> DecisionSet {
+        DecisionSet::reserved(TOP_EXACT)
     }
 
     pub fn is_top(self) -> bool {
-        std::ptr::eq(self.ids, &TOP_MARK)
+        self == DecisionSet::top() || self == DecisionSet::top_exact()
     }
 
-    /// Whether this is a collapsing set (see the type's doc).
+    /// Whether this is a collapsing set (see the type's doc). The empty set is exact.
     pub fn is_collapsing(self) -> bool {
-        self.collapse
+        self.0.get() & COLLAPSING != 0
     }
 
     pub fn is_empty(self) -> bool {
-        self.ids.is_empty()
+        self == DecisionSet::empty()
     }
 
     /// Elements of an explicit set; 0 for ⊤, which is not an explicit set.
     pub fn len(self) -> usize {
-        if self.is_top() { 0 } else { self.ids.len() }
+        self.members().len()
     }
 
     /// The explicit elements; empty for ⊤, whose members are implicit.
     pub fn ids(self) -> impl Iterator<Item = DecisionId> + 'static {
-        let ids: &'static [DecisionId] = if self.is_top() { &[] } else { self.ids };
-        ids.iter().copied()
+        self.members().iter().copied()
     }
 
     /// The decisions in an explicit set, looked up once per element.
@@ -310,18 +373,21 @@ impl DecisionSet {
     }
 
     pub fn contains(self, d: DecisionId) -> bool {
-        self.is_top() || self.ids.binary_search(&d).is_ok()
+        self.is_top() || self.members().binary_search(&d).is_ok()
     }
 
     /// `self ⊆ other`, by a merge walk (both sorted).
     pub fn is_subset(self, other: DecisionSet) -> bool {
-        if std::ptr::eq(self.ids, other.ids) || self.ids.is_empty() || other.is_top() {
+        if self == other || self.is_empty() || other.is_top() {
             return true;
         }
-        if self.is_top() || self.ids.len() > other.ids.len() {
+        if self.is_top() {
             return false;
         }
-        let (a, b) = (self.ids, other.ids);
+        let (a, b) = (self.members(), other.members());
+        if a.len() > b.len() {
+            return false;
+        }
         let mut j = 0;
         for x in a {
             while j < b.len() && b[j] < *x {
@@ -335,17 +401,17 @@ impl DecisionSet {
         true
     }
 
-    /// `self ∪ other`, interned. Returns `self` itself (pointer-equal) when nothing is added.
-    /// Between collapsing sets, two different singletons give ⊤.
+    /// `self ∪ other`, interned. Returns `self` itself when nothing is added. Between
+    /// collapsing sets, two different singletons give ⊤.
     pub fn union(self, other: DecisionSet) -> DecisionSet {
-        if std::ptr::eq(self.ids, other.ids) || other.ids.is_empty() {
+        if self == other || other.is_empty() {
             return self;
         }
-        if self.ids.is_empty() {
+        if self.is_empty() {
             return other;
         }
-        if self.collapse || other.collapse {
-            debug_assert!(self.collapse && other.collapse);
+        if self.is_collapsing() || other.is_collapsing() {
+            debug_assert!(self.is_collapsing() && other.is_collapsing());
             UNIONS.fetch_add(1, Ordering::Relaxed);
             if self.is_top() {
                 return self;
@@ -363,18 +429,18 @@ impl DecisionSet {
             return other;
         }
         // The key is unordered: union is commutative.
-        let (a, b) = {
-            let (a, b) = (self.ids.as_ptr() as usize, other.ids.as_ptr() as usize);
-            if a < b { (a, b) } else { (b, a) }
+        let key = {
+            let (a, b) = (self.0.get() as u64, other.0.get() as u64);
+            if a < b { a | b << 32 } else { b | a << 32 }
         };
-        let result = match union_cache_get(a, b) {
-            Some(ids) => DecisionSet {
-                ids,
-                collapse: self.collapse,
-            },
+        let result = match union_cache_get(key) {
+            // SAFETY: the seqlock returns only a result that `union_cache_put` stored whole,
+            // and every result stored is a set's raw handle (never 0).
+            Some(raw) => DecisionSet(unsafe { NonZeroU32::new_unchecked(raw) }),
             None => {
+                UNION_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
                 let result = self.union_uncached(other);
-                union_cache_put(a, b, result.ids);
+                union_cache_put(key, result.0.get());
                 result
             }
         };
@@ -391,7 +457,7 @@ impl DecisionSet {
         if self.is_subset(other) {
             return other;
         }
-        let (a, b) = (self.ids, other.ids);
+        let (a, b) = (self.members(), other.members());
         let mut out = Vec::with_capacity(a.len() + b.len());
         let (mut i, mut j) = (0, 0);
         while i < a.len() && j < b.len() {
@@ -422,32 +488,14 @@ impl DecisionSet {
 
     /// `self ∩ other`, interned.
     pub fn intersection(self, other: DecisionSet) -> DecisionSet {
-        if std::ptr::eq(self.ids, other.ids) || self.is_top() {
+        if self == other || self.is_top() {
             return other;
         }
         if other.is_top() {
             return self;
         }
-        let out: Vec<DecisionId> = self
-            .ids
-            .iter()
-            .copied()
-            .filter(|d| other.contains(*d))
-            .collect();
-        DecisionSet::intern(&out, self.collapse)
-    }
-}
-
-impl PartialEq for DecisionSet {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.ids, other.ids)
-    }
-}
-impl Eq for DecisionSet {}
-
-impl std::hash::Hash for DecisionSet {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.ids.as_ptr() as usize).hash(state)
+        let out: Vec<DecisionId> = self.ids().filter(|d| other.contains(*d)).collect();
+        DecisionSet::intern(&out, self.is_collapsing())
     }
 }
 
@@ -500,7 +548,7 @@ impl fmt::Debug for DecisionSet {
         if self.is_top() {
             return write!(f, "⊤");
         }
-        f.debug_list().entries(self.ids.iter()).finish()
+        f.debug_list().entries(self.ids()).finish()
     }
 }
 
@@ -524,10 +572,11 @@ impl Display for DecisionSet {
 /// Process-wide counters for the decision interners, for the debug log.
 pub fn stats() -> String {
     format!(
-        "decisions={} set unions={} (grew {})",
+        "decisions={} set unions={} (grew {}, union cache misses {})",
         DecisionId::count(),
         UNIONS.load(Ordering::Relaxed),
         UNIONS_GREW.load(Ordering::Relaxed),
+        UNION_CACHE_MISSES.load(Ordering::Relaxed),
     )
 }
 
@@ -571,5 +620,76 @@ mod tests {
         assert_eq!(x, u);
         assert!(!x.join_mut(a));
         assert_eq!(a.intersection(b).ids().collect::<Vec<_>>(), vec![d(3)]);
+    }
+
+    /// Both kinds live in one process, and a set's handle alone says which it is.
+    #[test]
+    fn a_handle_names_its_kind() {
+        assert_eq!(size_of::<DecisionSet>(), 4);
+        assert_eq!(size_of::<Option<DecisionSet>>(), 4);
+        let exact = DecisionSet::singleton(d(5), false);
+        let collapsing = DecisionSet::singleton(d(5), true);
+        assert_ne!(exact, collapsing);
+        assert!(!exact.is_collapsing() && collapsing.is_collapsing());
+        assert_eq!(exact.ids().collect::<Vec<_>>(), [d(5)]);
+        assert_eq!(collapsing.ids().collect::<Vec<_>>(), [d(5)]);
+        let grown = exact.union(DecisionSet::singleton(d(6), false));
+        assert!(!grown.is_collapsing() && grown.len() == 2);
+        assert_eq!(
+            collapsing.union(DecisionSet::singleton(d(6), true)),
+            DecisionSet::top()
+        );
+        assert!(DecisionSet::top().is_collapsing() && !DecisionSet::top_exact().is_collapsing());
+        assert!(DecisionSet::top_exact().is_top() && !DecisionSet::empty().is_top());
+        assert_eq!(DecisionSet::top_exact().len(), 0);
+        assert!(DecisionSet::empty().is_empty() && DecisionSet::empty().ids().next().is_none());
+        assert_eq!(DecisionSet::intern(&[], true), DecisionSet::empty());
+        assert_eq!(
+            collapsing.intersection(DecisionSet::singleton(d(6), true)),
+            DecisionSet::empty()
+        );
+    }
+
+    /// Two keys that share a union-cache slot, written in turn while readers look both up: a
+    /// hit must return the result stored for the key it matched, never the other's. Each key
+    /// pairs the empty set with another handle, a pair `union` never caches.
+    #[test]
+    fn union_cache_never_returns_a_torn_entry() {
+        use std::sync::atomic::AtomicBool;
+
+        let results = [0x1111_1111u32, 0x2222_2222];
+        let mut by_slot = HashMap::new();
+        let keys = (EMPTY as u64 + 1..)
+            .map(|b| EMPTY as u64 | b << 32)
+            .find_map(|k| {
+                let slot = std::ptr::from_ref(union_slot(k)) as usize;
+                by_slot.insert(slot, k).map(|other| [other, k])
+            })
+            .unwrap();
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            for w in 0..2 {
+                let stop = &stop;
+                s.spawn(move || {
+                    for i in 0..1_000_000 {
+                        let j = (i + w) % 2;
+                        union_cache_put(keys[j], results[j]);
+                    }
+                    stop.store(true, Ordering::Relaxed);
+                });
+            }
+            for _ in 0..2 {
+                let stop = &stop;
+                s.spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        for (j, &key) in keys.iter().enumerate() {
+                            if let Some(r) = union_cache_get(key) {
+                                assert_eq!(r, results[j], "key {j}: torn entry");
+                            }
+                        }
+                    }
+                });
+            }
+        });
     }
 }

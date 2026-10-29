@@ -429,7 +429,7 @@ fn emit_bridge(
             facts.actual_param.push((
                 site,
                 port.to.index,
-                FlowVertex(FlowVariable::formal_index(port.from.index), port.from.path),
+                FlowVertex::new(FlowVariable::formal_index(port.from.index), port.from.path),
             ));
             continue;
         }
@@ -444,17 +444,19 @@ fn emit_bridge(
             // The temporary IS the callee's parameter, so it is passed whole. It needs no
             // `formal_param` row of its own: `locals` seeds from formals and a temporary is a
             // conduit, not a source.
-            facts
-                .actual_param
-                .push((site, port.to.index, FlowVertex(t, facts::Path::empty())));
+            facts.actual_param.push((
+                site,
+                port.to.index,
+                FlowVertex::new(t, facts::Path::empty()),
+            ));
         }
 
         // Every path here is literal: `from_path` on the caller's formal, `to_path` on the
         // temporary. Nothing is concatenated, so `program_paths` -- seeded from both endpoints
         // of every `assign` and every `actual_param` vertex -- registers them for free. There
         // is no `facts.paths` push anywhere in a bridge.
-        let caller = FlowVertex(FlowVariable::formal_index(port.from.index), port.from.path);
-        let callee = FlowVertex(t, port.to.path);
+        let caller = FlowVertex::new(FlowVariable::formal_index(port.from.index), port.from.path);
+        let callee = FlowVertex::new(t, port.to.path);
         // `assign` is keyed on the packed instruction site, from which the function is derived.
         // (The function-keyed shape is the persisted parquet form only.)
         if port.direction.inward() {

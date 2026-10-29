@@ -1,217 +1,310 @@
-//! The admissible access paths, as a set that answers "is `prefix · rest` a path?" without
-//! building `prefix · rest`.
+//! The admissible access paths, frozen for the fixpoint: a per-index, read-only table that
+//! answers "is `prefix · [adjust] · rest` a path?" without building `prefix · [adjust] · rest`,
+//! and hands out each path's splits without interning them.
 //!
 //! The local propagation rules of the index engine extend an access path across an edge and
-//! then test the result against `paths`, the set of syntactic program paths. Most extensions
-//! fail the test: measured on a dense binary, the engine built four billion derived paths and
-//! kept six percent of them. Building one means allocating a buffer and interning a cons cell
-//! per prefix component, so the rejected paths were the bulk of the run.
+//! then test the result against the admissible paths. Most extensions fail the test: measured
+//! on a dense binary, the engine built four billion derived paths and kept six percent of them.
+//! Building one would intern a node per new segment, mid-run and under a shard lock.
 //!
-//! [`PathSet`] turns that into a lookup on components that already exist. It hashes the
-//! *virtual* concatenation — walking the prefix, an optional offset adjustment and the rest
-//! with the same offset-merging normalization `Path::from_accesses` applies — probes a table
-//! keyed on that hash, and confirms a hit by comparing components. A hit hands back the set's
-//! own interned `Path`, so nothing is allocated in either case.
+//! [`PathSet`] holds handles only; the segments stay in the global `Path` arena. A path's
+//! interned node stores its suffix hash, a fold of its segments onto its tail's hash, so the
+//! hash of `prefix · [adjust] · rest` folds the new segments onto `rest`'s stored hash, and one
+//! probe of the table settles membership. A hit is confirmed by walking the matched path's
+//! segments against the new part and checking that the tail where they end is `rest` itself.
+//! A miss means the candidate is not in the set, and nothing is left behind.
+//!
+//! The set is per index, not global: the global interner also holds prefix keys,
+//! rests and other indexes' paths, so having a handle is not being admissible.
 
 use std::hash::Hasher;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ctadl_ir::mir::{Offset, PathSegment};
-use rustc_hash::FxHasher;
-use smallvec::SmallVec;
+use hashbrown::HashTable;
 
-use crate::facts::Path;
+use crate::facts::{Path, suffix_hash};
 
-type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
-
-/// One component of a virtual, normalized path: a borrowed symbol or a merged offset.
-#[derive(Clone, Copy)]
-enum Seg<'a> {
-    Sym(&'a PathSegment),
-    Off(i64),
-}
-
-impl PartialEq<PathSegment> for Seg<'_> {
-    fn eq(&self, other: &PathSegment) -> bool {
-        match (self, other) {
-            (Seg::Sym(a), b) => *a == b,
-            (Seg::Off(a), PathSegment::Offset(Offset(b))) => a == b,
-            _ => false,
-        }
-    }
-}
-
-/// Walks components and yields what [`Path::from_accesses`] would keep: runs of adjacent
-/// offsets summed into one, and zero-sum runs dropped. Every `Path` is already in that form, so
-/// on a single path this is the identity; across a junction of two paths it performs exactly
-/// the merge `prepend_onto` performs.
-struct Normalized<'a, I> {
-    it: I,
-    pending: i64,
-    stash: Option<Seg<'a>>,
-}
-
-impl<'a, I: Iterator<Item = Seg<'a>>> Iterator for Normalized<'a, I> {
-    type Item = Seg<'a>;
-    #[inline]
-    fn next(&mut self) -> Option<Seg<'a>> {
-        if let Some(s) = self.stash.take() {
-            return Some(s);
-        }
-        loop {
-            match self.it.next() {
-                Some(Seg::Sym(PathSegment::Offset(Offset(o)))) => self.pending += o,
-                Some(Seg::Off(o)) => self.pending += o,
-                Some(seg) => {
-                    if self.pending != 0 {
-                        let o = std::mem::take(&mut self.pending);
-                        self.stash = Some(seg);
-                        return Some(Seg::Off(o));
-                    }
-                    return Some(seg);
-                }
-                None => {
-                    if self.pending != 0 {
-                        return Some(Seg::Off(std::mem::take(&mut self.pending)));
-                    }
-                    return None;
-                }
-            }
-        }
-    }
-}
-
+/// The table hash of a stored 32-bit suffix hash: hashbrown takes its bucket index from the low
+/// bits and its tag from the top 7.
 #[inline]
-fn normalized<'a, I: Iterator<Item = Seg<'a>>>(it: I) -> Normalized<'a, I> {
-    Normalized {
-        it,
-        pending: 0,
-        stash: None,
-    }
+fn wide(h: u32) -> u64 {
+    h as u64 | (h as u64) << 32
 }
 
-/// Hashes a normalized component sequence. This is the set's own hash, not `PathSegment`'s:
-/// the table is built and probed through this one function, so it only has to be
-/// deterministic. A symbol hashes by its interned pointer, as `Symbol` itself does.
-#[inline]
-fn hash_segs<'a>(segs: impl Iterator<Item = Seg<'a>>) -> u64 {
-    let mut h = FxHasher::default();
-    for seg in segs {
-        match seg {
-            Seg::Sym(PathSegment::Symbol(s)) => {
-                h.write_u8(1);
-                h.write_usize(s.as_ptr() as usize);
-            }
-            Seg::Sym(PathSegment::Offset(Offset(o))) => {
-                h.write_u8(2);
-                h.write_i64(*o);
-            }
-            Seg::Off(o) => {
-                h.write_u8(2);
-                h.write_i64(o);
-            }
-        }
-    }
-    h.finish()
-}
-
-#[inline]
-fn eq_path<'a>(path: &Path, segs: impl Iterator<Item = Seg<'a>>) -> bool {
-    let mut it = path.iter();
-    for seg in segs {
-        match it.next() {
-            Some(c) if seg == *c => {}
-            _ => return false,
-        }
-    }
-    it.next().is_none()
-}
-
-/// The splits of one admissible path, computed once: see [`PathSet::splits`].
-#[derive(Default)]
-pub struct Splits {
+/// The splits of one admissible path: see [`PathSet::splits`].
+#[derive(Clone, Copy, Default)]
+pub struct Splits<'a> {
     /// Every component-wise split `(key, rest)`, from `([], p)` to `(p, [])`.
-    pub exact: Vec<(Path, Path)>,
+    pub exact: &'a [(Path, Path)],
     /// The splits before an offset component, `(key, [n]·tail)`.
-    pub wild: Vec<(Path, Path)>,
+    pub wild: &'a [(Path, Path)],
+}
+
+/// The candidate `body[..n] · [junction] · base`: the first `n` segments of `body`, then an
+/// offset segment when `junction` is `Some`, then the existing path `base`. Normalized: no two
+/// offsets are adjacent and no offset is zero.
+struct Candidate {
+    body: Path,
+    n: usize,
+    junction: Option<i64>,
+    base: Path,
+}
+
+impl Candidate {
+    /// The suffix hash the candidate's node would store, folded from `base`'s.
+    #[inline]
+    fn hash(&self) -> u32 {
+        let mut h = self.base.suffix_hash();
+        if let Some(s) = self.junction {
+            h = suffix_hash(&PathSegment::Offset(Offset(s)), h);
+        }
+        fold(self.body, self.n, h)
+    }
+
+    /// Whether `p` is the candidate: its first segments are the new part, and the tail after
+    /// them is `base`, compared by handle.
+    #[inline]
+    fn is(&self, mut p: Path) -> bool {
+        let mut body = self.body;
+        for _ in 0..self.n {
+            let (Some((a, p_tail)), Some((b, body_tail))) = (p.uncons(), body.uncons()) else {
+                return false;
+            };
+            if a != b {
+                return false;
+            }
+            (p, body) = (p_tail, body_tail);
+        }
+        if let Some(s) = self.junction {
+            match p.uncons() {
+                Some((PathSegment::Offset(Offset(o)), tail)) if *o == s => p = tail,
+                _ => return false,
+            }
+        }
+        p == self.base
+    }
+}
+
+/// `p`'s first `n` segments folded onto `h`, from the last outward. Recursion keeps it off the
+/// heap; the caller bounds `n` by the set's deepest member.
+fn fold(p: Path, n: usize, h: u32) -> u32 {
+    if n == 0 {
+        return h;
+    }
+    let (head, tail) = p.uncons().expect("fold past the end of a path");
+    suffix_hash(head, fold(tail, n - 1, h))
 }
 
 /// The admissible paths. See the module docs.
+///
+/// Members are numbered by rank, their order by handle. Each member's precomputed splits sit in
+/// arrays indexed by rank, and a handle's rank is one word of the membership bitset plus a
+/// popcount.
 pub struct PathSet {
-    table: Map<u64, SmallVec<[Path; 1]>>,
-    /// The splits of every admissible path, keyed by the path. Every path a rule splits — an
-    /// edge's source path, a `locals` path — is admissible, so this is total over what the
-    /// rules ask, and a split costs a lookup instead of interning each prefix anew.
-    splits: Map<Path, Splits>,
-    len: usize,
+    /// Every non-empty member, by stored suffix hash.
+    table: HashTable<Path>,
+    /// Bit `b` is set when the path whose [`Path::raw`] are `b` is a member.
+    bits: Vec<u64>,
+    /// The number of members in the words before each word of `bits`.
+    ranks: Vec<u32>,
+    /// Each member's trailing-offset split `(key, m)`; `m == 0` when it has none, since no path
+    /// holds a zero offset.
+    trailing: Vec<(Path, i64)>,
+    /// Member `r`'s exact splits are `exact[exact_at[r]..exact_at[r + 1]]`.
+    exact_at: Vec<u32>,
+    exact: Vec<(Path, Path)>,
+    /// As `exact_at` and `exact`, for the wild splits.
+    wild_at: Vec<u32>,
+    wild: Vec<(Path, Path)>,
+    /// The most segments any member has. A candidate with a longer new part is not a member.
+    max_depth: usize,
+    /// Calls to [`PathSet::split_trailing_offset`] on a non-member, each a bug.
+    split_misses: AtomicUsize,
 }
 
 impl PathSet {
+    /// Freezes `paths`. Interns every split key, and so every trailing-offset split, that the
+    /// fixpoint will ask for; rests are tails of members, which are interned with them.
     pub fn from_paths(paths: impl IntoIterator<Item = Path>) -> Self {
+        let mut members: Vec<Path> = paths.into_iter().collect();
+        // Rank order is handle order.
+        members.sort_unstable();
+        members.dedup();
+        let words = members.last().map_or(0, |p| p.raw() as usize / 64 + 1);
         let mut set = PathSet {
-            table: Map::default(),
-            splits: Map::default(),
-            len: 0,
+            table: HashTable::with_capacity(members.len()),
+            bits: vec![0; words],
+            ranks: vec![0; words],
+            trailing: Vec::with_capacity(members.len()),
+            exact_at: Vec::with_capacity(members.len() + 1),
+            exact: Vec::new(),
+            wild_at: Vec::with_capacity(members.len() + 1),
+            wild: Vec::new(),
+            max_depth: 0,
+            split_misses: AtomicUsize::new(0),
         };
-        for p in paths {
-            let h = hash_segs(normalized(p.iter().map(Seg::Sym)));
-            let bucket = set.table.entry(h).or_default();
-            if !bucket.contains(&p) {
-                bucket.push(p);
-                set.splits.insert(
-                    p,
-                    Splits {
-                        exact: p.prefix_keys(),
-                        wild: p.prefix_keys_wild(),
-                    },
-                );
-                set.len += 1;
+        for &p in &members {
+            set.bits[p.raw() as usize / 64] |= 1 << (p.raw() % 64);
+            set.exact_at.push(set.exact.len() as u32);
+            set.exact.extend(p.prefix_keys());
+            set.wild_at.push(set.wild.len() as u32);
+            set.wild.extend(p.prefix_keys_wild());
+            set.trailing
+                .push(p.split_trailing_offset().unwrap_or((Path::EMPTY, 0)));
+            set.max_depth = set.max_depth.max(p.len());
+            if !p.is_empty() {
+                set.table
+                    .insert_unique(wide(p.suffix_hash()), p, |q| wide(q.suffix_hash()));
             }
+        }
+        set.exact_at.push(set.exact.len() as u32);
+        set.wild_at.push(set.wild.len() as u32);
+        let mut before = 0u32;
+        for (rank, word) in set.ranks.iter_mut().zip(&set.bits) {
+            *rank = before;
+            before += word.count_ones();
         }
         set
     }
 
-    /// The splits of `p` — [`Path::prefix_keys`] and [`Path::prefix_keys_wild`], precomputed.
-    /// `p` must be admissible; an inadmissible path has no splits, which is also the right
-    /// answer for a rule that gates on membership.
+    /// `p`'s rank, if it is a member.
     #[inline]
-    pub fn splits(&self, p: &Path) -> &Splits {
-        static NONE: std::sync::LazyLock<Splits> = std::sync::LazyLock::new(Splits::default);
-        self.splits.get(p).unwrap_or(&NONE)
+    fn rank(&self, p: Path) -> Option<usize> {
+        let b = p.raw() as usize;
+        let word = *self.bits.get(b / 64)?;
+        let bit = 1u64 << (b % 64);
+        (word & bit != 0)
+            .then(|| self.ranks[b / 64] as usize + (word & (bit - 1)).count_ones() as usize)
+    }
+
+    /// The splits of `p` ([`Path::prefix_keys`] and [`Path::prefix_keys_wild`]), precomputed.
+    /// A non-member has none, which is the right answer for a rule that gates on membership.
+    #[inline]
+    pub fn splits(&self, p: &Path) -> Splits<'_> {
+        match self.rank(*p) {
+            Some(r) => Splits {
+                exact: &self.exact[self.exact_at[r] as usize..self.exact_at[r + 1] as usize],
+                wild: &self.wild[self.wild_at[r] as usize..self.wild_at[r + 1] as usize],
+            },
+            None => Splits::default(),
+        }
+    }
+
+    /// [`Path::split_trailing_offset`], precomputed. The rules ask it of `locals` paths and edge
+    /// source paths, which are members or empty. A non-member is a bug: debug builds panic, and
+    /// release builds count it and answer `None`.
+    #[inline]
+    pub fn split_trailing_offset(&self, p: &Path) -> Option<(Path, i64)> {
+        // The empty path need not be a member (codegen can leave it out), and has no split.
+        if p.is_empty() {
+            return None;
+        }
+        match self.rank(*p) {
+            Some(r) => {
+                let (key, m) = self.trailing[r];
+                (m != 0).then_some((key, m))
+            }
+            None => {
+                self.split_misses.fetch_add(1, Ordering::Relaxed);
+                debug_assert!(false, "split_trailing_offset of a non-member path {p}");
+                None
+            }
+        }
+    }
+
+    /// How many times [`PathSet::split_trailing_offset`] was asked about a non-member.
+    pub fn split_misses(&self) -> usize {
+        self.split_misses.load(Ordering::Relaxed)
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.trailing.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.trailing.is_empty()
     }
 
     #[inline]
     pub fn contains(&self, p: &Path) -> bool {
-        let h = hash_segs(normalized(p.iter().map(Seg::Sym)));
-        self.table.get(&h).is_some_and(|b| b.contains(p))
+        self.rank(*p).is_some()
     }
 
-    /// The admissible path equal to `prefix · [adjust] · rest`, if there is one, where `[adjust]`
-    /// is an offset component that is present only when `adjust` is `Some`. Equivalent to
-    /// `Path::from_accesses(prefix ++ adjust ++ rest)` followed by a membership test, without
-    /// building the path.
+    /// Heap bytes of the frozen table, its bitset and its splits. The paths themselves are in the
+    /// global interner.
+    pub fn bytes(&self) -> usize {
+        self.table.allocation_size()
+            + self.bits.capacity() * size_of::<u64>()
+            + self.ranks.capacity() * size_of::<u32>()
+            + self.trailing.capacity() * size_of::<(Path, i64)>()
+            + (self.exact_at.capacity() + self.wild_at.capacity()) * size_of::<u32>()
+            + (self.exact.capacity() + self.wild.capacity()) * size_of::<(Path, Path)>()
+    }
+
+    /// The member equal to `prefix · [adjust] · rest`, normalized as [`Path::from_accesses`]
+    /// normalizes, if there is one. `[adjust]` is an offset segment, present only when `adjust`
+    /// is `Some`. A miss is an ordinary answer.
+    ///
+    /// Folds the new segments onto `rest`'s stored hash and probes once, so it costs time in the
+    /// length of `prefix`, not of the result, and neither interns nor allocates nor locks.
     #[inline]
     pub fn concat(&self, prefix: &Path, adjust: Option<i64>, rest: &Path) -> Option<Path> {
-        let segs = || {
-            normalized(
-                prefix
-                    .iter()
-                    .map(Seg::Sym)
-                    .chain(adjust.map(Seg::Off))
-                    .chain(rest.iter().map(Seg::Sym)),
-            )
+        // Offsets merge only at the junction: `prefix` and `rest` are each normalized.
+        let mut len = 0;
+        let mut last_off = None;
+        let mut p = *prefix;
+        while let Some((head, tail)) = p.uncons() {
+            len += 1;
+            if tail.is_empty() {
+                last_off = match head {
+                    PathSegment::Offset(Offset(o)) => Some(*o),
+                    PathSegment::Symbol(_) => None,
+                };
+            }
+            p = tail;
+        }
+        let candidate = if last_off.is_some() || adjust.is_some() {
+            let rest_off = rest.head_offset();
+            let sum = last_off.unwrap_or(0) + adjust.unwrap_or(0) + rest_off.unwrap_or(0);
+            Candidate {
+                body: *prefix,
+                n: len - last_off.is_some() as usize,
+                junction: (sum != 0).then_some(sum),
+                base: if rest_off.is_some() {
+                    rest.tail()
+                } else {
+                    *rest
+                },
+            }
+        } else {
+            Candidate {
+                body: *prefix,
+                n: len,
+                junction: None,
+                base: *rest,
+            }
         };
-        let h = hash_segs(segs());
-        let bucket = self.table.get(&h)?;
-        bucket.iter().find(|p| eq_path(p, segs())).copied()
+        if candidate.n == 0 && candidate.junction.is_none() {
+            return self.contains(&candidate.base).then_some(candidate.base);
+        }
+        if candidate.n + candidate.junction.is_some() as usize > self.max_depth {
+            return None;
+        }
+        let h = candidate.hash();
+        self.table
+            .find(wide(h), |&p| p.suffix_hash() == h && candidate.is(p))
+            .copied()
+    }
+
+    /// The member equal to `p` with its prefix `prefix` replaced by `new_prefix`, as
+    /// [`Path::substitute_prefix`] would build it, if there is one. A miss, whether `prefix` is
+    /// not a prefix of `p` or the result is not a member, is an ordinary answer.
+    #[inline]
+    pub fn substitute_prefix(&self, p: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
+        let (adjust, rest) = crate::facts::match_prefix_split(p, prefix)?;
+        self.concat(new_prefix, adjust, &rest)
     }
 }
 
@@ -301,5 +394,101 @@ mod tests {
         );
         // and the result is the set's own interned path
         assert_eq!(set.concat(&p(".x"), None, &p(".[8]")), Some(p(".x.[8]")));
+    }
+
+    /// Every `(prefix, adjust, rest)` over a small grammar agrees with building the path and
+    /// testing it, on a set that holds some of the results and not others.
+    #[test]
+    fn concat_agrees_with_building_the_path() {
+        let parts = [
+            "",
+            ".x",
+            ".y",
+            ".[2]",
+            ".[-2]",
+            ".x.[2]",
+            ".[2].x",
+            ".x.[-2]",
+            ".x.y",
+            ".[4].x.[2]",
+            ".y.[2].x",
+        ];
+        let adjusts = [None, Some(2), Some(-2), Some(4)];
+        let build = |a: &str, adj: Option<i64>, b: &str| {
+            let mut segs: Vec<PathSegment> = p(a).iter().cloned().collect();
+            segs.extend(adj.map(|o| PathSegment::Offset(Offset(o))));
+            segs.extend(p(b).iter().cloned());
+            Path::from_accesses(segs)
+        };
+        let mut all = Vec::new();
+        for a in parts {
+            for adj in adjusts {
+                for b in parts {
+                    all.push(build(a, adj, b));
+                }
+            }
+        }
+        all.sort_unstable();
+        all.dedup();
+        // Every other result is a member, the empty path included or not.
+        for parity in [0, 1] {
+            let members: Vec<Path> = all
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 == parity)
+                .map(|(_, p)| *p)
+                .collect();
+            let set = PathSet::from_paths(members.iter().copied());
+            assert_eq!(set.len(), members.len());
+            assert!(members.iter().all(|q| set.contains(q)));
+            for a in parts {
+                for adj in adjusts {
+                    for b in parts {
+                        let want = build(a, adj, b);
+                        let got = set.concat(&p(a), adj, &p(b));
+                        let expected = set.contains(&want).then_some(want);
+                        assert_eq!(got, expected, "{a} · {adj:?} · {b}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn substitute_prefix_agrees_with_path() {
+        let paths = [
+            "", ".x", ".x.y", ".x.[3]", ".x.[3].y", ".x.[5].y", ".[2]", ".z.[1].y", ".z.y",
+        ];
+        let set = PathSet::from_paths(paths.iter().map(|s| p(s)));
+        for ap in paths {
+            for pre in paths {
+                for np in paths {
+                    let want = p(ap)
+                        .substitute_prefix(&p(pre), &p(np))
+                        .filter(|q| set.contains(q));
+                    assert_eq!(
+                        set.substitute_prefix(&p(ap), &p(pre), &p(np)),
+                        want,
+                        "{ap} [{pre} := {np}]"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn splits_are_precomputed_per_member() {
+        let set = PathSet::from_paths([p(".x.[4]"), p(".[2].y"), p(".y")]);
+        let q = p(".x.[4]");
+        assert_eq!(set.splits(&q).exact, q.prefix_keys().as_slice());
+        assert_eq!(set.splits(&q).wild, q.prefix_keys_wild().as_slice());
+        assert_eq!(set.split_trailing_offset(&q), Some((p(".x"), 4)));
+        assert_eq!(set.split_trailing_offset(&p(".[2].y")), None);
+        assert!(set.splits(&p(".z")).exact.is_empty());
+        // The empty path is answered without being a member.
+        assert!(!set.contains(&Path::empty()));
+        assert_eq!(set.split_trailing_offset(&Path::empty()), None);
+        assert_eq!(set.split_misses(), 0);
+        assert!(set.bytes() > 0);
     }
 }
