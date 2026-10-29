@@ -280,10 +280,6 @@ pub struct ProgramFacts {
     pub language: Option<Str>,
     /// The import's name, if known.
     pub import: Option<Str>,
-    /// Which frontend's method table the program came from (`java`, `cil`, `native`, `lua`);
-    /// absent when it has none. Unlike `language`, this is read off the program rather than the
-    /// import's declared scope, so it is known even when the scope is not.
-    pub method_table: Option<Str>,
 
     by_fq: HashMap<Str, RowIdx>,
     by_name: HashMap<Str, Vec<RowIdx>>,
@@ -514,7 +510,6 @@ impl ProgramFacts {
             classes,
             language: index.scope.language.map(|l| Str::from(l.name())),
             import: index.scope.import.as_deref().map(Str::from),
-            method_table: method_table_name(index.vmt()).map(Str::from),
             by_fq,
             by_name,
             by_parent,
@@ -662,17 +657,6 @@ fn row_idx(i: usize) -> RowIdx {
 fn push_unique(v: &mut Vec<Str>, s: Str) {
     if !v.contains(&s) {
         v.push(s);
-    }
-}
-
-/// The `method_table` attribute's value for `vmt`.
-fn method_table_name(vmt: &VirtualMethodTable) -> Option<&'static str> {
-    match vmt {
-        VirtualMethodTable::Java { .. } => Some("java"),
-        VirtualMethodTable::Cil { .. } => Some("cil"),
-        VirtualMethodTable::Native { .. } => Some("native"),
-        VirtualMethodTable::Lua { .. } => Some("lua"),
-        VirtualMethodTable::Unknown => None,
     }
 }
 

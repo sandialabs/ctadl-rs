@@ -21,6 +21,10 @@
 //!
 //! Tests that fail because the migration is unfaithful are `#[ignore]`d with the reason, so the
 //! suite stays green while documenting each divergence; run them with `--ignored`.
+//!
+//! Where the JSON matcher has a bug or a limitation, the migration takes the DSL's meaning
+//! rather than reproducing it. Those cases are not ignored: they pin the exact difference
+//! ([`Known`]), so neither side can drift without a test noticing.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -920,11 +924,51 @@ fn assert_faithful_on(frontend_name: &str, generator: &Value) {
     assert_faithful(generator, &[frontend(frontend_name)]);
 }
 
+/// A deliberate difference between the JSON matcher and the migrated DSL: the JSON matcher's
+/// behavior is a bug or a limitation, and the migration keeps the DSL's meaning.
+struct Known {
+    /// Which JSON behavior the migration does not reproduce.
+    reason: &'static str,
+    /// The difference, one `JSON only …` / `DSL only …` line per row, as [`Matched::diff`]
+    /// prints it.
+    diff: &'static [&'static str],
+}
+
+const JSON_UNIVERSE: &str = "the JSON matcher's universe is the method table; the DSL's is \
+    every function, including one the table does not name";
+const FULL_NAME: &str = "the DSL also accepts a function's full name as a name or signature";
+const LUA_CLASSES: &str = "the JSON matcher sees no class on Lua; the DSL sees metatable classes";
+const IN_FUNCTION_BUG: &str =
+    "JSON matcher bug: `in_function` under `not`/`any_of` narrows the callee set";
+
+/// Requires the JSON matcher and the migrated DSL to differ on `frontend_name` by exactly
+/// `known.diff`.
+fn assert_known_on(frontend_name: &str, generator: &Value, known: &Known) {
+    let imports = [frontend(frontend_name)];
+    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None);
+    let json = run_json(generator, &imports).expect("the JSON matcher accepts the generator");
+    let dsl = run_dsl(&text, &imports)
+        .unwrap_or_else(|e| panic!("the migrated DSL fails: {e}\nmigrated DSL:\n{text}"));
+    let actual: Vec<String> = json
+        .diff(&dsl)
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    let expected: Vec<String> = known.diff.iter().map(|l| l.to_string()).collect();
+    assert!(
+        actual == expected,
+        "the known difference ({}) changed\nmigrated DSL:\n{text}\nexpected:\n{expected:#?}\n\
+         actual:\n{actual:#?}",
+        known.reason,
+    );
+}
+
 /// A test module named `$name` holding one test per listed frontend, each requiring the
 /// migration of `$generator` to be faithful on that frontend's fixture. A frontend may carry
-/// attributes, which is how a known divergence is `#[ignore]`d on just the frontend it shows on.
+/// attributes, which is how a known divergence is `#[ignore]`d on just the frontend it shows on,
+/// or `=> Known { … }`, which pins a deliberate difference there instead.
 macro_rules! faithful {
-    ($(#[doc = $doc:literal])* $name:ident = $generator:expr; $( $(#[$attr:meta])* $fe:ident ),+ $(,)?) => {
+    ($(#[doc = $doc:literal])* $name:ident = $generator:expr; $( $(#[$attr:meta])* $fe:ident $(=> $known:expr)? ),+ $(,)?) => {
         $(#[doc = $doc])*
         mod $name {
             use super::*;
@@ -935,7 +979,11 @@ macro_rules! faithful {
                 $(#[$attr])*
                 #[test]
                 fn $fe() {
-                    assert_faithful_on(stringify!($fe), &generator());
+                    let known: Option<Known> = None $(.or(Some($known)))?;
+                    match known {
+                        Some(known) => assert_known_on(stringify!($fe), &generator(), &known),
+                        None => assert_faithful_on(stringify!($fe), &generator()),
+                    }
                 }
             )+
         }
@@ -1010,8 +1058,18 @@ fn arity(op: &str, value: i64) -> Value {
 faithful! {
     /// A generator with no `where` matches every function the import names.
     no_where = json!({"find": "methods", "model": method_model()});
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown, java, native, lua, cil,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    java, native, lua, cil,
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,8 +1098,18 @@ faithful! {
 faithful! {
     /// Under `not`: everything the import names but the matched set.
     signature_match_name_not = methods(json!([not(sig_name("get"))]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown, java, native, lua, cil,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    java, native, lua, cil,
 }
 
 faithful! {
@@ -1057,22 +1125,41 @@ faithful! {
     /// only, so this matches nothing there. The DSL accepts every lowered function's full name
     /// as one of its names.
     signature_match_name_is_not_the_full_id = methods(json!([sig_name(J_BASE_GET)]));
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    java, native, lua, cil,
+    java => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: Lapp/Base;->get(I)I: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Base;->get(I)I Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Base;->get(I)I Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    native, lua, cil,
 }
 
 faithful! {
     /// The CIL counterpart of [`signature_match_name_is_not_the_full_id`].
     signature_match_name_is_not_the_full_cil_id = methods(json!([sig_name(C_B_M)]));
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    cil,
+    cil => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: [App]B::M()->System.Void: Return <- Index(0)",
+            "DSL only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     /// A native function the method table does not name: the JSON index has no row for it.
     signature_match_name_unnamed_native = methods(json!([sig_name(N_UNNAMED)]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    native_unnamed,
+    native_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: FUN_3000: Return <- Index(0)",
+            "DSL only endpoints: FUN_3000 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: FUN_3000 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1088,16 +1175,34 @@ faithful! {
     signature_match_parent_lua = methods(json!([
         {"constraint": "signature_match", "parent": "lua$class$Account"}
     ]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "DSL only propagations: app.Account.deposit: Return <- Index(0)",
+            "DSL only propagations: app.Account.withdraw: Return <- Index(0)",
+            "DSL only endpoints: app.Account.deposit Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: app.Account.deposit Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: app.Account.withdraw Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: app.Account.withdraw Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     signature_match_parent_lua_not = methods(json!([
         not(json!({"constraint": "signature_match", "parent": "lua$class$Account"}))
     ]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "JSON only propagations: app.Account.deposit: Return <- Index(0)",
+            "JSON only propagations: app.Account.withdraw: Return <- Index(0)",
+            "JSON only endpoints: app.Account.deposit Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: app.Account.deposit Forward Return kind=Src wildcard=false saturating=false local=None",
+            "JSON only endpoints: app.Account.withdraw Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: app.Account.withdraw Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1181,10 +1286,28 @@ faithful! {
 faithful! {
     /// On Java and CIL a pattern over the class part of the id matches no *name*.
     name_regex_over_the_full_id = methods(json!([{"constraint": "name", "pattern": "Leaf|\\[App\\]B"}]));
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    java,
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    cil,
+    java => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: Lapp/Leaf;->put(II)V: Return <- Index(0)",
+            "DSL only propagations: Lapp/Leaf;->upd()V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Leaf;->put(II)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Leaf;->put(II)V Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: Lapp/Leaf;->upd()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Leaf;->upd()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    cil => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: [App]B::M()->System.Void: Return <- Index(0)",
+            "DSL only propagations: [App]B::N(System.Int32)->System.Int32: Return <- Index(0)",
+            "DSL only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: [App]B::N(System.Int32)->System.Int32 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: [App]B::N(System.Int32)->System.Int32 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1206,10 +1329,25 @@ faithful! {
 faithful! {
     /// A Java signature is the descriptor: the method name is not in it.
     signature_regex_over_the_full_id = methods(json!([{"constraint": "signature", "pattern": "put|Main"}]));
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    java,
-    #[ignore = "migrator divergence: DSL name/signature also accept a lowered function's full name"]
-    cil,
+    java => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: Lapp/Leaf;->put(II)V: Return <- Index(0)",
+            "DSL only propagations: Lapp/Main;->main([Ljava/lang/String;)V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Leaf;->put(II)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Leaf;->put(II)V Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: Lapp/Main;->main([Ljava/lang/String;)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Main;->main([Ljava/lang/String;)V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    cil => Known {
+        reason: FULL_NAME,
+        diff: &[
+            "DSL only propagations: [App]Program::Main()->System.Void: Return <- Index(0)",
+            "DSL only endpoints: [App]Program::Main()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: [App]Program::Main()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1397,12 +1535,32 @@ faithful! {
 faithful! {
     /// The JSON `parent` needs a Java or CIL class hierarchy and matches nothing elsewhere.
     parent_lua = methods(json!([{"constraint": "parent", "inner": {"constraint": "name", "pattern": "Account"}}]));
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "DSL only propagations: app.Account.deposit: Return <- Index(0)",
+            "DSL only propagations: app.Account.withdraw: Return <- Index(0)",
+            "DSL only endpoints: app.Account.deposit Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: app.Account.deposit Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: app.Account.withdraw Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: app.Account.withdraw Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     parent_lua_not = methods(json!([not(json!({"constraint": "parent", "inner": {"constraint": "name", "pattern": "Account"}}))]));
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "JSON only propagations: app.Account.deposit: Return <- Index(0)",
+            "JSON only propagations: app.Account.withdraw: Return <- Index(0)",
+            "JSON only endpoints: app.Account.deposit Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: app.Account.deposit Forward Return kind=Src wildcard=false saturating=false local=None",
+            "JSON only endpoints: app.Account.withdraw Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: app.Account.withdraw Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1487,12 +1645,26 @@ faithful! {
 
 faithful! {
     extends_lua = methods(json!([{"constraint": "extends", "inner": {"constraint": "name", "pattern": "Account"}}]));
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "DSL only propagations: app.Sub.new: Return <- Index(0)",
+            "DSL only endpoints: app.Sub.new Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: app.Sub.new Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     extends_lua_not = methods(json!([not(json!({"constraint": "extends", "inner": {"constraint": "name", "pattern": "Account"}}))]));
-    lua,
+    lua => Known {
+        reason: LUA_CLASSES,
+        diff: &[
+            "JSON only propagations: app.Sub.new: Return <- Index(0)",
+            "JSON only endpoints: app.Sub.new Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: app.Sub.new Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -1527,8 +1699,18 @@ faithful! {
         {"constraint": "has_code", "value": true},
         any_of(json!([not(sig_name("get")), arity("==", 3)])),
     ]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown, java, native, lua, cil,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    java, native, lua, cil,
 }
 
 faithful! {
@@ -1688,8 +1870,13 @@ faithful! {
         sig_name("exec"),
         not(json!({"constraint": "in_function", "inner": sig_name("main")})),
     ]));
-    #[ignore = "JSON matcher bug: `in_function` under `not`/`any_of` narrows the callee set"]
-    java,
+    java => Known {
+        reason: IN_FUNCTION_BUG,
+        diff: &[
+            "JSON only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Main;->main([Ljava/lang/String;)V Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "JSON only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Main;->main([Ljava/lang/String;)V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1700,14 +1887,27 @@ faithful! {
             {"constraint": "in_function", "inner": sig_name("run")},
         ])),
     ]));
-    #[ignore = "JSON matcher bug: `in_function` under `not`/`any_of` narrows the callee set"]
-    java,
+    java => Known {
+        reason: IN_FUNCTION_BUG,
+        diff: &[
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Main;->main([Ljava/lang/String;)V Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Main;->main([Ljava/lang/String;)V Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Mid;->run()V Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Mid;->run()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     callsites_not_callee = callsites(json!([not(sig_name("exec"))]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown, java, native, lua, cil,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only callsite endpoints: f1 in f2 Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: f1 in f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    java, native, lua, cil,
 }
 
 /// The callees a `find: callsites` load anchored endpoints at, before any expansion over call
@@ -1724,8 +1924,8 @@ fn callsite_callees(m: &ProgramModelMatches) -> BTreeSet<String> {
 /// matching callee a call-site endpoint, and Stage 2 anchors it at the sites the resolved call
 /// graph sends there -- including a virtual call that names the base method (`Base.run`) and
 /// that CHA resolves to an override (`Mid.run`). The DSL joins on the callee the site names, so
-/// it anchors only `Base.run`, and only where a site spells it.
-#[ignore = "migrator divergence: callsite joins the static callee, not the resolved call targets"]
+/// it anchors only `Base.run`, and only where a site spells it. The migration keeps the DSL's
+/// static meaning; a resolved-callee relation is future work (`DESIGN.md`, `resolves_to`).
 #[test]
 fn callsites_anchor_at_every_matched_callee() {
     let generator = callsites(json!([sig_name("run")]));
@@ -1745,7 +1945,12 @@ fn callsites_anchor_at_every_matched_callee() {
     let mut from_dsl = ProgramModelMatches::default();
     matcher.observe_import(&index, &mut from_dsl);
     matcher.finish(&mut from_dsl).expect("finish");
-    assert_eq!(callsite_callees(&from_json), callsite_callees(&from_dsl));
+    let callees = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+    assert_eq!(
+        callsite_callees(&from_json),
+        callees(&[J_BASE_RUN, J_MID_RUN])
+    );
+    assert_eq!(callsite_callees(&from_dsl), callees(&[J_BASE_RUN]));
 }
 
 faithful! {
@@ -2063,32 +2268,95 @@ faithful! {
 
 faithful! {
     universe_no_where = json!({"find": "methods", "model": method_model()});
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    java_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    native_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown,
+    java_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: Lapp/Synth;->lambda$0()V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    native_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: FUN_3000: Return <- Index(0)",
+            "DSL only endpoints: FUN_3000 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: FUN_3000 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     universe_not = methods(json!([not(sig_name("get"))]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    java_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    native_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown,
+    java_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: Lapp/Synth;->lambda$0()V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    native_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: FUN_3000: Return <- Index(0)",
+            "DSL only endpoints: FUN_3000 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: FUN_3000 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     universe_not_has_code_false = methods(json!([not(json!({"constraint": "has_code", "value": false}))]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    java_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    native_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown,
+    java_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: Lapp/Synth;->lambda$0()V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    native_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: FUN_3000: Return <- Index(0)",
+            "DSL only endpoints: FUN_3000 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: FUN_3000 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -2101,12 +2369,33 @@ faithful! {
     /// ... so a lowered function the table does not name can be matched positively but never
     /// through `not`.
     universe_any_of_containing_not = methods(json!([any_of(json!([not(sig_name("get")), sig_name("get")]))]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    java_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    native_unnamed,
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown,
+    java_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: Lapp/Synth;->lambda$0()V: Return <- Index(0)",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: Lapp/Synth;->lambda$0()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    native_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: FUN_3000: Return <- Index(0)",
+            "DSL only endpoints: FUN_3000 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: FUN_3000 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -2114,14 +2403,25 @@ faithful! {
         sig_name("exec"),
         {"constraint": "in_function", "inner": not(sig_name("main"))},
     ]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    java_unnamed,
+    java_unnamed => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Synth;->lambda$0()V Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process; in Lapp/Synth;->lambda$0()V Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
     universe_callsites_no_where = callsites(json!([]));
-    #[ignore = "migrator divergence: `fun(F)` and `not` range over every lowered function, not the method table"]
-    unknown, java_unnamed, native_unnamed,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only callsite endpoints: f1 in f2 Backward Index(0) kind=Snk wildcard=false saturating=false local=None",
+            "DSL only callsite endpoints: f1 in f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
+    java_unnamed, native_unnamed,
 }
 
 // ---------------------------------------------------------------------------

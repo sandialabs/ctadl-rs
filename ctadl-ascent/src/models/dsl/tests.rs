@@ -482,33 +482,6 @@ fn migrates_extends_through_subclass() {
     assert!(text.contains(r#"= "Lb/Base;""#), "{text}");
 }
 
-/// The JSON's `parent` and `extends` read the Java and CIL method tables only; the DSL's also
-/// see Lua's metatable classes, so the migrated atom says which tables it means.
-#[test]
-fn a_class_predicate_names_the_tables_it_reads() {
-    let text = migrate_and_load(
-        r#"{"find":"methods",
-            "where":[{"constraint":"parent",
-                      "inner":{"constraint":"signature_match","name":"Lb/Base;"}}],
-            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
-    );
-    assert!(
-        text.contains(
-            r#"fun(F, parent = P0, method_table in {"java", "cil"}),
-  P0 = "Lb/Base;""#
-        ),
-        "{text}"
-    );
-    // A signature key's class is the call site's, which the JSON reads on any frontend.
-    let text = migrate_and_load(
-        r#"{"find":"dispatch",
-            "where":[{"constraint":"parent","inner":{"constraint":"name","pattern":"^Lb/"}}],
-            "model":{"closure_shaped":true}}"#,
-    );
-    assert!(text.contains("callsig(K, parent = P0),"), "{text}");
-    assert!(!text.contains("method_table"), "{text}");
-}
-
 /// One supertype has to satisfy the whole predicate, so the predicate is one formula over one
 /// bound class rather than a rule-level conjunction with a class per leaf.
 #[test]
@@ -550,7 +523,7 @@ fn a_class_predicate_nests_and_negates_as_one_formula() {
     );
     assert!(
         text.contains(
-            r#"!(fun(F, parent = P0, method_table in {"java", "cil"}) && (P0 != "La;" || (regex_match(P0, "^Lp/") && P0 in {"Lb;", "Lc;"})))"#
+            r#"!(fun(F, parent = P0) && (P0 != "La;" || (regex_match(P0, "^Lp/") && P0 in {"Lb;", "Lc;"})))"#
         ),
         "{text}"
     );
@@ -565,10 +538,7 @@ fn empty_class_combinators_fold() {
             "where":[{"constraint":"parent","inner":{"constraint":"all_of","inners":[]}}],
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
     );
-    assert!(
-        text.contains(r#"fun(F, parent = _, method_table in {"java", "cil"});"#),
-        "{text}"
-    );
+    assert!(text.contains(r#"fun(F, parent = _);"#), "{text}");
     let text = migrate_and_load(
         r#"{"find":"methods",
             "where":[{"constraint":"not","inner":{"constraint":"extends",
@@ -576,9 +546,7 @@ fn empty_class_combinators_fold() {
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
     );
     assert!(
-        text.contains(
-            r#"!(fun(F, parent = P0, method_table in {"java", "cil"}) && subclass(P0, _))"#
-        ),
+        text.contains(r#"!(fun(F, parent = P0) && subclass(P0, _))"#),
         "{text}"
     );
     let text = migrate_and_load(

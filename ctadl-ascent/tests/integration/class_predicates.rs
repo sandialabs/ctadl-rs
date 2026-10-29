@@ -6,7 +6,8 @@
 //! frontend the shape that tells a faithful translation from a near miss: a Java and a CIL class
 //! with two direct supertypes, which is what separates "one supertype satisfies the whole
 //! predicate" from "each part is satisfied by some supertype"; and a Lua class, which the DSL's
-//! `parent` sees and the JSON's does not.
+//! `parent` sees and the JSON's did not. On Lua the migration takes the DSL's meaning, so the two
+//! are compared everywhere else and the Lua results are pinned on their own.
 
 use ctadl_ascent::models::dsl::migrate::migrate_generators;
 use ctadl_ascent::models::{
@@ -340,9 +341,13 @@ fn java_for(generator: &Value) -> fn() -> ProgramInfo {
     }
 }
 
-/// Requires the JSON and the migrated DSL to agree on every program.
+/// Requires the JSON and the migrated DSL to agree on every program but Lua, where the JSON's
+/// class predicates matched nothing; see [`parent_and_extends_see_lua_classes`].
 fn agree(generator: Value) {
     for (name, info, scope) in programs(java_for(&generator)) {
+        if name.starts_with("lua") {
+            continue;
+        }
         let (json, dsl, text) = both(&generator, &info, &scope);
         assert_eq!(
             json, dsl,
@@ -406,33 +411,57 @@ fn parent_leaves() {
     // No name at all is a predicate no class satisfies.
 }
 
-/// The Lua divergence: the DSL's `parent` covers metatable classes, the JSON's does not, so a
-/// positive predicate must fail on Lua and a negated one must hold of everything there.
+/// The JSON's `parent` and `extends` matched nothing on Lua; a migrated rule takes the DSL's
+/// meaning instead, where a metatable-recovered class is a class like any other.
 #[test]
-fn parent_matches_nothing_outside_java_and_cil() {
+fn parent_and_extends_see_lua_classes() {
     agree_on_java(
         methods(vec![parent(name(".*"))]),
         &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"],
     );
-    agree(methods(vec![not(parent(sig("lua$class$Account")))]));
-    agree(methods(vec![not(parent(name(".*")))]));
-    agree(methods(vec![extends(name(".*"))]));
-    agree(methods(vec![not(extends(sig("lua$class$Base")))]));
-
     let lua = lua_program();
-    let (json, _, _) = both(
-        &methods(vec![not(parent(sig("lua$class$Account")))]),
-        &lua,
-        &ImportScope::unknown(),
-    );
-    assert_eq!(
-        json,
-        ["m.Account.deposit", "m.helper"]
-            .map(String::from)
-            .into_iter()
-            .collect(),
-        "the JSON's negated `parent` on Lua complements an empty match"
-    );
+    let cases = [
+        (
+            methods(vec![parent(sig("lua$class$Account"))]),
+            vec!["m.Account.deposit"],
+        ),
+        (
+            methods(vec![not(parent(sig("lua$class$Account")))]),
+            vec!["m.helper"],
+        ),
+        (
+            methods(vec![extends(sig("lua$class$Base"))]),
+            vec!["m.Account.deposit"],
+        ),
+        (
+            methods(vec![not(extends(sig("lua$class$Base")))]),
+            vec!["m.helper"],
+        ),
+    ];
+    for (generator, expected) in cases {
+        for scope in [
+            ImportScope::new(ArtifactLanguage::Lua, "app"),
+            ImportScope::unknown(),
+        ] {
+            let (json, dsl, text) = both(&generator, &lua, &scope);
+            let expected: Selected = expected.iter().map(|f| f.to_string()).collect();
+            assert_eq!(
+                dsl, expected,
+                "migrated DSL on Lua for {generator}\nmigrated:\n{text}"
+            );
+            // What the JSON did instead, so the difference stays a deliberate one.
+            let negated = generator.to_string().contains("\"not\"");
+            let json_expected: Selected = if negated {
+                ["m.Account.deposit", "m.helper"]
+                    .map(String::from)
+                    .into_iter()
+                    .collect()
+            } else {
+                Selected::new()
+            };
+            assert_eq!(json, json_expected, "the JSON on Lua for {generator}");
+        }
+    }
 }
 
 #[test]
