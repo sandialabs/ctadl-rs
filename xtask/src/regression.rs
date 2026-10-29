@@ -2755,7 +2755,7 @@ mod tests {
             "import 'app': 3 classes not closed",
             BTreeMap::new(),
         );
-        found.save(&index, "ctadl index").unwrap();
+        found.save(&index).unwrap();
         let outcome = explain_lost_flow(&work, "full:0", lost());
         assert!(
             matches!(&outcome, Outcome::Fail(why) if why.contains("no index notification")),
@@ -2768,7 +2768,7 @@ mod tests {
             "mem2reg full: main: ...",
             BTreeMap::new(),
         );
-        found.save(&index, "ctadl index").unwrap();
+        found.save(&index).unwrap();
         let outcome = explain_lost_flow(&work, "full:0", lost());
         assert!(matches!(
             &outcome,

@@ -1077,7 +1077,7 @@ mod tests {
         fails_with("wrote no");
 
         let mut found = Notifications::default();
-        found.save(&dir, "ctadl import").unwrap();
+        found.save(&dir).unwrap();
         fails_with("has no CTADL0105");
 
         let (a, b, c, d, e) = MERGED_CLASSES;
@@ -1090,11 +1090,11 @@ mod tests {
         };
         let mut moved = Notifications::default();
         moved.push(&MERGED_CLASSES_SPLIT, Level::Note, "split", counts(a + 1));
-        moved.save(&dir, "ctadl import").unwrap();
+        moved.save(&dir).unwrap();
         fails_with("Re-pin");
 
         found.push(&MERGED_CLASSES_SPLIT, Level::Note, "split", counts(a));
-        found.save(&dir, "ctadl import").unwrap();
+        found.save(&dir).unwrap();
         check_merged_classes(&dir).unwrap();
 
         found.push(
@@ -1103,7 +1103,7 @@ mod tests {
             "too many classes not closed",
             BTreeMap::new(),
         );
-        found.save(&dir, "ctadl import").unwrap();
+        found.save(&dir).unwrap();
         fails_with("too many classes not closed");
         std::fs::remove_dir_all(&dir).unwrap();
     }

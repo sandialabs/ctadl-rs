@@ -2093,9 +2093,10 @@ fn ctadl_tool() -> Tool {
     Tool::builder()
         .driver(
             ToolComponent::builder()
-                .name("ctadl")
-                .version("2026.1")
-                .information_uri("https://github.com/sandialabs/ctadl-rs")
+                .name(ctadl_import::notifications::TOOL_NAME)
+                .version(ctadl_import::notifications::TOOL_VERSION)
+                .semantic_version(ctadl_import::notifications::TOOL_VERSION)
+                .information_uri(ctadl_import::notifications::TOOL_INFORMATION_URI)
                 .full_description(
                     MultiformatMessageString::builder()
                         .text(CTADL_FULL_DESCRIPTION)

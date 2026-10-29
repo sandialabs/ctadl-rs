@@ -292,7 +292,7 @@ pub fn import_and_save(import: &ArtifactImport, opts: ImportOptions<'_>) -> Resu
         }
     } else {
         notifications
-            .save(&dir, "ctadl import")
+            .save(&dir)
             .err_context(|| format!("writing notifications to {}", dir.display()))?;
     }
     log::debug!("encoding");

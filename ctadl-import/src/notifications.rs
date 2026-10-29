@@ -19,6 +19,29 @@ use serde_sarif::sarif::{
 
 pub const NOTIFICATIONS_FILE: &str = "notifications.sarif";
 
+/// The SARIF `tool.driver` every SARIF file ctadl writes names: its `name`, `version` (also its
+/// `semanticVersion`; the workspace version, so `Cargo.toml` is the one place to change it) and
+/// `informationUri`.
+pub const TOOL_NAME: &str = "ctadl";
+pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const TOOL_INFORMATION_URI: &str = "https://github.com/sandialabs/ctadl-rs";
+
+/// This process's command line, for a SARIF `invocation.commandLine`.
+pub fn command_line() -> String {
+    std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// This process's arguments after the program name, for a SARIF `invocation.arguments`.
+pub fn arguments() -> Vec<String> {
+    std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
+}
+
 /// A kind of notification: its SARIF `reportingDescriptor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Descriptor {
@@ -187,15 +210,20 @@ impl Notifications {
             .filter(move |n| descriptor_id(n) == Some(descriptor.id))
     }
 
-    /// Writes these to `dir`'s `notifications.sarif`, replacing what was there. `tool` names the
-    /// step that wrote them (`ctadl import`, `ctadl index`).
-    pub fn save(&self, dir: impl AsRef<Path>, tool: &str) -> std::io::Result<()> {
+    /// Writes these to `dir`'s `notifications.sarif`, replacing what was there. The invocation
+    /// records this process's command line, which says which step wrote them.
+    pub fn save(&self, dir: impl AsRef<Path>) -> std::io::Result<()> {
         let driver = ToolComponent::builder()
-            .name(tool.to_string())
+            .name(TOOL_NAME)
+            .version(TOOL_VERSION)
+            .semantic_version(TOOL_VERSION)
+            .information_uri(TOOL_INFORMATION_URI)
             .notifications(self.descriptors.values().cloned().collect::<Vec<_>>())
             .build();
         let invocation = Invocation::builder()
             .execution_successful(true)
+            .command_line(command_line())
+            .arguments(arguments())
             .tool_execution_notifications(self.notifications.clone())
             .build();
         let run = Run::builder()
@@ -290,7 +318,7 @@ mod tests {
             "f was analyzed loosely",
             [("count".to_string(), serde_json::json!(3))].into(),
         );
-        n.save(dir.path(), "ctadl test").unwrap();
+        n.save(dir.path()).unwrap();
 
         let back = Notifications::load(dir.path()).unwrap();
         assert_eq!(back.len(), 1, "an equal notification is kept once");
@@ -301,6 +329,15 @@ mod tests {
         assert_eq!(only.level, Some(serde_json::json!("warning")));
         assert_eq!(back.descriptors().count(), 1);
         assert_eq!(back.of(&KIND).count(), 1);
+        let text = std::fs::read_to_string(dir.path().join(NOTIFICATIONS_FILE)).unwrap();
+        let sarif: Sarif = serde_json::from_str(&text).unwrap();
+        let run = &sarif.runs[0];
+        assert_eq!(run.tool.driver.name, TOOL_NAME);
+        let invocation = &run.invocations.as_ref().unwrap()[0];
+        assert_eq!(
+            invocation.command_line.as_deref(),
+            Some(command_line().as_str())
+        );
     }
 
     #[test]

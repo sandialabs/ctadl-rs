@@ -185,9 +185,7 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
         [("callInput".to_string(), serde_json::json!(1))].into(),
     );
     let summary_index = summary.index_path().expect("summary index path");
-    summary_notes
-        .save(&summary_index, "ctadl index")
-        .expect("writing note");
+    summary_notes.save(&summary_index).expect("writing note");
 
     let app_import = import_lua("notes_app", "print(io.read())\n");
     let mut import_notes = Notifications::default();
@@ -198,7 +196,7 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
         Default::default(),
     );
     import_notes
-        .save(app_import.import_path(), "ctadl import")
+        .save(app_import.import_path())
         .expect("writing import note");
     let app = AnalysisProject::try_create("notes_app", &["notes_app"], SubImports::All)
         .expect("app project");

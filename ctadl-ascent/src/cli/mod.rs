@@ -660,7 +660,7 @@ pub fn index(
         );
     }
     notes
-        .save(&path, "ctadl index")
+        .save(&path)
         .err_context(|| format!("saving notifications: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
     project.write_index_config(Some(call_policy_record(
@@ -809,14 +809,8 @@ pub fn query(
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
     let mut diagnostics = query_engine::formatter::QueryDiagnostics {
-        command_line: std::env::args_os()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" "),
-        arguments: std::env::args_os()
-            .skip(1)
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect(),
+        command_line: ctadl_import::notifications::command_line(),
+        arguments: ctadl_import::notifications::arguments(),
         start_time_utc,
         index_notifications: Notifications::load(&index_path)
             .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
@@ -1049,14 +1043,8 @@ fn query_model_check(
 
     let has_file_errors = outcome.has_file_errors();
     let mut diagnostics = outcome.into_diagnostics();
-    diagnostics.command_line = std::env::args_os()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ");
-    diagnostics.arguments = std::env::args_os()
-        .skip(1)
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
+    diagnostics.command_line = ctadl_import::notifications::command_line();
+    diagnostics.arguments = ctadl_import::notifications::arguments();
     diagnostics.start_time_utc = start_time_utc;
 
     let execution_successful =
