@@ -66,3 +66,34 @@ impl log::Log for Capture {
 pub fn capture_warnings() {
     log_capture();
 }
+
+/// Loads `generators`, the generators of one JSON model file, against `index`, appending what
+/// they matched to `out`: migrated to the DSL and run on its engine, which is how every JSON
+/// model file is loaded.
+pub fn load_json(
+    index: &ctadl_ascent::models::ProgramMatchIndex<'_>,
+    generators: impl IntoIterator<Item = serde_json::Value>,
+    out: &mut ctadl_ascent::models::ProgramModelMatches,
+) -> Result<ctadl_ascent::models::ModelLoadReport, ctadl_ascent::error::Error> {
+    use ctadl_ascent::models::{DslFile, DslMatcher, DslModelSet, DslPhase, ModelLoadReport};
+    let generators: Vec<serde_json::Value> = generators.into_iter().collect();
+    let file = DslFile::from_json_generators("<models>", &generators)?;
+    let set = DslModelSet { files: vec![file] };
+    let mut matcher = DslMatcher::new(&set, DslPhase::All);
+    matcher.observe_import(index, out);
+    matcher.finish(out).map(ModelLoadReport::from_dsl)
+}
+
+/// `e` without the context it was wrapped in on the way out: the error the context is about,
+/// such as the [`Error::JsonModel`](ctadl_ascent::error::Error::JsonModel) the migrator rejected
+/// a model file with.
+pub fn without_context(e: ctadl_ascent::error::Error) -> ctadl_ascent::error::Error {
+    use ctadl_ascent::error::Error;
+    match e {
+        Error::Context { context, source } => match source.downcast::<Error>() {
+            Ok(inner) => without_context(*inner),
+            Err(source) => Error::Context { context, source },
+        },
+        e => e,
+    }
+}

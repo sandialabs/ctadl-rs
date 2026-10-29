@@ -14,7 +14,7 @@
 
 use ctadl_ascent::models::{
     DEFAULT_MODEL_FILES, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
-    try_load_default_models, try_load_jsonl_models,
+    try_load_default_models, try_load_models,
 };
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::Symbol;
@@ -27,7 +27,7 @@ use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::BufReader;
+use std::io::Write;
 
 /// A 3-parameter function named `name`, so `Argument(0..2)` ports all have a formal to land on.
 fn function(name: &str) -> FunctionData {
@@ -408,10 +408,11 @@ fn unknown_vmt_loads_no_defaults() {
     assert!(matches.endpoints.is_empty());
 }
 
-/// The cheap guard against drift. Every shipped file is parsed against a program of each VMT
-/// shape — the loader's hard errors (unknown constraint keys, malformed access paths) do not
-/// depend on which functions match, so any one program would do, but running all four also
-/// proves no file panics on a table shape it was not written for.
+/// The cheap guard against drift. Every shipped `.jsonl` is loaded the way any JSON model file
+/// is, migrated and run, against a program of each VMT shape — the format's hard errors (unknown
+/// constraint keys, malformed access paths) do not depend on which functions match, so any one
+/// program would do, but running all four also proves no file panics on a table shape it was
+/// not written for.
 #[test]
 fn every_shipped_default_file_parses() {
     let programs = [
@@ -421,12 +422,12 @@ fn every_shipped_default_file_parses() {
         ("cil", cil_program()),
         ("unknown", unknown_program()),
     ];
-    for (name, contents) in DEFAULT_MODEL_FILES {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/defaults");
+    for (name, _) in DEFAULT_MODEL_FILES {
         for (vmt_name, program_info) in &programs {
             let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
             let mut matches = ProgramModelMatches::default();
-            let result =
-                try_load_jsonl_models(&match_index, BufReader::new(*contents), &mut matches);
+            let result = try_load_models(&match_index, dir.join(name), &mut matches);
             assert!(
                 result.is_ok(),
                 "{name} failed to load against a {vmt_name} program: {:?}",
@@ -539,17 +540,26 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     let with_comments = format!("// leading commentary\n\n  // indented\n{real}\n\n");
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut bare = ProgramModelMatches::default();
-    try_load_jsonl_models(&match_index, BufReader::new(real.as_bytes()), &mut bare).unwrap();
-    let mut commented = ProgramModelMatches::default();
-    try_load_jsonl_models(
-        &match_index,
-        BufReader::new(with_comments.as_bytes()),
-        &mut commented,
-    )
-    .unwrap();
+    let load = |text: &str| {
+        let mut file = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .expect("temp file");
+        file.write_all(text.as_bytes()).expect("write");
+        file.flush().expect("flush");
+        let mut out = ProgramModelMatches::default();
+        let report = try_load_models(&match_index, file.path(), &mut out).unwrap();
+        (out, report)
+    };
+    let (bare, _) = load(real);
+    let (commented, report) = load(&with_comments);
     assert_eq!(bare.propagations.len(), commented.propagations.len());
     assert!(!bare.propagations.is_empty());
+    assert_eq!(
+        report.propagation_stats.keys().copied().collect::<Vec<_>>(),
+        vec![0],
+        "the generator after the comments is still generator 0"
+    );
 }
 
 /// Every shipped `.ctadl` default is exactly what `ctadl migrate-models` writes for the `.jsonl`

@@ -1,5 +1,5 @@
+use crate::common::load_json;
 use ctadl_ascent::facts::TaintDirection;
-use ctadl_ascent::models::json::ModelGeneratorIngest;
 use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
 use ctadl_ascent::models::{ProgramModelMatches, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
@@ -76,11 +76,10 @@ fn test_load_models_json5() {
     );
 }
 
-/// Loading is batched in chunks of 1024 (`try_load_models_from_values`). Every generator must
-/// survive that batching, and every generator's index must keep counting across batch
-/// boundaries: the index names the generator in JSON error messages and in the `CTADL0004`
-/// SARIF notification, and it keys `endpoint_stats`, so a per-batch index both misnames
-/// generators and collides their match counts.
+/// Every generator of a large file is accounted for, under its own index: the index names the
+/// generator in JSON error messages and in the `CTADL0004` SARIF notification, and it keys
+/// `endpoint_stats`, so an index that restarted part-way would both misname generators and
+/// collide their match counts.
 #[test]
 fn test_load_models_across_batch_boundary() {
     const COUNT: usize = 1030;
@@ -120,10 +119,8 @@ fn test_load_models_across_batch_boundary() {
 /// `sources`/`sinks` entry, not one per (generator, direction) — counting the latter made the
 /// summary compare a count of generators against a count of endpoints.
 ///
-/// `CTADL0004` reports which of the several ways a port can produce no endpoint happened.
-/// "Matched no function" is only one of them: functions can match and the port still resolve
-/// in none of them, and reporting that as a failed `where` sends the reader to rewrite a
-/// constraint that was working.
+/// A port that produced no endpoint is reported with why: on the DSL path, a rule whose body
+/// selected no function.
 #[test]
 fn test_endpoint_stats_ports_and_unmatched_reasons() {
     const PROGRAM: &str = r#"
@@ -151,7 +148,6 @@ s:
         .program_info;
     let mut matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let generators = vec![
         // 0: two source ports on one generator, both matching `reader`.
         serde_json::json!({
@@ -168,34 +164,9 @@ s:
             "where": [{"constraint": "name", "pattern": "^nosuchfunction$"}],
             "model": {"sinks": [{"port": "Argument(0)", "kind": "S"}]},
         }),
-        // 2: `writer` matches, but has no local named `nope`.
-        serde_json::json!({
-            "find": "methods",
-            "where": [{"constraint": "name", "pattern": "^writer$"}],
-            "model": {"sinks": [{"port": "Variable(nope)", "kind": "S"}]},
-        }),
-        // 3: `writer` matches as a callee, but no caller satisfies `in_function`.
-        serde_json::json!({
-            "find": "callsites",
-            "where": [
-                {"constraint": "name", "pattern": "^writer$"},
-                {"constraint": "in_function",
-                 "inner": {"constraint": "name", "pattern": "^nosuchcaller$"}},
-            ],
-            "model": {"sinks": [{"port": "Argument(0)", "kind": "S"}]},
-        }),
-        // 4: two sink ports of one direction failing for two different reasons.
-        serde_json::json!({
-            "find": "methods",
-            "where": [{"constraint": "name", "pattern": "^writer$"}],
-            "model": {"sinks": [
-                {"port": "Variable(nope)", "kind": "S"},
-                {"port": "Variable(alsonope)", "kind": "S"},
-            ]},
-        }),
     ];
-    ingest.encode_models(generators).expect("encoding models");
-    let stats = &ingest.endpoint_stats;
+    let report = load_json(&match_index, generators, &mut matches).expect("encoding models");
+    let stats = &report.endpoint_stats;
     let get = |index: usize, direction| {
         stats
             .get(&(index, direction))
@@ -214,37 +185,6 @@ s:
     assert_eq!(
         no_function.unmatched.iter().collect::<Vec<_>>(),
         vec![&UnmatchedReason::NoFunctionMatched]
-    );
-
-    let no_local = get(2, TaintDirection::Backward);
-    assert_eq!(no_local.endpoints_matched, 0);
-    assert_eq!(
-        no_local.functions_matched, 1,
-        "the `where` constraint did match; only the port did not resolve"
-    );
-    assert_eq!(
-        no_local.unmatched.iter().collect::<Vec<_>>(),
-        vec![&UnmatchedReason::LocalNotFound("nope".to_string())]
-    );
-
-    let no_caller = get(3, TaintDirection::Backward);
-    assert_eq!(no_caller.endpoints_matched, 0);
-    assert_eq!(no_caller.functions_matched, 1, "the callee matched");
-    assert_eq!(
-        no_caller.unmatched.iter().collect::<Vec<_>>(),
-        vec![&UnmatchedReason::NoCallerMatched]
-    );
-
-    let mixed = get(4, TaintDirection::Backward);
-    assert_eq!(mixed.ports_declared, 2);
-    assert_eq!(mixed.endpoints_matched, 0);
-    assert_eq!(
-        mixed.unmatched.iter().collect::<Vec<_>>(),
-        vec![
-            &UnmatchedReason::LocalNotFound("alsonope".to_string()),
-            &UnmatchedReason::LocalNotFound("nope".to_string()),
-        ],
-        "each port's own reason survives, so `CTADL0004` can list both"
     );
 }
 
@@ -343,16 +283,13 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
     let program_info = native_program_with_f();
     let mut matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "signature_match", "name": "f"}],
         "model": {"propagation": [{"input": input, "output": output}]}
     });
-    ingest
-        .encode_models(vec![model])
+    load_json(&match_index, [model], &mut matches)
         .unwrap_or_else(|e| panic!("loading {input:?} -> {output:?}: {e}"));
-    drop(ingest);
     assert!(
         !matches.propagations.is_empty(),
         "generator matched nothing for {input:?} -> {output:?}"

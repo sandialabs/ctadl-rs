@@ -275,6 +275,19 @@ impl DslFile {
         Self::from_migration(path, text, report)
     }
 
+    /// Migrates `generators`, a JSON model file's generators in file order, and loads the
+    /// migration: [`Self::read_json`] for a caller that already has them. `path` names the file
+    /// in diagnostics.
+    pub fn from_json_generators(
+        path: impl Into<PathBuf>,
+        generators: &[serde_json::Value],
+    ) -> Result<Self, Error> {
+        let path = path.into();
+        let (text, report) = migrate::migrate_generators(generators, None)
+            .err_context(|| format!("migrating model file: {}", path.display()))?;
+        Self::from_migration(&path, text, report)
+    }
+
     /// [`Self::read_json`] for a linter: a generator that does not migrate is left out rather
     /// than costing the rest of the file. The second half is the error [`Self::read_json`]
     /// would have failed with, which names every generator left out.

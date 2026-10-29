@@ -1,18 +1,19 @@
 //! Matching and scoping tests for bridging models and `in`.
 //!
 //! Emission is covered by the unit tests in `codegen/model_matches/tests.rs`; parse/validate by
-//! `models/spec/tests.rs`. What lives here is the middle layer: what the streaming matcher
-//! records, given two programs, and what `in` does to an ordinary generator.
+//! `models/spec/tests.rs`. What lives here is the middle layer: what a JSON bridge pairs, given
+//! two programs, and what `in` does to an ordinary generator. A JSON bridge is migrated to a DSL
+//! rule whose two sides are two components of its body, paired by the engine once every import
+//! has gone past.
 
 use std::io::Write;
 
 use ctadl_ascent::codegen::model_matches::codegen_model_matches;
 use ctadl_ascent::index_engine::IndexFacts;
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
-use ctadl_ascent::models::matches::observe_import;
 use ctadl_ascent::models::{
-    ImportScope, ModelFileSpecs, ProgramMatchIndex, ProgramModelMatches, scan_model_files,
-    try_load_models,
+    DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
+    ProgramModelMatches, try_load_models,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::ProgramInfo;
@@ -45,21 +46,6 @@ fn native_program(functions: &[&str]) -> ProgramInfo {
     }
 }
 
-/// Writes `generators` (one per line) to a `.jsonl` file that lives as long as the returned
-/// handle, and scans it.
-fn specs_of(generators: &[serde_json::Value]) -> (tempfile::NamedTempFile, ModelFileSpecs) {
-    let mut file = tempfile::Builder::new()
-        .suffix(".jsonl")
-        .tempfile()
-        .expect("temp file");
-    for g in generators {
-        writeln!(file, "{}", serde_json::to_string(g).unwrap()).expect("write");
-    }
-    file.flush().expect("flush");
-    let specs = scan_model_files(&[file.path().to_path_buf()]).expect("scan");
-    (file, specs)
-}
-
 /// The bridge the matching cases use: a Lua-side callee joined to a pcode-side implementation.
 fn lua_to_pcode_bridge() -> serde_json::Value {
     serde_json::json!({
@@ -74,22 +60,32 @@ fn lua_to_pcode_bridge() -> serde_json::Value {
     })
 }
 
-fn names(set: &std::collections::BTreeSet<ctadl_ascent::facts::Str>) -> Vec<String> {
-    set.iter().map(|s| s.as_str().to_string()).collect()
-}
-
-/// Streams the given imports past the matcher, in order, and returns what it recorded.
+/// Loads `generators` as one JSON model file, streams the given imports past it in order, and
+/// returns the `(from, to)` pairs its bridges made.
 fn stream(
-    specs: &ModelFileSpecs,
+    generators: &[serde_json::Value],
     imports: &[(ArtifactLanguage, &str, ProgramInfo)],
-) -> ProgramModelMatches {
+) -> Result<Vec<(String, String)>, ctadl_ascent::error::Error> {
+    let file = DslFile::from_json_generators("bridges.jsonl", generators)?;
+    let set = DslModelSet { files: vec![file] };
+    let mut matcher = DslMatcher::new(&set, DslPhase::All);
     let mut matches = ProgramModelMatches::default();
-    matches.bridges.prepare(&specs.bridges);
     for (language, name, program_info) in imports {
         let index = ProgramMatchIndex::new(program_info, ImportScope::new(*language, name));
-        observe_import(&index, &specs.bridges, &mut matches).expect("observe");
+        matcher.observe_import(&index, &mut matches);
     }
-    matches
+    matcher.finish(&mut matches)?;
+    let mut pairs: Vec<(String, String)> = matches
+        .resolved_bridges
+        .iter()
+        .map(|b| (b.from.to_string(), b.to.to_string()))
+        .collect();
+    pairs.sort();
+    Ok(pairs)
+}
+
+fn pair(from: &str, to: &str) -> (String, String) {
+    (from.to_string(), to.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -100,9 +96,8 @@ fn stream(
 /// the fact base.
 #[test]
 fn matches_each_side_in_the_import_its_scope_admits() {
-    let (_f, specs) = specs_of(&[lua_to_pcode_bridge()]);
-    let matches = stream(
-        &specs,
+    let pairs = stream(
+        &[lua_to_pcode_bridge()],
         &[
             (
                 ArtifactLanguage::Lua,
@@ -115,104 +110,89 @@ fn matches_each_side_in_the_import_its_scope_admits() {
                 native_program(&["l_add", "l_sub"]),
             ),
         ],
-    );
-
-    let side = matches.bridges.get(0);
-    assert_eq!(names(&side.from), vec!["mylib.add"]);
-    assert_eq!(names(&side.to), vec!["l_add"]);
-    assert!(side.is_unique());
-    let pairs: Vec<_> = side
-        .pairs()
-        .map(|(a, b)| (a.as_str().to_string(), b.as_str().to_string()))
-        .collect();
-    assert_eq!(pairs, vec![("mylib.add".to_string(), "l_add".to_string())]);
+    )
+    .expect("load");
+    assert_eq!(pairs, vec![pair("mylib.add", "l_add")]);
 }
 
-/// The streaming reconciliation, stated as a test: side B's import may arrive *before* side
-/// A's, at which point whether `from` matched is unknowable. Evaluation is therefore eager and
-/// the pairing is identical either way.
+/// Side B's import may arrive *before* side A's, at which point whether `from` matched is
+/// unknowable. Each side is accumulated as the imports go past and the pairing is made at the
+/// end, so it is identical either way.
 #[test]
 fn the_to_side_may_stream_before_the_from_side() {
-    let (_f, specs) = specs_of(&[lua_to_pcode_bridge()]);
     let forward = stream(
-        &specs,
+        &[lua_to_pcode_bridge()],
         &[
             (ArtifactLanguage::Lua, "app", native_program(&["mylib.add"])),
             (ArtifactLanguage::Pcode, "lib", native_program(&["l_add"])),
         ],
-    );
+    )
+    .expect("load");
     let reversed = stream(
-        &specs,
+        &[lua_to_pcode_bridge()],
         &[
             (ArtifactLanguage::Pcode, "lib", native_program(&["l_add"])),
             (ArtifactLanguage::Lua, "app", native_program(&["mylib.add"])),
         ],
-    );
-    assert_eq!(
-        names(&forward.bridges.get(0).from),
-        names(&reversed.bridges.get(0).from)
-    );
-    assert_eq!(
-        names(&forward.bridges.get(0).to),
-        names(&reversed.bridges.get(0).to)
-    );
+    )
+    .expect("load");
+    assert_eq!(forward, vec![pair("mylib.add", "l_add")]);
+    assert_eq!(forward, reversed);
 }
 
 /// "Unmatched" means not matched *anywhere in the project*, not per import. A side that matches
 /// in one import and not another is matched.
 #[test]
 fn a_side_matched_in_any_import_counts_as_matched() {
-    let (_f, specs) = specs_of(&[serde_json::json!({
-        "find": "methods",
-        "where": [{"constraint": "signature_match", "name": "shared"}],
-        "model": {"bridge": {"to": {"where": [{"constraint": "signature_match", "name": "impl"}]}}}
-    })]);
-    let matches = stream(
-        &specs,
+    let pairs = stream(
+        &[serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "signature_match", "name": "shared"}],
+            "model": {"bridge": {
+                "to": {"where": [{"constraint": "signature_match", "name": "impl"}]},
+                "arguments": [{"from": "Argument(0)", "to": "Argument(0)"}]
+            }}
+        })],
         &[
             (ArtifactLanguage::Dex, "app", native_program(&["shared"])),
             (ArtifactLanguage::Pcode, "lib", native_program(&["impl"])),
         ],
-    );
-    let side = matches.bridges.get(0);
-    assert_eq!(names(&side.from), vec!["shared"]);
-    assert_eq!(names(&side.to), vec!["impl"]);
+    )
+    .expect("load");
+    assert_eq!(pairs, vec![pair("shared", "impl")]);
 }
 
-/// A scope naming a language no import in the project has admits nothing, so both sides come
-/// out empty -- the same observable condition as a `where` that matched nothing, and it gets
-/// the same warning rather than a category of its own.
+/// A scope naming a language no import in the project has admits nothing, so the bridge pairs
+/// nothing -- the same observable condition as a `where` that matched nothing.
 #[test]
 fn a_scope_that_admits_no_import_matches_nothing() {
-    let (_f, specs) = specs_of(&[lua_to_pcode_bridge()]);
-    let matches = stream(
-        &specs,
+    let pairs = stream(
+        &[lua_to_pcode_bridge()],
         &[(
             ArtifactLanguage::Dex,
             "app",
             native_program(&["mylib.add", "l_add"]),
         )],
-    );
-    let side = matches.bridges.get(0);
-    assert!(side.from.is_empty(), "the lua scope admits no dex import");
-    assert!(side.to.is_empty());
+    )
+    .expect("load");
+    assert!(pairs.is_empty(), "the lua scope admits no dex import");
 }
 
-/// The cross product, and the counts the `on-ambiguous` warning reports.
+/// Several matches on both sides pair as the full cross product.
 #[test]
 fn multiple_matches_on_both_sides_produce_the_full_cross_product() {
-    let (_f, specs) = specs_of(&[serde_json::json!({
-        "find": "methods",
-        "in": {"language": "dex"},
-        "where": [{"constraint": "name", "pattern": "^exec"}],
-        "model": {"bridge": {
-            "to": {"in": {"language": "pcode"},
-                   "where": [{"constraint": "name", "pattern": "^impl"}]},
-            "on-ambiguous": "ignore"
-        }}
-    })]);
-    let matches = stream(
-        &specs,
+    let pairs = stream(
+        &[serde_json::json!({
+            "find": "methods",
+            "in": {"language": "dex"},
+            "where": [{"constraint": "name", "pattern": "^exec"}],
+            "model": {"bridge": {
+                "to": {"in": {"language": "pcode"},
+                       "where": [{"constraint": "name", "pattern": "^impl"}]},
+                "arguments": [{"from": "Argument(0)", "to": "Argument(0)"}],
+                "on-ambiguous": "ignore"
+            }}
+        })],
         &[
             (
                 ArtifactLanguage::Dex,
@@ -225,31 +205,35 @@ fn multiple_matches_on_both_sides_produce_the_full_cross_product() {
                 native_program(&["impl1", "impl2"]),
             ),
         ],
+    )
+    .expect("load");
+    assert_eq!(
+        pairs,
+        vec![
+            pair("exec1", "impl1"),
+            pair("exec1", "impl2"),
+            pair("exec2", "impl1"),
+            pair("exec2", "impl2"),
+        ]
     );
-    let side = matches.bridges.get(0);
-    assert_eq!(side.from.len(), 2);
-    assert_eq!(side.to.len(), 2);
-    assert!(!side.is_unique());
-    assert_eq!(side.pairs().count(), 4);
 }
 
 /// A malformed constraint on a bridge side is a hard error, exactly as it is anywhere else in
-/// the loader. Only the evaluator can see this one, so it surfaces at match time rather than in
-/// the pre-loop scan.
+/// the file, and it fails the load before any import is matched.
 #[test]
 fn a_bad_constraint_on_a_bridge_side_is_a_hard_error() {
-    let (_f, specs) = specs_of(&[serde_json::json!({
-        "find": "methods",
-        "model": {"bridge": {"to": {"where": [{"constraint": "no_such_constraint"}]}}}
-    })]);
-    let mut matches = ProgramModelMatches::default();
-    matches.bridges.prepare(&specs.bridges);
-    let program_info = native_program(&["a"]);
-    let index = ProgramMatchIndex::new(
-        &program_info,
-        ImportScope::new(ArtifactLanguage::Pcode, "lib"),
-    );
-    let err = observe_import(&index, &specs.bridges, &mut matches).expect_err("should fail");
+    let err = stream(
+        &[serde_json::json!({
+            "find": "methods",
+            "model": {"bridge": {
+                "to": {"where": [{"constraint": "no_such_constraint"}]},
+                "arguments": [{"from": "Argument(0)", "to": "Argument(0)"}]
+            }}
+        })],
+        &[(ArtifactLanguage::Pcode, "lib", native_program(&["a"]))],
+    )
+    .expect_err("should fail");
+    let err = crate::common::without_context(err);
     assert!(format!("{err}").contains("JSON model"), "{err}");
 }
 
@@ -415,9 +399,8 @@ fn a_malformed_declared_access_path_fails_the_load() {
 /// A load counts the index-time constructs it saw, so a caller that ignores them can say so
 /// instead of dropping them in silence.
 ///
-/// The bridge carries an `arguments` map: without one the JSON loader pairs the arguments
-/// the two sides share, which needs the fact base, and the migration a JSON file now goes
-/// through refuses to guess it.
+/// The bridge carries an `arguments` map: without one the JSON format pairs the arguments the
+/// two sides share, which needs the fact base, and the migration refuses to guess it.
 #[test]
 fn index_time_constructs_are_counted_for_the_query_side_warning() {
     let mut file = tempfile::Builder::new()

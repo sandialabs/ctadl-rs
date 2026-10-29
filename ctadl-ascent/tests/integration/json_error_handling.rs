@@ -1,16 +1,31 @@
+//! What a JSON model file is rejected with, and what its `where` constraints select.
+//!
+//! Every JSON model file is migrated to the DSL as it is loaded, and a generator the JSON format
+//! does not allow fails the migration with the error the JSON loader raised for it. These tests
+//! load generators the way a file is loaded, through [`encode`].
+
 use ctadl_ascent::error::{Error, JsonModelError};
-use ctadl_ascent::models::ProgramModelMatches;
-use ctadl_ascent::models::json::ModelGeneratorIngest;
-use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
+use ctadl_ascent::models::{ImportScope, ModelLoadReport, ProgramMatchIndex, ProgramModelMatches};
 use ctadl_ir::mir::ProgramInfo;
 use serde_json::json;
+
+use crate::common::{load_json, without_context};
+
+/// Loads `generators` as one JSON model file against `index`, with the migrator's
+/// [`Error::JsonModel`] unwrapped from the context it is reported in.
+fn encode(
+    index: &ProgramMatchIndex<'_>,
+    generators: impl IntoIterator<Item = serde_json::Value>,
+    out: &mut ProgramModelMatches,
+) -> Result<ModelLoadReport, Error> {
+    load_json(index, generators, out).map_err(without_context)
+}
 
 #[test]
 fn test_missing_field_error() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     // Test individual model generator (this is what encode_models expects)
     let malformed_json = json!({
@@ -25,7 +40,7 @@ fn test_missing_field_error() {
         }
     });
 
-    let result = ingest.encode_models(vec![malformed_json]);
+    let result = encode(&match_index, [malformed_json], &mut model_matches);
     match result {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
@@ -46,7 +61,6 @@ fn test_invalid_regex_error() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let malformed_json = json!({
         "find": "methods",
@@ -59,7 +73,7 @@ fn test_invalid_regex_error() {
         "model": {}
     });
 
-    let result = ingest.encode_models(vec![malformed_json]);
+    let result = encode(&match_index, [malformed_json], &mut model_matches);
     match result {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
@@ -80,14 +94,13 @@ fn test_field_not_string_error() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let malformed_json = json!({
         "find": 123, // Should be a string
         "model": {}
     });
 
-    let result = ingest.encode_models(vec![malformed_json]);
+    let result = encode(&match_index, [malformed_json], &mut model_matches);
     match result {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
@@ -108,7 +121,6 @@ fn test_valid_json_still_works() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     // This should not produce errors, just not match any methods
     let valid_json = json!({
@@ -123,16 +135,21 @@ fn test_valid_json_still_works() {
         }
     });
 
-    let result = ingest.encode_models(vec![valid_json]);
+    let result = encode(&match_index, [valid_json], &mut model_matches);
     assert!(result.is_ok(), "Valid JSON should not produce errors");
 }
 
 /// `find: callsites` matches the callee via `signature_match` and the containing (caller)
 /// function via `in_function`, emitting one callsite-scoped endpoint carrying both.
+///
+/// `read_http_data` has a body calling `get`: the migrated rule joins on the call sites the
+/// program text names (`callsite`'s `callee_string`), where the JSON matcher anchored at the
+/// matched callee and needed no call site at all (DESIGN.md §4).
 #[test]
 fn test_callsites_matches_callee_and_caller() {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+        CallEdges, CallStyle, NativeFunction, NativeQualifiedName, NativeSignature,
+        NativeSimpleName, VirtualMethodTable,
     };
 
     let method = |n: &str| {
@@ -143,16 +160,29 @@ fn test_callsites_matches_callee_and_caller() {
             NativeQualifiedName(n.into()),
         )
     };
+    let mut caller = make_function("read_http_data", 0, false, &[]);
+    let body = caller.blocks.blocks_mut().push(BasicBlockData::new(None));
+    caller.blocks.blocks_mut()[body].extend(vec![Statement::new_kind(StatementKind::CallAssign {
+        style: CallStyle::DirectCall {
+            call_edges: CallEdges::Explicit(std::iter::once("get".to_string()).collect()),
+        },
+        rets: Default::default(),
+        args: Default::default(),
+    })]);
     let program_info = ProgramInfo {
         vmt: VirtualMethodTable::Native {
             methods: vec![method("get"), method("read_http_data"), method("unrelated")],
         },
+        program: Program::new(Functions::new([
+            make_function("get", 1, false, &[]),
+            caller,
+            make_function("unrelated", 0, false, &[]),
+        ])),
         ..Default::default()
     };
     let mut model_matches = ProgramModelMatches::default();
     {
         let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
         let model = json!({
             "find": "callsites",
             "where": [
@@ -162,9 +192,7 @@ fn test_callsites_matches_callee_and_caller() {
             ],
             "model": {"sinks": [{"kind": "TestSink", "port": "Argument(0)"}]}
         });
-        ingest
-            .encode_models(vec![model])
-            .expect("callsites model should load");
+        encode(&match_index, [model], &mut model_matches).expect("callsites model should load");
     }
 
     let rows = &model_matches.endpoints;
@@ -186,14 +214,13 @@ fn test_callsites_propagation_rejected() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let model = json!({
         "find": "callsites",
         "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}
     });
 
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => {
             assert!(
                 errors.iter().any(|e| matches!(
@@ -319,15 +346,12 @@ fn matched_functions(program_info: &ProgramInfo, where_c: serde_json::Value) -> 
     let mut model_matches = ProgramModelMatches::default();
     {
         let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
         let model = json!({
             "find": "methods",
             "where": where_c,
             "model": {"sources": [{"kind": "K", "port": "Argument(0)"}]},
         });
-        ingest
-            .encode_models(vec![model])
-            .expect("model should load");
+        encode(&match_index, [model], &mut model_matches).expect("model should load");
     }
     model_matches
         .endpoints
@@ -367,7 +391,7 @@ fn all_of_is_intersection() {
 
 #[test]
 fn not_complements_against_universe() {
-    // Top-level `not` materializes the whole function universe, then subtracts.
+    // A top-level `not` ranges over every function.
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "not", "inner": {"constraint": "name", "pattern": "^a$"}}]),
@@ -377,7 +401,7 @@ fn not_complements_against_universe() {
 
 #[test]
 fn nested_not_in_any_of_composes() {
-    // any_of[ not(a), a ] covers the whole universe (scratch composition sanity).
+    // any_of[ not(a), a ] covers every function.
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "any_of", "inners": [
@@ -447,8 +471,8 @@ fn extends_matches_superclass_java() {
 
 #[test]
 fn extends_on_non_java_matches_nothing() {
-    // `extends` needs a class hierarchy: on a native program it warns and matches nothing (not
-    // an error).
+    // `extends` needs a class hierarchy: on a native program it matches nothing (not an
+    // error).
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "extends",
@@ -462,9 +486,8 @@ fn assert_unexpected_constraint(where_c: serde_json::Value) {
     let program_info = native_program();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({"find": "methods", "where": where_c, "model": {}});
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => assert!(
             errors
                 .iter()
@@ -500,10 +523,9 @@ fn top_level_integer_compare_is_hard_error() {
 // ---------------------------------------------------------------------------
 // Fail-open `where` constraints are hard errors.
 //
-// The working set starts as `UniverseSet::all()`, so a constraint the loader skipped
-// silently would leave the generator matching *every* function in the program, and
-// `CTADL0004` only reports generators that matched nothing. A constraint the loader
-// cannot act on must therefore fail the load.
+// A constraint skipped silently would leave the generator matching *every* function in the
+// program, and `CTADL0004` only reports generators that matched nothing. A constraint the
+// format does not define must therefore fail the load.
 // ---------------------------------------------------------------------------
 
 /// Loads a `find: methods` generator with the given `where` against `program_info`, returning
@@ -512,9 +534,8 @@ fn top_level_integer_compare_is_hard_error() {
 fn load_errors_with(program_info: &ProgramInfo, where_c: serde_json::Value) -> Vec<String> {
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({"find": "methods", "where": where_c, "model": {}});
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => errors.iter().map(|e| e.to_string()).collect(),
         other => panic!("expected the model to fail loading, got: {other:?}"),
     }
@@ -526,9 +547,8 @@ fn assert_unexpected_field(where_c: serde_json::Value, field_name: &str) {
     let program_info = native_program();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({"find": "methods", "where": where_c, "model": {}});
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => assert!(
             errors.iter().any(|e| matches!(
                 e,
@@ -545,9 +565,8 @@ fn assert_missing_field(where_c: serde_json::Value) {
     let program_info = native_program();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({"find": "methods", "where": where_c, "model": {}});
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => assert!(
             errors
                 .iter()
@@ -620,8 +639,7 @@ fn in_function_with_no_inner_is_hard_error() {
 
 #[test]
 fn fail_open_constraint_does_not_match_everything() {
-    // Treated as a no-op, each of these `where` clauses would make `matched_functions` return
-    // all of {a, b, c}, turning a model meant to mark one method as a source into a global
+    // Treated as a no-op, each of these `where` clauses would select all of {a, b, c}, turning a model meant to mark one method as a source into a global
     // source. They must fail to load.
     for where_c in [
         json!([{"constraint": "signature", "name": ".*sink.*"}]),
@@ -817,13 +835,12 @@ fn qualified_id_matches_java_method_id() {
 }
 
 // ---------------------------------------------------------------------------
-// Predicate validation is hoisted out of the per-candidate evaluation loop.
+// A malformed class predicate is reported once, whatever the program.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn invalid_predicate_is_reported_exactly_once() {
-    // `eval_predicate` runs once per candidate class, so reporting from inside it would emit
-    // one copy of the same error per method in the program.
+    // One error per malformed predicate, not one per method in the program it could test.
     let errors = load_errors_with(
         &java_program(),
         json!([{"constraint": "parent", "inner": {"constraint": "totally_bogus"}}]),
@@ -867,7 +884,6 @@ fn variable_port_on_propagation_is_rejected() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let malformed_json = json!({
         "find": "methods",
@@ -881,7 +897,7 @@ fn variable_port_on_propagation_is_rejected() {
         }
     });
 
-    let result = ingest.encode_models(vec![malformed_json]);
+    let result = encode(&match_index, [malformed_json], &mut model_matches);
     match result {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
@@ -905,7 +921,6 @@ fn variable_port_with_find_callsites_is_rejected() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let malformed_json = json!({
         "find": "callsites",
@@ -919,7 +934,7 @@ fn variable_port_with_find_callsites_is_rejected() {
         }
     });
 
-    let result = ingest.encode_models(vec![malformed_json]);
+    let result = encode(&match_index, [malformed_json], &mut model_matches);
     match result {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
@@ -945,7 +960,6 @@ fn test_missing_find_field_error() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
 
     let no_find = json!({
         "where": [{"constraint": "name", "pattern": "^f$"}],
@@ -957,7 +971,7 @@ fn test_missing_find_field_error() {
         "model": {"sinks": [{"port": "Argument(0)", "kind": "K"}]}
     });
 
-    match ingest.encode_models(vec![no_find, with_find]) {
+    match encode(&match_index, [no_find, with_find], &mut model_matches) {
         Err(Error::JsonModel(errors)) => {
             assert_eq!(errors.len(), 1);
             match &errors[0] {
@@ -989,13 +1003,12 @@ fn access_path_errors_for(port: &str) -> Vec<String> {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "name", "pattern": "^f$"}],
         "model": {"sources": [{"port": port, "kind": "K"}]}
     });
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => errors.iter().map(|e| format!("{e:?}|{e}")).collect(),
         Ok(_) => panic!("expected a load error for port {port:?}"),
         Err(e) => panic!("expected JsonModel error for port {port:?}, got: {e}"),
@@ -1059,7 +1072,6 @@ fn multiple_bad_ports_all_reported() {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut model_matches);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "name", "pattern": "^f$"}],
@@ -1068,7 +1080,7 @@ fn multiple_bad_ports_all_reported() {
             {"port": "Argument(1).a..b", "kind": "K"},
         ]}
     });
-    match ingest.encode_models(vec![model]) {
+    match encode(&match_index, [model], &mut model_matches) {
         Err(Error::JsonModel(errors)) => {
             let n = errors
                 .iter()
