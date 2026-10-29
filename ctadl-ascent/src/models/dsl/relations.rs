@@ -116,9 +116,40 @@ pub struct ProgramFacts {
     callsigs_by_signature: HashMap<Str, Vec<usize>>,
 }
 
+/// Which input relations some loaded rule reads, so `ProgramFacts::build` can skip the tables
+/// nobody asks for.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct Needs {
+    pub callsite: bool,
+    pub uses_field: bool,
+    pub subclass: bool,
+}
+
+impl Needs {
+    /// Every table.
+    pub fn all() -> Self {
+        Self {
+            callsite: true,
+            uses_field: true,
+            subclass: true,
+        }
+    }
+
+    /// The tables the rules of `program` read.
+    pub fn of_program(_program: &crate::models::dsl::ast::Program) -> Self {
+        Self::all()
+    }
+
+    pub fn union(&mut self, other: Self) {
+        self.callsite |= other.callsite;
+        self.uses_field |= other.uses_field;
+        self.subclass |= other.subclass;
+    }
+}
+
 impl ProgramFacts {
     /// Materializes the relations for the program `index` was built from.
-    pub fn build(index: &ProgramMatchIndex<'_>) -> Self {
+    pub fn build(index: &ProgramMatchIndex<'_>, _needs: &Needs) -> Self {
         let mut rows: Vec<FunRow> = Vec::new();
         let mut by_fq: HashMap<Str, usize> = HashMap::new();
 
@@ -454,6 +485,24 @@ impl ProgramFacts {
                     stack.push(*s);
                 }
             }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+impl ProgramFacts {
+    /// Subclasses of `cls` at the requested closure; the converse of [`Self::supers`].
+    pub fn subs(&self, cls: Str, reflexive: bool, deep: bool) -> Vec<Str> {
+        let mut out: Vec<Str> = self
+            .classes
+            .iter()
+            .copied()
+            .filter(|&c| (reflexive && c == cls) || self.supers(c, false, deep).contains(&cls))
+            .collect();
+        if reflexive && !out.contains(&cls) {
+            out.push(cls);
         }
         out.sort_unstable();
         out.dedup();
