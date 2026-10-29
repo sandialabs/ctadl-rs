@@ -196,10 +196,13 @@ time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
 Each IR instruction carries a span id into its import's source-info tables, which map it to
 a byte range in a file of an original artifact, recorded by path and content hash. Front ends
-record spans as they lower, and IR passes carry them along. The formatter resolves them to
-SARIF locations: line and column when the artifact's text is at hand, an absolute and
-section-relative address for a binary, and the enclosing function as a logical location. When
-the artifact is missing, a location falls back to a byte offset and a warning.
+record spans as they lower, and IR passes carry them along. The formatter resolves spans to
+SARIF locations. For a text file it rereads the file, checks its hash, and computes line and
+column. For a binary it uses the absolute and section-relative address. Every location also
+gets its enclosing function as a logical location. A text file that is missing, or whose hash
+no longer matches, falls back to a byte offset and a notification. Each location points to a
+SARIF artifact entry carrying the content hash, so a consumer can check that the artifact in
+front of them is the one that was analyzed.
 
 ### 4.5 Output
 
@@ -233,3 +236,5 @@ See [limitations.md](limitations.md). Also:
 - Only context-free summaries cross a `--summary` boundary.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
 - Some declared model behaviours are accepted but have no effect yet.
+- The formatter does not yet check source hashes (a file edited since import gets wrong lines,
+  and a missing one fails the query), and SARIF does not yet carry artifact hashes.
