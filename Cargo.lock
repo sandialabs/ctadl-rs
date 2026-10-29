@@ -5133,6 +5133,7 @@ dependencies = [
  "cil-reader",
  "ctadl-ascent",
  "ctadl-cil",
+ "ctadl-import",
  "ctadl-ir",
  "dex-reader",
  "json5",

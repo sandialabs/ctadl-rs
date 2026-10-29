@@ -20,6 +20,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use ctadl_import::notifications::{
+    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
+};
 
 use crate::android_icc;
 use crate::apk;
@@ -778,10 +781,11 @@ const MEM2REG_ENV: &str = "CTADL_MEM2REG";
 /// Judges a failed case run under `--mem2reg <policy>` by the notifications its indexes wrote.
 ///
 /// A policy like `full:0` is expected to lose flows, and `ctadl index` names each function it
-/// analyzed in a way that may lose them in its `notifications.log`. A lost flow is then an XFAIL
-/// that lists those lines. A lost flow with no notification under `work` is a FAIL: the index
-/// missed a function it should have named. The check is per case, not per flow: it does not
-/// match a notification to the function the flow went through.
+/// promoted in a way that may lose them with a `STACK_SLOTS_PROMOTED_FULLY` notification in its
+/// `notifications.sarif`. A lost flow is then an XFAIL that lists their texts. A lost flow with
+/// no such notification under `work` is a FAIL: the index missed a function it should have
+/// named. Other notifications explain no lost flow. The check is per case, not per flow: it does
+/// not match a notification to the function the flow went through.
 fn explain_lost_flow(work: &Path, policy: &str, outcome: Outcome) -> Outcome {
     let Outcome::Fail(why) = outcome else {
         return outcome;
@@ -792,7 +796,8 @@ fn explain_lost_flow(work: &Path, policy: &str, outcome: Outcome) -> Outcome {
     }
     if lines.is_empty() {
         return Outcome::Fail(format!(
-            "{why}\nlost under --mem2reg {policy}, and no index notification names a function"
+            "{why}\nlost under --mem2reg {policy}, and no index notification names a function \
+             promoted fully"
         ));
     }
     let lines: Vec<String> = lines.into_iter().collect();
@@ -802,17 +807,21 @@ fn explain_lost_flow(work: &Path, policy: &str, outcome: Outcome) -> Outcome {
     ))
 }
 
-/// Adds the lines of every `notifications.log` under `dir`, the case's scratch directory, which
-/// holds each project the case indexed.
+/// Adds the text of each `STACK_SLOTS_PROMOTED_FULLY` notification in every
+/// `notifications.sarif` under `dir`, the case's scratch directory, which holds each project the
+/// case indexed.
 fn index_notifications(dir: &Path, lines: &mut BTreeSet<String>) -> Result<()> {
+    let found = Notifications::load(dir)
+        .with_context(|| format!("reading {}", dir.join(NOTIFICATIONS_FILE).display()))?;
+    lines.extend(
+        found
+            .of(&STACK_SLOTS_PROMOTED_FULLY)
+            .map(|n| notifications::text(n).to_string()),
+    );
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let path = entry?.path();
         if path.is_dir() {
             index_notifications(&path, lines)?;
-        } else if path.file_name().is_some_and(|n| n == "notifications.log") {
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading {}", path.display()))?;
-            lines.extend(text.lines().filter(|l| !l.is_empty()).map(str::to_string));
         }
     }
     Ok(())
@@ -2711,6 +2720,10 @@ fn scratch_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
+    use ctadl_import::notifications::{
+        Level, Notifications, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+    };
+    use std::collections::BTreeMap;
 
     /// A failing JVM case fails the suite unless it is a known failure.
     #[test]
@@ -2719,8 +2732,9 @@ mod tests {
         assert!(matches!(outcome, Outcome::Fail(_)));
     }
 
-    /// Under `--mem2reg`, a lost flow is an XFAIL when an index named a function, wherever under
-    /// the case's directory that index is, and a FAIL when none did.
+    /// Under `--mem2reg`, a lost flow is an XFAIL when an index named a function it promoted
+    /// fully, wherever under the case's directory that index is, and a FAIL when none did. Other
+    /// notifications explain no lost flow.
     #[test]
     fn a_lost_flow_needs_a_notification() {
         let work = std::env::temp_dir().join(format!("xtask_lost_flow_{}", std::process::id()));
@@ -2731,12 +2745,35 @@ mod tests {
         let outcome = explain_lost_flow(&work, "full:0", lost());
         assert!(
             matches!(&outcome, Outcome::Fail(why) if why.contains("no index notification")),
-            "no notifications.log: still a failure"
+            "no notifications.sarif: still a failure"
         );
 
-        std::fs::write(index.join("notifications.log"), "mem2reg full: main: ...\n").unwrap();
+        let mut found = Notifications::default();
+        found.push(
+            &MERGED_CLASSES_NOT_SPLIT,
+            Level::Warning,
+            "import 'app': 3 classes not closed",
+            BTreeMap::new(),
+        );
+        found.save(&index, "ctadl index").unwrap();
         let outcome = explain_lost_flow(&work, "full:0", lost());
-        assert!(matches!(&outcome, Outcome::Xfail(why) if why.contains("mem2reg full: main")));
+        assert!(
+            matches!(&outcome, Outcome::Fail(why) if why.contains("no index notification")),
+            "a merged-classes warning explains no lost flow"
+        );
+
+        found.push(
+            &STACK_SLOTS_PROMOTED_FULLY,
+            Level::Warning,
+            "mem2reg full: main: ...",
+            BTreeMap::new(),
+        );
+        found.save(&index, "ctadl index").unwrap();
+        let outcome = explain_lost_flow(&work, "full:0", lost());
+        assert!(matches!(
+            &outcome,
+            Outcome::Xfail(why) if why.contains("mem2reg full: main") && !why.contains("not closed")
+        ));
         assert!(matches!(
             explain_lost_flow(&work, "full:0", Outcome::Pass),
             Outcome::Pass

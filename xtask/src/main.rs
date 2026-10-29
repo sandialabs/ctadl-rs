@@ -389,8 +389,9 @@ Tasks:
     --mem2reg <policy>       Index every case with `ctadl index --mem2reg <policy>`
                              (default: ctadl's own default). For a policy that
                              can lose flows, such as `full:0`: a case that loses
-                             its flow is an XFAIL when an index notification
-                             names a function, and a FAIL when none does.
+                             its flow is an XFAIL when an index's
+                             notifications.sarif names a function it promoted
+                             fully, and a FAIL when none does.
     --release                Build and exercise the release `ctadl` binary
                              (default: debug). Either way the binary is rebuilt
                              from current source before any case runs, so the
