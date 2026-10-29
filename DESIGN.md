@@ -606,3 +606,43 @@ published spelling* where a frontend has several — a native symbol known both 
 only a canonical name would silently narrow what a migrated `name` regex matches, which is exactly
 what the equivalence requirement forbids. It is documented in `relations.rs` and in
 `docs/model-dsl.md`.
+
+## Function names and the VMT (planned)
+
+`fun`'s `name` / `signature` / `qualified-id` are multi-valued today, which breaks the design's
+functional dependence: `fun(F, name = N)` binds `N` once per spelling, so `fun(F, name != "x")`
+("no spelling is `x`") and `fun(F, name = N), N != "x"` ("some spelling is not `x`") disagree,
+and the second holds for nearly every function because the fq is always a spelling. The extra
+spellings come from `ProgramFacts::build`: CIL override-alias rows in the VMT, and the fq added
+as a spelling (by the Native and Lua table readers, and by the lowered-function loop for every
+function).
+
+### The model
+
+The IR namespace is the only identity: every function has one fully-qualified IR name. The VMT
+says, per IR name, what other names and facts make sense for it. Nothing in the VMT creates an
+identity, and every frontend must decide each function's simple name.
+
+### Steps
+
+1. **CIL bridges replace override aliases.** For each alias row, the CIL frontend synthesizes a
+   bridge function under the alias's key whose body calls the implementation (the same
+   `method::thunk_body` the delegate thunks use), the way `javac` does for Java. An alias that
+   equals the method's own row needs none. When the key is already a different method `D`
+   declares (`class C : IA, IB { void IA.M(); public void M(); }`, or `D<U> : B<string>`
+   declaring `M(U)`), the bridge gets a disambiguated name (`C::M()->System.Void#IA`) and a row
+   under the shared key, so CHA reaches both bodies as today; `Stats` counts these. Keying
+   interface call sites by their declared interface, which would fix that precisely, is a
+   separate CHA change.
+2. **dex: one IR function per declared method**, abstract ones included, as jvm already does.
+3. **Restructure `VirtualMethodTable`** into a struct: `names: Vec<FunctionNames>` (`fq`,
+   `simple`, `other`, `parent`, `signature`), the shared CHA relations (`implements`,
+   `hierarchy`, `interfaces`, `abstract_methods`), and per-language extras (Java `natives`, CIL
+   `pinvokes`, the CHA flavour). Every frontend fills `names`, c and flowy included; pcode puts
+   its namespace-qualified name and the unstripped `_name` in `other`; an import-time check
+   requires exactly one entry per IR function. Bumps `IMPORT_FORMAT_VERSION`.
+4. **The DSL reads `names`.** `fun`'s attributes are single-valued again; the fq is no longer a
+   spelling (match it as `F = "…"`); `qualified-id` goes away; a `name_of(F, N)` relation ranges
+   over `simple` and `other`.
+5. **The migrator** emits `name_of` and `F = …` where the JSON matched every spelling, so the
+   equivalence goldens hold; `docs/model-dsl.md` and the `relations.rs` module docs follow.
