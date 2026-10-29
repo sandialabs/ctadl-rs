@@ -1261,6 +1261,7 @@ dependencies = [
  "jvm-reader",
  "log",
  "serde",
+ "serde-sarif",
  "serde_json",
  "source-info",
  "tempfile",

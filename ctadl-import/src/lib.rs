@@ -24,6 +24,7 @@ remove one of the two imports, not to spell out the call.
 */
 
 pub mod error;
+pub mod notifications;
 pub mod project;
 pub mod store;
 
