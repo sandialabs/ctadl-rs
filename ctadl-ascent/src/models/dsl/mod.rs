@@ -28,16 +28,19 @@ There is no recursion, so no stratification is needed and the fixpoint is one pa
 # Two phases, and the streaming posture
 
 [`DslMatcher`] is used the way the JSON matcher is: built before the import loop, fed one
-program at a time, and finished after. What it retains between imports is only the *bindings*
-its rules produced — never a program's tables, never its IR.
+program at a time, and finished after. Nearly every rule is emitted during the import that
+satisfies it. What is retained between imports is only the *bindings* of bridging rules, plus
+the head keys already emitted — never a program's tables, never its IR.
 
-Finishing after the loop rather than per import is what makes a bridging rule expressible at
-all. Such a rule names two programs in one body, and no single import satisfies it; the body's
-connected components are accumulated separately and joined at the end. See [`eval`].
+Finishing after the loop is what makes a bridging rule expressible at all. Such a rule names two
+programs in one body, and no single import satisfies it; the body's connected components are
+accumulated separately and joined at the end. See [`eval`].
 
-`index` keeps the propagation / bridge / access-path / dispatch heads and `query` keeps the
-source / sink ones. Each says how many rules contributed nothing to it, rather than dropping them in silence;
-a rule contributing at least one head to the running phase is never counted.
+The phase is fixed when the matcher is built. `index` keeps the propagation / bridge /
+access-path / dispatch heads and `query` keeps the source / sink ones, and a rule with no head
+for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
+dropping them in silence; a rule contributing at least one head to the running phase is never
+counted.
 */
 
 use std::path::{Path as FsPath, PathBuf};
@@ -128,6 +131,19 @@ impl DslErrors {
 
     pub fn extend(&mut self, other: DslErrors) {
         self.errors.extend(other.errors);
+    }
+
+    /// [`Self::extend`], dropping an error already held: same message at the same span.
+    pub fn extend_unique(&mut self, other: DslErrors) {
+        for e in other.errors {
+            if !self
+                .errors
+                .iter()
+                .any(|held| held.span() == e.span() && held.message() == e.message())
+            {
+                self.errors.push(e);
+            }
+        }
     }
 
     /// Renders every error against the file it came from, one per line, with a `path:line:col`
@@ -251,105 +267,215 @@ impl DslModelSet {
     pub fn uses_callsig(&self) -> bool {
         self.files.iter().any(|f| f.program.uses_callsig())
     }
+
+    /// The input relations some rule in the set reads, so an import builds only those.
+    pub fn needs(&self) -> relations::Needs {
+        Self::needs_of(&self.files)
+    }
+
+    fn needs_of(files: &[DslFile]) -> relations::Needs {
+        let mut needs = relations::Needs::default();
+        for file in files {
+            needs.union(relations::Needs::of_program(&file.program));
+        }
+        needs
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Matching
 // ---------------------------------------------------------------------------
 
-/// Accumulates rule solutions across the import loop.
+/// Matches a model set across the import loop, for one phase.
 ///
-/// One per run, not one per import: see the module docs for why the join cannot happen while a
-/// single program is in hand.
+/// One per run, not one per import: see the module docs for why a bridging rule's join cannot
+/// happen while a single program is in hand. The lifecycle is [`Self::new`] before the loop,
+/// [`Self::observe_import`] (or [`Self::observe_facts`]) once per import, [`Self::finish`]
+/// after.
+///
+/// What it holds between imports is no more than that join needs:
+///
+/// - a rule the phase keeps no head of is never evaluated;
+/// - a rule whose body is one component is emitted into `out` *during* the import that
+///   satisfied it and its solutions dropped, since its solution set is the union over imports
+///   anyway. Only the head keys it emitted are kept, to drop a row a later import would repeat;
+/// - only a bridging rule — two or more components — keeps its solutions until `finish`.
 pub struct DslMatcher<'a> {
     files: &'a [DslFile],
-    /// `[file][rule]`.
-    solutions: Vec<Vec<eval::RuleSolutions>>,
-    /// How many imports were observed, so `finish` can say "nothing was matched against" rather
-    /// than "nothing matched".
-    imports: usize,
+    phase: Phase,
+    /// `[file][rule]`. `None` for a rule the phase skips.
+    rules: Vec<Vec<Option<RuleState>>>,
+    /// Per file, what emission reported so far. Held to `finish`, which is where a load has
+    /// always reported them, and deduplicated, since a per-import rule says the same thing about
+    /// every import.
+    errors: Vec<DslErrors>,
+}
+
+/// One rule the phase keeps.
+struct RuleState {
+    /// For a per-import rule, this import's solutions, cleared after each; for a bridging rule,
+    /// the union so far.
+    solutions: eval::RuleSolutions,
+    emitter: emit::RuleEmitter,
+    per_import: bool,
 }
 
 impl<'a> DslMatcher<'a> {
-    pub fn new(set: &'a DslModelSet) -> Self {
-        let solutions = set
+    pub fn new(set: &'a DslModelSet, phase: Phase) -> Self {
+        let rules = set
             .files
             .iter()
-            .map(|f| f.plans.iter().map(eval::RuleSolutions::for_plan).collect())
+            .map(|file| {
+                file.program
+                    .rules
+                    .iter()
+                    .zip(&file.plans)
+                    .map(|(rule, plan)| {
+                        let per_import = plan.components.len() <= 1;
+                        let emitter = emit::RuleEmitter::new(rule, plan, phase, per_import);
+                        emitter.is_live().then(|| RuleState {
+                            solutions: eval::RuleSolutions::for_plan(plan),
+                            emitter,
+                            per_import,
+                        })
+                    })
+                    .collect()
+            })
             .collect();
         Self {
             files: &set.files,
-            solutions,
-            imports: 0,
+            phase,
+            rules,
+            errors: vec![DslErrors::default(); set.files.len()],
         }
     }
 
+    /// Whether no rule is live for the phase, so an import need not build relations for it.
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.rules.iter().flatten().all(Option::is_none)
     }
 
-    /// Evaluates every rule against one program, folding the bindings in.
-    pub fn observe_import(&mut self, index: &ProgramMatchIndex<'_>) {
-        if self.files.is_empty() {
+    /// The relations the set's rules read; see [`DslModelSet::needs`].
+    pub fn needs(&self) -> relations::Needs {
+        DslModelSet::needs_of(self.files)
+    }
+
+    /// Builds this import's relations and observes them. A caller running several matchers
+    /// over one import builds the relations once instead, with the union of their
+    /// [`Self::needs`], and calls [`Self::observe_facts`] on each.
+    pub fn observe_import(&mut self, index: &ProgramMatchIndex<'_>, out: &mut ProgramModelMatches) {
+        if self.is_empty() {
             return;
         }
-        self.imports += 1;
-        let facts = relations::ProgramFacts::build(index, &relations::Needs::all());
-        log::trace!(
-            "DSL relations for {}: {} function(s), {} call site(s), {} field use(s)",
-            index.scope.describe(),
-            facts.funs.len(),
-            facts.callsites.len(),
-            facts.uses_field.len()
-        );
+        let facts = program_facts(index, &self.needs());
+        self.observe_facts(&facts, out);
+    }
+
+    /// Evaluates every live rule against one program. A per-import rule's heads go into `out`
+    /// now; a bridging rule's solutions are folded in for [`Self::finish`].
+    ///
+    /// Emitting into the caller's accumulator rather than a buffer of its own is what keeps
+    /// the posture streaming: a buffer would hold every row until the end, which is what this
+    /// exists not to do. `out` must be the same accumulator on every call and at `finish`.
+    pub fn observe_facts(
+        &mut self,
+        facts: &relations::ProgramFacts,
+        out: &mut ProgramModelMatches,
+    ) {
         for (fi, file) in self.files.iter().enumerate() {
+            let mut errors = DslErrors::default();
             for (ri, rule) in file.program.rules.iter().enumerate() {
-                eval::evaluate_rule(rule, &file.plans[ri], &facts, &mut self.solutions[fi][ri]);
+                let Some(state) = &mut self.rules[fi][ri] else {
+                    continue;
+                };
+                eval::evaluate_rule(rule, &file.plans[ri], facts, &mut state.solutions);
+                if state.per_import {
+                    state.emitter.emit(
+                        rule,
+                        &state.solutions,
+                        &file.provenance(ri),
+                        out,
+                        &mut errors,
+                    );
+                    state.solutions.clear();
+                }
             }
+            self.errors[fi].extend_unique(errors);
         }
     }
 
-    /// Instantiates every rule's heads for `phase` into `out`.
-    pub fn finish(self, phase: Phase, out: &mut ProgramModelMatches) -> Result<DslReport, Error> {
+    /// Instantiates the bridging rules' heads into `out`, and reports on every rule. Fails on
+    /// the first file emission found a problem in.
+    pub fn finish(self, out: &mut ProgramModelMatches) -> Result<DslReport, Error> {
         let mut report = DslReport::default();
-        for (fi, file) in self.files.iter().enumerate() {
-            let mut errors = DslErrors::default();
-            let mut file_report = DslFileReport {
-                path: file.path.clone(),
-                phase,
-                rules: Vec::with_capacity(file.program.rules.len()),
-                skipped_rules: 0,
-            };
-            for (ri, rule) in file.program.rules.iter().enumerate() {
-                let (index_time, query_time) = rule.phases();
-                let contributes = match phase {
-                    Phase::All => true,
-                    Phase::Index => index_time,
-                    Phase::Query => query_time,
-                };
-                if !contributes {
-                    file_report.skipped_rules += 1;
-                    file_report.rules.push(RuleStats::default());
-                    continue;
-                }
-                let stats = emit::emit_rule(
-                    rule,
-                    &file.plans[ri],
-                    &self.solutions[fi][ri],
-                    &file.provenance(ri),
-                    phase,
-                    out,
-                    &mut errors,
-                );
-                file_report.rules.push(stats);
-            }
-            if !errors.is_empty() {
-                return Err(errors.into_error(&file.path, &file.source));
-            }
-            report.files.push(file_report);
+        for file in self.finish_each(out) {
+            report.files.push(file?);
         }
         Ok(report)
     }
+
+    /// [`Self::finish`], reporting each file separately, for a caller that attributes a
+    /// problem to the file it is in rather than failing the run.
+    pub fn finish_each(self, out: &mut ProgramModelMatches) -> Vec<Result<DslFileReport, Error>> {
+        let Self {
+            files,
+            phase,
+            rules,
+            errors,
+        } = self;
+        files
+            .iter()
+            .zip(rules)
+            .zip(errors)
+            .map(|((file, rules), mut errors)| {
+                let mut file_report = DslFileReport {
+                    path: file.path.clone(),
+                    phase,
+                    rules: Vec::with_capacity(rules.len()),
+                    skipped_rules: 0,
+                };
+                let mut emitted = DslErrors::default();
+                for (ri, state) in rules.into_iter().enumerate() {
+                    let Some(mut state) = state else {
+                        file_report.skipped_rules += 1;
+                        file_report.rules.push(RuleStats::default());
+                        continue;
+                    };
+                    if !state.per_import {
+                        state.emitter.emit(
+                            &file.program.rules[ri],
+                            &state.solutions,
+                            &file.provenance(ri),
+                            out,
+                            &mut emitted,
+                        );
+                    }
+                    file_report.rules.push(state.emitter.finish());
+                }
+                errors.extend_unique(emitted);
+                if !errors.is_empty() {
+                    return Err(errors.into_error(&file.path, &file.source));
+                }
+                Ok(file_report)
+            })
+            .collect()
+    }
+}
+
+/// Materializes the relations `needs` names for the program `index` was built from.
+pub fn program_facts(
+    index: &ProgramMatchIndex<'_>,
+    needs: &relations::Needs,
+) -> relations::ProgramFacts {
+    let facts = relations::ProgramFacts::build(index, needs);
+    log::trace!(
+        "DSL relations for {}: {} function(s), {} call site(s), {} field use(s)",
+        index.scope.describe(),
+        facts.funs.len(),
+        facts.callsites.len(),
+        facts.uses_field.len()
+    );
+    facts
 }
 
 /// Loads one DSL file against one program, in one shot.
@@ -365,9 +491,9 @@ pub fn try_load_dsl_models(
 ) -> Result<DslReport, Error> {
     let file = DslFile::read(path)?;
     let set = DslModelSet { files: vec![file] };
-    let mut matcher = DslMatcher::new(&set);
-    matcher.observe_import(index);
-    matcher.finish(phase, out)
+    let mut matcher = DslMatcher::new(&set, phase);
+    matcher.observe_import(index, out);
+    matcher.finish(out)
 }
 
 // ---------------------------------------------------------------------------

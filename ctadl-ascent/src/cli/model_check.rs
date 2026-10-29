@@ -177,10 +177,29 @@ pub fn check_programs(
     let mut outcome = ModelCheckOutcome::default();
     let mut files: Vec<FileState> = Vec::new();
     let mut bridges: Vec<BridgeSpec> = Vec::new();
+    // The DSL files that parsed, matched by one matcher across every import exactly as
+    // `cli::index` matches them: finishing per import would report a bridging rule whose
+    // components match in two different imports as matching nothing. `dsl_owners[i]` is the
+    // position in `files` of `dsl.files[i]`.
+    let mut dsl = models::DslModelSet::default();
+    let mut dsl_owners: Vec<usize> = Vec::new();
 
     // Inventory: program-independent, so it runs once, before any IR is loaded.
     for path in models {
         let mut state = FileState::new(path.clone());
+        if models::is_dsl_path(path) {
+            // A DSL file declares no unevaluated bridge sides, so there is nothing to scan.
+            match models::dsl::DslFile::read(path) {
+                Ok(file) => {
+                    state.take_dsl_inventory(&file);
+                    dsl_owners.push(files.len());
+                    dsl.files.push(file);
+                }
+                Err(e) => state.record_error(render_chain(&e)),
+            }
+            files.push(state);
+            continue;
+        }
         let readable = state.take_inventory();
         // Scanned per file so a malformed bridge names the file it is in. One rejected bridge
         // costs that file's bridges, not the run's. Skipped when the inventory could not read
@@ -194,10 +213,13 @@ pub fn check_programs(
         files.push(state);
     }
 
-    // Matching, per import.
+    // Matching, per import. The gate is `cli::index`'s: a `find: "dispatch"` JSON generator, or
+    // a DSL rule reading `callsig`.
     let wants_dispatch = files
         .iter()
-        .any(|f| f.generators.iter().any(|g| g.declares_dispatch));
+        .any(|f| !models::is_dsl_path(&f.path) && f.generators.iter().any(|g| g.declares_dispatch))
+        || dsl.uses_callsig();
+    let mut dsl_matcher = models::DslMatcher::new(&dsl, models::DslPhase::All);
     let mut matches = ProgramModelMatches::default();
     let mut imports_checked = 0usize;
     for item in programs {
@@ -232,10 +254,14 @@ pub fn check_programs(
         // The built-in default models are deliberately not loaded: `ctadl query` does not load
         // them either, and this is `ctadl query` reporting on the files it was given.
         for file in &mut files {
+            if models::is_dsl_path(&file.path) {
+                continue;
+            }
             let (load, errors) =
                 models::try_check_models(&match_index, &file.path, SAMPLE_CAP, &mut matches);
             file.absorb(load, errors);
         }
+        dsl_matcher.observe_import(&match_index, &mut matches);
 
         // Bridge sides, matched exactly as indexing matches them. An evaluator error here is
         // about the run rather than about one file: the spec it came from is not identified.
@@ -261,6 +287,25 @@ pub fn check_programs(
         imports_checked += 1;
         // `program_info` and `match_index` drop here -- the same streaming posture
         // `cli::index` keeps, which the owned iterator items exist to preserve.
+    }
+
+    // The DSL files, once, over every import. With no import there is nothing to absorb, the
+    // same as for a JSON file: a rule that never ran did not match nothing.
+    let dsl_results = dsl_matcher.finish_each(&mut matches);
+    if imports_checked > 0 {
+        for (owner, result) in dsl_owners.into_iter().zip(dsl_results) {
+            let (load, errors) = match result {
+                Ok(file) => (
+                    models::ModelLoadReport::from_dsl(models::DslReport { files: vec![file] }),
+                    Vec::new(),
+                ),
+                Err(e) => (
+                    models::ModelLoadReport::default(),
+                    vec![ModelCheckError::Stream(e)],
+                ),
+            };
+            files[owner].absorb(load, errors);
+        }
     }
 
     // Bridge verdicts, once, over every import: "unmatched" means not matched anywhere. With no
@@ -353,9 +398,6 @@ impl FileState {
     /// read to the end.
     fn take_inventory(&mut self) -> bool {
         let path = self.path.clone();
-        if models::is_dsl_path(&path) {
-            return self.take_dsl_inventory();
-        }
         let outcome = spec::visit_model_file(&path, |n, value| {
             // The errors are dropped: the matching pass parses the same clause and reports
             // them, once, as the model errors they are. What is wanted here is only whether
@@ -402,14 +444,7 @@ impl FileState {
     /// reported as applicable and `CTADL0009` ("this generator's scope admits no import") never
     /// fires for one. The rule that matched nothing is still reported, through `CTADL0004`,
     /// which is the diagnostic that actually distinguishes the two cases.
-    fn take_dsl_inventory(&mut self) -> bool {
-        let file = match models::dsl::DslFile::read(&self.path) {
-            Ok(file) => file,
-            Err(e) => {
-                self.record_error(render_chain(&e));
-                return false;
-            }
-        };
+    fn take_dsl_inventory(&mut self, file: &models::dsl::DslFile) {
         for rule in &file.program.rules {
             use models::dsl::ast::HeadKind;
             let state = GeneratorState {
@@ -449,7 +484,6 @@ impl FileState {
             self.positions.insert(rule.index, self.generators.len());
             self.generators.push(state);
         }
-        true
     }
 
     /// Records whether this import's scope admits each generator.

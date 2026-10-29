@@ -151,15 +151,13 @@ fn run_scoped(imports: &[(ImportScope, &ProgramInfo)], source: &str) -> ProgramM
         Err(e) => panic!("{e}"),
     };
     let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set);
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
     for (scope, program_info) in imports {
         let index = ProgramMatchIndex::new(program_info, scope.clone());
-        matcher.observe_import(&index);
+        matcher.observe_import(&index, &mut out);
     }
-    let mut out = ProgramModelMatches::default();
-    matcher
-        .finish(dsl::Phase::All, &mut out)
-        .unwrap_or_else(|e| panic!("{e}"));
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
     out
 }
 
@@ -611,11 +609,11 @@ fn each_phase_keeps_its_own_heads_and_counts_the_rest() {
         (dsl::Phase::Query, 2usize, 0usize, 1usize),
         (dsl::Phase::All, 2usize, 2usize, 0usize),
     ] {
-        let mut matcher = dsl::DslMatcher::new(&set);
-        let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        matcher.observe_import(&index);
         let mut out = ProgramModelMatches::default();
-        let report = matcher.finish(phase, &mut out).expect("finishes");
+        let mut matcher = dsl::DslMatcher::new(&set, phase);
+        let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        matcher.observe_import(&index, &mut out);
+        let report = matcher.finish(&mut out).expect("finishes");
         assert_eq!(out.endpoints.len(), endpoints, "{phase:?}");
         assert_eq!(out.propagations.len(), summaries, "{phase:?}");
         assert_eq!(report.skipped_rules(), skipped, "{phase:?}");
@@ -633,13 +631,11 @@ fn a_skipped_rule_is_not_reported_as_dead() {
     )
     .expect("loads");
     let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set);
-    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    matcher.observe_import(&index);
     let mut out = ProgramModelMatches::default();
-    let report = matcher
-        .finish(dsl::Phase::Index, &mut out)
-        .expect("finishes");
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Index);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    matcher.observe_import(&index, &mut out);
+    let report = matcher.finish(&mut out).expect("finishes");
     assert_eq!(report.skipped_rules(), 1);
     assert!(report.dead_rules().is_empty(), "{:?}", report.dead_rules());
     assert!(report.phase_warning().is_some());
@@ -654,13 +650,11 @@ fn a_rule_that_matches_nothing_is_reported() {
     )
     .expect("loads");
     let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set);
-    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    matcher.observe_import(&index);
     let mut out = ProgramModelMatches::default();
-    let report = matcher
-        .finish(dsl::Phase::Query, &mut out)
-        .expect("finishes");
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Query);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    matcher.observe_import(&index, &mut out);
+    let report = matcher.finish(&mut out).expect("finishes");
     assert_eq!(report.dead_rules(), vec!["test.ctadl:0".to_string()]);
 }
 
@@ -814,15 +808,13 @@ fn run_dispatch(program_info: &ProgramInfo, source: &str) -> ProgramModelMatches
         Err(e) => panic!("{e}"),
     };
     let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set);
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
     let keys = ctadl_ascent::models::DispatchKeys::from_program(&program_info.program);
     let index =
         ProgramMatchIndex::new_with_dispatch(program_info, ImportScope::unknown(), Some(&keys));
-    matcher.observe_import(&index);
-    let mut out = ProgramModelMatches::default();
-    matcher
-        .finish(dsl::Phase::All, &mut out)
-        .unwrap_or_else(|e| panic!("{e}"));
+    matcher.observe_import(&index, &mut out);
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
     out
 }
 
@@ -897,15 +889,15 @@ fn a_dispatch_head_belongs_to_the_index_phase() {
     for (phase, want) in [(dsl::Phase::Index, 1), (dsl::Phase::Query, 0)] {
         let file = dsl::DslFile::from_text("test.ctadl", source).expect("parses");
         let set = dsl::DslModelSet { files: vec![file] };
-        let mut matcher = dsl::DslMatcher::new(&set);
+        let mut out = ProgramModelMatches::default();
+        let mut matcher = dsl::DslMatcher::new(&set, phase);
         let index = ProgramMatchIndex::new_with_dispatch(
             &program_info,
             ImportScope::unknown(),
             Some(&keys),
         );
-        matcher.observe_import(&index);
-        let mut out = ProgramModelMatches::default();
-        matcher.finish(phase, &mut out).expect("finishes");
+        matcher.observe_import(&index, &mut out);
+        matcher.finish(&mut out).expect("finishes");
         assert_eq!(out.dispatch.len(), want, "{phase:?}");
     }
 }
@@ -1121,4 +1113,182 @@ fn a_multi_edge_site_keeps_every_edge() {
         endpoint_functions(&matches),
         BTreeSet::from(["g".to_string(), "h".to_string()])
     );
+}
+
+// ---- streaming ----
+
+/// Two native imports, a Lua one declaring `lua` and a pcode one declaring `native`.
+fn lua_and_pcode(lua: &[&str], native: &[&str]) -> [(ImportScope, ProgramInfo); 2] {
+    use ctadl_ascent::project::ArtifactLanguage;
+    [
+        (
+            ImportScope::new(ArtifactLanguage::Lua, "app"),
+            native_program(lua),
+        ),
+        (
+            ImportScope::new(ArtifactLanguage::Pcode, "lib"),
+            native_program(native),
+        ),
+    ]
+}
+
+/// Runs `source` over `imports` for `phase`, returning the matches and the report.
+fn run_phase(
+    imports: &[(ImportScope, ProgramInfo)],
+    source: &str,
+    phase: dsl::Phase,
+) -> (ProgramModelMatches, dsl::DslReport) {
+    let file = dsl::DslFile::from_text("test.ctadl", source).unwrap_or_else(|e| panic!("{e}"));
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = dsl::DslMatcher::new(&set, phase);
+    for (scope, program_info) in imports {
+        let index = ProgramMatchIndex::new(program_info, scope.clone());
+        matcher.observe_import(&index, &mut out);
+    }
+    let report = matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    (out, report)
+}
+
+/// The phase is fixed when the matcher is built, and a matcher none of whose rules have a head
+/// for it has nothing to evaluate — while still counting what it skipped.
+#[test]
+fn a_matcher_built_for_one_phase_skips_the_others_rules() {
+    let source = r#"propagation(F::return <- F::arg(0)) :- fun(F, name = "emit");"#;
+    let file = dsl::DslFile::from_text("test.ctadl", source).expect("loads");
+    let set = dsl::DslModelSet { files: vec![file] };
+    assert!(dsl::DslMatcher::new(&set, dsl::Phase::Query).is_empty());
+    assert!(!dsl::DslMatcher::new(&set, dsl::Phase::Index).is_empty());
+
+    let imports = [(ImportScope::unknown(), java_program())];
+    let (out, report) = run_phase(&imports, source, dsl::Phase::Query);
+    assert!(out.propagations.is_empty());
+    assert_eq!(report.skipped_rules(), 1);
+    assert!(report.phase_warning().is_some());
+    assert!(report.dead_rules().is_empty());
+}
+
+/// A one-component rule is emitted per import, so a key two imports both produce — the same
+/// function name declared in each — must still be emitted once, and the report must describe
+/// the run, not the last import.
+#[test]
+fn a_per_import_rule_emits_a_key_two_imports_share_once() {
+    let (out, report) = run_phase(
+        &lua_and_pcode(&["shared"], &["shared"]),
+        r#"source(F::return) :- fun(F, name = "shared");"#,
+        dsl::Phase::All,
+    );
+    assert_eq!(out.endpoints.len(), 1, "{:?}", out.endpoints);
+    let stats = &report.files[0].rules[0];
+    assert_eq!(stats.sources, 1);
+    assert_eq!(stats.functions, 1);
+}
+
+/// A rule that matches only in a later import is live, not dead: the stats accumulate.
+#[test]
+fn a_per_import_rule_matching_only_in_a_later_import_is_not_dead() {
+    let (out, report) = run_phase(
+        &lua_and_pcode(&["a"], &["b"]),
+        r#"source(F::return) :- fun(F, name = "b");"#,
+        dsl::Phase::All,
+    );
+    assert_eq!(out.endpoints.len(), 1);
+    assert!(report.dead_rules().is_empty(), "{:?}", report.dead_rules());
+}
+
+/// A bridging rule still fires whichever import comes first, and its head grounds over its own
+/// variables only: the other component is a gate.
+#[test]
+fn a_bridging_rule_fires_across_imports_in_either_order() {
+    let lua: &[&str] = &["luaCallNativeAdd"];
+    let native: &[&str] = &["luaNativeAdd"];
+    let source = r#"source(F::return) :-
+             fun(F, name = "luaCallNativeAdd", language = "lua"),
+             fun(G, name = "luaNativeAdd", language = "pcode");"#;
+    let mut imports = lua_and_pcode(lua, native);
+    for _ in 0..2 {
+        let (out, report) = run_phase(&imports, source, dsl::Phase::All);
+        assert_eq!(
+            endpoint_functions(&out),
+            ["<EXTERNAL>::luaCallNativeAdd@00101008".to_string()].into(),
+        );
+        assert!(report.dead_rules().is_empty());
+        imports.reverse();
+    }
+    // A gate that never opens kills the rule.
+    let (out, report) = run_phase(&lua_and_pcode(lua, &["other"]), source, dsl::Phase::All);
+    assert!(out.endpoints.is_empty());
+    assert_eq!(report.dead_rules(), vec!["test.ctadl:0".to_string()]);
+}
+
+/// `functions` counts distinct anchors. A native function has two spellings, so `fun(F, name =
+/// N)` grounds twice for one function.
+#[test]
+fn functions_matched_counts_functions_not_groundings() {
+    let (_, report) = run_phase(
+        &[(ImportScope::unknown(), native_program(&["system"]))],
+        r#"source(F::return) :- fun(F, name = N), regex_match(N, "system");"#,
+        dsl::Phase::All,
+    );
+    let stats = &report.files[0].rules[0];
+    assert_eq!(stats.functions, 1, "{stats:?}");
+}
+
+/// The join size is a product, and it saturates rather than overflowing; enumerating a head's
+/// own columns never forms the product at all.
+#[test]
+fn grounding_counts_saturate_and_groundings_stay_lazy() {
+    use ctadl_ascent::models::dsl::eval::{RuleSolutions, Value};
+    let component: BTreeSet<Vec<Value>> = (0..10_000).map(|i| vec![Value::Int(i)]).collect();
+    // 10^20 groundings: past `u64::MAX`.
+    let solutions = RuleSolutions {
+        components: vec![component.clone(); 5],
+    };
+    assert_eq!(solutions.grounding_count(), usize::MAX);
+    assert_eq!(solutions.groundings(&[(2, 0)]).count(), 10_000);
+    assert_eq!(solutions.groundings(&[(0, 0), (1, 0)]).take(5).count(), 5);
+    // An open gate is a factor of one; a closed one empties the join.
+    let gated = RuleSolutions {
+        components: vec![component.clone(), [Vec::new()].into()],
+    };
+    assert_eq!(gated.grounding_count(), 10_000);
+    assert_eq!(gated.groundings(&[(0, 0)]).count(), 10_000);
+    let closed = RuleSolutions {
+        components: vec![component, BTreeSet::new()],
+    };
+    assert_eq!(closed.groundings(&[(0, 0)]).count(), 0);
+}
+
+/// The model check matches the DSL across every import with one matcher, as `ctadl index` does:
+/// a bridging rule satisfied only by two imports together matched something, and is not a
+/// `CTADL0004`.
+#[test]
+fn the_model_check_does_not_call_a_cross_import_rule_dead() {
+    use std::io::Write as _;
+    let mut file = tempfile::NamedTempFile::with_suffix(".ctadl").expect("tempfile");
+    write!(
+        file,
+        r#"source(F::return) :-
+             fun(F, name = "luaCallNativeAdd", language = "lua"),
+             fun(G, name = "luaNativeAdd", language = "pcode");"#
+    )
+    .expect("write");
+    let imports = lua_and_pcode(&["luaCallNativeAdd"], &["luaNativeAdd"]);
+    let outcome = ctadl_ascent::cli::check_programs(
+        imports.into_iter().map(Ok),
+        &[file.path().to_path_buf()],
+    )
+    .expect("checking");
+    assert!(
+        !outcome.has_file_errors(),
+        "{:?}",
+        outcome.check.file_errors
+    );
+    assert_eq!(
+        outcome.dead_declarations(),
+        0,
+        "{:?}",
+        outcome.endpoint_stats
+    );
+    assert_eq!(outcome.rows_matched(TaintDirection::Forward), 1);
 }

@@ -110,22 +110,71 @@ pub fn try_load_default_models(
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     log::trace!("load_models");
-    let Some((name, source)) = default_dsl_model_file(index.vmt()) else {
+    let Some(set) = default_dsl_models(index.vmt())? else {
         return Ok(ModelLoadReport::default());
     };
+    let facts = dsl::program_facts(index, &set.needs());
+    load_default_models_from_facts(set, &facts, out)
+}
+
+/// [`try_load_default_models`] over relations already built, for a caller that shares one
+/// [`dsl::relations::ProgramFacts`] between the defaults and the user's DSL files. `set` is
+/// what [`default_dsl_models`] returned for the program `facts` were built from, and the facts
+/// must cover its [`dsl::DslModelSet::needs`].
+pub fn load_default_models_from_facts(
+    set: &dsl::DslModelSet,
+    facts: &dsl::relations::ProgramFacts,
+    out: &mut ProgramModelMatches,
+) -> Result<ModelLoadReport, Error> {
+    let name = set
+        .files
+        .first()
+        .map(|f| f.path.display().to_string())
+        .unwrap_or_default();
     log::debug!("loading default models from {name}");
-    let file = dsl::DslFile::from_text(name, source)
-        .err_context(|| format!("loading default index models: {name}"))?;
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set);
-    matcher.observe_import(index);
     // Both phases: the defaults are propagation-only, so `All` and `Index` name the same rules,
     // and a caller that hands them to a query gets what the file says rather than a phase
     // decision made here.
+    let mut matcher = dsl::DslMatcher::new(set, dsl::Phase::All);
+    matcher.observe_facts(facts, out);
     matcher
-        .finish(dsl::Phase::All, out)
+        .finish(out)
         .map(ModelLoadReport::from_dsl)
         .err_context(|| format!("loading default index models: {name}"))
+}
+
+/// The shipped DSL defaults, parsed and checked once per process rather than once per import.
+/// Parallel to [`DEFAULT_DSL_MODELS`]. A file that does not parse keeps its rendered error.
+static DEFAULT_DSL_SETS: std::sync::LazyLock<Vec<Result<dsl::DslModelSet, String>>> =
+    std::sync::LazyLock::new(|| {
+        DEFAULT_DSL_MODELS
+            .iter()
+            .map(|&(name, source)| {
+                dsl::DslFile::from_text(name, source)
+                    .map(|file| dsl::DslModelSet { files: vec![file] })
+                    .map_err(|e| e.to_string())
+            })
+            .collect()
+    });
+
+/// The parsed DSL default a program with this [`VirtualMethodTable`] selects; see
+/// [`default_dsl_model_file`]. An error only if a shipped file does not parse, which is a
+/// build-time bug.
+pub fn default_dsl_models(
+    vmt: &VirtualMethodTable,
+) -> Result<Option<&'static dsl::DslModelSet>, Error> {
+    let Some(index) = default_dsl_index(vmt) else {
+        return Ok(None);
+    };
+    match &DEFAULT_DSL_SETS[index] {
+        Ok(set) => Ok(Some(set)),
+        Err(message) => Err(Error::DslModel(message.clone())).err_context(|| {
+            format!(
+                "loading default index models: {}",
+                DEFAULT_DSL_MODELS[index].0
+            )
+        }),
+    }
 }
 
 /// The built-in default model file a program with this [`VirtualMethodTable`] selects, as
@@ -153,28 +202,30 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
 /// `.jsonl` original says the same thing -- the pair is pinned by `tests/default_models.rs` --
 /// but answering from the file that is not loaded would be one more way for the two to drift.
 pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
-    let Some((name, source)) = default_dsl_model_file(vmt) else {
-        return false;
-    };
     // A shipped default that does not parse is a build-time bug, and every other caller of this
     // file reports it with a span; here there is no diagnostic channel and nothing to gain from
     // guessing, so an unparsable file simply asks for nothing.
-    dsl::DslFile::from_text(name, source)
-        .map(|f| f.program.uses_callsig())
-        .unwrap_or(false)
+    default_dsl_models(vmt)
+        .ok()
+        .flatten()
+        .is_some_and(|set| set.uses_callsig())
 }
 
 /// The DSL default a program with this [`VirtualMethodTable`] selects. Parallel to
 /// [`default_model_file`], and the one [`try_load_default_models`] runs.
 pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static str)> {
-    let index = match vmt {
-        VirtualMethodTable::Java { .. } => 0,
-        VirtualMethodTable::Native { .. } => 1,
-        VirtualMethodTable::Lua { .. } => 2,
-        VirtualMethodTable::Cil { .. } => 3,
-        VirtualMethodTable::Unknown => return None,
-    };
-    DEFAULT_DSL_MODELS.get(index).copied()
+    DEFAULT_DSL_MODELS.get(default_dsl_index(vmt)?).copied()
+}
+
+/// Which entry of [`DEFAULT_DSL_MODELS`] a program with this [`VirtualMethodTable`] selects.
+fn default_dsl_index(vmt: &VirtualMethodTable) -> Option<usize> {
+    match vmt {
+        VirtualMethodTable::Java { .. } => Some(0),
+        VirtualMethodTable::Native { .. } => Some(1),
+        VirtualMethodTable::Lua { .. } => Some(2),
+        VirtualMethodTable::Cil { .. } => Some(3),
+        VirtualMethodTable::Unknown => None,
+    }
 }
 
 /// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
@@ -626,22 +677,10 @@ impl ModelLoadReport {
         let mut propagation_stats: BTreeMap<usize, PropagationStats> = BTreeMap::new();
         let mut access_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
         for file in &report.files {
+            for (key, stats) in dsl_endpoint_stats(file) {
+                endpoint_stats.entry(key).or_default().merge(&stats);
+            }
             for (i, stats) in file.rules.iter().enumerate() {
-                for (declared, rows, direction) in [
-                    (stats.source_heads, stats.sources, TaintDirection::Forward),
-                    (stats.sink_heads, stats.sinks, TaintDirection::Backward),
-                ] {
-                    if declared == 0 {
-                        continue;
-                    }
-                    let entry = endpoint_stats.entry((i, direction)).or_default();
-                    entry.ports_declared += declared;
-                    entry.endpoints_matched += rows;
-                    entry.functions_matched = entry.functions_matched.max(stats.groundings);
-                    if rows == 0 {
-                        entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
-                    }
-                }
                 if stats.propagation_heads > 0 {
                     propagation_stats.insert(
                         i,
@@ -660,7 +699,7 @@ impl ModelLoadReport {
                 matched.insert(
                     i,
                     MatchedFunctions::Some {
-                        total: stats.groundings,
+                        total: stats.functions,
                         names: stats.matched_functions.clone(),
                     },
                 );
@@ -687,6 +726,34 @@ impl ModelLoadReport {
             ..Default::default()
         }
     }
+}
+
+/// The source/sink counters one DSL file's rules project onto, keyed `(rule, direction)`: one
+/// entry per direction a rule declares a head in. `ctadl query` and [`ModelLoadReport::from_dsl`]
+/// both read a DSL load's endpoint stats through this.
+pub fn dsl_endpoint_stats(
+    file: &dsl::DslFileReport,
+) -> impl Iterator<Item = ((usize, TaintDirection), EndpointStats)> + '_ {
+    file.rules.iter().enumerate().flat_map(|(i, stats)| {
+        [
+            (stats.source_heads, stats.sources, TaintDirection::Forward),
+            (stats.sink_heads, stats.sinks, TaintDirection::Backward),
+        ]
+        .into_iter()
+        .filter(|&(declared, _, _)| declared > 0)
+        .map(move |(declared, rows, direction)| {
+            let mut entry = EndpointStats {
+                ports_declared: declared,
+                endpoints_matched: rows,
+                functions_matched: stats.functions,
+                ..Default::default()
+            };
+            if rows == 0 {
+                entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
+            }
+            ((i, direction), entry)
+        })
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
