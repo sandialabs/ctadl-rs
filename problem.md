@@ -383,16 +383,16 @@ skips those functions, and its fair comparison is `store` with `--mem2reg off`:
 |---|---|---|---|---|---|---|---|
 | `uclited` | `store` | `window:8` (default) | 41.4 M | 0.2 M | 10.6 s | 1.21 GiB | 6.5x over |
 | | `store` | `off` | 188.8 M | 0.7 M | 40.5 s | 10.94 GiB | 58.7x over |
-| | `update` | (skipped: 115 functions) | 212.2 M | 0.7 M | 42.2 s | 13.39 GiB | 71.9x over |
+| | `update` | `window:8`, skips 115 functions | 212.2 M | 0.7 M | 42.2 s | 13.39 GiB | 71.9x over |
 | `ntfs-3g` | `store` | `window:8` (default) | 283.8 M | 68.5 M | 220 s | 14.93 GiB | 29.7x over |
 | | `store` | `off` | 676.3 M | 233.9 M | 1187 s | 47.70 GiB | 94.8x over |
-| | `update` | (skipped: 288) | 667.9 M | 142.9 M | 377 s | 32.80 GiB | 65.2x over |
+| | `update` | `window:8`, skips 288 | 667.9 M | 142.9 M | 377 s | 32.80 GiB | 65.2x over |
 | `glxy` | `store` | `window:8` (default) | 100.4 M | 3.3 M | 44 s | 4.10 GiB | 2.9x over |
 | | `store` | `off` | 109.3 M | 3.7 M | 50 s | 4.61 GiB | 3.3x over |
-| | `update` | (skipped: 44) | 89.7 M | 3.3 M | 40 s | 3.85 GiB | 2.7x over |
+| | `update` | `window:8`, skips 44 | 89.7 M | 3.3 M | 40 s | 3.85 GiB | 2.7x over |
 | `androidudpbus` | `store` | `window:8` (default) | 337.9 M | 14.2 M | 161 s | 13.31 GiB | 5.1x over |
 | | `store` | `off` | 1,639.3 M | 25.1 M | 853 s | 47.88 GiB | 18.2x over |
-| | `update` | (skipped: 503) | | | killed at 970 s | 55 GiB guard | 21x or more |
+| | `update` | `window:8`, skips 503 | | | timed out at 1800 s | 91.8 GiB or more | 35x or more |
 
 The `store`/`window:8` rows are equal to the pre-S29 runs (`3ff13aa0`) in rows; their times
 and peaks are within 2%. Another index ran beside the last 6 minutes of `androidudpbus`'s `off`
@@ -400,9 +400,11 @@ run, so its time is loose. Every run that finished reports the same findings as 
 
 - **Without steps 3 and 5, `update` is a precision change that does not pay for itself.** On
   `uclited` it is 12% more `locals` and 22% more peak than `off`; against today's default it is
-  5.1x the rows and 11x the peak, because it also loses mem2reg.On `androidudpbus` it
-  outgrows `off`: the guard killed it at 55 GiB after 970 s, past `off`'s 47.9 GiB and 853 s.
-- **`ntfs-3g` is the exception that shows the shape.** `locals` is the same as `off` (-1%), but
+  5.1x the rows and 11x the peak, because it also loses mem2reg. On `androidudpbus` it
+  outgrows `off` by far: still short of the fixpoint at the 1800 s timeout, at 91.8 GiB (under a
+  110 GiB guard; the 55 GiB guard killed it at 970 s), against `off`'s 47.9 GiB and 853 s. A
+  timed-out run on this branch keeps no `locals` count.
+- **On `ntfs-3g` it beats `off`, though not today.** `locals` is the same as `off`'s (-1%), but
   the context relations are 39-44% smaller (`edge_split` 143 M against 234 M, `assign_like` 35 M
   against 56 M, `summary` 4.1 M against 7.2 M), so the peak is 31% lower and the fixpoint 3.1x
   faster.
@@ -654,8 +656,8 @@ What it would and would not do:
   `full`'s lost flows. It does not fix the hubs: `inflate` and `ntfs-3g`'s `FUN_0001f97c` hold over
   90% of `locals` with every slot promoted, so what is left there is not the stack.
 - **The cost, before steps 3 and 5, is measured** (S29 above): with every update kept, `locals`
-  is 0.8-1.1x `off`'s and 0.9-5.1x today's default, and `androidudpbus` outgrows the 55 GiB
-  guard. Step 2 is the valve, and it stays on (coarsen all) until the other steps beat today.
+  is 0.8-1.1x `off`'s and 0.9-5.1x today's default, and `androidudpbus` does not finish in 30
+  minutes and 92 GiB. Step 2 is the valve, and it stays on (coarsen all) until the other steps beat today.
 - **Next:** the overwrite rule (step 5), then mem2reg on `Update` (step 3). Compare flows on the
   regression suite (`pcode`, `jni`) and `locals` and peak on `uclited`, `ntfs-3g`, `glxy` and
   `androidudpbus` against the `--frame update` rows above and against `window:8` and `full`.
