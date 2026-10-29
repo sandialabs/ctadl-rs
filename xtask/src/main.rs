@@ -81,6 +81,16 @@ fn run() -> Result<bool> {
     }
 }
 
+fn parse_jobs(value: &str) -> Result<usize> {
+    let jobs: usize = value
+        .parse()
+        .with_context(|| format!("--jobs expects a number, got `{value}`"))?;
+    if jobs == 0 {
+        bail!("--jobs must be at least 1");
+    }
+    Ok(jobs)
+}
+
 fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regression::Options> {
     let mut opts = regression::Options::default();
     // `--frontend` is additive across occurrences, so the first one seen has to
@@ -104,13 +114,12 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             }
             "--jobs" | "-j" => {
                 let value = args.next().context("--jobs requires a value")?;
-                let jobs: usize = value
-                    .parse()
-                    .with_context(|| format!("--jobs expects a number, got `{value}`"))?;
-                if jobs == 0 {
-                    bail!("--jobs must be at least 1");
-                }
-                opts.jobs = Some(jobs);
+                opts.jobs = Some(parse_jobs(&value)?);
+            }
+            // The value can also be attached: `-j4`, `--jobs=4`.
+            other if other.starts_with("--jobs=") || other.starts_with("-j") => {
+                let value = other.strip_prefix("--jobs=").or_else(|| other.strip_prefix("-j"));
+                opts.jobs = Some(parse_jobs(value.unwrap_or_default())?);
             }
             "--release" => {
                 opts.release = true;
@@ -539,6 +548,8 @@ mod tests {
         assert_eq!(jobs(&[]), None);
         assert_eq!(jobs(&["--jobs", "4"]), Some(4));
         assert_eq!(jobs(&["-j", "4"]), Some(4));
+        assert_eq!(jobs(&["-j4"]), Some(4));
+        assert_eq!(jobs(&["--jobs=4"]), Some(4));
     }
 
     #[test]
@@ -549,6 +560,9 @@ mod tests {
         assert!(err(&["--jobs", "nope"]));
         // Zero workers would silently run nothing; say so instead.
         assert!(err(&["--jobs", "0"]));
+        assert!(err(&["-j0"]));
+        assert!(err(&["--jobs="]));
+        assert!(err(&["-jx"]));
     }
 
     #[test]
