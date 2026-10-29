@@ -294,7 +294,7 @@ impl<'a> DslMatcher<'a> {
             return;
         }
         self.imports += 1;
-        let facts = relations::ProgramFacts::build(index);
+        let facts = relations::ProgramFacts::build(index, &relations::Needs::all());
         log::trace!(
             "DSL relations for {}: {} function(s), {} call site(s), {} field use(s)",
             index.scope.describe(),
