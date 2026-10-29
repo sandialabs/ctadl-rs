@@ -16,6 +16,8 @@ design and first measurements are under S5 below. `improve-native-handling` has 
   suite fails on a lost flow instead of skipping on Darwin).
 - **S5** is on this branch. `ctadl index --mem2reg <policy>` (or `CTADL_MEM2REG`) picks the
   policy: `window:N`, `exact`, `above`, `full[:N]` or `off`.
+- **S29 steps 1 and 2** are on this branch: pcode writes the frame as `Update`, and
+  `ctadl index --frame store` (the default; `CTADL_FRAME`) coarsens it back to `Store`. See S29.
 - **Optional, for native apps that also link libc++abi's demangler** (P4, not P1): `bb9cc766`
   "Model __cxa_demangle and skip the helpers only it reaches" (S6).
 
@@ -337,6 +339,89 @@ query could see named it. Two causes, both fixed:
 After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function (`main` or
 `handler`).
 
+## S29: the frame as `Update`, coarsened by default
+
+Steps 1 and 2 of S29 (Ideas for solutions) are done; 3-5 are not.
+
+- **The frontend** writes into the frame itself, `__stack_top.[k].deref := v`, as
+  `__stack_top = update (__stack_top.[k].deref := v)`. A write through anything else (a copy of
+  the frame address, a loaded pointer) is a `Store`, as before.
+- **The pipeline's first pass**, `coarsen_frame_updates`, turns each frame update back into the
+  store it stands for, before dead-temp elimination, coalescing and mem2reg, which then see the IR
+  they saw before. `ctadl index --frame store|update` (`CTADL_FRAME`) picks the default, `store`;
+  model modes `frame-store` and `frame-update` pick one for one function.
+- **Not done:** mem2reg still leaves alone a function that defines `__stack_top` (step 3), so
+  under `update` it promotes nothing in any function that writes its frame; and codegen still
+  lowers `Update` as the copy `x <- y` plus the write `x.f <- v` (step 5, the overwrite rule). So
+  `--frame update` today is the table's "`Update` + SSA, lowered as today" row.
+
+### Coarsening gives today's results
+
+Checked against the branch before S29 (`3ff13aa0`) on `uclited`, `ntfs-3g`, `androidudpbus` and
+`glxy`:
+
+- **The IR is the same.** Each binary's import, with each frame update rewritten textually into a
+  store, is line for line the old import (`ctadl inspect --dump-ir`): 4,950, 17,259, 208,538 and
+  11,088 frame updates, and no other `Update`. Both imports have to read the same Ghidra facts:
+  two Ghidra runs on the same binary give different facts (the order of instructions with the
+  same index in a block, and of a block's out-edges), so separate imports differ in a few
+  functions either way. Import once, copy the import's `facts` into the other store, and re-import
+  there with `CTADL_REUSE_FACTS=1 ctadl import --force`.
+- **The index is the same:** all 56 relations' counts in `profile.json` are equal, and so are the
+  findings (79, 75, 1 and 1).
+- **The regression suite** (`cargo xtask regression --frontend pcode,jni`) passes 46 of 46, with
+  `--frame store` and with `CTADL_FRAME=update` alike.
+
+### What keeping `Update` costs
+
+Same machine and settings as Current state (macOS arm64, one run at a time, peaks from `time -l`,
+budget 100x the IR: `uclited` 2.0 MB, `ntfs-3g` 5.4 MB, `glxy` 15.1 MB, `androidudpbus` 28.2 MB),
+55 GiB guard, 1800 s timeout. `store` is today; `update` keeps every frame update, so mem2reg
+skips those functions, and its fair comparison is `store` with `--mem2reg off`:
+
+| App | `--frame` | `--mem2reg` | `locals` | `edge_split` | Fixpoint | Peak | Against budget |
+|---|---|---|---|---|---|---|---|
+| `uclited` | `store` | `window:8` (default) | 41.4 M | 0.2 M | 10.6 s | 1.21 GiB | 6.5x over |
+| | `store` | `off` | 188.8 M | 0.7 M | 40.5 s | 10.94 GiB | 58.7x over |
+| | `update` | (skipped: 115 functions) | 212.2 M | 0.7 M | 42.2 s | 13.39 GiB | 71.9x over |
+| `ntfs-3g` | `store` | `window:8` (default) | 283.8 M | 68.5 M | 220 s | 14.93 GiB | 29.7x over |
+| | `store` | `off` | 676.3 M | 233.9 M | 1187 s | 47.70 GiB | 94.8x over |
+| | `update` | (skipped: 288) | 667.9 M | 142.9 M | 377 s | 32.80 GiB | 65.2x over |
+| `glxy` | `store` | `window:8` (default) | 100.4 M | 3.3 M | 44 s | 4.10 GiB | 2.9x over |
+| | `store` | `off` | 109.3 M | 3.7 M | 50 s | 4.61 GiB | 3.3x over |
+| | `update` | (skipped: 44) | 89.7 M | 3.3 M | 40 s | 3.85 GiB | 2.7x over |
+| `androidudpbus` | `store` | `window:8` (default) | 337.9 M | 14.2 M | 161 s | 13.31 GiB | 5.1x over |
+| | `store` | `off` | 1,639.3 M | 25.1 M | 853 s | 47.88 GiB | 18.2x over |
+| | `update` | (skipped: 503) | | | killed at 970 s | 55 GiB guard | 21x or more |
+
+The `store`/`window:8` rows are equal to the pre-S29 runs (`3ff13aa0`) in rows; their times
+and peaks are within 2%. Another index ran beside the last 6 minutes of `androidudpbus`'s `off`
+run, so its time is loose. Every run that finished reports the same findings as `window:8`.
+
+- **Without steps 3 and 5, `update` is a precision change that does not pay for itself.** On
+  `uclited` it is 12% more `locals` and 22% more peak than `off`; against today's default it is
+  5.1x the rows and 11x the peak, because it also loses mem2reg.On `androidudpbus` it
+  outgrows `off`: the guard killed it at 55 GiB after 970 s, past `off`'s 47.9 GiB and 853 s.
+- **`ntfs-3g` is the exception that shows the shape.** `locals` is the same as `off` (-1%), but
+  the context relations are 39-44% smaller (`edge_split` 143 M against 234 M, `assign_like` 35 M
+  against 56 M, `summary` 4.1 M against 7.2 M), so the peak is 31% lower and the fixpoint 3.1x
+  faster.
+- **`glxy` is cheaper under `update` than today:** 11% fewer `locals` than `window:8` and 6%
+  less peak. Its hub's rows are mostly not from the stack (Current state), so losing mem2reg
+  costs it little.
+- **Why `update` costs rows:** lowered as today, each version `st_n` is a copy of `st_{n-1}` plus
+  one slot, so every path the frame ever held rides the copies into every later version, and a
+  loop-head phi merges them. The frame still mixes, now with one variable per version, so the
+  rows grow with versions × paths. The overwrite rule (step 5) is what stops a slot's old value
+  from riding the copy past a write to it; mem2reg on `Update` (step 3) is what turns the slots no
+  escape reaches back into scalars. These numbers are the baseline those two steps have to beat.
+- **To reproduce:** import each binary with this branch, copy each pcode import's `facts`
+  directory into a store for the old build and re-import there with
+  `CTADL_REUSE_FACTS=1 ctadl import --force`, then compare `ctadl inspect --dump-ir` (frame
+  updates rewritten into stores) and each `ctadl index` run's `profile.json`. Compare findings by
+  rule, message and logical location name: the messages' site numbers (`call-arg(520, 0)`) and
+  the location indexes change with the IR.
+
 ## Analysis: `uclited` has three causes, not one
 
 `uclited` (see How to reproduce) was taken apart with the `index-instrument` branch's
@@ -506,8 +591,8 @@ query's SARIF. A slot a returned address reaches stays in memory (the pcode fron
 stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
 forbid it for one function. See Current state for what it does to the apps.
 
-**S29, proposed, not started: the pcode frontend emits `Update` for the frame, and passes
-coarsen it.** A frontend should emit the most precise IR, since a later pass can drop information
+**S29, steps 1 and 2 on this branch: the pcode frontend emits `Update` for the frame, and passes
+coarsen it.** Steps 3-5 are not started; what is done and what it costs is under S29 below. A frontend should emit the most precise IR, since a later pass can drop information
 but not recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
 frame for the whole function, and mem2reg has to rebuild the order of stack accesses and guess
 how far an escaped address reaches (`window:8`). `Update` (restored in #118, emitted today only by
