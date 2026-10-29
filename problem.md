@@ -1,295 +1,315 @@
 # Native index blowups that are not the stack - DO-NOT-MERGE
 
-What is left over budget on native code after P1 (`problem/p1-stack-slots`). That branch fixed the
-stack frame as a mixing pool: S3's promotion (`window:8`), S29's frame updates (`--frame update`,
-the default) and the frontend fix that stopped writing taken frame addresses into the frame. They
-brought `androidudpbus` and `ntfs-3g` under budget and changed no finding on 49 binaries and the
-regression suite. Everything below survives them. In almost every case the evidence says the stack
-is not the cause: few stack accesses stay in memory, `--mem2reg full` hardly moves the rows, or the
-largest relations are the context ones rather than `locals`.
+What is left over budget on native code after P1 (`problem/p1-stack-slots`, #174), which fixed the
+stack frame as a mixing pool. The budget is 100x the imported IR. Peaks are `time -l` "peak memory
+footprint" on macOS (arm64). Everything here was measured on this branch (`main` at `a617c790`,
+defaults `--frame update --mem2reg window:8`) unless marked "estimated" or "sweep". Each agent's
+full notes, tables and scripts are under `/Volumes/Shampoo/nb-work/<agent>/` (`p4`, `p1ctx`,
+`p2wild`, `p3locals`, `apps`, `verify`).
 
-The budget is 100x the imported IR throughout, as on P1. Peaks are from `time -l` on macOS
-(arm64). P1's `problem.md` (at `7bfe1342`, in #174's history) has the full record of how each
-number below was measured; this file keeps only what is still open.
+## What the blowups have in common
 
-## Starting point
+Most of the rows are **a few functions' summaries, instantiated at every call site**. In the
+binaries checked, 95-99% of `assign_like` is summary instances. Each hub's summary is a near-complete
+bipartite block, and every caller inherits it through summary composition. So:
 
-- This branch is `main` at `a617c790` (P1, #174), with only this file added.
-- The defaults are P1's: `ctadl index --frame update --mem2reg window:8`. `--frame store` and
-  `--mem2reg off|exact|above|full[:N]` are there for comparison.
-- **Measurement tooling not on `main`** (see P1's Starting point for the cherry-picks; expect
-  conflicts): a patched `ascent_macro` that keeps a timed-out run's running scc (`b47ed139`),
-  per-relation and per-index sizes (`5858fa78`), per-rule row counters (`918c771a`) and
-  `scripts/blowup-rank.py` (`c1ee3d61`). `main` writes `profile.json`, which has relation counts
-  and scc and rule times for a run that reaches the fixpoint.
-- **`ctadl index --lsm`** (experimental, #155) moves the large relations to memory-mapped files.
-  It changes where the rows live, not how many there are, and has not been tried on any of these.
+- **The largest function or relation is not the cause.** The cost shows up as `locals` and
+  `edge_split` in the callers and in rule time on `locals <-- edge_split`. `edge_split`
+  (3.1-4.4x `assign_like`) and `edge_split_wild` (0.9-1.26x) are fixed multiples of `assign_like`
+  in all 43 sweep profiles, so they never name a cause.
+- **`skip-analysis` on one function is the decisive test.** In every binary below, skipping one
+  to three named functions brings it within 1-4x of budget.
+- **None is the stack.** `--mem2reg full` moves none of them by more than a few percent once P1's
+  frontend fix is in. Earlier readings of `chat`, `wifitool` and `glxy` as stack effects were
+  wrong.
 
-## Open problems
+## Independent causes
 
-### 1. The context relations copy the context-free ones under a decision on `$globals`
+Ordered by how many over-budget binaries they explain.
 
-The firmware rows that looked like "context relations dominate" are two independent causes that
-compound. The first is the allocator (problem 4). In all 13 members (the 8 below and `iperf.mips`,
-both `aptestmips`, both `SwiRelayAgentmips`), skipping `malloc` alone cuts the peak 7-30x. The
-second is this problem: the context relations are copies.
+### 1. A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
+
+**Binaries:** 25 of the 34 sweep binaries over 1.5x, including both that ran out of memory. All
+link uClibc's `malloc` (dlmalloc).
+
+| Binary | Default (x budget) | `malloc` skipped | Whole allocator skipped |
+|---|---|---|---|
+| DSP-W115 `hnapserver-combo` | killed at 32 GiB | 2.20 GB, 4.2x | 0.62 GB, 1.2x |
+| MR200 `adb` | killed at 32 GiB | 2.05 GB, 3.4x | 0.57 GB, 0.94x |
+| DSP-W115 `GpioForCrond` | 27.30 GiB, 104x | 0.90 GiB, 3.4x | 0.13 GB, 0.46x |
+| R7000 `bdupdater` | 13.08 GiB, 30x | 0.49 GiB, 1.14x | |
+| DSP-W115 `file` | 7.27 GiB, 20x | | 0.41 GB, 1.04x |
+| MBM621 `chat` | 0.93 GiB, 8.5x | | 0.07 GB, under |
+| MVBR1210C `sdkmips` | 4.28 GiB, 16x | 0.21 GiB, 0.8x | |
+
+- **The other members:** `malloc` skipped alone cuts each of them 5-30x:
+  - `testI2C-r-20ms`, `mxcam`, DCS `iperf`, `upnpd`, `KC_PRINT`, `KC_BONJOUR`;
+  - `iperf.mips`, both `aptestmips`, both `SwiRelayAgentmips`;
+  - `signalc`, `fsck_hfs` (under budget after), `iptables`, `alphapd`, `kcairplay`;
+  - `captival_usockc`, `wifitool`.
+
+**Mechanism.**
+- **The size becomes a pointer.** `malloc`'s size goes through arithmetic lowered as a merge of
+  its operands (`nb = size + 11 & ~7` becomes `assign nb = size, 11`). A bin address is the size
+  class with the bin array's absolute address as an offset (`%u = %idx.[4824424]`).
+- **The heap state is global.** The allocator's state (`av->top`, bins, fastbins: about 90 words,
+  each read-modify-written about 200 times) is `$globals.[addr]`.
+- **So the summary is a dense block.** `malloc`'s summary is nearly complete bipartite,
+  `$globals.<138 paths> <- p0.<38 paths>` in `hnapserver` (5,230 rows), plus a 2,000-9,700-row
+  `$globals <- $globals` block. `free` threads the bin lists into `$globals` too
+  (`$globals.[k].deref.deref.deref <- $globals.[k].deref.deref`).
+- **Every caller inherits it.** `$globals` is an implicit in/out formal of every function, so the
+  block lands in the summary of every transitive caller of `malloc` (201-1,129 functions per
+  binary). There it is 60-74% of `summary`, 96% or more of `assign_like` and 23-97% of
+  `edge_split`, and it is re-instantiated at every call site. That is why `edge_split` looked
+  spread out over 18-167 functions.
+- **Inside `malloc` the offsets pile up as in cause 3.** `@p0` sits at about 350 offsets.
+
+**Other details.**
+- **stdio.** In `signalc`, `malloc` and stdio form a 22-function call-graph SCC
+  (`__malloc_consolidate -> sysconf -> config_read -> fopen -> malloc`). In `kcairplay`,
+  `fputs_unlocked` is a second hub of the same kind: 9.04 GiB with neither skipped, 4.00 GiB with
+  `malloc` skipped, 2.21 GiB with both.
+- **Stripped binaries.** `malloc` is recognizable by shape: one parameter, about 5,200
+  instructions, about 1,550 stores to `$globals`, and the most call sites among such functions
+  (`/Volumes/Shampoo/nb-work/p4/rankalloc.py`). `realloc` carries its own copy of the code
+  (8,040 instructions, 2,618 global stores).
+- **Not measured:** findings on the skipped indexes. Taint through the allocator's free lists is
+  spurious anyway: `malloc`'s return should carry nothing from its size.
+
+### 2. The context relations copy the context-free ones, under a decision on `$globals`
+
+**Binaries:** the 13 binaries that were "problem 1", which all link the allocator of cause 1. This
+cause roughly doubles what cause 1 leaves.
 
 - **97-99.9% of the context rows are duplicates.** That holds for `context_locals`,
-  `context_assign` and `context_summary` in every dump at the fixpoint (6 members, and
-  `GpioForCrond` with malloc skipped). Each row also exists, identical with its decision set
-  dropped, in `locals`, `assign_like` or `summary`. Per function, `context_locals` is about equal
-  to `locals`, and `ctx_edge_split` about equal to `edge_split`, inside the decision's reach.
-- **The decision.** uClibc's `exit()` calls `(*__exit_cleanup)(status)`, a function pointer in a
-  global whose target is `__exit_handler`. That makes one hybrid-inlining decision on the globals
-  pseudo-formal, `[arg-32768.[G].deref = ptr<__exit_handler>]`. It reaches the allocator's SCC
-  (43-57 functions with `malloc`, `free`, stdio, `abort` and `exit`) and its callers. 86-99.9% of
-  `context_locals` holds under it. A decision on `$globals` cannot separate callers, since every
-  caller passes the same globals.
+  `context_assign` and `context_summary`, in 7 dumps. Each row is identical, once its decision set
+  is dropped, to a `locals`, `assign_like` or `summary` row. Per function, `context_locals` is
+  about `locals` and `ctx_edge_split` about `edge_split`. These relations do not grow
+  independently, and the rows are not spread out.
+- **The decision.** uClibc's `exit()` calls `(*__exit_cleanup)(status)`, a function pointer
+  stored in a global. That makes one decision on the globals pseudo-formal,
+  `[arg-32768.[G].deref = ptr<__exit_handler>]`, which reaches the 43-57-function SCC that holds
+  `malloc`, stdio, `abort` and `exit`, and its callers. 86-99.9% of `context_locals` holds under
+  it. A decision on `$globals` cannot separate callers, since every caller passes the same globals.
 - **No subsumption.** Rule 3.1 seeds `context_assign` from `summary(__exit_handler)`, which is
-  mostly malloc's `$globals` block that the same functions already hold unconditionally.
-  Rule 3.3b (`context_locals <-- ctx_edge_split, locals`) copies every context-free row that
-  reaches a contextual edge's source, without checking that `locals` already holds it. 3.3a closes
-  the copy over the same edges, and 3.4 and 3.2 carry it up as `context_summary` and
-  `context_assign` (rules in `ctadl-index/src/index_engine/mod.rs`, around lines 1947-2030).
-- **Measured.** `--hybrid-context none` removes the context relations and changes `locals` by only
-  0.2-1.7%. The peak falls 1.7-2.4x and the time 3-5.5x (`GpioForCrond` 2,402 s to 730 s).
-  Skipping only the handler target cuts `context_locals` 19-31x on the six small members. On
-  `GpioForCrond` with malloc present it is not enough (killed at 16.6 GiB): other decisions (stdio
-  cookies, RPC/XDR) carry copies there.
-- **Precision not measured.** None of the small members has query endpoints.
+  mostly cause 1's block, and every function in the SCC already holds that block unconditionally.
+  Rule 3.3b (`context_locals <-- ctx_edge_split, locals`) copies every context-free row reaching a
+  contextual edge without checking that `locals` already holds it. 3.3a closes the copies over the
+  same edges, and 3.4 and 3.2 carry them up (`ctadl-index/src/index_engine/mod.rs`, around
+  1947-2030). A row that holds unconditionally holds under every decision set, so nothing needs
+  the copies.
 
-| Binary | Default (x budget) | Skip malloc | Skip malloc + `--hybrid-context none` |
-|---|---|---|---|
-| DSP-W115 `GpioForCrond` | 104x | 0.90 GiB, 3.4x | 1.4x |
-| DSP-W115 `testI2C-r-20ms` | 94x | 3.8x | 1.4x |
-| DCS-8200LH `mxcam` | 58x | 2.9x | |
-| DCS-8200LH `iperf` | 41x | 2.7x | 1.1x |
-| LG6100D `upnpd` | 39x | 2.2x | 1.5x |
-| WNDR3700v5 `KC_PRINT` | 38x | 1.8x | 1.0x |
-| WNDR3700v5 `KC_BONJOUR` | 36x | 1.6x | |
-| MVBR1210C `sdkmips` | 16x | 0.8x | 0.6x |
-| DIR-140L `iperf.mips` | 22x | 1.7x | 0.8x |
-| MBR1200 `aptestmips` | 13x | 2.0x | 1.4x |
-| MVBR1210C `aptestmips` | 11x | 1.9x | 1.3x |
-| MVBR1210C `SwiRelayAgentmips` | 10x | 1.2x | 0.7x |
-| MBR1200 `SwiRelayAgentmips` | 9.8x | 1.2x | 0.7x |
+**Measured.**
 
-**What is left after both:**
-- **`GpioForCrond` and `testI2C`:** linuxthreads (`__pthread_manager`) and `realloc`, which carries
-  its own copy of the dlmalloc code, hold about 60% of `locals`. Skipping the whole allocator
-  takes `GpioForCrond` to 0.13 GB.
-- **`upnpd`:** an unrelated hub, `FUN_0042b28c` (16.5 k instructions), holds 62.5% of `locals`.
-- **The rest:** 1-2x, spread over 2-4 application functions.
+| Measurement | Effect |
+|---|---|
+| `--hybrid-context none` (allocator present) | context relations gone; `locals` +0.2-1.7%; peak 1.7-2.4x lower; time 3-5.5x lower (`GpioForCrond` 2,402 s to 730 s) |
+| `malloc` skipped plus `none` | `GpioForCrond` 3.4x to 1.4x; `testI2C` 3.8x to 1.4x; DCS `iperf` 2.7x to 1.1x; `KC_PRINT` 1.8x to 1.0x; `iperf.mips` 1.7x to 0.8x; `SwiRelayAgentmips` 1.2x to 0.7x |
+| Skipping only the handler target | `context_locals` 19-31x lower on the six small members |
 
-### 2. Lua's GC links the running `lua_State` into its own gray list
+- **The handler skip is not enough on `GpioForCrond`.** With `malloc` present it is killed at
+  16.6 GiB, against 11.95 GiB under `none`: other decisions (stdio cookies, RPC/XDR, 18,219
+  resolvents) carry copies too.
+- **Precision of `none` is not measured.** No small member has query endpoints.
 
-Was "wild relations next to `locals`" (P6). The wild relations are not a cause. In all 43 sweep
-profiles, problem 1's included, `edge_split` is 3.1-4.4x `assign_like` and `edge_split_wild`
-0.9-1.26x. Both are split from `assign_like`'s source paths. The wildcard joins idle: `ext_fml`
-reaches at most 0.9 M rows, `locals_wild` at most 2,900, and wild rules take 0.9-6.4% of rule time.
-When a hub is skipped, every wild relation falls 25-60x with `assign_like`. P6's mechanism
-(`assign_wild` at 26-31 M, the `ext_dst` join slowing per row) is not what happens here
-(`assign_wild` 0.13-5.6 M). The large `assign_like` is summaries instantiated at call sites: 95-99%
-of its rows. This problem's own binaries split:
+### 3. Offsets pile up on a loop-incremented pointer (and a loop SCC through merged operands)
 
-- `bdupdater` is problem 4, the allocator. Skipping malloc `FUN_0003f244` takes it from 13.08 GiB
-  to 0.49 GiB (1.14x).
-- `evLua` and `ipsWeb` are a new hub, Lua 5.1's `reallymarkobject`. Skipping it: `evLua` 3.36 GiB
-  (22x) to 0.16 GiB (1.09x), `ipsWeb` 4.74 GiB (22x) to 0.19 GiB (0.93x), and nothing is left.
-  Both call the external `realloc`, so malloc is not involved.
+**Binaries:** Tenda `nginx` (5.0x), `uclited` (3.6x), and the bulk of `a2050` and `fir.tube`. It
+is also inside the hubs of causes 1 and 4.
 
-**Mechanism.** `reallymarkobject(g, o)`'s summary is 11 rows:
+- **The mechanism.** A pointer incremented in a loop (`p = p.[1]`) adds 1 to the source path's
+  offset on each trip. Exact concatenation (`[k]·[1]` becomes `[k+1]`) bounds it only by the
+  program-wide `path_set`. Each variant of a source shape reaches the same `(v, p)` set, so the
+  rows are variants x reach.
+- **`nginx`:** PCRE 8.11's `match()` (`FUN_0005e130`, identified by its shape and strings)
+  holds 92% of 319 M `locals`.
+  - The offsets of `p0.[k]` run 1..64 contiguous, then every offset in `path_set` up to 832:
+    227 variants, most reaching the same 470 K `(v, p)`.
+  - Collapsing offset-only variants of formal sources would leave 6.3 M rows, about 50x fewer
+    (counted in the dump; not tried in the engine).
+  - Skipping `match()`: 25.9 M rows, 0.88 GiB, under budget.
+  - It is only 5x over with 319 M rows because nothing else is large: about 16 bytes per row.
+- **`uclited`:** zlib's `inflate` holds 99.3% of 40.7 M `locals` (0.66 GiB, 3.55x).
+  - About 60 offsets per shape: collapsing gives about 3x (estimated).
+  - Here the second mechanism matters too: the state machine is one loop SCC (4,941 of 8,313
+    variables), and a binary operator is lowered as a merge, so a table pointer indexed by the bit
+    buffer shares the buffer's paths.
+  - `--mem2reg full`: 11.8 M rows, 0.29 GiB, 1.55x.
+- **`a2050` (1.69x):** 30 libc++ `std::__sort<T>` copies hold 51% of `locals`. Their sources sit
+  at about 370 offsets (`first++`/`last--`, element strides 1-16) in 2 distinct sets: about 84x
+  collapse (estimated). `FUN_002a2af4` holds another 19%.
+- **`fir.tube` (1.34x, Rust `argon2`):** the rows are spread over 10 functions. Collapse in the
+  top function is about 54x (estimated).
+- **Not the uclited shape elsewhere.** In `gzip`, the `tar`s and `unzip` the variables-only SCC is
+  91-97% of the hub only through the `$globals` vertex, and 14-52 variables without it. The SCC
+  measure must exclude `$globals`.
 
-```
-0 .[36].deref            <- 1                 g->gray = o
-1 .[8|24|68|100].deref   <- 0 .[36].deref     o->gclist = g->gray, at 4 offsets
-1 .[8|24|68|100].deref   <- 1                 o->gclist = o
-```
+### 4. A callee's summary relates every offset or field to every other, and every call site copies it
 
-1. **The self-link.** The heap is flow-insensitive, so `o->gclist = g->gray; g->gray = o` gives
-   `o.gclist <- o`.
-2. **All four offsets.** `gclist` sits at a different offset in each GC type (8, 24, 68, 100), and
-   the switch on `o->tt` is not seen, so every object gets all four.
-3. **The running thread points at itself.** `atomic` marks the running thread
-   (`reallymarkobject(g, L)`). Offset 8 of a `lua_State` is `L->top`, so the Lua stack pointer
-   appears to point at the `lua_State`.
-4. **Every field reaches every stack slot.** Through `atomic`, `singlestep` and `luaC_step`, and
-   Lua's 73-function call-graph SCC, 343 functions (every API function that takes `L`) carry the
-   same block of about 5,800 rows `L.<24 paths> <- L.<365 paths>`, 67% dense. Each call site
-   instantiates it.
+**Binaries:** `libgdx` (`glxy` 1.52x, `retrodrawing` 1.91x, `halma` 1.26x), and libntfs
+(`ntfslabel` 1.7x, `ntfsdebug` 1.8x). A small callee mixes all the offsets of its arguments, and
+its O(offsets²)-per-argument-pair summary makes every caller mix them too.
 
-Steps 1-4 are read from the summaries. The skips are measured: skipping `reallymarkobject` or
-`luaC_step`, `singlestep` or `atomic` removes 97.5% of `locals`. Not settled: whether the self-link
-or the offset mix-up matters more. A propagation model of the 11 rows does not behave like the
-derived summary, so testing it needs a frontend or IR change.
+- **`libgdx`:** stb_image's load function (`glxy` `FUN_0010b408`, 87.5% of `locals`) calls a
+  NEON-vectorized pixel loop (`FUN_0011bc30`, 6 calls).
+  - The loop's pointers step by 64 and it touches 32 lanes at `.[-32]..[30]`. Its summary is
+    `@pA.[a].deref <- @pB.[b].deref` for every `a, b` in -64..95: 4,027 rows per argument pair.
+  - 73-96% of the hub's `assign_like` is callee summary instances.
+  - Skipping the callee cuts `locals` 55-67%: `glxy` 1.09x (0.89x with `FUN_0011c900` too),
+    `retrodrawing` 1.09x, `halma` 0.82x.
+  - The hub's own `img_buffer++` loops add cause 3 on top: about 200 offsets per shape, about 54x
+    collapse (estimated).
+  - Not the stack: `--mem2reg full` cuts 1% now (16% before P1's fix). Not the wild relations:
+    under 1% of the hub's rows.
+  - `retrodrawing` and `halma` are one libgdx build relinked; per-function counts match within
+    0.1%.
+- **libntfs:** `ntfs_attr_pwrite` holds 79% of `locals`. Skipping it puts both under budget
+  (12.1 M rows to 1.16 M, 0.16 GB).
+  - The mixing comes from two 286-line callees (`FUN_00423ae0`, `FUN_00424028`, 2 calls each).
+    Their 64-bit field arithmetic (`a->x + a->y`, compares) is lowered as merges, with no loop.
+  - Each summary is `p0.deref.deref.[f].deref <- p0.deref.[g].deref` over about 45 fields:
+    9,560 rows.
+  - Not a loop SCC (6% without summary edges), not a +1 offset run: the offsets are field
+    offsets, stride 4.
+- **Fix ideas.** Not lowering integer arithmetic as a merge would remove the libntfs case. The
+  offset collapse of cause 3 would shrink `libgdx`'s callee summary. A fix aimed only at the
+  caller's loop would not.
 
-### 3. `locals` alone: loops that carry pointers, and offsets that pile up
+### 5. Lua's GC links the running `lua_State` into its own gray list
 
-`uclited` (TP-Link TL-WPA8630P) is the studied case: 3.6x over budget under the default (40.7 M
-`locals`, 0.67 GiB). zlib's `inflate` holds 98% of `locals` even with every slot promoted
-(`--mem2reg full`: 11.8 M rows, 0.29 GiB, still 1.55x over; re-measured on this branch). P1's Analysis took it apart; its causes 2 and 3
-are what remain:
+**Binaries:** D-Link DCS-6818 `evLua` (22x) and `ipsWeb` (22x). They call the external `realloc`,
+so cause 1 is not involved.
 
-- **The state-machine loop is one cycle through most of the function.** With every slot promoted,
-  `inflate`'s `assign_like` graph (variables only) has one SCC of 4,941 of its 8,313 variables,
-  and 79% are downstream of it. Loop-carried values merge in the head's phis, and a binary
-  operator is lowered as a merge of its operands (`x = a op b` becomes `assign x = a, b`), so a
-  pointer combined with an integer (a table indexed by the bit buffer) shares paths with it. Of
-  364 sources, the median reaches 54% of `inflate`'s 65,750 `(v, p)`.
-- **Offsets pile up around the loop.** 242 of the 364 sources are four shapes (`@p0.deref.[k]`,
-  `@p0.deref.[k].deref`, `@p0.deref.deref.[k]`, `@p0.deref.deref.[k].deref`) at about 60 offsets
-  each, because the input pointer is incremented in the loop (`__src' = __src.[1]`) and each trip
-  adds 1 to the source path's offset. The only bound is the program-wide `path_set`. Every
-  variant of a shape reaches the same 64,746 `(v, p)`. Collapsing them would cut `locals` about
-  3x (estimated, not tried).
+- **Measured.** Skipping `reallymarkobject` (or `atomic`, `singlestep` or `luaC_step`, its only
+  route in) takes `evLua` from 3.36 GiB to 0.16 GiB (1.09x) and `ipsWeb` from 4.74 GiB to
+  0.19 GiB (0.93x). It removes 97.5% of the rows, and nothing is left.
+- **The summary.** `reallymarkobject(g, o)` has an 11-row summary: `g->gray = o`,
+  `o->gclist = g->gray`.
+  1. **The self-link.** The heap is flow-insensitive, so this gives `o.gclist <- o`.
+  2. **All four offsets.** The switch on `o->tt` is not seen, so `gclist` is at all four types'
+     offsets (8, 24, 68, 100).
+  3. **The running thread points at itself.** `atomic` marks the running thread
+     (`reallymarkobject(g, L)`). Offset 8 of a `lua_State` is `L->top`, so the Lua stack pointer
+     appears to point at the `lua_State`.
+  4. **Every field reaches every stack slot.** Through Lua's 73-function call-graph SCC, 343
+     functions (every API function that takes `L`) carry the same block of about 5,800 rows,
+     `L.<24 paths> <- L.<365 paths>`, 67% dense, instantiated at each call site.
+- **Evidence.** Steps 1-4 are read from the summaries. Which of the first two matters more is not
+  settled: a propagation model of the 11 rows does not behave like the derived summary.
+- **Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here
+  (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
 
-Binaries where `locals` leads by far, not yet checked for this shape:
+### 6. A self-recursive function feeds its summary back into its own body
 
-| Binary | `locals` | next | Peak | Against budget | Stack accesses kept |
-|---|---|---|---|---|---|
-| D-Link DSP-W115 `bin/file` | 130.8 M | `edge_split` 43.6 M | 7.27 GiB | 20x | 1,489 |
-| Netgear R7000 `usr/sbin/unzip` | 107.5 M | `edge_split` 33.1 M | 6.43 GiB | 11x | 2,014 |
-| Tenda AC15 `usr/bin/nginx` | 318.9 M | `locals_key` 2.6 M | 5.23 GiB | 5.0x | 539 |
-| D-Link DAP-2690 `usr/sbin/captival_usockc` | 22.9 M | `edge_split` 12.1 M | 3.84 GiB | 20x | 258 |
-| Netgear MBM621 `bin/chat` | 13.3 M | `edge_split` 5.7 M | 0.93 GiB | 8.5x | 80 |
-| D-Link DAP-2310B `sbin/wifitool` | 32.7 M | | 2.66 GiB | 15x | 92 |
+**Binary:** `avifview`. It reaches 15.9 GiB at a 3,000 s timeout, 3.3x or more over, still
+growing, with no fixpoint.
 
-- **`unzip` and `fsck_hfs` likely link a decompressor**, as `uclited` links zlib; `file` may too.
-  Unchecked.
-- **`nginx` is the odd one:** 319 M `locals` rows but nothing else above 3 M, and only 5x over.
-  Before P1's frontend fix and #170 it reached a 16 GiB cap. `window:8` promotes 77,878 of its
-  81,135 stack accesses.
-- **`chat`:** `--mem2reg full` moves nothing, and any promotion adds rows (`off` has 30% fewer
-  than `window:8`, measured before P1's fix).
-- **`wifitool`:** `full` cut it 24% before P1's fix (`FUN_0040d740` and three uClibc functions).
-
-### 4. The statically linked allocator writes `$globals` from `malloc`'s size, and every caller inherits it
-
-`hnapserver-combo` (DSP-W115) and `adb` (MR200) were killed at 32 GiB. Both link uClibc's dlmalloc.
-Skipping `malloc` alone (`skip-analysis`) lets both finish: `hnapserver` 2.20 GB (4.2x) in 56 s,
-`adb` 2.05 GB (3.4x) in 27 s. Skipping the whole allocator (malloc, realloc, calloc, free,
-`__malloc_consolidate`, `malloc_trim`) gets 0.62 GB (1.2x) and 0.57 GB (0.94x). Skipping `free` or
-`realloc` alone does nothing.
-
-- **Shape** (300 s timed-out runs, `hnapserver`, 20.4 GB partial): `edge_split` 93 M, `locals`
-  45 M, `assign_like` 25 M, `summary` 12.6 M. 97% of `edge_split`, 96% of `assign_like` and 97%
-  of `summary` have `$globals` as their destination. The rows are spread over callers (the top
-  function holds 9% of `assign_like`), so there is no hub function: there is a hub *variable*
-  (`$globals`) and a hub *callee* (`malloc`). Rule time goes to the `locals`/`context_locals`
-  joins on `edge_split`, so `profile.json` points at problem 1's rules, not at the cause.
-- **Mechanism.** `malloc`'s size goes through arithmetic that is lowered as a merge
-  (`nb = size + 11 & ~7` becomes `assign nb = size, 11`), and a bin address is the size class
-  with the bin array's absolute address as an offset (`%u = %idx.[4824424]`). The allocator's
-  state (`av->top`, bins, fastbins) is `$globals.[addr]`. So `malloc`'s summary is nearly a
-  complete bipartite graph, `$globals.<138 paths> <- p0.<38 paths>` (5,230 rows). `$globals` is an
-  implicit in/out formal of every function. At each call site, what reaches the size argument
-  (`strlen(s) + 24`, a struct field) reaches 138 global paths and becomes the caller's summary,
-  and so on up the call graph. `context_assign` (99% `$globals` in `adb`) instantiates the same
-  summaries along resolved indirect calls, which is why the context relations grow too.
-- **It is also the first half of problem 1.** In those binaries 201-1,129 functions carry the
-  block (2,000-8,300 rows each). It is 60-74% of `summary` and 23-56% of `edge_split`, which is why
-  `edge_split` looked spread out. Inside `malloc` itself, `@p0` sits at about 350 offsets, each
-  reaching about 4,300 `(v, p)`: problem 3's offset pile-up in the hub.
-- **Not run:** the query on the skipped indexes. There is no baseline, since the full index never
-  finishes. Taint through the allocator's free lists is spurious anyway: `malloc`'s return should
-  carry nothing from its size.
-- **On `main` a timed-out run reads 0** for `locals`, `edge_split`, `assign_like`, `locals_key`
-  and `ext_dst`, and dumps them empty. The patched `ascent_macro` (`b47ed139`) is needed to see
-  them.
-- **Stripped binaries:** malloc is recognizable by shape: one parameter, about 5,200
-  instructions, about 1,550 stores to `$globals`, and the most call sites among such functions.
-  (`adb` `FUN_0042d400`: 5,456 instructions, 1,568 global stores, 70 call sites.)
-
-### 5. `libgdx`: a vectorized callee whose summary relates every offset to every offset
-
-`glxy`, `retrodrawing` and `halma` (1.52x, 1.91x and 1.26x) carry stb_image in `libgdx`. The hub
-is stb_image's load function with the decoders inlined: `glxy` `FUN_0010b408` holds 87.5% of
-`locals`, and its counterparts hold 42% in the other two. The other two share one libgdx build
-relinked: per-function counts match within 0.1%. `glxy`'s is a newer build with more inlined.
-
-- **Not the stack, not P6.** `--mem2reg full` now cuts 1% (`FUN_0010b408` 0.3%). The 16% was
-  measured before P1's frontend fix. Wild relations are under 1% of the hub's rows.
-- **Problem 3's offset pile-up, at about 200 offsets per shape.** Four source shapes
-  (`@p0.deref.[k].deref` and the like) hold 95% of the hub's rows. Each shape's variants fall into
-  5-20 distinct `(v, p)` sets: collapsing them leaves 54x fewer rows (estimated from the dump).
-  Inside the hub the cause is `img_buffer++` in the inlined `stbi__get8` loops.
-- **The multiplier is a callee.** `FUN_0011bc30` (called 6 times) is a NEON-vectorized pixel loop:
-  the pointers advance by 64 per trip and the body touches 32 lanes at `.[-32]..[30]`. Its summary
-  is `@pA.[a].deref <- @pB.[b].deref` for every `a, b` in -64..95, 4,027 rows per argument pair.
-  Instantiated at each call, it connects every offset of one buffer to every offset of the others,
-  so each offset variant in the hub reaches the same 140 K `(v, p)`. 73% of the hub's
-  `assign_like` (96% in `retrodrawing`) is callee summary instances.
-- **Measured.** Skipping the vectorized callee cuts `locals` 55-67%: `glxy` 1.09x (0.89x with the
-  second one, `FUN_0011c900`), `retrodrawing` 1.09x, `halma` 0.82x. The same offset collapse as
-  problem 3 would also shrink the callee's summary. A fix aimed only at the caller's own loop
-  would not.
-
-### 6. dav1d in `avifview`: a self-recursive function feeds its summary back into itself
-
-The apps, re-measured on this branch (fresh imports, hashes checked; the rows are 98% or more in
-the native library in every app):
-
-| App | Peak | Against budget | Before S3 | Shape |
-|---|---|---|---|---|
-| `glxy` | 2.12 GiB | 1.52x | | 5 |
-| `retrodrawing` | 2.72 GiB | 1.91x | 13.0x | 5 |
-| `fir.tube` (Rust `argon2`) | 3.24 GiB | 1.34x | 4.6x | 3, spread over 10 functions |
-| `halma` | 3.67 GiB | 1.26x | 7.2x | 5 |
-| `a2050` | 9.04 GiB | 1.69x | 5.6x | 3, in 30 libc++ `std::__sort` copies (51%); P6 second |
-| `avifview` | 15.9 GiB at the 3,000 s timeout | 3.3x or more | 11.5x | this problem |
-
-- **The hub.** `avifview`'s `FUN_001189a8` is dav1d code in `libavif-jni.so`: 95 K IR lines, 49
-  recovered parameters (mostly Ghidra over-recovery), 568 `$globals` offsets, and 8 direct calls
-  to itself.
+- **The function.** dav1d's `FUN_001189a8` in `libavif-jni.so` has 95 K IR lines, 49 recovered
+  parameters, 568 `$globals` offsets and 8 direct calls to itself.
 - **The summary.** It is a cross product into globals, `$globals.[k].deref <- @pN.deref.[k].deref`,
-  57 K rows per argument over about 17 arguments: 1.03 M rows, 67% of all `summary` at 300 s.
-- **The loop.** The self-calls instantiate the summary into the function's own body. A larger
-  summary means more `assign_like` edges, which mean more `locals`, which mean a larger summary,
-  so the fixpoint runs through one function's own summary.
-- **Measured.** Skipping it alone: the fixpoint in 153 s at 4.30 GiB (0.93x). The large
-  `edge_split_wild` (33 M) is downstream: 74% of it is in this function.
-- **`a2050` (problem 3):** the 30 `std::__sort<T>` copies hold sources at about 370 offsets
-  (`first++`/`last--` with element strides 1-16) in 2 distinct sets: about 84x collapse,
-  estimated. The wild `locals <-- ext_fml` rule is 22.6% of rule time (`ext_fml` 7.2 M, in
-  nlohmann::json's `__emplace_back_slow_path`).
-- **WhatsApp:** not re-measured (the APK is not available).
+  57 K rows per argument: 1.03 M rows, 67% of `summary` at 300 s. It holds 74% of
+  `edge_split_wild`.
+- **The loop.** Each self-call instantiates the summary into the body, which grows `locals`, which
+  grows the summary.
+- **Measured.** Skipping it alone gives the fixpoint in 153 s at 4.30 GiB (0.93x).
 
-### 7. Escaped stack slots: sound, but not affordable
+### 7. A global-state hub with no allocator: `gzip`, `tar`, `unzip` (mechanism not found)
+
+**Binaries:** DSN-5000 `gzip` (9.0x), DSN-5000 and DSN-3200 `tar` (6.3x and 4.2x), R7000 `unzip`
+(11x). They are dynamically linked, and skipping their allocator stubs changes nothing.
+
+- **Shape.** One to four very long functions hold the rows: 91% in DSN-3200 `tar`'s
+  `FUN_10018798` (51 K IR lines). Their sources are 600-1,000 real global cells, each reaching
+  64-78% of the hub's `(v, p)`, and they arrive through `$globals <- $globals` callee summaries.
+  Collapsing formal offsets gains only 1.0-1.2x.
+- **Measured.** Skipping the hub: DSN-3200 `tar` from 41.3 M rows to 3.6 M (0.40 GB, under);
+  DSN-5000 `tar` to 9.6 M (2.6x); `gzip` with both hubs skipped about 1.0x. `unzip`'s hubs were not
+  skipped (30 minutes a run).
+- **Unconfirmed leads.**
+  - Global-to-global pure copies, `store $globals.[Y] := phi(loads of $globals.[X])`: about 2,000
+    per binary. Some cannot be a MULTIEQUAL, which suggests a frontend artifact.
+  - "Globals" at tiny addresses (`$globals.[44]`): field offsets whose base was lost, so every
+    struct's field 44 becomes one shared cell.
+- **Ruled out:** rooting `idx.[&table]` at `$globals.[&table]` changes nothing.
+
+### 8. Ghidra `INDIRECT` on globals is lowered as a reload and store at every call (a constant factor)
+
+Ghidra puts an `INDIRECT` on every global a function touches at every call site. The frontend
+lowers it as `COPY` (`ctadl-pcode/src/lib.rs:951`), which gives
+`%t = load $globals.[A].deref; store $globals.[A].deref := %t`. That is an identity, since
+`$globals` is already threaded through every call.
+
+- **Size.** `gzip`'s hub has 7,691 of them: half its IR. The temps hold 35-39% of the cause-7 hubs'
+  `locals`.
+- **Experiment** (an env-gated frontend patch dropping them, in
+  `/Volumes/Shampoo/nb-work/p3locals/src`, not committed):
+
+| Binary | IR | `locals` | Against budget |
+|---|---|---|---|
+| DSN-3200 `tar` | -19% | 41.3 M to 18.5 M | 4.3x to 2.2x |
+| `gzip` | -19% | 6.7 M to 4.0 M | 8.9x to 6.0x |
+| `unzip` | -21% | 107.5 M to 60.7 M | 11x to 9.5x |
+| `chat` | -9% | 13.3 M to 10.7 M | 8.5x to 6.0x |
+
+- **Findings not compared.**
+
+### 9. Escaped stack slots: sound, but not affordable
 
 Not a blowup at the default, but the gap P1 leaves. `window:8` guesses that an escaped address
-reaches 8 slots; it loses nothing on the suite, but nothing bounds it. `--mem2reg above` keeps every
-slot at or above an escape. It is the only policy that cannot lose a flow, and on `androidudpbus` it
-costs 268.5 M `locals`, 699 s and 14.3 GiB, against 42.5 M, 58 s and 2.26 GiB under `window:8`
-(re-measured on this branch).
+reaches 8 slots; nothing bounds that. `--mem2reg above`, the only policy that cannot lose a flow,
+costs `androidudpbus` 268.5 M `locals`, 699 s and 14.3 GiB, against 42.5 M, 58 s and 2.26 GiB.
 
-- **Five functions hold 96% of the 226 M extra rows:** `FUN_00156cb8` 36%, `FUN_001517cc` 29%,
-  `FUN_0014c94c` 19%, `FUN_00144f04` 7%, `FUN_00124804` 5%.
-- **The rows are on the frame's versions.** In four of the five, 90-99% of the rows sit on the
-  frame's versions. Every write to a kept slot makes a new version, and each version carries every
-  kept slot's contents, so the rows grow as writes x contents. In `FUN_00156cb8` the escape is a
-  stack array indexed by a counter (`&buf[i]`).
-- **A bound by escape position cannot help.** In all five the lowest escape is at or near the
-  bottom of the frame, so `above` keeps 90-100% of slots, the same as `off`. What could help: a
-  size for each escaped address (the array or struct it points into), or versioning kept slots
-  apart instead of the whole frame.
+- **Five functions hold 96% of the 226 M extra rows.** In four of them, 90-99% of the rows sit on
+  the frame's versions: every write to a kept slot makes a version carrying every kept slot's
+  contents. In `FUN_00156cb8` the escape is a stack array indexed by a counter (`&buf[i]`).
+- **The lowest escape is at or near the bottom of the frame.** So `above` keeps 90-100% of slots,
+  and a bound by escape position cannot help. A size for each escaped address, or versioning kept
+  slots apart, could.
 
-### 8. `call_target_assign_like` joins on the function alone
+### 10. `call_target_assign_like` joins on the function alone (time, not memory)
 
-The propagation rule for `call_target_assign_like` joins on the function and tests the path prefix
-afterwards. That is the pattern the `locals` rules replaced with `edge_split`. It costs time, not
-memory:
+The rule joins on the function alone and tests the path prefix afterwards: the pattern the `locals`
+rules replaced with `edge_split`.
 
-- **It is the top rule at the default on `androidudpbus`:** 11.6 s of 58 s.
-- **It dominates under `above`:** 446 s of 699 s on `androidudpbus`.
-- **Rare elsewhere:** no firmware sweep run shows it. On the apps it is 0-2.6% of rule time, except
-  `fir.tube`, where it is 14.3%.
+- **`androidudpbus`:** 11.6 of 58 s at the default, 446 of 699 s under `above`.
+- **`fir.tube`:** 14.3% of rule time.
+- **Elsewhere:** 0-2.6% of rule time on the apps, and absent from the firmware sweep.
 
-(The old problem 8, path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`, is not
-independent. It is the 44x row growth from turning promotion off (188.6 M rows, 8.0 GiB, against
-4.3 M at the default), which is the stack problem P1 fixed. The formal-side `locals` rule makes
-2.16 billion concatenation probes there, 82% of them misses, at about 70 ns each through 3-4
-linked path segments: about 150 s of 237 s. One probe per `(path, rest)` instead of per pair
-would cut it.)
+## Not yet explained
+
+What is left after the causes above are removed:
+
+| Binary | What is left |
+|---|---|
+| `upnpd` | `FUN_0042b28c` (16.5 K instructions) holds 62.5% of `locals` (2.2x with `malloc` skipped) |
+| `GpioForCrond`, `testI2C` | linuxthreads (`__pthread_manager`) and `realloc` hold about 60% (1.4x with `malloc` skipped plus `none`) |
+| `wifitool` | 5.8x with the allocator skipped, led by `edge_split` and spread out (`print_rrmstats`, `_vfprintf_internal`); not examined |
+| `iptables` | 2.6x with `malloc` skipped, `locals` not localized |
+| `alphapd` | `FUN_00450b80` (1.7x with both skipped) |
+| `kcairplay` | `vfprintf` and `__encode_dotted` `locals` and 1.1 M `context_locals` (5.3x with `malloc` and `fputs_unlocked` skipped) |
+| `a2050` | nlohmann::json's `__emplace_back_slow_path` holds 7.2 M `ext_fml`, and the wild `locals <-- ext_fml` rule is 22.6% of rule time: the one place P6's mechanism shows |
+
+The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
+independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
+fixed. There, 2.16 billion concatenation probes, 82% of them misses, at about 70 ns each through
+linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut it.
+
+## Ideas, not tried
+
+- **Model the allocator** (cause 1): recognize `malloc`, `realloc`, `calloc` and `free` by name,
+  or by shape when stripped, and give them models (a fresh object, no flow from the size)
+  instead of their bodies. Measured upper bound: the "whole allocator skipped" column.
+- **Let unconditional rows subsume conditional ones** (cause 2), and make no hybrid decision on
+  `$globals`. Estimated: the `--hybrid-context none` numbers, with no precision loss.
+- **Collapse offset-only variants of a formal source** (causes 3 and 4): about 50x on `nginx`,
+  54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
+- **Do not lower integer arithmetic as a merge of its operands** (causes 1, 3 and 4): `size`
+  would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
+- **Bound a function's `$globals` summary** (causes 1, 6 and 7), for example field-insensitive
+  above a threshold, since every transitive caller inherits it.
+- **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
+- **Model Lua's `reallymarkobject`** (cause 5), or see the `o->tt` switch.
 
 ## Benchmarks
 
@@ -305,8 +325,10 @@ at a time beside the ct-bench daemon (so times are loose; peaks are per process)
   `runs/<id>-<frame>/` (`index.log`, `profile.json`, `notifications.log`, `results.sarif`).
 - **The imports are kept** in `stores/<id>`, so an index can be re-run without Ghidra:
   `ctadl --store /Volumes/Shampoo/s29/sweep/stores/<id> index bin -m $M`. They predate #168's
-  import format bump (P1, "After merging `main`'s interning"), so re-import with
-  `CTADL_REUSE_FACTS=1 ctadl import --force` if `index` refuses them.
+  import format bump, but this branch still indexes them. Clone a store before indexing in it
+  (`/bin/cp -Rc`, cheap on APFS): the index writes into the store.
+- P1's app store `/Volumes/Shampoo/p1-full/store` is import format 9, which this branch refuses.
+  `CTADL_REUSE_FACTS=1 ctadl import --force` on a clone re-imports it in seconds, without Ghidra.
 - The binaries are in the Operation Mango dataset under
   `/Volumes/Shampoo/datasets/operation-mango-public/firmware/`; the four `fw-*` ids are copies in
   `/Volumes/Shampoo/p1-fw/`.
@@ -314,47 +336,46 @@ at a time beside the ct-bench daemon (so times are loose; peaks are per process)
 Every binary at 1.5x or more under the default (`--frame update`, `window:8`), worst first.
 "Kept" is the stack accesses `window:8` leaves in memory:
 
-| Binary | Id | IR | `locals` | Peak | Against budget | Kept | Problem |
+| Binary | Id | IR | `locals` | Peak | Against budget | Kept | Cause |
 |---|---|---|---|---|---|---|---|
-| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 4 (allocator) |
-| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 4 |
-| D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 74.9 M | 27.30 GiB | 104x | 367 | 1 |
-| D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 69.5 M | 23.65 GiB | 94x | 357 | 1 |
-| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 44.9 M | 22.14 GiB | 58x | 380 | 1 |
-| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 22.7 M | 16.99 GiB | 41x | 551 | 1 |
-| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 65.4 M | 21.81 GiB | 39x | 1,038 | 1 |
-| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 37.9 M | 13.87 GiB | 38x | 209 | 1 |
-| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1 |
-| Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 37.5 M | 13.08 GiB | 30x | 415 | 2 |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 26.6 M | 4.56 GiB | 22x | 3 | 2 |
-| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | |
-| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 19.2 M | 3.18 GiB | 22x | 0 | 2 |
-| D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 130.8 M | 7.27 GiB | 20x | 1,489 | 3 |
-| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 3 |
-| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | |
-| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | |
-| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1 |
-| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 3 |
-| D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 33.4 M | 6.68 GiB | 15x | 392 | |
-| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | |
-| Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 107.5 M | 6.43 GiB | 11x | 2,014 | 3 |
-| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 15.9 M | 4.65 GiB | 11x | 1,735 | |
-| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 6.0 M | 2.33 GiB | 10x | 222 | |
-| D-Link DIR-868L `mydlink/signalc` | `817d77ed2df42ecc` | 3.3 MB | 13.3 M | 3.07 GiB | 10x | 45 | |
-| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 6.9 M | 2.49 GiB | 9.8x | 669 | |
-| D-Link DSN-5000 `bin/gzip` | `32a8fd8ec075ee3e` | 2.0 MB | 6.7 M | 1.64 GiB | 9.0x | 2 | |
-| Netgear MBM621 `bin/chat` | `fw-chat` | 1.2 MB | 13.3 M | 0.93 GiB | 8.5x | 80 | 3 |
-| D-Link DSN-5000 `bin/tar` | `c6c8ca0b29fadb65` | 5.2 MB | 54.7 M | 3.03 GiB | 6.3x | 14 | |
+| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 1 |
+| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 1 |
+| D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 74.9 M | 27.30 GiB | 104x | 367 | 1, 2 |
+| D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 69.5 M | 23.65 GiB | 94x | 357 | 1, 2 |
+| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 44.9 M | 22.14 GiB | 58x | 380 | 1, 2 |
+| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 22.7 M | 16.99 GiB | 41x | 551 | 1, 2 |
+| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 65.4 M | 21.81 GiB | 39x | 1,038 | 1, 2 |
+| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 37.9 M | 13.87 GiB | 38x | 209 | 1, 2 |
+| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1, 2 |
+| Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 37.5 M | 13.08 GiB | 30x | 415 | 1 |
+| D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 26.6 M | 4.56 GiB | 22x | 3 | 5 |
+| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | 1 (+ stdio) |
+| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | 1, 2 |
+| D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 19.2 M | 3.18 GiB | 22x | 0 | 5 |
+| D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 130.8 M | 7.27 GiB | 20x | 1,489 | 1 |
+| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 1 |
+| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | 1 |
+| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | 1 |
+| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1, 2 |
+| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 1 |
+| D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 33.4 M | 6.68 GiB | 15x | 392 | 1 |
+| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | 1, 2 |
+| Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 107.5 M | 6.43 GiB | 11x | 2,014 | 7, 8 |
+| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 15.9 M | 4.65 GiB | 11x | 1,735 | 1, 2 |
+| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 6.0 M | 2.33 GiB | 10x | 222 | 1, 2 |
+| D-Link DIR-868L `mydlink/signalc` | `817d77ed2df42ecc` | 3.3 MB | 13.3 M | 3.07 GiB | 10x | 45 | 1 |
+| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 6.9 M | 2.49 GiB | 9.8x | 669 | 1, 2 |
+| D-Link DSN-5000 `bin/gzip` | `32a8fd8ec075ee3e` | 2.0 MB | 6.7 M | 1.64 GiB | 9.0x | 2 | 7, 8 |
+| Netgear MBM621 `bin/chat` | `fw-chat` | 1.2 MB | 13.3 M | 0.93 GiB | 8.5x | 80 | 1 |
+| D-Link DSN-5000 `bin/tar` | `c6c8ca0b29fadb65` | 5.2 MB | 54.7 M | 3.03 GiB | 6.3x | 14 | 7, 8 |
 | Tenda AC15 `usr/bin/nginx` | `fw-nginx` | 11.2 MB | 318.9 M | 5.23 GiB | 5.0x | 539 | 3 |
-| D-Link DSN-3200 `bin/tar` | `f10a8a500d6fe5d5` | 5.0 MB | 41.3 M | 1.96 GiB | 4.2x | 14 | |
-| Linksys EA6350v4 `bin/ntfsdebug` | `120cca2b628a34d5` | 5.5 MB | 12.8 M | 0.92 GiB | 1.8x | 1,188 | |
-| Linksys EA6900v2 `bin/ntfslabel` | `d9bd68cc9006e841` | 5.1 MB | 12.1 M | 0.83 GiB | 1.7x | 1,110 | |
+| D-Link DSN-3200 `bin/tar` | `f10a8a500d6fe5d5` | 5.0 MB | 41.3 M | 1.96 GiB | 4.2x | 14 | 7, 8 |
+| Linksys EA6350v4 `bin/ntfsdebug` | `120cca2b628a34d5` | 5.5 MB | 12.8 M | 0.92 GiB | 1.8x | 1,188 | 4 |
+| Linksys EA6900v2 `bin/ntfslabel` | `d9bd68cc9006e841` | 5.1 MB | 12.1 M | 0.83 GiB | 1.7x | 1,110 | 4 |
 
 Re-indexing `fw-chat`, `fw-sdkmips` and `gzip` on this branch gives the same `locals` and
-`edge_split` and peaks within 1%, so the table still stands. Binaries with an empty Problem column
-have not been sorted: check their `profile.json` in the
-sweep's `runs/<id>-update/`.
+`edge_split` and peaks within 1%, so the table still stands. Every row is sorted; "Cause" is the
+section above, and the residual each leaves is in "Not yet explained".
 
 ### `uclited`
 
@@ -409,10 +430,17 @@ target/release/ctadl --store $S index bin -m $M -m tmp/skip.json5
 target/release/ctadl --store $S inspect bin --dump-ir --function FUN_0001f97c
 ```
 
-The candidates are the functions `--mem2reg full` names in `notifications.log` (the largest by
-stack accesses), or, better, a per-function count of `locals` rows from a relation dump
-(`CTADL_DUMP_RELATIONS`, or `CTADL_INDEX_TIMEOUT_SECS=<n> CTADL_INDEX_DUMP=<dir>` for a run that
-does not finish).
+The best candidates come from a per-function count of `summary` rows (with their call sites)
+and of `locals` rows, from a relation dump (`CTADL_DUMP_RELATIONS=<dir>`, one `<relation>.tsv`
+each, by content). The function holding the most `locals` is often downstream of the hub
+(`chat`'s `clean` and `file`'s `regex_compile` call `malloc`), so confirm with a skip.
+
+- **A run that does not finish:** `CTADL_INDEX_TIMEOUT_SECS=<n>` stops it and still writes
+  `profile.json` and the dump. On `main`, the running scc's relations (`locals`, `edge_split`,
+  `assign_like`, `locals_key`, `ext_dst`) then read 0 and dump empty. The patched `ascent_macro`
+  (`b47ed139`) keeps them: a build with it is `/Volumes/Shampoo/cargo-target/nb-p4/release/ctadl`.
+- **Find a stripped `malloc`:**
+  `python3 -I /Volumes/Shampoo/nb-work/p4/rankalloc.py <(ctadl --store $S inspect bin --dump-ir)`.
 
 ### `uclited`
 
@@ -440,18 +468,3 @@ expected failures being `AndroidIcc:droidbench-activity-communication-2`, `C:def
 `Jvm:ClassIdMergedTryFlow`). Compare findings on the benchmarks by rule, message and logical
 location name; the messages' site numbers change with the IR. Then peak against budget, the
 largest relations, and the share held by the largest function.
-
-## Ideas, not explored
-
-- **Collapse offsets that reach the same thing** (problem 3): the source-path variants that differ
-  only in a loop-incremented offset. About 3x on `inflate`, estimated.
-- **Stop lowering a binary operator as a merge of its operands** where one side is an integer, so a
-  pointer indexed by a counter does not share the counter's paths (problem 3).
-- **A field-insensitive collapse for the few hub functions** that hold most of a relation, behind
-  a size threshold: bounded precision loss for bounded rows.
-- **Summarize a hub coarsely and skip its body**, as S6 (`skip-exclusive-callees`, on
-  `improve-native-handling`) does for libc++abi's demangler.
-- **Model `memcpy` and similar copies precisely** (offset ranges rather than whole-slot mixing).
-- **For the context relations** (problem 1): nothing yet. First find whether the rows are a few
-  hubs or spread out, and whether `ctx_edge_split` and `context_locals` grow with the same
-  functions as `edge_split` and `locals`.
