@@ -1292,3 +1292,114 @@ fn the_model_check_does_not_call_a_cross_import_rule_dead() {
     );
     assert_eq!(outcome.rows_matched(TaintDirection::Forward), 1);
 }
+
+// ---- planner/eval ----
+
+/// `rec` calls itself, `a` calls `b`. No method table: `fun` comes from the lowered bodies.
+fn recursive_program() -> ProgramInfo {
+    ProgramInfo {
+        program: Program::new(Functions::new(vec![
+            function("rec", 1, vec![call("rec")]),
+            function("a", 1, vec![call("b")]),
+            function("b", 1, vec![]),
+        ])),
+        ..Default::default()
+    }
+}
+
+/// A variable written twice in one atom is one variable: its first occurrence binds it and the
+/// second tests the binding, so `callsite(F, S, callee_string = F)` is a recursive call.
+#[test]
+fn a_repeated_variable_unifies_within_one_atom() {
+    let matches = run(
+        &recursive_program(),
+        r#"sink(F::arg(0)) :- callsite(F, S, callee_string = F);"#,
+    );
+    assert_eq!(
+        endpoint_functions(&matches),
+        BTreeSet::from(["rec".to_string()])
+    );
+
+    // No class is its own direct superclass and no function's name is a field it uses, so each
+    // of these existence checks fails and takes the rule with it.
+    let java = java_program();
+    for body in ["subclass(C, C)", "uses_field(X, X)"] {
+        let matches = run(&java, &format!("source(F::return) :- fun(F), {body};"));
+        assert!(
+            matches.endpoints.is_empty(),
+            "{body}: {:?}",
+            matches.endpoints
+        );
+    }
+    // The reflexive closure does relate every class to itself.
+    let matches = run(
+        &java,
+        r#"source(F::return) :- fun(F, parent = C), subclass*(C, C);"#,
+    );
+    assert_eq!(endpoint_functions(&matches).len(), 3);
+}
+
+/// A negated group's locals connect nothing. Each side of this bridge quantifies its own `N`, so
+/// the sides stay two components and pair up across imports.
+#[test]
+fn negated_group_locals_do_not_join_components() {
+    use ctadl_ascent::project::ArtifactLanguage;
+
+    let lua = native_program(&["luaCallNativeAdd"]);
+    let native = native_program(&["luaNativeAdd"]);
+    let matches = run_scoped(
+        &[
+            (ImportScope::new(ArtifactLanguage::Lua, "app"), &lua),
+            (ImportScope::new(ArtifactLanguage::Pcode, "lib"), &native),
+        ],
+        r#"bridge(F::arg(0) -> G::arg(0)) :-
+             fun(F, language = "lua"), !(fun(F, name = N) && regex_match(N, "^x")),
+             fun(G, language = "pcode"), !(fun(G, name = N) && regex_match(N, "^y"));"#,
+    );
+    assert_eq!(
+        matches.resolved_bridges.len(),
+        1,
+        "{:?}",
+        matches.resolved_bridges
+    );
+}
+
+/// `in` compares a call-signature key by its id, exactly as `=` does.
+#[test]
+fn a_set_test_matches_a_callsig_key() {
+    let id = "Ljava/util/Iterator;->next()Ljava/lang/Object;";
+    for test in [format!("K = {id:?}"), format!("K in {{{id:?}, \"other\"}}")] {
+        let out = run_dispatch(
+            &dispatch_program(),
+            &format!(r#"K::dispatch(resolve = "skip") :- callsig(K), {test};"#),
+        );
+        assert_eq!(
+            out.dispatch.keys().collect::<Vec<_>>(),
+            vec![&key("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;")],
+            "{test}"
+        );
+    }
+}
+
+/// Solutions keep only what a head reads, so a body variable no head mentions does not
+/// multiply the groundings.
+#[test]
+fn groundings_are_projected_onto_head_variables() {
+    let file = dsl::DslFile::from_text(
+        "test.ctadl",
+        r#"source(F::return) :- fun(F, name = "run"), param(F, I);"#,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let program_info = java_program();
+    let mut out = ProgramModelMatches::default();
+    matcher.observe_import(
+        &ProgramMatchIndex::new(&program_info, ImportScope::unknown()),
+        &mut out,
+    );
+    let report = matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    // `run` has three parameters; the head reads only `F`.
+    assert_eq!(report.files[0].rules[0].groundings, 1);
+    assert_eq!(out.endpoints.len(), 1);
+}

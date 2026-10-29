@@ -17,7 +17,13 @@ Three things happen here, all of them before any program is in hand:
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hashbrown::HashSet;
+use regex::Regex;
+
+use crate::facts::Str;
+
 use super::ast::*;
+use super::eval::Value;
 use super::{DslError, DslErrors};
 
 /// What a variable ranges over. Used only for the handful of checks that need it; an
@@ -75,14 +81,260 @@ pub struct Plan {
     pub var_types: BTreeMap<String, VarType>,
 }
 
-/// One connected component: a set of body items sharing variables, plus the order to run them
-/// in and the variables they bind.
+/// One connected component: a set of body items sharing variables, compiled into the steps the
+/// engine runs.
 #[derive(Clone, Debug)]
 pub struct Component {
-    /// Indices into `Rule::body`, in the order the engine should evaluate them.
+    /// Indices into `Rule::body`, in the order the engine evaluates them. Parallel to `body`.
     pub steps: Vec<usize>,
-    /// The variables this component binds, sorted. Also the tuple layout of its solutions.
+    /// The head variables this component binds, sorted: the tuple layout of its solutions. Body
+    /// variables no head reads are projected away, so a component no head reads has no `vars`
+    /// and stores at most the empty tuple — it is an existence check.
     pub vars: Vec<String>,
+    /// The slot each of `vars` lives in.
+    pub outputs: Vec<Slot>,
+    pub body: Vec<Step>,
+    /// How many slots the environment has. Every variable of the rule gets one, group locals
+    /// included, so one environment serves the component and all its subqueries.
+    pub slots: usize,
+    /// From this step on nothing binds an output, so one witness of the remaining steps is as
+    /// good as all of them.
+    pub witness_from: usize,
+}
+
+/// A variable's index in the evaluation environment.
+pub type Slot = usize;
+
+/// One compiled body item.
+#[derive(Clone, Debug)]
+pub enum Step {
+    /// A relation atom that enumerates rows and binds what it outputs.
+    Atom(AtomPlan),
+    /// A test of what is already bound.
+    Filter(Filter),
+}
+
+/// A relation atom, resolved against what is bound when it runs.
+#[derive(Clone, Debug)]
+pub struct AtomPlan {
+    pub rel: Relation,
+    /// How the candidate rows are found.
+    pub access: Access,
+    /// Parallel to the atom's columns.
+    pub columns: Vec<ColumnPat>,
+    /// In written order. Columns are matched first, then attributes, which is the order the mode
+    /// check binds in: a variable's first occurrence binds it and every later one tests it.
+    pub attrs: Vec<(Attr, AttrPat)>,
+}
+
+impl AtomPlan {
+    /// The slots this atom binds.
+    fn binds(&self) -> impl Iterator<Item = Slot> + '_ {
+        let columns = self.columns.iter().filter_map(|c| match c {
+            ColumnPat::Bind(s) => Some(*s),
+            ColumnPat::Test(_) => None,
+        });
+        let attrs = self.attrs.iter().filter_map(|(_, a)| match a {
+            AttrPat::Bind(s) => Some(*s),
+            _ => None,
+        });
+        columns.chain(attrs)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Relation {
+    Fun,
+    CallSig,
+    Param,
+    CallSite,
+    /// `subclass` is neither, `subclass*` both, `subclass+` only `deep`.
+    Subclass {
+        reflexive: bool,
+        deep: bool,
+    },
+    UsesField,
+}
+
+impl Relation {
+    fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "fun" => Relation::Fun,
+            "callsig" => Relation::CallSig,
+            "param" => Relation::Param,
+            "callsite" => Relation::CallSite,
+            "subclass" => Relation::Subclass {
+                reflexive: false,
+                deep: false,
+            },
+            "subclass*" => Relation::Subclass {
+                reflexive: true,
+                deep: true,
+            },
+            "subclass+" => Relation::Subclass {
+                reflexive: false,
+                deep: true,
+            },
+            "uses_field" => Relation::UsesField,
+            _ => return None,
+        })
+    }
+
+    /// The columns `ProgramFacts` can look rows up by, most selective first.
+    ///
+    /// This and [`Self::indexed_attrs`] are the one statement of what is indexed: the cost model
+    /// ranks atoms by the [`Access`] they allow, and the engine follows that same `Access`.
+    fn indexed_columns(self) -> &'static [usize] {
+        match self {
+            Relation::Fun | Relation::CallSig | Relation::Param | Relation::UsesField => &[0],
+            // By id, then by caller.
+            Relation::CallSite => &[1, 0],
+            // `supers` of a known sub, `subs` of a known super.
+            Relation::Subclass { .. } => &[0, 1],
+        }
+    }
+
+    /// The attributes `ProgramFacts` can look rows up by.
+    fn indexed_attrs(self) -> &'static [Attr] {
+        match self {
+            Relation::Fun | Relation::CallSig => {
+                &[Attr::Name, Attr::Parent, Attr::Signature, Attr::QualifiedId]
+            }
+            Relation::CallSite => &[Attr::CalleeString],
+            _ => &[],
+        }
+    }
+
+    /// The relative cost of a full scan; see [`Access::cost`].
+    fn scan_cost(self) -> u32 {
+        match self {
+            Relation::Subclass { .. } => 10,
+            Relation::UsesField => 20,
+            Relation::Param => 25,
+            // Ranked beside `fun`: the same four attributes are indexed, over a universe that is
+            // typically an order of magnitude smaller.
+            Relation::CallSig => 28,
+            Relation::Fun => 30,
+            Relation::CallSite => 40,
+        }
+    }
+}
+
+/// Every attribute a built-in relation honors.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Attr {
+    Name,
+    Parent,
+    Signature,
+    QualifiedId,
+    Language,
+    Import,
+    Arity,
+    HasCode,
+    CalleeString,
+}
+
+impl Attr {
+    fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "name" => Attr::Name,
+            "parent" => Attr::Parent,
+            "signature" => Attr::Signature,
+            "qualified-id" => Attr::QualifiedId,
+            "language" => Attr::Language,
+            "import" => Attr::Import,
+            "arity" => Attr::Arity,
+            "has_code" => Attr::HasCode,
+            "callee_string" => Attr::CalleeString,
+            _ => return None,
+        })
+    }
+}
+
+/// How an atom finds its candidate rows.
+#[derive(Clone, Debug)]
+pub enum Access {
+    Scan,
+    /// Through the index on this column, which is a [`ColumnPat::Test`] of a known value.
+    Column(usize),
+    /// Through the index on this attribute.
+    Attr(Attr, Key),
+}
+
+impl Access {
+    /// A rough relative cost of enumerating an atom this way. Lower is better; the absolute
+    /// numbers mean nothing outside this comparison.
+    fn cost(&self, rel: Relation) -> u32 {
+        match self {
+            Access::Column(_) => 1,
+            Access::Attr(_, Key::One(_)) => 2,
+            Access::Attr(_, Key::Set(_)) => 3,
+            Access::Scan => rel.scan_cost(),
+        }
+    }
+}
+
+/// What an attribute lookup keys on.
+#[derive(Clone, Debug)]
+pub enum Key {
+    One(Operand),
+    /// `in {...}`: the union of one lookup per member.
+    Set(Vec<Str>),
+}
+
+/// A value a step reads.
+#[derive(Clone, Debug)]
+pub enum Operand {
+    Const(Value),
+    Var(Slot),
+    /// `_`.
+    Any,
+}
+
+#[derive(Clone, Debug)]
+pub enum ColumnPat {
+    /// The variable's first occurrence: the row's value binds it.
+    Bind(Slot),
+    /// The row's value must equal this one. [`Operand::Any`] accepts every row.
+    Test(Operand),
+}
+
+#[derive(Clone, Debug)]
+pub enum AttrPat {
+    /// `= V` with `V` unbound: one alternative per value the attribute has.
+    Bind(Slot),
+    /// Some value compares true; for `!=`, no value is equal.
+    Cmp(CmpOp, Operand),
+    In(HashSet<Value>),
+    /// `= _`: the attribute has a value.
+    Present,
+    /// A shape that matches nothing. The checker rejects it where it looks; a negated atom's
+    /// attributes are checked for name only.
+    Never,
+}
+
+/// A test of the current bindings.
+#[derive(Clone, Debug)]
+pub enum Filter {
+    /// A relation atom in filter position: some row matches. Variables it finds unbound are
+    /// existential.
+    Exists(Box<AtomPlan>),
+    /// A `&&` group: the subquery has a solution. Its locals are existential.
+    Group(Vec<Step>),
+    Not(Box<Filter>),
+    Or(Vec<Filter>),
+    Cmp(Operand, CmpOp, Operand),
+    In(Operand, HashSet<Value>),
+    /// `regex_match(subject, pattern)`.
+    Regex(Operand, Pattern),
+    Never,
+}
+
+#[derive(Clone, Debug)]
+pub enum Pattern {
+    Compiled(Regex),
+    /// A pattern that arrives through a variable, compiled at use.
+    Var(Slot),
 }
 
 /// Checks one rule and builds its plan. Errors accumulate into `errors`; a rule with errors
@@ -90,17 +342,17 @@ pub struct Component {
 pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
     let before = errors.len();
     let mut types: BTreeMap<String, VarType> = BTreeMap::new();
+    let visible = visible_vars(&rule.heads, &rule.body);
 
     // ---- 1. shape, and left-to-right modedness ----
     let mut bound: BTreeSet<String> = BTreeSet::new();
-    for (i, item) in rule.body.iter().enumerate() {
-        let elsewhere = vars_outside(rule, i);
-        check_item(item, &elsewhere, &mut bound, &mut types, errors);
+    for item in &rule.body {
+        check_item(item, &visible, &mut bound, &mut types, errors);
     }
 
     // ---- 2. head variables ----
     for head in &rule.heads {
-        check_head(rule, head, &bound, &types, errors);
+        check_head(head, &bound, &types, errors);
     }
 
     if errors.len() != before {
@@ -108,9 +360,8 @@ pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
     }
 
     // ---- 3. components ----
-    let components = components_of(rule);
     Some(Plan {
-        components,
+        components: components_of(rule, &visible),
         var_types: types,
     })
 }
@@ -120,7 +371,7 @@ pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
 // ---------------------------------------------------------------------------
 
 /// Whether an item can *generate* bindings, or only filter existing ones.
-pub fn is_generator(item: &BodyItem) -> bool {
+fn is_generator(item: &BodyItem) -> bool {
     match item {
         BodyItem::Atom(atom) => relation_arity(&atom.name).is_some() && atom.name != "regex_match",
         // A negation, a disjunction and a conjunction of filters are all filters: nothing in
@@ -132,7 +383,7 @@ pub fn is_generator(item: &BodyItem) -> bool {
 
 fn check_item(
     item: &BodyItem,
-    elsewhere: &BTreeSet<String>,
+    visible: &BTreeSet<String>,
     bound: &mut BTreeSet<String>,
     types: &mut BTreeMap<String, VarType>,
     errors: &mut DslErrors,
@@ -144,7 +395,7 @@ fn check_item(
         _ => {
             // Every filter is checked against what is bound so far, and binds nothing itself.
             let span = item_span(item);
-            for var in required_vars(item, elsewhere) {
+            for var in required_vars(item, visible) {
                 if !bound.contains(&var) {
                     errors.push(DslError::Rule {
                         message: format!(
@@ -164,9 +415,9 @@ fn check_item(
 /// The variables an item needs bound before it can run.
 ///
 /// A generator needs none: it binds. A test needs all of them. A **negated group** needs only
-/// the ones that occur elsewhere in the rule — the rest are local to the subquery and are
-/// existentially quantified by it, which is what lets "no name of `F` matches this pattern" be
-/// written at all:
+/// the ones visible outside it (see [`visible_vars`]) — the rest are local to the subquery and
+/// are existentially quantified by it, which is what lets "no name of `F` matches this pattern"
+/// be written at all:
 ///
 /// ```text
 /// source(F::return) :- fun(F), !(fun(F, name = N) && regex_match(N, "^get"));
@@ -174,34 +425,42 @@ fn check_item(
 ///
 /// A negated *atom* is deliberately stricter, and matches the design: every variable in it must
 /// be bound, with `_` as the way to say "any value at all" (`!fun(F, parent = _)`).
-pub fn required_vars(item: &BodyItem, elsewhere: &BTreeSet<String>) -> BTreeSet<String> {
+fn required_vars(item: &BodyItem, visible: &BTreeSet<String>) -> BTreeSet<String> {
     if is_generator(item) {
         return BTreeSet::new();
     }
     let mut used = BTreeSet::new();
     collect_vars(item, &mut used);
-    match item {
-        BodyItem::Not(inner) if !matches!(&**inner, BodyItem::Atom(_)) => {
-            used.retain(|v| elsewhere.contains(v));
-            used
-        }
-        _ => used,
+    if is_negated_group(item) {
+        used.retain(|v| visible.contains(v));
     }
+    used
 }
 
-/// Every variable the rule mentions outside body item `skip`: the other body items and every
-/// head. A variable not in here is local to that item.
-fn vars_outside(rule: &Rule, skip: usize) -> BTreeSet<String> {
+/// `!(...)` over anything but a single atom: the one item that has locals.
+fn is_negated_group(item: &BodyItem) -> bool {
+    matches!(item, BodyItem::Not(inner) if !matches!(&**inner, BodyItem::Atom(_)))
+}
+
+/// The variables a negated group among `items` can see from outside itself: every head variable,
+/// and every variable of an item that is not itself a negated group. A group's other variables
+/// are its locals, even when another group happens to use the same name — two groups cannot
+/// share a local, since neither binds anything the other sees.
+fn visible_vars(heads: &[Head], items: &[BodyItem]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for (i, item) in rule.body.iter().enumerate() {
-        if i != skip {
-            collect_vars(item, &mut out);
-        }
-    }
-    for head in &rule.heads {
+    for head in heads {
         collect_head_vars(head, &mut out);
     }
+    add_positive_vars(items, &mut out);
     out
+}
+
+fn add_positive_vars(items: &[BodyItem], out: &mut BTreeSet<String>) {
+    for item in items {
+        if !is_negated_group(item) {
+            collect_vars(item, out);
+        }
+    }
 }
 
 fn collect_head_vars(head: &Head, out: &mut BTreeSet<String>) {
@@ -243,7 +502,7 @@ fn check_relation_atom(
     }
     for attr in &atom.attrs {
         let want = attribute_type(&atom.name, &attr.name);
-        check_attr_rhs(atom, attr, want, bound, types, errors);
+        check_attr_rhs(attr, want, bound, types, errors);
     }
 }
 
@@ -300,7 +559,6 @@ fn check_relation_shape(atom: &Atom, errors: &mut DslErrors) -> bool {
 /// An attribute's right-hand side: a constant, a bound variable (a test), or — for `=` only —
 /// a fresh variable, which binds it.
 fn check_attr_rhs(
-    atom: &Atom,
     attr: &AttrConstraint,
     want: VarType,
     bound: &mut BTreeSet<String>,
@@ -364,7 +622,6 @@ fn check_attr_rhs(
             }
         }
     }
-    let _ = atom;
 }
 
 fn check_literal_type(lit: &Literal, want: VarType, span: Span, errors: &mut DslErrors) {
@@ -525,7 +782,6 @@ fn levenshtein_close(a: &str, b: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn check_head(
-    rule: &Rule,
     head: &Head,
     bound: &BTreeSet<String>,
     types: &BTreeMap<String, VarType>,
@@ -742,8 +998,6 @@ fn check_head(
         }
         _ => {}
     }
-
-    let _ = rule;
 }
 
 fn same_term(a: &Term, b: &Term) -> bool {
@@ -758,12 +1012,17 @@ fn same_term(a: &Term, b: &Term) -> bool {
 // Components and ordering
 // ---------------------------------------------------------------------------
 
-fn components_of(rule: &Rule) -> Vec<Component> {
+fn components_of(rule: &Rule, visible: &BTreeSet<String>) -> Vec<Component> {
     let n = rule.body.len();
+    // What connects an item to the rest of the body. A negated group's locals connect nothing:
+    // they are quantified inside it, so two groups that reuse a local's name are unrelated.
     let mut vars: Vec<BTreeSet<String>> = Vec::with_capacity(n);
     for item in &rule.body {
         let mut s = BTreeSet::new();
         collect_vars(item, &mut s);
+        if is_negated_group(item) {
+            s.retain(|v| visible.contains(v));
+        }
         vars.push(s);
     }
     // Union-find over items sharing a variable.
@@ -796,127 +1055,296 @@ fn components_of(rule: &Rule) -> Vec<Component> {
         let root = find(&mut parent, i);
         groups.entry(root).or_default().push(i);
     }
+
+    let mut head_vars: BTreeSet<String> = BTreeSet::new();
+    for head in &rule.heads {
+        collect_head_vars(head, &mut head_vars);
+    }
+    let compiler = Compiler::new(rule);
     groups
         .into_values()
         .map(|items| {
-            let mut component_vars: BTreeSet<String> = BTreeSet::new();
-            for &i in &items {
-                component_vars.extend(vars[i].iter().cloned());
-            }
+            let refs: Vec<&BodyItem> = items.iter().map(|&i| &rule.body[i]).collect();
+            let (order, body) = compiler.plan(&refs, BTreeSet::new(), visible);
+            let output_vars: Vec<String> = items
+                .iter()
+                .flat_map(|&i| vars[i].iter())
+                .filter(|v| head_vars.contains(*v))
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let outputs: Vec<Slot> = output_vars.iter().map(|v| compiler.slot(v)).collect();
+            let witness_from = body
+                .iter()
+                .rposition(|step| match step {
+                    Step::Atom(atom) => atom.binds().any(|s| outputs.contains(&s)),
+                    Step::Filter(_) => false,
+                })
+                .map_or(0, |i| i + 1);
             Component {
-                steps: order_steps(rule, &items),
-                vars: component_vars.into_iter().collect(),
+                steps: order.into_iter().map(|i| items[i]).collect(),
+                vars: output_vars,
+                outputs,
+                body,
+                slots: compiler.slots.len(),
+                witness_from,
             }
         })
         .collect()
 }
 
-/// Greedy, binding-consistent join order.
-///
-/// Filters run as soon as their variables are bound — that is the whole point of reordering —
-/// and generators are picked cheapest-first given what is already bound. An indexed lookup
-/// (`fun(F, name = "append")`) beats a scan, and a scan of the smallest relation beats a scan of
-/// the biggest. The order is a heuristic; correctness rests only on never scheduling a filter
-/// before its variables exist, which the loop enforces.
-fn order_steps(rule: &Rule, items: &[usize]) -> Vec<usize> {
-    let mut remaining: Vec<usize> = items.to_vec();
-    let mut bound: BTreeSet<String> = BTreeSet::new();
-    let mut out = Vec::with_capacity(remaining.len());
-    while !remaining.is_empty() {
-        let mut best: Option<(usize, u32)> = None;
-        for (pos, &i) in remaining.iter().enumerate() {
-            let item = &rule.body[i];
-            let elsewhere = vars_outside(rule, i);
-            let cost = if !is_generator(item) {
-                if !required_vars(item, &elsewhere)
-                    .iter()
-                    .all(|v| bound.contains(v))
-                {
-                    continue;
-                }
-                0
-            } else {
-                generator_cost(item, &bound)
-            };
-            if best.is_none_or(|(_, c)| cost < c) {
-                best = Some((pos, cost));
-            }
-            if cost == 0 {
-                break;
-            }
-        }
-        // Every remaining item is a filter whose variables are still unbound. The left-to-right
-        // check above already reported that, so this can only be reached on an errored rule;
-        // keep the order stable rather than looping.
-        let Some((pos, _)) = best else {
-            out.append(&mut remaining);
-            break;
-        };
-        let i = remaining.remove(pos);
-        // Only a generator binds. A filter's variables are already bound (the loop above only
-        // schedules it then), so adding them would be a no-op — except for a negated group's
-        // locals, which are *not* bound and must not be treated as such.
-        if is_generator(&rule.body[i]) {
-            collect_vars(&rule.body[i], &mut bound);
-        }
-        out.push(i);
-    }
-    out
+/// Turns body items into [`Step`]s, choosing their order on the way.
+struct Compiler {
+    /// Every variable of the rule, body and head.
+    slots: BTreeMap<String, Slot>,
 }
 
-/// A rough relative cost of enumerating one generator given the current bindings. Lower is
-/// better; the absolute numbers mean nothing outside this comparison.
-fn generator_cost(item: &BodyItem, bound: &BTreeSet<String>) -> u32 {
-    let BodyItem::Atom(atom) = item else {
-        return 100;
-    };
-    let column_bound = atom.columns.iter().any(|c| match c {
-        Term::Lit(_) => true,
-        Term::Var(v) => bound.contains(v),
-        Term::Wildcard => false,
-    });
-    // An equality on an indexed attribute is as good as a bound column: `fun(F, name = "x")` is
-    // a hash lookup, not a scan.
-    let keyed = atom.attrs.iter().any(|a| {
-        a.op == CmpOp::Eq
-            && matches!(
-                a.name.as_str(),
-                "name" | "parent" | "signature" | "qualified-id"
-            )
-            && match &a.rhs {
-                Rhs::Term(Term::Lit(_)) => true,
-                Rhs::Term(Term::Var(v)) => bound.contains(v),
-                _ => false,
-            }
-    });
-    let set_keyed = atom.attrs.iter().any(|a| {
-        a.op == CmpOp::In
-            && matches!(
-                a.name.as_str(),
-                "name" | "parent" | "signature" | "qualified-id"
-            )
-            && matches!(&a.rhs, Rhs::Set(_))
-    });
-    let base = match atom.name.as_str() {
-        "subclass" | "subclass*" | "subclass+" => 10,
-        "uses_field" => 20,
-        "param" => 25,
-        // Ranked beside `fun`: the same four attributes are indexed, over a universe that is
-        // typically an order of magnitude smaller.
-        "callsig" => 28,
-        "fun" => 30,
-        "callsite" => 40,
-        _ => 50,
-    };
-    if column_bound {
-        1
-    } else if keyed {
-        2
-    } else if set_keyed {
-        3
-    } else {
-        base
+impl Compiler {
+    fn new(rule: &Rule) -> Self {
+        let mut names = BTreeSet::new();
+        for item in &rule.body {
+            collect_vars(item, &mut names);
+        }
+        for head in &rule.heads {
+            collect_head_vars(head, &mut names);
+        }
+        Self {
+            slots: names.into_iter().enumerate().map(|(i, v)| (v, i)).collect(),
+        }
     }
+
+    fn slot(&self, var: &str) -> Slot {
+        self.slots[var]
+    }
+
+    /// Greedy, binding-consistent join order over `items`, compiled as it is chosen.
+    ///
+    /// Filters run as soon as their variables are bound — that is the whole point of reordering —
+    /// and generators are picked cheapest-first given what is already bound. An indexed lookup
+    /// (`fun(F, name = "append")`) beats a scan, and a scan of the smallest relation beats a scan
+    /// of the biggest. The order is a heuristic; correctness rests only on never scheduling a
+    /// filter before its variables exist, which the loop enforces.
+    ///
+    /// Returns the chosen order, as indices into `items`, and the steps in that order.
+    fn plan(
+        &self,
+        items: &[&BodyItem],
+        mut bound: BTreeSet<String>,
+        visible: &BTreeSet<String>,
+    ) -> (Vec<usize>, Vec<Step>) {
+        let mut remaining: Vec<usize> = (0..items.len()).collect();
+        let mut order = Vec::with_capacity(items.len());
+        let mut steps = Vec::with_capacity(items.len());
+        while !remaining.is_empty() {
+            let mut best: Option<(usize, u32)> = None;
+            for (pos, &i) in remaining.iter().enumerate() {
+                let item = items[i];
+                let cost = match item {
+                    BodyItem::Atom(atom) if is_generator(item) => self.access(atom, &bound).1,
+                    _ => {
+                        if !required_vars(item, visible)
+                            .iter()
+                            .all(|v| bound.contains(v))
+                        {
+                            continue;
+                        }
+                        0
+                    }
+                };
+                if best.is_none_or(|(_, c)| cost < c) {
+                    best = Some((pos, cost));
+                }
+                if cost == 0 {
+                    break;
+                }
+            }
+            // Every remaining item is a filter whose variables are still unbound. At the top
+            // level the mode check has already reported that; inside a negated group, which it
+            // does not look into, the filter runs where it stands and fails on its unbound
+            // operands.
+            let pos = best.map_or(0, |(pos, _)| pos);
+            let i = remaining.remove(pos);
+            order.push(i);
+            steps.push(self.step(items[i], &mut bound, visible));
+        }
+        (order, steps)
+    }
+
+    /// Compiles one item given what is bound before it, and adds what it binds to `bound`.
+    fn step(
+        &self,
+        item: &BodyItem,
+        bound: &mut BTreeSet<String>,
+        visible: &BTreeSet<String>,
+    ) -> Step {
+        match item {
+            BodyItem::Atom(atom) if is_generator(item) => Step::Atom(self.atom(atom, bound)),
+            _ => Step::Filter(self.filter(item, bound, visible)),
+        }
+    }
+
+    fn filter(
+        &self,
+        item: &BodyItem,
+        bound: &BTreeSet<String>,
+        visible: &BTreeSet<String>,
+    ) -> Filter {
+        match item {
+            BodyItem::Atom(atom) if atom.name.starts_with('$') => {
+                // A comparison, built by the parser: the operator's left operand is the column,
+                // its right one the only attribute.
+                let lhs = self.operand(&atom.columns[0]);
+                let attr = &atom.attrs[0];
+                match (&attr.rhs, attr.op) {
+                    (Rhs::Set(items), CmpOp::In) => Filter::In(lhs, value_set(items)),
+                    (Rhs::Set(_), _) | (Rhs::Term(_), CmpOp::In) => Filter::Never,
+                    (Rhs::Term(t), op) => Filter::Cmp(lhs, op, self.operand(t)),
+                }
+            }
+            BodyItem::Atom(atom) if atom.name == "regex_match" => {
+                let pattern = match &atom.columns[1] {
+                    // The checker rejected an invalid literal pattern.
+                    Term::Lit(Literal::Str(p)) => match Regex::new(p) {
+                        Ok(rx) => Pattern::Compiled(rx),
+                        Err(_) => return Filter::Never,
+                    },
+                    Term::Var(v) => Pattern::Var(self.slot(v)),
+                    _ => return Filter::Never,
+                };
+                Filter::Regex(self.operand(&atom.columns[0]), pattern)
+            }
+            // Whatever it would bind stays local to the test.
+            BodyItem::Atom(atom) => Filter::Exists(Box::new(self.atom(atom, &mut bound.clone()))),
+            BodyItem::Not(inner) => Filter::Not(Box::new(self.filter(inner, bound, visible))),
+            BodyItem::Or(items) => Filter::Or(
+                items
+                    .iter()
+                    .map(|i| self.filter(i, bound, visible))
+                    .collect(),
+            ),
+            BodyItem::And(items) => {
+                // Planned once, here, against the bindings it will see: the group's position in
+                // the enclosing order is already fixed.
+                let mut inner_visible = visible.clone();
+                add_positive_vars(items, &mut inner_visible);
+                let refs: Vec<&BodyItem> = items.iter().collect();
+                Filter::Group(self.plan(&refs, bound.clone(), &inner_visible).1)
+            }
+        }
+    }
+
+    /// Compiles a relation atom. Each variable's first occurrence — columns left to right, then
+    /// attributes — binds it, and is added to `bound`; every later occurrence, in this atom or
+    /// after it, tests against that binding.
+    fn atom(&self, atom: &Atom, bound: &mut BTreeSet<String>) -> AtomPlan {
+        let (access, _) = self.access(atom, bound);
+        let rel = Relation::of(&atom.name).expect("the checker accepted only built-in relations");
+        let mut columns = Vec::with_capacity(atom.columns.len());
+        for col in &atom.columns {
+            columns.push(match col {
+                Term::Var(v) if !bound.contains(v) => {
+                    bound.insert(v.clone());
+                    ColumnPat::Bind(self.slot(v))
+                }
+                t => ColumnPat::Test(self.operand(t)),
+            });
+        }
+        let mut attrs = Vec::with_capacity(atom.attrs.len());
+        for a in &atom.attrs {
+            let attr = Attr::of(&a.name).expect("the checker accepted only honored attributes");
+            let pat = match (&a.rhs, a.op) {
+                (Rhs::Set(items), CmpOp::In) => AttrPat::In(value_set(items)),
+                (Rhs::Set(_), _) | (Rhs::Term(_), CmpOp::In) => AttrPat::Never,
+                (Rhs::Term(Term::Wildcard), CmpOp::Eq) => AttrPat::Present,
+                (Rhs::Term(Term::Wildcard), _) => AttrPat::Never,
+                (Rhs::Term(Term::Var(v)), op) if !bound.contains(v) => {
+                    if op == CmpOp::Eq {
+                        bound.insert(v.clone());
+                        AttrPat::Bind(self.slot(v))
+                    } else {
+                        AttrPat::Never
+                    }
+                }
+                (Rhs::Term(t), op) => AttrPat::Cmp(op, self.operand(t)),
+            };
+            attrs.push((attr, pat));
+        }
+        AtomPlan {
+            rel,
+            access,
+            columns,
+            attrs,
+        }
+    }
+
+    /// The cheapest way to find `atom`'s rows given `bound`, and its cost.
+    ///
+    /// A known value in an indexed column is a lookup; failing that, an equality (or a set) on an
+    /// indexed attribute is; failing that, a scan.
+    fn access(&self, atom: &Atom, bound: &BTreeSet<String>) -> (Access, u32) {
+        let rel = Relation::of(&atom.name).expect("the checker accepted only built-in relations");
+        let known = |t: &Term| match t {
+            Term::Lit(_) => true,
+            Term::Var(v) => bound.contains(v),
+            Term::Wildcard => false,
+        };
+        let access = if let Some(&i) = rel
+            .indexed_columns()
+            .iter()
+            .find(|&&i| known(&atom.columns[i]))
+        {
+            Access::Column(i)
+        } else {
+            let keyed = |a: &AttrConstraint| {
+                Attr::of(&a.name).filter(|attr| rel.indexed_attrs().contains(attr))
+            };
+            let one = atom.attrs.iter().find_map(|a| match (&a.rhs, a.op) {
+                (Rhs::Term(t), CmpOp::Eq) if known(t) => {
+                    Some(Access::Attr(keyed(a)?, Key::One(self.operand(t))))
+                }
+                _ => None,
+            });
+            let set = || {
+                atom.attrs.iter().find_map(|a| match (&a.rhs, a.op) {
+                    (Rhs::Set(items), CmpOp::In) => {
+                        let strs = items
+                            .iter()
+                            .filter_map(|l| match l {
+                                Literal::Str(s) => Some(Str::from(s.as_str())),
+                                _ => None,
+                            })
+                            .collect();
+                        Some(Access::Attr(keyed(a)?, Key::Set(strs)))
+                    }
+                    _ => None,
+                })
+            };
+            one.or_else(set).unwrap_or(Access::Scan)
+        };
+        let cost = access.cost(rel);
+        (access, cost)
+    }
+
+    fn operand(&self, term: &Term) -> Operand {
+        match term {
+            Term::Var(v) => Operand::Var(self.slot(v)),
+            Term::Lit(lit) => Operand::Const(literal_value(lit)),
+            Term::Wildcard => Operand::Any,
+        }
+    }
+}
+
+fn literal_value(lit: &Literal) -> Value {
+    match lit {
+        Literal::Str(s) => Value::Str(Str::from(s.as_str())),
+        Literal::Int(i) => Value::Int(*i),
+        Literal::Bool(b) => Value::Bool(*b),
+    }
+}
+
+fn value_set(items: &[Literal]) -> HashSet<Value> {
+    items.iter().map(literal_value).collect()
 }
 
 /// The types the built-in relations' positional columns range over.
@@ -945,7 +1373,7 @@ pub fn attribute_type(relation: &str, attr: &str) -> VarType {
 }
 
 /// Every variable mentioned anywhere in an item, including inside attribute right-hand sides.
-pub fn collect_vars(item: &BodyItem, out: &mut BTreeSet<String>) {
+fn collect_vars(item: &BodyItem, out: &mut BTreeSet<String>) {
     match item {
         BodyItem::Atom(atom) => {
             for c in &atom.columns {
