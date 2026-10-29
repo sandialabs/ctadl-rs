@@ -15,6 +15,16 @@ for one callee. A model that says `name = "system"` must match; a model that say
 functionally dependent on the columns. Matching generously and binding canonically is what
 satisfies both.
 
+# The full name is implicit
+
+Every lowered function accepts its own fully qualified name as a `name`, a `signature` and a
+`qualified-id`, and several frontends publish it as such too. Stored, that is three spellings and
+three map entries per function that no other function shares — most of what these tables cost on
+a large program. So a row records only *where* its full name sits among each attribute's
+spellings ([`FunRow::spellings`] puts it back in that place), and a lookup by value consults
+`by_fq` as well as the attribute's own map. Nothing a rule can observe changes: the same
+spellings, in the same order, so the same canonical one.
+
 # What this interns
 
 Every value is a [`Str`], whose interner never frees, so what a build interns stays for the
@@ -25,6 +35,7 @@ position ([`SiteId`]) rather than by an interned `caller#block:statement`, and t
 loaded rule reads ([`Needs`]) are not built at all.
 */
 
+use std::borrow::Cow;
 use std::ops::{Deref, Range};
 
 use hashbrown::hash_map::HashMap;
@@ -43,12 +54,17 @@ pub struct FunRow {
     /// The fully qualified name — the `fun` relation's one column, and what every match
     /// structure keys on.
     pub fq: Str,
-    /// Accepted spellings of the simple name; `names[0]` is the canonical one.
-    pub names: Vec<Str>,
+    /// Accepted spellings of the simple name, except `fq` itself (see `fq_at`). Read them
+    /// through [`Self::spellings`], whose first is the canonical one.
+    names: Vec<Str>,
     /// Owning class. Populated only where the frontend has a class hierarchy (Java, Lua).
     pub parents: Vec<Str>,
-    pub signatures: Vec<Str>,
-    pub qualified_ids: Vec<Str>,
+    signatures: Vec<Str>,
+    qualified_ids: Vec<Str>,
+    /// Where `fq` sits among the spellings of `name`, `signature` and `qualified-id`, in that
+    /// order: how many of the stored ones precede it, or [`NOT_A_SPELLING`]. See the module docs
+    /// for why it is not stored with them.
+    fq_at: [u32; 3],
     /// Parameter count, where the IR recovered one. `None` for a bodyless callee — an external,
     /// a dex/jvm `ext` stub — which is why `arity` and `param` do not match one.
     pub arity: Option<i64>,
@@ -64,18 +80,96 @@ impl FunRow {
             parents: Vec::new(),
             signatures: Vec::new(),
             qualified_ids: Vec::new(),
+            fq_at: [NOT_A_SPELLING; 3],
             arity: None,
             has_code: None,
         }
     }
 
-    fn spellings_mut(&mut self, key: FunKey) -> &mut Vec<Str> {
-        match key {
-            FunKey::Name => &mut self.names,
-            FunKey::Parent => &mut self.parents,
-            FunKey::Signature => &mut self.signatures,
-            FunKey::QualifiedId => &mut self.qualified_ids,
+    /// Every accepted spelling of attribute `key`, the canonical one first.
+    pub fn spellings(&self, key: FunKey) -> Spellings<'_> {
+        let (stored, slot) = match key {
+            FunKey::Name => (&self.names, Some(0)),
+            FunKey::Parent => (&self.parents, None),
+            FunKey::Signature => (&self.signatures, Some(1)),
+            FunKey::QualifiedId => (&self.qualified_ids, Some(2)),
+        };
+        Spellings {
+            stored,
+            fq: slot
+                .map(|i| self.fq_at[i])
+                .filter(|&at| at != NOT_A_SPELLING)
+                .map(|at| (at as usize, self.fq)),
         }
+    }
+
+    /// Whether `fq` is one of attribute `key`'s spellings.
+    fn has_fq_spelling(&self, key: FunKey) -> bool {
+        self.spellings(key).fq.is_some()
+    }
+
+    /// Adds `spelling` to attribute `key`'s spellings, after the ones it already has, unless it
+    /// is one already. `fq` itself is only recorded, in place.
+    fn add_spelling(&mut self, key: FunKey, spelling: Str) {
+        let (stored, slot) = match key {
+            FunKey::Name => (&mut self.names, 0),
+            FunKey::Parent => {
+                push_unique(&mut self.parents, spelling);
+                return;
+            }
+            FunKey::Signature => (&mut self.signatures, 1),
+            FunKey::QualifiedId => (&mut self.qualified_ids, 2),
+        };
+        if spelling != self.fq {
+            push_unique(stored, spelling);
+        } else if self.fq_at[slot] == NOT_A_SPELLING {
+            self.fq_at[slot] = stored.len() as u32;
+        }
+    }
+}
+
+/// `fq_at`'s mark for an attribute `fq` is not a spelling of: a function the method table names
+/// but the program does not lower, under an attribute the frontend does not spell it as.
+const NOT_A_SPELLING: u32 = u32::MAX;
+
+/// One attribute's spellings of one function: the stored ones, with the function's full name put
+/// back where it belongs when it is one of them.
+#[derive(Copy, Clone, Debug)]
+pub struct Spellings<'a> {
+    stored: &'a [Str],
+    /// The full name and how many stored spellings precede it.
+    fq: Option<(usize, Str)>,
+}
+
+impl<'a> Spellings<'a> {
+    /// A plain list, for a value with no implicit spelling.
+    pub fn of(stored: &'a [Str]) -> Self {
+        Self { stored, fq: None }
+    }
+
+    pub fn one(value: &'a Str) -> Self {
+        Self::of(std::slice::from_ref(value))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.stored.is_empty() && self.fq.is_none()
+    }
+
+    /// Whether `f` holds of every spelling, asked in order, the canonical one first, and
+    /// stopping at the first it does not hold of. Not an iterator: a broad rule calls this for
+    /// every row, and three plain loops are measurably cheaper than a chained one.
+    pub fn all(&self, mut f: impl FnMut(Str) -> bool) -> bool {
+        let (at, fq) = match self.fq {
+            Some((at, fq)) => (at, Some(fq)),
+            None => (self.stored.len(), None),
+        };
+        let (before, after) = self.stored.split_at(at);
+        before.iter().all(|&s| f(s)) && fq.is_none_or(&mut f) && after.iter().all(|&s| f(s))
+    }
+
+    /// Whether `f` holds of some spelling.
+    pub fn any(&self, mut f: impl FnMut(Str) -> bool) -> bool {
+        !self.all(|s| !f(s))
     }
 }
 
@@ -282,7 +376,7 @@ impl ProgramFacts {
             } else {
                 Str::from(spelling)
             };
-            push_unique(row.spellings_mut(key), value);
+            row.add_spelling(key, value);
         });
 
         // Every lowered function, whether or not the method table names it. This is what gives
@@ -292,9 +386,9 @@ impl ProgramFacts {
             let i = row_for(&mut rows, &mut by_fq, Str::from(fq));
             let row = &mut rows[i];
             let fq = row.fq;
-            push_unique(&mut row.names, fq);
-            push_unique(&mut row.signatures, fq);
-            push_unique(&mut row.qualified_ids, fq);
+            for key in [FunKey::Name, FunKey::Signature, FunKey::QualifiedId] {
+                row.add_spelling(key, fq);
+            }
             row.arity = Some(data.num_parameters() as i64);
             row.has_code = Some(!data.blocks.is_empty());
             lowered.push((fq, data));
@@ -304,6 +398,7 @@ impl ProgramFacts {
         let mut by_parent: HashMap<Str, Vec<usize>> = HashMap::new();
         let mut by_signature: HashMap<Str, Vec<usize>> = HashMap::new();
         let mut by_qualified_id: HashMap<Str, Vec<usize>> = HashMap::new();
+        // The stored spellings only: a row's full name is found through `by_fq`.
         for (i, row) in rows.iter().enumerate() {
             for n in &row.names {
                 by_name.entry(*n).or_default().push(i);
@@ -434,15 +529,34 @@ impl ProgramFacts {
         self.by_fq.get(&fq).copied()
     }
 
-    #[inline]
-    pub fn funs_by(&self, key: FunKey, value: Str) -> &[usize] {
+    /// Row indices whose attribute `key` has `value` among its spellings, ascending.
+    ///
+    /// A full name is a spelling of at most the one row it names, and that row is never in the
+    /// attribute's own map under it, so the two sources are disjoint. Both answer only where a
+    /// frontend's simple name collides with another function's full name — a Lua file imported as
+    /// the root, say — and only then is the answer a fresh list.
+    pub fn funs_by(&self, key: FunKey, value: Str) -> Cow<'_, [usize]> {
         let map = match key {
             FunKey::Name => &self.by_name,
             FunKey::Parent => &self.by_parent,
             FunKey::Signature => &self.by_signature,
             FunKey::QualifiedId => &self.by_qualified_id,
         };
-        map.get(&value).map_or(&[], |v| v.as_slice())
+        let stored = map.get(&value).map_or(&[][..], |v| v.as_slice());
+        let Some(own) = self
+            .by_fq
+            .get(&value)
+            .filter(|&&i| self.funs[i].has_fq_spelling(key))
+        else {
+            return Cow::Borrowed(stored);
+        };
+        if stored.is_empty() {
+            return Cow::Borrowed(std::slice::from_ref(own));
+        }
+        let mut all = stored.to_vec();
+        let at = all.partition_point(|&i| i < *own);
+        all.insert(at, *own);
+        Cow::Owned(all)
     }
 
     #[inline]

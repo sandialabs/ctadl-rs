@@ -62,7 +62,7 @@ use super::check::{
     Access, AtomPlan, Attr, AttrPat, ColumnPat, Filter, Key, Operand, Pattern, Plan, Relation,
     Slot, Step,
 };
-use super::relations::{FunKey, ProgramFacts, SiteId};
+use super::relations::{FunKey, ProgramFacts, SiteId, Spellings};
 
 /// A value a variable can take.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -321,7 +321,7 @@ enum Row {
 /// The values one row has for one attribute.
 enum AttrValues<'a> {
     /// Every accepted spelling.
-    Strs(&'a [Str]),
+    Strs(Spellings<'a>),
     One(Value),
     /// The row has no value: `arity` on a bodyless callee. Every constraint fails.
     Missing,
@@ -563,17 +563,21 @@ impl<'a> Machine<'a> {
 
     /// The rows an attribute index reaches for `key`. A set is the union of its members'
     /// lookups, deduplicated so a row two members reach is visited once.
-    fn keyed(&self, key: &Key, lookup: impl Fn(Str) -> &'a [usize]) -> Cow<'a, [usize]> {
+    fn keyed<L: Into<Cow<'a, [usize]>>>(
+        &self,
+        key: &Key,
+        lookup: impl Fn(Str) -> L,
+    ) -> Cow<'a, [usize]> {
         match key {
             Key::One(op) => match self.value(op).and_then(|v| v.as_str()) {
-                Some(s) => Cow::Borrowed(lookup(s)),
+                Some(s) => lookup(s).into(),
                 None => Cow::Borrowed(&[]),
             },
             Key::Set(members) => {
-                let mut all: Vec<usize> = members
-                    .iter()
-                    .flat_map(|&s| lookup(s).iter().copied())
-                    .collect();
+                let mut all: Vec<usize> = Vec::new();
+                for &s in members {
+                    all.extend_from_slice(&lookup(s).into());
+                }
                 all.sort_unstable();
                 all.dedup();
                 Cow::Owned(all)
@@ -639,7 +643,7 @@ impl<'a> Machine<'a> {
             keep_going
         };
         match values {
-            AttrValues::Strs(list) => list.iter().all(|&s| alternative(self, Value::Str(s))),
+            AttrValues::Strs(list) => list.all(|s| alternative(self, Value::Str(s))),
             AttrValues::One(v) => alternative(self, v),
             AttrValues::Missing => true,
         }
@@ -678,7 +682,7 @@ impl<'a> Machine<'a> {
     }
 
     /// A call-signature key has exactly one spelling of each attribute — it is composed from the
-    /// site's three components — so each is a one-element slice and the multi-spelling case
+    /// site's three components — so each is a single spelling and the multi-spelling case
     /// [`Self::match_attrs`] describes cannot arise.
     fn attr_values(&self, row: Row, attr: Attr) -> AttrValues<'a> {
         let facts = self.facts;
@@ -686,14 +690,14 @@ impl<'a> Machine<'a> {
             Row::Fun(r) => {
                 let row = &facts.funs[r];
                 match attr {
-                    Attr::Name => AttrValues::Strs(&row.names),
-                    Attr::Parent => AttrValues::Strs(&row.parents),
-                    Attr::Signature => AttrValues::Strs(&row.signatures),
-                    Attr::QualifiedId => AttrValues::Strs(&row.qualified_ids),
+                    Attr::Name => AttrValues::Strs(row.spellings(FunKey::Name)),
+                    Attr::Parent => AttrValues::Strs(row.spellings(FunKey::Parent)),
+                    Attr::Signature => AttrValues::Strs(row.spellings(FunKey::Signature)),
+                    Attr::QualifiedId => AttrValues::Strs(row.spellings(FunKey::QualifiedId)),
                     // The per-import scope attributes go through the same path as the
-                    // per-function ones, as a zero- or one-element slice.
-                    Attr::Language => AttrValues::Strs(facts.language.as_slice()),
-                    Attr::Import => AttrValues::Strs(facts.import.as_slice()),
+                    // per-function ones, as zero spellings or one.
+                    Attr::Language => AttrValues::Strs(Spellings::of(facts.language.as_slice())),
+                    Attr::Import => AttrValues::Strs(Spellings::of(facts.import.as_slice())),
                     Attr::Arity => row
                         .arity
                         .map_or(AttrValues::Missing, |a| AttrValues::One(Value::Int(a))),
@@ -706,17 +710,15 @@ impl<'a> Machine<'a> {
             Row::CallSig(r) => {
                 let row = &facts.callsigs[r];
                 match attr {
-                    Attr::Name => AttrValues::Strs(std::slice::from_ref(&row.name)),
-                    Attr::Parent => AttrValues::Strs(std::slice::from_ref(&row.parent)),
-                    Attr::Signature => AttrValues::Strs(std::slice::from_ref(&row.signature)),
-                    Attr::QualifiedId => AttrValues::Strs(std::slice::from_ref(&row.id)),
+                    Attr::Name => AttrValues::Strs(Spellings::one(&row.name)),
+                    Attr::Parent => AttrValues::Strs(Spellings::one(&row.parent)),
+                    Attr::Signature => AttrValues::Strs(Spellings::one(&row.signature)),
+                    Attr::QualifiedId => AttrValues::Strs(Spellings::one(&row.id)),
                     _ => AttrValues::Missing,
                 }
             }
             Row::CallSite(r) => match attr {
-                Attr::CalleeString => {
-                    AttrValues::Strs(std::slice::from_ref(&facts.callsites[r].callee))
-                }
+                Attr::CalleeString => AttrValues::Strs(Spellings::one(&facts.callsites[r].callee)),
                 _ => AttrValues::Missing,
             },
             Row::Param(..) | Row::Class(..) | Row::UsesField(_) => AttrValues::Missing,
@@ -731,7 +733,7 @@ impl<'a> Machine<'a> {
             (AttrPat::Present, AttrValues::Strs(list)) => !list.is_empty(),
             (AttrPat::Present, AttrValues::One(_)) => true,
             (AttrPat::In(set), AttrValues::Strs(list)) => {
-                list.iter().any(|&s| set.contains(&Value::Str(s)))
+                list.any(|s| set.contains(&Value::Str(s)))
             }
             (AttrPat::In(set), AttrValues::One(v)) => in_set(v, set),
             (AttrPat::Cmp(op, rhs), values) => {
@@ -742,12 +744,10 @@ impl<'a> Machine<'a> {
                     // `!=` over a multi-valued attribute is "no spelling equals it". Any other
                     // reading would make `name != "x"` true for a function that has `x` as one
                     // of its names.
-                    AttrValues::Strs(list) if *op == CmpOp::Ne => list
-                        .iter()
-                        .all(|&s| !compare(&Value::Str(s), CmpOp::Eq, &rhs)),
-                    AttrValues::Strs(list) => {
-                        list.iter().any(|&s| compare(&Value::Str(s), *op, &rhs))
+                    AttrValues::Strs(list) if *op == CmpOp::Ne => {
+                        list.all(|s| !compare(&Value::Str(s), CmpOp::Eq, &rhs))
                     }
+                    AttrValues::Strs(list) => list.any(|s| compare(&Value::Str(s), *op, &rhs)),
                     AttrValues::One(v) => compare(v, *op, &rhs),
                     AttrValues::Missing => false,
                 }
