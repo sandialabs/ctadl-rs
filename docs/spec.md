@@ -40,6 +40,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | Term | Meaning |
 | --- | --- |
 | **Artifact** | An input: `.dex`, `.jar`, `.class`, APK/XAPK, a directory of C files, a native binary (via Ghidra p-code), .NET assemblies, Lua, or Flowy (CTADL's test language). |
+| **Store** | Where CTADL keeps imports and projects, with their indexes, between runs. |
 | **Import** | An artifact lowered to CTADL IR and saved in the store. An APK yields sub-imports for its native libraries. |
 | **Project** | A named set of imports indexed together. |
 | **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
@@ -202,21 +203,6 @@ The store, under `$XDG_STATE_HOME` by default, holds `imports/` and `projects/`.
 IR and VMT (`bitcode`) plus source info (parquet), stamped with a format version. A project
 holds its import list, index configuration, and index facts and summaries (parquet,
 inspectable with DuckDB; see [debugging.md](debugging.md)).
-
-### 4.6 Components
-
-| Crate / directory | Role |
-| --- | --- |
-| `ctadl-ascent` | The `ctadl` binary: CLI, codegen, models, query engine, SARIF, cross-language passes, reports. |
-| `ctadl-index` (+ `engines/{serial,par,lsm}`) | Fact schema, parquet encoding, index Datalog and its engines. |
-| `ctadl-ir` | IR, verifier, visitors, graph algorithms, SSA pass pipeline. |
-| `ctadl-import` | The store: layout, format versioning, reading and writing imports. |
-| `ctadl-frontends` | Front-end selection; APK/XAPK unpacking and native sub-imports. |
-| `frontends/ctadl-*` | Front ends: `dex`, `jvm`, `c` (tree-sitter), `pcode` (Ghidra), `cil`, `lua` (tree-sitter), `flowy`. |
-| `readers/*` | Standalone parsers: Dex, class files, p-code, CIL. |
-| `source-info` | Compact instruction-to-source spans. |
-| `trie`, `tailshare`, `immortal`, `lsm` | Engine data structures: tries, shared-suffix sequences, interning, disk-backed relations. |
-| `xtask`, `nightly` | Golden tests and the regression suite. |
 
 ## 5. Verification
 
