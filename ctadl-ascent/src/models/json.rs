@@ -11,7 +11,6 @@ jq -c '.model_generators[] // empty' models.json > models.jsonl
 ```
 */
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
 
 use hashbrown::hash_map::HashMap;
 use regex::Regex;
@@ -21,10 +20,12 @@ use super::universe_set::*;
 use super::*;
 use crate::error::Error;
 use crate::facts;
-use ctadl_ir::mir;
 use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::StatementKind;
 use ctadl_ir::mir::call::VirtualMethodTable;
+
+pub use super::json_schema::FindMethod;
+pub(crate) use super::json_schema::{ParsedPort, parse_port};
 
 /// Ingests model_generators and matches them against a program, appending what matched into a
 /// [`ProgramModelMatches`](crate::models::ProgramModelMatches).
@@ -295,39 +296,6 @@ pub enum UnmatchedReason {
     /// The port is not usable in this generator's context. Always accompanied by a hard JSON
     /// error, so in practice the load fails before any SARIF is written.
     PortRejected,
-}
-
-static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
-static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
-static VARIABLE_REGEX: OnceLock<Regex> = OnceLock::new();
-
-// All three are anchored, so "MyReturnType" is not a `Return` port with access path `Type`, and
-// no text may surround an `Argument(n)`. A non-match falls through to `InvalidArgumentFormat`.
-
-#[inline]
-fn argument_regex() -> &'static Regex {
-    ARGUMENT_REGEX.get_or_init(|| Regex::new(r#"^Argument\((\d+|[*])\)(.*)$"#).unwrap())
-}
-
-#[inline]
-fn return_regex() -> &'static Regex {
-    RETURN_REGEX.get_or_init(|| Regex::new(r#"^Return(.*)$"#).unwrap())
-}
-
-#[inline]
-fn variable_regex() -> &'static Regex {
-    // `Variable(name)` selects a source/sink port by the local's source name, with an
-    // optional trailing access path (`Variable(buf).headers`).
-    VARIABLE_REGEX.get_or_init(|| Regex::new(r#"^Variable\(([^)]+)\)(.*)$"#).unwrap())
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum FindMethod {
-    Methods,
-    Callsites,
-    /// Selects call sites by their own static signature rather than by the callee they resolve
-    /// to. See `docs/model-generators.md`.
-    Dispatch,
 }
 
 /// What one [`ModelGeneratorIngest::emit_endpoint_rows`] call did, folded into
@@ -2338,115 +2306,6 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     }
 }
 
-/// A parsed source/sink/propagation port. `var_name` is `Some` only for a `Variable(name)`
-/// port (`tag == Local`); `index` is `Some` only for a positional `Argument(n)` port
-/// (`tag == Index`). Both `var_name` and `ap` borrow from the port `text`.
-#[derive(Debug)]
-pub(crate) struct ParsedPort<'a> {
-    pub(crate) tag: FormalIndexTypeTag,
-    pub(crate) index: Option<i16>,
-    pub(crate) var_name: Option<&'a str>,
-    /// The port's access path, parsed with the canonical grammar. Owned; the lifetime survives
-    /// only for `var_name`. A `PathSegment::Offset` here is what lets a port name a real offset
-    /// (`Argument(1).[8].deref`) and so match the offsets pcode emits.
-    pub(crate) ap: Vec<PathSegment>,
-}
-
-/// Entry point for parsing propagation inputs and outputs, which are called ports
-pub(crate) fn parse_port(
-    text: &str,
-    index: usize,
-) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
-    // Note the absence of `?` in the two `if let` arms: an early return would skip the
-    // index-patching `map_err` below, and the error would name generator 0.
-    let parsed = if let Some(m) = variable_regex().captures(text) {
-        // `Variable(name)` — name-based local selector. The base `LocalIdx` is resolved
-        // per-function later (in `emit_endpoints`), so no index is known here.
-        parse_access_path(m.get(2).map(|m| m.as_str())).map(|ap| ParsedPort {
-            tag: FormalIndexTypeTag::Local,
-            index: None,
-            var_name: m.get(1).map(|m| m.as_str()),
-            ap,
-        })
-    } else if let Some(m) = return_regex().captures(text) {
-        parse_access_path(m.get(1).map(|m| m.as_str())).map(|ap| ParsedPort {
-            tag: FormalIndexTypeTag::Return,
-            index: None,
-            var_name: None,
-            ap,
-        })
-    } else {
-        parse_argument(text).map(|(tag, idx, ap)| ParsedPort {
-            tag,
-            index: idx,
-            var_name: None,
-            ap,
-        })
-    };
-    parsed.map_err(|mut err| {
-        // These are raised with `index: 0` from helpers that do not know it; fill it in.
-        match &mut err {
-            crate::error::JsonModelError::InvalidArgumentFormat {
-                index: err_index, ..
-            } => *err_index = index,
-            crate::error::JsonModelError::InvalidInteger {
-                index: err_index, ..
-            } => *err_index = index,
-            crate::error::JsonModelError::InvalidAccessPath {
-                index: err_index, ..
-            } => *err_index = index,
-            _ => {}
-        }
-        err
-    })
-}
-
-/// Parses a port's trailing access path with the one canonical grammar, so `.[8]` is a real
-/// offset and a field name beginning with `[` is written `\[`.
-///
-/// `".*"` parses as `Symbol("*")`, a literal field, as it does everywhere else, and `.[*]` is
-/// an `InvalidOffset` error.
-fn parse_access_path(
-    input_text: Option<&str>,
-) -> Result<Vec<PathSegment>, crate::error::JsonModelError> {
-    let Some(s) = input_text else {
-        return Ok(Vec::new());
-    };
-    mir::parse_segments(s).map_err(|source| crate::error::JsonModelError::InvalidAccessPath {
-        index: 0, // filled in by `parse_port`
-        text: s.to_string(),
-        source,
-    })
-}
-
-fn parse_argument(
-    input_text: &str,
-) -> Result<(FormalIndexTypeTag, Option<i16>, Vec<PathSegment>), crate::error::JsonModelError> {
-    let m = argument_regex().captures(input_text).ok_or_else(|| {
-        crate::error::JsonModelError::InvalidArgumentFormat {
-            index: 0, // We don't have the index here, will be set by caller
-            text: input_text.to_string(),
-        }
-    })?;
-    let arg_text = m.get(1).map(|m| m.as_str()).ok_or_else(|| {
-        crate::error::JsonModelError::InvalidArgumentFormat {
-            index: 0,
-            text: input_text.to_string(),
-        }
-    })?;
-    let (tag, index) = match arg_text {
-        "*" => (FormalIndexTypeTag::AnyArgument, None),
-        _ => (
-            FormalIndexTypeTag::Index,
-            Some(arg_text.parse::<i16>().map_err(|source| {
-                crate::error::JsonModelError::InvalidInteger { index: 0, source }
-            })?),
-        ),
-    };
-    let p = parse_access_path(m.get(2).map(|m| m.as_str()))?;
-    Ok((tag, index, p))
-}
-
 /// Visitor for JSON model generators
 pub trait ModelGeneratorVisitor {
     #[inline]
@@ -2789,140 +2648,5 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 Vec::new()
             }
         },
-    }
-}
-
-#[cfg(test)]
-mod parse_port_tests {
-    use super::*;
-
-    #[test]
-    fn parses_variable_selector() {
-        let p = parse_port("Variable(buf)", 0).expect("parse");
-        assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.var_name, Some("buf"));
-        assert_eq!(p.index, None);
-        assert!(p.ap.is_empty());
-    }
-
-    #[test]
-    fn parses_variable_selector_with_access_path() {
-        let p = parse_port("Variable(buf).headers", 0).expect("parse");
-        assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.var_name, Some("buf"));
-        assert_eq!(p.ap, vec![PathSegment::symbol("headers")]);
-    }
-
-    #[test]
-    fn argument_and_return_still_parse() {
-        let a = parse_port("Argument(1)", 0).expect("parse");
-        assert_eq!(a.tag, FormalIndexTypeTag::Index);
-        assert_eq!(a.index, Some(1));
-        assert_eq!(a.var_name, None);
-
-        let r = parse_port("Return", 0).expect("parse");
-        assert_eq!(r.tag, FormalIndexTypeTag::Return);
-        assert_eq!(r.var_name, None);
-    }
-
-    /// A model port can name an offset: `Argument(1).[8]` is `Offset(8)`, which is what pcode's
-    /// `push_offset` emits, not `Symbol("[8]")`.
-    #[test]
-    fn port_can_name_an_offset() {
-        let p = parse_port("Argument(1).[8].deref", 0).expect("parse");
-        assert_eq!(p.tag, FormalIndexTypeTag::Index);
-        assert_eq!(p.index, Some(1));
-        assert_eq!(
-            p.ap,
-            vec![PathSegment::offset(8), PathSegment::symbol("deref")]
-        );
-    }
-
-    /// ... and a field name that begins with `[` is still reachable, written `\[`. This is how a
-    /// model names a Java array element, whose frontend segment is `Symbol("[]")`.
-    #[test]
-    fn port_can_name_a_bracketed_field() {
-        let p = parse_port(r"Argument(0).\[]", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("[]")]);
-
-        let p = parse_port(r"Argument(0).\[_elem_]", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("[_elem_]")]);
-    }
-
-    /// `.*` is `Symbol("*")`, a literal field, as it is everywhere else in the tree.
-    #[test]
-    fn trailing_star_is_a_literal_field() {
-        let p = parse_port("Argument(0).*", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("*")]);
-
-        let r = parse_port("Return.*", 0).expect("parse");
-        assert_eq!(r.tag, FormalIndexTypeTag::Return);
-        assert_eq!(r.ap, vec![PathSegment::symbol("*")]);
-    }
-
-    #[test]
-    fn malformed_access_paths_are_hard_errors() {
-        use crate::error::JsonModelError;
-        use ctadl_ir::mir::PathSyntaxErrorKind;
-
-        // `*` is not an offset.
-        let e = parse_port("Argument(0).[*]", 7).unwrap_err();
-        assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { index: 7, source, .. }
-                     if source.kind == PathSyntaxErrorKind::InvalidOffset("*".into())),
-            "got {e:?}"
-        );
-
-        // An empty segment is an error, not `Symbol("")`.
-        let e = parse_port("Argument(0).a..b", 3).unwrap_err();
-        assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { index: 3, source, .. }
-                     if source.kind == PathSyntaxErrorKind::EmptySegment),
-            "got {e:?}"
-        );
-
-        // A bare bracketed name is an offset position, and the message says how to fix it.
-        let e = parse_port("Argument(0).[_elem_]", 0).unwrap_err();
-        assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { source, .. }
-                     if source.kind == PathSyntaxErrorKind::InvalidOffset("_elem_".into())),
-            "got {e:?}"
-        );
-        assert!(
-            e.to_string().contains(r"\[_elem_]"),
-            "message must name the fix: {e}"
-        );
-    }
-
-    /// The regexes are anchored: "MyReturnType" is not a `Return` port with access path `Type`,
-    /// and no text may surround an `Argument(n)`.
-    #[test]
-    fn regexes_are_anchored() {
-        use crate::error::JsonModelError;
-
-        // Junk *before* the selector: no regex matches at all, so this is
-        // InvalidArgumentFormat.
-        for text in [
-            "MyReturnType",
-            "prefixReturn",
-            "xxArgument(0)",
-            "aVariable(b)",
-        ] {
-            let e = parse_port(text, 5).unwrap_err();
-            assert!(
-                matches!(&e, JsonModelError::InvalidArgumentFormat { index: 5, text: t } if t == text),
-                "{text:?} should be InvalidArgumentFormat, got {e:?}"
-            );
-        }
-
-        // Junk *after* the selector is captured as the trailing access path, so it is rejected
-        // by the grammar instead -- also a hard error, and a more specific message.
-        for text in ["Argument(0)yy", "ReturnType", "Variable(b)zz"] {
-            let e = parse_port(text, 5).unwrap_err();
-            assert!(
-                matches!(&e, JsonModelError::InvalidAccessPath { index: 5, .. }),
-                "{text:?} should be InvalidAccessPath, got {e:?}"
-            );
-        }
     }
 }

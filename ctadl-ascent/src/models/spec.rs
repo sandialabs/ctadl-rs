@@ -308,7 +308,7 @@ impl BridgePort {
                 index,
                 field_name: key.to_string(),
             })?;
-        let port = super::json::parse_port(text, index)?;
+        let port = super::json_schema::parse_port(text, index)?;
         let formal = match port.tag {
             FormalIndexTypeTag::Index => FormalIndex::new(port.index.expect("Index carries one")),
             FormalIndexTypeTag::Return => RETURN_INDEX.into(),

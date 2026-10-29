@@ -23,7 +23,9 @@ narrows the callee, not the caller) the DSL's meaning is the one written. Three 
 warn:
 
 - **The loader rejects the generator.** The migration fails with the loader's own error, because
-  the loader itself is run over each generator first (see [`json_loader_errors`]).
+  each generator is first checked by [`json_schema::generator_errors`], which reports exactly
+  what the loader does. A generator whose `in` scope names another import is checked too, where
+  the loader would skip it: a migrated file is not tied to one import.
 - **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, a
   `modes` list without `skip-analysis` does nothing, and `on-unmatched` / `on-ambiguous` other
   than `"error"` change only what is logged. These are warnings.
@@ -36,10 +38,9 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use ctadl_ir::mir::PathSegment;
-use ctadl_ir::mir::call::VirtualMethodTable;
 
 use crate::error::{Error, JsonModelError, JsonModelErrors};
-use crate::models::spec;
+use crate::models::json_schema;
 
 /// What a migration produced, and what it left out because the JSON loader ignores it too.
 #[derive(Clone, Debug, Default)]
@@ -79,7 +80,7 @@ pub fn migrate_generators<'a>(
     }
     for (i, value) in generators.into_iter().enumerate() {
         report.generators += 1;
-        let loader_errors = json_loader_errors(i, value);
+        let loader_errors = json_schema::generator_errors(i, value);
         if !loader_errors.is_empty() {
             errors.extend(loader_errors);
             continue;
@@ -100,63 +101,6 @@ pub fn migrate_generators<'a>(
         return Err(Error::JsonModel(errors));
     }
     Ok((out, report))
-}
-
-/// What the JSON loader reports against generator `index`, in the order it reports it.
-///
-/// The loader is run rather than re-implemented: its checks are interleaved with matching, and a
-/// copy of them would be a second set of rules to keep in step. A bridge is scanned first, as
-/// [`spec::scan_model_files`] does before any import is loaded. A clean scan is followed by the
-/// ordinary match pass, plus side B's `where`, which the loader evaluates once a bridge's scope
-/// admits an import.
-///
-/// The program is empty, so nothing matches and no per-function check fires. Its method table
-/// is an empty Java one rather than none, so that `parent` and `extends` do not log that the
-/// frontend has no class hierarchy. The import is made up from the generator's own `in`, so the
-/// scope never hides an error. That is stricter than the loader, which skips the rest of a
-/// generator its scope excludes, but a migrated file is not tied to one import.
-fn json_loader_errors(index: usize, generator: &Value) -> Vec<JsonModelError> {
-    use crate::models::json::{ModelGeneratorIngest, ModelGeneratorVisitor};
-    use crate::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
-
-    let mut errors = Vec::new();
-    let bridge = match generator.pointer("/model/bridge") {
-        Some(bridge) => {
-            let path = std::path::Path::new("<migrate>");
-            let spec = spec::parse_bridge(path, index, generator, bridge, &mut errors);
-            if !errors.is_empty() {
-                return errors;
-            }
-            spec
-        }
-        None => None,
-    };
-    let scope = spec::ProgramScope::parse(generator.get("in"), index, &mut errors);
-    if !errors.is_empty() {
-        return errors;
-    }
-    let program = ctadl_ir::mir::ProgramInfo {
-        vmt: VirtualMethodTable::Java {
-            methods: Vec::new(),
-            hierarchy: Default::default(),
-            interfaces: Vec::new(),
-            abstract_methods: Vec::new(),
-            natives: Vec::new(),
-        },
-        ..Default::default()
-    };
-    let import = ImportScope {
-        language: scope.languages.first().copied(),
-        import: scope.import,
-    };
-    let match_index = ProgramMatchIndex::new(&program, import);
-    let mut out = ProgramModelMatches::default();
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-    ingest.visit_model_generator(index, generator);
-    if let Some(bridge) = bridge {
-        ingest.match_where(index, &bridge.to.where_);
-    }
-    ingest.drain_errors()
 }
 
 /// A construct the JSON loader accepts and the DSL cannot express.
@@ -1313,7 +1257,7 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
             field_name: field.to_string(),
         })?,
     };
-    let parsed = super::super::json::parse_port(text, index)?;
+    let parsed = json_schema::parse_port(text, index)?;
     let base = match parsed.tag {
         crate::models::FormalIndexTypeTag::Return => "return".to_string(),
         crate::models::FormalIndexTypeTag::AnyArgument => "arg(_)".to_string(),

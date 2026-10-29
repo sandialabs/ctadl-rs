@@ -16,6 +16,7 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 pub mod codegen;
 pub mod dsl;
 pub mod json;
+pub mod json_schema;
 pub mod match_index;
 pub mod matches;
 pub mod spec;
