@@ -17,6 +17,11 @@ store __stack_top.[-16].deref := v   =>  __stack_m16 = v
 SSA conversion then versions the new locals like any other, so a load sees only the stores that
 reach it.
 
+A frame write may also be a functional update of the frame (see [`super::FrameWrites`]),
+`__stack_top = update (__stack_top.[-16].deref := v)`. It is a direct store like any other:
+promoting the slot rewrites it into `__stack_m16 = v`, and a slot that stays in memory
+keeps its updates, so SSA still versions the frame for the slots left in it.
+
 # Which slots are promotable
 
 A slot is reachable in two ways: directly, by a `.deref` load or store on `__stack_top.[k]`, and
@@ -56,8 +61,9 @@ one call would reach every read of the slot, which mixes the slot again.
 
 [`FullMode`] forces or forbids full promotion for one function, whatever its size.
 
-The pass leaves a function alone when `__stack_top` is ever assigned, or is used in a way this
-pass does not classify (a phi, a param-flow, an update of the frame itself).
+The pass leaves a function alone when `__stack_top` is assigned other than by a frame update, or
+is used in a way this pass does not classify (a phi, a param-flow, an update of something else
+that copies the frame).
 */
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -320,6 +326,21 @@ fn exp_slot(e: &Exp, st: Variable) -> Option<i64> {
     }
 }
 
+/// If `kind` is a frame update, `st = update (st.[k].deref := v)`, its slot `k`.
+fn frame_update_slot(kind: &StatementKind, st: Variable) -> Option<i64> {
+    match kind {
+        StatementKind::Update {
+            dest,
+            source,
+            field,
+            ..
+        } if dest.base.variable == st && source.variable == st && &*field.field == DEREF => {
+            Some(slot(dest))
+        }
+        _ => None,
+    }
+}
+
 /// A use of the frame base.
 enum Use {
     /// A `.deref` load (`false`) or store (`true`) of this slot.
@@ -360,7 +381,12 @@ fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
             }
             esc(value, EscapeKind::Stored, out);
         }
-        StatementKind::Update { value, .. } => esc(value, EscapeKind::Stored, out),
+        StatementKind::Update { value, .. } => {
+            if let Some(k) = frame_update_slot(kind, st) {
+                out.push(Use::Direct(k, true));
+            }
+            esc(value, EscapeKind::Stored, out);
+        }
         StatementKind::CallAssign { .. } => call_escapes(kind, st, |k| {
             out.push(Use::Escape(k, EscapeKind::CallInput))
         }),
@@ -425,7 +451,9 @@ pub fn promote_function(
     let mut escapes: Vec<(i64, EscapeKind, BasicBlockIdx, usize)> = Vec::new();
     for (bb, data) in function.blocks.iter_enumerated() {
         for (i, s) in data.iter().enumerate() {
-            if s.iter_dst_var().any(|v| v.variable == st) {
+            if s.iter_dst_var().any(|v| v.variable == st)
+                && frame_update_slot(&s.kind, st).is_none()
+            {
                 stats.skipped_functions = 1;
                 return (stats, None);
             }
@@ -579,6 +607,17 @@ pub fn promote_function(
                             stats.promoted_accesses += 1;
                         }
                         None => stats.kept_accesses += 1,
+                    }
+                }
+                StatementKind::Update { value, .. } => {
+                    if let Some(k) = frame_update_slot(&s.kind, st) {
+                        match promotable.get(&k) {
+                            Some(local) => {
+                                s.kind = StatementKind::assign(local.clone(), [value.clone()]);
+                                stats.promoted_accesses += 1;
+                            }
+                            None => stats.kept_accesses += 1,
+                        }
                     }
                 }
                 StatementKind::CallAssign { .. } if !escaped.is_empty() => {

@@ -556,7 +556,7 @@ pub struct IndexArgs {
     /// The pcode frontend writes a stack slot as a functional update of the frame, which SSA can
     /// version. `store` (the default) coarsens every such update into a store, as the frontend
     /// emitted before, so every load of a slot sees every store to it. Experimental: `update`
-    /// keeps them, so SSA versions the frame, and mem2reg leaves those functions alone. A
+    /// keeps them, so SSA versions the frame for the slots `--mem2reg` leaves in memory. A
     /// model's `modes: ["frame-store"]` or `["frame-update"]` picks one for one function.
     /// `CTADL_FRAME` in the environment sets the default.
     #[arg(
