@@ -72,8 +72,7 @@ start:
 }
 
 // An update overwrites: the copy of the source leaves out the written field, so the field's old
-// value does not survive into the result. The S29 example in problem.md: the frame written
-// twice at one slot.
+// value does not survive into the result: the frame written twice at one slot.
 def UpdateOverwrites(st) {
 start:
   a = source(Data);

@@ -129,8 +129,8 @@ impl EscapePolicy {
 }
 
 /// The function-size threshold `full` takes when none is given: above any function of ordinary
-/// size, and well below the few that hold most of a native app's `locals` (zlib's `inflate`,
-/// about 3,500 direct accesses).
+/// size, and well below the few that hold most of a native program's `locals` (thousands of
+/// direct accesses).
 pub const DEFAULT_FULL_THRESHOLD: usize = 1000;
 
 /// The configuration of [`promote_stack_slots`].

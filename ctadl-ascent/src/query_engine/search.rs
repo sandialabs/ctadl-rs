@@ -379,8 +379,8 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
-        // A functional update's copy: taint on `y.p` reaches `x.p` unless the update wrote `p`
-        // or a path above it. Like a whole-variable copy it is `Fixed`, but it is not an alias:
+        // A functional update's copy (`updates_by_src`). Like a whole-variable copy it is
+        // `Fixed`, but it is not an alias:
         // `x` is a new value, so it gets no object hop back to `y`.
         if let Some(updates) = self.updates_by_src.get(&(f, v)) {
             for (x, w) in updates {

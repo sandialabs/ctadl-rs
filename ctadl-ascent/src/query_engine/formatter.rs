@@ -222,8 +222,7 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
-    /// The lines of the index's `notifications.log`: each place `ctadl index` analyzed in a way
-    /// that may miss flows. See [`crate::index_engine::notifications`].
+    /// The lines of the index's `notifications.log`; see [`crate::index_engine::notifications`].
     pub index_notifications: Vec<String>,
     /// Set only when the project had no index and the run checked the model files against the
     /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.

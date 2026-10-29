@@ -203,7 +203,7 @@ impl Context {
     ///
     /// A write into the frame itself, `__stack_top.[k].deref := src`, is a functional update,
     /// `__stack_top = update (__stack_top.[k].deref := src)`, so that SSA can version the frame.
-    /// The pipeline coarsens it into a store unless told otherwise (see
+    /// The pipeline keeps it, or coarsens it into a store under `--frame store` (see
     /// `ctadl_ir::ssa::FrameWrites`).
     ///
     /// A `dest` that is a frame address, `__stack_top.[k]`, writes nothing. It comes from a

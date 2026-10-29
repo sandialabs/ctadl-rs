@@ -101,15 +101,15 @@ impl Pipeline {
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
-            // The frame stays versioned for the slots mem2reg keeps in memory. On
-            // `androidudpbus` this cuts the index from 6.6 GB to 2.3 GB; across 45 firmware
-            // binaries and the regression suite it changes no finding.
+            // The frame stays versioned for the slots mem2reg keeps in memory, so a write to one
+            // of them overwrites what it held instead of joining every other value stored there.
             frame: FrameWrites::Update,
             dead_temps: true,
             coalesce: true,
-            // An escaped frame address is assumed to reach 8 slots. On `androidudpbus` this cuts
-            // the index from 849 s and 52 GB to 163 s and 15 GB, and it loses no flow in the
-            // regression suite. `Exact` is as fast but loses the flow in `example.c`.
+            // An escaped frame address is assumed to reach 8 slots. It loses no flow in the
+            // regression suite, where `Exact` loses one through a field of a struct passed by
+            // pointer, and promotes nearly as much as `Exact`, where `Above` promotes almost
+            // nothing.
             mem2reg: Some(Mem2Reg {
                 escape: EscapePolicy::Window(8),
                 full_above: None,

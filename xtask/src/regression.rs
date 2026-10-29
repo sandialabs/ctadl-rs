@@ -1646,7 +1646,7 @@ fn check_pcode_case(
     let offsets: Vec<i64> = tainted_offsets(sarif)?.into_iter().collect();
     // A positive case must carry a connected source -> sink flow. This is checked
     // before the tainted-instruction guard below so a lost flow reports as one, on
-    // every platform. (This used to be a SKIP on Darwin, which hid a lost flow.)
+    // every platform.
     if !connects {
         return Ok(Outcome::Fail(
             "no code flow connects a source to a sink".to_string(),
