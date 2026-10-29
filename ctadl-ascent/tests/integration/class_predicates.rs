@@ -1,18 +1,21 @@
 //! The JSON `parent` / `extends` constraints, and their migration to the DSL.
 //!
-//! Each case loads one generator twice against the same program: through the JSON matcher
-//! directly, and through the migrator and the DSL engine. The two must match the same
-//! functions (or, for `find: dispatch`, the same signature keys). The programs give each
+//! Each case runs one generator through the migrator and the DSL engine against each program,
+//! and requires it to select exactly the functions (or, for `find: dispatch`, the signature
+//! keys) the JSON matcher selected, which each case writes out. The programs give each
 //! frontend the shape that tells a faithful translation from a near miss: a Java and a CIL class
 //! with two direct supertypes, which is what separates "one supertype satisfies the whole
 //! predicate" from "each part is satisfied by some supertype"; and a Lua class, which the DSL's
 //! `parent` sees and the JSON's did not. On Lua the migration takes the DSL's meaning, so the two
 //! are compared everywhere else and the Lua results are pinned on their own.
+//!
+//! The expectations are the JSON matcher's answers, recorded from it; [`json_oracle`] confirms
+//! them against it for as long as it exists.
 
 use ctadl_ascent::models::dsl::migrate::migrate_generators;
 use ctadl_ascent::models::{
     DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
-    ProgramModelMatches, try_load_models_from_values,
+    ProgramModelMatches,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::call::{
@@ -297,23 +300,11 @@ fn with_model(find: &str, where_: Value) -> Value {
     json!({"find": find, "where": where_, "model": model})
 }
 
-/// Loads `generator` through the JSON matcher and through the migrated DSL, and returns both.
-fn both(
-    generator: &Value,
-    info: &ProgramInfo,
-    scope: &ImportScope,
-) -> (Selected, Selected, String) {
+/// Loads `generator` through the migrated DSL, and returns what it selected and the migrated
+/// text.
+fn run_dsl(generator: &Value, info: &ProgramInfo, scope: &ImportScope) -> (Selected, String) {
     let keys = DispatchKeys::from_program(&info.program);
     let index = ProgramMatchIndex::new_with_dispatch(info, scope.clone(), Some(&keys));
-
-    let mut from_json = ProgramModelMatches::default();
-    try_load_models_from_values(
-        &index,
-        std::iter::once(Ok(generator.clone())),
-        &mut from_json,
-    )
-    .unwrap_or_else(|e| panic!("JSON load of {generator}: {e}"));
-
     let (text, report) = migrate_generators(std::iter::once(generator), None)
         .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
     assert!(
@@ -330,7 +321,40 @@ fn both(
     matcher
         .finish(&mut from_dsl)
         .unwrap_or_else(|e| panic!("DSL run of {generator}: {e}"));
-    (selected(&from_json), selected(&from_dsl), text)
+    (selected(&from_dsl), text)
+}
+
+/// Everything in this file that runs the JSON matcher (`models/json.rs`).
+///
+/// The expectations below are what the JSON matcher selected, written out. While the matcher
+/// exists, [`check`] confirms each of them against it. When it is removed, this module and the
+/// calls to [`check`] are deleted, and nothing else changes.
+mod json_oracle {
+    use super::*;
+    use ctadl_ascent::models::try_load_models_from_values;
+
+    /// Requires the JSON matcher to select `expected` for `generator` on `info`.
+    pub(super) fn check(
+        generator: &Value,
+        info: &ProgramInfo,
+        scope: &ImportScope,
+        expected: &Selected,
+    ) {
+        let keys = DispatchKeys::from_program(&info.program);
+        let index = ProgramMatchIndex::new_with_dispatch(info, scope.clone(), Some(&keys));
+        let mut from_json = ProgramModelMatches::default();
+        try_load_models_from_values(
+            &index,
+            std::iter::once(Ok(generator.clone())),
+            &mut from_json,
+        )
+        .unwrap_or_else(|e| panic!("JSON load of {generator}: {e}"));
+        assert_eq!(
+            selected(&from_json),
+            *expected,
+            "the JSON matcher no longer selects what is recorded for {generator} on {scope:?}"
+        );
+    }
 }
 
 /// The Java program `generator` is checked against: [`java_program_with_sites`] for a generator
@@ -342,28 +366,55 @@ fn java_for(generator: &Value) -> fn() -> ProgramInfo {
     }
 }
 
-/// Requires the JSON and the migrated DSL to agree on every program but Lua, where the JSON's
-/// class predicates matched nothing; see [`parent_and_extends_see_lua_classes`].
-fn agree(generator: Value) {
-    for (name, info, scope) in programs(java_for(&generator)) {
-        if name.starts_with("lua") {
-            continue;
-        }
-        let (json, dsl, text) = both(&generator, &info, &scope);
-        assert_eq!(
-            json, dsl,
-            "JSON and migrated DSL disagree on {name} for {generator}\nmigrated:\n{text}"
-        );
-    }
+/// What one generator selected, by the JSON matcher, on each program but Lua's (where the
+/// JSON's class predicates matched nothing; see [`parent_and_extends_see_lua_classes`]).
+///
+/// Java and CIL are written as the Java class whose `m` was selected (`Lp/A;` for
+/// `Lp/A;->m(I)V`, or for `[App]P.A::m(…)`); for a dispatch generator, the key on that class.
+/// Native names functions. The CIL classes are spelled `[App]P.A`, so a predicate naming
+/// `Lp/A;` does not hold of one.
+struct Selects {
+    java: &'static [&'static str],
+    cil: &'static [&'static str],
+    native: &'static [&'static str],
 }
 
-/// [`agree`], plus what the JSON selects on the Java program, so a case cannot pass by both
-/// sides matching nothing.
-fn agree_on_java(generator: Value, expected: &[&str]) {
-    agree(generator.clone());
-    let (json, _, _) = both(&generator, &java_for(&generator)(), &ImportScope::unknown());
-    let expected: Selected = expected.iter().map(|c| java_method(c)).collect();
-    assert_eq!(json, expected, "the JSON selection for {generator}");
+/// Nothing selected anywhere.
+const NONE: Selects = Selects {
+    java: &[],
+    cil: &[],
+    native: &[],
+};
+
+/// Every function of [`native_program`], which has no class at all.
+const ALL_NATIVE: &[&str] = &["Lp/C;", "system"];
+
+/// Every class with a method.
+const ALL_CLASSES: &[&str] = &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"];
+
+/// Requires the migrated DSL to select what the JSON matcher selected for `generator`, on each
+/// program but Lua's and under both scopes: the JSON keyed its class constraints off the method
+/// table, not the declared language, so the scope must not matter.
+fn selects(generator: Value, expected: Selects) {
+    for (name, info, scope) in programs(java_for(&generator)) {
+        let want: Selected = match name.split(' ').next() {
+            Some("java") => expected.java.iter().map(|c| java_method(c)).collect(),
+            Some("cil") => expected
+                .cil
+                .iter()
+                .map(|c| cil_method(&cil_class(c)))
+                .collect(),
+            Some("native") => expected.native.iter().map(|f| f.to_string()).collect(),
+            _ => continue,
+        };
+        json_oracle::check(&generator, &info, &scope, &want);
+        let (dsl, text) = run_dsl(&generator, &info, &scope);
+        assert_eq!(
+            dsl, want,
+            "the migrated DSL on {name} for {generator} does not select what the JSON \
+             selected\nmigrated:\n{text}"
+        );
+    }
 }
 
 fn sig(name: &str) -> Value {
@@ -400,15 +451,31 @@ fn methods(constraints: Vec<Value>) -> Value {
 
 #[test]
 fn parent_leaves() {
-    agree_on_java(methods(vec![parent(sig("Lp/A;"))]), &["Lp/A;"]);
+    selects(
+        methods(vec![parent(sig("Lp/A;"))]),
+        Selects {
+            java: &["Lp/A;"],
+            ..NONE
+        },
+    );
     // `names` and `name` together are one membership test.
-    agree_on_java(
+    selects(
         methods(vec![parent(json!({"constraint": "signature_match",
                                     "name": "Lp/A;", "names": ["Lp/B;"]}))]),
-        &["Lp/A;", "Lp/B;"],
+        Selects {
+            java: &["Lp/A;", "Lp/B;"],
+            ..NONE
+        },
     );
     // Unanchored, as the JSON's `is_match` is.
-    agree_on_java(methods(vec![parent(name("C"))]), &["Lp/C;"]);
+    selects(
+        methods(vec![parent(name("C"))]),
+        Selects {
+            java: &["Lp/C;"],
+            cil: &["Lp/C;"],
+            ..NONE
+        },
+    );
     // No name at all is a predicate no class satisfies.
 }
 
@@ -416,9 +483,13 @@ fn parent_leaves() {
 /// meaning instead, where a metatable-recovered class is a class like any other.
 #[test]
 fn parent_and_extends_see_lua_classes() {
-    agree_on_java(
+    selects(
         methods(vec![parent(name(".*"))]),
-        &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: ALL_CLASSES,
+            cil: ALL_CLASSES,
+            ..NONE
+        },
     );
     let lua = lua_program();
     let cases = [
@@ -444,7 +515,7 @@ fn parent_and_extends_see_lua_classes() {
             ImportScope::new(ArtifactLanguage::Lua, "app"),
             ImportScope::unknown(),
         ] {
-            let (json, dsl, text) = both(&generator, &lua, &scope);
+            let (dsl, text) = run_dsl(&generator, &lua, &scope);
             let expected: Selected = expected.iter().map(|f| f.to_string()).collect();
             assert_eq!(
                 dsl, expected,
@@ -460,75 +531,130 @@ fn parent_and_extends_see_lua_classes() {
             } else {
                 Selected::new()
             };
-            assert_eq!(json, json_expected, "the JSON on Lua for {generator}");
+            json_oracle::check(&generator, &lua, &scope, &json_expected);
+            assert_ne!(dsl, json_expected, "{generator}");
         }
     }
 }
 
 #[test]
 fn parent_with_a_negated_inner() {
-    agree_on_java(
+    selects(
         methods(vec![parent(not(sig("Lp/C;")))]),
-        &["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"],
+            cil: ALL_CLASSES,
+            ..NONE
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![parent(not(name("^Lp/[AB];$")))]),
-        &["Lp/C;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/C;", "Lp/D;", "Lp/E;"],
+            cil: ALL_CLASSES,
+            ..NONE
+        },
     );
-    agree_on_java(methods(vec![parent(not(not(sig("Lp/C;"))))]), &["Lp/C;"]);
+    selects(
+        methods(vec![parent(not(not(sig("Lp/C;"))))]),
+        Selects {
+            java: &["Lp/C;"],
+            ..NONE
+        },
+    );
 }
 
 #[test]
 fn parent_with_nested_combinators() {
     // A class under `Lp/` that is neither `A` nor anything matching `D`.
-    agree_on_java(
+    selects(
         methods(vec![parent(all_of(vec![
             name("^Lp/"),
             not(any_of(vec![sig("Lp/A;"), name("D")])),
         ]))]),
-        &["Lp/B;", "Lp/C;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/C;", "Lp/E;"],
+            ..NONE
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![parent(any_of(vec![
             all_of(vec![name("^Lp/"), not(name("[A-C]"))]),
             sig("Lp/A;"),
         ]))]),
-        &["Lp/A;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/A;", "Lp/D;", "Lp/E;"],
+            ..NONE
+        },
     );
     // The empty combinators: `all_of` holds of every class, `any_of` of none.
-    agree_on_java(
+    selects(
         methods(vec![parent(all_of(vec![]))]),
-        &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: ALL_CLASSES,
+            cil: ALL_CLASSES,
+            ..NONE
+        },
     );
-    agree_on_java(methods(vec![parent(any_of(vec![]))]), &[]);
-    agree(methods(vec![not(parent(any_of(vec![])))]));
-    agree(methods(vec![not(parent(all_of(vec![])))]));
+    selects(methods(vec![parent(any_of(vec![]))]), NONE);
+    // Under a top-level `not`, a function with no class at all is selected too.
+    selects(
+        methods(vec![not(parent(any_of(vec![])))]),
+        Selects {
+            java: ALL_CLASSES,
+            cil: ALL_CLASSES,
+            native: ALL_NATIVE,
+        },
+    );
+    selects(
+        methods(vec![not(parent(all_of(vec![])))]),
+        Selects {
+            native: ALL_NATIVE,
+            ..NONE
+        },
+    );
 }
 
 #[test]
 fn parent_under_an_outer_not() {
-    agree_on_java(
+    selects(
         methods(vec![not(parent(sig("Lp/C;")))]),
-        &["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"],
+            cil: ALL_CLASSES,
+            native: ALL_NATIVE,
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![not(parent(any_of(vec![sig("Lp/A;"), name("D")])))]),
-        &["Lp/B;", "Lp/C;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/C;", "Lp/E;"],
+            cil: &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/E;"],
+            native: ALL_NATIVE,
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![not(parent(all_of(vec![
             name("^Lp/"),
             not(sig("Lp/A;")),
         ])))]),
-        &["Lp/A;"],
+        Selects {
+            java: &["Lp/A;"],
+            cil: ALL_CLASSES,
+            native: ALL_NATIVE,
+        },
     );
     // Alongside other constraints, and inside a `where`-level combinator.
-    agree_on_java(
+    selects(
         methods(vec![
             json!({"constraint": "signature_match", "name": "m"}),
             not(any_of(vec![parent(sig("Lp/A;")), extends(sig("Lp/A;"))])),
         ]),
-        &["Lp/B;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/E;"],
+            cil: ALL_CLASSES,
+            ..NONE
+        },
     );
 }
 
@@ -536,48 +662,73 @@ fn parent_under_an_outer_not() {
 /// two supertypes are `A` and `I`, so no single one is both.
 #[test]
 fn extends_tests_one_supertype_against_the_whole_predicate() {
-    agree_on_java(
+    selects(
         methods(vec![extends(all_of(vec![sig("Lp/A;"), sig("Lp/I;")]))]),
-        &[],
+        NONE,
     );
-    agree_on_java(
+    selects(
         methods(vec![extends(any_of(vec![sig("Lp/A;"), sig("Lp/I;")]))]),
-        &["Lp/C;", "Lp/D;"],
+        Selects {
+            java: &["Lp/C;", "Lp/D;"],
+            ..NONE
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![extends(all_of(vec![name("^Lp/"), not(sig("Lp/A;"))]))]),
-        &["Lp/C;"],
+        Selects {
+            java: &["Lp/C;"],
+            ..NONE
+        },
     );
     // Direct supertypes only: `C` reaches `Object` through `A`, but does not extend it.
-    agree_on_java(
+    selects(
         methods(vec![extends(sig("Ljava/lang/Object;"))]),
-        &["Lp/A;"],
+        Selects {
+            java: &["Lp/A;"],
+            ..NONE
+        },
     );
 }
 
 #[test]
 fn extends_with_a_negated_inner_and_under_an_outer_not() {
     // Some direct supertype is not `A`.
-    agree_on_java(
+    selects(
         methods(vec![extends(not(sig("Lp/A;")))]),
-        &["Lp/A;", "Lp/C;"],
+        Selects {
+            java: &["Lp/A;", "Lp/C;"],
+            cil: &["Lp/A;", "Lp/C;", "Lp/D;"],
+            ..NONE
+        },
     );
     // Every direct supertype is `A`, vacuously so for a class with none.
-    agree_on_java(
+    selects(
         methods(vec![not(extends(not(sig("Lp/A;"))))]),
-        &["Lp/B;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/D;", "Lp/E;"],
+            cil: &["Lp/B;", "Lp/E;"],
+            native: ALL_NATIVE,
+        },
     );
     // No supertype at all.
-    agree_on_java(
+    selects(
         methods(vec![not(extends(all_of(vec![])))]),
-        &["Lp/B;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/E;"],
+            cil: &["Lp/B;", "Lp/E;"],
+            native: ALL_NATIVE,
+        },
     );
-    agree_on_java(
+    selects(
         methods(vec![not(extends(any_of(vec![
             sig("Lp/I;"),
             name("Object"),
         ])))]),
-        &["Lp/B;", "Lp/D;", "Lp/E;"],
+        Selects {
+            java: &["Lp/B;", "Lp/D;", "Lp/E;"],
+            cil: &["Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"],
+            native: ALL_NATIVE,
+        },
     );
 }
 
@@ -607,48 +758,44 @@ fn class_predicates_on_call_sites() {
             "where": where_,
             "model": {"sinks": [{"kind": "k", "port": "Argument(0)"}]}
         });
+        let expected: Selected = expected.iter().map(|c| java_method(c)).collect();
         for scope in [
             ImportScope::new(ArtifactLanguage::Dex, "app"),
             ImportScope::unknown(),
         ] {
-            let (json, dsl, text) = both(&generator, &java_program_with_sites(), &scope);
-            assert_eq!(json, dsl, "{generator}\nmigrated:\n{text}");
+            let program = java_program_with_sites();
+            json_oracle::check(&generator, &program, &scope, &expected);
+            let (dsl, text) = run_dsl(&generator, &program, &scope);
+            assert_eq!(dsl, expected, "{generator}\nmigrated:\n{text}");
         }
-        let (json, _, _) = both(
-            &generator,
-            &java_program_with_sites(),
-            &ImportScope::unknown(),
-        );
-        let expected: Selected = expected.iter().map(|c| java_method(c)).collect();
-        assert_eq!(json, expected, "the JSON selection for {generator}");
     }
 }
 
 /// A dispatch generator's `parent` is the call site's class, on any frontend; its `extends`
-/// reads the Java or CIL hierarchy.
+/// reads the Java or CIL hierarchy. Only the Java program has call sites, so only it has keys.
 #[test]
 fn class_predicates_on_dispatch_keys() {
+    let java = |java| Selects { java, ..NONE };
     for (where_, expected) in [
-        (vec![parent(name("^Lp/[CI];$"))], vec!["Lp/C;", "Lp/I;"]),
+        (vec![parent(name("^Lp/[CI];$"))], java(&["Lp/C;", "Lp/I;"])),
         (
             vec![not(parent(name("^Lp/[CI];$")))],
-            vec!["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"],
+            java(&["Lp/A;", "Lp/B;", "Lp/D;", "Lp/E;"]),
         ),
         (
             vec![parent(not(sig("Lp/A;")))],
-            vec!["Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;", "Lp/I;"],
+            java(&["Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;", "Lp/I;"]),
         ),
         (
             vec![extends(all_of(vec![sig("Lp/A;"), sig("Lp/I;")]))],
-            vec![],
+            NONE,
         ),
-        (vec![extends(not(sig("Lp/A;")))], vec!["Lp/A;", "Lp/C;"]),
+        (vec![extends(not(sig("Lp/A;")))], java(&["Lp/A;", "Lp/C;"])),
         (
             vec![not(extends(any_of(vec![sig("Lp/A;"), sig("Lp/I;")])))],
-            vec!["Lp/A;", "Lp/B;", "Lp/E;", "Lp/I;"],
+            java(&["Lp/A;", "Lp/B;", "Lp/E;", "Lp/I;"]),
         ),
     ] {
-        let generator = with_model("dispatch", Value::Array(where_));
-        agree_on_java(generator, &expected);
+        selects(with_model("dispatch", Value::Array(where_)), expected);
     }
 }
