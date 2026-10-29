@@ -1386,27 +1386,23 @@ faithful! {
         {"constraint": "name", "pattern": "\\]B$"},
         {"constraint": "name", "pattern": "\\]I$"},
     ]))}]));
-    #[ignore = "migrator divergence: parent/extends all_of gives each inner its own class variable"]
     cil, java,
 }
 
 faithful! {
     /// `not` inside a class predicate.
     parent_inner_not = methods(json!([{"constraint": "parent", "inner": not(sig_name("Lapp/Base;"))}]));
-    #[ignore = "migrator divergence: `not` inside a parent/extends inner is skipped, so it matches everything"]
     java, cil,
 }
 
 faithful! {
     /// The JSON `parent` needs a Java or CIL class hierarchy and matches nothing elsewhere.
     parent_lua = methods(json!([{"constraint": "parent", "inner": {"constraint": "name", "pattern": "Account"}}]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
     lua,
 }
 
 faithful! {
     parent_lua_not = methods(json!([not(json!({"constraint": "parent", "inner": {"constraint": "name", "pattern": "Account"}}))]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
     lua,
 }
 
@@ -1463,9 +1459,7 @@ faithful! {
         {"constraint": "name", "pattern": "Mid|\\]A$"},
         {"constraint": "name", "pattern": "Other|\\]I$"},
     ]))}]));
-    #[ignore = "migrator divergence: parent/extends all_of gives each inner its own class variable"]
     java,
-    #[ignore = "migrator divergence: parent/extends all_of gives each inner its own class variable"]
     cil,
 }
 
@@ -1474,15 +1468,12 @@ faithful! {
         {"constraint": "name", "pattern": "Mid|\\]A$"},
         {"constraint": "name", "pattern": "Other|\\]I$"},
     ]))}))]));
-    #[ignore = "migrator divergence: parent/extends all_of gives each inner its own class variable"]
     java,
-    #[ignore = "migrator divergence: parent/extends all_of gives each inner its own class variable"]
     cil,
 }
 
 faithful! {
     extends_inner_not = methods(json!([{"constraint": "extends", "inner": not(sig_name("Lapp/Mid;"))}]));
-    #[ignore = "migrator divergence: `not` inside a parent/extends inner is skipped, so it matches everything"]
     java,
 }
 
@@ -1492,19 +1483,16 @@ faithful! {
         not(sig_name("Ljava/lang/Object;")),
         sig_name("Lapp/Base;"),
     ]))}]));
-    #[ignore = "migrator divergence: `not` inside a parent/extends inner is skipped, so it matches everything"]
     java,
 }
 
 faithful! {
     extends_lua = methods(json!([{"constraint": "extends", "inner": {"constraint": "name", "pattern": "Account"}}]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
     lua,
 }
 
 faithful! {
     extends_lua_not = methods(json!([not(json!({"constraint": "extends", "inner": {"constraint": "name", "pattern": "Account"}}))]));
-    #[ignore = "migrator divergence: DSL parent/subclass include Lua metatable classes"]
     lua,
 }
 
