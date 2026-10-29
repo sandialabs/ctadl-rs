@@ -411,8 +411,9 @@ ctadl migrate-models my-models.jsonl --dry-run  # check only
 ```
 
 It loads what it produced before writing it, so a file that translates but does not check is a
-failure rather than a surprise on the next index. Anything that cannot carry across is reported
-rather than approximated.
+failure rather than a surprise on the next index. A generator that cannot carry across exactly
+fails the migration, with the JSON loader's own error where the loader rejects it, rather than
+being approximated or skipped.
 
 #### JSON model files are deprecated
 
@@ -550,7 +551,7 @@ The requirement that example illustrates — "argument 1's `.baz` of calls to F 
 the error message says exactly that.
 
 **`Variable(...)` ports have no DSL spelling.** A source or sink on a named local is not
-expressible; the migrator warns when it meets one.
+expressible; migrating a generator that uses one fails, naming it.
 
 **JVM, DEX and pcode regression suites did not run** — this machine has no Java or Ghidra
 toolchain. The Java and native defaults are covered semantically by the equivalence test, not end

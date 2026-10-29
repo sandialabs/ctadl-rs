@@ -87,7 +87,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | relation | columns | attributes |
 | --- | --- | --- |
 | `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import` |
-| `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id` |
+| `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id`, `language`, `import` |
 | `param(F, Index)` | function, parameter index | — |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
 | `subclass(Sub, Super)` | two classes, direct edge | — |
@@ -111,8 +111,9 @@ Notes worth having:
 - `callsig` is a **different universe from `fun`**, not a view of it. `fun` is built from the
   method table, which holds implementations; `callsig` is built from the call sites, so it names
   types the program never declares — `Ljava/util/Iterator;` has no implementation row anywhere,
-  and only `callsig` can select it. It carries no `arity`, `has_code`, `language` or `import`: a
-  signature key is composed from a call site, not read out of an import's method table. Collecting
+  and only `callsig` can select it. It carries no `arity` or `has_code`: a signature key is
+  composed from a call site, not read out of an import's method table. Its `language` and
+  `import` are those of the import the call site was read from. Collecting
   the keys costs a pass over every statement, so an import pays for it only when some rule reads
   `callsig`; a rule that reads it against an import collected without them matches nothing.
 
@@ -208,10 +209,11 @@ The point of a model file is to derive these.
   | --- | --- |
   | `K::dispatch(return <- arg(0))` | a summary flow; the receiver is `arg(0)`, as on a `propagation` |
   | `K::dispatch(resolve = "inline")` | defer to hybrid inlining regardless of the threshold |
+  | `K::dispatch(resolve = "inline", return <- arg(0))` | inline, and apply this summary flow too |
   | `K::dispatch(resolve = "skip")` | this call moves nothing; the target set is discarded |
   | `K::dispatch(closure_shaped = true)` | a report-time marker; nothing resolves differently |
 
-  A flow and an attribute in one head is an error, so "forgot the model" and "meant to discard"
+  A flow and an attribute in one head is an error, but for `resolve = "inline"`, so "forgot the model" and "meant to discard"
   stay different documents. Several flow heads on one key accumulate into one summary. Because a
   dispatch model takes the callee bodies out of the analysis along with the edges, it belongs on
   methods whose behaviour is fixed by the interface they implement — see the commentary in
@@ -340,7 +342,7 @@ How the JSON constructs map:
 | `find: methods` | the subject variable `F`, bound by `fun(F, …)` |
 | `find: callsites` | `callsite(C, S, callee_string = F)`, ports anchored at `S` |
 | `find: dispatch` | the key variable `K`, bound by `callsig(K, …)` |
-| `in: {language, languages, import}` | `fun(F, language = …, import = …)` |
+| `in: {language, languages, import}` | `fun(F, language = …, import = …)`, or the same on `callsig` |
 | `signature_match` name/parent/qualified-id | `fun(F, name = …, parent = …, qualified-id = …)` |
 | `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)` |
 | `has_code` | `fun(F, has_code = …)` |
@@ -354,18 +356,21 @@ How the JSON constructs map:
 | `model: {propagation: [...]}` under `find: dispatch` | `K::dispatch(<out> <- <in>)` |
 | `model: {propagation: []}` | `K::dispatch(resolve = "skip")` — a head is an atom, and there is no empty one |
 | `model: {resolve: "inline"}` | `K::dispatch(resolve = "inline")` |
+| `model: {resolve: "inline", propagation: [...]}` | `K::dispatch(resolve = "inline", <out> <- <in>)` |
 | `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
 
-Three things do not carry across, and are reported rather than approximated:
+A migration says what the JSON means or fails: it never writes a rule that matches more or less.
+A generator the JSON loader rejects fails with the loader's own error. Keys the loader accepts and
+ignores (`taint`, `forward_self`, a `modes` list without `skip-analysis`, an `on-unmatched` or
+`on-ambiguous` other than `"error"`) are warnings. These the loader accepts and the DSL cannot say
+fail the migration, naming the generator:
 
-- `taint`, `modes`, `forward_self` — schema-only in the JSON loader too; a model using them
-  parses and has no effect either way.
 - `Variable(...)` ports, which select a local by source name.
-- A `bridge` with no `arguments` map. The JSON loader falls back to an identity map over the
-  arity the two sides share, which needs the fact base and cannot be written as a rule. Write the
-  map.
-- An `in` scope on a `find: dispatch` generator: a signature key carries no language or import to
-  narrow on.
+- `modes: ["skip-analysis"]`: there is no DSL head that drops a function's body.
+- A `bridge` with no `arguments` map, or an empty one. The JSON loader falls back to an identity
+  map over the arity the two sides share, which needs the fact base; an empty map bridges only the
+  globals. Write the map.
+- `on-unmatched` / `on-ambiguous: "error"`, which fails the run, and a rule cannot.
 
 ---
 

@@ -17,8 +17,10 @@ approximate: `any_of` was already a union over the matched set. The empty disjun
 
 # What does not translate
 
-A migration either says exactly what the JSON loader would have done or fails; it never writes
-a rule that matches more or less. Three cases:
+A migration either says what the JSON loader means or fails; it never writes a rule that
+matches more or less. Where the JSON matcher has a bug (`in_function` under `any_of` / `not`
+narrows the callee, not the caller) the DSL's meaning is the one written. Three cases fail or
+warn:
 
 - **The loader rejects the generator.** The migration fails with the loader's own error, because
   the loader itself is run over each generator first (see [`json_loader_errors`]).
@@ -26,10 +28,8 @@ a rule that matches more or less. Three cases:
   `modes` list without `skip-analysis` does nothing, and `on-unmatched` / `on-ambiguous` other
   than `"error"` change only what is logged. These are warnings.
 - **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, the
-  `skip-analysis` mode, a bridge with no `arguments` map (or an empty one), a scoped dispatch
-  generator, `resolve: "inline"` with a `propagation` list, an `"error"` severity, and an
-  `in_function` under `any_of` / `not`. Each is a [`JsonModelError::Untranslatable`] that says
-  why.
+  `skip-analysis` mode, a bridge with no `arguments` map (or an empty one), and an `"error"`
+  severity. Each is a [`JsonModelError::Untranslatable`] that says why.
 */
 
 use std::fmt::Write as _;

@@ -791,9 +791,9 @@ K::dispatch(resolve = "inline") :-
 K::dispatch(resolve = "inline") :-
   callsig(K, name in {"MoveNext", "MoveNextAsync"}, parent in {"[System.Private.CoreLib]System.Collections.IEnumerator", "[System.Private.CoreLib]System.Collections.Generic.IAsyncEnumerator`1"});
 
-K::dispatch(resolve = "inline") :-
+K::dispatch(resolve = "inline", return <- arg(0)) :-
   callsig(K, name = "GetEnumerator", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerable`1", "[System.Private.CoreLib]System.Collections.IEnumerable"});
 
-K::dispatch(resolve = "inline") :-
+K::dispatch(resolve = "inline", return <- arg(0)."[]") :-
   callsig(K, name = "get_Current", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerator`1", "[System.Private.CoreLib]System.Collections.IEnumerator"});
 

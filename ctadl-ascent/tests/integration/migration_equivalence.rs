@@ -9,18 +9,17 @@
 //! closure-shaped markers and bridges.
 //!
 //! When the JSON matcher refuses a generator, the faithful outcome is that the migrated form is
-//! refused too: the DSL fails to load or to emit, or migration produced no row at all. A
-//! migration that *warns* and still emits rows is not faithful -- a file the old loader rejected
-//! would start applying models.
+//! refused too: the migration fails, the DSL fails to load or to emit, or migration produced no
+//! row at all. A migration that *warns* and still emits rows is not faithful -- a file the old
+//! loader rejected would start applying models. A migration may also refuse a generator the JSON
+//! matcher accepts, when the DSL cannot express it (`JsonModelError::Untranslatable`): a loud
+//! refusal never changes what a file matches.
 //!
 //! The fixtures are deliberately small but discriminating: a multi-level Java hierarchy with a
 //! class that has two direct supertypes, methods with and without bodies and of several arities,
 //! a lowered function the method table does not name, field loads, stores and updates, call
 //! sites of several callees from several callers, a Lua metatable hierarchy and externals, native
 //! symbols published under several spellings, and a CIL table with an override alias row.
-//!
-//! Tests that fail because the migration is unfaithful are `#[ignore]`d with the reason, so the
-//! suite stays green while documenting each divergence; run them with `--ignored`.
 //!
 //! Where the JSON matcher has a bug or a limitation, the migration takes the DSL's meaning
 //! rather than reproducing it. Those cases are not ignored: they pin the exact difference
@@ -970,7 +969,8 @@ const IN_FUNCTION_BUG: &str =
 /// `known.diff`.
 fn assert_known_on(frontend_name: &str, generator: &Value, known: &Known) {
     let imports = [frontend(frontend_name)];
-    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None);
+    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None)
+        .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
     let json = run_json(generator, &imports).expect("the JSON matcher accepts the generator");
     let dsl = run_dsl(&text, &imports)
         .unwrap_or_else(|e| panic!("the migrated DSL fails: {e}\nmigrated DSL:\n{text}"));
@@ -1276,14 +1276,12 @@ faithful! {
     signature_match_unknown_field = methods(json!([
         {"constraint": "signature_match", "name": "get", "extends": "Lapp/Base;"}
     ]));
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     /// No honored field at all.
     signature_match_no_field = methods(json!([{"constraint": "signature_match"}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
@@ -1474,7 +1472,6 @@ faithful! {
         "constraint": "number_parameters",
         "inner": {"constraint": "name", "pattern": "x"},
     }]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
@@ -1591,13 +1588,11 @@ faithful! {
 faithful! {
     /// `parent` is not a field of a class-level `signature_match`.
     parent_inner_unknown_field = methods(json!([{"constraint": "parent", "inner": {"constraint": "signature_match", "name": "Lapp/Base;", "parent": "x"}}]));
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     parent_inner_unknown_constraint = methods(json!([{"constraint": "parent", "inner": {"constraint": "has_code", "value": true}}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
@@ -1770,27 +1765,23 @@ faithful! {
 
 faithful! {
     not_without_inner = methods(json!([{"constraint": "not"}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
 faithful! {
     /// An unknown constraint is a hard error to the JSON loader.
     unknown_constraint = methods(json!([{"constraint": "parameter", "index": 0}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
 faithful! {
     unknown_constraint_not = methods(json!([not(json!({"constraint": "frobnicate"}))]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
 faithful! {
     /// `in_function` under `find: methods` is refused.
     in_function_on_methods = methods(json!([{"constraint": "in_function", "inner": sig_name("main")}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
@@ -2055,7 +2046,6 @@ faithful! {
         "where": [sig_name("exec")],
         "model": {"resolve": "inline", "propagation": [{"input": "Argument(1)", "output": "Return"}]},
     });
-    #[ignore = "migrator divergence: `resolve` drops the `propagation` beside it"]
     java,
 }
 
@@ -2088,7 +2078,6 @@ faithful! {
         "where": [sig_name("next")],
         "model": {"closure_shaped": true, "resolve": "inline"},
     });
-    #[ignore = "migrator divergence: conflicting dispatch dispositions are not refused"]
     java,
 }
 
@@ -2098,7 +2087,6 @@ faithful! {
         "where": [sig_name("next")],
         "model": {"propagation": [], "sources": [{"kind": "Src", "port": "Return"}]},
     });
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
@@ -2110,7 +2098,6 @@ faithful! {
         "where": [sig_name("next")],
         "model": {"propagation": []},
     });
-    #[ignore = "migrator divergence: `in` is dropped on a dispatch generator"]
     java,
 }
 
@@ -2132,7 +2119,6 @@ faithful! {
 
 faithful! {
     dispatch_in_function = dispatch(json!([sig_name("next"), {"constraint": "in_function", "inner": sig_name("main")}]));
-    #[ignore = "migrator divergence: a skipped constraint becomes true instead of refusing the generator"]
     java,
 }
 
@@ -2186,7 +2172,6 @@ faithful! {
         "modes": ["skip-analysis"],
         "propagation": [{"input": "Argument(1)", "output": "Return"}],
     }));
-    #[ignore = "migrator divergence: `modes: skip-analysis` is dropped as if it had no effect"]
     java,
 }
 
@@ -2202,32 +2187,27 @@ faithful! {
 faithful! {
     /// A source with no `kind` is refused, not defaulted.
     model_source_without_kind = with_model(json!([sig_name("get")]), json!({"sources": [{"port": "Return"}]}));
-    #[ignore = "migrator divergence: a missing `kind` is defaulted instead of refusing"]
     java,
 }
 
 faithful! {
     model_sink_with_saturating = with_model(json!([sig_name("get")]), json!({"sinks": [{"kind": "K", "port": "Return", "saturating": true}]}));
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     model_source_with_wildcard = with_model(json!([sig_name("get")]), json!({"sources": [{"kind": "K", "port": "Return", "wildcard": true}]}));
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     model_propagation_with_wildcard = with_model(json!([sig_name("get")]), json!({"propagation": [{"input": "Argument(0)", "output": "Return", "wildcard": true}]}));
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     /// A `Variable(name)` source port selects a named local of the matched function.
     model_variable_port = with_model(json!([sig_name("get")]), json!({"sources": [{"kind": "K", "port": "Variable(loaded)"}]}));
-    #[ignore = "migrator divergence: `Variable(...)` ports are not translated"]
     java,
 }
 
@@ -2244,13 +2224,11 @@ faithful! {
 faithful! {
     /// A misspelled generator key is refused rather than dropped.
     generator_unknown_key = json!({"find": "methods", "wehre": [sig_name("get")], "model": method_model()});
-    #[ignore = "migrator divergence: an unknown key is ignored instead of refusing the generator"]
     java,
 }
 
 faithful! {
     generator_without_find = json!({"where": [sig_name("get")], "model": method_model()});
-    #[ignore = "migrator divergence: a missing `find` defaults to methods instead of refusing"]
     java,
 }
 
@@ -2265,16 +2243,18 @@ faithful! {
         not(sig_name("get")),
         {"constraint": "has_code", "value": true},
     ]));
-    #[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
-    java,
-    #[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
-    native,
-    #[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
-    lua,
-    #[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
-    cil,
-    #[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
-    unknown,
+    java, native, lua, cil,
+    unknown => Known {
+        reason: JSON_UNIVERSE,
+        diff: &[
+            "DSL only propagations: f1: Return <- Index(0)",
+            "DSL only propagations: f2: Return <- Index(0)",
+            "DSL only endpoints: f1 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f1 Forward Return kind=Src wildcard=false saturating=false local=None",
+            "DSL only endpoints: f2 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "DSL only endpoints: f2 Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -2483,7 +2463,6 @@ fn arguments() -> Value {
 }
 
 /// A port pair with no `direction` is `both` to the JSON loader (`spec::Direction`'s default).
-#[ignore = "migrator divergence: a bridge pair with no `direction` becomes `in`, not `both`"]
 #[test]
 fn bridge_default_direction() {
     assert_faithful(
@@ -2523,7 +2502,6 @@ fn bridge_cross_product() {
 }
 
 /// `not` on side A.
-#[ignore = "migrator divergence: a leading `not` is emitted before the atom that binds F"]
 #[test]
 fn bridge_not_on_the_from_side() {
     assert_faithful(
@@ -2537,7 +2515,6 @@ fn bridge_not_on_the_from_side() {
 }
 
 /// A disjunction on side B is a union.
-#[ignore = "migrator divergence: only the first alternative of a bridge's `to` disjunction is kept"]
 #[test]
 fn bridge_disjunction_on_the_to_side() {
     assert_faithful(
@@ -2552,7 +2529,6 @@ fn bridge_disjunction_on_the_to_side() {
 
 /// No `arguments`: the JSON loader falls back to an identity map over the shared arity, which
 /// the migration cannot write as a rule.
-#[ignore = "migrator divergence: a bridge with no `arguments` carries only the return value"]
 #[test]
 fn bridge_without_arguments() {
     assert_faithful(
