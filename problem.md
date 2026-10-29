@@ -200,28 +200,59 @@ Skipping `malloc` alone (`skip-analysis`) lets both finish: `hnapserver` 2.20 GB
   instructions, about 1,550 stores to `$globals`, and the most call sites among such functions.
   (`adb` `FUN_0042d400`: 5,456 instructions, 1,568 global stores, 70 call sites.)
 
-### 5. `libgdx`: `glxy` and its siblings
+### 5. `libgdx`: a vectorized callee whose summary relates every offset to every offset
 
-`com.kaeruct.glxy` is 1.5x over budget under the default (76.6 M `locals`, 2.12 GiB, 15.1 MB IR).
-`FUN_0010b408` holds about 90% of `locals`, but promoting it fully cuts only 16%, so its rows are
-not from the stack. P6 is the suspect; unchecked. `retrodrawing` and `halma` carry the same library
-(two builds of it), and before P1 all three peaked at 20-23 GB whatever the rest of the app was.
+`glxy`, `retrodrawing` and `halma` (1.52x, 1.91x and 1.26x) carry stb_image in `libgdx`. The hub
+is stb_image's load function with the decoders inlined: `glxy` `FUN_0010b408` holds 87.5% of
+`locals`, and its counterparts hold 42% in the other two. The other two share one libgdx build
+relinked: per-function counts match within 0.1%. `glxy`'s is a newer build with more inlined.
 
-### 6. Apps not measured since P1
+- **Not the stack, not P6.** `--mem2reg full` now cuts 1% (`FUN_0010b408` 0.3%). The 16% was
+  measured before P1's frontend fix. Wild relations are under 1% of the hub's rows.
+- **Problem 3's offset pile-up, at about 200 offsets per shape.** Four source shapes
+  (`@p0.deref.[k].deref` and the like) hold 95% of the hub's rows. Each shape's variants fall into
+  5-20 distinct `(v, p)` sets: collapsing them leaves 54x fewer rows (estimated from the dump).
+  Inside the hub the cause is `img_buffer++` in the inlined `stbi__get8` loops.
+- **The multiplier is a callee.** `FUN_0011bc30` (called 6 times) is a NEON-vectorized pixel loop:
+  the pointers advance by 64 per trip and the body touches 32 lanes at `.[-32]..[30]`. Its summary
+  is `@pA.[a].deref <- @pB.[b].deref` for every `a, b` in -64..95, 4,027 rows per argument pair.
+  Instantiated at each call, it connects every offset of one buffer to every offset of the others,
+  so each offset variant in the hub reaches the same 140 K `(v, p)`. 73% of the hub's
+  `assign_like` (96% in `retrodrawing`) is callee summary instances.
+- **Measured.** Skipping the vectorized callee cuts `locals` 55-67%: `glxy` 1.09x (0.89x with the
+  second one, `FUN_0011c900`), `retrodrawing` 1.09x, `halma` 0.82x. The same offset collapse as
+  problem 3 would also shrink the callee's summary. A fix aimed only at the caller's own loop
+  would not.
 
-Before S3 (pruned SSA on `main`, each APK imported whole, Dex and arm64 libraries):
+### 6. dav1d in `avifview`: a self-recursive function feeds its summary back into itself
 
-| App | IR | Peak then | Against budget then |
-|---|---|---|---|
-| `com.github.msx80.retrodrawing` (`libgdx`) | 15.4 MB | 20.0 GB | 13.0x |
-| `com.zoffcc.applications.avifview` | 51.7 MB | 59 GB or more | 11.5x (guard hit) |
-| `app.halma` (`libgdx`) | 31.5 MB | 22.6 GB | 7.2x |
-| `org.mattvchandler.a2050` | 60.2 MB | 33.9 GB | 5.6x (also P6) |
-| `fir.tube` | 27.1 MB | 12.4 GB | 4.6x |
-| WhatsApp 2.17.79 with native libraries | | 7.34 GB, 484 s | 186 M `locals`, 90 rows per path |
+The apps, re-measured on this branch (fresh imports, hashes checked; the rows are 98% or more in
+the native library in every app):
 
-None has been run with S3, S29 or the frontend fix. Measure them first: some may already be
-under budget, and the rest sort into the shapes above.
+| App | Peak | Against budget | Before S3 | Shape |
+|---|---|---|---|---|
+| `glxy` | 2.12 GiB | 1.52x | | 5 |
+| `retrodrawing` | 2.72 GiB | 1.91x | 13.0x | 5 |
+| `fir.tube` (Rust `argon2`) | 3.24 GiB | 1.34x | 4.6x | 3, spread over 10 functions |
+| `halma` | 3.67 GiB | 1.26x | 7.2x | 5 |
+| `a2050` | 9.04 GiB | 1.69x | 5.6x | 3, in 30 libc++ `std::__sort` copies (51%); P6 second |
+| `avifview` | 15.9 GiB at the 3,000 s timeout | 3.3x or more | 11.5x | this problem |
+
+- **The hub.** `avifview`'s `FUN_001189a8` is dav1d code in `libavif-jni.so`: 95 K IR lines, 49
+  recovered parameters (mostly Ghidra over-recovery), 568 `$globals` offsets, and 8 direct calls
+  to itself.
+- **The summary.** It is a cross product into globals, `$globals.[k].deref <- @pN.deref.[k].deref`,
+  57 K rows per argument over about 17 arguments: 1.03 M rows, 67% of all `summary` at 300 s.
+- **The loop.** The self-calls instantiate the summary into the function's own body. A larger
+  summary means more `assign_like` edges, which mean more `locals`, which mean a larger summary,
+  so the fixpoint runs through one function's own summary.
+- **Measured.** Skipping it alone: the fixpoint in 153 s at 4.30 GiB (0.93x). The large
+  `edge_split_wild` (33 M) is downstream: 74% of it is in this function.
+- **`a2050` (problem 3):** the 30 `std::__sort<T>` copies hold sources at about 370 offsets
+  (`first++`/`last--` with element strides 1-16) in 2 distinct sets: about 84x collapse,
+  estimated. The wild `locals <-- ext_fml` rule is 22.6% of rule time (`ext_fml` 7.2 M, in
+  nlohmann::json's `__emplace_back_slow_path`).
+- **WhatsApp:** not re-measured (the APK is not available).
 
 ### 7. Escaped stack slots: sound, but not affordable
 
@@ -250,7 +281,8 @@ memory:
 
 - **It is the top rule at the default on `androidudpbus`:** 11.6 s of 58 s.
 - **It dominates under `above`:** 446 s of 699 s on `androidudpbus`.
-- **Unchecked:** no firmware sweep run shows it. It should be checked on the apps.
+- **Rare elsewhere:** no firmware sweep run shows it. On the apps it is 0-2.6% of rule time, except
+  `fir.tube`, where it is 14.3%.
 
 (The old problem 8, path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`, is not
 independent. It is the 44x row growth from turning promotion off (188.6 M rows, 8.0 GiB, against
