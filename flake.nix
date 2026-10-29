@@ -157,10 +157,6 @@
         packages.gap-gen = cil.gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
-        # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
-        packages.legacy-pcode-cli = pkgs.writeShellScriptBin "ctadl-legacy-pcode-cli" ''
-          ${self.packages.${system}.default}/bin/ctadl legacy-pcode-cli "$@"
-        '';
         packages.checksarif = checksarif;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
