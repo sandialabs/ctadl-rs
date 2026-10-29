@@ -46,7 +46,7 @@ impl Decision {
     pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.formal
             .cmp(&other.formal)
-            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| self.path.content_cmp(&other.path))
             .then_with(|| self.target.content_cmp(&other.target))
     }
 }
@@ -140,9 +140,9 @@ impl Display for DecisionId {
 ///
 /// **Encoding.** Each kind has its own interner, whose ids all fit in 31 bits; the top bit,
 /// [`COLLAPSING`], names the kind and so which interner the low bits index. The empty set and
-/// the two ⊤s take raw values below 256, which neither interner issues (an id is at least its
-/// shard count). The kind is a property of each set, not of the process, so indexes of both
-/// kinds can be built side by side (R16).
+/// the two ⊤s take raw values below [`FIRST_INTERNED`], which neither interner issues. The kind
+/// is a property of each set, not of the process, so indexes of both kinds can be built side by
+/// side (R16).
 ///
 /// `Eq` and `Hash` act on the handle alone. There is no `Ord`: the order is the lattice's
 /// `PartialOrd` (R10).

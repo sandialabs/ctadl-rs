@@ -250,12 +250,6 @@ impl Path {
         self.node().map_or(EMPTY_PATH_HASH, |n| n.hash)
     }
 
-    /// The handle's bits. Distinct paths have distinct bits, and [`Path::EMPTY`]'s are 1.
-    #[inline]
-    pub(crate) fn bits(self) -> u32 {
-        self.0.get()
-    }
-
     /// The first segment and the rest, in one arena read. `None` for the empty path.
     #[inline]
     pub(crate) fn uncons(self) -> Option<(&'static mir::PathSegment, Path)> {
@@ -309,7 +303,8 @@ impl Path {
         self.is_empty() || PathId::from_raw(self.0.get()).is_some()
     }
 
-    /// The handle's bits: [`Path::EMPTY`]'s, or the [`PathId`]'s.
+    /// The handle's bits: [`Path::EMPTY`]'s, which are 1, or the [`PathId`]'s. Distinct paths
+    /// have distinct bits.
     #[inline]
     pub fn raw(self) -> u32 {
         self.0.get()
@@ -323,8 +318,7 @@ impl Path {
         PathId::from_raw(raw).map(|id| Path::from_id(Some(id)))
     }
 
-    /// Orders by content, as `main`'s `Path` did: segment by segment from the innermost, a
-    /// proper prefix first. Walks both paths through the arena, and stops at a shared suffix.
+    /// Orders by content: segment by segment from the innermost, a proper prefix first. Walks both paths through the arena, and stops at a shared suffix.
     pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         let (mut a, mut b) = (*self, *other);
@@ -523,8 +517,8 @@ impl Iterator for PathIter {
     }
 }
 
-// serde writes the cons list as `main`'s `tailshare::Seq` did, node by node from the head:
-// `Nil`, or a struct `Node { head, tail }`, inside a newtype `Path` (R11).
+// serde writes the cons list node by node from the head: `Nil`, or a struct
+// `Node { head, tail }`, inside a newtype `Path` (R11).
 impl Serialize for Path {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         struct Node(Path);
@@ -1370,7 +1364,6 @@ impl Display for CallTargetObjectKind {
 immortal::id_handle! {
     /// An interned [`CallTargetObjectKind`]: a 4-byte handle into a process-wide interner that
     /// never frees. Ordered by id, so sort with `content_cmp` wherever the order is printed.
-    /// `Display` and serde go through the content.
     pub struct CallTargetObject(CallTargetObjectKind);
 }
 
@@ -1429,8 +1422,7 @@ interned_enum_impls!(CallDispatchKey, CallDispatchKeyKind);
 static C_DISPATCH: LazyLock<CallDispatchKey> = LazyLock::new(|| CallDispatchKeyKind::C.into());
 
 impl CallDispatchKey {
-    /// `C`'s handle. The first call interns it, so call this before a fixpoint whose rules
-    /// compare against it; after that it takes no lock.
+    /// `C`'s handle. The first call interns it; later calls take no lock.
     pub fn c() -> CallDispatchKey {
         *C_DISPATCH
     }

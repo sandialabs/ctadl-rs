@@ -65,7 +65,7 @@ pub mod source_info;
 // Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
 // them are `Copy`, fixed-width and free of padding. `Path` and a local `FlowVariable`'s `Str` are
 // 4-byte ids into interners that never free, so their bits stay valid for the whole process,
-// which is as long as the provider's run files live. Debug builds check every id read back.
+// which is as long as the provider's run files live.
 lsm::lsm_col!(FunctionId, 1, [u32]);
 lsm::lsm_col!(FlowVariable, 1, [u64], valid = FlowVariable::is_valid);
 lsm::lsm_col!(Path, 1, [std::num::NonZeroU32], valid = Path::is_valid);
@@ -644,7 +644,7 @@ impl IndexResult {
         external_function::try_save(&dir, self.external_function)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         intent_pair::try_save(&dir, self.intent_pair)?;
-        // After the tables, since writing them interns each path's string.
+        // After the tables, so the sizes include anything writing them interned.
         let mut profile = self.stats.profile;
         profile.memory.read_interned();
         let profile_path = dir.as_ref().join(profile::PROFILE_FILE);
@@ -1311,8 +1311,7 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
-/// `<component>`, the path of an intent's target component. Interned at seeding, with
-/// [`ACTION_PATH`] and [`TYPE_PATH`], so the intent rules intern nothing (R6).
+/// `<component>`, the path of an intent's target component.
 pub static COMPONENT_PATH: LazyLock<Path> =
     LazyLock::new(|| Path::from_symbol_names(["<component>"]));
 /// `<action>`, the path of an intent's action.
@@ -1384,7 +1383,7 @@ ascent_source! {
     // Analysis drivers:
 
     // Set of syntactic access paths. Computed before the run by `compute_paths`, and read by no
-    // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`],
+    // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`] (C9),
     // which every rule that tests or splits a path asks.
     relation paths(Path);
     relation path_set(PathSetRef);
@@ -2289,15 +2288,13 @@ impl<'a> EngineInput<'a> {
             summary_paths.into_iter().collect(),
             deref_paths,
         );
-        // Freezing interns every split the rules ask for, so the fixpoint interns no path (R6).
         let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
-        // The `paths` relation and the path set are the same set (C9): the rule that once joined
-        // `paths` now asks the path set.
         debug_assert!(
             path_set.len() == paths.len() && paths.iter().all(|(p,)| path_set.contains(p)),
             "the paths relation and the path set differ"
         );
-        // The paths the intent rules match by name.
+        // The paths the intent rules match by name, interned here so the rules intern nothing
+        // (R6).
         for p in [&COMPONENT_PATH, &ACTION_PATH, &TYPE_PATH] {
             LazyLock::force(p);
         }

@@ -26,11 +26,11 @@
 #   scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app
 #   scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app -j 8
 #
-# The dump is written by the index engine (ctadl-index/src/index_engine/dump.rs)
-# and prints every column by content, never by intern id. Rows are compared as
-# sets: each relation is sorted with `LC_ALL=C sort -u`, so row order and
-# duplicates do not matter. Raw dumps and sort's temporary files go under
-# $TMPDIR; point it at a disk with room for a few times the dump.
+# The dump is written by the index engine (ctadl-index/src/index_engine/dump.rs).
+# Rows are compared as sets: each relation is sorted with `LC_ALL=C sort -u`,
+# so row order and duplicates do not matter. Raw dumps and sort's temporary
+# files go under $TMPDIR; point it at a disk with room for a few times the
+# dump.
 #
 # Exits 0 if every relation is the same set on both sides, 1 if any differs
 # (with a summary per differing relation), 2 on a usage or run error.

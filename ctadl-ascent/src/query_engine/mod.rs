@@ -51,8 +51,8 @@ pub struct QueryFacts {
     pub endpoints: Vec<(QueryEndpoint,)>,
 }
 
-/// The formatter numbers graph nodes and orders results by row order, so
-/// [`search::taint_search`] emits every relation in an order that does not depend on handles.
+/// Every relation is in content order, never handle order: the formatter numbers graph nodes
+/// and orders results by row order.
 #[derive(Default, Debug, Clone)]
 pub struct QueryResult {
     pub taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)>,

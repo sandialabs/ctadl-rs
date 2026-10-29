@@ -144,8 +144,7 @@ pub unsafe trait LsmCol: Copy + 'static {
 /// so a padding byte, which is uninitialized, must not exist.
 ///
 /// `valid = f` names a `fn(&$t) -> bool` that becomes [`LsmCol::is_valid`], for
-/// a type that holds interned handles: [`LsmCol::ref_from`] asserts it, in debug
-/// builds, on every value it reads back.
+/// a type that holds interned handles.
 ///
 /// ```
 /// # #[derive(Clone, Copy)] struct Pair(u32, u32);

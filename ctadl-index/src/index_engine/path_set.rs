@@ -105,7 +105,7 @@ fn fold(p: Path, n: usize, h: u32) -> u32 {
 pub struct PathSet {
     /// Every non-empty member, by stored suffix hash.
     table: HashTable<Path>,
-    /// Bit `b` is set when the path whose [`Path::bits`] are `b` is a member.
+    /// Bit `b` is set when the path whose [`Path::raw`] are `b` is a member.
     bits: Vec<u64>,
     /// The number of members in the words before each word of `bits`.
     ranks: Vec<u32>,
@@ -132,7 +132,7 @@ impl PathSet {
         // Rank order is handle order.
         members.sort_unstable();
         members.dedup();
-        let words = members.last().map_or(0, |p| p.bits() as usize / 64 + 1);
+        let words = members.last().map_or(0, |p| p.raw() as usize / 64 + 1);
         let mut set = PathSet {
             table: HashTable::with_capacity(members.len()),
             bits: vec![0; words],
@@ -146,7 +146,7 @@ impl PathSet {
             split_misses: AtomicUsize::new(0),
         };
         for &p in &members {
-            set.bits[p.bits() as usize / 64] |= 1 << (p.bits() % 64);
+            set.bits[p.raw() as usize / 64] |= 1 << (p.raw() % 64);
             set.exact_at.push(set.exact.len() as u32);
             set.exact.extend(p.prefix_keys());
             set.wild_at.push(set.wild.len() as u32);
@@ -172,7 +172,7 @@ impl PathSet {
     /// `p`'s rank, if it is a member.
     #[inline]
     fn rank(&self, p: Path) -> Option<usize> {
-        let b = p.bits() as usize;
+        let b = p.raw() as usize;
         let word = *self.bits.get(b / 64)?;
         let bit = 1u64 << (b % 64);
         (word & bit != 0)

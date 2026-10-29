@@ -111,6 +111,9 @@ type TaintVertex = (FunctionId, FlowVariable, Path);
 /// field-alias back-flow from loads, the backward copy
 /// hop that carries object identity (see [`ObjectScope`]), and formal/actual
 /// call-boundary steps.
+///
+/// Every adjacency list is in content order: the search tries successors in list order, so it
+/// breaks ties between equal-length paths by it, and the index's row order depends on handles.
 pub struct TaintSearchGraph {
     /// `assign_like` edges indexed by source variable:
     /// `(f, src) -> [(dst, dst_path, src_path)]`.
@@ -226,8 +229,6 @@ impl TaintSearchGraph {
             }
         }
 
-        // The search tries successors in list order, so it breaks ties between equal-length
-        // paths by it. The index's row order depends on handles, so sort by content.
         for succs in assign_by_src.values_mut() {
             succs.sort_unstable_by(|a, b| {
                 a.0.content_cmp(&b.0)
@@ -295,8 +296,6 @@ impl TaintSearchGraph {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
             }
         }
-        // In content order: the search tries them in this order, so it breaks ties between
-        // equal-length paths.
         for srcs in copies_by_dst.values_mut() {
             srcs.sort_unstable_by(|a, b| a.content_cmp(b));
             srcs.dedup();

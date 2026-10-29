@@ -370,7 +370,7 @@ where
         self.len() == 0
     }
 
-    /// Visits every row, for the relation dump ([`super::dump`]).
+    /// Visits every row.
     pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
         self.fwd.for_each(|(fk, v), group| {
             for (p, m, fp) in group.iter() {
@@ -387,12 +387,9 @@ where
         self.fwd.len()
     }
 
-    /// Existence probe against the **frozen** store. Rules only ever probe `total`/`delta`, which
-    /// are frozen for the whole evaluation phase.
+    /// Existence probe, in either freeze state. Takes the `(f, v)` shard read lock when unfrozen.
     #[inline]
     pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
-        // Either state: rules probe the frozen store, and the post-fixpoint debug report
-        // (`dropped_compositions`) probes it unfrozen.
         self.fwd
             .get_with(&(f.clone(), v.clone()), |group| group.contains(p, m, fp))
             .unwrap_or(false)

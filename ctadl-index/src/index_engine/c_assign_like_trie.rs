@@ -271,7 +271,7 @@ where
         )
     }
 
-    /// Visits every row, for the relation dump ([`super::dump`]).
+    /// Visits every row.
     pub fn for_each_row(&self, mut f: impl FnMut((&F, &Vd, &Pd, &Vs, &Ps))) {
         self.fwd.for_each(|(fk, vs), group| {
             for (ps, vd, pd) in group.iter() {
