@@ -37,10 +37,7 @@ fn statement_count(f: &FunctionData) -> usize {
         .sum()
 }
 
-/// A body that returns at once, with no flows: what a merged method of a class with no object of
-/// its own gets (see `MergedClass::empties_union`). It stays in the dispatch table, so a call's
-/// targets, and with them whether the index resolves it by class hierarchy or by its call-target
-/// tags, are as before; it only no longer contributes the union of every arm.
+/// Gives `fdat` a body that returns at once, with no flows.
 fn empty_body(fdat: &mut FunctionData) {
     fdat.return_type = ReturnType { arity: 2 };
     let block = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
@@ -145,8 +142,9 @@ struct Context {
     /// The program's class-merged classes; see [`merged`].
     merged: merged::MergedClasses,
     /// The class each `new-instance` in the method being lowered allocates instead of the one it
-    /// names, by pc, and the pc of the instruction being lowered.
+    /// names, by pc.
     retag: HashMap<usize, String>,
+    /// The pc of the instruction being lowered.
     pc: usize,
     /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
     clone_statements: usize,
@@ -485,8 +483,6 @@ impl Context {
                 }
             });
             let last_inst = last.map(|(_, inst)| inst);
-            // A clone of a merged class's method takes only its own arm of a switch on
-            // the class id.
             let arm = last
                 .and_then(|(pc, _)| narrow.get(&pc))
                 .and_then(|target| offset_to_bb.get(target));
@@ -612,8 +608,8 @@ impl Context {
                 &merged::narrowed(&switches, id),
             )?;
             // The narrowed switch leaves every other id's arm unreachable. Without this each
-            // clone stores the whole merged body, so a class with n ids stores it n times over
-            // (39% of the IR of `org.schabi.newpipe`). The index would prune the same blocks
+            // clone stores the whole merged body, so a class with n ids stores it n times over.
+            // The index would prune the same blocks
             // before SSA anyway; doing it here keeps them out of the stored program.
             ctadl_ir::ssa::prune_unreachable_nodes(fdat);
             self.clone_statements += statement_count(fdat);
@@ -645,8 +641,7 @@ impl Context {
         log::trace!("program: {program}");
         // Guardrail: the clones of merged methods should be a modest share of the program. Each
         // stores only its own arm, so a large share means they are storing the whole merged body
-        // again (P24 in things-to-improve.md: 43% of NewPipe's program; with the arms pruned
-        // 2-24% of the apps measured, the most for cpuinfo's 620 merged classes).
+        // again; with the arms pruned they are 2-24% of the apps measured.
         if self.clone_statements > 0 {
             let total: usize = program.functions.iter().map(statement_count).sum();
             log::info!(

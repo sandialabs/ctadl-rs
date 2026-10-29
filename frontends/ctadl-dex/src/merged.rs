@@ -12,9 +12,9 @@ r(Object)Object:                   iget v0, p0, Li;->i:I
 ```
 
 Lowered as is, the switch is a nondeterministic branch, so each such method is the union of every
-merged class's body, and every virtual call on a merged object dispatches to that union. On
-`com.kgurgul.cpuinfo`, one class merges 29 lambdas, and its union summary lands at thirty call
-sites; the index never converges.
+merged class's body, and every virtual call on a merged object dispatches to that union. A class
+can merge dozens of lambdas, and its union's summary then lands at every call site that reaches
+it, enough that the index may not converge.
 
 This module finds such classes and the ids their objects are built with. The lowering in
 `lib.rs` then gives each id `k` its own class, `C$r8id<k>`, a subclass of `C`, whose switching
@@ -74,9 +74,9 @@ impl MergedClass {
     /// class is `final` and every `new-instance` of it allocates a clone, no object is ever the
     /// class itself, so the merged method never runs; only the clones' do. Emptying it keeps a
     /// call resolved by class hierarchy, which reaches the merged method beside the clones,
-    /// from taking on the union of every arm (P25 in things-to-improve.md). It stays a target,
-    /// so which calls the index resolves by class hierarchy does not change. An object built by
-    /// reflection is not seen.
+    /// from taking on the union of every arm. It stays a target, so a call's targets, and with
+    /// them whether the index resolves it by class hierarchy or by its call-target tags, do not
+    /// change. An object built by reflection is not seen.
     pub(crate) fn empties_union(&self, method: &str) -> bool {
         self.closed && self.switched.contains_key(method)
     }
@@ -194,10 +194,9 @@ impl MergedClasses {
 
     /// Warns when the split is visibly not working: merged classes it cannot split or close, or
     /// objects it cannot tell the id of. Each of these leaves merged methods, the union of every
-    /// arm, live, and with them false flows across the merged lambdas; P9 in
-    /// things-to-improve.md is what that looked like. The thresholds sit between the apps
-    /// measured with the split working (2-4% of classes not closed, about 0.1% of allocations
-    /// unresolved) and before its fixes (12-15%, 2-4%).
+    /// arm, live, and with them false flows across the merged lambdas. The thresholds sit between
+    /// the apps measured with the split working (2-4% of classes not closed, about 0.1% of
+    /// allocations unresolved) and with it not working (12-15%, 2-4%).
     fn guardrail(&self, over_cap: usize) {
         let split = self.classes.len();
         let open = self.classes.values().filter(|c| !c.closed).count();

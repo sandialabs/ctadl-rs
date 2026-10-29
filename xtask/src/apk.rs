@@ -52,9 +52,7 @@ const MERGED_CHECK: &str = "apk:merged-classes";
 /// What the dex frontend's split of R8-merged classes does with this app, from its guardrail
 /// line: classes split, split classes it could not close (their merged methods stay live), classes
 /// over the id cap, and allocations of split classes with no known id, of all of them. Pinned
-/// because each of these moved with a fix to the split (the clones, emptied merged methods, a
-/// `new-instance` that ends its block, a subclass object built by a superclass constructor), and
-/// a regression in any of them moves them back. Re-pin from the `merged classes guardrail:` line
+/// because a regression in the split moves them. Re-pin from the `merged classes guardrail:` line
 /// of `RUST_LOG=info ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in
 /// the commit message which change moved them.
 const MERGED_CLASSES: (u64, u64, u64, u64, u64) = (140, 3, 0, 3, 667);
@@ -158,7 +156,7 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
     ])
 }
 
-/// Like [`import`], with the log at `info` returned, for [`check_merged_classes`].
+/// Like [`import`], with the log at `info` returned.
 fn import_logged(work: &Path, state: &Path, apk: &Path) -> Result<String> {
     let apk = apk.to_string_lossy();
     let mut cmd = command(

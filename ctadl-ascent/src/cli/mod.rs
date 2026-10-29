@@ -109,13 +109,6 @@ impl Default for IndexOptions {
     }
 }
 
-/// Indexes a project
-/// If summary_projects is provided, loads summaries from those projects and maps them into the
-/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
-/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
-/// only in a summary project is linked to it; see [`jni`].
-/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
-/// complete set. See [`IndexOptions`] for the rest.
 /// A merged method counts as large from this many statements on.
 const LARGE_MERGED_METHOD: usize = 50;
 /// Call edges into large live merged methods above which the guardrail warns. With the split
@@ -160,7 +153,7 @@ fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
 
 /// Warns when many calls still reach large merged methods. A call resolved by class hierarchy
 /// reaches every target, so one that lands on a live merged method takes on every lambda merged
-/// into its class: the false flows of P9 in things-to-improve.md.
+/// into its class.
 fn merged_method_guardrail(
     live: &[String],
     call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
@@ -189,6 +182,13 @@ fn merged_method_guardrail(
     }
 }
 
+/// Indexes a project
+/// If summary_projects is provided, loads summaries from those projects and maps them into the
+/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
+/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
+/// only in a summary project is linked to it; see [`jni`].
+/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
+/// complete set. See [`IndexOptions`] for the rest.
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
@@ -250,8 +250,6 @@ pub fn index(
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
-    // The large merged methods the dex frontend's class split left live; see
-    // `merged_method_guardrail`.
     let mut live_merged_methods: Vec<String> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
