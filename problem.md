@@ -447,7 +447,38 @@ Same settings as "After merging `main`'s interning" below, on the imports after 
   568,503, so the rows and peak return to before step 3. It is the only policy that loses no
   flow, so `update` does not yet replace `window:8`'s guess with something sound at an
   affordable cost; it makes the slots `window:8` keeps precise.
-- **Not measured:** `full` and `full:0` under `update`, and the other binaries.
+- **`full` under `update`** keeps every finding too, and goes further on rows: `androidudpbus`
+  25.3 M and 1.14 GiB, `uclited` 11.8 M and 0.29 GiB, `ntfs-3g` 3.8 M, `glxy` 75.9 M. It names
+  27, 1, 2 and 3 functions in `notifications.log`, as it does under `store`.
+- **The whole regression suite** (every frontend) passes 250 of 253 under `--frame store` and
+  `CTADL_FRAME=update`, with the same three expected failures (`AndroidIcc:droidbench-activity-
+  communication-2`, `C:defaultmodels`, `Jvm:ClassIdMergedTryFlow`).
+
+#### 45 more firmware binaries
+
+The 40 binaries of the stack-hub screen (Other firmware binaries) plus `chat`, `captival_usockc`,
+`sdkmips`, `pppd` and `nginx` from the table there: each imported with this build (`bdcc187e`)
+and indexed under `--frame store` and `--frame update` (both `window:8`), with the sweep's model,
+a 32 GiB cap and a 3,600 s timeout, six binaries at a time beside the ct-bench daemon. So the
+times are loose and only peaks, rows and findings are compared; peaks from `time -l`. Scripts and
+runs are in `/Volumes/Shampoo/s29/sweep` (`one.sh`, `summary.py`, `summary.txt`).
+
+- **43 finish under both settings,** and every one of them reports the same findings under both
+  (by rule, message and location name), except `GpioForCrond`, whose query times out at 600 s
+  under both. `hnapserver-combo` and `adb` reach the 32 GiB cap under both.
+- **8 fall by more than 5% in peak under `update`,** all with fewer or equal rows. The `ntfs-3g`
+  family carries the stack shape: MX5300 `ntfslabel` 24.0 M to 13.6 M rows and 1.09 to 0.68 GiB
+  (-38%), EA6900v2 `ntfslabel` -24%, COVR-2600R `ntfs-3g` -20%, EA4500V3 `ntfsdebug` -14%,
+  EA6350v4 `ntfsdebug` -13%. `pppd` (RE600X), `fsck_hfs` and `unzip` fall 5-7%.
+- **32 are within 5%.** Most keep only tens to hundreds of accesses in memory under `window:8`;
+  the stack is not what makes them expensive, so keeping its updates changes little.
+- **3 rise by more than 5%, none for real.** Their rows are equal or lower (total rows -0.6%, 0.0%
+  and 0.0%). Run again one at a time, the two large ones peak the same under both: 6.18 and
+  6.18 GiB, 6.63 and 6.59 GiB. The third is 0.14 against 0.17 GiB.
+
+`update` never cost a finding or more than noise in memory on these 49 binaries and the
+regression suite, and it is where the stack is the hub that it pays: `androidudpbus` under
+budget, the `ntfs` tools 13-38% smaller.
 
 ### Step 5: the overwrite rule
 
