@@ -360,7 +360,7 @@ fn emit_head(
                 }
                 _ => {
                     let disposition = match disposition {
-                        DispatchHead::Inline => Disposition::Inline,
+                        DispatchHead::Inline => Disposition::Inline(Vec::new()),
                         DispatchHead::Skip => Disposition::Skip,
                         DispatchHead::ClosureShaped => unreachable!("handled above"),
                         DispatchHead::Flow(flow) => {

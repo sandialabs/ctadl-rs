@@ -1,0 +1,18 @@
+{
+  // No flow: new Pair(t, "clean") (20) stores the tainted value in first, and
+  // sink(p.second) (21) reads the clean field. The constructor's receiver is the
+  // `new` copied by `dup`, and its arguments sit above it on the stack.
+  "expected_lines": [],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LConstructorArgumentOrder;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LConstructorArgumentOrder;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

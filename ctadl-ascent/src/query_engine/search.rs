@@ -24,15 +24,14 @@ The regime:
    ([`TaintSearchGraph`]). Expansion reaches the aliases of a node (the copy
    sources holding the same object, when its scope allows the hop; the bases
    of the loads that defined it) as well as its direct assignment successors.
-   The search
-   threads a [`TaintState`] annotation along the edges so call/return matching
-   is respected: a `Call` edge enters `Restricted`, and a `Return` edge is only
-   traversable while `Free`.
+   The search threads a [`TaintState`] annotation along the edges so
+   call/return matching is respected: a `Call` edge enters `Restricted`, and a
+   `Return` edge is only traversable while `Free`.
 4. Sink endpoints are the search targets. Every sink reached gets a
    (breadth-first shortest) path from the source set, and found paths are
    reported through the existing means: the returned [`QueryResult`] carries
-   the reached states as `taint` rows and the search forest as `taint_edge`
-   rows, which the SARIF formatter walks exactly as before.
+   the reached states as `taint` rows and the found paths as `taint_edge`
+   rows, which the SARIF formatter walks (see [`taint_search`]).
 */
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,10 +49,11 @@ type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
+    PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
 use super::{QueryEndpoint, QueryFacts, QueryResult};
+use crate::graphviz::index_vertex_cmp;
 
 /// Which objects a taint on a *non-empty* access path `v.p` is about.
 ///
@@ -65,7 +65,7 @@ use super::{QueryEndpoint, QueryFacts, QueryResult};
 /// `src`. So value taint (empty path) only ever moves forward along a copy,
 /// while field taint (non-empty path) may also hop *backward* along it.
 ///
-/// Doing that hop naively re-creates the unification this replaced: hop back
+/// Doing that hop naively amounts to unification: hop back
 /// from `dst` to `src`, forward to a sibling `t = src`, back from `t` to its
 /// other source in `t = phi(src, u)`, forward to every copy of `u` -- and `u`'s
 /// object never aliased `dst`'s at all. The bit below is what stops it.
@@ -86,7 +86,7 @@ pub enum ObjectScope {
     /// store -- starts a fresh `All` derivation at the destination. But it does
     /// NOT hop backward: doing so would chase `v`'s *other* incoming copies, whose
     /// objects never carried this taint, and that transitive back-and-forth is
-    /// exactly the unification (and the false positives) this replaced.
+    /// exactly unification, with its false positives.
     Fixed,
 }
 
@@ -107,9 +107,13 @@ type TaintVertex = (FunctionId, FlowVariable, Path);
 
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
 /// program tables, never materialized. Edge expansion covers direct assigns
-/// with path substitution, field-alias back-flow from loads, the backward copy
+/// with path substitution, address computations off a tainted value,
+/// field-alias back-flow from loads, the backward copy
 /// hop that carries object identity (see [`ObjectScope`]), and formal/actual
 /// call-boundary steps.
+///
+/// Every adjacency list is in content order: the search tries successors in list order, so it
+/// breaks ties between equal-length paths by it, and the index's row order depends on handles.
 pub struct TaintSearchGraph {
     /// `assign_like` edges indexed by source variable:
     /// `(f, src) -> [(dst, dst_path, src_path)]`.
@@ -124,12 +128,22 @@ pub struct TaintSearchGraph {
     /// any offset `q` off a saturating base `a` taints the load's destination
     /// `x`, regardless of whether `q` matches the tainted path.
     loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
+    /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
+    /// ends in an offset, like C's `&a[2]` or pcode's `PTRADD` -- indexed by
+    /// source and keyed by the path `k` before the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
+    /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
+    /// `assign_by_src` step only carries taint that lies under the offset.
+    addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
     callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>>,
-    /// Callee of each call site, for actual-to-formal (call entry) steps.
-    callee_by_site: HashMap<PackedInsnSiteId, FunctionId>,
+    /// Callees of each call site, for actual-to-formal (call entry) steps. Several when the
+    /// index resolved an indirect or virtual call to more than one target.
+    callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
+    /// Calls accepting a heap, keyed by caller. Their actual vertex is the caller's
+    /// heap formal, so it cannot encode the site as an ordinary `CallArg` does.
+    heap_calls_by_caller: HashMap<FunctionId, Vec<(PackedInsnSiteId, FunctionId)>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -155,6 +169,31 @@ pub struct TaintSearchGraph {
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
 }
 
+/// Whether a load at `q` off a vertex saturating at `p` reads a saturated value. Offsets
+/// are ignored (`[3].deref` is below `.deref`). A read at or below `p` does; a sibling
+/// field does not; a read of a parent of `p` does only when what remains below it is
+/// exactly `.deref`, i.e. it yields a pointer whose whole pointee is saturated. Any other
+/// parent read (a struct with one saturated field) is left to the path-precise load rule.
+fn saturating_read(q: &Path, p: &Path) -> bool {
+    let mut p = p.iter().filter(|s| s.is_symbol());
+    let mut q = q.iter().filter(|s| s.is_symbol());
+    loop {
+        match (p.next(), q.next()) {
+            (None, _) => return true,
+            (Some(a), Some(b)) if a == b => continue,
+            (Some(a), None) => return a.is_deref() && p.next().is_none(),
+            _ => return false,
+        }
+    }
+}
+
+/// True for a call's return vertex.
+fn is_call_return(v: &FlowVariable) -> bool {
+    v.as_call_arg()
+        .and_then(|c| CallArgId::try_from(c).ok())
+        .is_some_and(|c| c.formal == crate::codegen::RETURN_INDEX)
+}
+
 impl TaintSearchGraph {
     pub fn new(facts: &QueryFacts) -> Self {
         let mut assign_by_src: HashMap<
@@ -165,7 +204,15 @@ impl TaintSearchGraph {
             HashMap::default();
         let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
             HashMap::default();
+        let mut addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>> =
+            HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
+            if let Some((key, _)) = sp.split_trailing_offset() {
+                addrs_by_src
+                    .entry((*f, *src))
+                    .or_default()
+                    .push((key, *dst, *dp));
+            }
             assign_by_src
                 .entry((*f, *src))
                 .or_default()
@@ -182,17 +229,55 @@ impl TaintSearchGraph {
             }
         }
 
-        let formal_ty = facts
+        for succs in assign_by_src.values_mut() {
+            succs.sort_unstable_by(|a, b| {
+                a.0.content_cmp(&b.0)
+                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.2.content_cmp(&b.2))
+            });
+        }
+        for succs in loads_by_dst.values_mut().chain(loads_by_src.values_mut()) {
+            succs
+                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
+        }
+        for succs in addrs_by_src.values_mut() {
+            succs.sort_unstable_by(|a, b| {
+                a.0.content_cmp(&b.0)
+                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.2.content_cmp(&b.2))
+            });
+        }
+
+        let formal_ty: HashMap<_, _> = facts
             .formal_param
             .iter()
             .map(|(f, v, ty)| ((*f, *v), *ty))
             .collect();
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
-        let mut callee_by_site = HashMap::default();
+        let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
+        let mut heap_calls_by_caller: HashMap<_, Vec<_>> = HashMap::default();
+        let heap = FlowVariable::formal_index(crate::codegen::GLOBALS_INDEX.into());
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
-            callee_by_site.insert(*site, *callee);
+            callee_by_site.entry(*site).or_default().push(*callee);
+            if formal_ty.contains_key(&(*callee, heap)) {
+                let caller = InsnSiteId::try_from(site).unwrap().func_id;
+                heap_calls_by_caller
+                    .entry(caller)
+                    .or_default()
+                    .push((*site, *callee));
+            }
+        }
+
+        for sites in callers_by_callee.values_mut() {
+            sites.sort_unstable();
+        }
+        for callees in callee_by_site.values_mut() {
+            callees.sort_unstable();
+        }
+        for calls in heap_calls_by_caller.values_mut() {
+            calls.sort_unstable();
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -200,12 +285,19 @@ impl TaintSearchGraph {
         let mut copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
             HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
-            if dp.is_empty() && sp.is_empty() && dst.as_formal().is_none() && dst != src {
+            if dp.is_empty()
+                && sp.is_empty()
+                && dst.as_formal().is_none()
+                && dst != src
+                // A call's return is derived from the arguments by summary edges, not a copied
+                // reference, so the object hop must not cross it.
+                && !is_call_return(dst)
+            {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
             }
         }
         for srcs in copies_by_dst.values_mut() {
-            srcs.sort_unstable();
+            srcs.sort_unstable_by(|a, b| a.content_cmp(b));
             srcs.dedup();
         }
 
@@ -221,14 +313,19 @@ impl TaintSearchGraph {
                     .push(ep.vertex.1);
             }
         }
+        for paths in sink_ext_by_var.values_mut() {
+            paths.sort_unstable_by(|a, b| a.content_cmp(b));
+        }
 
         TaintSearchGraph {
             assign_by_src,
             loads_by_dst,
             loads_by_src,
+            addrs_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
+            heap_calls_by_caller,
             paths,
             copies_by_dst,
             sink_ext_by_var,
@@ -268,20 +365,30 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
+        // Address computation off the tainted value: a fresh derivation, so
+        // `All`.
+        if let Some(addrs) = self.addrs_by_src.get(&(f, v)) {
+            for (key, dst, dp) in addrs {
+                if *key == p && self.paths.contains(dp) {
+                    out.push(((f, *dst, *dp, level, ObjectScope::All), FlowEdge::Intra));
+                }
+            }
+        }
+
         // Field-alias back-flow: a load `x = a.q` makes `x` an alias of `a.q`,
-        // so taint on `x.p` also lives at `a.(q·p)`. The empty-`p` step is
-        // ungated (its path `q` is already materialized, coming off an assign);
-        // an extended path is subject to the materialized-paths gate. The
-        // closure engine additionally gated its alias seeding on the base being
+        // so taint on `x.p` also lives at `a.(q·p)`, subject to the
+        // materialized-paths gate. There is no empty-`p` step: taint on `x`
+        // itself is about the value `x` holds, not the field it was read from,
+        // and following it back put a tainted call return onto the fields its
+        // summary read (tests/tnt/callsite_smear_field.tnt). The
+        // closure engine additionally gates its alias seeding on the base being
         // tainted — a flooding mitigation the demand-driven expansion doesn't
         // need, since only reached states are ever expanded.
         // The base `a` is read off whichever object it holds, so the taint on
         // `a.(q·p)` is about all of them: `All`.
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
-                if p.is_empty() {
-                    out.push(((f, *a, *q, level, ObjectScope::All), FlowEdge::Intra));
-                } else {
+                if !p.is_empty() {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
                         out.push(((f, *a, qp, level, ObjectScope::All), FlowEdge::Intra));
@@ -308,18 +415,20 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
-        // Saturating vertex-level read: any subfield/offset read off a
-        // saturating vertex is tainted, regardless of the tainted path `p` and
-        // without the materialized-paths gate. For every load `x = v.q` off
-        // this vertex, taint the destination `x` (at the empty path) and keep it
-        // `Saturating`, so saturation fills the whole access-path subtree
-        // (recursively). This is what reconnects `@p1_0.[8].deref` to the
-        // saturating `@p1_0`. Plain nodes get no such edges, so precise sources
-        // (e.g. `getenv`) keep their path-sensitive behavior and cannot
-        // over-taint.
+        // Saturating vertex-level read: a subfield/offset read off a saturating vertex
+        // within `p`'s subtree (or of a pointer to it; see `saturating_read`) is tainted,
+        // without the materialized-paths gate. For every load `x = v.q` off this vertex,
+        // taint the destination `x` (at the empty path) and keep it `Saturating`, so
+        // saturation fills the whole access-path subtree (recursively). This is what
+        // reconnects `@p1_0.[8].deref` to the saturating `@p1_0`. Plain nodes get no such
+        // edges, so precise sources (e.g. `getenv`) keep their path-sensitive behavior and
+        // cannot over-taint.
         if level == TaintLevel::Saturating {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
-                for (dst, _q) in loads {
+                for (dst, q) in loads {
+                    if !saturating_read(q, &p) {
+                        continue;
+                    }
                     out.push((
                         (
                             f,
@@ -352,10 +461,11 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Formal-to-actual (function exit): taint on an out-flowing formal
-        // continues at the corresponding call-arg vertex of every caller. The
+        // continues at the corresponding call vertex of every caller (the caller's
+        // heap formal for globals, a per-site call-arg for other parameters). The
         // `Return` label makes the edge traversable only in the `Free` state,
         // enforcing call/return matching exactly as the closure engine's
-        // `TaintState::Free` premise did.
+        // `TaintState::Free` premise does.
         if let Some(fty) = self.formal_ty.get(&(f, v))
             && let Some(formal) = v.as_formal()
             && isout(&formal, *fty, &p)
@@ -363,14 +473,13 @@ impl LazySuccessors for TaintSearchGraph {
         {
             for site in sites {
                 let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(site).unwrap();
-                let call_arg = PackedCallArg::try_from_parts(insn_id, formal).unwrap();
                 // The call-arg vertex holds the actual's object, and an out-flowing
                 // write through the formal is visible to every alias of that
                 // object in the caller, so the taint re-enters at `All`.
                 out.push((
                     (
                         func_id,
-                        FlowVariable::call_arg_packed(call_arg),
+                        FlowVariable::call_actual(insn_id, formal),
                         p,
                         level,
                         ObjectScope::All,
@@ -385,7 +494,7 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(packed) = v.as_call_arg() {
             let call_arg_id = CallArgId::try_from(packed).unwrap();
             let site = PackedInsnSiteId::try_from_parts(f, call_arg_id.insn_id).unwrap();
-            if let Some(callee) = self.callee_by_site.get(&site) {
+            for callee in self.callee_by_site.get(&site).into_iter().flatten() {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
                     // A formal has no incoming copies the hop would follow (its
@@ -396,6 +505,14 @@ impl LazySuccessors for TaintSearchGraph {
                         FlowEdge::Call(site),
                     ));
                 }
+            }
+        }
+        if v.as_formal() == Some(crate::codegen::GLOBALS_INDEX.into()) {
+            for (site, callee) in self.heap_calls_by_caller.get(&f).into_iter().flatten() {
+                out.push((
+                    (*callee, v, p, level, ObjectScope::All),
+                    FlowEdge::Call(*site),
+                ));
             }
         }
 
@@ -437,7 +554,7 @@ impl LazyAnnotation<TaintSearchGraph> for TaintState {
 ///
 /// Only what downstream consumers actually read is materialized — the search
 /// visits its states and drops them, rather than persisting the whole closure
-/// the way the fixpoint engine did:
+/// the way the fixpoint engine does:
 ///
 /// - `taint` holds a seed row per endpoint; a row per reached *call-arg* state
 ///   (tagged with the source endpoint the state descends from) — these drive
@@ -452,7 +569,7 @@ impl LazyAnnotation<TaintSearchGraph> for TaintState {
 ///   can only descend a sink's unique root-path, so path-union edges carry
 ///   exactly the same source/sink connectivity the full forest would.
 /// - `tainted_insn` / `absorbing_functions` are the same projections of `taint`
-///   the closure engine derived (call-arg rows are all retained, so these are
+///   the closure engine derives (call-arg rows are all retained, so these are
 ///   identical to a full-closure emission).
 pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     let graph = TaintSearchGraph::new(&facts);
@@ -483,7 +600,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
 
     let mut taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> = Vec::new();
     // Seed rows for every endpoint (both directions), as the closure engine's
-    // seed rule emitted.
+    // seed rule emits.
     for (ep,) in &facts.endpoints {
         taint.push((
             ep.infunc,
@@ -509,6 +626,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     // sinks share prefixes.
     let mut sink_tags: BTreeSet<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> =
         BTreeSet::new();
+
+    // One search per label, in content order: it is the order of their `taint` rows.
+    let mut source_sets: Vec<_> = source_sets.into_iter().collect();
+    source_sets.sort_unstable_by(|(a, _), (b, _)| a.content_cmp(b));
 
     let mut states_total = 0usize;
     for (label, endpoints) in &source_sets {
@@ -560,7 +681,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
                 continue;
             }
             // Emission drops the level and the scope (the "collapse"): every
-            // reached state is a plain tainted row, exactly as before.
+            // reached state is a plain tainted row.
             let ep = &endpoints[origin[i] as usize];
             taint.push((st.node.0, st.annot, st.node.1, st.node.2, ep.clone()));
         }
@@ -611,6 +732,8 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             paths_found,
         );
     }
+    let mut sink_tags: Vec<_> = sink_tags.into_iter().collect();
+    sink_tags.sort_unstable_by(taint_row_cmp);
     taint.extend(sink_tags);
 
     // Instruction-level projections of the taint rows, mirroring the closure
@@ -628,10 +751,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         if !v.is_globals() && *call_arg_id.formal() >= 0 {
             tainted_insn.insert((site, src.label.clone(), *v, *p));
         }
-        if let Some(target) = graph.callee_by_site.get(&site)
-            && external.contains(target)
-        {
-            absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+        for target in graph.callee_by_site.get(&site).into_iter().flatten() {
+            if external.contains(target) {
+                absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+            }
         }
     }
 
@@ -657,18 +780,50 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         }
     );
 
+    // The sets iterate in handle order; the result is in content order (see `QueryResult`).
+    let mut taint_edge: Vec<_> = taint_edge.into_iter().collect();
+    taint_edge.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| index_vertex_cmp(&(a.1, a.2, a.3), &(b.1, b.2, b.3)))
+            .then_with(|| index_vertex_cmp(&(a.4, a.5, a.6), &(b.4, b.5, b.6)))
+    });
+    let mut tainted_insn: Vec<_> = tainted_insn.into_iter().collect();
+    tainted_insn.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.content_cmp(&b.1))
+            .then_with(|| a.2.content_cmp(&b.2))
+            .then_with(|| a.3.content_cmp(&b.3))
+    });
+    let mut absorbing_functions: Vec<_> = absorbing.into_iter().collect();
+    absorbing_functions.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.content_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
     QueryResult {
         taint,
-        taint_edge: taint_edge.into_iter().collect(),
-        tainted_insn: tainted_insn.into_iter().collect(),
-        absorbing_functions: absorbing.into_iter().collect(),
+        taint_edge,
+        tainted_insn,
+        absorbing_functions,
     }
+}
+
+/// Orders `taint` rows by content.
+fn taint_row_cmp(
+    a: &(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint),
+    b: &(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint),
+) -> std::cmp::Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| a.1.cmp(&b.1))
+        .then_with(|| a.2.content_cmp(&b.2))
+        .then_with(|| a.3.content_cmp(&b.3))
+        .then_with(|| a.4.content_cmp(&b.4))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{FlowVertex, Label};
+    use crate::facts::{FlowVertex, FormalIndex, InsnId, Label, PackedCallArg};
 
     /// A single-field access path `.field`.
     fn field_path(field: &str) -> Path {
@@ -681,7 +836,7 @@ mod tests {
     fn source(func: u32, var: FlowVariable, saturating: bool) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label("argv_input".into()),
             direction: TaintDirection::Forward,
             call_site: None,
@@ -693,7 +848,7 @@ mod tests {
     fn sink(func: u32, var: FlowVariable) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label("cmdi".into()),
             direction: TaintDirection::Backward,
             call_site: None,
@@ -702,7 +857,7 @@ mod tests {
     }
 
     /// A saturating source reconnects an offset/field read off its base to the
-    /// read's destination (the `argv[1]` regression, in miniature): the base
+    /// read's destination (`argv[1]`, in miniature): the base
     /// `p` is the source, and the sink `q` is read via a *sibling* load `q =
     /// p.field` whose path is never matched by precise, path-sensitive
     /// propagation. Only saturation reconnects it, so a `Saturating` seed
@@ -767,7 +922,7 @@ mod tests {
             let src = source(f, base, saturating);
             // Sink on the same vertex, at the extended path `.field`.
             let mut sink_ep = sink(f, base);
-            sink_ep.vertex = FlowVertex(base, deref);
+            sink_ep.vertex = FlowVertex::new(base, deref);
             let facts = QueryFacts {
                 assign: assign.clone(),
                 paths: paths.clone(),
@@ -787,6 +942,150 @@ mod tests {
         assert!(
             plain.taint_edge.is_empty(),
             "plain source at the bare path must not reach the `.field` sink"
+        );
+    }
+
+    /// Facts for a plain source on `base` and a sink on `dst`, joined by the single edge
+    /// `dst = base.<read>`; also returns `base` and `dst`.
+    fn plain_source_through(read: &str) -> (QueryFacts, FlowVariable, FlowVariable) {
+        let f = 0u32;
+        let base = FlowVariable::local("base".into());
+        let dst = FlowVariable::local("dst".into());
+        let read = Path::parse(read).unwrap();
+        let facts = QueryFacts {
+            assign: vec![(FunctionId::new(f), dst, Path::empty(), base, read)],
+            paths: vec![(Path::empty(),), (read,)],
+            endpoints: vec![(source(f, base, false),), (sink(f, dst),)],
+            ..Default::default()
+        };
+        (facts, base, dst)
+    }
+
+    /// Whether the closure engine's `taint` holds `var` at the empty path, seeded by an endpoint
+    /// of `direction`.
+    fn closure_taints(result: &QueryResult, var: FlowVariable, direction: TaintDirection) -> bool {
+        result
+            .taint
+            .iter()
+            .any(|(_, _, v, p, ep)| *v == var && p.is_empty() && ep.direction == direction)
+    }
+
+    /// An assign whose source path ends in an offset, `dst = base.[8]`, computes an address from
+    /// the value of `base` -- C's `&base[2]`, pcode's `PTRADD` -- so a taint on that value reaches
+    /// `dst`, from a plain source too. Contrast `saturating_source_reaches_offset_read`, whose
+    /// edge reads a field `.field`, where a plain source rightly stops. Both engines agree. The
+    /// end-to-end version is `tests/tnt/offset_address.tnt`.
+    #[test]
+    fn plain_source_value_reaches_offset_address() {
+        let (facts, base, dst) = plain_source_through(".[8]");
+        assert!(
+            !taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted value must reach an address computed from it"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: the source's taint must reach the address computed from it"
+        );
+        assert!(
+            closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: the sink's demand must reach the value the address is computed from"
+        );
+    }
+
+    /// The boundary of `plain_source_value_reaches_offset_address`: `dst = base.[8].deref` reads
+    /// the memory at that address, and a plain taint on the pointer value says nothing about the
+    /// memory it points at. Only a saturating source reaches this.
+    #[test]
+    fn plain_source_value_does_not_reach_offset_pointee() {
+        let (facts, base, dst) = plain_source_through(".[8].deref");
+        assert!(
+            taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted pointer value must not taint the memory it points at"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            !closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: a tainted pointer value must not taint the memory it points at"
+        );
+        assert!(
+            !closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: a demand on the memory must not reach the pointer value"
+        );
+    }
+
+    #[test]
+    fn activity_get_intent_lifecycle_bridge_reaches_sink() {
+        let sender = FunctionId::new(1);
+        let receiver = FunctionId::new(2);
+        let put_extra_value = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(10), FormalIndex::new(2)).unwrap(),
+        );
+        let bridge_receiver = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(20), FormalIndex::new(0)).unwrap(),
+        );
+        let sink_arg = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(30), FormalIndex::new(0)).unwrap(),
+        );
+        let tainted = FlowVariable::local("tainted".into());
+        let intent = FlowVariable::local("intent".into());
+        let got_intent = FlowVariable::local("got_intent".into());
+        let extra = FlowVariable::local("extra".into());
+        let extras_k = Path::from_symbol_names(["<extras>", "k"]);
+        let intent_path = Path::from_symbol_names(["<intent>"]);
+        let intent_extras_k = Path::from_symbol_names(["<intent>", "<extras>", "k"]);
+
+        let mut src = source(sender.id, put_extra_value, false);
+        src.label = Label("UserInput".into());
+        let mut snk = sink(receiver.id, sink_arg);
+        snk.label = Label("TaintedData".into());
+        let facts = QueryFacts {
+            endpoints: vec![(src,), (snk,)],
+            formal_param: vec![
+                (
+                    receiver,
+                    FlowVariable::formal_index(FormalIndex::new(0)),
+                    FormalType::Shared,
+                ),
+                (sender, put_extra_value, FormalType::Shared),
+            ],
+            call: vec![(
+                PackedInsnSiteId::try_from_parts(sender, InsnId::new(20)).unwrap(),
+                receiver,
+            )],
+            assign: vec![
+                (
+                    sender,
+                    tainted,
+                    Path::empty(),
+                    put_extra_value,
+                    Path::empty(),
+                ),
+                (sender, intent, extras_k, tainted, Path::empty()),
+                (sender, bridge_receiver, intent_path, intent, Path::empty()),
+                (
+                    receiver,
+                    got_intent,
+                    Path::empty(),
+                    FlowVariable::formal_index(FormalIndex::new(0)),
+                    intent_path,
+                ),
+                (receiver, extra, Path::empty(), got_intent, extras_k),
+                (receiver, sink_arg, Path::empty(), extra, Path::empty()),
+            ],
+            paths: vec![
+                (Path::empty(),),
+                (extras_k,),
+                (intent_path,),
+                (intent_extras_k,),
+            ],
+            ..Default::default()
+        };
+
+        let result = taint_search(facts, None);
+        assert!(
+            !result.taint_edge.is_empty(),
+            "activity getIntent lifecycle bridge should reach the sink"
         );
     }
 }

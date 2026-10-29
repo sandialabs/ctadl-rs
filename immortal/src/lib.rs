@@ -1,3 +1,7 @@
+mod id;
+
+pub use id::{Id, IdInterner, Internable, Stats};
+
 use hashbrown::HashTable;
 use parking_lot::RwLock;
 use rustc_hash::FxBuildHasher;
@@ -10,23 +14,21 @@ pub struct Interner<T: ?Sized + 'static> {
 
 impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
     pub fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashTable::new()));
-        }
         Self {
             state: FxBuildHasher,
-            shards: shards.into_boxed_slice(),
+            shards: (0..num_shards)
+                .map(|_| RwLock::new(HashTable::new()))
+                .collect(),
         }
     }
 
     #[inline]
     fn shard_index(&self, hash: u64) -> usize {
-        // Shard on the HIGH bits: hashbrown indexes its buckets with the LOW bits of
-        // the same hash, so sharding on the high bits keeps full entropy inside each
-        // shard's table (sharding on low bits would collapse every entry in a shard
-        // into the same handful of hashbrown buckets).
-        (hash >> 57) as usize % self.shards.len()
+        // Shard on the MIDDLE bits: hashbrown indexes its buckets with the low bits of
+        // the same hash and takes its 7-bit control tag from the top 7, so sharding on
+        // either would make those bits constant within a shard (crowding the buckets,
+        // or making the tag match about half of each probe group).
+        (hash >> 32) as usize % self.shards.len()
     }
 
     pub fn intern(&self, value: &T) -> &'static T
@@ -71,7 +73,7 @@ macro_rules! immortal {
         $vis struct $name(&'static $inner);
 
         impl $name {
-            /// Interns a value into a thread-local static interner for this type.
+            /// Interns a value into this type's process-wide static interner.
             #[inline]
             $vis fn intern(val: &$inner) -> Self {
                 static INTERNER: ::std::sync::OnceLock<$crate::Interner<$inner>> = ::std::sync::OnceLock::new();
@@ -160,7 +162,6 @@ impl<'de> serde::Deserialize<'de> for StringRef {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::Deserialize;
         let s = String::deserialize(deserializer)?;
         Ok(StringRef::intern(&s))
     }

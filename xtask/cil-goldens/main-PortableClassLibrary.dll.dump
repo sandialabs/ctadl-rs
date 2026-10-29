@@ -1,0 +1,184 @@
+[module]
+name=PortableClassLibrary.dll
+mvid=8c03175a-22f0-4109-86bc-5bf9529d85f9
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=PortableClassLibrary, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.5.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e, Retargetable=Yes flags=0x00000100
+0x23000002=System.Core, Version=2.0.5.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e, Retargetable=Yes flags=0x00000100
+0x23000003=Microsoft.CSharp, Version=2.0.5.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, Retargetable=Yes flags=0x00000100
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=PortableClassLibrary.Klass flags=0x00100001
+	base=System.Object
+0x02000003=PortableClassLibrary.Klass/<Perform>o__SiteContainer0 flags=0x00100183
+	base=System.Object
+[fields]
+0x04000001=System.Collections.Generic.List`1<PortableClassLibrary.Klass> PortableClassLibrary.Klass::Klasses flags=0x0016
+0x04000002=System.Linq.ILookup`2<PortableClassLibrary.Klass,PortableClassLibrary.Klass> PortableClassLibrary.Klass::KlassLookup flags=0x0016
+0x04000003=System.Object PortableClassLibrary.Klass::Foo flags=0x0016
+0x04000004=System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site1 flags=0x0016
+0x04000005=System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site2 flags=0x0016
+[methods]
+0x06000001=System.Int32 PortableClassLibrary.Klass::Perform() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void PortableClassLibrary.Klass::.ctor() flags=0x1886 impl=0x0000 rva=0x00002103
+0x06000003=System.Void PortableClassLibrary.Klass::.cctor() flags=0x1891 impl=0x0000 rva=0x000020f7
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"PortableClassLibrary"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETPortable,Version=v4.0,Profile=Profile46")) property FrameworkDisplayName=(String:".NET Portable Subset")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"PortableClassLibrary"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"Microsoft"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright © Microsoft 2013"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Resources.NeutralResourcesLanguageAttribute::.ctor(System.String) args=((String:"en"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x04000003 ctor=System.Void System.Runtime.CompilerServices.DynamicAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=10 init-locals=true code-size=155
+	local 0=System.Int32
+	local 1=Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo[]
+	IL_0000: nop
+	IL_0001: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site1
+	IL_0006: brtrue.s IL_002e
+	IL_0008: ldc.i4.0
+	IL_0009: ldtoken System.Int32
+	IL_000e: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0013: ldtoken PortableClassLibrary.Klass
+	IL_0018: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_001d: call System.Runtime.CompilerServices.CallSiteBinder Microsoft.CSharp.RuntimeBinder.Binder::Convert(Microsoft.CSharp.RuntimeBinder.CSharpBinderFlags,System.Type,System.Type)
+	IL_0022: call System.Runtime.CompilerServices.CallSite`1<!0> System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>>::Create(System.Runtime.CompilerServices.CallSiteBinder)
+	IL_0027: stsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site1
+	IL_002c: br.s IL_002e
+	IL_002e: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site1
+	IL_0033: ldfld !0 System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>>::Target
+	IL_0038: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site1
+	IL_003d: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site2
+	IL_0042: brtrue.s IL_0078
+	IL_0044: ldc.i4.0
+	IL_0045: ldstr "Bazoonga"
+	IL_004a: ldnull
+	IL_004b: ldtoken PortableClassLibrary.Klass
+	IL_0050: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0055: ldc.i4.1
+	IL_0056: newarr Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo
+	IL_005b: stloc.1
+	IL_005c: ldloc.1
+	IL_005d: ldc.i4.0
+	IL_005e: ldc.i4.0
+	IL_005f: ldnull
+	IL_0060: call Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo::Create(Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfoFlags,System.String)
+	IL_0065: stelem.ref
+	IL_0066: ldloc.1
+	IL_0067: call System.Runtime.CompilerServices.CallSiteBinder Microsoft.CSharp.RuntimeBinder.Binder::InvokeMember(Microsoft.CSharp.RuntimeBinder.CSharpBinderFlags,System.String,System.Collections.Generic.IEnumerable`1<System.Type>,System.Type,System.Collections.Generic.IEnumerable`1<Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo>)
+	IL_006c: call System.Runtime.CompilerServices.CallSite`1<!0> System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>>::Create(System.Runtime.CompilerServices.CallSiteBinder)
+	IL_0071: stsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site2
+	IL_0076: br.s IL_0078
+	IL_0078: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site2
+	IL_007d: ldfld !0 System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>>::Target
+	IL_0082: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>> PortableClassLibrary.Klass/<Perform>o__SiteContainer0::<>p__Site2
+	IL_0087: ldsfld System.Object PortableClassLibrary.Klass::Foo
+	IL_008c: callvirt !2 System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Object>::Invoke(!0,!1)
+	IL_0091: callvirt !2 System.Func`3<System.Runtime.CompilerServices.CallSite,System.Object,System.Int32>::Invoke(!0,!1)
+	IL_0096: stloc.0
+	IL_0097: br.s IL_0099
+	IL_0099: ldloc.0
+	IL_009a: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000003 max-stack=8 init-locals=false code-size=11
+	IL_0000: newobj System.Void System.Dynamic.ExpandoObject::.ctor()
+	IL_0005: stsfld System.Object PortableClassLibrary.Klass::Foo
+	IL_000a: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x1b000003 -> -
+0x1b000004 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

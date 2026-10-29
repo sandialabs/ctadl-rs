@@ -5,10 +5,6 @@
 //! line-map / basic-block / stack-slot analyses), then bundle them with `jar`
 //! and re-check the `.jar` (parsed classes compared against `jar tf`). No
 //! compiled `.class`/`.jar` artifacts are committed; everything is built here.
-//!
-//! These checks are a faithful port of the former `jvm-reader/tests/test_disas.rs`
-//! integration tests, restructured to report pass/fail rather than panic and to
-//! run against freshly compiled inputs instead of committed binaries.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,8 +18,8 @@ use jvm_reader::{
     ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location, MethodInfo,
 };
 
-use crate::exec;
 use crate::regression::Outcome;
+use crate::{asm_flow, exec, jvm_opcodes};
 
 /// A compiled sample program.
 struct Sample {
@@ -36,8 +32,15 @@ struct Sample {
 
 /// Compile every sample and run all jvm-reader checks. Returns named
 /// (case, outcome) pairs to fold into the regression report. If the JDK tools
-/// are missing, returns a single Skip (mirrors the pcode Darwin skip).
-pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+/// are missing, returns a single Skip.
+///
+/// `cases` is the nightly Java case directory, whose programs `jvm:asm-flow`
+/// checks as well.
+pub fn run_checks(
+    samples_dir: &Path,
+    cases: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<(String, Outcome)>> {
     for tool in ["javac", "jar", "javap"] {
         if exec::which(tool).is_none() {
             return Ok(vec![(
@@ -66,10 +69,86 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         ("jvm:utf8-constants", check_utf8_constants),
     ];
 
-    Ok(checks
+    let mut results: Vec<(String, Outcome)> = checks
         .into_iter()
         .map(|(name, run)| (name.to_string(), to_outcome(run(&samples))))
-        .collect())
+        .collect();
+    // Both need ASM: one as an oracle, the other to build what it runs.
+    let (asm_flow, opcodes) = match asm_flow::find_classpath() {
+        Some(cp) => (
+            to_outcome(check_asm_flow(&cp, &samples, cases, work)),
+            to_outcome(jvm_opcodes::check(&cp, &work.join("opcodes"))),
+        ),
+        None => {
+            let why = "no ASM: set ASM_CLASSPATH or put `asm-classpath` on PATH";
+            (Outcome::Skip(why.into()), Outcome::Skip(why.into()))
+        }
+    };
+    results.push(("jvm:asm-flow".to_string(), asm_flow));
+    results.push(("jvm:opcodes".to_string(), opcodes));
+    Ok(results)
+}
+
+/// jvm-reader's dataflow agrees with ASM's on every instruction of the
+/// all-opcodes class (which must hold every opcode), the samples, and the
+/// nightly Java cases. See [`asm_flow`].
+fn check_asm_flow(cp: &str, samples: &[Sample], cases: Option<&Path>, work: &Path) -> Result<()> {
+    let work = work.join("asm-flow");
+    let fixture = asm_flow::build_all_opcodes(cp, &work.join("all-opcodes"))?;
+    let missing = asm_flow::missing_opcodes(std::slice::from_ref(&fixture))?;
+    if !missing.is_empty() {
+        bail!("AllOpcodes.java lacks opcodes: {}", missing.join(", "));
+    }
+
+    let mut inputs = vec![("all-opcodes", vec![fixture])];
+    inputs.push((
+        "samples",
+        samples.iter().flat_map(|s| s.classes.clone()).collect(),
+    ));
+    if let Some(cases) = cases {
+        // As the JVM taint cases compile them.
+        let class_dir = work.join("cases-classes");
+        exec::fresh_dir(&class_dir)?;
+        let mut sources: Vec<PathBuf> = std::fs::read_dir(cases)
+            .with_context(|| format!("reading {}", cases.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("java"))
+            .collect();
+        sources.sort();
+        let mut javac = Command::new("javac");
+        javac
+            .args(["--release", "8", "-encoding", "UTF-8", "-d"])
+            .arg(&class_dir)
+            .args(&sources);
+        exec::run_checked(javac, "javac")?;
+        let mut classes = Vec::new();
+        collect_class_files(&class_dir, &mut classes)?;
+        classes.sort();
+        inputs.push(("cases", classes));
+    }
+
+    let mut problems = Vec::new();
+    for (label, classes) in &inputs {
+        match asm_flow::compare(cp, label, classes, &work.join(label)) {
+            Ok(report) if *label == "all-opcodes" => {
+                // Every known disagreement is on an opcode the fixture holds,
+                // so one it no longer trips has been fixed.
+                for (_, reason) in asm_flow::KNOWN {
+                    if !report.known.contains_key(reason) {
+                        problems.push(format!(
+                            "known disagreement no longer seen, remove it from asm_flow::KNOWN: {reason}"
+                        ));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(err) => problems.push(format!("{err:#}")),
+        }
+    }
+    if !problems.is_empty() {
+        bail!("{}", problems.join("\n"));
+    }
+    Ok(())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -181,8 +260,7 @@ fn check_javap(samples: &[Sample]) -> Result<()> {
     Ok(())
 }
 
-/// Collapse runs of whitespace and trim each line, matching the old test's
-/// comparison rules.
+/// Collapse runs of whitespace and trim each line.
 fn normalize(input: &str) -> String {
     input
         .lines()
@@ -447,6 +525,11 @@ fn check_basic_blocks(samples: &[Sample]) -> Result<()> {
 /// After stack-slot normalization no relative stack locations remain, slot ids
 /// stay small, and across the samples we observe both a StackSlot and a reused
 /// destination slot id.
+///
+/// A method whose stack heights disagree at a join
+/// (`ClassFileError::StackHeightMismatch`, a shape the normalization does not
+/// support) is skipped rather than failed, recognized by the structured error;
+/// eight or more such skips fail the check.
 fn check_stack_slots(samples: &[Sample]) -> Result<()> {
     let mut saw_stack_slot = false;
     let mut saw_duplicate_dest = false;
@@ -545,11 +628,9 @@ fn assert_normalized(loc: &Location, saw_stack_slot: &mut bool) -> Result<()> {
 
 // --- fixture-shape checks -------------------------------------------------
 //
-// These two came out of `jvm-reader`'s `flow.rs` unit tests, which used to load
-// compiled classes from a directory someone had to populate first. Everything
-// they asserted about *decoding* those fixtures is now covered end to end by
-// the `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
-// cases, in both frontends. What is left is what a taint case cannot say.
+// The `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
+// cases cover decoding these fixtures end to end, in both frontends. These two
+// check what a taint case cannot say.
 
 /// Read one sample's compiled `.class` by class name.
 fn class_bytes(samples: &[Sample], name: &str) -> Result<Vec<u8>> {

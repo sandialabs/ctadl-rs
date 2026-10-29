@@ -1,6 +1,4 @@
 //! Parsing of analyzer outputs and known-answer checking.
-//!
-//! These replace the old `jq`/`grep` pipelines with structured JSON parsing.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -10,8 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Read the `expected_lines` array from a test config. An empty array denotes a
-/// negative test (no flow expected). A missing key is an error, matching the
-/// old `jq -e '.expected_lines'` check.
+/// negative test (no flow expected). A missing key is an error.
 pub fn read_expected_lines(config: &Path) -> Result<Vec<i64>> {
     let value = read_config(config)?;
     let array = value
@@ -41,6 +38,37 @@ pub fn read_unexpected_lines(config: &Path) -> Result<Vec<i64>> {
 /// A missing key means the case claims nothing about the native side.
 pub fn read_expected_native_lines(config: &Path) -> Result<Vec<i64>> {
     read_optional_lines(config, "expected_native_lines")
+}
+
+/// The Android ABI a JNI case's library is built for: the `native_abi` key, `arm64-v8a` when
+/// absent. `x86` selects the 32-bit x86 toolchain.
+pub fn read_native_abi(config: &Path) -> Result<String> {
+    let value = read_config(config)?;
+    match value.get("native_abi") {
+        None => Ok("arm64-v8a".to_string()),
+        Some(abi) => abi
+            .as_str()
+            .map(str::to_string)
+            .with_context(|| format!("`native_abi` in {} is not a string", config.display())),
+    }
+}
+
+/// The native slot layout a JNI case's library must get when its debug info is stripped: the
+/// `untyped_native_layout` key. Present only on the cases that also run stripped.
+pub fn read_untyped_native_layout(config: &Path) -> Result<Option<String>> {
+    let value = read_config(config)?;
+    match value.get("untyped_native_layout") {
+        None => Ok(None),
+        Some(layout) => layout
+            .as_str()
+            .map(|s| Some(s.to_string()))
+            .with_context(|| {
+                format!(
+                    "`untyped_native_layout` in {} is not a string",
+                    config.display()
+                )
+            }),
+    }
 }
 
 /// Read an optional array of source line numbers from a test config, treating a missing key
@@ -88,10 +116,9 @@ fn line_array(array: &Value, key: &str, config: &Path) -> Result<Vec<i64>> {
         .collect()
 }
 
-/// Collect every `byteOffset` value anywhere in a SARIF document. Used for the
-/// machine profile, whose results are the tainted *instructions* (there are no code
-/// flows to scope to); the union of these with the human profile's code-flow offsets
-/// is what a DEX/JVM case's `expected_lines` must be covered by.
+/// Collect every `byteOffset` value anywhere in a SARIF document's results. Meant for
+/// the machine profile, whose results are the tainted *instructions* (there are no code
+/// flows to scope to).
 ///
 /// Endpoint results (`C0003.taint-source` / `C0004.taint-sink`) are excluded. They are
 /// emitted in every profile, and their locations are the *declared* source and sink lines
@@ -125,10 +152,9 @@ pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
 
 /// Whether some human-profile code flow connects a source to a sink: a single thread
 /// flow that carries both a `source ...` step and a `sink ...` step (the step messages
-/// the formatter emits for the two endpoints). This is the code-flow *integrity* check
-/// -- distinct from `expected_lines` coverage -- and is exactly what regressed when the
-/// step dedup collapsed every flow to its lone source step: with only a source step and
-/// no sink step, no thread connects the two.
+/// the formatter emits for the two endpoints). This is the code-flow *integrity* check,
+/// distinct from `expected_lines` coverage: a flow collapsed to its lone source step has
+/// no sink step, so no thread connects the two.
 pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
     let value = read_json(sarif)?;
     for run in value
@@ -183,6 +209,44 @@ pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The functions whose sinks a connected code flow ends in: for every thread flow that
+/// has a source step, the function the last sink step names
+/// (`sink call-arg(22, 0) in <function>`).
+pub fn collect_codeflow_sink_functions(sarif: &Path) -> Result<BTreeSet<String>> {
+    let value = read_json(sarif)?;
+    let mut found = BTreeSet::new();
+    let all = |v: Option<&Value>| -> Vec<Value> {
+        v.and_then(Value::as_array).cloned().unwrap_or_default()
+    };
+    for run in all(value.get("runs")) {
+        for result in all(run.get("results")) {
+            for flow in all(result.get("codeFlows")) {
+                for thread in all(flow.get("threadFlows")) {
+                    let msgs: Vec<String> = all(thread.get("locations"))
+                        .iter()
+                        .filter_map(|loc| {
+                            loc.get("location")
+                                .and_then(|l| l.get("message"))
+                                .and_then(|m| m.get("text"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect();
+                    if !msgs.iter().any(|m| m.starts_with("source ")) {
+                        continue;
+                    }
+                    if let Some(sink) = msgs.iter().rev().find(|m| m.starts_with("sink ")) {
+                        if let Some((_, function)) = sink.split_once(" in ") {
+                            found.insert(function.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Collect every `byteOffset` reached by a code-flow step, i.e. the offsets under

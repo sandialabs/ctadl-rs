@@ -49,6 +49,9 @@ See summaries from the index:
 select * from summary.parquet join function_id.parquet on summary.func_id = function_id.id limit 10;
 ```
 
+`ctadl inspect <index>/function_id.parquet` prints the same function table without duckdb,
+one `<id> function(<name>)` per line.
+
 Get functions endpoints are in:
 
 ```sql
@@ -115,33 +118,32 @@ order ever matters; the third is not.
    the seed relations. Ascent relations are `Vec`s, so a randomized seed order
    propagates into derivation order. Sorting these two makes `paths.parquet`
    byte-stable, and nothing else.
-3. Interned keys hash by heap address: `Symbol = ArcIntern<str>`
-   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `tailshare::Seq`
-   --- what `Path` wraps --- uses `std::ptr::hash`. Every hash container keyed by
-   an access path or a field symbol therefore iterates in heap-address order, and
-   addresses move per process. This is hasher-independent: ascent's relation
-   indices and the BYODS tries both use `FxHasher` and are still address-ordered.
-   Hashing `Seq` by contents does not help, because that recurses into
+3. Interned keys hash by address or id: `Symbol = ArcIntern<str>`
+   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
+   interner id, which depends on the order paths were first interned. Every hash
+   container keyed by an access path or a field symbol therefore iterates in an
+   order that moves per process. This is hasher-independent: ascent's relation
+   indices and the BYODS tries both use `FxHasher` and are still id-ordered.
+   Hashing `Path` by contents does not help, because that recurses into
    `PathSegment::Symbol(ArcIntern<str>)`, which hashes the pointer again.
 
-How this reaches the SARIF: `query` is deterministic *given an index*, but
-`TaintSearchGraph::new` (`query_engine/search.rs`) builds its adjacency lists by
-pushing `assign` rows in stored order, and the search is breadth-first-shortest.
-Among equal-length paths the tie-break is adjacency order, i.e. index row order.
-A different index picks a different *witness* path for the same source/sink pair,
-so the rendered code flow changes while the finding does not.
+How this reaches the SARIF: the search is breadth-first-shortest, and among
+equal-length paths the tie-break is adjacency order. `TaintSearchGraph::new`
+(`query_engine/search.rs`) sorts each adjacency list by content, so that order is
+not the index's row order, and the query's output is sorted by content too.
+`tests/integration/determinism.rs` checks that the graphviz, the relation
+dumps and the SARIF come out byte-identical, timestamps aside, whatever order
+values were interned in. Without that sort, a different index would pick a different
+*witness* path for the same source/sink pair, so the rendered code flow would change
+while the finding did not.
 
 Consequences for measurement:
 
-- Endpoint-level counters are reproducible: sources and sinks matched, result
-  counts, per-file/per-plugin attribution, which sinks a given source reaches.
-- Flow-rendering counters are not: distinct source->sink pairs, how many results
-  anchor on the last code-flow step, per-result step and alternative-flow totals.
-  Expect a few counts of drift between indexes of identical input.
-- To attribute a moved number to a code change, compare the stable counters, or
-  hold the index fixed and vary only the model. Never diff two SARIFs byte-wise.
-- Regression cases must assert set-level properties --- reached lines, whether a
-  code flow connects a source and a sink --- never the shape of a rendered flow.
+- Endpoint-level and flow-rendering counters are both reproducible: two indexes
+  of identical input give the same SARIF, timestamps aside.
+- Regression cases must still assert set-level properties --- reached lines,
+  whether a code flow connects a source and a sink --- never the shape of a
+  rendered flow.
   The `nightly` harness does this today; keep it that way.
 
 Check that two indexes agree as sets (0/0 means order-only difference):
@@ -153,6 +155,44 @@ SELECT
   (SELECT count(*) FROM (SELECT * FROM read_parquet('B/assign.parquet')
                          EXCEPT SELECT * FROM read_parquet('A/assign.parquet'))) AS only_in_b;
 ```
+
+# Comparing every relation: `scripts/fact-dump-diff.sh`
+
+The parquet tables hold only the index's outputs. To check that a change derives the same
+fixpoint, including `locals`, the propagation relations and the contextual ones, set
+`CTADL_DUMP_RELATIONS=<dir>` on a `ctadl index` run. Once the fixpoint is reached, the engine
+writes every relation of `index_rules` to `<dir>/<relation>.tsv`, one row per line with tabs
+between columns, and every column printed by content: a function by its name, a path, string
+or call target by its text, a decision set by its decisions, sorted. No intern id is printed, so
+two builds that intern in different orders print the same rows. The dump panics if a relation
+in the program is missing from `dump_relations!` (`index_engine/dump.rs`).
+
+`scripts/fact-dump-diff.sh` runs the command, sorts each relation (`LC_ALL=C sort -u`), and
+compares the dumps as sets:
+
+```
+# Record a reference with the build on PATH, one per engine
+scripts/fact-dump-diff.sh record ref-serial -- ctadl index app
+scripts/fact-dump-diff.sh record ref-par    -- ctadl index app -j 8
+scripts/fact-dump-diff.sh record ref-lsm    -- ctadl index app --lsm
+
+# Later, compare a candidate build against the reference
+scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app
+scripts/fact-dump-diff.sh compare -k cand-par ref-par -- target/release/ctadl index app -j 8
+
+# Or compare two saved dumps, for example two engines
+scripts/fact-dump-diff.sh diff ref-serial ref-par
+```
+
+It exits 0 if every relation is the same set. Otherwise it exits 1 and prints, for each
+differing relation, the row count on each side, how many rows only one side has, and the first
+few of them (`-n N`, default 5). The `config` relation leaves out the engine and storage, so
+dumps of different engines compare.
+
+The dump and the sort scale with the index: `locals` alone is tens of millions of rows on a large
+target. Raw dumps and sort's temporary files go under `$TMPDIR`, so point it at a disk with room
+for a few times the dump. A reference is only as good as the build that wrote it: record it with
+a build that has `CTADL_DUMP_RELATIONS`, and pass the same index flags on both sides.
 
 # Pcode
 
@@ -209,3 +249,52 @@ ORDER BY target."column1", idx."column1";
 cd ~/.local/state/ctadl/imports/ls/facts
 cat pcode_schema.sql | sqlite3 facts.db
 ```
+
+# Debugging Android apps
+
+The dev shell carries an emulator, adb, frida, jdb and a native lldb. The flake
+comments next to `androidDebugSdk` have the command sequences; these are the
+things that do not work the obvious way.
+
+- **The SDK is read-only.** It lives in the Nix store, so `sdkmanager --install`
+  fails. Add components to `androidDebugSdk` in `flake.nix` instead.
+- **jdb needs a debuggable app, even on the userdebug emulator image.** A release
+  APK gets `Not starting debugger since process cannot load the jdwp agent` in
+  logcat, `adb jdwp` lists nothing, and `jdb -attach` fails its handshake. Setting
+  `persist.debug.dalvik.vm.jdwp.enabled` does not help. Repack the APK instead:
+
+  ```
+  apktool d -o app app.apk
+  # add android:debuggable="true" to <application> in app/AndroidManifest.xml
+  apktool b -o app-unsigned.apk app
+  zipalign -p -f 4 app-unsigned.apk app-aligned.apk
+  keytool -genkeypair -keystore dbg.keystore -storepass android -keypass android \
+    -alias dbg -keyalg RSA -validity 10000 -dname CN=dbg
+  apksigner sign --ks dbg.keystore --ks-pass pass:android --out app-debug.apk app-aligned.apk
+  adb uninstall <pkg>; adb install app-debug.apk
+  ```
+
+  The `-p` matters for apps with native code: without it the install fails with
+  `Failed to extract native libraries`. The new signature means the original app
+  has to be uninstalled first. Frida needs none of this: after `adb root` it
+  works on any app.
+- **`am start -D` waits only until a debugger attaches.** Once jdb connects the
+  app runs on, so a breakpoint typed a few seconds later can miss startup code
+  like `onCreate`/`onResume`. Set it as jdb's first command.
+- **jdb only invokes methods from a thread stopped at an event.** After a plain
+  `suspend`, `print Foo.bar()` fails with `IncompatibleThreadStateException` or
+  `Name unknown`. Stop at a breakpoint first. A dotted nested class does not resolve:
+  `android.os.Build.VERSION.SDK_INT` gives `No static field or method with the
+  name VERSION`.
+- **jdb's thread and object ids change between sessions.** An id from one
+  `jdb -attach` is meaningless in the next, so script a single session rather than
+  re-attaching for each command.
+- **Use `android-lldb`, not the NDK's lldb or `lldb`.** The NDK's host lldb needs a
+  `libpython3.11.dylib` the Nix package leaves out, so it dies in dyld.
+  `/usr/bin/lldb` is an xcrun shim that cannot find Xcode inside the shell.
+  `android-lldb` is nixpkgs' lldb 21, which segfaults attaching to an Android
+  process while it loads modules in parallel; the wrapper runs
+  `settings set target.parallel-module-load false` for you. The device side is
+  `$ANDROID_LLDB_SERVER`.
+- **frida-server must match the host frida exactly.** `$FRIDA_SERVER` is the
+  matching build; do not download one by hand.

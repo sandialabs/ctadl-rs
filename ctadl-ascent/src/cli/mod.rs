@@ -22,10 +22,10 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
-    taint_index_with_config,
+    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, Storage,
+    source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::jni;
+use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -42,7 +42,24 @@ use ctadl_import::{SourceInfoMode, load_import};
 /// code calls it. The code itself lives in [`ctadl_frontends`], because choosing a front end by
 /// language is not the engine's job. Keeping it in a crate below the engine is what lets a
 /// program that reads only Dex build neither the engine nor the other front ends.
-pub use ctadl_frontends::{ImportOptions, import_and_save as import, import_artifact};
+pub use ctadl_frontends::{ImportOptions, import_artifact};
+
+pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
+    ctadl_frontends::import_and_save(import, opts)?;
+    if import.language == ArtifactLanguage::Apk {
+        match android_manifest::import_from_apk(import) {
+            Ok(Some(manifest)) => log::info!(
+                "{}: AndroidManifest.xml: {} node(s), {} attribute(s)",
+                import.artifact_path.display(),
+                manifest.nodes.len(),
+                manifest.attrs.len()
+            ),
+            Ok(None) => {}
+            Err(e) => log::warn!("{}: could not decode AndroidManifest.xml: {e}", import.name),
+        }
+    }
+    Ok(())
+}
 
 /// How to perform one index, beyond the project and the model files.
 ///
@@ -71,6 +88,8 @@ pub struct IndexOptions {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Where the large relations are stored; see [`Storage`].
+    pub storage: Storage,
 }
 
 impl Default for IndexOptions {
@@ -85,12 +104,89 @@ impl Default for IndexOptions {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
         }
     }
 }
 
+/// A merged method counts as large from this many statements on.
+const LARGE_MERGED_METHOD: usize = 50;
+/// Call edges into large live merged methods above which the guardrail warns. With the split
+/// working, the apps measured have 0-8; with merged methods left live, an estimated 195-1,073.
+const MERGED_METHOD_CALL_EDGES: usize = 300;
+
+/// The large merged methods of R8-merged classes that the dex frontend split but could not empty:
+/// a function `LC;->m(..)` beside a clone `LC$r8id<k>;->m(..)`, with a body of at least
+/// [`LARGE_MERGED_METHOD`] statements. Such a method is the union of every lambda merged into
+/// the class.
+fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
+    let size: HashMap<&str, usize> = program
+        .functions
+        .iter()
+        .map(|f| {
+            let n = f
+                .blocks
+                .iter_enumerated()
+                .map(|(_, b)| b.statements.len())
+                .sum();
+            (f.name.as_str(), n)
+        })
+        .collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for name in size.keys() {
+        let Some(at) = name.find("$r8id") else {
+            continue;
+        };
+        let Some(end) = name[at..].find(';') else {
+            continue;
+        };
+        let merged = format!("{}{}", &name[..at], &name[at + end..]);
+        if size
+            .get(merged.as_str())
+            .is_some_and(|n| *n >= LARGE_MERGED_METHOD)
+        {
+            out.insert(merged);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Warns when many calls still reach large merged methods. A call resolved by class hierarchy
+/// reaches every target, so one that lands on a live merged method takes on every lambda merged
+/// into its class.
+fn merged_method_guardrail(
+    live: &[String],
+    call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
+    ids: &facts::IdMap,
+) {
+    if live.is_empty() {
+        return;
+    }
+    let targets: std::collections::HashSet<facts::FunctionId> = live
+        .iter()
+        .filter_map(|name| ids.get_function_id(facts::Function(name.as_str().into())))
+        .collect();
+    let edges = call.iter().filter(|(_, t)| targets.contains(t)).count();
+    log::info!(
+        "merged classes guardrail: {edges} of {} call edges reach one of {} large live merged \
+         methods",
+        call.len(),
+        live.len()
+    );
+    if edges > MERGED_METHOD_CALL_EDGES {
+        log::warn!(
+            "merged classes: {edges} call edges reach {} large merged methods that the class split \
+             left live; each such call takes on every lambda merged into the method's class",
+            live.len()
+        );
+    }
+}
+
 /// Indexes a project
-/// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
+/// If summary_projects is provided, loads summaries from those projects and maps them into the
+/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
+/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
+/// only in a summary project is linked to it; see [`jni`].
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
 /// complete set. See [`IndexOptions`] for the rest.
 /// What a DSL load did, said once, for whichever phase just ran.
@@ -144,6 +240,7 @@ pub fn index(
         hybrid_context,
         context_join,
         parallelism,
+        storage,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -153,6 +250,17 @@ pub fn index(
         project.imports.join(", ")
     );
     log::debug!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
+    // Opened once, and checked before the import loop so an unusable one fails fast. The JNI
+    // bridge reads their imports' native halves and `load_and_map_summaries` their summaries.
+    let summary_projects: Vec<AnalysisProject> = summary_projects
+        .iter()
+        .map(|name| {
+            let summary_project = AnalysisProject::try_load_name(name)
+                .err_context(|| format!("loading summary project: {name}"))?;
+            summary_project.check_index_config()?;
+            Ok(summary_project)
+        })
+        .collect::<Result<_, Error>>()?;
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
@@ -177,10 +285,12 @@ pub fn index(
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
     let mut jni_observer = jni::JniObserver::new();
+    let mut android_intent_observer = android_intent::AndroidIntentObserver::default();
 
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
+    let mut live_merged_methods: Vec<String> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
         // Everything codegen records from here to the next import belongs to this one. Source
@@ -188,12 +298,17 @@ pub fn index(
         source_info.begin_import(&import.name);
         log::info!("'{}': loading IR", import.name);
         let mut program_info = load_import(&import, SourceInfoMode::Skip)?;
+        android_intent_observer.observe_import(&program_info);
         log::debug!(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
         );
         if !no_jni_bridge {
-            jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
+            jni_observer.observe(
+                &program_info,
+                jni::SlotModel::for_language(import.language),
+                jni::NativeAbi::of(&import),
+            );
             if !no_jni_registry {
                 // The `RegisterNatives` tables this import's library was scanned for. Read from
                 // the import directory rather than from the IR: they are a sidecar, so no
@@ -247,20 +362,25 @@ pub fn index(
         // variable count that SSA and the datalog fact base pay for. Dead-temp
         // elimination runs first: it removes defs that coalescing can't (a dead
         // temp has no use to fuse into) and shrinks the input coalescing scans.
-        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        // Both are no-ops on programs already in SSA form.
         log::info!(
             "'{}': preprocessing {} function(s) (SSA) and generating facts",
             import.name,
             program_info.program.functions.len()
         );
-        ssa::run_pipeline(
+        ssa::run_pipeline_with_threads(
             &mut program_info.program,
             ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            match parallelism {
+                Parallelism::Serial => 1,
+                Parallelism::Threads(n) => n.get(),
+            },
         );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
         );
+        live_merged_methods.extend(large_live_merged_methods(&program_info.program));
         // The match block above has already contributed every `modes: ["skip-analysis"]` name
         // this import can, so codegen can drop those bodies as it goes rather than lowering
         // facts the analysis would then have to ignore.
@@ -283,19 +403,11 @@ pub fn index(
     let dsl_report = dsl_matcher.finish(crate::models::DslPhase::Index, &mut model_matches)?;
     report_dsl(&dsl_report);
 
-    // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
-    // name plus two (tag, index, path) triples per propagation -- and drops each import's
-    // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
-    // matches from the shipped Java defaults plus a bridge spec) this checkpoint reads the same
-    // 406.7 MB as the `after codegen_program` one immediately before it: the retained matches
-    // are below the resolution of the gauge. Peak physical footprint for that whole run was
-    // 2.27 GB, in `ascent_run`, not here.
-    //
-    // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
-    // an APK now imports its native libraries as pcode sub-imports (see
-    // [`ctadl_frontends::apk_native`]), so a project naming one APK routinely walks several
-    // programs here -- but the loop drops each import's IR before loading the next, so the
-    // posture is per-import peak rather than the sum.
+    // Streaming matching retains only the *matches* -- one interned name plus two
+    // (tag, index, path) triples per propagation -- and drops each import's match index and IR
+    // with the import, so memory here stays near the per-import peak rather than the sum, even
+    // when an APK brings its native libraries in as pcode sub-imports (see
+    // [`ctadl_frontends::apk_native`]).
     log::debug!(
         "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
          spec(s) retained): {:.1} MB",
@@ -305,11 +417,21 @@ pub fn index(
         phys_footprint_mb()
     );
 
+    merged_method_guardrail(&live_merged_methods, &facts.call, &source_info.sites);
+
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
     // Java `native` stub and its `Java_…` implementation to two ids in the same map.
-    if !no_jni_bridge {
-        jni::link(&jni_observer, &mut facts, &mut source_info);
-    }
+    let jni_targets = if no_jni_bridge {
+        Default::default()
+    } else {
+        observe_summary_natives(
+            project,
+            &summary_projects,
+            &mut jni_observer,
+            no_jni_registry,
+        )?;
+        jni::link(&jni_observer, &mut facts, &mut source_info).targets
+    };
 
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
@@ -317,6 +439,7 @@ pub fn index(
         &mut facts,
         &mut source_info,
     )?;
+    let android_intent_stats = android_intent::emit_phase2_facts(&mut facts, &source_info.sites);
     log::info!(
         "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \
          analyzed",
@@ -324,6 +447,28 @@ pub fn index(
         model_report.declared_paths,
         codegen_report.skipped_bodies
     );
+    if android_intent_stats.api_functions > 0 || android_intent_stats.intent_frames > 0 {
+        log::info!(
+            "android intent api: {} function(s), {} summary row(s), {} frame(s), {} keyed extras site(s), {} lumped extras site(s)",
+            android_intent_stats.api_functions,
+            android_intent_stats.api_summary_rows,
+            android_intent_stats.intent_frames,
+            android_intent_stats.keyed_extra_sites,
+            android_intent_stats.lumped_extra_sites,
+        );
+    }
+    let android_phase3_stats = android_intent::emit_phase3_facts(
+        project,
+        &android_intent_observer,
+        &mut facts,
+        &mut source_info,
+    )?;
+    if android_phase3_stats.intent_frames > 0 {
+        log::info!(
+            "android intent linking: {} send frame(s)",
+            android_phase3_stats.intent_frames,
+        );
+    }
     // Unconditionally, at info: without this line a mis-scoped dispatch model silently swallows
     // a signature and the only symptom is a missing finding. The `super` row is not comparable
     // across frontends -- the jvm frontend lowers constructors and private calls to `Super`
@@ -385,10 +530,18 @@ pub fn index(
     }
     drop(model_matches);
 
-    // Load and map summaries from multiple projects if specified
-    for summary_project_name in summary_projects {
-        load_and_map_summaries(summary_project_name, project, &mut facts, &mut source_info)?;
+    // Load and map summaries from multiple projects if specified. After the link, which is what
+    // interns a summary-only native target and so lets its summaries through the filter.
+    let mut mapped_per_function: HashMap<facts::FunctionId, usize> = HashMap::new();
+    for summary_project in &summary_projects {
+        load_and_map_summaries(
+            summary_project,
+            &mut facts,
+            &source_info,
+            &mut mapped_per_function,
+        )?;
     }
+    report_bridged_summaries(&jni_targets, &mapped_per_function);
 
     let path = project.index_path()?;
     project.clear_index_config()?;
@@ -401,14 +554,41 @@ pub fn index(
         "[mem cp] after facts.try_save: {:.1} MB",
         phys_footprint_mb()
     );
+    // The native front ends deal in pointers, and every pointer may be dereferenced, so the
+    // index admits `<path>.deref` for every program path (see `compute_paths`). Decided from the
+    // imports' languages, not from whether some dereference happens to survive SSA. CIL joins
+    // them: `T*` fields, `ref` fields and addresses stored through a pointer are pointers held
+    // in memory, whose pointee's path the index otherwise never admits.
+    let deref_paths = project.iter_imports().filter_map(Result::ok).any(|import| {
+        matches!(
+            import.language,
+            ArtifactLanguage::C | ArtifactLanguage::Pcode | ArtifactLanguage::Cil
+        )
+    });
     let config = crate::index_engine::IndexConfig {
         alias_rule,
         hybrid_context,
         context_join,
         parallelism,
+        storage,
+        deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));
+    if !result.intent_pair.is_empty() {
+        let explicit = result
+            .intent_pair
+            .iter()
+            .filter(|(_, _, _, kind)| *kind == crate::facts::IntentPairKind::Explicit)
+            .count();
+        let implicit = result.intent_pair.len() - explicit;
+        log::info!(
+            "android intent pairs: {} explicit, {} implicit, {} total",
+            explicit,
+            implicit,
+            result.intent_pair.len()
+        );
+    }
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
@@ -565,6 +745,7 @@ pub fn query(
         .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
     let index_result = IndexResult::try_load(&index_path)
         .err_context(|| format!("loading index result from: {}", index_path.display()))?;
+    let final_call = index_result.final_call(&index_facts.call);
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
@@ -694,7 +875,7 @@ pub fn query(
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
-                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
+                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &final_call)?;
                 endpoints.extend(eps);
             }
         }
@@ -717,6 +898,7 @@ pub fn query(
                 &index_facts,
                 &ids,
                 &index_result.assign_like,
+                &final_call,
             );
             diagnostics.unresolved_functions = built.unresolved_functions;
             endpoints.extend(built.endpoints);
@@ -725,7 +907,7 @@ pub fn query(
 
         // Declared: model *ports* of that direction, plus flowy's already-resolved
         // endpoints (one port each). Matched: post-fan-out `QueryEndpoint`s. Counting
-        // (generator, direction) keys here instead made `CTADL0100` compare a count of
+        // (generator, direction) keys here instead would make `CTADL0100` compare a count of
         // generators against a count of endpoints.
         let count_declared = |direction| {
             diagnostics
@@ -765,7 +947,7 @@ pub fn query(
             .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param.clone())
-            .call(index_facts.call.clone())
+            .call(final_call.clone())
             .assign(index_result.assign_like)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
@@ -778,7 +960,7 @@ pub fn query(
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::query_check(&import, &result, &ids, &index_facts.call)?;
+            crate::codegen::flowy::query_check(&import, &result, &ids, &final_call)?;
         }
     }
 
@@ -787,7 +969,7 @@ pub fn query(
     b.taint(result.taint)
         .taint_edge(result.taint_edge)
         .index_actual_param(index_facts.actual_param)
-        .call(index_facts.call)
+        .call(final_call)
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
 
@@ -960,7 +1142,7 @@ fn dump_taint_graph_dot(
     }
 
     // The persisted taint edges are already in data-flow (execution) order
-    // (source → derived, matching `find_path`) and no longer carry the
+    // (source → derived, matching `find_path`) and do not carry the
     // exploration direction, so draw each edge as-is and dedup. Approximate an
     // edge's cone from the cones its endpoints already carry (from the
     // authoritative `facts.taint` classification above); a `Call`/`Return`/`Intra`
@@ -979,6 +1161,12 @@ fn dump_taint_graph_dot(
             .and_modify(|c| *c = c.join(cone))
             .or_insert(cone);
     }
+    // `oriented` iterates in handle order; the file wants content order.
+    let mut oriented: Vec<_> = oriented.into_iter().collect();
+    oriented.sort_unstable_by(|((s1, d1), _), ((s2, d2), _)| {
+        crate::graphviz::index_vertex_cmp(s1, s2)
+            .then_with(|| crate::graphviz::index_vertex_cmp(d1, d2))
+    });
     let edges: Vec<_> = oriented
         .into_iter()
         .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))
@@ -1074,31 +1262,197 @@ fn dump_taint_graph_dot(
     Ok(())
 }
 
-/// Load summaries from a previously indexed project and map them into the current project.
-/// This function handles the FunctionId mapping between the source and target projects.
-fn load_and_map_summaries(
-    summary_project_name: &str,
-    _current_project: &AnalysisProject,
-    current_facts: &mut IndexFacts,
-    current_source_info: &mut IndexSourceInfo,
+/// Feeds the JNI observer the native half of every import of the `--summary` projects: each
+/// import's symbol table, read without its program IR, and unless `no_jni_registry` its
+/// `RegisterNatives` tables. Imports already observed are skipped; see [`summary_imports`].
+fn observe_summary_natives(
+    project: &AnalysisProject,
+    summary_projects: &[AnalysisProject],
+    jni_observer: &mut jni::JniObserver,
+    no_jni_registry: bool,
 ) -> Result<(), Error> {
+    for summary_project in summary_projects {
+        check_summary_provenance(project, summary_project);
+    }
+    for (summary_project, name) in summary_imports(project, summary_projects) {
+        let import = ArtifactImport::load_by_name(name).err_context(|| {
+            format!("loading import '{name}' of summary project '{summary_project}'")
+        })?;
+        log::info!(
+            "'{}': reading native symbols for the JNI bridge (summary project \
+             '{summary_project}')",
+            import.name,
+        );
+        let vmt = ctadl_import::load_vmt(&import)?;
+        jni_observer.observe_native_vmt(
+            &vmt,
+            jni::NativeAbi::of(&import),
+            jni::Origin::Summary(summary_project.to_string()),
+        );
+        if !no_jni_registry {
+            jni_observer.observe_registry(&import)?;
+        }
+    }
+    Ok(())
+}
+
+/// Something [`check_summary_provenance`] found wrong with a summary project. None of it stops
+/// the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SummaryProvenance {
+    /// The summary project's native library `import` is not one this project's imports were
+    /// expanded from: another ABI, another app, or another version of this one.
+    NotThisApp { project: String, import: String },
+    /// `import` changed since the summary project was indexed, so its summaries describe
+    /// another build of it.
+    Stale { project: String, import: String },
+    /// The summary project's index predates recorded import hashes, so staleness cannot be
+    /// checked.
+    NoHashes { project: String },
+}
+
+/// Warns when a `--summary` project may not describe this project's native libraries, and
+/// returns what it found.
+///
+/// This project's libraries are its imports plus the `sub_imports` recorded on them. Those are
+/// read from the import configs, so they are the full lists, before `--no-native-libs` filtered
+/// the project.
+pub fn check_summary_provenance(
+    project: &AnalysisProject,
+    summary_project: &AnalysisProject,
+) -> Vec<SummaryProvenance> {
+    let mut found = Vec::new();
+    let mut ours: std::collections::HashSet<String> = project.imports.iter().cloned().collect();
+    for import in project.iter_imports().filter_map(Result::ok) {
+        ours.extend(import.sub_imports);
+    }
+    let recorded = summary_project
+        .index_config()
+        .map(|config| config.import_hashes)
+        .unwrap_or_default();
+    let name = &summary_project.name;
+    let libraries = summary_project
+        .iter_imports()
+        .filter_map(Result::ok)
+        .filter(|import| import.language == ArtifactLanguage::Pcode);
+    for import in libraries {
+        if !ours.contains(&import.name) {
+            log::warn!(
+                "summary provenance: '{}' in summary project '{name}' is not a native library of \
+                 this project's imports ({}); it may be another ABI, another app, or another \
+                 version of this one, and its natives may not be this app's",
+                import.name,
+                project.imports.join(", ")
+            );
+            found.push(SummaryProvenance::NotThisApp {
+                project: name.clone(),
+                import: import.name.clone(),
+            });
+        }
+        if let (Some(current), Some(indexed)) = (&import.hash, recorded.get(&import.name))
+            && current != indexed
+        {
+            log::warn!(
+                "summary provenance: '{}' changed since summary project '{name}' was indexed, \
+                 so its summaries describe another build of it; re-run `ctadl index {name}`",
+                import.name
+            );
+            found.push(SummaryProvenance::Stale {
+                project: name.clone(),
+                import: import.name.clone(),
+            });
+        }
+    }
+    if recorded.is_empty() {
+        log::info!(
+            "summary provenance: summary project '{name}' records no import hashes (it was \
+             indexed by an older build), so whether its summaries are stale cannot be checked"
+        );
+        found.push(SummaryProvenance::NoHashes {
+            project: name.clone(),
+        });
+    }
+    found
+}
+
+/// The `(summary project, import)` pairs [`observe_summary_natives`] reads, in order: each
+/// summary project's imports, minus any this project or an earlier summary project already has.
+fn summary_imports<'a>(
+    project: &'a AnalysisProject,
+    summary_projects: &'a [AnalysisProject],
+) -> Vec<(&'a str, &'a str)> {
+    let mut seen: std::collections::HashSet<&str> =
+        project.imports.iter().map(String::as_str).collect();
+    summary_projects
+        .iter()
+        .flat_map(|summary_project| {
+            summary_project
+                .imports
+                .iter()
+                .map(move |name| (summary_project.name.as_str(), name.as_str()))
+        })
+        .filter(|(_, name)| seen.insert(name))
+        .collect()
+}
+
+/// Says how many of the summaries mapped in from `--summary` projects belong to natives the JNI
+/// bridge linked to, and warns for each summary-sourced target that got none: its bridge carries
+/// no flow, and nothing else would say so.
+fn report_bridged_summaries(
+    targets: &std::collections::BTreeMap<facts::FunctionId, jni::NativeTarget>,
+    mapped_per_function: &HashMap<facts::FunctionId, usize>,
+) {
+    let mut from_summary = 0usize;
+    let mut mapped = 0usize;
+    for (id, target) in targets {
+        let jni::Origin::Summary(summary_project) = &target.origin else {
+            continue;
+        };
+        from_summary += 1;
+        let count = mapped_per_function.get(id).copied().unwrap_or(0);
+        mapped += count;
+        if count == 0 {
+            log::warn!(
+                "jni bridge: '{}' is linked to summary project '{summary_project}', which has no \
+                 summaries for it, so no flow will cross this bridge. Either the function has no \
+                 flow CTADL can see (no parameters, or arguments read only through JNIEnv), or \
+                 the project was indexed from another build of the library",
+                target.function
+            );
+        }
+    }
+    if from_summary > 0 {
+        log::info!(
+            "jni bridge: {mapped} mapped summar{} belong to {from_summary} native function(s) \
+             linked from summary projects",
+            if mapped == 1 { "y" } else { "ies" }
+        );
+    }
+}
+
+/// Maps a previously indexed project's summaries into the current project.
+///
+/// A summary is kept only when its function is in the current project's `IdMap` by name.
+/// `mapped_per_function` counts the summaries kept per function in the current project.
+///
+/// Only context-free `summary` rows are mapped; `context_summary` and `critical_summary` are
+/// not.
+fn load_and_map_summaries(
+    summary_project: &AnalysisProject,
+    current_facts: &mut IndexFacts,
+    current_source_info: &IndexSourceInfo,
+    mapped_per_function: &mut HashMap<facts::FunctionId, usize>,
+) -> Result<(), Error> {
+    let summary_project_name = summary_project.name.as_str();
     log::info!("Loading summaries from project: {}", summary_project_name);
 
-    // Load the summary project
-    let summary_project = AnalysisProject::try_load_name(summary_project_name)
-        .err_context(|| format!("loading summary project: {}", summary_project_name))?;
-
-    // Load summaries directly using schema::summary::try_load
-    summary_project.check_index_config()?;
     let summary_index_path = summary_project.index_path()?;
     let source_summaries = crate::facts::schema::summary::try_load(&summary_index_path)
         .err_context(|| format!("loading source project summaries: {}", summary_project_name))?;
 
-    // Load the source project's id map for function name resolution
     let source_id_map = facts::IdMap::try_load(&summary_index_path)
         .err_context(|| format!("loading source project id map: {}", summary_project_name))?;
 
-    // Get the current project's id map
     let current_id_map = &current_source_info.sites;
 
     log::info!(
@@ -1106,41 +1460,32 @@ fn load_and_map_summaries(
         source_summaries.len()
     );
 
-    // Map summaries from source project to current project
     let mut mapped_summaries = 0;
     let mut discarded_summaries = 0;
 
     for (source_func_id, dst_index, dst_path, src_index, src_path) in source_summaries {
-        // Get the function name from the source project
-        let source_func_name = match source_id_map.get_function(source_func_id) {
-            Some(func) => func,
-            None => {
-                log::warn!(
-                    "Source function ID {} not found in source id map",
-                    source_func_id.id
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(source_func_name) = source_id_map.get_function(source_func_id) else {
+            log::warn!(
+                "Source function ID {} not found in source id map",
+                source_func_id.id
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
-        // Check if this function exists in the current project
-        let target_func_id = match current_id_map.get_function_id(source_func_name.clone()) {
-            Some(func_id) => func_id,
-            None => {
-                log::trace!(
-                    "Function {} not found in current project, discarding summary",
-                    source_func_name
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(target_func_id) = current_id_map.get_function_id(source_func_name.clone()) else {
+            log::trace!(
+                "Function {} not found in current project, discarding summary",
+                source_func_name
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
-        // Add the mapped summary to current facts
         current_facts
             .summary
             .push((target_func_id, dst_index, dst_path, src_index, src_path));
+        *mapped_per_function.entry(target_func_id).or_default() += 1;
         mapped_summaries += 1;
     }
 
@@ -1231,6 +1576,7 @@ impl ImportStats {
                             ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                             ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
                             ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
+                            ctadl_ir::call::CallStyle::CilCall { .. } => "CilCall",
                         };
                         *stats.call_styles.entry(style_name).or_insert(0) += 1;
                     }
@@ -1585,7 +1931,7 @@ fn human_bytes(bytes: u64) -> String {
 /// Renders a finished project's index (assign-like) graph to a Graphviz DOT file.
 ///
 /// Reads `assign.parquet` and `function_id.parquet` out of the project's index directory -- the
-/// same rows `ctadl index` used to hold in memory -- so no re-index is needed. Sorts assigns for
+/// rows `ctadl index` wrote -- so no re-index is needed. Sorts assigns for
 /// stability.
 ///
 /// # Errors
@@ -1708,6 +2054,15 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 
     let parent = path.parent().unwrap_or(std::path::Path::new("."));
 
+    // The generic `Debug` dump below prints an interned name as its string id, which says
+    // nothing about which function it is, so the IdMap prints its names instead.
+    if filename == function_id::FILENAME {
+        for (id, function) in function_id::try_load(parent)? {
+            println!("{} {}", id.id, function);
+        }
+        return Ok(());
+    }
+
     macro_rules! match_schema {
         ($($mod:ident),*) => {
             match filename {
@@ -1735,7 +2090,6 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         taint,
         index_source_map,
         import_id,
-        function_id,
         external_function
     );
 
@@ -1792,8 +2146,8 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     if filename == crate::project::PROGRAM_BITCODE_FILE {
         let program =
             ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;
-        // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
-        // that the name lives in `FunctionData::locals` rather than in the variable itself.
+        // Resolve locals through each function's table: a dump full of `%L7` is unreadable,
+        // since the name lives in `FunctionData::locals` rather than in the variable itself.
         println!("{}", ctadl_ir::mir::WithLocalNames(&program));
     } else if filename == crate::project::VMT_BITCODE_FILE {
         let vmt: ctadl_ir::call::VirtualMethodTable =
@@ -1807,17 +2161,6 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 
     Ok(())
 }
-
-// fn build_query_facts(project: &AnalysisProject) -> Result<IndexResult, Error> {
-//     // Get the original programs to
-//     for import in project.iter_imports() {
-//         let import = import?;
-//         let program_info = load_import(&import, SourceInfoMode::Skip)?;
-//     }
-//     let path = &project.index_path()?;
-//     let index = IndexResult::try_load(path)?;
-//     Ok(index)
-// }
 
 pub fn inspect_index_facts(
     facts: &IndexFacts,
@@ -1944,4 +2287,33 @@ pub fn inspect_index_facts(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(name: &str, imports: &[&str]) -> AnalysisProject {
+        AnalysisProject {
+            name: name.to_string(),
+            project_dir: std::path::PathBuf::from("projects").join(name),
+            imports: imports.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// An import in both this project and a summary project, or in two summary projects, is
+    /// observed once. Observed twice, every one of its symbols would have two targets and the
+    /// bridge would call each ambiguous.
+    #[test]
+    fn a_shared_import_is_observed_once() {
+        let app = project("app", &["app", "app__x86__libshared"]);
+        let summaries = [
+            project("xproj", &["app__x86__libshared", "app__x86__libx"]),
+            project("yproj", &["app__x86__libx", "app__x86__liby"]),
+        ];
+        assert_eq!(
+            summary_imports(&app, &summaries),
+            [("xproj", "app__x86__libx"), ("yproj", "app__x86__liby")]
+        );
+    }
 }

@@ -1,4 +1,3 @@
-use internment::ArcIntern;
 use smallvec::smallvec;
 
 use ctadl_ir::index::{idx::Idx, index_vec::IndexVec};
@@ -22,8 +21,8 @@ fn function_f() -> FunctionData {
     let mut f = FunctionData::default();
     f.set_name("F".to_string());
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
+    f.params.push(ParameterType::SharedFields);
     let a_idx = f.intern_local("a");
     let blocks = f.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
@@ -52,7 +51,6 @@ fn function_f() -> FunctionData {
                 [Exp::from(a.clone())]
             ))
         ];
-        // stmts.extend(]));
         let body_block = &mut f[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
@@ -73,7 +71,7 @@ fn function_g() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
@@ -112,7 +110,7 @@ fn function_g() -> FunctionData {
     g
 }
 
-// c1 is never set anywhere, this was a bug in ssa
+// c1 is never set anywhere: SSA must handle a use with no def.
 //def G1(b) {
 //  a = 1;
 //  c = F(a, b);
@@ -124,7 +122,7 @@ fn function_g1() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
@@ -166,14 +164,14 @@ fn function_g1() -> FunctionData {
 
 // def F(p)
 // {
-//   %global.bar = update(p;
+//   %global.bar = p;
 // }
 fn program_h() -> Program {
     let mut program = Program::default();
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -186,7 +184,7 @@ fn program_h() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),

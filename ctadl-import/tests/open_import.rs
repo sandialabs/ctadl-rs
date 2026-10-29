@@ -10,7 +10,7 @@ use std::sync::Once;
 use ctadl_import::project::{
     ArtifactImport, ArtifactLanguage, IMPORT_FORMAT_VERSION, init_store_path,
 };
-use ctadl_import::{SourceInfoMode, load_import, open_import, save_program_info};
+use ctadl_import::{SourceInfoMode, load_import, load_vmt, open_import, save_program_info};
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::ssa;
 
@@ -138,11 +138,8 @@ fn incompatible_cause(err: &ctadl_import::Error) -> (String, String, String) {
 /// A store written by an older build is refused, and the error says which artifact to import
 /// again.
 ///
-/// This is the regression the reader exists for. Reading `ir-program.bitcode` directly -- which
-/// is what a downstream crate had to do before [`open_import`] was public -- cannot make this
-/// check, so a stale store either decodes into something wrong or fails with a `bitcode::Error`
-/// that names no cause. Here the bitcode is perfectly readable and the version is the only thing
-/// wrong, which is the point: the check fires on the config, before the decode.
+/// The bitcode here is perfectly readable and the version is the only thing wrong, which is the
+/// point: the check fires on the config, before the decode.
 #[test]
 fn an_import_from_an_older_build_is_refused_by_name() {
     store();
@@ -224,4 +221,83 @@ fn the_completion_mark_is_written_last_and_cleared_by_a_re_import() {
         !restarted.is_complete(),
         "the stored program is still there, but this import is running again"
     );
+}
+
+/// An import is up to date only when it finished, its artifact path matches, and the recorded
+/// hash still matches the artifact's contents. `ctadl import` skips exactly those unless forced.
+#[test]
+fn only_a_finished_import_of_unchanged_contents_is_up_to_date() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let mut import = write_import("up_to_date", dir.path());
+    let artifact = import.artifact_path.clone();
+    // No hash recorded yet: nothing proves the artifact is unchanged.
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    import = ArtifactImport::load_by_name("up_to_date").unwrap();
+    import.record_artifact_hash().unwrap();
+    assert!(ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    // The same hash, but the completion mark is gone, as when a re-import dies part way.
+    let mut unfinished = ArtifactImport::load_by_name("up_to_date").unwrap();
+    unfinished.status = None;
+    unfinished.save().unwrap();
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+    ArtifactImport::mark_complete("up_to_date").unwrap();
+    assert!(ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    // Changed contents at the same path.
+    std::fs::write(&artifact, b"a different dex").unwrap();
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+}
+
+/// [`load_vmt`] reads the same table [`load_import`] does, without the program. The fixture is a
+/// Lua VMT with one row per column, so an empty-vs-empty comparison cannot pass by accident.
+#[test]
+fn load_vmt_agrees_with_load_import() {
+    use ctadl_ir::mir::Symbol;
+    use ctadl_ir::mir::call::VirtualMethodTable;
+
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("account.lua");
+    std::fs::write(&artifact, b"-- not really lua").unwrap();
+    let import = ArtifactImport::try_create("vmt_only", ArtifactLanguage::Lua, &artifact).unwrap();
+    let vmt = VirtualMethodTable::Lua {
+        methods: vec![(
+            Symbol::from("lua$class$Account"),
+            Symbol::from("deposit"),
+            Symbol::from("Account.deposit"),
+        )],
+        functions: vec![(Symbol::from("deposit"), Symbol::from("Account.deposit"))],
+        externals: vec![(Symbol::from("format"), Symbol::from("string.format"))],
+        hierarchy: Default::default(),
+    };
+    save_program_info(
+        ProgramInfo {
+            vmt: vmt.clone(),
+            ..Default::default()
+        },
+        &import,
+    )
+    .unwrap();
+
+    let only = load_vmt(&import).unwrap();
+    assert_eq!(only, vmt);
+    assert_eq!(
+        only,
+        load_import(&import, SourceInfoMode::Skip).unwrap().vmt
+    );
+}
+
+/// [`load_vmt`] refuses an unfinished import the way [`load_import`] does.
+#[test]
+fn load_vmt_refuses_an_unfinished_import() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("half.dex");
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    let import = ArtifactImport::try_create("vmt_half", ArtifactLanguage::Dex, &artifact).unwrap();
+    let message = full_message(&load_vmt(&import).unwrap_err());
+    assert!(message.contains("never finished"), "{message}");
 }

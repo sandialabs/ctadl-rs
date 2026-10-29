@@ -1,0 +1,47 @@
+// One indirect call site that resolves to two targets. `im.get` is assigned `get_a` on one
+// branch and `get_b` on the other (C: `im.get = pick() ? get_a : get_b`), then called. The
+// query enters both targets' formals, so the sinks in both are reached.
+//
+// The sinks sit one call further down, in `sink_a` and `sink_b`, so each is anchored at a call
+// site inside a target. A `sink` directly on a target's formal would be anchored at the indirect
+// call in `main`, which the query reaches without entering either target.
+
+def sink_a(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_b(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def get_a(im shared, h):1 {
+start:
+  sink_a(h);
+  return h;
+}
+
+def get_b(im shared, h):1 {
+start:
+  sink_b(h);
+  return h;
+}
+
+def main() {
+start:
+  h = source(Height);
+  goto a, b;
+a:
+  im.get = ptr<get_a>;
+  goto call;
+b:
+  im.get = ptr<get_b>;
+  goto call;
+call:
+  f = im.get;
+  r = f(im, h);
+  return;
+}

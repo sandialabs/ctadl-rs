@@ -153,20 +153,20 @@ pub fn split_apk_entries_of_file(path: &std::path::Path) -> DexResult<Vec<SplitA
     Ok(entries)
 }
 
-/// Decompresses one entry of an app bundle. Reopens the archive, so extracting every split costs
-/// one central-directory read each rather than holding the whole bundle in memory.
+/// Decompresses one entry of an app bundle or APK. Reopens the archive, so extracting every
+/// split costs one central-directory read each rather than holding the whole bundle in memory.
 pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<Vec<u8>> {
     let file = std::fs::File::open(path)
-        .map_err(|_| crate::error::DexError::InvalidDex("cannot open app bundle"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open ZIP archive"))?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|_| crate::error::DexError::InvalidDex("app bundle is not a valid ZIP"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("not a valid ZIP archive"))?;
     let mut entry = archive
         .by_name(entry_name)
-        .map_err(|_| crate::error::DexError::InvalidDex("no such entry in app bundle"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("no such entry in ZIP archive"))?;
     let mut buf = Vec::new();
     entry
         .read_to_end(&mut buf)
-        .map_err(|_| crate::error::DexError::InvalidDex("failed to decompress bundle entry"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("failed to decompress ZIP entry"))?;
     Ok(buf)
 }
 
@@ -216,7 +216,7 @@ pub struct AbiChoice<'a> {
 /// lexicographically first ABI present -- skipping any ABI whose every entry fails
 /// [`looks_like_object_file`]. `None` when `entries` is empty.
 ///
-/// If *no* ABI is usable, the plain preference order is returned as before: the caller's
+/// If *no* ABI is usable, the plain preference order is returned: the caller's
 /// per-library reporting is what explains that case, and there is nothing better to pick.
 pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Option<AbiChoice<'a>> {
     let plain = |entries: &'a [NativeLibEntry]| -> Option<&'a str> {
@@ -254,8 +254,8 @@ pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Opt
             .iter()
             .filter(|e| e.abi == abi)
             .any(|e| match archive.as_mut() {
-                // Unreadable is not the same as unusable: without an archive to look in, keep
-                // the old behavior rather than skipping every ABI.
+                // Unreadable is not the same as unusable: without an archive to look in, treat
+                // every ABI as usable rather than skipping them all.
                 None => true,
                 Some(archive) => entry_looks_like_object_file(archive, &e.entry_name),
             });
@@ -576,8 +576,7 @@ mod native_lib_tests {
     }
 
     /// Listing from disk sees exactly what listing from bytes sees. Written by hand
-    /// rather than with `tempfile`: this crate is workspace-excluded and built offline
-    /// from its own lockfile, so one test is not worth a dependency.
+    /// rather than with `tempfile`: one test is not worth a dependency.
     #[test]
     fn listing_from_a_file_matches_listing_from_bytes() {
         let path = std::env::temp_dir().join("dex_reader_native_lib_listing_test.apk");
@@ -636,8 +635,8 @@ mod native_lib_tests {
         assert_eq!(chosen_abi(&apk, &[]), None);
     }
 
-    /// The Chrome trap: the preferred ABI holds one zero-length placeholder and the real code
-    /// is built for the next ABI down. Picking by preference order alone yields an import with
+    /// The preferred ABI holds one zero-length placeholder and the real code is built for the
+    /// next ABI down. Picking by preference order alone yields an import with
     /// no native libraries in it at all.
     #[test]
     fn an_abi_with_no_loadable_object_file_is_skipped() {
@@ -666,8 +665,9 @@ mod native_lib_tests {
         assert!(choice.unusable.is_empty());
     }
 
-    /// When nothing anywhere is loadable, the choice is the old one: the caller's per-library
-    /// reporting explains that case, and skipping every ABI would leave nothing to report.
+    /// When nothing anywhere is loadable, the choice is the plain preference order: the caller's
+    /// per-library reporting explains that case, and skipping every ABI would leave nothing to
+    /// report.
     #[test]
     fn no_usable_abi_falls_back_to_the_preference_order() {
         let apk = zip_of(&[

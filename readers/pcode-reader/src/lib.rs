@@ -21,8 +21,8 @@ pub use error::PcodeError;
 pub mod constant_propagation;
 pub mod error;
 
-/// Macro to generate newtype wrappers around ArcIntern<str>
-/// Each newtype gets Deref and Display implementations
+/// Macro to generate newtype wrappers around `ArcIntern<str>`.
+/// Each newtype gets `From<impl AsRef<str>>`, `Deref` and `Display` implementations.
 macro_rules! define_interned_newtype {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -51,10 +51,9 @@ macro_rules! define_interned_newtype {
     };
 }
 
-/// Re-export commonly used types
+/// Result type for pcode-reader operations.
 pub type Result<T> = std::result::Result<T, PcodeError>;
 
-// Define all the interned newtypes using the macro
 define_interned_newtype! {
     /// Unique identifier for a high-level function
     HighFunc
@@ -318,13 +317,10 @@ impl PcodeFactsReader {
     pub fn read_hfunc_facts(&self) -> Result<BTreeMap<HighFunc, HFuncData>> {
         let mut result = BTreeMap::new();
 
-        // Read HFUNC_NAME.facts
         let name_facts = self.read_csv_facts::<(HighFunc, String)>("HFUNC_NAME.facts")?;
 
-        // Read HFUNC_PROTO.facts
         let proto_facts = self.read_csv_facts::<(HighFunc, HighProto)>("HFUNC_PROTO.facts")?;
 
-        // Read HFUNC_ISEXT.facts
         let isext_facts = self.read_csv_facts::<HighFunc>("HFUNC_ISEXT.facts")?;
 
         // Convert to more usable formats
@@ -340,7 +336,6 @@ impl PcodeFactsReader {
 
         let isext_set: BTreeSet<HighFunc> = isext_facts.into_iter().collect();
 
-        // Read HFUNC_EP.facts
         let ep_facts = self.read_csv_facts::<(HighFunc, i64)>("HFUNC_EP.facts")?;
 
         let mut ep_map: BTreeMap<HighFunc, PcodeAddress> = BTreeMap::new();
@@ -351,7 +346,6 @@ impl PcodeFactsReader {
             ep_to_func_map.insert(ep_address, func_id);
         }
 
-        // Read HFUNC_LOCAL_EP.facts
         let local_ep_facts = self.read_csv_facts::<(i64, i64)>("HFUNC_LOCAL_EP.facts")?;
 
         let mut local_ep_map: BTreeMap<HighFunc, Vec<PcodeAddress>> = BTreeMap::new();
@@ -393,11 +387,9 @@ impl PcodeFactsReader {
     pub fn read_proto_facts(&self) -> Result<BTreeMap<HighProto, ProtoData>> {
         let mut result = BTreeMap::new();
 
-        // Read PROTO_PARAMETER_COUNT.facts
         let param_count_facts =
             self.read_csv_facts::<(HighProto, usize)>("PROTO_PARAMETER_COUNT.facts")?;
 
-        // Read PROTO_PARAMETER.facts
         let param_facts =
             self.read_csv_facts::<(HighProto, usize, HighSymbol)>("PROTO_PARAMETER.facts")?;
 
@@ -411,7 +403,6 @@ impl PcodeFactsReader {
             param_map.entry(proto_id).or_default().push((index, symbol));
         }
 
-        // Read PROTO_RETTYPE.facts
         let rettype_facts = self.read_csv_facts::<(HighProto, String)>("PROTO_RETTYPE.facts")?;
 
         let mut rettype_map: BTreeMap<HighProto, String> = BTreeMap::new();
@@ -419,10 +410,8 @@ impl PcodeFactsReader {
             rettype_map.insert(proto_id, rettype);
         }
 
-        // Read PROTO_IS_VARARG.facts
         let vararg_facts = self.read_csv_facts::<HighProto>("PROTO_IS_VARARG.facts")?;
 
-        // Read PROTO_IS_VOID.facts
         let void_facts = self.read_csv_facts::<HighProto>("PROTO_IS_VOID.facts")?;
 
         let vararg_set: BTreeSet<HighProto> = vararg_facts.into_iter().collect();
@@ -459,23 +448,13 @@ impl PcodeFactsReader {
         param_count: usize,
         param_map: &BTreeMap<HighProto, Vec<(usize, HighSymbol)>>,
     ) -> Vec<ProtoParameter> {
-        let mut parameters = Vec::with_capacity(param_count);
-
-        // Get parameter names and indices
-        let param_names = param_map.get(proto_id).cloned().unwrap_or_default();
-
-        // Sort parameters by index
-        let mut sorted_params: Vec<_> = param_names
-            .iter()
-            .map(|(idx, name)| (*idx, name.clone()))
-            .collect();
+        let mut sorted_params = param_map.get(proto_id).cloned().unwrap_or_default();
         sorted_params.sort_by_key(|&(idx, _)| idx);
 
-        // Build parameters
+        let mut parameters = Vec::with_capacity(param_count);
         for (_, symbol) in sorted_params {
             parameters.push(ProtoParameter { symbol });
         }
-
         parameters
     }
 
@@ -561,7 +540,6 @@ impl PcodeFactsReader {
             self.register_fact_csv(&ctx, table, file, fields).await?;
         }
 
-        // Build mnemonic map
         let mut mnemonic_map = BTreeMap::new();
         if ctx.table_exist("pcode_mnemonic")? {
             let df = ctx.sql("SELECT c0, c1 FROM pcode_mnemonic").await?;
@@ -586,7 +564,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build opcode map
         let mut opcodes_by_inst = BTreeMap::new();
         if ctx.table_exist("pcode_opcode")? {
             let df = ctx.sql("SELECT c0, c1 FROM pcode_opcode").await?;
@@ -609,7 +586,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build input map
         let mut inputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 2]>> =
             BTreeMap::new();
         if ctx.table_exist("pcode_input")? {
@@ -638,7 +614,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build output map
         let mut outputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 1]>> =
             BTreeMap::new();
         if ctx.table_exist("pcode_output")? {
@@ -664,7 +639,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build index map
         let mut indices_by_inst = BTreeMap::new();
         if ctx.table_exist("pcode_index")? {
             let df = ctx.sql("SELECT c0, c1 FROM pcode_index").await?;
@@ -686,7 +660,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build target map
         let mut targets_by_inst = BTreeMap::new();
         if ctx.table_exist("pcode_target")? {
             let df = ctx.sql("SELECT c0, c1 FROM pcode_target").await?;
@@ -711,7 +684,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build parent map
         let mut parent_map = BTreeMap::new();
         if ctx.table_exist("pcode_parent")? {
             let df = ctx.sql("SELECT c0, c1 FROM pcode_parent").await?;
@@ -736,7 +708,6 @@ impl PcodeFactsReader {
             }
         }
 
-        // Build bb_ids set
         let mut bb_ids = BTreeSet::new();
         if ctx.table_exist("bb_hfunc")? {
             let df = ctx.sql("SELECT DISTINCT c0 FROM bb_hfunc").await?;
@@ -760,13 +731,10 @@ impl PcodeFactsReader {
             let outputs = outputs_by_inst.get(&inst_id).cloned().unwrap_or_default();
             let index = indices_by_inst.get(&inst_id).copied().unwrap_or(0);
             let target = targets_by_inst.get(&inst_id).cloned();
-            let bb_id = parent_map.get(&inst_id).and_then(|id| {
-                if bb_ids.contains(id) {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            });
+            let bb_id = parent_map
+                .get(&inst_id)
+                .filter(|id| bb_ids.contains(*id))
+                .cloned();
 
             result.insert(
                 inst_id,
@@ -1330,8 +1298,8 @@ impl PcodeFactsReader {
 
     /// Read VNODE_HVAR facts, mapping each varnode to the high variable it belongs to.
     ///
-    /// Optional: fact sets exported before this was read lack the file, in which case
-    /// callers see an empty map and simply detect no high-variable classes.
+    /// Optional: returns an empty map when the fact file is absent, as it is in older
+    /// fact sets.
     pub fn read_vnode_hvar_facts(&self) -> Result<BTreeMap<PcodeVarnode, HighVariable>> {
         let facts = self
             .read_csv_facts_optional::<(PcodeVarnode, HighVariable)>("VNODE_HVAR.facts")?
@@ -1367,9 +1335,6 @@ impl PcodeFactsReader {
         };
 
         let file = std::fs::File::open(&path).map_err(PcodeError::from)?;
-
-        // The reader must work whether the fact file is compressed or not, so that
-        // someone can manually gunzip files in the store and everything still works.
         let reader: std::io::BufReader<Box<dyn std::io::Read>> = if compressed {
             std::io::BufReader::new(Box::new(flate2::read::GzDecoder::new(file)))
         } else {
@@ -1377,7 +1342,7 @@ impl PcodeFactsReader {
         };
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(false)
-            .delimiter(b'\t') // Use tab delimiter
+            .delimiter(b'\t')
             .from_reader(reader);
 
         let mut result = Vec::new();
@@ -1414,19 +1379,14 @@ impl PcodeFacts {
     /// Get the representative PcodeVarnode for a given HighSymbol
     /// by chaining symbol_hvar_facts and hvar_representative_facts mappings.
     ///
-    /// Returns the first PcodeVarnode found by:
-    /// 1. Looking up the HighSymbol in symbol_hvar_facts to get a HighVariable
-    /// 2. Looking up the HighVariable in hvar_representative_facts to get a PcodeVarnode
-    ///
-    /// Returns None if either mapping is not found.
+    /// Returns the representative of the first of the symbol's HighVariables (in
+    /// symbol_hvar_facts order) that has one, or None if none does.
     pub fn get_symbol_representative(&self, symbol: &HighSymbol) -> Option<&PcodeVarnode> {
-        // Step 1: Find the HighVariables for the given HighSymbol. Ghidra maps one symbol
-        // to several high variables when it splits an aggregate into the pieces the body
-        // actually touches (the whole variable, plus one per accessed field). Only some of
-        // them carry a representative varnode, so try each rather than picking one blindly.
+        // Ghidra maps one symbol to several high variables when it splits an aggregate
+        // into the pieces the body actually touches (the whole variable, plus one per
+        // accessed field). Only some of them carry a representative varnode, so try each
+        // rather than picking one blindly.
         let hvars = self.symbol_hvar_facts.get(symbol)?;
-
-        // Step 2: Find PcodeVarnode for the HighVariable
         hvars
             .iter()
             .find_map(|hvar| self.hvar_representative_facts.get(hvar))

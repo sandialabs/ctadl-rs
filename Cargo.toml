@@ -4,8 +4,13 @@ members = [
     "ctadl-ascent",
     "ctadl-frontends",
     "ctadl-import",
+    "ctadl-index",
+    "ctadl-index/engines/lsm",
+    "ctadl-index/engines/par",
+    "ctadl-index/engines/serial",
     "ctadl-ir",
     "frontends/ctadl-c",
+    "frontends/ctadl-cil",
     "frontends/ctadl-dex",
     "frontends/ctadl-flowy",
     "frontends/ctadl-jvm",
@@ -14,8 +19,11 @@ members = [
     "readers/dex-reader",
     "readers/jvm-reader",
     "readers/pcode-reader",
+    "readers/cil-reader/crates/cil-reader",
+    "readers/cil-reader/crates/cil-dump",
     "immortal",
-    "tailshare",
+    "lsm",
+    "lsm/crates/ascent-tc-lsm-bench",
     "trie",
     "xtask",
 ]
@@ -25,17 +33,12 @@ members = [
 # number. It is what `ctadl --version` prints, and it is what any of these
 # crates would carry if we ever publish them. Bump it here and nowhere else.
 [workspace.package]
-version = "0.1.3"
+version = "0.1.6"
 
-# Section defining rustc compiler lint rules for the workspace
 [workspace.lints.rust]
-
-# Fail on violations of the `rust-2018-idioms` lint group
 rust-2018-idioms = "deny"
 
-# Section defining Clippy lint rules for the workspace
 [workspace.lints.clippy]
-
 # Require a "SAFETY" comment preceding any unsafe code
 undocumented_unsafe_blocks = "deny"
 
@@ -46,6 +49,27 @@ large_enum_variant = "allow"
 result_large_err = "allow"
 # Our Ascent code uses _ as a name all the time
 just_underscores_and_digits = "allow"
+
+# Every debug binary links all of datafusion, so debuginfo size is link time. Line tables
+# keep file:line in backtraces and panics; for locals in a debugger, build with
+# `CARGO_PROFILE_DEV_DEBUG=full`. Dependencies get none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# The CIL reader and frontend and the IR passes run hot in-process under `cargo test` and
+# `cargo xtask`: importing Mono.Android.dll takes 72 s at opt-level 1 and 226 s at 0. An edit to
+# them, or to anything downstream, builds no slower at 1.
+[profile.dev.package.cil-reader]
+opt-level = 1
+
+[profile.dev.package.ctadl-cil]
+opt-level = 1
+
+[profile.dev.package.ctadl-ir]
+opt-level = 1
 
 [profile.release]
 debug = false

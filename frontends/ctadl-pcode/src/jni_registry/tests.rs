@@ -72,8 +72,8 @@ fn owned(rows: &[(&str, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The Facebook Lite shape: three tables laid out adjacent with no gap between them, each run a
-/// *subset* of what its class declares (`SuperpackArchive` declares 14 natives and registers 13).
+/// Three tables laid out adjacent with no gap between them, each run a *subset* of what its class
+/// declares.
 ///
 /// Splitting on address gaps alone yields two runs here, not three -- guards 2 and 3 are what
 /// recover the third boundary. Asserting **3** is the direct regression for both.
@@ -201,8 +201,8 @@ fn an_address_gap_splits_the_run() {
     assert_eq!(owned(&attributed), pairs(&[("LA;", "a"), ("LA;", "b")]));
 }
 
-/// A run that stays multi-class to the end attributes nothing. Guessing between the candidates is
-/// what the measured-and-cut tier 2 would have done.
+/// A run that stays multi-class to the end attributes nothing, rather than guessing between the
+/// candidates.
 #[test]
 fn a_run_that_stays_ambiguous_is_left_unattributed() {
     let registry = registry(24, &table(0x1000, &[("a", "()V"), ("b", "()V")]));
@@ -220,8 +220,8 @@ fn a_run_that_stays_ambiguous_is_left_unattributed() {
     assert!(attributed.is_empty());
 }
 
-/// The VLC shape: well-formed tables whose Java classes ship outside `classes.dex` -- libbluray's
-/// BD-J bindings, a feature-split dex. Nothing matches, so each entry closes its own run, nothing
+/// Well-formed tables whose Java classes ship outside `classes.dex`, as bindings for another
+/// runtime or a feature-split dex do. Nothing matches, so each entry closes its own run, nothing
 /// is misattributed, and no link is emitted. Attributing nothing is the right answer.
 #[test]
 fn a_library_whose_java_half_is_absent_attributes_nothing() {
@@ -297,8 +297,7 @@ fn descriptors_are_validated_through_the_return_type() {
 // ---------------------------------------------------------------------------
 
 /// Bad magic, a truncated header and a zero-length file are three separate quiet returns. All
-/// three ship under `lib/<abi>/*.so` in the reference corpus -- 17 of its 370 libraries are not
-/// ELF at all.
+/// three ship under `lib/<abi>/*.so` in real APKs.
 #[test]
 fn a_non_elf_file_is_a_quiet_no_op() {
     assert!(scan_bytes(b"").is_none());
@@ -314,8 +313,7 @@ fn a_non_elf_file_is_a_quiet_no_op() {
 }
 
 /// The standard path: `.data.rel.ro` holds zeros and a `SHT_RELA` section carries the real
-/// addresses as `R_AARCH64_RELATIVE` addends. Every slot of `libsuperpack-jni.so` resolves this
-/// way.
+/// addresses as `R_AARCH64_RELATIVE` addends.
 #[test]
 fn elf64_resolves_slots_through_relative_relocations() {
     let scan = scan_bytes(&Elf64::new().relocated().build()).expect("scanning");
@@ -329,7 +327,7 @@ fn elf64_resolves_slots_through_relative_relocations() {
 }
 
 /// The `.relr.dyn` path, which needs no decoder at all: those formats leave the value in place,
-/// so the in-place read covers them. Nine of one app's eleven libraries are like this.
+/// so the in-place read covers them.
 #[test]
 fn elf64_falls_back_to_the_value_stored_in_the_file() {
     let scan = scan_bytes(&Elf64::new().build()).expect("scanning");
@@ -410,9 +408,8 @@ fn a_function_pointer_outside_executable_code_is_rejected() {
     assert!(scan_bytes(&elf).expect("scanning").entries.is_empty());
 }
 
-/// 32-bit ARM: stride 12, and the Thumb bit set on the function pointer. 92% of the corpus's
-/// 1269 32-bit ARM entries carry it, and unmasked they match no function entry point at all --
-/// so without the mask, 92% of every armeabi-v7a app maps to nothing.
+/// 32-bit ARM: stride 12, and the Thumb bit set on the function pointer. Most 32-bit ARM entries
+/// carry it, and unmasked they match no function entry point at all.
 #[test]
 fn elf32_masks_the_thumb_bit() {
     let scan = scan_bytes(&build_elf32()).expect("scanning");
@@ -423,7 +420,7 @@ fn elf32_masks_the_thumb_bit() {
     assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR);
     // Veneer following is AArch64 only. `.text` is zeroed here, but the guard is on the machine,
     // not on what the bytes happen to be: a 32-bit `fnPtr` may be Thumb or ARM and this decoder
-    // reads neither. Measured on the corpus, the 32-bit libraries hold no veneers here anyway.
+    // reads neither.
     assert_eq!(scan.entries[0].veneer_target, None);
 }
 
@@ -431,8 +428,8 @@ fn elf32_masks_the_thumb_bit() {
 // Branch veneers
 // ---------------------------------------------------------------------------
 
-/// The instruction decoder, against the bytes Messenger 563 actually ships: `0x17ff246e` at
-/// `0x40e74` is the veneer for `writeNative`, and it branches back to `0xa02c`.
+/// The instruction decoder, against a real veneer: `0x17ff246e` at `0x40e74` branches back to
+/// `0xa02c`.
 #[test]
 fn an_aarch64_branch_decodes_to_its_target() {
     assert_eq!(aarch64_branch_target(0x17ff_246e, 0x40e74), Some(0xa02c));
@@ -452,7 +449,7 @@ fn only_a_plain_branch_is_followed() {
     assert_eq!(aarch64_branch_target(0x0000_0000, 0x1000), None); // padding
 }
 
-/// The Messenger shape end to end: the `fnPtr` points at a stub holding one `B`, so the scan
+/// A veneer end to end: the `fnPtr` points at a stub holding one `B`, so the scan
 /// records where it goes. `fn_addr` stays the address in the table -- that is the pointer
 /// `RegisterNatives` receives, and changing it would break a spot-check against the ELF.
 #[test]
@@ -465,8 +462,7 @@ fn a_function_pointer_at_a_veneer_records_its_target() {
 }
 
 /// A pointer into an ordinary function body records nothing, so resolution goes on using the
-/// pointer itself. This is the Facebook Lite shape, and it is also every entry in a library
-/// linked without veneers.
+/// pointer itself, as for every entry in a library linked without veneers.
 #[test]
 fn a_function_pointer_at_ordinary_code_records_no_veneer() {
     // `stp x29, x30, [sp, #-16]!` -- the prologue at the head of a real function.

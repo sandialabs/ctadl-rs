@@ -1,0 +1,799 @@
+// Migrated from cil-index.jsonl by `ctadl migrate-models`. Edit this file, not the original.
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Object");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"Concat", "Concat``1"}, parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\((System\\.String\\[\\]|System\\.Object\\[\\]|System\\.Collections\\.Generic\\.IEnumerable`1<[^>]*>)\\)");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "Concat", parent = "[System.Private.CoreLib]System.String"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\((System\\.String\\[\\]|System\\.Object\\[\\]|System\\.Collections\\.Generic\\.IEnumerable`1<[^>]*>)\\)|^\\(System\\.ReadOnlySpan`1<System\\.Char>"));
+
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::return <- F::arg(1)."[]"),
+  propagation(F::return <- F::arg(2)."[]"),
+  propagation(F::return <- F::arg(3)."[]") :-
+  fun(F, name = "Concat", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.ReadOnlySpan`1<System\\.Char>");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)."[]") :-
+  fun(F, name in {"Join", "Join``1"}, parent = "[System.Private.CoreLib]System.String");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)."[]") :-
+  fun(F, name = "Format", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String,System\\.Object\\[\\]\\)");
+
+propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(2)."[]") :-
+  fun(F, name = "Format", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.IFormatProvider,System\\.String,System\\.Object\\[\\]\\)");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"Format", "Format``1", "Format``2", "Format``3"}, parent = "[System.Private.CoreLib]System.String"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "System\\.Object\\[\\]\\)"));
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"Substring", "Trim", "TrimStart", "TrimEnd", "ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant", "PadLeft", "PadRight", "Normalize", "Remove", "ToString", "Clone", "get_Chars", "Copy", "Intern", "IsInterned"}, parent = "[System.Private.CoreLib]System.String");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(2)) :-
+  fun(F, name in {"Insert", "Replace", "ReplaceLineEndings"}, parent = "[System.Private.CoreLib]System.String");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"Split", "ToCharArray", "GetEnumerator", "EnumerateRunes"}, parent = "[System.Private.CoreLib]System.String");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name = "get_Current", parent = "[System.Private.CoreLib]System.CharEnumerator");
+
+propagation(F::arg(2)."[]" <- F::arg(0)) :-
+  fun(F, name = "CopyTo", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "Char\\[\\]");
+
+propagation(F::arg(0) <- F::arg(1)."[]") :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.(Char\\[\\]|ReadOnlySpan`1)");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.String"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.(Char\\[\\]|ReadOnlySpan`1)"));
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(3)),
+  propagation(F::arg(0) <- F::arg(4)),
+  propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(2)),
+  propagation(F::return <- F::arg(3)),
+  propagation(F::return <- F::arg(4)) :-
+  fun(F, name in {"Append", "AppendLine", "AppendFormat", "AppendFormat``1", "AppendFormat``2", "AppendFormat``3", "AppendJoin", "AppendJoin``1", "Insert", "Replace"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "\\[\\]|IEnumerable|Memory`1|Span`1"));
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(1)."[]"),
+  propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(1)."[]"),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(2)."[]"),
+  propagation(F::return <- F::arg(2)),
+  propagation(F::return <- F::arg(2)."[]"),
+  propagation(F::arg(0) <- F::arg(3)),
+  propagation(F::arg(0) <- F::arg(3)."[]"),
+  propagation(F::return <- F::arg(3)),
+  propagation(F::return <- F::arg(3)."[]") :-
+  fun(F, name in {"Append", "AppendLine", "AppendFormat", "AppendFormat``1", "AppendFormat``2", "AppendFormat``3", "AppendJoin", "AppendJoin``1", "Insert", "Replace"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "\\[\\]|IEnumerable|Memory`1|Span`1");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToString", "get_Chars"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder");
+
+propagation(F::arg(2)."[]" <- F::arg(0)) :-
+  fun(F, name = "CopyTo", parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "Char\\[\\]");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Text.StringBuilder");
+
+propagation(F::arg(0).deref <- F::arg(3)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Text.StringBuilder/AppendInterpolatedStringHandler");
+
+propagation(F::arg(0).deref <- F::arg(1)) :-
+  fun(F, name in {"AppendLiteral", "AppendFormatted", "AppendFormatted``1"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder/AppendInterpolatedStringHandler");
+
+propagation(F::arg(0) <- F::arg(1).deref),
+  propagation(F::return <- F::arg(1).deref),
+  propagation(F::arg(0) <- F::arg(2).deref),
+  propagation(F::return <- F::arg(2).deref) :-
+  fun(F, name in {"Append", "AppendLine"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "AppendInterpolatedStringHandler&");
+
+propagation(F::arg(0).deref <- F::arg(1)) :-
+  fun(F, name in {"AppendLiteral", "AppendFormatted", "AppendFormatted``1"}, parent = "[System.Private.CoreLib]System.Runtime.CompilerServices.DefaultInterpolatedStringHandler");
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"ToStringAndClear", "ToString"}, parent = "[System.Private.CoreLib]System.Runtime.CompilerServices.DefaultInterpolatedStringHandler");
+
+propagation(F::return <- F::arg(1).deref) :-
+  fun(F, name = "Create", parent = "[System.Private.CoreLib]System.String"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "DefaultInterpolatedStringHandler&");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"Parse", "ParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"});
+
+propagation(F::arg(1).deref <- F::arg(0)) :-
+  fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*&\\)");
+
+propagation(F::arg(2).deref <- F::arg(0)) :-
+  fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*&\\)");
+
+propagation(F::arg(3).deref <- F::arg(0)) :-
+  fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*,[^,]*&\\)");
+
+propagation(F::arg(4).deref <- F::arg(0)) :-
+  fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*,[^,]*,[^,]*&\\)");
+
+propagation(F::return <- F::arg(0).deref),
+  propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "ToString", parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant"}, parent = "[System.Private.CoreLib]System.Char");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToBoolean", "ToByte", "ToChar", "ToDateTime", "ToDecimal", "ToDouble", "ToInt16", "ToInt32", "ToInt64", "ToSByte", "ToSingle", "ToString", "ToUInt16", "ToUInt32", "ToUInt64", "ChangeType"}, parent = "[System.Private.CoreLib]System.Convert");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"ToBase64String", "ToHexString"}, parent = "[System.Private.CoreLib]System.Convert"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToBase64String", "ToHexString"}, parent = "[System.Private.CoreLib]System.Convert"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.Byte\\[\\]"));
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"FromBase64String", "FromHexString"}, parent = "[System.Private.CoreLib]System.Convert");
+
+propagation(F::return."[]" <- F::arg(0)."[]") :-
+  fun(F, name = "FromBase64CharArray", parent = "[System.Private.CoreLib]System.Convert");
+
+propagation(F::arg(3)."[]" <- F::arg(0)."[]") :-
+  fun(F, name = "ToBase64CharArray", parent = "[System.Private.CoreLib]System.Convert");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name = "GetBytes", parent = "[System.Private.CoreLib]System.BitConverter");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"ToString", "ToBoolean", "ToChar", "ToDouble", "ToInt16", "ToInt32", "ToInt64", "ToSingle", "ToUInt16", "ToUInt32", "ToUInt64"}, parent = "[System.Private.CoreLib]System.BitConverter"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
+
+propagation(F::return."[]" <- F::arg(1)) :-
+  fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String(,System\\.Int32,System\\.Int32)?\\)");
+
+propagation(F::return."[]" <- F::arg(1)."[]") :-
+  fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Char\\[\\](,System\\.Int32,System\\.Int32)?\\)");
+
+propagation(F::arg(4)."[]" <- F::arg(1)) :-
+  fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String,System\\.Int32,System\\.Int32,System\\.Byte\\[\\]");
+
+propagation(F::arg(4)."[]" <- F::arg(1)."[]") :-
+  fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Char\\[\\],System\\.Int32,System\\.Int32,System\\.Byte\\[\\]");
+
+propagation(F::return <- F::arg(1)."[]") :-
+  fun(F, name = "GetString", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
+
+propagation(F::return."[]" <- F::arg(1)."[]") :-
+  fun(F, name = "GetChars", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\](,System\\.Int32,System\\.Int32)?\\)");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"Combine", "Join", "GetFileName", "GetDirectoryName", "GetFullPath", "GetExtension", "GetFileNameWithoutExtension", "ChangeExtension", "GetRelativePath", "GetPathRoot", "TrimEndingDirectorySeparator"}, parent = "[System.Private.CoreLib]System.IO.Path"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String\\[\\]\\)");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"Combine", "Join", "GetFileName", "GetDirectoryName", "GetFullPath", "GetExtension", "GetFileNameWithoutExtension", "ChangeExtension", "GetRelativePath", "GetPathRoot", "TrimEndingDirectorySeparator"}, parent = "[System.Private.CoreLib]System.IO.Path"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.String\\[\\]\\)"));
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.Uri]System.Uri");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_AbsolutePath", "get_AbsoluteUri", "get_Authority", "get_DnsSafeHost", "get_Fragment", "get_Host", "get_IdnHost", "get_LocalPath", "get_OriginalString", "get_PathAndQuery", "get_Query", "get_Scheme", "get_UserInfo", "ToString", "GetComponents", "GetLeftPart", "MakeRelativeUri"}, parent = "[System.Private.Uri]System.Uri");
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "MakeRelativeUri", parent = "[System.Private.Uri]System.Uri");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name = "get_Segments", parent = "[System.Private.Uri]System.Uri");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"EscapeDataString", "EscapeUriString", "UnescapeDataString"}, parent = "[System.Private.Uri]System.Uri");
+
+propagation(F::arg(2).deref <- F::arg(0)),
+  propagation(F::arg(2).deref <- F::arg(1)) :-
+  fun(F, name = "TryCreate", parent = "[System.Private.Uri]System.Uri"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*&\\)");
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(3)),
+  propagation(F::arg(0) <- F::arg(4)),
+  propagation(F::arg(0) <- F::arg(5)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.Uri]System.UriBuilder");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name in {"set_Fragment", "set_Host", "set_Password", "set_Path", "set_Query", "set_Scheme", "set_UserName"}, parent = "[System.Private.Uri]System.UriBuilder");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Uri", "ToString", "get_Fragment", "get_Host", "get_Path", "get_Query"}, parent = "[System.Private.Uri]System.UriBuilder");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"UrlEncode", "UrlDecode", "HtmlEncode", "HtmlDecode"}, parent = "[System.Private.CoreLib]System.Net.WebUtility"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String\\)");
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name in {"HtmlEncode", "HtmlDecode"}, parent = "[System.Private.CoreLib]System.Net.WebUtility"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String,System\\.IO\\.TextWriter\\)");
+
+propagation(F::return."[]" <- F::arg(0)."[]") :-
+  fun(F, name in {"UrlEncodeToBytes", "UrlDecodeToBytes"}, parent = "[System.Private.CoreLib]System.Net.WebUtility");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"UrlEncode", "UrlDecode", "UrlPathEncode", "HtmlEncode", "HtmlDecode", "HtmlAttributeEncode", "JavaScriptStringEncode", "UrlEncodeUnicode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "Byte\\[\\]|TextWriter"));
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"UrlEncode", "UrlDecode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name in {"HtmlEncode", "HtmlDecode", "HtmlAttributeEncode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "TextWriter\\)");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name = "ParseQueryString", parent = "[System.Web.HttpUtility]System.Web.HttpUtility");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"get_Item", "Find", "FindLast", "Peek", "Pop", "Dequeue", "Take", "get_First", "get_Last", "get_Min", "get_Max", "ElementAt", "GetByIndex", "GetValueAtIndex", "GetKeyAtIndex"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name in {"Add", "Insert", "set_Item", "Push", "Enqueue", "AddFirst", "AddLast", "AddBefore", "AddAfter", "TryAdd", "SetByIndex", "SetValueAtIndex"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
+  fun(F, name in {"AddFirst", "AddLast", "AddBefore", "AddAfter"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::arg(0)."[]" <- F::arg(1)."[]"),
+  propagation(F::arg(0)."[]" <- F::arg(2)."[]") :-
+  fun(F, name in {"AddRange", "InsertRange", "UnionWith", "PushRange", "EnqueueRange", "SetRange"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::arg(1).deref <- F::arg(0)."[]"),
+  propagation(F::arg(2).deref <- F::arg(0)."[]") :-
+  fun(F, name in {"TryGetValue", "TryDequeue", "TryPop", "TryPeek", "TryTake", "TryRemove", "Remove", "TryGetNonEnumeratedCount"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "&\\)");
+
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)),
+  propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
+  fun(F, name in {"GetOrAdd", "AddOrUpdate"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::return <- F::arg(2)) :-
+  fun(F, name = "GetValueOrDefault``2", parent = "[System.Private.CoreLib]System.Collections.Generic.CollectionExtensions");
+
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name = "TryAdd``2", parent = "[System.Private.CoreLib]System.Collections.Generic.CollectionExtensions");
+
+propagation(F::arg(2).deref <- F::arg(0)."[]") :-
+  fun(F, name = "Remove``2", parent = "[System.Private.CoreLib]System.Collections.Generic.CollectionExtensions");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"AsReadOnly``1", "AsReadOnly``2"}, parent = "[System.Private.CoreLib]System.Collections.Generic.CollectionExtensions");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToArray", "GetRange", "GetEnumerator", "get_Keys", "get_Values", "AsReadOnly", "Slice", "Clone", "GetKeyList", "GetValueList", "GetViewBetween", "Reverse"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"}),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(\\)->System\\.Void$"));
+
+propagation(F::arg(1) <- F::arg(0)),
+  propagation(F::arg(2) <- F::arg(0)) :-
+  fun(F, name = "CopyTo", parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.Queue`1", "[System.Collections]System.Collections.Generic.SortedSet`1", "[System.Collections]System.Collections.Generic.Stack`1", "[System.Collections]System.Collections.Generic.LinkedList`1", "[System.Private.CoreLib]System.Collections.ObjectModel.Collection`1", "[System.ObjectModel]System.Collections.ObjectModel.ObservableCollection`1", "[System.Private.CoreLib]System.Collections.Concurrent.ConcurrentQueue`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentStack`1", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentBag`1", "[System.Collections.Concurrent]System.Collections.Concurrent.BlockingCollection`1", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.IList", "[System.Collections.NonGeneric]System.Collections.Queue", "[System.Collections.NonGeneric]System.Collections.Stack", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Collections]System.Collections.Generic.SortedDictionary`2", "[System.Collections]System.Collections.Generic.SortedList`2", "[System.Collections.Concurrent]System.Collections.Concurrent.ConcurrentDictionary`2", "[System.Private.CoreLib]System.Collections.Hashtable", "[System.Private.CoreLib]System.Collections.IDictionary"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Collections\\.(Generic\\.)?(IEnumerable|ICollection|IDictionary|IReadOnlyDictionary|IList)");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "GetEnumerator", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerable`1", "[System.Private.CoreLib]System.Collections.IEnumerable"});
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name = "get_Current", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerator`1", "[System.Private.CoreLib]System.Collections.IEnumerator"});
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"get_Key", "get_Value", "get_Entry"}, parent = "[System.Private.CoreLib]System.Collections.IDictionaryEnumerator");
+
+propagation(F::return <- F::arg(0).deref."[]") :-
+  fun(F, name = "get_Current", parent in {"[System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/Enumerator", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/ValueCollection/Enumerator", "[System.Private.CoreLib]System.Collections.Generic.HashSet`1/Enumerator", "[System.Private.CoreLib]System.Collections.Generic.Queue`1/Enumerator", "[System.Collections]System.Collections.Generic.Stack`1/Enumerator", "[System.Collections]System.Collections.Generic.LinkedList`1/Enumerator", "[System.Collections]System.Collections.Generic.SortedSet`1/Enumerator", "[System.Collections]System.Collections.Generic.SortedDictionary`2/Enumerator", "[System.Collections]System.Collections.Generic.SortedDictionary`2/KeyCollection/Enumerator", "[System.Collections]System.Collections.Generic.SortedDictionary`2/ValueCollection/Enumerator"});
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name in {"GetEnumerator", "CopyTo", "ToArray"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/KeyCollection", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/ValueCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/KeyCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/ValueCollection"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/KeyCollection", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/ValueCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/KeyCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/ValueCollection"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"get_Key", "get_Value", "ToString"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
+
+propagation(F::arg(1).deref <- F::arg(0).deref),
+  propagation(F::arg(2).deref <- F::arg(0).deref) :-
+  fun(F, name = "Deconstruct", parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
+
+propagation(F::arg(0).deref <- F::arg(1)),
+  propagation(F::arg(0).deref <- F::arg(2)) :-
+  fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "Create``2", parent = "[System.Private.CoreLib]System.Collections.Generic.KeyValuePair");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "get_Value", parent = "[System.Collections]System.Collections.Generic.LinkedListNode`1");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "set_Value", parent = "[System.Collections]System.Collections.Generic.LinkedListNode`1");
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name in {"Copy", "ConstrainedCopy"}, parent = "[System.Private.CoreLib]System.Array"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*\\)");
+
+propagation(F::arg(2) <- F::arg(0)) :-
+  fun(F, name in {"Copy", "ConstrainedCopy"}, parent = "[System.Private.CoreLib]System.Array"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*,[^,]*,[^,]*\\)");
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name = "CopyTo", parent = "[System.Private.CoreLib]System.Array");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"Clone", "AsReadOnly``1"}, parent = "[System.Private.CoreLib]System.Array");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"GetValue", "Find``1", "FindLast``1"}, parent = "[System.Private.CoreLib]System.Array");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "FindAll``1", parent = "[System.Private.CoreLib]System.Array");
+
+propagation(F::arg(0)."[]" <- F::arg(1)) :-
+  fun(F, name in {"SetValue", "Fill``1"}, parent = "[System.Private.CoreLib]System.Array");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"AsSpan", "AsMemory"}, parent = "[System.Private.CoreLib]System.MemoryExtensions"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.String");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"AsSpan", "AsSpan``1", "AsMemory", "AsMemory``1"}, parent = "[System.Private.CoreLib]System.MemoryExtensions"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.String"));
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"ToArray", "Slice"}, parent in {"[System.Private.CoreLib]System.ReadOnlySpan`1", "[System.Private.CoreLib]System.Span`1"});
+
+propagation(F::return <- F::arg(0).deref."[]") :-
+  fun(F, name = "ToString", parent in {"[System.Private.CoreLib]System.ReadOnlySpan`1", "[System.Private.CoreLib]System.Span`1"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"ToArray", "Slice", "get_Span"}, parent in {"[System.Private.CoreLib]System.ReadOnlyMemory`1", "[System.Private.CoreLib]System.Memory`1"});
+
+propagation(F::return <- F::arg(0).deref."[]") :-
+  fun(F, name = "ToString", parent in {"[System.Private.CoreLib]System.ReadOnlyMemory`1", "[System.Private.CoreLib]System.Memory`1"});
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"First``1", "FirstOrDefault``1", "Last``1", "LastOrDefault``1", "Single``1", "SingleOrDefault``1", "ElementAt``1", "ElementAtOrDefault``1", "Min``1", "Max``1", "MinBy``2", "MaxBy``2", "Aggregate``1", "Aggregate``2", "Aggregate``3"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
+  fun(F, name in {"FirstOrDefault``1", "LastOrDefault``1", "SingleOrDefault``1", "Aggregate``2", "Aggregate``3"}, parent = "[System.Linq]System.Linq.Enumerable"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "Func`2<!!0,System\\.Boolean>\\)|IEnumerable`1<!!0>\\)"));
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"Where``1", "Select``2", "OrderBy``2", "OrderByDescending``2", "ThenBy``2", "ThenByDescending``2", "Order``1", "OrderDescending``1", "Reverse``1", "Skip``1", "SkipLast``1", "SkipWhile``1", "Take``1", "TakeLast``1", "TakeWhile``1", "Distinct``1", "DistinctBy``2", "ToList``1", "ToArray``1", "ToHashSet``1", "AsEnumerable``1", "Cast``1", "OfType``1", "DefaultIfEmpty``1", "ToDictionary``2", "ToDictionary``3", "Concat``1", "Union``1", "UnionBy``2", "Intersect``1", "IntersectBy``2", "Except``1", "ExceptBy``2", "Append``1", "Prepend``1", "Zip``2", "Zip``3", "SelectMany``2", "SelectMany``3"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"GroupBy``3", "GroupBy``4"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"GroupBy``2", "GroupBy``3", "GroupBy``4", "ToLookup``2", "ToLookup``3", "Chunk``1"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return."[]"."<[System.Private.CoreLib]System.ValueTuple`2::Item1>" <- F::arg(0)."[]"),
+  propagation(F::return."[]"."<[System.Private.CoreLib]System.ValueTuple`2::Item2>" <- F::arg(1)."[]") :-
+  fun(F, name = "Zip``2", parent = "[System.Linq]System.Linq.Enumerable"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "ValueTuple`2<!!0,!!1>>$");
+
+propagation(F::return."[]"."<[System.Private.CoreLib]System.ValueTuple`3::Item1>" <- F::arg(0)."[]"),
+  propagation(F::return."[]"."<[System.Private.CoreLib]System.ValueTuple`3::Item2>" <- F::arg(1)."[]"),
+  propagation(F::return."[]"."<[System.Private.CoreLib]System.ValueTuple`3::Item3>" <- F::arg(2)."[]") :-
+  fun(F, name = "Zip``3", parent = "[System.Linq]System.Linq.Enumerable"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "ValueTuple`3<!!0,!!1,!!2>>$");
+
+propagation(F::return."[]" <- F::arg(0)."[]"."<[System.Private.CoreLib]System.ValueTuple`2::Item1>"),
+  propagation(F::return."[]" <- F::arg(0)."[]"."<[System.Private.CoreLib]System.ValueTuple`2::Item2>") :-
+  fun(F, name = "ToDictionary``2", parent = "[System.Linq]System.Linq.Enumerable"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "ValueTuple`2");
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name in {"Concat``1", "Union``1", "UnionBy``2", "Zip``2", "Zip``3"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return."[]" <- F::arg(1)) :-
+  fun(F, name in {"Append``1", "Prepend``1", "DefaultIfEmpty``1"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name = "Repeat``1", parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"SelectMany``2", "SelectMany``3"}, parent = "[System.Linq]System.Linq.Enumerable");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"Serialize", "Serialize``1", "SerializeToDocument", "SerializeToDocument``1", "SerializeToElement", "SerializeToElement``1", "SerializeToNode", "SerializeToNode``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "->System\\.Void$"));
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name in {"Serialize", "Serialize``1", "SerializeAsync", "SerializeAsync``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.(IO\\.Stream|Text\\.Json\\.Utf8JsonWriter),");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"SerializeToUtf8Bytes", "SerializeToUtf8Bytes``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"Deserialize", "Deserialize``1", "DeserializeAsync", "DeserializeAsync``1", "DeserializeAsyncEnumerable``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"Parse", "ParseAsync", "ParseValue"}, parent = "[System.Text.Json]System.Text.Json.JsonDocument"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "Memory`1"));
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name = "Parse", parent = "[System.Text.Json]System.Text.Json.JsonDocument"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "Memory`1");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "get_RootElement", parent = "[System.Text.Json]System.Text.Json.JsonDocument");
+
+propagation(F::return."[]" <- F::arg(0).deref) :-
+  fun(F, name in {"EnumerateArray", "EnumerateObject"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"GetProperty", "GetString", "GetRawText", "ToString", "get_Item", "Clone", "GetBoolean", "GetInt32", "GetInt64", "GetDouble", "GetDecimal", "GetGuid", "GetDateTime", "GetBytesFromBase64"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
+
+propagation(F::arg(2).deref <- F::arg(0).deref) :-
+  fun(F, name = "TryGetProperty", parent = "[System.Text.Json]System.Text.Json.JsonElement");
+
+propagation(F::return <- F::arg(0).deref."[]") :-
+  fun(F, name = "get_Current", parent in {"[System.Text.Json]System.Text.Json.JsonElement/ArrayEnumerator", "[System.Text.Json]System.Text.Json.JsonElement/ObjectEnumerator"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name = "GetEnumerator", parent in {"[System.Text.Json]System.Text.Json.JsonElement/ArrayEnumerator", "[System.Text.Json]System.Text.Json.JsonElement/ObjectEnumerator"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"get_Value", "get_Name"}, parent = "[System.Text.Json]System.Text.Json.JsonProperty");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"SerializeObject", "DeserializeObject", "DeserializeObject``1"}, parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ReadToEnd", "ReadLine", "Read", "Peek", "ReadToEndAsync", "ReadLineAsync", "ReadBlock", "ReadAsync", "ReadBlockAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"}),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.Char\\[\\]"));
+
+propagation(F::arg(1)."[]" <- F::arg(0)) :-
+  fun(F, name in {"Read", "ReadBlock", "ReadAsync", "ReadBlockAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.(Char\\[\\]|Memory`1|Span`1)");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"});
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(3)),
+  propagation(F::arg(0) <- F::arg(4)) :-
+  fun(F, name in {"Write", "WriteLine", "WriteAsync", "WriteLineAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"}),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "\\[\\]|Memory`1|Span`1"));
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(1)."[]"),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(2)."[]") :-
+  fun(F, name in {"Write", "WriteLine", "WriteAsync", "WriteLineAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "\\[\\]|Memory`1|Span`1");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToString", "GetStringBuilder"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"});
+
+propagation(F::arg(1)."[]" <- F::arg(0)) :-
+  fun(F, name in {"Read", "ReadAsync", "ReadExactly", "ReadAtLeast", "ReadExactlyAsync", "ReadAtLeastAsync"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.(Byte\\[\\]|Memory`1|Span`1)");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "ReadByte", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
+
+propagation(F::arg(0) <- F::arg(1)."[]") :-
+  fun(F, name in {"Write", "WriteAsync"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.(Byte\\[\\]|ReadOnlyMemory`1|ReadOnlySpan`1)");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "WriteByte", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name in {"CopyTo", "CopyToAsync", "WriteTo"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"ToArray", "GetBuffer"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
+
+propagation(F::arg(0) <- F::arg(1)."[]") :-
+  fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ReadString", "ReadBoolean", "ReadByte", "ReadChar", "ReadDecimal", "ReadDouble", "ReadInt16", "ReadInt32", "ReadInt64", "ReadSingle", "ReadUInt16", "ReadUInt32", "ReadUInt64", "Read7BitEncodedInt"}, parent = "[System.Private.CoreLib]System.IO.BinaryReader");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"ReadBytes", "ReadChars"}, parent = "[System.Private.CoreLib]System.IO.BinaryReader");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.IO.BinaryReader");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "Replace", parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)) :-
+  fun(F, name in {"Match", "Escape", "Unescape"}, parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
+
+propagation(F::return."[]" <- F::arg(0)),
+  propagation(F::return."[]" <- F::arg(1)) :-
+  fun(F, name in {"Matches", "Split"}, parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Value", "ToString", "NextMatch", "get_ValueSpan"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.Match", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Group", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Capture"});
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"get_Groups", "get_Captures"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.Match", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Group"});
+
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::arg(2).deref <- F::arg(0)."[]") :-
+  fun(F, name in {"get_Item", "TryGetValue"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.GroupCollection", "[System.Text.RegularExpressions]System.Text.RegularExpressions.MatchCollection"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"GetEnumerator", "get_Values"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.GroupCollection", "[System.Text.RegularExpressions]System.Text.RegularExpressions.MatchCollection"});
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"get_Item", "Get", "GetKey"}, parent = "[System.Collections.Specialized]System.Collections.Specialized.NameValueCollection");
+
+propagation(F::return."[]" <- F::arg(0)."[]") :-
+  fun(F, name in {"GetValues", "get_AllKeys"}, parent = "[System.Collections.Specialized]System.Collections.Specialized.NameValueCollection");
+
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name in {"Add", "Set", "set_Item"}, parent = "[System.Collections.Specialized]System.Collections.Specialized.NameValueCollection"),
+  !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.Collections\\.Specialized\\.NameValueCollection\\)"));
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "Add", parent = "[System.Collections.Specialized]System.Collections.Specialized.NameValueCollection"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, "^\\(System\\.Collections\\.Specialized\\.NameValueCollection\\)");
+
+propagation(F::arg(0).deref <- F::arg(1)) :-
+  fun(F, name = "SetResult", parent in {"[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name = "get_Task", parent in {"[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Result", "GetAwaiter", "ConfigureAwait"}, parent = "[System.Private.CoreLib]System.Threading.Tasks.Task`1");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "FromResult``1", parent = "[System.Private.CoreLib]System.Threading.Tasks.Task");
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name = "GetResult", parent in {"[System.Private.CoreLib]System.Runtime.CompilerServices.TaskAwaiter`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1/ConfiguredTaskAwaiter", "[System.Private.CoreLib]System.Runtime.CompilerServices.ValueTaskAwaiter`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1/ConfiguredValueTaskAwaiter"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name = "GetAwaiter", parent in {"[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1", "[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"get_Result", "AsTask", "GetAwaiter", "ConfigureAwait"}, parent = "[System.Private.CoreLib]System.Threading.Tasks.ValueTask`1");
+
+propagation(F::arg(0).deref <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Threading.Tasks.ValueTask`1");
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"get_Value", "GetValueOrDefault", "ToString"}, parent = "[System.Private.CoreLib]System.Nullable`1");
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "GetValueOrDefault", parent = "[System.Private.CoreLib]System.Nullable`1");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"op_Explicit", "op_Implicit"}, parent = "[System.Private.CoreLib]System.Nullable`1");
+
+propagation(F::arg(0).deref <- F::arg(1)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Nullable`1");
+
+propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`2::Item1>" <- F::arg(1)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`2::Item2>" <- F::arg(2)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.ValueTuple`2");
+
+propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`2::Item1>" <- F::arg(0)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`2::Item2>" <- F::arg(1)) :-
+  fun(F, name = "Create``2", parent = "[System.Private.CoreLib]System.ValueTuple");
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`2");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Item1", "get_Item2", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`2");
+
+propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`3::Item1>" <- F::arg(1)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`3::Item2>" <- F::arg(2)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`3::Item3>" <- F::arg(3)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.ValueTuple`3");
+
+propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`3::Item1>" <- F::arg(0)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`3::Item2>" <- F::arg(1)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`3::Item3>" <- F::arg(2)) :-
+  fun(F, name = "Create``3", parent = "[System.Private.CoreLib]System.ValueTuple");
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(3)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`3");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Item1", "get_Item2", "get_Item3", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`3");
+
+propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item1>" <- F::arg(1)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item2>" <- F::arg(2)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item3>" <- F::arg(3)),
+  propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item4>" <- F::arg(4)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.ValueTuple`4");
+
+propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`4::Item1>" <- F::arg(0)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`4::Item2>" <- F::arg(1)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`4::Item3>" <- F::arg(2)),
+  propagation(F::return."<[System.Private.CoreLib]System.ValueTuple`4::Item4>" <- F::arg(3)) :-
+  fun(F, name = "Create``4", parent = "[System.Private.CoreLib]System.ValueTuple");
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)),
+  propagation(F::arg(0) <- F::arg(3)),
+  propagation(F::arg(0) <- F::arg(4)) :-
+  fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`4");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"get_Item1", "get_Item2", "get_Item3", "get_Item4", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`4");
+
+K::dispatch(return <- arg(_)),
+  K::dispatch(return <- arg(0).deref) :-
+  callsig(K, name = "ToString"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)->System\\.String$");
+
+K::dispatch(return <- arg(_)),
+  K::dispatch(return <- arg(0).deref) :-
+  callsig(K, name = "GetHashCode"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)->System\\.Int32$");
+
+K::dispatch(return <- arg(_)),
+  K::dispatch(return <- arg(0).deref) :-
+  callsig(K, name = "Equals"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\([^,]+\\)->System\\.Boolean$");
+
+K::dispatch(return <- arg(_)) :-
+  callsig(K, name in {"Equals", "GetHashCode"}, parent in {"[System.Private.CoreLib]System.Collections.IEqualityComparer", "[System.Private.CoreLib]System.Collections.Generic.IEqualityComparer`1", "[System.Private.CoreLib]System.Collections.Generic.EqualityComparer`1"});
+
+K::dispatch(return <- arg(0)."[]") :-
+  callsig(K, name = "get_Item", parent in {"[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyList`1", "[System.Private.CoreLib]System.Collections.IList", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Private.CoreLib]System.Collections.IDictionary", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.Hashtable"});
+
+K::dispatch(arg(0)."[]" <- arg(1)),
+  K::dispatch(arg(0)."[]" <- arg(2)) :-
+  callsig(K, name in {"Add", "Insert", "set_Item"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.IList", "[System.Private.CoreLib]System.Collections.Generic.ISet`1", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.IDictionary", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.Hashtable"});
+
+K::dispatch(arg(2).deref <- arg(0)."[]") :-
+  callsig(K, name = "TryGetValue", parent in {"[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "&\\)");
+
+K::dispatch(return <- arg(0)) :-
+  callsig(K, name in {"get_Keys", "get_Values"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Private.CoreLib]System.Collections.IDictionary", "[System.Private.CoreLib]System.Collections.Hashtable"});
+
+K::dispatch(arg(1) <- arg(0)),
+  K::dispatch(arg(2) <- arg(0)) :-
+  callsig(K, name = "CopyTo", parent in {"[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.ICollection", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.Hashtable"});
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name = "get_Count", parent in {"[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyCollection`1", "[System.Private.CoreLib]System.Collections.ICollection", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.Hashtable"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)->System\\.Int32$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name in {"Contains", "ContainsKey", "ContainsValue"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.ICollection`1", "[System.Private.CoreLib]System.Collections.IList", "[System.Private.CoreLib]System.Collections.IDictionary", "[System.Private.CoreLib]System.Collections.Generic.IDictionary`2", "[System.Private.CoreLib]System.Collections.Generic.IReadOnlyDictionary`2", "[System.Private.CoreLib]System.Collections.ArrayList", "[System.Private.CoreLib]System.Collections.Hashtable"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "->System\\.Boolean$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name in {"IndexOf", "LastIndexOf"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.IList`1", "[System.Private.CoreLib]System.Collections.IList", "[System.Private.CoreLib]System.Collections.ArrayList"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "->System\\.Int32$");
+
+K::dispatch(resolve = "inline") :-
+  callsig(K, name in {"Dispose", "DisposeAsync", "Close", "Flush", "FlushAsync"}, parent in {"[System.Private.CoreLib]System.IDisposable", "[System.Private.CoreLib]System.IAsyncDisposable", "[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.BinaryReader", "[System.Private.CoreLib]System.IO.BinaryWriter"});
+
+K::dispatch(resolve = "inline") :-
+  callsig(K, name in {"MoveNext", "MoveNextAsync"}, parent in {"[System.Private.CoreLib]System.Collections.IEnumerator", "[System.Private.CoreLib]System.Collections.Generic.IAsyncEnumerator`1"});
+
+K::dispatch(resolve = "inline") :-
+  callsig(K, name = "GetEnumerator", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerable`1", "[System.Private.CoreLib]System.Collections.IEnumerable"});
+
+K::dispatch(resolve = "inline") :-
+  callsig(K, name = "get_Current", parent in {"[System.Private.CoreLib]System.Collections.Generic.IEnumerator`1", "[System.Private.CoreLib]System.Collections.IEnumerator"});
+

@@ -12,11 +12,7 @@
 //
 // THE ARRAY ELEMENT is `Symbol("[]")` on both dex and jvm, and a port names it `.\[]`, ESCAPED
 // -- in JSON, "Argument(0).\\[]". Unescaped, `[` at segment start introduces an offset, so
-// `Argument(0).[]` is a hard load error (`InvalidOffset("")`) rather than a silent mismatch. The
-// four collection generators at the end of this file used to use a synthetic `.rep` instead,
-// which no frontend emits: `List.add` wrote it and `List.get` read it, so add->get chains
-// composed with each other but never joined a real array write. `[]` is what the frontends
-// actually emit, so they do now.
+// `Argument(0).[]` is a hard load error (`InvalidOffset("")`) rather than a silent mismatch.
 //
 // A port pair is a PREFIX SUBSTITUTION, not a filter: `Argument(0).\[] -> Return` unwraps a
 // level, `Argument(1) -> Argument(0).\[]` adds one. See docs/model-generators.md §7 and the
@@ -117,8 +113,6 @@
 {"find":"methods","where":[{"constraint":"signature_match","names":["of","ofNullable","get","orElse","orElseGet"],"parents":["Ljava/util/Optional;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["name"],"parents":["Ljava/lang/Enum;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 // ---- android ----
-{"find":"methods","where":[{"constraint":"signature_match","names":["getStringExtra","getData","getAction"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["putExtra"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["parse","toString","getQueryParameter","buildUpon","build"],"parents":["Landroid/net/Uri;","Landroid/net/Uri$Builder;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["getString","getStringSet"],"parents":["Landroid/content/SharedPreferences;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["putString","putStringSet"],"parents":["Landroid/content/SharedPreferences$Editor;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
@@ -146,7 +140,7 @@
 // The `Object` models are faithful, not merely cheap. Over 204 named-field writes across all
 // four contract methods in two apps, 181 went into an object reached from the receiver's own
 // field, 13 into an object allocated in the body, 10 unattributed, and none into an argument or
-// a static. See /Volumes/Shampoo/ctadl-sweep/sigstudy/purity.py.
+// a static.
 // ---- the Object contract ----
 {"find":"dispatch","where":[{"constraint":"signature_match","name":"toString"},{"constraint":"signature","pattern":"^\\(\\)Ljava/lang/String;$"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 // hashCode and equals are models, not skips: the primitive is derived from the receiver's

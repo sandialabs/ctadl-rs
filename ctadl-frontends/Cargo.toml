@@ -12,20 +12,23 @@ log = "0.4"
 # variants. A program that reads only Dex therefore builds no tree-sitter grammar and no Ghidra
 # support.
 ctadl-c = { path = "../frontends/ctadl-c", optional = true }
+ctadl-cil = { path = "../frontends/ctadl-cil", optional = true }
 ctadl-dex = { path = "../frontends/ctadl-dex", optional = true }
 ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"], optional = true }
 ctadl-jvm = { path = "../frontends/ctadl-jvm", optional = true }
 ctadl-lua = { path = "../frontends/ctadl-lua", optional = true }
 ctadl-pcode = { path = "../frontends/ctadl-pcode", optional = true }
 
+# Writes a flowy program's requirements; see the `flowy` feature.
+bitcode = { version = "0.6", features = ["serde"], optional = true }
+
 # The container formats read the ZIP directory of an APK or a bundle themselves. That code is
 # already in `dex-reader::apk`, so the `apk` feature pulls it in whether or not the Dex lowering
 # is wanted.
-bitcode = { version = "0.6", features = ["serde"], optional = true }
 dex-reader = { path = "../readers/dex-reader", optional = true }
 
 [features]
-# `xapk` is on by default, even though the plan left it off. A bundle is a ZIP file of APKs,
+# `xapk` is on by default. A bundle is a ZIP file of APKs,
 # and `dex_reader::apk` already reads that, so turning it on adds no dependency. Leaving it off
 # would also mean its unit tests never ran under `cargo test`.
 default = ["dex", "jvm", "apk", "xapk"]
@@ -41,6 +44,7 @@ pcode = ["dep:ctadl-pcode", "ctadl-import/pcode"]
 lua = ["dep:ctadl-lua", "ctadl-import/ts"]
 c = ["dep:ctadl-c", "ctadl-import/ts"]
 flowy = ["dep:ctadl-flowy", "dep:bitcode", "ctadl-import/flowy"]
+cil = ["dep:ctadl-cil", "ctadl-import/cil"]
 
 [lints]
 workspace = true

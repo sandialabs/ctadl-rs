@@ -9,8 +9,10 @@
 //! This is not a 1:1 conversion. In addition to resolving function names →
 //! [`FunctionId`](crate::facts::FunctionId), it performs two index-dependent expansions:
 //! - **call-site fan-out** — a function-anchored endpoint is fanned into one endpoint per
-//!   matching call site (via [`QueryEndpoint::anchored_at_callsites`] /
-//!   [`QueryEndpoint::anchored_at_callsites_filtered`]), needing `facts.call`;
+//!   matching call site (via
+//!   [`QueryEndpoint::anchored_at_callsites`](super::QueryEndpoint::anchored_at_callsites) /
+//!   [`QueryEndpoint::anchored_at_callsites_filtered`](super::QueryEndpoint::anchored_at_callsites_filtered)),
+//!   needing `facts.call`;
 //! - **sink wildcard expansion** — a wildcard sink port is expanded into the concrete
 //!   access paths that live on the argument's copy class (via [`super::compute_copy_alias`]),
 //!   needing `assign_like`.
@@ -20,7 +22,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
-use crate::facts::{self, FlowVariable, FlowVertex, Label};
+use crate::facts::{self, FlowVariable, FlowVertex, Label, PackedInsnSiteId};
 use crate::index_engine::IndexFacts;
 
 /// The outcome of Stage 2: the resolved endpoints, the formals they register, and the
@@ -53,6 +55,7 @@ pub fn build_query_endpoints(
         FlowVariable,
         facts::Path,
     )],
+    call: &[(PackedInsnSiteId, facts::FunctionId)],
 ) -> BuiltEndpoints {
     use crate::models::FormalIndexTypeTag;
     let func_num_params = facts.compute_arg_arity();
@@ -224,14 +227,14 @@ pub fn build_query_endpoints(
             // Register the model function's formal so taint can cross the call boundary
             // for flow-through, independent of how the endpoint is anchored below.
             if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
+                out_formals.push((infunc, var, facts::FormalType::Shared));
             }
             // Anchor at the call sites of `infunc` (the modeled function) so flows that
             // share a formal but differ by call site stay distinct. Anchoring uses the
             // port path; wildcard expansion (if any) then happens per anchored vertex.
             let base = crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var, ap),
+                vertex: FlowVertex::new(var, ap),
                 label: lbl.clone(),
                 direction,
                 call_site: None,
@@ -241,9 +244,9 @@ pub fn build_query_endpoints(
                 Some(formal) if callsite_scoped => {
                     // Anchor only at the matching call sites (callee is `infunc`, caller is
                     // constrained by `caller_filter`); no function-anchored fallback.
-                    base.anchored_at_callsites_filtered(formal, &facts.call, caller_filter)
+                    base.anchored_at_callsites_filtered(formal, call, caller_filter)
                 }
-                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                Some(formal) => base.anchored_at_callsites(formal, call),
                 None => vec![base],
             };
             for ep in fanned {
@@ -257,6 +260,9 @@ pub fn build_query_endpoints(
                 let mut seeded_port = false;
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
+                    // In content order: endpoint order is the order of the query's seed rows.
+                    let mut paths: Vec<&facts::Path> = paths.iter().collect();
+                    paths.sort_unstable_by(|a, b| a.content_cmp(b));
                     for p in paths {
                         if !p.is_extension_of(&ap) {
                             continue;
@@ -265,7 +271,7 @@ pub fn build_query_endpoints(
                             seeded_port = true;
                         }
                         out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
+                            vertex: FlowVertex::new(ep.vertex.0, *p),
                             ..ep.clone()
                         },));
                     }

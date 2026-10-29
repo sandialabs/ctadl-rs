@@ -10,7 +10,7 @@ s:
   return b;
 }
 
-def G(c byref): 1
+def G(c shared): 1
 where summaries [return <- c]
 {
 s:

@@ -130,7 +130,7 @@ fn query_check_endpoints(
     let mut fail_count = 0;
     for (func_name, flow_specs) in endpoint_requires.requires {
         for (endpoint, flow_spec) in flow_specs.iter() {
-            let fx_endpoint: fx::TaintEndpoint = endpoint.into();
+            let fx_endpoint = taint_endpoint(endpoint);
             let func_id = sites.get_function_id(func_name.clone().into());
             if func_id.is_none() {
                 log::warn!("Function {func_name} not found in query results");
@@ -241,9 +241,9 @@ fn check_human_profile_paths(
             // query seeded: a declaration on a callee's formal fans out to one
             // endpoint per call site. Count how many distinct human-profile paths
             // touch *any* of them -- that is what a declared `path_count` (the
-            // trailing integer on `source`/`sink`) asserts, and the two flows that
-            // differ only in their call site now land on distinct call-arg
-            // endpoints instead of collapsing onto the shared formal vertex.
+            // trailing integer on `source`/`sink`) asserts. Two flows that differ
+            // only in their call site land on distinct call-arg endpoints, not on
+            // the shared formal vertex.
             let qes: std::collections::HashSet<QueryEndpoint> =
                 from_flowy_endpoint(sites, &format_facts.call, endpoint)
                     .into_iter()
@@ -321,7 +321,7 @@ pub fn check_with_config<P: AsRef<Path>>(
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
     // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
-    // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
+    // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
     // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
     let match_index = crate::models::ProgramMatchIndex::new(
@@ -365,6 +365,9 @@ pub fn check_with_config<P: AsRef<Path>>(
     }
     log::trace!("requirements: {}", program.requirements);
     crate::cli::inspect_index_facts(&index_facts, Some(&source_info.sites))?;
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_result.final_call(&index_facts.call);
     let endpoints = program
         .requirements
         .endpoint_requires
@@ -372,13 +375,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         .iter()
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
         .flat_map(|e| {
-            from_flowy_endpoint(&source_info.sites, &index_facts.call, e)
+            from_flowy_endpoint(&source_info.sites, &final_call, e)
                 .into_iter()
                 .map(|ep| (ep,))
         })
         .collect();
-    let index_result =
-        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)
@@ -406,7 +407,7 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut format_facts_builder = formatter::FormatFactsBuilder::default();
     format_facts_builder
         .index_actual_param(index_facts.actual_param.clone())
-        .call(index_facts.call.clone())
+        .call(final_call.clone())
         .id_to_name(source_info.sites.get_id_to_name_map());
 
     let query_facts = QueryFacts {
@@ -414,9 +415,9 @@ pub fn check_with_config<P: AsRef<Path>>(
         actual_param: index_facts.actual_param,
         // Cloned: the call graph is also needed below to resolve declared
         // endpoints to their call-site-anchored forms during the query check.
-        call: index_facts.call.clone(),
+        call: final_call.clone(),
         assign: index_result.assign_like,
-        paths: index_facts.paths,
+        paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,
     };
@@ -429,7 +430,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         &query_result,
         program.requirements.endpoint_requires,
         &source_info.sites,
-        &index_facts.call,
+        &final_call,
     )?;
     pass_count += ipass;
     fail_count += ifail;
@@ -463,41 +464,21 @@ pub fn check_with_config<P: AsRef<Path>>(
     Ok(())
 }
 
-//fn from_endpoint(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> fx::TaintEndpoint2 {
-//    //let infunc = sites.get_function(endpoint.infunc.clone().into()).unwrap();
-//    let vertex = {
-//        let (var, fields) = &endpoint.port;
-//        fx::FlowVertex2(var.try_into().unwrap(), fields.into())
-//    };
-//    fx::TaintEndpoint2 {
-//        infunc: endpoint.infunc.clone().into(),
-//        vertex,
-//        label: fx::Label(endpoint.label.clone().into()),
-//        direction: match endpoint.direction {
-//            flowy::EndpointDirection::Source => fx::TaintDirection::Forward,
-//            flowy::EndpointDirection::Sink => fx::TaintDirection::Backward,
-//        },
-//    }
-//}
-
-impl From<&flowy::Endpoint> for fx::TaintEndpoint {
-    #[inline]
-    fn from(e: &flowy::Endpoint) -> Self {
-        use flowy::*;
-        use fx::*;
-        let vertex = {
-            let (var, fields) = &e.port;
-            FlowVertex(var.try_into().unwrap(), fields.into())
-        };
-        Self {
-            infunc: Function(e.infunc.clone().into()),
-            vertex,
-            label: Label(e.label.clone().into()),
-            direction: match e.direction {
-                EndpointDirection::Source => TaintDirection::Forward,
-                EndpointDirection::Sink => TaintDirection::Backward,
-            },
-        }
+fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
+    use flowy::*;
+    use fx::*;
+    let vertex = {
+        let (var, fields) = &e.port;
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
+    };
+    TaintEndpoint {
+        infunc: Function(e.infunc.clone().into()),
+        vertex,
+        label: Label(e.label.clone().into()),
+        direction: match e.direction {
+            EndpointDirection::Source => TaintDirection::Forward,
+            EndpointDirection::Sink => TaintDirection::Backward,
+        },
     }
 }
 
@@ -511,7 +492,7 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
         .unwrap();
     let vertex = {
         let (var, fields) = &endpoint.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
     };
     QueryEndpoint {
         infunc,
@@ -529,11 +510,13 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
 
 /// Resolves a flowy `source`/`sink` declaration to the query endpoints it seeds and checks
 /// against. A declaration on a parameter fans out to one endpoint per call site of its function
-/// (so flows that differ only by call site stay distinct); a declaration on a local (e.g. a
-/// `source`'s returned value), a global, or a function with no callers stays function-anchored.
-/// The parameter index is taken from `endpoint.formal` (resolved by the flowy front-end), since
-/// SSA has versioned the port into a local. The same set is used for both seeding and requirement
-/// checking, so a path's endpoint compares equal to a declared one.
+/// in `call` (so flows that differ only by call site stay distinct); a declaration on a local
+/// (e.g. a `source`'s returned value), a global, or a function with no callers stays
+/// function-anchored. `call` is the final call graph, so a function reached only through a
+/// resolved indirect call is anchored at that call site. The parameter index is taken from
+/// `endpoint.formal` (resolved by the flowy front-end), since SSA has versioned the port into a
+/// local. The same set is used for both seeding and requirement checking, so a path's endpoint
+/// compares equal to a declared one.
 fn from_flowy_endpoint(
     sites: &fx::IdMap,
     call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
@@ -551,7 +534,7 @@ fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
     let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
         PortBase::Return => Ok(((-1i16).into(), path)),
-        PortBase::Var(v) => match v.variable.as_ref() {
+        PortBase::Var(v) => match &v.variable {
             Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")

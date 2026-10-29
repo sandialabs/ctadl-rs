@@ -1,0 +1,77 @@
+[module]
+name=catch.exe
+mvid=060c5c8d-be13-410a-b959-2102809d4144
+kind=Console
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000001
+[assembly]
+full-name=catch, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Program::Foo() flags=0x0091 impl=0x0000 rva=0x000020b8
+0x06000003=System.Void Program::Bar() flags=0x0091 impl=0x0000 rva=0x000020ba
+0x06000004=System.Void Program::Baz() flags=0x0091 impl=0x0000 rva=0x000020bc
+0x06000005=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x000020be
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+[il]
+0x06000001 max-stack=1 init-locals=false code-size=40
+	IL_0000: call System.Void Program::Foo()
+	IL_0005: leave.s IL_000d
+	IL_0007: call System.Void Program::Baz()
+	IL_000c: endfinally
+	IL_000d: leave.s IL_001f
+	IL_000f: pop
+	IL_0010: call System.Void Program::Bar()
+	IL_0015: leave.s IL_001f
+	IL_0017: pop
+	IL_0018: call System.Void Program::Bar()
+	IL_001d: leave.s IL_001f
+	IL_001f: leave.s IL_0027
+	IL_0021: call System.Void Program::Baz()
+	IL_0026: endfinally
+	IL_0027: ret
+	.try IL_0000 to IL_0007 finally handler IL_0007 to IL_000d
+	.try IL_0000 to IL_000f catch System.ArgumentException handler IL_000f to IL_0017
+	.try IL_0000 to IL_000f catch System.Exception handler IL_0017 to IL_001f
+	.try IL_0000 to IL_0021 finally handler IL_0021 to IL_0027
+0x06000002 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000003 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000004 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000005 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+[custom-attributes-resolved]
+[fields-resolved]

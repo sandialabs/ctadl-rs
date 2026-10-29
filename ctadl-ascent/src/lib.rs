@@ -3,16 +3,19 @@
 pub mod cli;
 pub mod codegen;
 pub mod devguide;
-pub mod error;
-pub mod facts;
 pub mod graphviz;
-pub mod index_engine;
 pub mod languages;
 pub mod lattice;
 pub mod models;
 /// The CTADL store. It lives in [`ctadl_import`] so that reading an import does not require
 /// building the engine. Re-exported here so the name `crate::project::…` works.
 pub use ctadl_import::project;
+/// The facts schema. It lives in [`ctadl_index`], a crate of its own, so an edit elsewhere in the
+/// engine does not recompile it. Re-exported here so the name `crate::facts::…` works.
+pub use ctadl_index::{error, facts};
+pub mod index_engine;
+#[cfg(test)]
+mod index_engine_tests;
 pub mod query_engine;
 pub mod report;
 pub mod stats;
@@ -21,7 +24,7 @@ pub mod stats;
 ///
 /// The default filter is `warn,ctadl=info` -- warnings from every crate, plus this
 /// project's status output. Crates that aren't `ctadl*` (the readers, `trie`,
-/// `tailshare`, ...) stay at `warn` because they have no status to report. `RUST_LOG`
+/// `immortal`, ...) stay at `warn` because they have no status to report. `RUST_LOG`
 /// overrides the whole thing, so `RUST_LOG=warn,ctadl=debug` is how to get more and
 /// `RUST_LOG=warn` is how to get less.
 ///

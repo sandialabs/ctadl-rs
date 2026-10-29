@@ -975,7 +975,7 @@ fn artifact_uri(p: &path::Path) -> String {
 /// path (a frontend that names sources by their in-artifact path, e.g. Dex debug info) is
 /// already artifact-relative and stands alone, and an absolute path elsewhere on disk is
 /// written as the `file:` URI it is, rather than as a slash-stripped imitation of a relative
-/// one -- which is what every path used to get, and what made the URIs unreadable.
+/// one.
 fn source_artifact_location(
     import: &ImportSource,
     canonical_path: &str,
@@ -1522,10 +1522,7 @@ pub struct TaintedInstructions {
 
 pub struct TaintAnalysisResults {
     /// Taint-graph edges in execution / data-flow order, as loaded from the query
-    /// engine's persisted `taint_edge` (see [`FormatFacts::taint_edge`]). Each
-    /// tuple is `(edge, src_func, src_var, src_path, dst_func, dst_var,
-    /// dst_path)`: the source vertex flows to the destination vertex, and `edge`
-    /// is the [`FlowEdge`] classifying the step as `Intra`, `Call`, or `Return`.
+    /// engine's persisted `taint_edge` (see [`FormatFacts::taint_edge`]).
     /// Call/return matching is *not* baked into the vertices (they carry no taint
     /// state); it is recovered on the fly by the realizable-path search, which
     /// carries a [`TaintState`] annotation that evolves along these edge labels.
@@ -1552,7 +1549,7 @@ impl FormatFactsBuilder {
             facts
                 .into_iter()
                 .map(|(id, i, vx)| {
-                    let FlowVertex(var, path) = vx;
+                    let FlowVertex(var, path, ..) = vx;
                     (id, i, var, path)
                 })
                 .collect(),
@@ -1649,8 +1646,7 @@ impl Annotation<LabeledTaintGraph> for TaintState {
 }
 
 /// A node in the taint dataflow graph: a function-local vertex (a variable
-/// together with its access path). Unlike before, the node carries no taint
-/// state — call/return matching is enforced by the [`TaintState`] annotation the
+/// together with its access path). The node carries no taint state — call/return matching is enforced by the [`TaintState`] annotation the
 /// realizable-path search threads along the [`FlowEdge`] labels, not by splitting
 /// a vertex into per-state copies.
 pub type FlowNode = (FunctionId, FlowVariable, Path);
@@ -1773,17 +1769,18 @@ pub fn find_endpoint_paths(
     // The source/sink endpoints actually present on tainted nodes -- the same
     // endpoint set the SARIF formatter draws on. Forward endpoints are sources,
     // backward endpoints are sinks.
-    let mut sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
-    let mut sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    let mut sources: Vec<&QueryEndpoint> = Vec::new();
+    let mut sinks: Vec<&QueryEndpoint> = Vec::new();
     for (_, _, _, _, ep) in &facts.taint {
         match ep.direction {
-            TaintDirection::Forward => {
-                sources.insert(ep);
-            }
-            TaintDirection::Backward => {
-                sinks.insert(ep);
-            }
+            TaintDirection::Forward => sources.push(ep),
+            TaintDirection::Backward => sinks.push(ep),
         }
+    }
+    // In content order, the order of the paths returned.
+    for eps in [&mut sources, &mut sinks] {
+        eps.sort_unstable_by(|a, b| a.content_cmp(b));
+        eps.dedup();
     }
 
     let mut paths = Vec::new();
@@ -2014,6 +2011,13 @@ async fn async_format_sarif(
             }
         }
     }
+    // In content order, since the pairing in `format_source_info_results` walks them in this order.
+    for details in details_by_span.values_mut() {
+        details.sort_by(|a, b| {
+            a.0.content_cmp(&b.0)
+                .then_with(|| crate::graphviz::index_vertex_cmp(&(a.1, a.2, a.3), &(b.1, b.2, b.3)))
+        });
+    }
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
     let imports = load_import_sources(&index_dir)?;
@@ -2025,7 +2029,7 @@ async fn async_format_sarif(
     // Results are built once for the whole project, not once per import: a taint path is a
     // fact about the project's fact base, and each of its locations is resolved against the
     // one import that numbered it (see `populate_source_info`). Rendering per import instead
-    // emitted every result once per import, each copy carrying whatever line the other
+    // would emit every result once per import, each copy carrying whatever line the other
     // artifact happened to have at that span id.
     let ctx = ProjectContext {
         source_spans: &source_spans,
@@ -2622,7 +2626,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     };
 
     // Call site -> callee, used to name a call-site-anchored source/sink by the
-    // framework method it models rather than the caller `infunc` now holds.
+    // framework method it models rather than the caller `infunc` holds.
     let call_callee: BTreeMap<PackedInsnSiteId, FunctionId> =
         ctx.facts.call.iter().copied().collect();
 
@@ -2635,8 +2639,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .or_default()
             .push(src.clone());
     }
-    // All unique endpoints
-    let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
+    // A node's endpoints in content order, since the pairing below walks them in this order.
+    for eps in node_to_endpoint.values_mut() {
+        eps.sort_by(|a, b| a.content_cmp(b));
+    }
+    // All unique endpoints, in content order: the order of their results.
+    let mut endpoints: Vec<&QueryEndpoint> =
+        node_to_endpoint.values().flat_map(|v| v.iter()).collect();
+    endpoints.sort_unstable_by(|a, b| a.content_cmp(b));
+    endpoints.dedup();
 
     // Map each node to an instruction for location info
     let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
@@ -2813,7 +2824,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
     for (path, (span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
+        // The previous step's location identity, and its instruction.
         let mut last_loc_id: Option<(String, Option<String>)> = None;
+        let mut last_site: Option<(u32, u64)> = None;
         // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
         // so a viewer/`jq` can order steps unambiguously across the (possibly several)
         // code flows a result carries.
@@ -2828,14 +2841,20 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .unwrap_or_else(|| format!("func#{}", fid.id))
         };
         // Emit a located code-flow step for a call instruction, deduping against the
-        // previous step's location. `message` describes the step (the full vertex —
-        // variable *and* access path — its function, and the edge kind); `kinds` are the
+        // previous step's location. An `endpoint` step (`source ...`/`sink ...`) is deduped
+        // only against a step at the same instruction: a source-level location can be a
+        // whole statement (a CIL sequence point), so in `Sink(F(Source()))` every call has
+        // the one location, and deduping by it alone would drop the sink step. `message`
+        // describes the step (the full vertex — variable *and* access path — its function,
+        // and the edge kind); `kinds` are the
         // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
         // bumped so every emitted step carries its temporal order.
         let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
                               last_loc_id: &mut Option<(String, Option<String>)>,
+                              last_site: &mut Option<(u32, u64)>,
                               exec_order: &mut i64,
                               site: &InsnSiteId,
+                              endpoint: bool,
                               kinds: Vec<String>,
                               message: String| {
             let Some(loc) = source_data
@@ -2850,8 +2869,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             // `region.byteOffset`. Build the key from *every* dimension that is present
             // rather than picking one — a first-wins fallback would collapse two steps that
             // agree on one dimension but differ on another (and an all-`None` key collapses
-            // every step in a file to `(uri, None)`, which once flattened whole `.dex` flows
-            // down to a lone source step).
+            // every step in a file to `(uri, None)`, flattening whole `.dex` flows down to a
+            // lone source step).
             let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
                 let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
                 let mut parts: Vec<String> = Vec::new();
@@ -2873,10 +2892,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 };
                 Some((uri, pos))
             });
-            if current_loc_id.is_some() && current_loc_id == *last_loc_id {
+            let current_site = Some((site.func_id.id, site.insn_id.id));
+            if current_loc_id.is_some()
+                && current_loc_id == *last_loc_id
+                && (!endpoint || current_site == *last_site)
+            {
                 return;
             }
             *last_loc_id = current_loc_id;
+            *last_site = current_site;
             *exec_order += 1;
             let mut loc_with_msg = loc.clone();
             loc_with_msg.message = Some(Message::builder().text(message).build());
@@ -2899,8 +2923,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    true,
                     vec!["taint".to_string()],
                     format!(
                         "source {}{} in {}",
@@ -2954,8 +2980,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     site,
+                    false,
                     vec![kind.to_string()],
                     format!(
                         "{} {}{} in {}",
@@ -2992,8 +3020,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    false,
                     vec!["call".to_string()],
                     format!(
                         "call {}{} in {}",
@@ -3013,8 +3043,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    true,
                     vec!["taint".to_string()],
                     format!(
                         "sink {}{} in {}",
@@ -3271,11 +3303,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 /// The callee function an endpoint denotes for source/sink *naming*.
 ///
 /// A source/sink is modeled on the framework method it calls (e.g.
-/// `ContentResolver.query`), so before call-site anchoring an endpoint's `infunc`
-/// was that callee and naming read straight off it. After anchoring (8fbc7ca),
-/// `infunc` is the *caller* (the app method containing the call) and `vertex` is
-/// the call-arg vertex; the modeled method is now the callee at `call_site`.
-/// Recover it via the static call graph so reported source/sink callees stay the
+/// `ContentResolver.query`). A call-site-anchored endpoint's `infunc` is the
+/// *caller* (the app method containing the call) and `vertex` is the call-arg
+/// vertex; the modeled method is the callee at `call_site`. Recover it via the static call graph so reported source/sink callees stay the
 /// framework method, not the caller. Function-anchored endpoints (no call site:
 /// a local/global port or a callee with no callers) keep `infunc`.
 fn endpoint_callee(
@@ -3289,7 +3319,7 @@ fn endpoint_callee(
 
 fn format_source_sink_results(
     sarif_data: &mut SarifData,
-    endpoints: &BTreeSet<&QueryEndpoint>,
+    endpoints: &[&QueryEndpoint],
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
     site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
@@ -3318,7 +3348,7 @@ fn format_source_sink_results(
             // other distinguishing field; carry it in `properties` below.
             let vertex = format!("{}{}", node.1, node.2.to_dot_string());
             // Name the source/sink by the framework method it models (the callee
-            // at its anchored call site), not the caller `infunc` holds post-8fbc7ca.
+            // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
             let func_name = id_to_name
                 .get(&callee_id.id)
@@ -3533,7 +3563,7 @@ pub async fn find_source_ids(
 /// whose import list changed since it was indexed would otherwise shift every span onto the
 /// wrong artifact, silently. An import named there but no longer loadable from the store is
 /// kept as a hole, so the ids of the imports after it still line up; spans landing in that hole
-/// simply go unresolved, exactly as they did before this table existed.
+/// simply go unresolved.
 fn load_import_sources(index_dir: &path::Path) -> Result<Vec<ImportSource>, Error> {
     let names = schema::import_id::try_load(index_dir)?;
     let mut imports = Vec::with_capacity(names.len());
@@ -3673,7 +3703,7 @@ mod tests {
     ) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label(label.into()),
             direction: dir,
             call_site: None,
@@ -3682,8 +3712,8 @@ mod tests {
     }
 
     /// A taint fact placing endpoint `ep` on the vertex `(func, var)`. The taint
-    /// state is incidental now (the graph nodes are bare vertices), so it is
-    /// always `Free`.
+    /// state is incidental (the graph nodes are bare vertices), so it is always
+    /// `Free`.
     fn taint_fact(
         func: u32,
         var: FlowVariable,

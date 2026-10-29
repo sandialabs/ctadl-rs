@@ -21,8 +21,8 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .map(|name| {
             let mut f = FunctionData::default();
             f.set_name((*name).to_string());
-            f.params.parameters.push(ParameterType::ByVal);
-            f.params.parameters.push(ParameterType::ByVal);
+            f.params.parameters.push(ParameterType::SharedFields);
+            f.params.parameters.push(ParameterType::SharedFields);
             f.locals.get_or_intern("buf");
             let blocks = f.blocks.blocks_mut();
             let body = blocks.push(BasicBlockData::new(None));
@@ -153,11 +153,6 @@ fn a_variable_port_carries_its_local_index() {
 /// The two spellings a bracketed segment can have must stay distinguishable, or a port naming
 /// the real `Offset(8)` a binary frontend emits and one naming the synthetic `Symbol("[]")` the
 /// dex/jvm/lua frontends emit collapse into each other.
-///
-/// This used to be pinned by round-tripping a segment through the model layer's columnar
-/// access-path encoding, which stored one canonical escaped spelling per row. That encoding is
-/// gone -- a matched port is a `facts::Path` from the moment it parses -- so the guarantee is
-/// pinned where it now lives, at the spelling functions themselves.
 #[test]
 fn bracketed_segment_spellings_stay_distinct() {
     use ctadl_ir::mir::Offset;
@@ -284,7 +279,7 @@ mod capture {
     use super::*;
     use crate::models::json::MatchedFunctions;
 
-    /// A frontend with no method table -- what pcode uses. The match index falls back to the
+    /// A frontend with no method table -- what C and flowy use. The match index falls back to the
     /// IR function names, so a `where` still matches; it is only `matched_functions(&All)`
     /// that has nothing to enumerate.
     fn unknown_vmt_program(names: &[&str]) -> ProgramInfo {
@@ -296,7 +291,7 @@ mod capture {
             .map(|name| {
                 let mut f = FunctionData::default();
                 f.set_name((*name).to_string());
-                f.params.parameters.push(ParameterType::ByVal);
+                f.params.parameters.push(ParameterType::SharedFields);
                 f
             })
             .collect();
@@ -368,7 +363,7 @@ mod capture {
         }
     }
 
-    /// The pcode-shaped case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
+    /// The `Unknown`-VMT case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
     /// captures a real count even though the `All` arm of `matched_functions` could not.
     #[test]
     fn a_narrowed_generator_counts_on_an_unknown_vmt() {
@@ -593,6 +588,68 @@ mod dispatch {
         assert_eq!(matched.provenance, vec!["<models>:0".to_string()]);
     }
 
+    /// A `callvirt` is keyed the same way, in .NET spellings, and its id is the CIL method id.
+    #[test]
+    fn matches_a_cil_call_site() {
+        use ctadl_ir::mir::builder::FunctionBuilder;
+
+        const CLS: &str = "[System.Private.CoreLib]System.Object";
+        const DESC: &str = "()->System.String";
+        let mut caller = FunctionData {
+            name: "[App]App.Caller::Run()->System.Void".to_string(),
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut caller);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let x: VariableRef = b.new_local_var("x");
+            b.create_call(
+                CallStyle::CilCall {
+                    receiver: x,
+                    cls: CLS.into(),
+                    simple_name: "ToString".into(),
+                    descriptor: DESC.into(),
+                },
+                Vec::new(),
+                Vec::new(),
+            );
+            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+        }
+        let program_info = ProgramInfo {
+            vmt: VirtualMethodTable::new_cil(),
+            program: Program::new(Functions::new(vec![caller])),
+            ..Default::default()
+        };
+        let keys = DispatchKeys::from_program(&program_info.program);
+        let mut out = ProgramModelMatches::default();
+        {
+            let match_index = ProgramMatchIndex::new_with_dispatch(
+                &program_info,
+                ImportScope::unknown(),
+                Some(&keys),
+            );
+            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+            ingest
+                .encode_models(vec![serde_json::json!({
+                    "find": "dispatch",
+                    "where": [{"constraint": "signature_match",
+                               "qualified-id": format!("{CLS}::ToString{DESC}")}],
+                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+                })])
+                .expect("loading");
+        }
+        let keys: Vec<_> = out
+            .dispatch
+            .keys()
+            .map(|k| (k.0.to_string(), k.1.to_string(), k.2.to_string()))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![(CLS.to_string(), "ToString".to_string(), DESC.to_string())]
+        );
+    }
+
     #[test]
     fn an_empty_propagation_is_a_skip() {
         let out = dispatch_of(&[ITERATOR], vec![model(serde_json::json!([]))]).expect("loading");
@@ -615,17 +672,39 @@ mod dispatch {
         .expect("loading");
         assert_eq!(
             out.dispatch.values().next().map(|m| &m.disposition),
-            Some(&Disposition::Inline)
+            Some(&Disposition::Inline(Vec::new()))
         );
     }
 
+    /// `resolve: inline` with a propagation keeps both: the site is inlined and carries the
+    /// summary.
+    #[test]
+    fn resolve_inline_with_a_propagation_keeps_the_ports() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "name": "next"}],
+                "model": {"resolve": "inline",
+                          "propagation": [{"input": "Argument(0)", "output": "Return"}]},
+            })],
+        )
+        .expect("loading");
+        let Some(Disposition::Inline(ports)) = out.dispatch.values().next().map(|m| &m.disposition)
+        else {
+            panic!("expected an inline disposition");
+        };
+        assert_eq!(ports.len(), 1);
+    }
+
     /// "Forgot the model" and "meant to discard" have to be different documents, so neither key
-    /// is an error and both keys is too.
+    /// is an error; and a marker is not a model, so `closure_shaped` stands alone.
     #[test]
     fn exactly_one_of_propagation_and_resolve_is_required() {
         for m in [
             serde_json::json!({}),
-            serde_json::json!({"propagation": [], "resolve": "inline"}),
+            serde_json::json!({"closure_shaped": true, "resolve": "inline"}),
+            serde_json::json!({"closure_shaped": true, "propagation": []}),
         ] {
             let err = errors_of(vec![serde_json::json!({
                 "find": "dispatch",
@@ -724,7 +803,7 @@ mod dispatch {
         ] {
             let out = dispatch_of(&[ITERATOR], vec![a, b]).expect("loading");
             let matched = out.dispatch.values().next().expect("one key");
-            assert_eq!(matched.disposition, Disposition::Inline);
+            assert_eq!(matched.disposition, Disposition::Inline(Vec::new()));
             assert_eq!(matched.provenance.len(), 2);
         }
     }

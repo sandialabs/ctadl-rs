@@ -1,0 +1,72 @@
+[module]
+name=hello.exe
+mvid=37c37d1b-c717-45ed-a505-6439a833a7a8
+kind=Console
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000002
+[assembly]
+full-name=hello, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x000020ec
+0x06000002=System.Int32 Program::Main(System.String[]) flags=0x0091 impl=0x0000 rva=0x000020f4
+	param 0 name=args flags=0x0000
+0x06000003=System.Void Program::Print(System.String) flags=0x0091 impl=0x0000 rva=0x00002120
+	param 0 name=arg flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=4 init-locals=true code-size=30
+	local 0=System.Int32
+	IL_0000: ldc.i4.0
+	IL_0001: stloc.0
+	IL_0002: br IL_0013
+	IL_0007: ldarg.0
+	IL_0008: ldloc.0
+	IL_0009: ldelem.ref
+	IL_000a: call System.Void Program::Print(System.String)
+	IL_000f: ldloc.0
+	IL_0010: ldc.i4.1
+	IL_0011: add
+	IL_0012: stloc.0
+	IL_0013: ldloc.0
+	IL_0014: ldarg.0
+	IL_0015: ldlen
+	IL_0016: conv.i4
+	IL_0017: blt IL_0007
+	IL_001c: ldc.i4.0
+	IL_001d: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Console::WriteLine(System.String)
+	IL_0006: ret
+[resolve]
+0x01000001 -> mscorlib.dll!0x02000987 System.Object
+0x01000002 -> mscorlib.dll!0x02000963 System.Console
+0x01000003 -> mscorlib.dll!0x020002d1 System.Runtime.CompilerServices.RuntimeCompatibilityAttribute
+0x0a000001 -> mscorlib.dll!0x06005b4a System.Void System.Object::.ctor()
+0x0a000002 -> mscorlib.dll!0x0600594a System.Void System.Console::WriteLine(System.String)
+0x0a000003 -> mscorlib.dll!0x06001df6 System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor()
+[custom-attributes-resolved]
+[fields-resolved]

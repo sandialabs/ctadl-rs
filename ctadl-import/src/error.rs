@@ -1,9 +1,7 @@
 //! The error type that the store and every front end share.
 //!
-//! There is a second error type, `ctadl_ascent::error::Error`. The crate-level docs explain the
-//! rule that keeps the two apart: a file imports one [`ErrorContext`] trait or the other, never
-//! both, and the `#[from]` on `ctadl_ascent::Error::Import` converts between the two error types
-//! wherever `?` is used.
+//! There is a second error type, `ctadl_ascent::error::Error`. The crate-level docs give the
+//! rule that keeps the two apart.
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -41,6 +39,9 @@ pub enum Error {
     #[cfg(feature = "flowy")]
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
+    #[cfg(feature = "cil")]
+    #[error("cil decoding error: {0}")]
+    Cil(#[from] cil_reader::Error),
     #[cfg(feature = "pcode")]
     #[error("pcode fact reading error: {0}")]
     PcodeFactRead(String),
@@ -82,9 +83,7 @@ pub enum Error {
         artifact_path: PathBuf,
     },
     /// No index has been written for the project yet. This is different from
-    /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read. `ctadl
-    /// query` never raises this error when it is given model files, because it checks those
-    /// files against the imports instead. See `ctadl_ascent::cli::query`.
+    /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read.
     #[error(
         "project '{project}' has no index; run `ctadl index {project}` first. \
          With `--models` given, `ctadl query {project}` reports what those files match in the \

@@ -1,0 +1,19 @@
+{
+  // Flow: guarded(source()) (22) returns s from inside a try (15). javac saves
+  // the value in a local, copies the finally block onto the normal and the
+  // exceptional exit, and returns the local. Line 15 is dropped: the callee only
+  // copies its argument through (see "Pure copies" in nightly/README.md).
+  "expected_lines": [22],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LTryFinallyReturn;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LTryFinallyReturn;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

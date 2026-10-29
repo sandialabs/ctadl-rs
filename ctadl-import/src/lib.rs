@@ -31,4 +31,4 @@ pub use error::{Error, ErrorContext};
 pub use project::{
     ArtifactImport, ArtifactLanguage, IMPORT_FORMAT_VERSION, INDEX_FORMAT_VERSION, StorePaths,
 };
-pub use store::{SourceInfoMode, load_import, open_import, save_program_info};
+pub use store::{SourceInfoMode, load_import, load_vmt, open_import, save_program_info};

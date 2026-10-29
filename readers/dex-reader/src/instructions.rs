@@ -1,6 +1,6 @@
 use std::fmt::Formatter;
 
-use streaming_iterator::{DoubleEndedStreamingIterator, StreamingIterator};
+use smallvec::{SmallVec, smallvec};
 
 use crate::types::{DexConstantPool, DexString, MethodId};
 
@@ -26,7 +26,14 @@ macro_rules! index_type {
 }
 
 index_type!(
-    Reg, TypeIdx, ProtoIdx, MethodIdx, CallIdx, FieldIdx, StringIdx
+    Reg,
+    TypeIdx,
+    ProtoIdx,
+    MethodIdx,
+    CallIdx,
+    MethodHandleIdx,
+    FieldIdx,
+    StringIdx
 );
 
 pub trait DisplayInstr {
@@ -72,8 +79,7 @@ impl DisplayInstr for TypeIdx {
 /// Quote a string constant for disassembly output.
 ///
 /// Scalar values are escaped as `char::escape_debug` does. An unpaired
-/// surrogate has no `char` to escape -- and a DEX string constant may legally
-/// hold one, since generated lexers use constants as packed UTF-16 tables --
+/// surrogate (which a [`DexString`] may legally hold) has no `char` to escape,
 /// so it is written the way baksmali writes every non-ASCII code unit,
 /// `\uXXXX`.
 fn quote_string_constant(s: &DexString) -> String {
@@ -108,8 +114,13 @@ impl DisplayInstr for ProtoIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
-        write!(f, "proto<{}>", self.0)
+    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+        let proto = cp
+            .proto_ids
+            .get(self.0 as usize)
+            .and_then(|p| p.pretty_signature(cp.data, &cp.strings, &cp.type_ids).ok())
+            .unwrap_or("<invalid_proto>".into());
+        write!(f, "{proto}")
     }
 }
 
@@ -139,6 +150,38 @@ impl DisplayInstr for CallIdx {
 
     fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
         write!(f, "call<{}>", self.0)
+    }
+}
+
+impl DisplayInstr for MethodHandleIdx {
+    fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0)
+    }
+
+    /// Written as smali writes it: the handle's kind, `@`, then the field or method it names.
+    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+        let Some(handle) = cp.method_handles.get(self.0 as usize) else {
+            return write!(f, "<invalid_method_handle>");
+        };
+        let member = u32::from(handle.field_or_method_id);
+        let (kind, is_field) = match handle.method_handle_type {
+            0x00 => ("static-put", true),
+            0x01 => ("static-get", true),
+            0x02 => ("instance-put", true),
+            0x03 => ("instance-get", true),
+            0x04 => ("invoke-static", false),
+            0x05 => ("invoke-instance", false),
+            0x06 => ("invoke-constructor", false),
+            0x07 => ("invoke-direct", false),
+            0x08 => ("invoke-interface", false),
+            _ => return write!(f, "<invalid_method_handle>"),
+        };
+        write!(f, "{kind}@")?;
+        if is_field {
+            FieldIdx(member).display(f, cp)
+        } else {
+            MethodIdx(member).display(f, cp)
+        }
     }
 }
 
@@ -410,8 +453,19 @@ impl DisplayInstr for Format51l {
     }
 
     fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
-        write!(f, "{}, {}L", DispArg(self.a, cp), self.lit)
+        write!(
+            f,
+            "{}, {}{}",
+            DispArg(self.a, cp),
+            self.lit,
+            long_suffix(self.lit)
+        )
     }
+}
+
+/// The suffix baksmali writes after a 64-bit literal: `L`, unless the value fits in an int.
+fn long_suffix(v: i64) -> &'static str {
+    if i32::try_from(v).is_ok() { "" } else { "L" }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -843,38 +897,30 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format3rc<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Format45cc {
-    pub a: u32,
     pub method_id: MethodIdx,
-    pub c: Reg,
-    pub d: Reg,
-    pub e: Reg,
-    pub f: Reg,
-    pub g: Reg,
+    pub args: Vec<Reg>,
     pub proto_id: ProtoIdx,
 }
 
 impl Format45cc {
     pub fn new(insns: &[u16]) -> (usize, Self) {
-        let a = ((insns[0] >> 8) & 0x0f) as u32;
+        // Same register layout as 35c: A|G|op BBBB F|E|D|C, then the proto index HHHH.
+        let count: usize = ((insns[0] >> 12) & 0x0f).into();
+        let g = Reg(((insns[0] >> 8) & 0x0f).into());
         let method_id = MethodIdx(insns[1].into());
         let c = Reg((insns[2] & 0x0f).into());
         let d = Reg(((insns[2] >> 4) & 0x0f).into());
         let e = Reg(((insns[2] >> 8) & 0x0f).into());
         let f = Reg(((insns[2] >> 12) & 0x0f).into());
-        let g = Reg(((insns[0] >> 12) & 0x0f).into());
         let proto_id = ProtoIdx(insns[3].into());
+        let args = [c, d, e, f, g].into_iter().take(count).collect();
         (
             4,
             Self {
-                a,
                 method_id,
-                c,
-                d,
-                e,
-                f,
-                g,
+                args,
                 proto_id,
             },
         )
@@ -882,42 +928,26 @@ impl Format45cc {
 }
 impl DisplayInstr for Format45cc {
     fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{{")?;
+        for (i, arg) in self.args.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", RawArg(arg))?;
+        }
         write!(
             f,
-            "{}, {}, {}, {}, {}, {}, {}, {}",
-            self.a,
+            "}}, {}, {}",
             RawArg(self.method_id),
-            RawArg(self.c),
-            RawArg(self.d),
-            RawArg(self.e),
-            RawArg(self.f),
-            RawArg(self.g),
-            RawArg(self.proto_id),
+            RawArg(self.proto_id)
         )
     }
 
     fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
         // Smali-style order:
         //   {regs}, method, proto
-        let mut regs: Vec<Reg> = Vec::with_capacity(self.a as usize);
-        if self.a > 0 {
-            regs.push(self.c);
-        }
-        if self.a > 1 {
-            regs.push(self.d);
-        }
-        if self.a > 2 {
-            regs.push(self.e);
-        }
-        if self.a > 3 {
-            regs.push(self.f);
-        }
-        if self.a > 4 {
-            regs.push(self.g);
-        }
-
         write!(f, "{{")?;
-        for (i, r) in regs.iter().enumerate() {
+        for (i, r) in self.args.iter().enumerate() {
             if i != 0 {
                 write!(f, ", ")?;
             }
@@ -1262,85 +1292,41 @@ pub enum Instruction {
     UnusedF7(FormatUnused) = 0xf7,
     UnusedF8(FormatUnused) = 0xf8,
     UnusedF9(FormatUnused) = 0xf9,
-    UnusedFA(Format45cc) = 0xfa,
-    UnusedFB(Format4rcc) = 0xfb,
-    UnusedFC(Format35c<CallIdx>) = 0xfc,
-    UnusedFD(Format3rc<CallIdx>) = 0xfd,
-    UnusedFE(Format21c<MethodIdx>) = 0xfe,
-    UnusedFF(Format21c<ProtoIdx>) = 0xff,
+    InvokePolymorphic(Format45cc) = 0xfa,
+    InvokePolymorphicRange(Format4rcc) = 0xfb,
+    InvokeCustom(Format35c<CallIdx>) = 0xfc,
+    InvokeCustomRange(Format3rc<CallIdx>) = 0xfd,
+    ConstMethodHandle(Format21c<MethodHandleIdx>) = 0xfe,
+    ConstMethodType(Format21c<ProtoIdx>) = 0xff,
 }
 
-/// Represents data flow registers accessed by an instruction
+/// The registers an instruction reads and writes. A wide (64-bit) operand contributes both of its
+/// registers, low then high.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DataFlow {
-    /// Source registers for the instruction
-    pub source: DynIter,
-    /// Dest registers for the instruction
-    pub dest: DynIter,
-    /// Ret registers for the instruction
-    pub ret: DynIter,
+    /// Registers the instruction reads
+    pub source: Regs,
+    /// Registers the instruction writes
+    pub dest: Regs,
 }
 
-type DynIter = Box<dyn DoubleEndedStreamingIterator<Item = Reg>>;
-
-/// Streaming iterator over a slice of registers (used for 35c/3rc args).
-struct RegSliceStream {
-    vec: Vec<Reg>,
-    pos: usize,
-}
-
-impl RegSliceStream {
-    fn new(slice: &[Reg]) -> Self {
-        Self {
-            vec: slice.to_vec(),
-            pos: 0,
-        }
-    }
-}
-
-impl StreamingIterator for RegSliceStream {
-    type Item = Reg;
-    fn advance(&mut self) {
-        self.pos = (self.pos + 1).min(self.vec.len());
-    }
-    fn get(&self) -> Option<&Reg> {
-        self.vec.get(self.pos)
-    }
-}
-
-impl DoubleEndedStreamingIterator for RegSliceStream {
-    fn advance_back(&mut self) {
-        self.pos = self.pos.saturating_sub(1);
-    }
-}
+/// Register list sized so that the operands of all fixed-arity instructions, including 35c
+/// invokes, fit without allocating.
+pub type Regs = SmallVec<[Reg; 5]>;
 
 fn dataflow_from_args(args: &[Reg]) -> DataFlow {
     DataFlow {
-        source: Box::new(RegSliceStream::new(args)),
-        dest: Box::new(streaming_iterator::empty()),
-        ret: Box::new(streaming_iterator::empty()),
+        source: Regs::from_slice(args),
+        dest: Regs::new(),
     }
 }
 
-macro_rules! iter_chain {
-    ([]) => {
-        streaming_iterator::empty()
-    };
-    ([$first:expr]) => {
-        streaming_iterator::once($first)
-    };
-    ([$first:expr, $($rest:expr),+ $(,)?]) => {
-        streaming_iterator::once($first).chain(iter_chain!([$($rest),+]))
-    };
-}
-
-/// Given arrays of references to source, dest, and return Reg information, build iterators over
-/// them and pack them into a DataFlow
-macro_rules! dataflow_source_sink_ret {
-    ($source:tt, $dest:tt, $ret:tt) => {
+/// Builds a [`DataFlow`] from lists of source and dest registers.
+macro_rules! dataflow {
+    ([$($source:expr),* $(,)?], [$($dest:expr),* $(,)?] $(,)?) => {
         DataFlow {
-            source: Box::new(iter_chain!($source)),
-            dest: Box::new(iter_chain!($dest)),
-            ret: Box::new(iter_chain!($ret)),
+            source: smallvec![$($source),*],
+            dest: smallvec![$($dest),*],
         }
     };
 }
@@ -2350,27 +2336,27 @@ impl Instruction {
             }
             0xfa => {
                 let (size, fmt) = Format45cc::new(insns);
-                (size, Instruction::UnusedFA(fmt))
+                (size, Instruction::InvokePolymorphic(fmt))
             }
             0xfb => {
                 let (size, fmt) = Format4rcc::new(insns);
-                (size, Instruction::UnusedFB(fmt))
+                (size, Instruction::InvokePolymorphicRange(fmt))
             }
             0xfc => {
                 let (size, fmt) = Format35c::<CallIdx>::new(insns);
-                (size, Instruction::UnusedFC(fmt))
+                (size, Instruction::InvokeCustom(fmt))
             }
             0xfd => {
                 let (size, fmt) = Format3rc::<CallIdx>::new(insns);
-                (size, Instruction::UnusedFD(fmt))
+                (size, Instruction::InvokeCustomRange(fmt))
             }
             0xfe => {
-                let (size, fmt) = Format21c::<MethodIdx>::new(insns);
-                (size, Instruction::UnusedFE(fmt))
+                let (size, fmt) = Format21c::<MethodHandleIdx>::new(insns);
+                (size, Instruction::ConstMethodHandle(fmt))
             }
             0xff => {
                 let (size, fmt) = Format21c::<ProtoIdx>::new(insns);
-                (size, Instruction::UnusedFF(fmt))
+                (size, Instruction::ConstMethodType(fmt))
             }
         }
     }
@@ -2627,12 +2613,12 @@ impl Instruction {
             Self::UnusedF7(fmt) => Format::FormatUnused(fmt),
             Self::UnusedF8(fmt) => Format::FormatUnused(fmt),
             Self::UnusedF9(fmt) => Format::FormatUnused(fmt),
-            Self::UnusedFA(fmt) => Format::Format45cc(fmt),
-            Self::UnusedFB(fmt) => Format::Format4rcc(fmt),
-            Self::UnusedFC(fmt) => Format::Format35cC(fmt),
-            Self::UnusedFD(fmt) => Format::Format3rcC(fmt),
-            Self::UnusedFE(fmt) => Format::Format21cM(fmt),
-            Self::UnusedFF(fmt) => Format::Format21cP(fmt),
+            Self::InvokePolymorphic(fmt) => Format::Format45cc(fmt),
+            Self::InvokePolymorphicRange(fmt) => Format::Format4rcc(fmt),
+            Self::InvokeCustom(fmt) => Format::Format35cC(fmt),
+            Self::InvokeCustomRange(fmt) => Format::Format3rcC(fmt),
+            Self::ConstMethodHandle(fmt) => Format::Format21cH(fmt),
+            Self::ConstMethodType(fmt) => Format::Format21cP(fmt),
         }
     }
 
@@ -2646,72 +2632,71 @@ impl Instruction {
     /// Returns data flow information about the registers accessed by this instruction
     pub fn data_flow(&self) -> DataFlow {
         use Instruction::*;
-        // The order of dataflow_source_sink_ret is source-dest-ret
         match self {
             // Move: dest=a, source=b
-            Move(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveFrom16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            Move16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            Move(f) => dataflow!([f.b], [f.a]),
+            MoveFrom16(f) => dataflow!([f.b], [f.a]),
+            Move16(f) => dataflow!([f.b], [f.a]),
             MoveWide(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             MoveWideFrom16(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             MoveWide16(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
-            MoveObject(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveObjectFrom16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveObject16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            MoveObject(f) => dataflow!([f.b], [f.a]),
+            MoveObjectFrom16(f) => dataflow!([f.b], [f.a]),
+            MoveObject16(f) => dataflow!([f.b], [f.a]),
             // Move result / exception: dest=a only
-            MoveResult(f) => dataflow_source_sink_ret!([], [f.a], []),
-            MoveResultWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            MoveResultObject(f) => dataflow_source_sink_ret!([], [f.a], []),
-            MoveException(f) => dataflow_source_sink_ret!([], [f.a], []),
+            MoveResult(f) => dataflow!([], [f.a]),
+            MoveResultWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            MoveResultObject(f) => dataflow!([], [f.a]),
+            MoveException(f) => dataflow!([], [f.a]),
             // No registers
             ReturnVoid(_) | Nop(_) | Goto(_) | Goto16(_) | Goto32(_) => {
-                dataflow_source_sink_ret!([], [], [])
+                dataflow!([], [])
             }
             // 11x read only
-            Return(f) => dataflow_source_sink_ret!([f.a], [], []),
-            ReturnWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [], []),
-            ReturnObject(f) => dataflow_source_sink_ret!([f.a], [], []),
-            MonitorEnter(f) | MonitorExit(f) | Throw(f) => dataflow_source_sink_ret!([f.a], [], []),
+            Return(f) => dataflow!([f.a], []),
+            ReturnWide(f) => dataflow!([f.a, f.a.next_reg()], []),
+            ReturnObject(f) => dataflow!([f.a], []),
+            MonitorEnter(f) | MonitorExit(f) | Throw(f) => dataflow!([f.a], []),
             // Const: dest only
-            Const4(f) => dataflow_source_sink_ret!([], [f.a], []),
-            Const16(f) => dataflow_source_sink_ret!([], [f.a], []),
-            Const(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstHigh16(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstWide16(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWide32(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWideHigh16(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
+            Const4(f) => dataflow!([], [f.a]),
+            Const16(f) => dataflow!([], [f.a]),
+            Const(f) => dataflow!([], [f.a]),
+            ConstHigh16(f) => dataflow!([], [f.a]),
+            ConstWide16(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWide32(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWideHigh16(f) => dataflow!([], [f.a, f.a.next_reg()]),
             // 21c/31c: dest=a
-            ConstString(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstStringJumbo(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstClass(f) | NewInstance(f) => dataflow_source_sink_ret!([], [f.a], []),
-            CheckCast(f) => dataflow_source_sink_ret!([f.a], [f.a], []),
+            ConstString(f) => dataflow!([], [f.a]),
+            ConstStringJumbo(f) => dataflow!([], [f.a]),
+            ConstClass(f) | NewInstance(f) => dataflow!([], [f.a]),
+            CheckCast(f) => dataflow!([f.a], [f.a]),
             // SGet*: dest=a (wide = two regs)
             SGet(f) | SGetBoolean(f) | SGetByte(f) | SGetChar(f) | SGetShort(f) | SGetObject(f) => {
-                dataflow_source_sink_ret!([], [f.a], [])
+                dataflow!([], [f.a])
             }
-            SGetWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
+            SGetWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
             // SPut*: source=a
             SPut(f) | SPutBoolean(f) | SPutByte(f) | SPutChar(f) | SPutShort(f) | SPutObject(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
-            SPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [], []),
+            SPutWide(f) => dataflow!([f.a, f.a.next_reg()], []),
             // 22c
-            InstanceOf(f) | NewArray(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            InstanceOf(f) | NewArray(f) => dataflow!([f.b], [f.a]),
             IGet(f) | IGetBoolean(f) | IGetByte(f) | IGetChar(f) | IGetShort(f) | IGetObject(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
-            IGetWide(f) => dataflow_source_sink_ret!([f.b], [f.a, f.a.next_reg()], []),
+            IGetWide(f) => dataflow!([f.b], [f.a, f.a.next_reg()]),
             IPut(f) | IPutBoolean(f) | IPutByte(f) | IPutChar(f) | IPutShort(f) | IPutObject(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [], [])
+                dataflow!([f.a, f.b], [])
             }
-            IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], []),
+            IPutWide(f) => dataflow!([f.a, f.a.next_reg(), f.b], []),
             // 35c/3rc: source = args
             FilledNewArray(f) => dataflow_from_args(&f.args),
             FilledNewArrayRange(f) => dataflow_from_args(&f.args),
@@ -2722,114 +2707,122 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => dataflow_from_args(&f.args),
-            UnusedFC(f) => dataflow_from_args(&f.args),
-            UnusedFD(f) => dataflow_from_args(&f.args),
+            InvokePolymorphic(f) => dataflow_from_args(&f.args),
+            InvokePolymorphicRange(f) => dataflow_from_args(&f.args),
+            InvokeCustom(f) => dataflow_from_args(&f.args),
+            InvokeCustomRange(f) => dataflow_from_args(&f.args),
+            // 21c: dest=a
+            ConstMethodHandle(f) => dataflow!([], [f.a]),
+            ConstMethodType(f) => dataflow!([], [f.a]),
             // 31t
             FillArrayData(f) | PackedSwitch(f) | SparseSwitch(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
             // 21t/22t branches
             IfEq(f) | IfNe(f) | IfLt(f) | IfGe(f) | IfGt(f) | IfLe(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [], [])
+                dataflow!([f.a, f.b], [])
             }
             IfEqz(f) | IfNez(f) | IfLtz(f) | IfGez(f) | IfGtz(f) | IfLez(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
             // 12x unary
-            ArrayLength(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            ArrayLength(f) => dataflow!([f.b], [f.a]),
             NegInt(f) | NotInt(f) | IntToByte(f) | IntToChar(f) | IntToShort(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             NegFloat(f) | IntToFloat(f) | FloatToInt(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             IntToLong(f) | IntToDouble(f) | FloatToLong(f) | FloatToDouble(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b], [f.a, f.a.next_reg()])
             }
             LongToInt(f) | LongToFloat(f) | DoubleToInt(f) | DoubleToFloat(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a])
             }
             NegLong(f) | NotLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             NegDouble(f) | LongToDouble(f) | DoubleToLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             // 12x binary 2addr: source=a,b dest=a (or wide)
             AddInt2Addr(f) | SubInt2Addr(f) | MulInt2Addr(f) | DivInt2Addr(f) | RemInt2Addr(f)
             | AndInt2Addr(f) | OrInt2Addr(f) | XorInt2Addr(f) | ShlInt2Addr(f) | ShrInt2Addr(f)
             | UshrInt2Addr(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [f.a], [])
+                dataflow!([f.a, f.b], [f.a])
             }
             AddLong2Addr(f) | SubLong2Addr(f) | MulLong2Addr(f) | DivLong2Addr(f)
-            | RemLong2Addr(f) | AndLong2Addr(f) | OrLong2Addr(f) | XorLong2Addr(f)
-            | ShlLong2Addr(f) | ShrLong2Addr(f) | UshrLong2Addr(f) => {
-                dataflow_source_sink_ret!(
+            | RemLong2Addr(f) | AndLong2Addr(f) | OrLong2Addr(f) | XorLong2Addr(f) => {
+                dataflow!(
                     [f.a, f.a.next_reg(), f.b, f.b.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
+            }
+            // The shift amount is an int, so vB is one register, not a pair
+            ShlLong2Addr(f) | ShrLong2Addr(f) | UshrLong2Addr(f) => {
+                dataflow!([f.a, f.a.next_reg(), f.b], [f.a, f.a.next_reg()])
             }
             AddFloat2Addr(f) | SubFloat2Addr(f) | MulFloat2Addr(f) | DivFloat2Addr(f)
             | RemFloat2Addr(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [f.a], [])
+                dataflow!([f.a, f.b], [f.a])
             }
             AddDouble2Addr(f) | SubDouble2Addr(f) | MulDouble2Addr(f) | DivDouble2Addr(f)
             | RemDouble2Addr(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.a, f.a.next_reg(), f.b, f.b.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             // 22s / 22b
             AddIntLit16(f) | RsubInt(f) | MulIntLit16(f) | DivIntLit16(f) | RemIntLit16(f)
             | AndIntLit16(f) | OrIntLit16(f) | XorIntLit16(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             AddIntLit8(f) | RsubIntLit8(f) | MulIntLit8(f) | DivIntLit8(f) | RemIntLit8(f)
             | AndIntLit8(f) | OrIntLit8(f) | XorIntLit8(f) | ShlIntLit8(f) | ShrIntLit8(f)
             | UshrIntLit8(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             // 23x aget*: dest=a, source=b,c (array, index)
             AGet(f) | AGetBoolean(f) | AGetByte(f) | AGetChar(f) | AGetShort(f) | AGetObject(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
-            AGetWide(f) => dataflow_source_sink_ret!([f.b, f.c], [f.a, f.a.next_reg()], []),
+            AGetWide(f) => dataflow!([f.b, f.c], [f.a, f.a.next_reg()]),
             // 23x aput*
             APut(f) | APutBoolean(f) | APutByte(f) | APutChar(f) | APutShort(f) | APutObject(f) => {
-                dataflow_source_sink_ret!([f.a, f.b, f.c], [], [])
+                dataflow!([f.a, f.b, f.c], [])
             }
-            APutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg(), f.b, f.c], [], []),
+            APutWide(f) => dataflow!([f.a, f.a.next_reg(), f.b, f.c], []),
             // 23x binop / cmp
-            CmplFloat(f) | CmpgFloat(f) => dataflow_source_sink_ret!([f.b, f.c], [f.a], []),
+            CmplFloat(f) | CmpgFloat(f) => dataflow!([f.b, f.c], [f.a]),
             CmpLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a])
             }
             CmplDouble(f) | CmpgDouble(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a])
             }
             AddInt(f) | SubInt(f) | MulInt(f) | DivInt(f) | RemInt(f) | AndInt(f) | OrInt(f)
             | XorInt(f) | ShlInt(f) | ShrInt(f) | UshrInt(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
             AddLong(f) | SubLong(f) | MulLong(f) | DivLong(f) | RemLong(f) | AndLong(f)
-            | OrLong(f) | XorLong(f) | ShlLong(f) | ShrLong(f) | UshrLong(f) => {
-                dataflow_source_sink_ret!(
+            | OrLong(f) | XorLong(f) => {
+                dataflow!(
                     [f.b, f.b.next_reg(), f.c, f.c.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
+            // The shift amount is an int, so vC is one register, not a pair
+            ShlLong(f) | ShrLong(f) | UshrLong(f) => {
+                dataflow!([f.b, f.b.next_reg(), f.c], [f.a, f.a.next_reg()])
+            }
             AddFloat(f) | SubFloat(f) | MulFloat(f) | DivFloat(f) | RemFloat(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
             AddDouble(f) | SubDouble(f) | MulDouble(f) | DivDouble(f) | RemDouble(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.b, f.b.next_reg(), f.c, f.c.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             // Unused
@@ -2838,14 +2831,15 @@ impl Instruction {
             | UnusedE6(_) | UnusedE7(_) | UnusedE8(_) | UnusedE9(_) | UnusedEA(_) | UnusedEB(_)
             | UnusedEC(_) | UnusedED(_) | UnusedEE(_) | UnusedEF(_) | UnusedF0(_) | UnusedF1(_)
             | UnusedF2(_) | UnusedF3(_) | UnusedF4(_) | UnusedF5(_) | UnusedF6(_) | UnusedF7(_)
-            | UnusedF8(_) | UnusedF9(_) | UnusedFA(_) | UnusedFB(_) | UnusedFE(_) | UnusedFF(_) => {
-                dataflow_source_sink_ret!([], [], [])
+            | UnusedF8(_) | UnusedF9(_) => {
+                dataflow!([], [])
             }
         }
     }
 
     /// Returns the argument registers of a call/invoke instruction in order, or `None` if this
-    /// instruction is not a call (invoke or UnusedFC/UnusedFD). Array instructions are excluded.
+    /// instruction is not a call (invoke, invoke-polymorphic or invoke-custom). Array instructions
+    /// are excluded.
     pub fn call_args(&self) -> Option<&[Reg]> {
         use Instruction::*;
         match self {
@@ -2856,13 +2850,16 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => Some(&f.args),
-            UnusedFC(f) => Some(&f.args),
-            UnusedFD(f) => Some(&f.args),
+            InvokePolymorphic(f) => Some(&f.args),
+            InvokePolymorphicRange(f) => Some(&f.args),
+            InvokeCustom(f) => Some(&f.args),
+            InvokeCustomRange(f) => Some(&f.args),
             _ => None,
         }
     }
 
-    /// Returns `true` if this instruction is an invoke (invoke-virtual, invoke-static, etc.).
+    /// Returns `true` if this instruction is an invoke (invoke-virtual, invoke-static,
+    /// invoke-polymorphic, invoke-custom, etc.).
     pub fn is_invoke(&self) -> bool {
         use Instruction::*;
         matches!(
@@ -2877,6 +2874,10 @@ impl Instruction {
                 | InvokeDirectRange(_)
                 | InvokeStaticRange(_)
                 | InvokeInterfaceRange(_)
+                | InvokePolymorphic(_)
+                | InvokePolymorphicRange(_)
+                | InvokeCustom(_)
+                | InvokeCustomRange(_)
         )
     }
 
@@ -3100,12 +3101,6 @@ impl Instruction {
                 | UnusedF7(_)
                 | UnusedF8(_)
                 | UnusedF9(_)
-                | UnusedFA(_)
-                | UnusedFB(_)
-                | UnusedFC(_)
-                | UnusedFD(_)
-                | UnusedFE(_)
-                | UnusedFF(_)
         )
     }
 }
@@ -3129,50 +3124,23 @@ impl DisplayInstr for PayloadInstruction {
             }
             PayloadInstruction::FillArrayData(payload) => {
                 write!(f, ".array-data {}", payload.element_width)?;
+                // Elements are signed, written with baksmali's width suffix: t (byte), s (short),
+                // none (int), and L (long) unless the value fits in an int.
                 let w = payload.element_width as usize;
-                let mut off = 0usize;
-                while off + w <= payload.data.len() {
-                    let val: i64 = match w {
-                        1 => payload.data[off] as i64,
-                        2 => {
-                            let v = u16::from_le_bytes([payload.data[off], payload.data[off + 1]]);
-                            v as i64
-                        }
-                        4 => {
-                            let v = u32::from_le_bytes([
-                                payload.data[off],
-                                payload.data[off + 1],
-                                payload.data[off + 2],
-                                payload.data[off + 3],
-                            ]);
-                            v as i64
-                        }
-                        8 => {
-                            let v = u64::from_le_bytes([
-                                payload.data[off],
-                                payload.data[off + 1],
-                                payload.data[off + 2],
-                                payload.data[off + 3],
-                                payload.data[off + 4],
-                                payload.data[off + 5],
-                                payload.data[off + 6],
-                                payload.data[off + 7],
-                            ]);
-                            v as i64
-                        }
-                        _ => break,
-                    };
-                    if w == 8 {
-                        let v = val as i64;
-                        if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
-                            write!(f, "\n    {}", v)?;
-                        } else {
-                            write!(f, "\n    {}L", v)?;
-                        }
-                    } else {
-                        write!(f, "\n    {}", val)?;
+                if matches!(w, 1 | 2 | 4 | 8) {
+                    for chunk in payload.data.chunks_exact(w) {
+                        let mut bytes = [0u8; 8];
+                        bytes[..w].copy_from_slice(chunk);
+                        let shift = 64 - 8 * w as u32;
+                        let val = (i64::from_le_bytes(bytes) << shift) >> shift;
+                        let suffix = match w {
+                            1 => "t",
+                            2 => "s",
+                            8 => long_suffix(val),
+                            _ => "",
+                        };
+                        write!(f, "\n    {val}{suffix}")?;
                     }
-                    off += w;
                 }
                 write!(f, "\n.end array-data")
             }
@@ -3207,17 +3175,14 @@ impl DisplayInstr for Instruction {
         // Baksmali prints the full 64-bit value (e.g. -0x8000000000000000L), not the raw immediate.
         if let Self::ConstWideHigh16(fmt) = self {
             let wide_val = (fmt.lit as i64) << 48;
-            let (sign, abs_hex) = if wide_val < 0 {
-                ("-", format!("0x{:x}", (wide_val as u64)))
-            } else {
-                ("", format!("0x{:x}", wide_val as u64))
-            };
+            let sign = if wide_val < 0 { "-" } else { "" };
             return write!(
                 f,
-                "const-wide/high16 {}, {}{}L",
+                "const-wide/high16 {}, {}0x{:x}{}",
                 DispArg(fmt.a, cp),
                 sign,
-                abs_hex
+                wide_val.unsigned_abs(),
+                long_suffix(wide_val)
             );
         }
 
@@ -3498,12 +3463,12 @@ pub static DALVIK_OPCODES: [&str; 256] = [
     "unused-f7",
     "unused-f8",
     "unused-f9",
-    "unused-fa",
-    "unused-fb",
-    "unused-fc",
-    "unused-fd",
-    "unused-fe",
-    "unused-ff",
+    "invoke-polymorphic",
+    "invoke-polymorphic/range",
+    "invoke-custom",
+    "invoke-custom/range",
+    "const-method-handle",
+    "const-method-type",
 ];
 
 pub enum Format<'a> {
@@ -3515,6 +3480,7 @@ pub enum Format<'a> {
     Format20t(&'a Format20t),
     Format21cF(&'a Format21c<FieldIdx>),
     Format21cM(&'a Format21c<MethodIdx>),
+    Format21cH(&'a Format21c<MethodHandleIdx>),
     Format21cP(&'a Format21c<ProtoIdx>),
     Format21cS(&'a Format21c<StringIdx>),
     Format21cT(&'a Format21c<TypeIdx>),
@@ -3556,6 +3522,7 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format20t(fmt) => fmt.display_raw(f),
             Format::Format21cF(fmt) => fmt.display_raw(f),
             Format::Format21cM(fmt) => fmt.display_raw(f),
+            Format::Format21cH(fmt) => fmt.display_raw(f),
             Format::Format21cP(fmt) => fmt.display_raw(f),
             Format::Format21cS(fmt) => fmt.display_raw(f),
             Format::Format21cT(fmt) => fmt.display_raw(f),
@@ -3597,6 +3564,7 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format20t(fmt) => fmt.display(f, cp),
             Format::Format21cF(fmt) => fmt.display(f, cp),
             Format::Format21cM(fmt) => fmt.display(f, cp),
+            Format::Format21cH(fmt) => fmt.display(f, cp),
             Format::Format21cP(fmt) => fmt.display(f, cp),
             Format::Format21cS(fmt) => fmt.display(f, cp),
             Format::Format21cT(fmt) => fmt.display(f, cp),
@@ -3626,5 +3594,346 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format51l(fmt) => fmt.display(f, cp),
             Format::FormatUnused(fmt) => fmt.display(f, cp),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `DataFlow` reading `source` and writing `dest`, given as register numbers.
+    fn df(source: &[u32], dest: &[u32]) -> DataFlow {
+        DataFlow {
+            source: source.iter().copied().map(Reg).collect(),
+            dest: dest.iter().copied().map(Reg).collect(),
+        }
+    }
+
+    fn f12x(a: u32, b: u32) -> Format12x {
+        Format12x {
+            a: Reg(a),
+            b: Reg(b),
+        }
+    }
+
+    fn f22c(a: u32, b: u32) -> Format22c<FieldIdx> {
+        Format22c {
+            a: Reg(a),
+            b: Reg(b),
+            idx: FieldIdx(0),
+        }
+    }
+
+    fn f23x(a: u32, b: u32, c: u32) -> Format23x {
+        Format23x {
+            a: Reg(a),
+            b: Reg(b),
+            c: Reg(c),
+        }
+    }
+
+    #[test]
+    fn moves() {
+        use Instruction::*;
+        assert_eq!(MoveObject(f12x(0, 1)).data_flow(), df(&[1], &[0]));
+        assert_eq!(MoveWide(f12x(0, 2)).data_flow(), df(&[2, 3], &[0, 1]));
+        assert_eq!(
+            MoveResultWide(Format11x { a: Reg(4) }).data_flow(),
+            df(&[], &[4, 5])
+        );
+        assert_eq!(
+            ReturnWide(Format11x { a: Reg(4) }).data_flow(),
+            df(&[4, 5], &[])
+        );
+    }
+
+    #[test]
+    fn consts() {
+        use Instruction::*;
+        assert_eq!(
+            ConstWide16(Format21s { a: Reg(6), lit: 1 }).data_flow(),
+            df(&[], &[6, 7])
+        );
+        // check-cast narrows the type of vA in place, so it both reads and writes it.
+        assert_eq!(
+            CheckCast(Format21c {
+                a: Reg(3),
+                idx: TypeIdx(0),
+            })
+            .data_flow(),
+            df(&[3], &[3])
+        );
+    }
+
+    #[test]
+    fn loads() {
+        use Instruction::*;
+        assert_eq!(IGetObject(f22c(0, 1)).data_flow(), df(&[1], &[0]));
+        assert_eq!(IGetWide(f22c(0, 2)).data_flow(), df(&[2], &[0, 1]));
+        assert_eq!(AGet(f23x(0, 1, 2)).data_flow(), df(&[1, 2], &[0]));
+        assert_eq!(AGetWide(f23x(0, 2, 3)).data_flow(), df(&[2, 3], &[0, 1]));
+    }
+
+    #[test]
+    fn stores() {
+        use Instruction::*;
+        assert_eq!(IPutObject(f22c(0, 1)).data_flow(), df(&[0, 1], &[]));
+        assert_eq!(APut(f23x(0, 1, 2)).data_flow(), df(&[0, 1, 2], &[]));
+        assert_eq!(APutWide(f23x(0, 2, 3)).data_flow(), df(&[0, 1, 2, 3], &[]));
+        assert_eq!(
+            SPutWide(Format21c {
+                a: Reg(4),
+                idx: FieldIdx(0),
+            })
+            .data_flow(),
+            df(&[4, 5], &[])
+        );
+    }
+
+    /// Every instance-field and array store reads its value, object or array, and index
+    /// registers, and writes none.
+    #[test]
+    fn stores_read_every_operand_and_write_nothing() {
+        use Instruction::*;
+        let iputs: [(fn(Format22c<FieldIdx>) -> Instruction, bool); 7] = [
+            (IPut, false),
+            (IPutBoolean, false),
+            (IPutByte, false),
+            (IPutChar, false),
+            (IPutShort, false),
+            (IPutObject, false),
+            (IPutWide, true),
+        ];
+        for (op, wide) in iputs {
+            let inst = op(f22c(0, 5));
+            let flow = inst.data_flow();
+            let mut expected: Vec<Reg> = vec![Reg(0)];
+            if wide {
+                expected.push(Reg(1));
+            }
+            expected.push(Reg(5));
+            assert_eq!(
+                flow.source.as_slice(),
+                expected,
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+            assert!(flow.dest.is_empty(), "opcode {:#04x}", inst.discriminant());
+        }
+
+        let aputs: [(fn(Format23x) -> Instruction, bool); 7] = [
+            (APut, false),
+            (APutBoolean, false),
+            (APutByte, false),
+            (APutChar, false),
+            (APutShort, false),
+            (APutObject, false),
+            (APutWide, true),
+        ];
+        for (op, wide) in aputs {
+            let inst = op(f23x(0, 5, 6));
+            let flow = inst.data_flow();
+            let mut expected: Vec<Reg> = vec![Reg(0)];
+            if wide {
+                expected.push(Reg(1));
+            }
+            expected.extend([Reg(5), Reg(6)]);
+            assert_eq!(
+                flow.source.as_slice(),
+                expected,
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+            assert!(flow.dest.is_empty(), "opcode {:#04x}", inst.discriminant());
+        }
+    }
+
+    #[test]
+    fn arithmetic() {
+        use Instruction::*;
+        assert_eq!(IntToLong(f12x(0, 2)).data_flow(), df(&[2], &[0, 1]));
+        assert_eq!(
+            AddLong(f23x(0, 2, 4)).data_flow(),
+            df(&[2, 3, 4, 5], &[0, 1])
+        );
+        assert_eq!(
+            AddLong2Addr(f12x(0, 2)).data_flow(),
+            df(&[0, 1, 2, 3], &[0, 1])
+        );
+        assert_eq!(CmpLong(f23x(0, 2, 4)).data_flow(), df(&[2, 3, 4, 5], &[0]));
+    }
+
+    /// `invoke-polymorphic {v1, v2, v3, v4, v9}, meth@5, proto@7`. Format 45cc is
+    /// `A|G|op BBBB F|E|D|C HHHH`: the argument count A is the high nibble of the first unit.
+    #[test]
+    fn invoke_polymorphic_decodes_and_reads_its_arguments() {
+        let insns = [
+            (5 << 12) | (9 << 8) | 0xfa,
+            5,
+            (4 << 12) | (3 << 8) | (2 << 4) | 1,
+            7,
+        ];
+        let (size, inst) = Instruction::new(&insns);
+        assert_eq!(size, 4);
+        let Instruction::InvokePolymorphic(f) = &inst else {
+            panic!(
+                "expected invoke-polymorphic, got opcode {:#04x}",
+                inst.discriminant()
+            );
+        };
+        assert_eq!(f.method_id, MethodIdx(5));
+        assert_eq!(f.proto_id, ProtoIdx(7));
+        assert_eq!(f.args, [1, 2, 3, 4, 9].map(Reg));
+        assert_eq!(inst.data_flow(), df(&[1, 2, 3, 4, 9], &[]));
+        assert_eq!(inst.call_args(), Some([1, 2, 3, 4, 9].map(Reg).as_slice()));
+        assert!(inst.is_invoke());
+
+        // Two arguments: only C and D are used.
+        let insns = [(2 << 12) | 0xfa, 5, (2 << 4) | 1, 7];
+        let (_, inst) = Instruction::new(&insns);
+        assert_eq!(inst.data_flow(), df(&[1, 2], &[]));
+    }
+
+    #[test]
+    fn invoke_polymorphic_range_and_invoke_custom_read_their_arguments() {
+        use Instruction::*;
+        let inst = InvokePolymorphicRange(Format4rcc {
+            method_id: MethodIdx(0),
+            args: vec![Reg(4), Reg(5), Reg(6)],
+            proto_id: ProtoIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[4, 5, 6], &[]));
+        assert!(inst.is_invoke());
+        let inst = InvokeCustom(Format35c {
+            idx: CallIdx(0),
+            args: vec![Reg(1), Reg(2)],
+        });
+        assert_eq!(inst.data_flow(), df(&[1, 2], &[]));
+        assert!(inst.is_invoke());
+        let inst = InvokeCustomRange(Format3rc {
+            idx: CallIdx(0),
+            args: vec![Reg(7), Reg(8)],
+        });
+        assert_eq!(inst.data_flow(), df(&[7, 8], &[]));
+        assert!(inst.is_invoke());
+    }
+
+    #[test]
+    fn const_method_handle_and_type_write_their_register() {
+        use Instruction::*;
+        let inst = ConstMethodHandle(Format21c {
+            a: Reg(3),
+            idx: MethodHandleIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[], &[3]));
+        let inst = ConstMethodType(Format21c {
+            a: Reg(4),
+            idx: ProtoIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[], &[4]));
+    }
+
+    /// Invokes can throw whatever the callee throws, and const-method-handle and
+    /// const-method-type can fail to resolve their constant.
+    #[test]
+    fn opcodes_fa_to_ff_can_throw() {
+        use Instruction::*;
+        let insts = [
+            InvokePolymorphic(Format45cc {
+                method_id: MethodIdx(0),
+                args: vec![Reg(0)],
+                proto_id: ProtoIdx(0),
+            }),
+            InvokePolymorphicRange(Format4rcc {
+                method_id: MethodIdx(0),
+                args: vec![Reg(0)],
+                proto_id: ProtoIdx(0),
+            }),
+            InvokeCustom(Format35c {
+                idx: CallIdx(0),
+                args: vec![],
+            }),
+            InvokeCustomRange(Format3rc {
+                idx: CallIdx(0),
+                args: vec![],
+            }),
+            ConstMethodHandle(Format21c {
+                a: Reg(0),
+                idx: MethodHandleIdx(0),
+            }),
+            ConstMethodType(Format21c {
+                a: Reg(0),
+                idx: ProtoIdx(0),
+            }),
+        ];
+        for inst in insts {
+            assert!(inst.can_throw(), "opcode {:#04x}", inst.discriminant());
+        }
+    }
+
+    /// A long shift's amount is an int: one register, not a pair.
+    #[test]
+    fn long_shift_amount_is_one_register() {
+        use Instruction::*;
+        for op in [ShlLong, ShrLong, UshrLong] {
+            let inst = op(f23x(0, 2, 4));
+            assert_eq!(
+                inst.data_flow(),
+                df(&[2, 3, 4], &[0, 1]),
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+        }
+        for op in [ShlLong2Addr, ShrLong2Addr, UshrLong2Addr] {
+            let inst = op(f12x(0, 2));
+            assert_eq!(
+                inst.data_flow(),
+                df(&[0, 1, 2], &[0, 1]),
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+        }
+    }
+
+    #[test]
+    fn invokes_read_their_arguments() {
+        use Instruction::*;
+        let args = vec![Reg(1), Reg(2), Reg(3)];
+        assert_eq!(
+            InvokeVirtual(Format35c {
+                idx: MethodIdx(0),
+                args,
+            })
+            .data_flow(),
+            df(&[1, 2, 3], &[])
+        );
+        // More arguments than `Regs` holds inline.
+        let args: Vec<Reg> = (10..20).map(Reg).collect();
+        assert_eq!(
+            InvokeStaticRange(Format3rc {
+                idx: MethodIdx(0),
+                args,
+            })
+            .data_flow(),
+            df(&(10..20).collect::<Vec<_>>(), &[])
+        );
+    }
+
+    /// `iput-wide vA, vB, field` reads the value pair `vA, vA+1` and the object `vB`. It writes
+    /// no register, like every other store.
+    #[test]
+    fn iput_wide_reads_object_register() {
+        let inst = Instruction::IPutWide(Format22c {
+            a: Reg(2),
+            b: Reg(5),
+            idx: FieldIdx(0),
+        });
+        assert_eq!(
+            inst.data_flow(),
+            DataFlow {
+                source: smallvec![Reg(2), Reg(3), Reg(5)],
+                dest: smallvec![],
+            }
+        );
     }
 }

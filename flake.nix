@@ -4,14 +4,21 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
-    # Only the release builds use fenix: they cross-compile, and cross-compiling
-    # with naersk needs a rustc that carries the *target's* std alongside a cargo
-    # that runs on the builder. fenix serves those upstream Rust artifacts per
-    # target; nixpkgs' rustc only ships std for its own host. Everything else in
-    # this flake still builds with the nixpkgs toolchain.
+    # Upstream Rust releases, any version; nixpkgs has only its own rustc.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # Mono.Cecil, for testing cil-reader.
+    cecil = {
+      url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
+      flake = false;
+    };
+    # dnlib, for the tools that write cil-reader's Ptr-table and gap fixtures
+    # (dnlibTool in ./nix/cil.nix).
+    dnlib = {
+      url = "github:0xd4d/dnlib/9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2";
+      flake = false;
     };
   };
 
@@ -23,142 +30,62 @@
       naersk,
       ctadl-souffle,
       fenix,
+      cecil,
+      dnlib,
     }:
     utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          # The nightly regression suite pulls in unfree components (the Android
-          # SDK and ghidra-bin) and needs the Android SDK license accepted
-          # non-interactively. These only matter for `checks.<system>.nightly`;
-          # the cheap checks and packages build the same as before.
+          # The regression check and the dev shell pull in unfree components
+          # (the Android SDKs and ghidra-bin), and the Android SDKs need their
+          # license accepted non-interactively.
           config = {
             allowUnfree = true;
             android_sdk.accept_license = true;
           };
-          # nixpkgs ships a wrong hash for the Darwin platform-tools zip; fix it
-          # here. This overlay is a no-op on Linux (the URL never matches), so CI
-          # on ubuntu-latest is unaffected.
-          overlays = [
-            (final: prev: {
-              fetchurl =
-                args:
-                if
-                  (args.url or "") == "https://dl.google.com/android/repository/platform-tools_r37.0.0-darwin.zip"
-                then
-                  prev.fetchurl (
-                    (builtins.removeAttrs args [
-                      "sha256"
-                      "sha1"
-                      "sha512"
-                      "md5"
-                      "hash"
-                    ])
-                    // {
-                      hash = "sha1-jEySbQyhkjdrKgSwMYSEckMZ5nw=";
-                    }
-                  )
-                else
-                  prev.fetchurl args;
-            })
-          ];
         };
-        naersk-lib = pkgs.callPackage naersk { };
+        # The Rust toolchain rust-toolchain.toml names, the one the `test` workflow
+        # runs. Everything here builds and checks with it, so a feature newer
+        # than the pinned release fails locally the same way it fails in CI.
+        # `sha256` is the hash of that release's manifest; update it with the
+        # channel.
+        rustToolchainFile = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain;
+        rustRelease = {
+          inherit (rustToolchainFile) channel;
+          sha256 = "sha256-zC8E38iDVJ1oPIzCqTk/Ujo9+9kx9dXq7wAwPMpkpg0=";
+        };
+        rustDist = fenix.packages.${system}.toolchainOf rustRelease;
+        rustToolchain = fenix.packages.${system}.combine (
+          map (c: rustDist.${c}) (
+            [
+              "rustc"
+              "cargo"
+              "rust-std"
+            ]
+            ++ rustToolchainFile.components
+          )
+        );
+        naersk-lib = pkgs.callPackage naersk {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
         ctadl-souffle-wrapper = pkgs.writeShellScriptBin "ctadl-souffle" ''
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
         checksarif = pkgs.callPackage ./nix/sarif-multitool/checksarif.nix { };
 
-        # --- Nightly regression suite dependencies -------------------------
-        # These are only forced when building `checks.<system>.{regression,nightly}`.
-
-        # Android SDK, pinned to build-tools 30.0.2 because the DEX tests invoke
-        # `dx`, which was removed in build-tools 31+.
-        androidSdk = pkgs.androidenv.composeAndroidPackages {
-          buildToolsVersions = [ "30.0.2" ];
-          platformVersions = [ "30" ];
-          includeEmulator = false;
-          includeNDK = false;
-        };
-        jdk = pkgs.temurin-bin-17;
-
-        # baksmali, the reference smali disassembler, used as ground truth for
-        # the dex-reader `dex:baksmali` regression check. nixpkgs has no smali
-        # package, so we fetch the pinned 3.0.9 "fat" jar (the same version the
-        # original dex-reader test used) and wrap it so `baksmali` runs it. The
-        # jar is fetched, never committed to this repo.
-        baksmali =
-          let
-            jar = pkgs.fetchurl {
-              url = "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat.jar";
-              hash = "sha256-r0qBj26b/Koxst4t3ZkRfZlyXXbWZuklfmM9MF0r1NQ=";
-            };
-          in
-          pkgs.writeShellScriptBin "baksmali" ''
-            exec ${jdk}/bin/java -jar ${jar} "$@"
-          '';
-
         # The one version this tree has. Read rather than repeated so these
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
-        # `dex-reader` is the DEX dumper the linemap step of the DEX regression
-        # tests runs. It is an *example* of the dex-reader crate, not a bin, so
-        # that a plain `cargo build` -- which is what packages.default runs --
-        # leaves it out of the distro. Examples are not built by default, so
-        # ask for it by name.
-        #
-        # Two details of the target selection:
-        #
-        # - The src is the whole workspace, not ./dex-reader. dex-reader is a
-        #   workspace member now, and a member cannot be built alone: its
-        #   `version.workspace = true` needs the root manifest.
-        # - `--lib` rides along with `--examples` for naersk's sake. naersk
-        #   builds dependencies in a first pass over a stub source tree, which
-        #   has no examples/ directory; with `--examples` alone that pass
-        #   matches no targets, builds nothing, and the dependency caching it
-        #   exists for is lost. `--lib` gives it the crate's real dependencies
-        #   to chew on.
-        #
-        # naersk installs whatever cargo reports as an executable, and an
-        # example is one, so this lands at $out/bin/dex-reader as before.
-        dex-reader = naersk-lib.buildPackage {
-          src = ./.;
-          version = workspaceVersion;
-          name = "dex-reader";
-          release = false;
-          cargoBuildOptions =
-            x:
-            x
-            ++ [
-              "--package"
-              "dex-reader"
-              "--lib"
-              "--examples"
-            ];
-        };
+        android = import ./nix/android-jvm.nix { inherit pkgs naersk-lib workspaceVersion; };
 
-        # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
-        jvm-reader = naersk-lib.buildPackage {
-          src = ./.;
-          version = workspaceVersion;
-          name = "jvm-reader";
-          release = false;
-          cargoBuildOptions =
-            x:
-            x
-            ++ [
-              "--package"
-              "jvm-reader"
-              "--lib"
-              "--examples"
-            ];
-        };
+        cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
-        # The external toolchain the regression scripts expect on PATH
-        # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
-        # python3). Deliberately excludes this repo's own package so that the
+        # The external toolchain `xtask regression` expects on PATH.
+        # Deliberately excludes this repo's own package so that the
         # dev shell can be used to run parts of the suite against a locally
         # built ctadl/xtask; the `regression` check adds the Nix-built package
         # on top.
@@ -170,8 +97,7 @@
           paths = [
             pkgs.bash
             pkgs.coreutils
-            pkgs.cargo
-            pkgs.rustc
+            rustToolchain
             pkgs.jq
             pkgs.python3
             # `xtask regression` validates the SARIF each taint case emits by
@@ -187,37 +113,54 @@
             # Where it is not cross (x86_64 Linux) it collapses to the native
             # gcc, which is the right linker there anyway.
             pkgs.pkgsCross.gnu64.stdenv.cc
+            # The 32-bit x86 toolchain (`i686-unknown-linux-gnu-` prefixed, so it
+            # claims no `cc` either), for the JNI cases that need a 32-bit
+            # library: the ABI on which a `long` arrives split in two.
+            pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
-            dex-reader
-            jvm-reader
-            androidSdk.androidsdk
-            jdk
-            baksmali
+            android.dex-reader
+            android.jvm-reader
+            android.androidSdk.androidsdk
+            android.jdk
+            android.baksmali
+            android.smali
+            android.asmClasspath
             pkgs.ghidra-bin
+            # The source cases need the SDK, and CIL imports discover framework
+            # metadata through dotnet on PATH (the wrapped runners alone do not).
+            pkgs.dotnet-sdk_8
+            cil.cecilDump
+            cil.flowRun
+            cil.modelRun
           ];
         };
 
-        # The distributable `ctadl` binaries, one per released target. What each
-        # one is, why it cannot just be `packages.default`, and which builder
-        # can produce which target all live in ./nix/release.nix.
         release = import ./nix/release.nix {
-          inherit pkgs naersk fenix;
+          inherit
+            pkgs
+            naersk
+            fenix
+            rustRelease
+            ;
           src = ./.;
           version = workspaceVersion;
         };
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
+        # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
+        packages.cecil-dump = cil.cecilDump;
+        packages.cil-fixtures = cil.cilFixtures;
+        packages.flow-run = cil.flowRun;
+        packages.model-run = cil.modelRun;
+        packages.ptr-gen = cil.ptrGen;
+        packages.gap-gen = cil.gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
-        packages.legacy-pcode-cli =
-          let
-            ctadl = pkgs.writeShellScriptBin "ctadl-legacy-pcode-cli" ''
-              ${self.packages.${system}.default}/bin/ctadl legacy-pcode-cli "$@"
-            '';
-          in
-          ctadl;
+        packages.legacy-pcode-cli = pkgs.writeShellScriptBin "ctadl-legacy-pcode-cli" ''
+          ${self.packages.${system}.default}/bin/ctadl legacy-pcode-cli "$@"
+        '';
         packages.checksarif = checksarif;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
@@ -234,14 +177,15 @@
           }
         );
 
-        # The distributable binaries. They live under `legacyPackages` rather
-        # than `packages` for the same reason the example above does; see
-        # ./nix/release.nix for the rest.
+        # The distributable binaries, under `legacyPackages` for the same reason as
+        # the example above; what each is and which builder produces it are in
+        # ./nix/release.nix. Build one with
+        #   nix build .#legacyPackages.<system>.release.<target>
         legacyPackages.release = release;
 
-        # CI/test logic lives under `checks` so the nightly GitHub workflow can run
-        #   nix build .#checks.<system>.regression .#checks.<system>.dex-reader-tests
-        # instead of duplicating the test harness in YAML. This does not rely on
+        # CI/test logic lives under `checks` so the nightly GitHub workflow can
+        # `nix build .#checks.<system>.<name>` instead of duplicating the test
+        # harness in YAML. This does not rely on
         # `nix flake check`; the check is an ordinary buildable derivation. The
         # cheap per-PR checks (fmt/clippy/unit tests) are intentionally NOT here:
         # they run as a plain cargo job in the `test` workflow. Nix is reserved
@@ -249,12 +193,14 @@
         # the Android SDK) is what makes a reproducible Nix environment worthwhile.
         checks =
           let
-            # The expensive regression suite: source-sink taint tests over Java
-            # (DEX) and pcode (C) inputs. The orchestration lives in the `xtask`
-            # crate (`cargo xtask regression`); here we just run the prebuilt
-            # `xtask` binary that ships in packages.default. This is a full
-            # (non-local) derivation because it runs ctadl + ghidra + the Android
-            # toolchain. The Nix sandbox has no network, so every tool comes from
+            # The expensive regression suite: every frontend's source-sink taint
+            # cases plus the checks that are not taint cases (nightly/README.md
+            # lists them). The orchestration lives in
+            # the `xtask` crate (`cargo xtask regression`); here we just run the
+            # prebuilt `xtask` binary that ships in packages.default. This is a
+            # full (non-local) derivation because it runs ctadl + ghidra + the
+            # Android toolchain. The Nix sandbox has no network, so every tool
+            # comes from testEnv.
             regression =
               pkgs.runCommand "ctadl-checks-regression"
                 {
@@ -268,11 +214,16 @@
                 ''
                   cp -R "$src" ./nightly
                   chmod -R u+w ./nightly
+                  # Keep the known exceptions beside the goldens where xtask's
+                  # resolver expects them. These files are outside ./nightly.
+                  mkdir xtask
+                  ln -s ${./xtask/cil-goldens} xtask/cil-goldens
+                  ln -s ${./xtask/cil-taint-known.json5} xtask/cil-taint-known.json5
+                  ln -s ${./xtask/cil-models-known.json5} xtask/cil-models-known.json5
                   cd ./nightly
 
-                  # `dx` lives under the SDK's build-tools, not on the default PATH.
-                  export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
-                  export ANDROID_SDK_ROOT="${androidSdk.androidsdk}/libexec/android-sdk"
+                  export PATH="${android.androidSdkBuildTools}:$PATH"
+                  export ANDROID_SDK_ROOT="${android.androidSdk.androidsdk}/libexec/android-sdk"
                   # ghidra/javac want a writable HOME; the sandbox HOME is not.
                   export HOME="$TMPDIR"
 
@@ -284,113 +235,59 @@
                   # the JDK and Android SDK in testEnv / PATH.
                   # `--dex-apk` feeds a second family too: the `apk:*` checks,
                   # which drive ctadl itself over that same app -- import it,
-                  # read the store back, model-check it unindexed. They were
-                  # `#[test]`s in ctadl-ascent until the ~13 s import made them
-                  # most of `cargo test`'s wall clock. They need no toolchain,
-                  # only the CTADL_BIN below.
+                  # read the store back, model-check it unindexed. They need no
+                  # toolchain, only the CTADL_BIN below.
                   # xtask normally rebuilds ctadl from source to guard against a
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
+                  export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
                   # no source tree, so point xtask at them explicitly or they
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
+                  # The `cil:*` checks read Cecil's test corpus (the pinned
+                  # input), the Cecil goldens and the built fixtures, and diff
+                  # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
-                    --models-dir ${./ctadl-ascent/src/models}
+                    --models-dir ${./ctadl-ascent/src/models} \
+                    --cil-goldens ${./xtask/cil-goldens} \
+                    --cecil-src ${cecil} \
+                    --cil-fixtures ${cil.cilFixtures}
 
                   mkdir -p "$out"
                 '';
 
-            # dex-reader's pure-Rust unit tests, built offline by naersk in test
-            # mode. No external toolchain needed. The integration-style
-            # full-parse checks (compiled samples + the real-world APK) were
-            # moved to `xtask regression`.
-            #
-            # `cargo test --workspace` in the test workflow now covers these
-            # too -- dex-reader is a workspace member, where it used to be
-            # excluded. This check is kept because it runs on the nightly's Nix
-            # builder with no toolchain assumptions, and because it costs
-            # nothing to keep.
-            #
-            # `--package` is not optional here: without it, `src = ./.` would
-            # test the whole workspace, which is a far larger build than this
-            # check wants.
-            dex-reader-tests = naersk-lib.buildPackage {
-              src = ./.;
-              version = workspaceVersion;
-              name = "dex-reader-tests";
-              mode = "test";
-              cargoBuildOptions =
-                x:
-                x
-                ++ [
-                  "--package"
-                  "dex-reader"
-                ];
-              cargoTestOptions =
-                opts:
-                opts
-                ++ [
-                  "--package"
-                  "dex-reader"
-                ];
-            };
-
-            # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
-            # now entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
-            # Everything that needed a compiled class moved out, to the `jvm:*`
-            # checks in `xtask regression` and to the `SwitchFlow` /
-            # `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint cases.
-            jvm-reader-tests = naersk-lib.buildPackage {
-              src = ./.;
-              version = workspaceVersion;
-              name = "jvm-reader-tests";
-              mode = "test";
-              cargoBuildOptions =
-                x:
-                x
-                ++ [
-                  "--package"
-                  "jvm-reader"
-                ];
-              cargoTestOptions =
-                opts:
-                opts
-                ++ [
-                  "--package"
-                  "jvm-reader"
-                ];
-            };
           in
           {
-            inherit regression dex-reader-tests jvm-reader-tests;
+            inherit regression;
+            inherit (android) dex-reader-tests jvm-reader-tests;
           };
 
         formatter = pkgs.nixfmt;
-        # One shell for everything: the day-to-day Rust/Nix tooling plus the
-        # external toolchain the regression suite needs (ghidra, the Android
-        # SDK, a JDK, dex-reader/jvm-reader, ...). `cargo xtask regression`
-        # runs straight from here.
+        # One shell for everything: the day-to-day Rust/Nix tooling plus testEnv,
+        # so `cargo xtask regression` runs straight from here.
         devShells.default =
           with pkgs;
           mkShell {
             buildInputs = [
               pre-commit
-              cargo
+              rustToolchain
               cargo-typify
-              rustc
-              rustfmt
-              rustPackages.clippy
               rust-analyzer
               cargo-expand
               sarif-tools
               cargo-flamegraph
-              (python3.withPackages (ps: [ ps.pyarrow ]))
+              (python3.withPackages (ps: [
+                ps.pyarrow
+                # The frida Python API, for scripting hooks with structured results.
+                ps.frida-python
+              ]))
               ctadl-souffle-wrapper
               parquet-tools
               graphviz
@@ -400,15 +297,44 @@
               pkg-config
               bzip2
               ghidra-bin
+              # Android app debugging; see androidDebugSdk in ./nix/android-jvm.nix. jdb comes
+              # with the JDK in testEnv.
+              frida-tools
+              apktool
+              jadx
+              scrcpy
+              android.androidLldb
             ];
             packages = [ testEnv ];
 
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            RUST_SRC_PATH = "${rustDist.rust-src}/lib/rustlib/src/rust/library";
+            # The pinned Mono.Cecil checkout: cil-reader's tests, the `cil:*`
+            # checks and `cargo xtask cil` read it.
+            CECIL_SRC = "${cecil}";
+            # cil-reader's compiled fixtures, for the same consumers.
+            CIL_READER_FIXTURES = "${cil.cilFixtures}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
-            ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
+            # The debugging SDK, so the emulator finds its system image through
+            # this.
+            ANDROID_SDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_HOME = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_NDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
+            ANDROID_DEBUG_SYSTEM_IMAGE = android.androidDebugSystemImage;
+            FRIDA_SERVER = "${android.fridaServer}";
+            CTADL_ANDROID_ICC_APKS = "${android.droidbenchIccApks}";
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
 
+            # The debugging SDK's bin/ (adb, emulator, avdmanager, ...) goes
+            # ahead of testEnv's, which carries the regression SDK's adb too.
+            # The NDK's toolchain stays off PATH, where its clang would shadow
+            # the stdenv's; ANDROID_LLDB_SERVER names the binary to push for
+            # `android-lldb`, and simpleperf is under $ANDROID_NDK_ROOT/simpleperf.
             shellHook = ''
-              export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+              export PATH="${android.androidDebugSdk.androidsdk}/bin:${android.androidDebugSdkBuildTools}:$PATH"
+              ANDROID_LLDB_SERVER=$(echo "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux/${android.androidLldbArch}/lldb-server)
+              export ANDROID_LLDB_SERVER
             '';
           };
       }

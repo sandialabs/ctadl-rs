@@ -7,7 +7,7 @@ use crate::graph::{DirectedGraph, Predecessors, Successors};
 /// View that reverses the direction of edges in its underlying graph, so that
 /// successors become predecessors and vice-versa.
 ///
-/// Because of `impl<G: Graph> Graph for &G`, the underlying graph can be
+/// Because of the graph trait impls for `&G` (in `graph::reference`), the underlying graph can be
 /// wrapped by-reference instead of by-value if desired.
 #[derive(Clone, Copy, Debug)]
 pub struct ReversedGraph<G> {

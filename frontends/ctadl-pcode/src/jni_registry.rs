@@ -42,9 +42,8 @@ names, and decoding an APS2 blob as an array of `Elf_Rela` yields plausible-look
 addends. Only `SHT_RELA` is read; everything else falls through to the in-place read, which is
 correct for those formats anyway. `object::read::elf::SectionHeader::rela` applies that gate for us.
 
-Every failure is a quiet no-op. That is not just Mach-O/PE insurance: 17 of the 370 `.so` files in
-the reference corpus are not ELF at all -- ZIPs of dex shipped under `lib/`, custom packed
-containers, and one zero-length placeholder.
+Every failure is a quiet no-op. That is not just Mach-O/PE insurance: a `.so` under an APK's `lib/`
+need not be ELF at all -- ZIPs of dex, custom packed containers, zero-length placeholders.
 */
 
 use std::collections::BTreeMap;
@@ -362,18 +361,36 @@ struct Scan {
 /// both short; this only bounds the work done rejecting a bad candidate.
 const MAX_STRING: usize = 512;
 
-/// Scans an ELF image for `JNINativeMethod` tables. `None` when `data` is not an ELF this build
-/// understands -- a truncated header, a foreign magic, an empty file -- which are all things the
-/// reference corpus actually contains under `lib/<abi>/*.so`.
-fn scan_bytes(data: &[u8]) -> Option<Scan> {
-    // Three separate quiet returns, all of which the corpus contains: a zero-length file, a
-    // truncated header, and a foreign magic (`PK\x03\x04`, `\x7fKOM`, `SKCL`).
-    let ident = data.get(..16)?;
+/// How many leading bytes of a file [`elf_machine_class`] reads.
+pub const ELF_IDENT_PREFIX: usize = 20;
+
+/// An ELF file's `(e_machine, EI_CLASS)`, read from the first [`ELF_IDENT_PREFIX`] bytes. `None`
+/// for a zero-length file, a truncated header, a foreign magic (`PK\x03\x04`, `\x7fKOM`,
+/// `SKCL`), or an unknown class or byte order.
+pub fn elf_machine_class(data: &[u8]) -> Option<(u16, u8)> {
+    let ident = data.get(..ELF_IDENT_PREFIX)?;
     if ident[..4] != elf::ELFMAG {
         return None;
     }
-    // `Ident::class` is the fifth byte.
-    match ident[4] {
+    // `Ident::class` is the fifth byte and `Ident::data` the sixth; `e_machine` follows the
+    // 16-byte ident and the two-byte `e_type`.
+    let class = ident[4];
+    if class != elf::ELFCLASS32 && class != elf::ELFCLASS64 {
+        return None;
+    }
+    let machine = [ident[18], ident[19]];
+    let machine = match ident[5] {
+        elf::ELFDATA2LSB => u16::from_le_bytes(machine),
+        elf::ELFDATA2MSB => u16::from_be_bytes(machine),
+        _ => return None,
+    };
+    Some((machine, class))
+}
+
+/// Scans an ELF image for `JNINativeMethod` tables. `None` for anything [`elf_machine_class`]
+/// rejects, all of which occur under an APK's `lib/<abi>/*.so`.
+fn scan_bytes(data: &[u8]) -> Option<Scan> {
+    match elf_machine_class(data)?.1 {
         elf::ELFCLASS32 => scan_elf::<elf::FileHeader32<Endianness>>(data),
         elf::ELFCLASS64 => scan_elf::<elf::FileHeader64<Endianness>>(data),
         _ => None,
@@ -390,8 +407,7 @@ where
     let pointer = if header.is_type_64() { 8u64 } else { 4 };
     let entry_size = pointer * 3;
     // A Thumb function pointer carries its low bit set, and unmasked it matches no function
-    // entry point. This is the common case on armeabi-v7a, not a corner case: 92% of the
-    // reference corpus's 32-bit ARM entries have it set.
+    // entry point. This is the common case on armeabi-v7a, not a corner case.
     let thumb_mask = machine == elf::EM_ARM;
 
     let load_bias = header
@@ -601,21 +617,18 @@ fn read_u32(mapped: &[(u64, &[u8])], addr: u64, endian: Endianness) -> Option<u3
 ///
 /// A linker that cannot reach the implementation with one `BL` emits a **veneer**: a stub holding
 /// nothing but this branch, and registers *that* address. Ghidra creates no function object at a
-/// bare 4-byte thunk, so the `fnPtr` names nothing and the native goes unlinked -- which is why
-/// Messenger's `libsuperpack-jni.so` mapped 0 of 28 entries while the same library in Facebook
-/// Lite, linked without veneers, mapped 28 of 28.
+/// bare 4-byte thunk, so the `fnPtr` names nothing and the native goes unlinked.
 ///
 /// Following the branch gives the real implementation. That is the right answer for a genuine
 /// veneer and also for the one other thing this decodes, a one-instruction tail-call thunk:
 /// either way the arguments arrive unchanged at the target, so it is where the taint goes.
 ///
-/// One hop, deliberately. Every one of the 62 veneers in the reference corpus is a single branch
-/// straight to its implementation; a chain would leave the row unresolved, exactly as it is today.
+/// One hop, deliberately: a veneer is a single branch straight to its implementation, and a chain
+/// leaves the row unresolved.
 ///
 /// The encoding is `0b000101` : `imm26`, and the offset is `imm26` sign-extended and scaled by 4.
-/// AArch64 only: measured across the corpus, the 32-bit libraries hold no veneers at all here --
-/// their unmapped pointers are ordinary Thumb functions Ghidra did not recognize, which following
-/// a branch cannot fix.
+/// AArch64 only: in 32-bit libraries the unmapped pointers are ordinary Thumb functions Ghidra did
+/// not recognize, which following a branch cannot fix.
 fn aarch64_branch_target(word: u32, addr: u64) -> Option<u64> {
     if word >> 26 != 0b000101 {
         return None;
@@ -664,9 +677,8 @@ fn is_java_method_name(s: &str) -> bool {
 /// True for a well-formed method descriptor, *including* its return type.
 ///
 /// [`descriptor_params`] stops at the `)` and never looks at what follows, so `"(I)garbage"`
-/// passes it. Checking the tail here is cheap defence; measured across the reference corpus the
-/// strict and lax rules admit identical candidate sets, because the executable-section and
-/// method-name tests already do the real filtering.
+/// passes it. Checking the tail here is cheap defence; the executable-section and method-name
+/// tests already do the real filtering.
 fn is_method_descriptor(s: &str) -> bool {
     let Some(params) = descriptor_params(s) else {
         return false;
@@ -767,8 +779,8 @@ pub struct Attribution<'a> {
 /// current entry. A closed run whose set is a single class attributes all of its entries to that
 /// class; anything else is counted unattributed.
 ///
-/// Matching is by *containment*, never by count: `SuperpackArchive` declares 14 natives and
-/// registers 13.
+/// Matching is by *containment*, never by count: a class may declare natives it does not
+/// register.
 ///
 /// The greedy rule alone can silently merge two adjacent tables -- if table B's leading entries
 /// happen to also be declared by table A's class, the set never empties and B's entries are
@@ -780,17 +792,17 @@ pub struct Attribution<'a> {
 /// 3. **Cap a run at the number of natives its class declares.** A run longer than that is
 ///    impossible for that class.
 ///
-/// Guard 1 alone is provably insufficient: on `libsuperpack-jni.so` splitting on address gaps
-/// yields 2 runs for 3 adjacent tables, and adding the other two yields exactly 3. Guard 2 is
-/// what recovers the third boundary there; guard 3 is a backstop that, as long as guard 2 holds
+/// Guard 1 alone is insufficient: tables can sit adjacent with no address gap between them, and
+/// guard 2 is what recovers such a boundary. Guard 3 is a backstop that, as long as guard 2 holds
 /// and no class declares the same signature twice, cannot fire -- a class that declares every
 /// *distinct* entry of a run declares at least as many natives as the run is long. It is kept
 /// because it costs one comparison and because that proof rests on the Java side being
 /// well-formed, which is an assumption about someone else's input.
 ///
-/// Attributing nothing is the right answer when the Java half is absent -- libbluray's BD-J
-/// bindings inside VLC, a feature-split dex in TikTok. There the candidate set empties on every
-/// entry, each entry closes its own run, and nothing is misattributed.
+/// Attributing nothing is the right answer when the Java half is absent -- bindings whose classes
+/// ship outside the app's `classes.dex`, or a feature-split dex not in the project. There the
+/// candidate set empties on every entry, each entry closes its own run, and nothing is
+/// misattributed.
 pub fn attribute<'a>(registry: &'a JniRegistry, index: &ClassIndex<'a>) -> Attribution<'a> {
     let mut out = Attribution::default();
     let entries = &registry.entries;

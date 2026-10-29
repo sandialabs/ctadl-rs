@@ -81,7 +81,7 @@ impl TerminatorKind {
         }
     }
 
-    /// Returns an iterator over variables referenced by this statement.
+    /// Returns an iterator over variables referenced by this terminator.
     pub fn iter_src_var<'s>(&'s self) -> Box<dyn DoubleEndedIterator<Item = &'s VariableRef> + 's> {
         use TerminatorKind::*;
         match self {
@@ -90,7 +90,7 @@ impl TerminatorKind {
         }
     }
 
-    /// Returns an iterator over variables referenced by this statement.
+    /// Returns an iterator over variables referenced by this terminator.
     pub fn iter_src_var_mut<'s>(
         &'s mut self,
     ) -> Box<dyn DoubleEndedIterator<Item = &'s mut VariableRef> + 's> {

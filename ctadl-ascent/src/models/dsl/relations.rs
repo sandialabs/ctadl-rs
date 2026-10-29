@@ -158,6 +158,17 @@ impl ProgramFacts {
                     push_unique(&mut rows[i].qualified_ids, Str::from(fid.as_ref()));
                 }
             }
+            // The Java arm over .NET spellings. An override alias names its class's own
+            // implementation, so it lands on that method's row with the base method's name.
+            VirtualMethodTable::Cil { methods, .. } => {
+                for (cls, name, sig, fid) in methods {
+                    let i = row_for!(Str::from(fid.as_ref()));
+                    push_unique(&mut rows[i].names, Str::from(name.as_ref()));
+                    push_unique(&mut rows[i].parents, Str::from(cls.as_ref()));
+                    push_unique(&mut rows[i].signatures, Str::from(sig.as_ref()));
+                    push_unique(&mut rows[i].qualified_ids, Str::from(fid.as_ref()));
+                }
+            }
             VirtualMethodTable::Native { methods } => {
                 for (simple, sig, fq, qualified) in methods {
                     let i = row_for!(Str::from(fq.as_ref()));
@@ -245,6 +256,16 @@ impl ProgramFacts {
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
         match index.vmt() {
             VirtualMethodTable::Java { hierarchy, .. } => {
+                for (cls, supers) in hierarchy {
+                    let sub = Str::from(cls.as_ref());
+                    for sup in supers {
+                        let sup = Str::from(sup.as_ref());
+                        subclass.push((sub, sup));
+                        supers_of.entry(sub).or_default().push(sup);
+                    }
+                }
+            }
+            VirtualMethodTable::Cil { hierarchy, .. } => {
                 for (cls, supers) in hierarchy {
                     let sub = Str::from(cls.as_ref());
                     for sup in supers {
@@ -501,11 +522,17 @@ fn callee_strings(style: &CallStyle, data: &FunctionData) -> Vec<Str> {
             descriptor,
             ..
         } => vec![Str::from(format!("{cls}->{simple_name}{descriptor}"))],
+        CallStyle::CilCall {
+            cls,
+            simple_name,
+            descriptor,
+            ..
+        } => vec![Str::from(format!("{cls}::{simple_name}{descriptor}"))],
         CallStyle::LuaCall { method, .. } => vec![Str::from(method.as_ref())],
         CallStyle::FuncPtrCall { callee, .. } => {
             // "the variable name from the program text": a local resolves through the
             // function's own declaration table, which is the only place the source name lives.
-            let name = match &*callee.base.variable {
+            let name = match &callee.base.variable {
                 Variable::Local(idx) => data
                     .locals
                     .get(*idx)

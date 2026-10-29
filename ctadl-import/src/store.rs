@@ -1,7 +1,8 @@
 /*! Reads and writes a [`ProgramInfo`] in an import directory.
 
-The writer ([`save_program_info`]) and the readers ([`load_import`], [`open_import`]) are all
-public, so no other crate has to work out the store layout and the bitcode filenames for itself.
+The writer ([`save_program_info`]) and the readers ([`load_import`], [`load_vmt`],
+[`open_import`]) are all public, so no other crate has to work out the store layout and the
+bitcode filenames for itself.
 This matters because code that reads the files directly cannot tell when
 [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) has changed. It either decodes
 nonsense or fails with a `bitcode::Error` that explains nothing. [`open_import`] always goes
@@ -10,6 +11,7 @@ through [`ArtifactImport::load`], so an out-of-date store fails with
 */
 
 use ctadl_ir::graph::is_connected;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::{ProgramInfo, encode, ssa};
 
 use crate::error::{Error, ErrorContext};
@@ -18,9 +20,7 @@ use crate::project::{ArtifactImport, IMPORT_CONFIG_FILE, StorePaths};
 /// Says whether [`load_import`] should read an import's source-info database.
 ///
 /// That database is stored as parquet, and it is by far the largest part of an import
-/// directory. Code that only wants the IR, such as a fact generator, a pass, or another
-/// analysis, never looks at it. `ctadl index` reads it on its own, one import at a time, at the
-/// point where it needs source spans.
+/// directory, so code that only wants the IR can skip reading it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceInfoMode {
     /// Leave [`ProgramInfo::source_info`] empty.
@@ -76,8 +76,8 @@ pub fn save_program_info(
     ArtifactImport::mark_complete(&import.name)
 }
 
-/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported,
-/// returning an error if incomplete.
+/// Returns [`Error::IncompleteImport`] unless `import`, or the config stored for it on disk, is
+/// marked complete.
 fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
     if import.is_complete() {
         return Ok(());
@@ -93,20 +93,16 @@ fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
     })
 }
 
+/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported,
+/// returning an error if incomplete.
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
-    refuse_unfinished(import)?;
+    let vmt = load_vmt(import)?;
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
     let data =
         std::fs::read(path).err_context(|| format!("reading program: {}", path.display()))?;
     let program = encode::decode_program(&data)
         .err_context(|| format!("decoding program: {}", path.display()))?;
-
-    let path = &import.vmt_path();
-    log::debug!("reading {}", path.display());
-    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
-    let vmt =
-        encode::decode_vmt(&data).err_context(|| format!("decoding vmt: {}", path.display()))?;
 
     let source_info = match src {
         SourceInfoMode::Skip => Default::default(),
@@ -125,6 +121,22 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
     })
 }
 
+/// Reads only the [`VirtualMethodTable`] of an import, leaving its program IR on disk.
+///
+/// The VMT is small next to the program. [`load_import`] calls this too, so the two read the
+/// same table.
+///
+/// # Errors
+///
+/// If the import did not finish, or its VMT cannot be read or decoded.
+pub fn load_vmt(import: &ArtifactImport) -> Result<VirtualMethodTable, Error> {
+    refuse_unfinished(import)?;
+    let path = &import.vmt_path();
+    log::debug!("reading {}", path.display());
+    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
+    encode::decode_vmt(&data).err_context(|| format!("decoding vmt: {}", path.display()))
+}
+
 /// Turns an import in the store into preprocessed IR, in one call.
 ///
 /// `name_or_dir` is either the name of an import, looked up under the store's `imports/`
@@ -138,8 +150,7 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
 /// # Errors
 ///
 /// Returns [`Error::IncompatibleImport`] if the import was written by a build with a different
-/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION). Code that reads
-/// `ir-program.bitcode` directly cannot make that check, which is why this function exists.
+/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION).
 pub fn open_import(name_or_dir: &str, pipeline: ssa::Pipeline) -> Result<ProgramInfo, Error> {
     let import = resolve_import(name_or_dir)?;
     let mut program_info = load_import(&import, SourceInfoMode::Skip)?;

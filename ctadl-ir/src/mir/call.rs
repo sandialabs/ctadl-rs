@@ -18,8 +18,7 @@ pub enum JavaDispatch {
     /// admits every unrelated class that implements it.
     Interface,
     /// Dex `invoke-super`, JVM `invokespecial` with a receiver: the target is fixed at the
-    /// named class rather than found from the receiver. CTADL still resolves it as a virtual
-    /// call, so it is counted separately in order to show what that costs.
+    /// named class rather than found from the receiver.
     ///
     /// The two frontends do not draw this line in the same place, and a cross-frontend
     /// comparison has to know it. On dex, `invoke-direct` -- constructors and private methods
@@ -92,8 +91,7 @@ pub enum CallStyle {
         cls: Symbol,
         simple_name: Symbol,
         descriptor: Symbol,
-        /// Which of `invoke-virtual` / `-interface` / `-super` this was. Resolution ignores
-        /// it; see [`JavaDispatch`].
+        /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
         dispatch: JavaDispatch,
         /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
         /// every other dispatch kind and for a `Super` site whose frontend could not
@@ -115,6 +113,17 @@ pub enum CallStyle {
         receiver: VariableRef,
         method: Symbol,
     },
+    /// .NET `callvirt`, resolved through [`VirtualMethodTable::Cil`]. Shaped like
+    /// [`CallStyle::JavaCall`]: `cls` is the erased declaring type the instruction names (or the
+    /// `constrained.` type), and `simple_name` + `descriptor` are the key CHA joins on. The
+    /// receiver is not in the call's `args`. There is no dispatch kind: `callvirt` names an
+    /// interface method and a class method alike, and the table says which `cls` is.
+    CilCall {
+        receiver: VariableRef,
+        cls: Symbol,
+        simple_name: Symbol,
+        descriptor: Symbol,
+    },
 }
 
 impl CallStyle {
@@ -122,6 +131,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::LuaCall { receiver, .. } => Some(receiver),
+            CallStyle::CilCall { receiver, .. } => Some(receiver),
             CallStyle::FuncPtrCall { callee, .. } => Some(&callee.base),
             _ => None,
         }
@@ -131,6 +141,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::LuaCall { receiver, .. } => Some(receiver),
+            CallStyle::CilCall { receiver, .. } => Some(receiver),
             CallStyle::FuncPtrCall { callee, .. } => Some(&mut callee.base),
             _ => None,
         }
@@ -184,6 +195,12 @@ impl Display for CallStyle {
                 }
             }
             LuaCall { receiver, method } => write!(f, "lua-call {receiver}:{method}"),
+            CilCall {
+                receiver,
+                cls,
+                simple_name,
+                descriptor,
+            } => write!(f, "cil-call {receiver}.<{cls}::{simple_name}{descriptor}>"),
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
                 None => write!(f, "funcptr-call {callee}"),
@@ -214,6 +231,10 @@ pub enum CallObject {
     /// (`setmetatable({}, Account)` ⟹ `lua$class$Account`). Resolved against
     /// [`VirtualMethodTable::Lua`] at a [`CallStyle::LuaCall`] site.
     LuaClass(super::Symbol),
+    /// A .NET object of the named class (`[Asm]Ns.Type`, the open generic definition), from
+    /// `newobj`, `newarr` or `box`. Resolved against [`VirtualMethodTable::Cil`] at a
+    /// [`CallStyle::CilCall`] site.
+    CilObject(CilClass),
 }
 
 impl Display for CallObject {
@@ -222,6 +243,7 @@ impl Display for CallObject {
             CallObject::FunctionPtr(name) => write!(f, "ptr<{name}>"),
             CallObject::JavaObject(cls) => write!(f, "java<{cls}>"),
             CallObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
+            CallObject::CilObject(cls) => write!(f, "cil<{cls}>"),
         }
     }
 }
@@ -293,9 +315,6 @@ pub enum VirtualMethodTable {
     /// Table for the Lua frontend. Structurally mirrors [`VirtualMethodTable::Java`]
     /// but has no descriptors/overloading: a Lua method is uniquely named within its
     /// class table, and the `__index` chain plays the role of `direct_superclass`.
-    /// Where the shared CHA wants a `descriptor` column, the Lua codegen arm feeds a
-    /// fixed empty sentinel so the existing 3-key `(cls, name, desc)` resolvent map is
-    /// reused untouched.
     Lua {
         /// The columns are as follows:
         /// - Class table symbol defining the method (e.g. `lua$class$Account`)
@@ -317,10 +336,9 @@ pub enum VirtualMethodTable {
         functions: Vec<(Symbol, Symbol)>,
         /// Functions *called* by the import but defined nowhere in it — the Lua stdlib
         /// (`os.execute`, `string.format`), and anything from a module outside the import.
-        /// Without this column they are unmodelable: the IR names them correctly at their call
-        /// sites, but every model match index is built from the table, so a model naming
-        /// `execute` (or `qualified-id: "os.execute"`) matched nothing and a Lua propagation
-        /// model file was inert. dex/jvm answer the same question with their `Context::ext`
+        /// Without this column they would be unmodelable: the IR names them correctly at their
+        /// call sites, but every model match index is built from the table, so a model naming
+        /// `execute` (or `qualified-id: "os.execute"`) would match nothing. dex/jvm answer the same question with their `Context::ext`
         /// entries and pcode with real `<EXTERNAL>::…` thunks.
         ///
         /// The columns are as follows:
@@ -336,6 +354,44 @@ pub enum VirtualMethodTable {
         externals: Vec<(Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
+    },
+    /// Table for the .NET (CIL) frontend. The first four columns mirror
+    /// [`VirtualMethodTable::Java`], with .NET spellings: a class is `[Asm]Ns.Outer/Inner`, a
+    /// descriptor `(P1,P2)->Ret`, a method id `{cls}::{simple}{descriptor}`.
+    Cil {
+        /// The columns are as follows:
+        /// - Class whose table holds the row
+        /// - Simple name, e.g. `Parse`, `.ctor`, `Select``2`
+        /// - Descriptor, e.g. `(System.String)->System.Int32`
+        /// - Method id the row resolves to
+        ///
+        /// Besides each class's own implementations, this holds *override aliases*: a row
+        /// under a class with a base method's or interface method's key, naming the class's
+        /// own implementation. CIL has no bridge methods, so `D : B<string>` overriding
+        /// `B<T>.M(T)` has no row under `M(!0)` otherwise, and neither does an explicit
+        /// interface implementation, whose name differs from the interface method's.
+        methods: Vec<(CilClass, CilSimpleName, CilSignature, CilMethod)>,
+        /// Class -> its base type and the interfaces it implements, erased to open definitions.
+        hierarchy: HashMap<CilClass, SmallVec<[CilClass; 2]>>,
+        /// The interfaces this import declares. See the column of the same name on
+        /// [`VirtualMethodTable::Java`].
+        interfaces: Vec<CilClass>,
+        /// Methods declared `abstract`, including interface methods without a default body.
+        abstract_methods: Vec<(CilClass, CilSimpleName, CilSignature)>,
+        /// Methods implemented by P/Invoke (`[DllImport]`). They also appear in `methods`.
+        ///
+        /// The columns are as follows:
+        /// - Class, simple name, descriptor and method id, as in `methods`
+        /// - The native module (`ModuleRef` name), e.g. `libc`
+        /// - The entry point, e.g. `getenv`
+        pinvokes: Vec<(
+            CilClass,
+            CilSimpleName,
+            CilSignature,
+            CilMethod,
+            Symbol,
+            Symbol,
+        )>,
     },
 }
 
@@ -487,6 +543,16 @@ impl VirtualMethodTable {
         }
     }
 
+    pub fn new_cil() -> Self {
+        VirtualMethodTable::Cil {
+            methods: Vec::new(),
+            hierarchy: HashMap::new(),
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
+            pinvokes: Vec::new(),
+        }
+    }
+
     pub fn new_lua() -> Self {
         VirtualMethodTable::Lua {
             methods: Vec::new(),
@@ -563,6 +629,39 @@ impl Display for VirtualMethodTable {
                     }
                 }
                 writeln!(f, "end lua virtual method table")?;
+                Ok(())
+            }
+            VirtualMethodTable::Cil {
+                methods,
+                hierarchy,
+                interfaces,
+                abstract_methods,
+                pinvokes,
+            } => {
+                writeln!(f, "cil virtual method table")?;
+                for (cls, name, sig, method) in methods {
+                    writeln!(f, "{cls}::{name} has signature {sig}: {method}")?;
+                }
+                for cls in interfaces {
+                    writeln!(f, "{cls} is an interface")?;
+                }
+                for (cls, name, sig) in abstract_methods {
+                    writeln!(f, "{cls}::{name} has signature {sig}: abstract")?;
+                }
+                for (cls, name, sig, method, module, entry) in pinvokes {
+                    writeln!(
+                        f,
+                        "{cls}::{name} has signature {sig}: {method} (pinvoke {module}!{entry})"
+                    )?;
+                }
+                let mut edges: Vec<_> = hierarchy.iter().collect();
+                edges.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+                for (subclass, superclasses) in edges {
+                    for superclass in superclasses {
+                        writeln!(f, "{subclass} extends {superclass}")?;
+                    }
+                }
+                writeln!(f, "end cil virtual method table")?;
                 Ok(())
             }
             VirtualMethodTable::Unknown => write!(f, "unknown virtual method table"),
@@ -662,6 +761,53 @@ impl Display for JavaMethod {
         write!(f, "{}", self.0)
     }
 }
+
+/// A newtype over [`Symbol`] with the derives and conversions every VMT column type has.
+macro_rules! symbol_newtype {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[repr(transparent)]
+        pub struct $name(pub Symbol);
+
+        impl Deref for $name {
+            type Target = Symbol;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl From<$name> for Symbol {
+            fn from(c: $name) -> Self {
+                c.0
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+symbol_newtype!(
+    /// A .NET class: `[Asm]Ns.Outer/Inner`, generic arity kept, open definition.
+    CilClass
+);
+symbol_newtype!(
+    /// A .NET method's simple name: `Parse`, `.ctor`, `Select``2`.
+    CilSimpleName
+);
+symbol_newtype!(
+    /// A .NET method descriptor: `(System.String,!!0&)->System.Boolean`.
+    CilSignature
+);
+symbol_newtype!(
+    /// A .NET method id: `{cls}::{simple}{descriptor}`.
+    CilMethod
+);
 
 /// Simple (un-decorated) name of a native function, e.g. `system`.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

@@ -28,7 +28,7 @@ fn fact_base(functions: &[(&str, i16)]) -> (IndexFacts, IndexSourceInfo) {
             facts.formal_param.push((
                 id,
                 FlowVariable::formal_index(FormalIndex::new(i)),
-                FormalType::ByRef,
+                FormalType::Shared,
             ));
         }
     }
@@ -86,7 +86,7 @@ fn actual_formals(facts: &IndexFacts, site: PackedInsnSiteId) -> Vec<(i16, i16)>
         .actual_param
         .iter()
         .filter(|(s, _, _)| *s == site)
-        .filter_map(|(_, index, FlowVertex(var, path))| {
+        .filter_map(|(_, index, FlowVertex(var, path, ..))| {
             var.as_formal().map(|f| {
                 assert!(path.is_empty(), "a collapsed bridge port carries no path");
                 (**index, *f)
@@ -103,8 +103,8 @@ fn actual_temps(facts: &IndexFacts, site: PackedInsnSiteId) -> Vec<(i16, FlowVar
         .actual_param
         .iter()
         .filter(|(s, _, _)| *s == site)
-        .filter(|(_, _, FlowVertex(var, _))| var.as_formal().is_none())
-        .map(|(_, index, FlowVertex(var, path))| {
+        .filter(|(_, _, FlowVertex(var, ..))| var.as_formal().is_none())
+        .map(|(_, index, FlowVertex(var, path, ..))| {
             assert!(path.is_empty(), "the temporary is passed whole");
             (**index, *var)
         })
@@ -472,7 +472,7 @@ fn any_argument_expands_over_call_sites_from_every_import() {
             facts.actual_param.push((
                 site,
                 FormalIndex::new(i),
-                FlowVertex(
+                FlowVertex::new(
                     FlowVariable::local(facts::Str::from(format!("x{i}").as_str())),
                     facts::Path::empty(),
                 ),
@@ -574,7 +574,7 @@ fn a_propagation_on_an_absent_function_is_skipped() {
 // ---------------------------------------------------------------------------
 
 fn vertex_str(v: &FlowVertex) -> String {
-    let FlowVertex(var, path) = v;
+    let FlowVertex(var, path, ..) = v;
     format!("{}{}", var, path.to_dot_string())
 }
 

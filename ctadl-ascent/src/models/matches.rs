@@ -11,14 +11,14 @@ This is one structure spanning two phases, and each field is consumed by exactly
   ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
 - [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
   indexer paths.
-- [`ProgramModelMatches::skip_analysis`] -- index time, and the one field phase *1* reads:
+- [`ProgramModelMatches::skip_analysis`] -- index time, and read by phase *1*:
   [`crate::codegen::codegen_program`] lowers those functions' signatures and drops their bodies,
   so nothing about them ever enters the fact base.
 - [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
   `call`/`actual_param`/`assign`/`formal_param` rows.
-- [`ProgramModelMatches::dispatch`] -- index time, and the second field phase *1* reads:
-  codegen classifies every Java call site against it before it emits anything for the site,
-  and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
+- [`ProgramModelMatches::dispatch`] -- index time, and also read by phase *1*:
+  codegen classifies every Java and CIL call site against it before it emits anything for the
+  site, and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
 - [`ProgramModelMatches::closure_shaped`] -- report time. A note about what hybrid inlining is
   for; nothing resolves differently for being on it.
 - [`ProgramModelMatches::endpoints`] -- query time. Stage 2
@@ -29,8 +29,7 @@ This is one structure spanning two phases, and each field is consumed by exactly
 Each phase therefore ignores the other's half, and both say so rather than dropping them in
 silence: `ctadl index` warns that the given files declare source/sink models it ignores, and
 `ctadl query` warns that they declare propagation/bridging models it ignores (both in
-`cli::mod`). That symmetry is deliberate -- each phase used to discard what the other consumes
-without a word.
+`cli::mod`).
 
 The alternative -- a second, sibling structure for the query-time half -- was considered and
 rejected: one matcher pass produces both halves, and splitting its output across two
@@ -75,7 +74,8 @@ pub struct ModelPort {
 }
 
 /// A call site's static signature: the `(cls, simple_name, descriptor)` triple a
-/// `CallStyle::JavaCall` carries, which is what a `find: "dispatch"` generator matches.
+/// `CallStyle::JavaCall` or `CallStyle::CilCall` carries, which is what a `find: "dispatch"`
+/// generator matches.
 pub type DispatchKey = (facts::Str, facts::Str, facts::Str);
 
 /// What a matched `find: "dispatch"` generator says to do with every site of one signature.
@@ -86,8 +86,11 @@ pub type DispatchKey = (facts::Str, facts::Str, facts::Str);
 /// `--no-default-models`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Disposition {
-    /// Hybrid inlining regardless of the threshold, unless the key has exactly one target.
-    Inline,
+    /// Hybrid inlining regardless of the threshold, unless the key has exactly one target. A
+    /// non-empty list is `resolve: inline` with a `propagation` too: the site is inlined *and*
+    /// gets the synthetic summary, for a contract whose receivers are sometimes the program's
+    /// objects, whose bodies inlining reaches, and sometimes a library's, which have none.
+    Inline(Vec<(ModelPort, ModelPort)>),
     /// One synthetic summary at the site, carrying these `(destination, source)` propagations.
     /// Two generators matching one key union their lists, as two generators matching one
     /// function do.
@@ -100,7 +103,7 @@ impl Disposition {
     /// Higher wins when several generators match one key.
     fn rank(&self) -> u8 {
         match self {
-            Disposition::Inline => 2,
+            Disposition::Inline(_) => 2,
             Disposition::Model(_) => 1,
             Disposition::Skip => 0,
         }
@@ -117,12 +120,13 @@ pub struct DispatchModel {
 
 impl DispatchModel {
     /// Folds another generator's disposition for the same key in, applying the precedence in
-    /// [`Disposition`]. Two `Model`s union their propagation lists; otherwise the higher-ranked
-    /// disposition wins. Either way both generators stay in the provenance, which is what lets
-    /// the diagnostics name the one that lost.
+    /// [`Disposition`]. Two `Model`s, or two `Inline`s, union their propagation lists; otherwise
+    /// the higher-ranked disposition wins. Either way both generators stay in the provenance,
+    /// which is what lets the diagnostics name the one that lost.
     pub fn merge(&mut self, other: DispatchModel) {
         match (&mut self.disposition, other.disposition) {
-            (Disposition::Model(ours), Disposition::Model(theirs)) => {
+            (Disposition::Model(ours), Disposition::Model(theirs))
+            | (Disposition::Inline(ours), Disposition::Inline(theirs)) => {
                 for p in theirs {
                     if !ours.contains(&p) {
                         ours.push(p);
@@ -203,8 +207,7 @@ pub struct EndpointMatch {
 ///
 /// "Unmatched" means *not matched anywhere in the project*, so these sets union over imports
 /// rather than being classified per import. A scope that admits no import at all leaves both
-/// sets empty, which is the same condition and gets the same warning -- deliberately, rather
-/// than a separate configuration-error category.
+/// sets empty.
 #[derive(Clone, Debug, Default)]
 pub struct BridgeSideMatches {
     /// fq-names side A (the call side) matched.
@@ -217,10 +220,18 @@ impl BridgeSideMatches {
     /// The cross product of the two sides. There is no `cardinality` key: every matched A pairs
     /// with every matched B, and a pairing that is not singleton x singleton is reported through
     /// `on-ambiguous` rather than restricted.
+    ///
+    /// Each side goes in name order, so the warnings about pairs come out in a reproducible order.
     pub fn pairs(&self) -> impl Iterator<Item = (facts::Str, facts::Str)> + '_ {
-        self.from
-            .iter()
-            .flat_map(|a| self.to.iter().map(move |b| (*a, *b)))
+        let by_name = |set: &BTreeSet<facts::Str>| {
+            let mut names: Vec<facts::Str> = set.iter().copied().collect();
+            names.sort_unstable_by(|a, b| a.content_cmp(b));
+            names
+        };
+        let to = by_name(&self.to);
+        by_name(&self.from)
+            .into_iter()
+            .flat_map(move |a| to.clone().into_iter().map(move |b| (a, b)))
     }
 
     /// Singleton x singleton -- the unambiguous case `on-ambiguous` exists to distinguish.
@@ -277,7 +288,7 @@ impl BridgeMatches {
 /// Everything a models file matched, accumulated across every (import x model file) pair.
 ///
 /// Accumulation is append-only and its *order* is only required to be deterministic, not
-/// specific: the SARIF writer sorts endpoints into `BTreeSet`s before writing anything, so
+/// specific: the SARIF writer sorts endpoints by content before writing anything, so
 /// insertion order does not reach the output. The natural loop order (import outer, model file
 /// inner, visit order within a file) is deterministic and is what accumulation gets for free;
 /// the one rule is never to route it through unordered iteration.
@@ -311,8 +322,8 @@ pub struct ProgramModelMatches {
     pub skip_analysis: BTreeSet<facts::Str>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
-    /// Signatures a `find: "dispatch"` generator matched. Index time, and the second field
-    /// phase *1* reads: codegen classifies each Java call site against this map before it
+    /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
+    /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
     ///
     /// A `BTreeMap` so iteration order does not depend on hashing: the synthetic functions
@@ -391,8 +402,7 @@ pub fn observe_import(
     matches.bridges.prepare(specs);
     // The ingest emits into `matches`, so it holds that borrow for as long as it lives and
     // `matches.bridges` cannot be written through it. Collect each spec's matched names while
-    // the ingest is alive, release it, then fold. `match_where` already returns an owned
-    // `Vec<String>` per side, so this allocates nothing the old shape did not.
+    // the ingest is alive, release it, then fold.
     let mut matched: Vec<(Vec<String>, Vec<String>)> = Vec::with_capacity(specs.len());
     let result = {
         let mut ingest = ModelGeneratorIngest::new(index, matches);
@@ -425,7 +435,7 @@ pub fn observe_import(
         ingest.take_errors()
     };
     // Folded in even when the evaluation errored: an errored side yields no matches, and the
-    // sides that did match were already recorded before the error under the old shape.
+    // sides that did match keep theirs.
     for (i, (from, to)) in matched.into_iter().enumerate() {
         let side = matches.bridges.side_mut(i);
         side.from
@@ -439,16 +449,14 @@ pub fn observe_import(
 /// The verdict on one bridge spec's accumulated sides: `on-unmatched` per side, then
 /// `on-ambiguous`.
 ///
-/// Returns what to *say*, not the saying of it. Evaluation was eager -- both sides are matched
-/// per import as imports stream by -- because side B's import may arrive before side A's, so
-/// whether `from` matched is unknowable at match time. The conditionality is applied here, once,
-/// over the whole project: "unmatched" means *not matched anywhere*, not "not matched in this
-/// import".
+/// Returns what to *say*, not the saying of it. This is where the conditional `to`-side
+/// semantics are applied (see the module docs), once, over the whole project: "unmatched" means
+/// *not matched anywhere*, not "not matched in this import".
 ///
 /// This reads nothing but the spec and the two match sets, which is what lets `ctadl query`
-/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of codegen wraps it
-/// in [`crate::codegen::model_matches::classify`], which is the only caller that acts on the
-/// severity.
+/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of
+/// codegen wraps it in [`crate::codegen::model_matches::classify`], which is the only caller that
+/// acts on the severity.
 pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(Severity, String)> {
     let where_ = spec.provenance();
     if side.from.is_empty() {
@@ -462,9 +470,6 @@ pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(S
                  nothing is bridged. Check the 'where' constraints and the 'in' scope."
             ),
         ));
-        // Note there is no `to`-side report here. "If the from side doesn't match anything, the
-        // to side isn't even attempted" is exactly this: reporting semantics, not evaluation
-        // order.
     }
     if side.to.is_empty() {
         return Some((
@@ -496,9 +501,12 @@ pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(S
     None
 }
 
-/// The functions a set of matches names, for a diagnostic that has to list a few of them.
+/// The functions a set of matches names, for a diagnostic that has to list a few of them. The
+/// first few by name, since the set iterates in handle order.
 pub(crate) fn sample(names: &BTreeSet<facts::Str>, limit: usize) -> String {
-    let shown: Vec<&str> = names.iter().take(limit).map(|s| s.as_str()).collect();
+    let mut shown: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    shown.sort_unstable();
+    shown.truncate(limit);
     if names.len() > limit {
         format!("{}, … and {} more", shown.join(", "), names.len() - limit)
     } else {

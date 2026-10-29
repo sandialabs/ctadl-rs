@@ -27,6 +27,7 @@ identity does not move when the store does.
 
 */
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{File, canonicalize};
 use std::sync::OnceLock;
@@ -107,13 +108,13 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   a `Super` dispatch, so an `invoke-super` resolves to its single real target instead of every
 ///   implementation below the named class. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "8";
+/// - `9`: APK imports gained persisted Android manifest triple tables.
+/// - `10`: The dex frontend splits a class-merged class (R8's merged lambdas) into one class per
+///   class id, with clones of its switching methods and retagged construction sites. The file
+///   format is unchanged, but an older import of such an app has the merged methods only.
+pub const IMPORT_FORMAT_VERSION: &str = "10";
 
 /// Filename of the serialized IR program inside an import directory.
-///
-/// Shared with the `inspect` command, which recognizes a raw path into the store by filename
-/// rather than by resolving an [`ArtifactImport`]. Keeping the spelling in one place means
-/// renaming an artifact file cannot silently desync the writer from the inspector.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 
 /// Filename of the serialized virtual method table inside an import directory.
@@ -153,7 +154,13 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   column cannot say which import's source-info database to read one in -- which is exactly
 ///   how a multi-import project used to render every result once per import, each copy
 ///   carrying an unrelated line from another artifact.
-pub const INDEX_FORMAT_VERSION: &str = "3";
+/// - `4`: the index gained `intent_pair.parquet`, the Android ICC pairings the fixpoint derived,
+///   which loading an index result now requires. The pairings' call edges are persisted in
+///   `resolved_call.parquet`. `call.parquet` holds the pre-fixpoint relation, and a consumer that
+///   wants the final call graph must union the two, as query does.
+/// - `5`: the CIL front end's call-resolution key space: `CallTargetObject::CilClass` and
+///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
+pub const INDEX_FORMAT_VERSION: &str = "5";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";
@@ -171,6 +178,13 @@ pub struct IndexConfig {
     /// [`CallPolicyRecord`].
     #[serde(default)]
     pub call_policy: Option<CallPolicyRecord>,
+    /// Import name -> the [`ArtifactImport::hash`] it had when this index was written, for each
+    /// of the project's imports that recorded one.
+    ///
+    /// Empty for an index written before this field existed. The field is additive, so
+    /// [`INDEX_FORMAT_VERSION`] did not change for it.
+    #[serde(default)]
+    pub import_hashes: BTreeMap<String, String>,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -256,14 +270,15 @@ pub struct ArtifactImport {
     pub image_base: Option<i64>,
     /// Hex-encoded SHA-256 content hash of the artifact, recorded once the import
     /// has successfully completed. Together with [`Self::artifact_path`] this lets
-    /// `import --skip-existing` decide whether a re-import is necessary. `None` for
+    /// `ctadl import` decide whether a re-import is necessary. `None` for
     /// older imports created before this field existed, or for an import that has
     /// not yet completed.
     #[serde(default)]
     pub hash: Option<String>,
     /// Names of imports derived from this one: the native libraries extracted out of
     /// an APK and lowered through the pcode frontend (see
-    /// `ctadl_frontends::apk_native`). A project naming this import co-indexes
+    /// `ctadl_frontends::apk_native`), or an XAPK's split APKs and their libraries (see
+    /// `ctadl_frontends::xapk`). A project naming this import co-indexes
     /// these too, which is what lets the JNI bridge see both halves of the boundary
     /// from a single `ctadl import app.apk`. Empty for every other language.
     #[serde(default)]
@@ -377,11 +392,8 @@ impl ArtifactImport {
 
     /// Whether the store holds an import under `name` at all, without reading it.
     ///
-    /// This is the difference between "there is no such import" and "there is one and it
-    /// cannot be read", which callers that fall back from a project name to an import name
-    /// have to tell apart: a stale import is a real import, and its error -- which says to
-    /// re-import it -- is the one worth showing. Deciding that on the config file's existence
-    /// keeps the store's layout in this module rather than spreading it into `main.rs`.
+    /// This tells "there is no such import" apart from "there is one and it cannot be read":
+    /// a stale import still exists.
     pub fn exists_by_name(name: &str) -> bool {
         Self::config_path_by_name(name).is_file()
     }
@@ -413,9 +425,9 @@ impl ArtifactImport {
 
     /// Path to the `RegisterNatives` tables recovered from this import, if it has any.
     ///
-    /// Written at *import* time, so `ctadl import --skip-existing` -- which reuses an unchanged
-    /// library's import directory -- will not create one for a library imported before this
-    /// existed. Re-import without `--skip-existing` to gain it.
+    /// Written at *import* time, so `ctadl import` -- which reuses an unchanged library's import
+    /// directory -- will not create one for a library imported before this existed. Re-import
+    /// with `--force` to gain it.
     pub fn jni_registry_path(&self) -> PathBuf {
         self.import_path().join(JNI_REGISTRY_FILE)
     }
@@ -429,7 +441,7 @@ impl ArtifactImport {
         self.import_path().join("source-info")
     }
 
-    /// Path to the IR program for this artifact
+    /// Path to this import's config file
     #[inline]
     pub fn config_path(&self) -> PathBuf {
         self.import_path().join(IMPORT_CONFIG_FILE)
@@ -464,8 +476,8 @@ impl ArtifactImport {
     }
 
     /// Records the artifact's content hash in the config and persists it. Call this
-    /// once an import has completed successfully so that a later `--skip-existing`
-    /// import can detect that the stored artifact is up to date.
+    /// once an import has completed successfully so that a later import can detect that
+    /// the stored artifact is up to date.
     ///
     /// # Errors
     ///
@@ -475,10 +487,14 @@ impl ArtifactImport {
         self.save()
     }
 
-    /// Returns true if an import named `name` already exists in the store, its
-    /// destination is present, and both the stored artifact path and content hash
-    /// match `artifact_path` and its current contents. When this holds, a re-import
-    /// would reproduce the same result and can be skipped.
+    /// Returns true if an import named `name` already exists in the store, ran to
+    /// completion, its destination is present, and both the stored artifact path and
+    /// content hash match `artifact_path` and its current contents. When this holds, a
+    /// re-import would reproduce the same result and can be skipped.
+    ///
+    /// Always false for a Ghidra Server repository (`ghidra://…`), which cannot be
+    /// hashed, and for an import with no recorded hash (one created before hashes were
+    /// recorded), since nothing proves either is unchanged.
     ///
     /// Returns `false` (rather than erroring) when no matching import config can be
     /// loaded, so the caller falls back to performing the import.
@@ -487,8 +503,6 @@ impl ArtifactImport {
     ///
     /// If the artifact path cannot be canonicalized or its contents cannot be hashed.
     pub fn is_up_to_date(name: &str, artifact_path: &Path) -> Result<bool, Error> {
-        // A Ghidra Server repository lives outside the filesystem and cannot be
-        // hashed, so we can never prove it is unchanged: always re-import.
         if is_ghidra_server_url(artifact_path) {
             return Ok(false);
         }
@@ -497,7 +511,9 @@ impl ArtifactImport {
             // No (readable) prior import: not up to date, so the caller imports.
             Err(_) => return Ok(false),
         };
-        if !config.destination_exists() {
+        // The hash is recorded only after a successful import, so it already implies
+        // completion; checking the mark as well costs nothing and does not lean on that.
+        if !config.is_complete() || !config.destination_exists() {
             return Ok(false);
         }
         let stored_hash = match &config.hash {
@@ -521,16 +537,6 @@ pub fn is_ghidra_server_url(path: &Path) -> bool {
     path.to_string_lossy().starts_with("ghidra://")
 }
 
-/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
-/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
-///
-/// For a directory the hash covers every regular file underneath it, incorporating
-/// each file's path relative to the directory and its contents, in a deterministic
-/// (sorted) order so the result is independent of filesystem iteration order.
-///
-/// # Errors
-///
-/// If the artifact (or any file within it) cannot be read.
 /// SHA-256 over the *contents* of a set of files, independent of the order they are given in
 /// and of where they live: the contents are sorted and length-prefixed, so two different sets
 /// cannot collide by concatenation and the same file named two ways hashes alike.
@@ -560,6 +566,16 @@ pub fn hash_file_contents(paths: &[PathBuf]) -> Result<String, Error> {
     Ok(to_hex(&hasher.finalize()))
 }
 
+/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
+/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
+///
+/// For a directory the hash covers every regular file underneath it, incorporating
+/// each file's path relative to the directory and its contents, in a deterministic
+/// (sorted) order so the result is independent of filesystem iteration order.
+///
+/// # Errors
+///
+/// If the artifact (or any file within it) cannot be read.
 pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
@@ -620,6 +636,32 @@ fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
+/// Which of a named import's [`ArtifactImport::sub_imports`] an [`AnalysisProject`] expands to.
+///
+/// Only *expanded* sub-imports are filtered. An import named explicitly is always kept, even
+/// when it is also some other named import's sub-import.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SubImports {
+    /// Every sub-import: an APK's native libraries, an XAPK's split APKs and their libraries.
+    #[default]
+    All,
+    /// Every sub-import except the native libraries, i.e. those whose language is
+    /// [`ArtifactLanguage::Pcode`]. An XAPK's split APKs are kept.
+    NoNativeLibs,
+}
+
+impl SubImports {
+    /// Whether the expanded sub-import `name` stays in the project. A sub-import whose config
+    /// cannot be loaded is kept.
+    fn keeps(self, name: &str) -> bool {
+        match self {
+            SubImports::All => true,
+            SubImports::NoNativeLibs => ArtifactImport::load_by_name(name)
+                .map_or(true, |import| import.language != ArtifactLanguage::Pcode),
+        }
+    }
+}
+
 /// An analysis project allows you to index single or multiple artifacts together.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct AnalysisProject {
@@ -643,8 +685,9 @@ impl AnalysisProject {
     pub fn try_create<S: AsRef<str>>(
         name: &str,
         import_names: &[S],
+        sub_imports: SubImports,
     ) -> Result<AnalysisProject, Error> {
-        let result = Self::ephemeral(name, import_names);
+        let result = Self::ephemeral(name, import_names, sub_imports);
         let path = result.dir();
         std::fs::create_dir_all(&path)
             .map_err(Error::Io)
@@ -655,14 +698,18 @@ impl AnalysisProject {
 
     /// The same project value [`Self::try_create`] would build, without writing anything.
     ///
-    /// This is what lets `ctadl query my-import -m models.json5` work on a name that was only
-    /// ever imported: the query has an import list to match models against, and the store is
-    /// left exactly as it was. Nothing that reads or writes the project's directory may be
-    /// called on the result -- notably [`Self::index_path`], which creates it.
-    pub fn ephemeral<S: AsRef<str>>(name: &str, import_names: &[S]) -> AnalysisProject {
+    /// Nothing that reads or writes the project's directory may be called on the result --
+    /// notably [`Self::index_path`], which creates it.
+    ///
+    /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`].
+    pub fn ephemeral<S: AsRef<str>>(
+        name: &str,
+        import_names: &[S],
+        sub_imports: SubImports,
+    ) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
-        // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
+        // (e.g. `index p prog prog`) would codegen its facts twice and inflate every
         // relation. Indexing the same import twice is never meaningful.
         //
         // The expansion is what makes `ctadl import app.apk && ctadl index p app` pull in the
@@ -672,6 +719,8 @@ impl AnalysisProject {
         // A name with no loadable config passes through unchanged rather than erroring --
         // a project may legitimately be created before (or without) its imports, and
         // `cli::index` has its own preflight gates that report that properly.
+        let named: std::collections::HashSet<&str> =
+            import_names.iter().map(|s| s.as_ref()).collect();
         let mut seen = std::collections::HashSet::new();
         let imports: Vec<String> = import_names
             .iter()
@@ -679,7 +728,9 @@ impl AnalysisProject {
                 let name = s.as_ref().to_owned();
                 let subs = ArtifactImport::load_by_name(&name)
                     .map(|import| import.sub_imports)
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|sub| named.contains(sub.as_str()) || sub_imports.keeps(sub));
                 std::iter::once(name).chain(subs)
             })
             .filter(|n| seen.insert(n.clone()))
@@ -787,6 +838,13 @@ impl AnalysisProject {
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
     pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+        // An import that cannot be loaded, or never recorded a hash, is left out: there is
+        // nothing to compare it against later.
+        let import_hashes: BTreeMap<String, String> = self
+            .iter_imports()
+            .filter_map(Result::ok)
+            .filter_map(|import| Some((import.name, import.hash?)))
+            .collect();
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
         let file = File::create(&path)
             .err_context(|| format!("creating index config: '{}'", path.display()))?;
@@ -795,6 +853,7 @@ impl AnalysisProject {
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
+                import_hashes,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
@@ -804,10 +863,14 @@ impl AnalysisProject {
     /// The call policy this project's index was built under, or `None` for an index written
     /// before the stamp existed or with no readable config.
     pub fn index_call_policy(&self) -> Option<CallPolicyRecord> {
+        self.index_config()?.call_policy
+    }
+
+    /// This project's index config, or `None` when there is no readable one.
+    pub fn index_config(&self) -> Option<IndexConfig> {
         let path = self.dir().join("index").join(INDEX_CONFIG_FILE);
         let file = File::open(path).ok()?;
-        let config: IndexConfig = serde_json::from_reader(file).ok()?;
-        config.call_policy
+        serde_json::from_reader(file).ok()
     }
 
     /// Whether `ctadl index` ever finished for this project.
@@ -1002,6 +1065,8 @@ pub enum ArtifactLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe` with CLI metadata), or a directory of them
+    Cil,
 }
 
 impl ArtifactLanguage {
@@ -1017,6 +1082,7 @@ impl ArtifactLanguage {
         ArtifactLanguage::Lua,
         ArtifactLanguage::Pcode,
         ArtifactLanguage::Flowy,
+        ArtifactLanguage::Cil,
     ];
 
     /// The lowercase spelling a model generator's `in` block uses. Distinct from the
@@ -1033,6 +1099,7 @@ impl ArtifactLanguage {
             ArtifactLanguage::Lua => "lua",
             ArtifactLanguage::Pcode => "pcode",
             ArtifactLanguage::Flowy => "flowy",
+            ArtifactLanguage::Cil => "cil",
         }
     }
 
@@ -1111,5 +1178,17 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("import format 7"), "{message}");
         assert!(message.contains("re-import it"), "{message}");
+    }
+
+    /// An index written before `import_hashes` existed still loads, with no hashes.
+    #[test]
+    fn an_index_config_without_import_hashes_loads() {
+        let config: IndexConfig = serde_json::from_value(serde_json::json!({
+            "version": INDEX_FORMAT_VERSION,
+            "call_policy": null,
+        }))
+        .expect("old index config");
+        assert_eq!(config.version, INDEX_FORMAT_VERSION);
+        assert!(config.import_hashes.is_empty());
     }
 }

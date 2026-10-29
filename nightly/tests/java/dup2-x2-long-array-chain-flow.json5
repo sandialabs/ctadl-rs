@@ -1,0 +1,17 @@
+{
+  // Flow: x = a[0] = source() (13) -> sink(x) (14). The positive twin of
+  // Dup2X2LongArrayChain.
+  "expected_lines": [13, 14],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LDup2X2LongArrayChainFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LDup2X2LongArrayChainFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

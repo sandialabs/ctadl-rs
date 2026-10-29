@@ -19,12 +19,13 @@ A non-constant index (`a[n]`) has no offset to name, so it lowers to a bare `der
 offset at all -- the very path `a[0]` produces, which is how the two may-alias.
 See `nonconstant_subscript_may_alias_constant`.
 
-One consequence remains unfixed and is pinned elsewhere: `nightly/tests/c/ptrarith.c`
-(XFAIL as `C:ptrarith` in the xtask suite) needs the binary `+` in `*(p + 2)` to lower
-to an offset address too, which it does not yet.
+A sum with a literal is the same offset where C says it is an address: `*(a + 2)` is `a[2]`
+and `(a + 1)[1]` is `a[2]` (`constant_pointer_offset_deref_is_a_subscript`). Elsewhere the
+untyped parse cannot tell `p + 2` from integer arithmetic, so `q = p + 2` and `p += 2` still
+lower as a merge of the operands and lose the offset.
 */
 
-use ctadl_ir::ParameterType::{ByRef, ByVal};
+use ctadl_ir::ParameterType::SharedFields;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
 use crate::test_utils::*;
@@ -106,12 +107,12 @@ fn simple_global_assign() {
 
 #[test_log::test]
 fn basic_params() {
-    // How parameters are passed: a plain `int x` is by-value, a pointer `int *y` is by-reference.
+    // Every parameter is `SharedFields`, a pointer `int *y` included.
     let src = r"
             void basic_params(int x, int *y) {}
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[SharedFields, SharedFields]);
 }
 
 #[test_log::test]
@@ -124,7 +125,7 @@ fn basic_param_flow() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
@@ -142,7 +143,7 @@ fn param_flows_through_local() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
@@ -152,25 +153,24 @@ fn param_flows_through_local() {
 
 #[test_log::test]
 fn return_from_pointer() {
-    // Returning a dereferenced pointer parameter (`return *y;`). CTADL doesn't distinguish `*y` from
-    // `y`, so the summary is identical to returning the param directly: param 0 reaches the return.
+    // `return *y;` returns the pointee, `@p0.deref`.
     let src = r"
             int return_from_pointer(int *y) {
                 return *y;
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[SharedFields]);
+    check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
-    check_returns_param(&summary, 0, "");
+    check_returns_param(&summary, 0, ".deref");
 }
 
 #[test_log::test]
 fn return_from_pointer_through_local() {
-    // Returning a dereferenced pointer parameter through a local (`int b = *y; return b;`). The
-    // pointer deref and the local copy are both transparent -- param 0 still reaches the return.
+    // `int b = *y; return b;`: a load of `@p0.deref` through a transparent local.
     let src = r"
             int return_from_pointer_through_local(int *y) {
                 int b = *y;
@@ -178,12 +178,12 @@ fn return_from_pointer_through_local() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByRef]);
-    check_assign_or_update(&prog, "b", ["@p0"], None);
+    check_params(&prog, &[SharedFields]);
+    check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
-    check_returns_param(&summary, 0, "");
+    check_returns_param(&summary, 0, ".deref");
 }
 
 #[test_log::test]
@@ -207,7 +207,7 @@ fn unique_temps() {
         .iter()
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
-            StatementKind::Assign { dest, .. } => match dest.variable.as_ref() {
+            StatementKind::Assign { dest, .. } => match &dest.variable {
                 Variable::Local(idx) => {
                     let name = fun.locals.name(*idx);
                     name.starts_with("<t").then(|| name.to_string())
@@ -893,7 +893,8 @@ fn implicit_return() {
     get_summary(program_from_string(src).0).expect("Verify probably bonked");
 }
 
-//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
+// TODO_JDB: `(p + 1)->f()` is not handled; `*(p + 1) = f` is
+// (`constant_pointer_offset_deref_is_a_subscript`).
 
 #[test_log::test]
 fn simple_else() {
@@ -1157,6 +1158,53 @@ fn switch_fallthrough_flows_to_return() {
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn a_case_label_inside_an_if_is_entered_from_the_switch() {
+    // After `return 0`, `case -1:` is reachable only from the switch.
+    let src = r"
+        int pick(int a, int v) {
+            switch (a) {
+            case 1:
+                return 0;
+                if (a)
+            case -1:
+                    return v;
+            }
+            return 0;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn statements_after_a_case_labelled_if_body_follow_the_if() {
+    // `g = v2` follows the `if`, so it runs when `v1 != v2`.
+    let src = r"
+        int g;
+        int check(int a, int v1, int v2) {
+            switch (a) { case 1: if (v1 == v2) case -1: return 1; g = v2; }
+            return 0;
+        }";
+    let _strict = super::force_error_on_ast();
+    let (prog, _, _dump) = super::parse_c_program(src).expect("not a frontend gap");
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "check", 2, ".g");
+}
+
+#[test_log::test]
+fn the_tail_of_a_case_two_bodies_deep_is_lowered_once() {
+    // `g = v` follows the outer `if`, and is lowered there only.
+    let src = r"
+        int g;
+        void f(int a, int b, int v) {
+            switch (a) { case 1: if (b) if (v) case 2: return; g = v; }
+        }";
+    let (prog, _dump) = program_from_string(src);
+    check_writes_to(&prog, "$globals.g", 1);
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 2, ".g");
 }
 
 #[test_log::test]
@@ -1939,7 +1987,7 @@ fn field_increment_is_update() {
 // A second store into the same aggregate creates a new SSA version of the receiver, and
 // the stored target must propagate across it to reach the indirect call: the transitive
 // rule gates on `paths(p_new)`, so a call's *receiver* path must be registered as a
-// program path (ctadl-ascent/src/index_engine/mod.rs):
+// program path (ctadl-index/src/index_engine/mod.rs):
 //     program_paths(p) <-- callee_info(_, _, _, p, _);
 //
 // Each test routes param 1 through `id` and back; a `return <- @p1` summary can only come
@@ -2046,6 +2094,20 @@ fn deref_paren_field_equivalent() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, ".x");
+}
+
+#[test_log::test]
+fn store_through_a_stepped_pointer_reaches_the_pointee() {
+    // `*out++ = *in++` must store through `out`, as `*out = *in` does.
+    let src = r"
+        void post(char *out, char *in) { *out++ = *in++; }
+        void pre(char *out, char *in)  { *++out = *in; }
+        void dec(char *out, char *in)  { *(out--) = *in; }
+        void loop(char *out, char *in, int n) { while (n--) *out++ = *in++; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    for f in ["post", "pre", "dec", "loop"] {
+        check_flow_in(&s, &si, f, 1, ".deref", 0, ".deref");
+    }
 }
 
 #[test_log::test]
@@ -2257,14 +2319,13 @@ fn field_store_then_load_roundtrips() {
 
 #[test_log::test]
 fn out_param_write_propagates() {
-    // The canonical C out-parameter taint shape: `*out = src` should propagate src (@p1) into the
-    // object reached through out (@p0). This is the highest-value pointer pattern for a taint tool.
+    // The canonical C out-parameter: `*out = src` carries src (@p1) into `@p0.deref`.
     let src = r"
         void f(int *out, int src) {
             *out = src;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, "");
+    check_flow(&s, 1, "", 0, ".deref");
 }
 
 #[test_log::test]
@@ -2499,6 +2560,45 @@ fn nonconstant_subscript_may_alias_constant() {
 }
 
 #[test_log::test]
+fn constant_pointer_offset_deref_is_a_subscript() {
+    // `*(a + 2)` is `a[2]`, so the store lands on `.[2].deref`, not `a[0]`
+    // (`nightly/tests/c/ptrarith.c`). Likewise `2 + a` and `a - 1`.
+    let src = r"
+        void plus(int *a, int src)  { *(a + 2) = src; }
+        void rplus(int *a, int src) { *(2 + a) = src; }
+        void minus(int *a, int src) { *(a - 1) = src; }
+        int load(int *a)            { return *(a + 2); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "plus", 1, "", 0, ".[2].deref");
+    check_no_flow_in(&s, &si, "plus", 1, "", 0, ".deref");
+    check_flow_in(&s, &si, "rplus", 1, "", 0, ".[2].deref");
+    check_flow_in(&s, &si, "minus", 1, "", 0, ".[-1].deref");
+    check_returns_param_in(&s, &si, "load", 0, ".[2].deref");
+    check_does_not_return_param_in(&s, &si, "load", 0, ".deref");
+}
+
+#[test_log::test]
+fn constant_pointer_offset_subscript_base_sums() {
+    // `(a + 1)[1]` is `a[2]`, and `(a + 1)[0]` is `a[1]`.
+    let src = r"
+        void two(int *a, int src) { (a + 1)[1] = src; }
+        void one(int *a, int src) { (a + 1)[0] = src; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "two", 1, "", 0, ".[2].deref");
+    check_flow_in(&s, &si, "one", 1, "", 0, ".[1].deref");
+}
+
+#[test_log::test]
+fn a_dereferenced_cast_of_minus_one_is_not_pointer_arithmetic() {
+    // `*((lp) - 1)` dereferences a cast of -1; `lp` is a type, not a pointer to offset.
+    let src = r"
+        typedef long *lp;
+        long f(void) { return *((lp) - 1); }";
+    let (_prog, dump) = program_from_string(src);
+    assert!(check_no_match(&dump, "$globals"), "{dump}");
+}
+
+#[test_log::test]
 #[ignore = "limitation: union member overlap is modeled only for variables declared with an explicit \
             `union_specifier` (see `union_member_write_aliases_other_member`, live). This uses a bare \
             `U u;` whose type is a `type_identifier` (typedef/undeclared union), which the collapse \
@@ -2644,10 +2744,7 @@ fn static_local_flows() {
 
 #[test_log::test]
 fn addr_of_local_write_through_taints_pointee() {
-    // Soundness: writing through a local's address must write the *pointee*. The
-    // value-copy model (`*p = src` -> `assign p = src`) is sound for reads but drops the
-    // write-back; resolving `*p` to its same-block pointee lowers the store to
-    // `assign x = src` -- a real def of `x` -- so a later `sink(x)` observes the taint.
+    // `*p = src` after a same-block `p = &x` stores `x.deref`.
     let src = r"
         int f() {
             int x = 0;
@@ -2657,14 +2754,12 @@ fn addr_of_local_write_through_taints_pointee() {
             return x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "x", ["src"], None); // *p = src  ==>  x = src
+    check_assign_or_update(&prog, "x.deref", ["src"], None); // *p = src  ==>  x.deref := src
 }
 
 #[test_log::test]
 fn addr_of_local_read_through_resolves_pointee() {
-    // Reading through the alias (`int *p = &x; int y = *p;`) resolves `*p` to `x`, so `y`
-    // reads the current `x` -- the read path is consistent with the write path (both route
-    // the dereference to the pointee).
+    // `int y = *p;` loads `x.deref`.
     let src = r"
         int f() {
             int x = source();
@@ -2673,15 +2768,12 @@ fn addr_of_local_read_through_resolves_pointee() {
             return y;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "y", ["x"], None); // y = *p  ==>  y = x
+    check_loads(&prog, "x.deref"); // y = *p  ==>  y = load x.deref
 }
 
 #[test_log::test]
 fn addr_of_alias_does_not_cross_basic_blocks() {
-    // The must-points-to is confined to the block the binding was recorded in: once
-    // control flow intervenes, `*p` falls back to the value-copy model rather than
-    // unsoundly resolving a possibly-stale alias across a branch. The post-if store writes
-    // `p`, and the only write to `x` is its initializer.
+    // The alias is per block: after the branch, `*p = src` stores to `p.deref`.
     let src = r"
         int f(int c) {
             int x = 0;
@@ -2692,12 +2784,63 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
             return x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "p", ["src"], None); // fallback: *p = src  ==>  p = src
+    check_assign_or_update(&prog, "p.deref", ["src"], None); // *p = src  ==>  p.deref := src
     assert_eq!(
-        count_writes_to(&prog, "x"),
+        count_writes_to(&prog, "x.deref"),
         1,
         "only `int x = 0` should write x; the post-if `*p = src` must not resolve to x across a block boundary"
     );
+    check_writes_to(&prog, "p", 1); // `int *p = &x` only
+}
+
+#[test_log::test]
+fn addr_of_a_struct_pointer_is_a_cell() {
+    // `struct S *p` is a pointer, not a record, so `init(&p, v)` writes `p` itself.
+    let src = r"
+        struct S { int f; };
+        void init(struct S **out, struct S *v) { *out = v; }
+        struct S *f(struct S *v) { struct S *p = 0; init(&p, v); return p; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_function_pointer_is_a_cell() {
+    // The declarator nearest `fp` is the pointer, so `fp` is a scalar: `pick(&fp)` sets it.
+    let src = r"
+        int id(int p) { return p; }
+        void pick(int (**out)(int)) { *out = id; }
+        int f(int x) { int (*fp)(int) = 0; pick(&fp); return fp(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_local_array_is_not_a_cell() {
+    // A local array names its own storage: `&a` is `a`, and `a[0]` loads `a.deref`.
+    let src = r"
+        void put(int *out, int v) { *out = v; }
+        int f(int v) { int a[4]; put((int *)&a, v); return a[0]; }";
+    let (prog, dump) = program_from_string(src);
+    let a = local_render(&prog, "f", "a");
+    assert!(check_match(&dump, &format!("load {a}.deref")), "{dump}");
+    assert!(check_no_match(&dump, &format!("{a}.deref.deref")), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn an_initializer_reaches_an_address_taken_pointer() {
+    // `char *p = q` stores `q` into `p`'s cell, as `p = q` does; likewise a function pointer.
+    let src = r"
+        void touch(char **pp);
+        char *f(char *q) { char *p = q; touch(&p); return p; }
+        void touch_fp(int (**pp)(int));
+        int id(int p) { return p; }
+        int g(int x) { int (*fp)(int) = id; touch_fp(&fp); return fp(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
 }
 
 #[test_log::test]
@@ -2914,7 +3057,13 @@ fn variable_port_selects_lowest_ssa_version() {
         endpoints: eps,
         formals,
         ..
-    } = build_query_endpoints(&matches.endpoints, &facts, &source_info.sites, &assign_like);
+    } = build_query_endpoints(
+        &matches.endpoints,
+        &facts,
+        &source_info.sites,
+        &assign_like,
+        &facts.call,
+    );
 
     // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
     // not a formal — no formal registered.
@@ -4409,7 +4558,7 @@ fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
         void c(struct T *t, int x) { *(int *)(t->q) = x; }";
     let (prog, _) = program_from_string(deref_of_field);
     check_loads(&prog, "@p0.q");
-    check_assign_or_update(&prog, "<t0>", ["@p1"], None);
+    check_assign_or_update(&prog, "<t0>.deref", ["@p1"], None);
 
     let thru_arithmetic = r"
         struct S { int f; };
@@ -4462,7 +4611,7 @@ fn pointer_returning_definition_is_collected() {
         "a `char *` definition must be collected\n{dump}"
     );
     check_return_arity(&prog, "dup", 1);
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[SharedFields]);
     check_block_count(&prog, 1);
 }
 
@@ -4488,7 +4637,7 @@ fn taint_returns_through_a_call_to_a_pointer_returning_function() {
     check_has_direct_call(&prog, "use", "dup");
     check_return_arity(&prog, "dup", 1);
     assert!(
-        check_no_match(&dump, "define dup(@p0[byref]) -> 0"),
+        check_no_match(&dump, "define dup(@p0[shared]) -> 0"),
         "`dup` must not be an arity-0 stub\n{dump}"
     );
     let (summary, info) = get_summary(prog).expect("must verify");
@@ -4693,7 +4842,7 @@ fn a_double_pointer_parameter_is_bound() {
     // Dropping `v` would take `w` down to `@p0`; both must bind at their own index.
     let src = r"void f(char **v, char *w) { char **a; char *b; a = v; b = w; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByRef]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (a, b) = (local_render(&prog, "f", "a"), local_render(&prog, "f", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0")),
@@ -4711,7 +4860,7 @@ fn main_binds_argc_and_argv_in_that_order() {
     // here too, because depth is not a list of cases.
     let src = r"int main(int argc, char **argv) { int n; char **a; n = argc; a = argv; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (n, a) = (
         local_render(&prog, "main", "n"),
         local_render(&prog, "main", "a"),
@@ -4724,7 +4873,7 @@ fn main_binds_argc_and_argv_in_that_order() {
 
     let deep = r"void g(char ***v, int n) { char ***a; int b; a = v; b = n; }";
     let (prog, dump) = program_from_string(deep);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (a, b) = (local_render(&prog, "g", "a"), local_render(&prog, "g", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0"))
@@ -4739,7 +4888,7 @@ fn taint_flows_through_a_double_pointer_parameter() {
     // that name and the summary would be empty.
     let src = r"char **argv_of(char **v) { return v; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[SharedFields]);
     check_return_arity(&prog, "argv_of", 1);
     assert!(
         check_match(&dump, "return @p0"),
@@ -4750,18 +4899,16 @@ fn taint_flows_through_a_double_pointer_parameter() {
 }
 
 #[test_log::test]
-fn a_parameter_is_by_reference_at_every_depth() {
-    // `ParameterType` is a property of the declarator's shape, not of how many layers the
-    // query happened to spell: anything that dereferences to storage the caller can see is
-    // `ByRef`, at any depth, and a plain value is `ByVal`.
-    for (src, want) in [
-        (r"void f(int a) { int x; x = a; }", ByVal),
-        (r"void f(char *a) { char *x; x = a; }", ByRef),
-        (r"void f(char **a) { char **x; x = a; }", ByRef),
-        (r"void f(char ***a) { char ***x; x = a; }", ByRef),
-        (r"void f(char *a[]) { char **x; x = a; }", ByRef),
-        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByRef),
-        (r"void f(struct S **a) { struct S **x; x = a; }", ByRef),
+fn every_parameter_is_shared_fields_at_every_depth() {
+    // Every parameter is `SharedFields`, at any pointer depth.
+    for src in [
+        r"void f(int a) { int x; x = a; }",
+        r"void f(char *a) { char *x; x = a; }",
+        r"void f(char **a) { char **x; x = a; }",
+        r"void f(char ***a) { char ***x; x = a; }",
+        r"void f(char *a[]) { char **x; x = a; }",
+        r"void f(char a[10][20]) { char *x; x = a[0]; }",
+        r"void f(struct S **a) { struct S **x; x = a; }",
     ] {
         let (prog, dump) = program_from_string(src);
         let got = get_only_function(&prog)
@@ -4770,7 +4917,11 @@ fn a_parameter_is_by_reference_at_every_depth() {
             .parameters
             .raw
             .as_slice();
-        assert_eq!(got, &[want], "wrong parameter type for `{src}`\n{dump}");
+        assert_eq!(
+            got,
+            &[SharedFields],
+            "wrong parameter type for `{src}`\n{dump}"
+        );
     }
 }
 
@@ -4779,10 +4930,10 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // The boundary in the other direction: `int (*cb)(int a, int b)` declares ONE
     // parameter, `cb` -- `a` and `b` belong to the type. Matching anywhere under the list
     // would give `g` four parameters and put `s` at index 3. A function pointer stays
-    // `ByVal`: what it points at is code, not storage.
+    // `SharedFields`: what it points at is code, not storage.
     let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let t = local_render(&prog, "g", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4793,7 +4944,7 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // parameter, and so is a pointer to a function returning a pointer.
     let typed = r"void h(int cb(int a), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(typed);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let t = local_render(&prog, "h", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4808,7 +4959,7 @@ fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
     // list, and `Argument(1)` means the second one. The slot is reserved; no name is bound.
     let src = r"void k(char **, int n) { int x; x = n; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let x = local_render(&prog, "k", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
@@ -4837,7 +4988,7 @@ fn a_nameless_value_parameter_would_hold_its_slot_too() {
     // parameter for every one of those and dropping this one, practice decides: real
     // definitions do not write it.
     let (prog, _dump) = program_from_string(r"void f(int, int n) { int x; x = n; }");
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
 }
 
 #[test_log::test]
@@ -4846,7 +4997,7 @@ fn a_variadic_marker_is_not_a_parameter() {
     // count it as a formal either.
     let src = r"void logmsg(const char *fmt, int level, ...) { int x; x = level; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let x = local_render(&prog, "logmsg", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
@@ -5087,14 +5238,13 @@ fn a_record_tag_is_not_a_type_name() {
 fn a_global_function_pointer_callee_is_not_a_cast() {
     // The other half of "`A` is a variable, not a type": a file-scope function pointer is
     // not in the scope tree, so what saves this one is that `hook` is not a type name
-    // anywhere in the unit. It lands as a direct call to `hook` -- a name, the same one
-    // the unparenthesized spelling produces; that is deliberate, see
-    // `a_bare_global_callee_is_still_a_name`.
+    // anywhere in the unit. It calls through `hook`, as `hook(x)` does.
     let src = r"
         void (*hook)(int);
         void fire(int x) { (hook)(x); }";
     let (prog, dump) = program_from_string(src);
-    check_has_direct_call(&prog, "fire", "hook");
+    assert!(direct_calls_in(&prog, "fire").is_empty(), "{dump}");
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
     assert!(
         function_named(&prog, "(hook)").is_none(),
         "the parentheses are not part of the name\n{dump}"
@@ -5116,6 +5266,81 @@ fn a_cast_shaped_call_is_not_a_frontend_gap() {
         }";
     let _strict = super::force_error_on_ast();
     super::parse_c_program(src).expect("a cast written as a call is not a frontend gap");
+}
+
+// ---------------------------------------------------------------------------------------
+// `(T) -1`, `(T) *p`, `(T) &x`: casts tree-sitter parses as binary expressions.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_cast_of_a_signed_operand_reads_no_type_name() {
+    // `(T) -1` is not `T - 1`: no global named `T` is read.
+    let src = r"
+        typedef long count_t;
+        long lit(void) { return (count_t) -1; }
+        long neg(long x) { return (count_t) - x; }
+        long pos(long x, long y) { return (count_t) + x - y; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        check_no_match(&dump, "$globals"),
+        "a type name is not a global\n{dump}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "neg", 0, "");
+    check_returns_param_in(&s, &si, "pos", 0, "");
+    check_returns_param_in(&s, &si, "pos", 1, "");
+}
+
+#[test_log::test]
+fn a_cast_of_a_dereference_reads_the_pointee() {
+    // `(T) *p + q` is `(T)(*p) + q`, not `T * p + q`.
+    let src = r"
+        typedef long T;
+        long first(long *p, long q) { return (T) *p + q; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(check_no_match(&dump, "$globals"), "{dump}");
+    check_loads(&prog, "@p0.deref");
+    let s = get_summary(prog).unwrap().0;
+    check_returns_param(&s, 0, ".deref");
+    check_does_not_return_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn a_cast_of_an_element_address_is_the_address() {
+    // `fill((bytes_t) &buf[off], v)` fills the caller's buffer.
+    let src = r"
+        typedef char *bytes_t;
+        void fill(char *d, char v) { d[0] = v; }
+        void at(char *buf, int off, char v) { fill((bytes_t) &buf[off], v); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "at", 2, "", 0, ".deref");
+}
+
+#[test_log::test]
+fn a_cast_of_a_scalars_address_is_its_cell() {
+    // `get((T) &w, v)` writes `w`, as `get(&w, v)` does.
+    let src = r"
+        typedef long *lp;
+        void get(long *out, long v) { *out = v; }
+        long f(long v) { long w = 0; get((lp) &w, v); return w; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn a_parenthesized_variable_minus_one_is_a_subtraction() {
+    // `(x) - 1` is a cast only for a type name, not a parameter, global or shadowing local.
+    let src = r"
+        typedef long T;
+        long g;
+        long param(long x) { return (x) - 1; }
+        long global(void) { return (g) - 1; }
+        long shadow(long v) { long T = v; return (T) - 1; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "param", 0, "");
+    check_returns_global_in(&s, &si, "global", ".g");
+    check_returns_param_in(&s, &si, "shadow", 0, "");
 }
 
 #[test_log::test]
@@ -5362,22 +5587,82 @@ fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
 }
 
 #[test_log::test]
-fn a_bare_global_callee_is_still_a_name() {
-    // The other side, and why the rule is the PATH: a plain `f(1)` and a call through a
-    // global function POINTER are both spelled as a bare identifier, and the frontend
-    // cannot tell them apart (`plain` is only declared). Both keep resolving by name, so a
-    // taint model naming `hook` still matches.
+fn a_call_through_a_global_function_pointer_is_indirect() {
+    // `hook` is a declared variable, so both spellings call through it.
     let src = r"
         void (*hook)(int);
         void plain(int x);
-        void fire(int x) { hook(x); plain(x); }";
+        void fire(int x) { hook(x); (*hook)(x); plain(x); }";
     let (prog, dump) = program_from_string(src);
-    check_has_direct_call(&prog, "fire", "hook");
-    check_has_direct_call(&prog, "fire", "plain");
-    assert!(
-        check_no_match(&dump, "funcptr-call"),
-        "a bare global name is still a direct call\n{dump}"
+    let callees: Vec<String> = direct_calls_in(&prog, "fire")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert_eq!(callees, vec!["plain".to_string()], "{dump}");
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        2,
+        "both spellings call through `hook`\n{dump}"
     );
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("not a frontend gap");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_a_global_function_pointer() {
+    // End to end: `set` installs `id` in the global, `fire` calls through it.
+    let src = r"
+        int id(int p) { return p; }
+        int (*hook)(int);
+        void set(void) { hook = id; }
+        int fire(int x) { set(); return hook(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_an_extern_function_pointer() {
+    // `hook` is declared `extern` here, defined and installed in another unit.
+    let lib = r"
+        int (*hook)(int);
+        void set_hook(int (*h)(int)) { hook = h; }";
+    let app = r"
+        extern int (*hook)(int);
+        void set_hook(int (*h)(int));
+        int id(int p) { return p; }
+        int fire(int x) { set_hook(id); return (*hook)(x); }";
+    let (prog, dump) = program_from_files(&[("lib.c", lib), ("app.c", app)]);
+    assert!(function_named(&prog, "hook").is_none(), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
+}
+
+#[test_log::test]
+fn a_function_pointer_in_another_unit_does_not_hide_a_function() {
+    // Per-unit evidence: `a.c`'s static variable `hook` says nothing about `b.c`'s `hook`.
+    let a = r"
+        static void (*hook)(int);
+        void arm(void (*h)(int)) { hook = h; }";
+    let b = r"
+        void hook(int x);
+        void fire(int x) { hook(x); }";
+    let (prog, _dump) = program_from_files(&[("a.c", a), ("b.c", b)]);
+    check_has_direct_call(&prog, "fire", "hook");
+}
+
+#[test_log::test]
+fn a_function_declared_through_a_function_typedef_is_called_directly() {
+    // `fn_t id;` declares the function `id`, spelled like a variable; its definition decides.
+    let src = r"
+        typedef int fn_t(int);
+        fn_t id;
+        int fire(int x) { return id(x); }
+        int id(int p) { return p; }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "id");
+    assert!(check_no_match(&dump, "funcptr-call"), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
 }
 
 #[test_log::test]

@@ -1,25 +1,17 @@
 //! End-to-end checks driving `ctadl` over a real-world Android app.
 //!
-//! These used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they ran on every `cargo
-//! test`. Four of them imported `xtask/tests/dex/com.noto_54.apk` -- a 6.4 MB app carrying two
-//! `classes*.dex` and some 50,000 functions -- and each paid the full ~13 s import to do it.
-//! Between them that was ~60 s of the ~77 s every test in the workspace spent executing, and
-//! taking them out halved `cargo test --workspace` end to end (33 s to 16 s on the machine this
-//! was measured on). That is a lot to charge every contributor for four cases that are not unit
-//! tests at all: they import a real artifact through the real pipeline and read the result back
-//! out of the store, which is the definition of end to end, and end-to-end work belongs in the
-//! nightly suite.
+//! They import `xtask/tests/dex/com.noto_54.apk` -- a 6.4 MB app carrying two `classes*.dex`
+//! and some 50,000 functions -- through the real pipeline and read the result back out of the
+//! store. That is end-to-end work, too slow for `cargo test`, so it belongs in the nightly suite.
 //!
-//! Moving them here changes what is actually asserted, for the better. The old tests called
-//! `ctadl_ascent::cli::import` and friends as a library, so nothing between `main.rs` and the
-//! library was covered -- `--skip-existing`, for one, is decided entirely in `main.rs` and had no
-//! test at all. These drive the shipped `ctadl` binary and assert against the store it writes and
-//! the SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
-//! scope.
+//! The checks drive the shipped `ctadl` binary and assert against the store it writes and the
+//! SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
+//! scope -- skipping an up-to-date re-import, for one, is decided entirely in `main.rs`.
 //!
-//! They also cost less than they did. The import is the expensive part and every check needs the
-//! same one, so it is done once and the checks read the same store, rather than each case
-//! importing the app for itself.
+//! The import takes ~13 s and the checks read one shared store, except
+//! `apk:manifest-and-intents`. It indexes, which takes longer than everything else here together,
+//! and writes the project `apk:model-check` asserts is absent, so it imports into a store of its
+//! own ([`run_index_check`]) and runs alongside the others.
 //!
 //! Nothing here needs a toolchain: the APK is prebuilt and checked in, so unlike the `dex:*` and
 //! `jvm:*` checks there is no javac, no `dx`, and no Ghidra in the loop. All it needs is `ctadl`.
@@ -48,20 +40,33 @@ pub const CHECKS: &[&str] = &[
     "apk:model-check",
     "apk:report",
     "apk:report-invariants",
-    "apk:skip-existing",
+    "apk:reimport",
+    INDEX_CHECK,
+    MERGED_CHECK,
 ];
 
-// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported:
-// xtask deliberately does not depend on the analyzer crate (see `xtask/Cargo.toml`), and these
-// checks are *about* the on-disk contract anyway -- a path that moves should fail them loudly
-// here rather than follow the analyzer silently.
+/// The checks [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
+const INDEX_CHECK: &str = "apk:manifest-and-intents";
+const MERGED_CHECK: &str = "apk:merged-classes";
+
+/// What the dex frontend's split of R8-merged classes does with this app, from its guardrail
+/// line: classes split, split classes it could not close (their merged methods stay live), classes
+/// over the id cap, and allocations of split classes with no known id, of all of them. Pinned
+/// because a regression in the split moves them. Re-pin from the `merged classes guardrail:` line
+/// of `RUST_LOG=info ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in
+/// the commit message which change moved them.
+const MERGED_CLASSES: (u64, u64, u64, u64, u64) = (140, 3, 0, 3, 667);
+
+// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
+// even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
+// that moves should fail them loudly here rather than follow the analyzer silently.
 const IMPORTS_DIR: &str = "imports";
 const PROJECTS_DIR: &str = "projects";
 const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "8";
+const IMPORT_FORMAT_VERSION: &str = "10";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -72,13 +77,18 @@ const MODELS: &str = r#"{"model_generators": [
    "model": {"sources": [{"kind": "k", "port": "Return"}]}}
 ]}"#;
 
-/// Import the app once, then run every check against that store. Returns named (check, outcome)
-/// pairs to fold into the regression report.
+/// Import the app once, then run every check but [`INDEX_CHECK`] against that store. Returns named
+/// (check, outcome) pairs to fold into the regression report.
 ///
 /// The import is shared, so a failure in it is not one failed check -- there is nothing for the
 /// others to look at. It is reported as `apk:import` failing and the rest are Skipped naming it,
-/// which reads as what happened rather than as four independent breakages.
+/// which reads as what happened rather than as several independent breakages.
 pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+    let shared: Vec<&str> = CHECKS
+        .iter()
+        .copied()
+        .filter(|c| ![INDEX_CHECK, MERGED_CHECK].contains(c))
+        .collect();
     let state = work.join("state");
     std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
     let store = state.join("ctadl");
@@ -88,7 +98,7 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
 
     if let Err(err) = import(work, &state, &apk, &[]) {
         let mut results = vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))];
-        results.extend(CHECKS.iter().skip(1).map(|name| {
+        results.extend(shared.iter().skip(1).map(|name| {
             (
                 (*name).to_string(),
                 Outcome::Skip("the shared import failed; see apk:import".to_string()),
@@ -99,21 +109,99 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
 
     // Positional, and in the order [`CHECKS`] names them -- the checks share a store, so the
     // order is part of the arrangement rather than a presentation choice. `apk:model-check` runs
-    // before `apk:skip-existing` because it wants the store exactly as the first import left it,
-    // and `apk:skip-existing` re-imports.
+    // before `apk:reimport` because it wants the store exactly as the first import left it,
+    // and `apk:reimport` re-imports.
     let outcomes = [
         to_outcome(check_import(work, &state, &store, &apk)),
         to_outcome(check_no_native_libs(&store)),
         to_outcome(check_model_check(work, &state, &store)),
         to_outcome(check_report(work, &state, &store)),
         to_outcome(check_report_invariants(work, &state)),
-        to_outcome(check_skip_existing(work, &state, &store, &apk)),
+        to_outcome(check_reimport(work, &state, &store, &apk)),
     ];
-    Ok(CHECKS
+    Ok(shared
         .iter()
         .map(|name| (*name).to_string())
         .zip(outcomes)
         .collect())
+}
+
+/// Import the app into a store of its own and run [`INDEX_CHECK`] against it. Apart from
+/// [`run_checks`], so the index, the slowest step here, runs alongside the other checks.
+pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+    let state = work.join("state");
+    std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
+    let store = state.join("ctadl");
+    let apk = std::fs::canonicalize(apk)
+        .with_context(|| format!("failed to canonicalize {}", apk.display()))?;
+    let log = match import_logged(work, &state, &apk) {
+        Ok(log) => log,
+        Err(err) => {
+            let why = format!("{err:#}");
+            return Ok(vec![
+                (INDEX_CHECK.to_string(), Outcome::Fail(why.clone())),
+                (MERGED_CHECK.to_string(), Outcome::Fail(why)),
+            ]);
+        }
+    };
+    Ok(vec![
+        (
+            INDEX_CHECK.to_string(),
+            to_outcome(check_manifest_and_intents(work, &state, &store)),
+        ),
+        (
+            MERGED_CHECK.to_string(),
+            to_outcome(check_merged_classes(&log)),
+        ),
+    ])
+}
+
+/// Like [`import`], with the log at `info` returned.
+fn import_logged(work: &Path, state: &Path, apk: &Path) -> Result<String> {
+    let apk = apk.to_string_lossy();
+    let mut cmd = command(
+        work,
+        state,
+        &["import", "-l", "apk", "--name", IMPORT, &apk],
+    )?;
+    cmd.env("RUST_LOG", "info");
+    let out = cmd.output().context("running ctadl import")?;
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    ensure!(out.status.success(), "ctadl import failed:\n{log}");
+    Ok(log)
+}
+
+/// The split of R8-merged classes still works on this app: its guardrail line reports
+/// [`MERGED_CLASSES`], and the guardrail warned about nothing.
+fn check_merged_classes(log: &str) -> Result<()> {
+    let re = regex::Regex::new(
+        r"merged classes guardrail: (\d+) split, (\d+) not closed, (\d+) over \d+ ids, (\d+) of (\d+) allocations",
+    )?;
+    let caps = re
+        .captures(log)
+        .context("the import logged no `merged classes guardrail:` line")?;
+    let n = |i: usize| caps[i].parse::<u64>().unwrap_or(u64::MAX);
+    let got = (n(1), n(2), n(3), n(4), n(5));
+    ensure!(
+        got == MERGED_CLASSES,
+        "merged classes (split, not closed, over the id cap, allocations with no known id, \
+         allocations): the import says {got:?}, this APK has {MERGED_CLASSES:?}. Re-pin \
+         MERGED_CLASSES in xtask/src/apk.rs if a frontend change really moved them"
+    );
+    let warnings: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("merged classes:") && l.to_lowercase().contains("warn"))
+        .collect();
+    ensure!(
+        warnings.is_empty(),
+        "the merged-classes guardrail warned:\n{}",
+        warnings.join("\n")
+    );
+    Ok(())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -149,8 +237,8 @@ fn check_import(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<(
         config["artifact_path"],
         apk.display()
     );
-    // Recorded by `main.rs` after a successful import, and what `--skip-existing` reads.
-    // `apk:skip-existing` pins what it is *for*; this pins that it is written at all.
+    // Recorded by `main.rs` after a successful import, and what a re-import reads to skip.
+    // `apk:reimport` pins what it is *for*; this pins that it is written at all.
     ensure!(
         config["hash"].as_str().is_some_and(|h| !h.is_empty()),
         "import config records no artifact hash: {}",
@@ -213,7 +301,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// `ctadl query` would happily use.
 ///
 /// The synthetic-program half of this -- what `check_programs` decides, given programs and no
-/// store -- stays in `ctadl-ascent/tests/model_check.rs`, which needs no artifact and runs in
+/// store -- stays in `ctadl-ascent/tests/integration/model_check.rs`, which needs no artifact and runs in
 /// milliseconds. What is here is the half that needs a real import.
 fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
     let models = work.join("models.json");
@@ -313,10 +401,10 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 /// by running `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk` followed by
 /// `ctadl report app --format json` and reading the four numbers back out, and say in the
 /// commit message which frontend change moved them.
-const REPORT_TOTAL_SITES: u64 = 178_310;
-const REPORT_VIRTUAL_SITES: u64 = 99_551;
-const REPORT_CHA_EDGES: u64 = 2_080_404;
-const REPORT_RTA_EDGES: u64 = 2_026_676;
+const REPORT_TOTAL_SITES: u64 = 178_939;
+const REPORT_VIRTUAL_SITES: u64 = 99_828;
+const REPORT_CHA_EDGES: u64 = 2_119_933;
+const REPORT_RTA_EDGES: u64 = 2_055_105;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.
@@ -339,9 +427,9 @@ const REPORT_SECTIONS: &[&str] = &[
 /// instruction, and every other assertion here would still pass. The three sum to
 /// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
 const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
-    ("virtual", 76_791),
-    ("interface", 21_153),
-    ("super", 1_607),
+    ("virtual", 77_014),
+    ("interface", 21_200),
+    ("super", 1_614),
     ("unknown", 0),
 ];
 
@@ -759,24 +847,24 @@ fn report_json(work: &Path, state: &Path) -> Result<Value> {
         .with_context(|| format!("`ctadl report --format json` emitted invalid JSON:\n{text}"))
 }
 
-/// `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one.
+/// A re-import skips an unchanged artifact, and only an unchanged one, unless `--force` is given.
 ///
-/// Both halves are asserted, because either alone is satisfied by a bug. A flag that always
-/// skips passes the first; a flag that never skips passes the second. What distinguishes them is
-/// the recorded content hash, so the negative half is produced by falsifying exactly that: the
+/// Every half is asserted, because any one alone is satisfied by a bug. Always skipping passes
+/// the first; never skipping passes the second and third. What distinguishes the first two is the
+/// recorded content hash, so the changed case is produced by falsifying exactly that: the
 /// artifact and its path are untouched and only the stored hash is wrong, which is the state a
 /// changed artifact leaves behind.
 ///
 /// The observable is the program bitcode's modification time. A skipped import does no work, so
 /// it cannot rewrite it; a performed import always does.
-fn check_skip_existing(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<()> {
+fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<()> {
     let program = program_path(store);
     let before = modified(&program)?;
 
-    import(work, state, apk, &["--skip-existing"])?;
+    import(work, state, apk, &[])?;
     ensure!(
         modified(&program)? == before,
-        "a --skip-existing re-import of an unchanged artifact rewrote {}",
+        "a re-import of an unchanged artifact rewrote {}",
         program.display()
     );
 
@@ -788,17 +876,106 @@ fn check_skip_existing(work: &Path, state: &Path, store: &Path, apk: &Path) -> R
     std::fs::write(&path, serde_json::to_vec(&config)?)
         .with_context(|| format!("writing {}", path.display()))?;
 
-    import(work, state, apk, &["--skip-existing"])?;
+    import(work, state, apk, &[])?;
+    let reimported = modified(&program)?;
     ensure!(
-        modified(&program)? != before,
-        "a --skip-existing re-import skipped an artifact whose recorded hash does not match, \
-         leaving {} untouched",
+        reimported != before,
+        "a re-import skipped an artifact whose recorded hash does not match, leaving {} untouched",
         program.display()
     );
     // And the import it performed recorded the true hash again, so the next one can skip.
     ensure!(
         read_config(store)?["hash"] == real_hash,
         "the re-import did not record the artifact's hash"
+    );
+
+    // `--force` re-imports even though the recorded hash now matches.
+    import(work, state, apk, &["--force"])?;
+    ensure!(
+        modified(&program)? != reimported,
+        "a --force re-import of an unchanged artifact left {} untouched",
+        program.display()
+    );
+    Ok(())
+}
+
+/// The imported manifest has the shape this app's `AndroidManifest.xml` has, and indexing the app
+/// links the intents it sends to the components that receive them.
+///
+/// The counts are a property of this APK, of the manifest decoder, and of intent resolution, so
+/// a deliberate change to any of them moves them; re-pin from `ctadl index app` and say in the commit
+/// message which change moved them. The index is the expensive part -- about two minutes on this
+/// app in a debug build, which is why this lives here and not under `cargo test`. It runs on every
+/// core (`-j 0`); the parallel engine derives the same relations as the serial one.
+fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {
+    use ctadl_ascent::facts::IntentPairKind;
+    use ctadl_ascent::languages::android_manifest::AndroidManifest;
+
+    let manifest = AndroidManifest::load(import_dir(store))
+        .with_context(|| format!("loading the manifest under {}", import_dir(store).display()))?;
+    ensure!(
+        manifest.nodes.len() == 180,
+        "expected 180 manifest nodes, found {}",
+        manifest.nodes.len()
+    );
+    ensure!(
+        manifest.attrs.len() == 302,
+        "expected 302 manifest attributes, found {}",
+        manifest.attrs.len()
+    );
+    let components = manifest.components();
+    ensure!(
+        components.len() == 35,
+        "expected 35 components, found {}",
+        components.len()
+    );
+    let aliases = components
+        .iter()
+        .filter(|c| c.tag == "activity-alias")
+        .count();
+    ensure!(
+        aliases == 10,
+        "expected 10 activity-aliases, found {aliases}"
+    );
+    ensure!(
+        components.iter().any(|c| {
+            c.descriptor.as_deref() == Some("Lcom/noto/app/AppActivity;")
+                && c.exported == Some(true)
+                && c.has_intent_filter
+        }),
+        "AppActivity is not an exported component with an intent filter"
+    );
+    ensure!(
+        components.iter().any(|c| {
+            c.descriptor.as_deref() == Some("Lcom/noto/app/note/NoteReminderReceiver;")
+                && c.exported == Some(false)
+        }),
+        "NoteReminderReceiver is not an unexported component"
+    );
+
+    exec::run_checked(
+        command(work, state, &["index", "-j", "0", IMPORT])?,
+        "ctadl index",
+    )?;
+    let index = store.join(PROJECTS_DIR).join(IMPORT).join("index");
+    let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index)
+        .with_context(|| format!("loading intent pairs from {}", index.display()))?;
+    let explicit = pairs
+        .iter()
+        .filter(|(_, _, _, kind)| *kind == IntentPairKind::Explicit)
+        .count();
+    let implicit = pairs.len() - explicit;
+    ensure!(
+        explicit == 5 && implicit == 1,
+        "expected 5 explicit and 1 implicit intent pair, found {explicit} and {implicit}: {pairs:?}"
+    );
+    let calls = ctadl_ascent::facts::schema::call::try_load(&index)
+        .with_context(|| format!("loading calls from {}", index.display()))?;
+    ensure!(
+        calls.len() >= pairs.len(),
+        "the final call graph ({} calls) should include the {} derived intent calls",
+        calls.len(),
+        pairs.len()
     );
     Ok(())
 }
@@ -862,12 +1039,18 @@ fn modified(path: &Path) -> Result<SystemTime> {
 mod tests {
     use super::*;
 
-    /// [`run_checks`] fills [`CHECKS`] positionally, so a check added to one and not the other
-    /// would silently drop a result or mislabel one. The count is what a compiler cannot catch.
+    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] and [`MERGED_CHECK`]
+    /// positionally, so a check added to one and not the other would silently drop a result or
+    /// mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 6, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 8, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
+        assert_eq!(
+            CHECKS[CHECKS.len() - 2..],
+            [INDEX_CHECK, MERGED_CHECK],
+            "run_index_check's checks are last"
+        );
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),
             "the family prefix is what --filter selects on: {CHECKS:?}"

@@ -7,15 +7,12 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 handled one level up, in `ctadl-frontends`.
 */
 
-use std::fs::File;
-use std::io::{self, Read};
 use std::path::Path;
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
-use streaming_iterator::StreamingIterator; // needed for DataFlow.dest.owned()
+use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -25,10 +22,30 @@ use ctadl_ir::mir::call::{
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
 use dex_reader::error::DexError;
-use dex_reader::instructions::{DataFlow, Instruction, Reg};
+use dex_reader::instructions::{DataFlow, Instruction, Reg, TypeIdx};
 use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
 use dex_reader::{APKParser, DexParser};
+
+mod merged;
+
+/// The statements in a function's body.
+fn statement_count(f: &FunctionData) -> usize {
+    f.blocks
+        .iter_enumerated()
+        .map(|(_, b)| b.statements.len())
+        .sum()
+}
+
+/// Gives `fdat` a body that returns at once, with no flows.
+fn empty_body(fdat: &mut FunctionData) {
+    fdat.return_type = ReturnType { arity: 2 };
+    let block = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+    let empty = Exp::new_bytes(Vec::new());
+    fdat.blocks[block].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+        args: smallvec![empty.clone(), empty],
+    }));
+}
 
 #[cfg(test)]
 mod tests;
@@ -43,22 +60,22 @@ pub struct ApkImport {
 /// Imports the Dex code out of an APK.
 ///
 /// An APK with no `classes*.dex` yields an empty program rather than an error: a split
-/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK, as
-/// distributed by APKPure and friends -- puts the native libraries in one APK and the
-/// Dex in another, and the native half is still worth importing on its own. Callers that
-/// need to distinguish the two check [`ApkImport::dex_count`].
+/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK -- puts the
+/// native libraries in one APK and the Dex in another, and the native half is still worth
+/// importing on its own. Callers that need to distinguish the two check
+/// [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
     let parser =
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
+    let parsers = parser.dex_parsers_with_filenames();
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    ctx.merged = merged::MergedClasses::scan(&parsers.iter().map(|(_, p)| p).collect::<Vec<_>>());
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
-    for (sub_artifact_id, (dex_file_name, parser)) in
-        parser.dex_parsers_with_filenames().into_iter().enumerate()
-    {
+    for (sub_artifact_id, (dex_file_name, parser)) in parsers.into_iter().enumerate() {
         // This will not refer to a real file path, but a path "inside" the apk. But this is OK,
         // since for ArtifactEncoding::Binary, format won't read the file on this path.
         let key = ArtifactKey {
@@ -79,11 +96,12 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let file = file.as_ref();
     let data =
-        read_file_bytes(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
+        std::fs::read(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
     let parser =
         DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    ctx.merged = merged::MergedClasses::scan(&[&parser]);
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
         sub_artifact_id: 0,
@@ -96,24 +114,20 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     ctx.finish(builders)
 }
 
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_java(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
-}
-
+/// The translation of dex files into CTADL IR.
+///
+/// The expectation is to call [`Context::new`], then [`Context::process`] possibly many times,
+/// then [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
+/// files and open programs, programs that call functions for which we don't have a definition.
+///
+/// During `process`, the context records methods that are "external," meaning we haven't so
+/// far seen a definition for them. We also stub them out in the program. Since we might see a
+/// definition for them during a later call to process, we also clear those entries when we
+/// process the defined methods. We record the VMT entry for such methods in the
+/// [`Context::ext`] member.
+///
+/// During `finish`, any methods still-undefined are added to the VMT using what we recorded
+/// during processing.
 #[derive(Debug)]
 struct Context {
     counter: Counter,
@@ -121,13 +135,19 @@ struct Context {
     catch_result: Option<VariableRef>,
     call_to: HashSet<MethodId>,
     defined: HashMap<String, FunctionIdx>,
-    // vmt entries for externs so far
+    /// VMT entries for the externs seen so far.
     ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
-    /// The class whose methods are being lowered, and its direct parents. Set once per class in
-    /// [`Context::process`] and read by [`Context::decode_call`] to fill in `super_start`: an
-    /// `invoke-super` begins lookup at the enclosing class's superclass, which the instruction
-    /// itself does not name.
+    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
+    /// The program's class-merged classes; see [`merged`].
+    merged: merged::MergedClasses,
+    /// The class each `new-instance` in the method being lowered allocates instead of the one it
+    /// names, by pc.
+    retag: HashMap<usize, String>,
+    /// The pc of the instruction being lowered.
+    pc: usize,
+    /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
+    clone_statements: usize,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -140,20 +160,6 @@ struct EnclosingClass {
 }
 
 impl Context {
-    /// The context manages translation from dex into CTADL IR.
-    ///
-    /// The expectation is to call `new`, then [`Context::process`] possibly many times, then
-    /// [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
-    /// files and open programs, programs that call functions for which we don't have a definition.
-    ///
-    /// During `process`, the context records methods that are "external," meaning we haven't so
-    /// far seen a definition for them. We also stub them out in the program. Since we might see a
-    /// definition for them during a later call to process, we also clear those entries when we
-    /// process the defined methods. We record the VMT entry for such methods in the
-    /// [`Context::ext`] member.
-    ///
-    /// During `finish`, any methods still-undefined are added to the VMT using what we recorded
-    /// during processing.
     fn new() -> Self {
         Self {
             counter: Default::default(),
@@ -163,6 +169,10 @@ impl Context {
             defined: Default::default(),
             ext: Default::default(),
             enclosing: None,
+            merged: Default::default(),
+            retag: Default::default(),
+            pc: 0,
+            clone_statements: 0,
         }
     }
 
@@ -173,9 +183,8 @@ impl Context {
         &mut self,
         parser: &DexParser<'_>,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Iterate over all classes.
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
             log::trace!("Class: {}", class_name);
@@ -270,15 +279,10 @@ impl Context {
                         methods, natives, ..
                     } = &mut builders.vmt
                     {
-                        // In `methods` because CHA builds its resolvent map from that column:
-                        // without a row there, an `invoke-virtual` of a native method resolves
-                        // to nothing and the call site is lost -- bridge or no bridge. (A
-                        // `static` native is reached by `invoke-static`, which resolves by name
-                        // and never consults the table.) The jvm frontend lists native methods
-                        // there for the same reason, because it walks every declared method.
+                        // A row in both columns (see `natives` on `VirtualMethodTable::Java`).
+                        // A `static` native is reached by `invoke-static`, which resolves by
+                        // name and never consults the table.
                         methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
-                        // ... and in `natives` because that is where the JNI bridge looks, and
-                        // it is the only column carrying the staticness the bridge needs.
                         natives.push((
                             cls,
                             simple,
@@ -289,8 +293,6 @@ impl Context {
                     }
                 }
 
-                // Handle instructions
-
                 // Parse the instruction stream for the method.
                 if let Some(code) = parser.method_code(enc)? {
                     // ---------------------------------------------------------------------
@@ -300,10 +302,10 @@ impl Context {
 
                     if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                         methods.push((
-                            JavaClass(class_name.into()),
-                            JavaSimpleName(method_name.into()),
-                            JavaSignature(method_descr.into()),
-                            JavaMethod(sig.into()),
+                            JavaClass(class_name.as_str().into()),
+                            JavaSimpleName(method_name.as_str().into()),
+                            JavaSignature(method_descr.as_str().into()),
+                            JavaMethod(sig.as_str().into()),
                         ));
                     }
                     // ---------------------------------------------------------------------
@@ -313,7 +315,7 @@ impl Context {
                     if !ACC_STATIC.is_set_in(enc.access_flags)
                         && !ACC_NATIVE.is_set_in(enc.access_flags)
                     {
-                        fdat.params.push(ParameterType::ByRef);
+                        fdat.params.push(ParameterType::Shared);
                     }
                     for param_idx in param_types.into_iter() {
                         let ty = parser.get_type(param_idx.into()).unwrap();
@@ -326,145 +328,40 @@ impl Context {
                         };
                         for _ in 0..reg_count {
                             fdat.params.push(if !descr.starts_with("L") {
-                                ParameterType::ByVal
+                                ParameterType::SharedFields
                             } else {
-                                ParameterType::ByRef
+                                ParameterType::Shared
                             });
                         }
                     }
 
-                    let items = decode_code_item(&code);
-                    // Compute Dex basic blocks.
-                    let bb_vec = basic_blocks(&code, &items);
-
-                    // Compute successors for each basic block using dex-reader.
-                    let block_successors_vec = block_successors(&code, &items);
-
-                    // Ensure MIR has a block for each Dex basic block.
-                    for _ in &bb_vec {
-                        fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+                    self.retag = self.merged.retags(&sig, None);
+                    if self
+                        .merged
+                        .class(&class_name)
+                        .is_some_and(|c| c.empties_union(&sig))
+                    {
+                        empty_body(fdat);
+                    } else {
+                        self.lower_code(
+                            parser,
+                            &code,
+                            &artifact_key,
+                            &mut builders.source_info_builder,
+                            fdat,
+                            &HashMap::new(),
+                        )?;
                     }
-
-                    let mut offset_to_bb: HashMap<usize, BasicBlockIdx> = HashMap::new();
-                    for (i, bb) in bb_vec.iter().enumerate() {
-                        let offset = items[bb.start].offset();
-                        offset_to_bb.insert(offset, BasicBlockIdx::new(i));
-                    }
-
-                    // All Java functions return 2 values: (normal_return, exception_return)
-                    fdat.return_type = ReturnType { arity: 2 };
-
-                    // Populate each MIR block.
-                    for (i, bb) in bb_vec.iter().enumerate() {
-                        let block_idx = BasicBlockIdx::new(i);
-                        let range = &items[bb.start..bb.end];
-                        for dci in range {
-                            if let DecodedCodeItem::Instruction { inst, .. } = dci {
-                                let item_offset = code.absolute_offset(dci);
-                                let source_info =
-                                    SourceInfo::new(builders.source_info_builder.span_for(
-                                        artifact_key.clone(),
-                                        item_offset.try_into().unwrap(),
-                                        SpanLen::ByteLen(2),
-                                    ));
-                                if let Some(mut stmt) =
-                                    self.decode_call(parser, &code, inst, &mut fdat.locals)
-                                {
-                                    stmt.source_info = source_info;
-                                    fdat.blocks[block_idx].push_back(stmt);
-                                } else {
-                                    for mut stmt in self.dataflow_to_assign(
-                                        parser,
-                                        &code,
-                                        inst,
-                                        &mut fdat.locals,
-                                    )? {
-                                        stmt.source_info = source_info;
-                                        fdat.blocks[block_idx].push_back(stmt);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Determine the terminator for this block using the last instruction in the block.
-                        let last_inst = range.iter().rev().find_map(|dci| {
-                            if let DecodedCodeItem::Instruction { inst, .. } = dci {
-                                Some(inst)
-                            } else {
-                                None
-                            }
-                        });
-
-                        let term = if let Some(inst) = last_inst {
-                            // Return instructions end the function.
-                            match inst {
-                                // Throw instruction - jump to handlers if protected, else return exception
-                                Instruction::Throw(f) => {
-                                    let succ_usizes = &block_successors_vec[i];
-                                    let succs = succ_usizes
-                                        .iter()
-                                        .map(|&b| BasicBlockIdx::new(b))
-                                        .collect::<SmallVec<[BasicBlockIdx; 4]>>();
-
-                                    if succs.is_empty() {
-                                        let throw_exp = Exp::from(AccessPath::without_fields(
-                                            reg_to_var(&code, f.a, &mut fdat.locals),
-                                        ));
-                                        let empty_exp = Exp::new_bytes(Vec::new());
-                                        TerminatorKind::Return {
-                                            args: smallvec![empty_exp, throw_exp],
-                                        }
-                                    } else {
-                                        TerminatorKind::Goto { targets: succs }
-                                    }
-                                }
-                                // Return with a value (register)
-                                Instruction::Return(reg)
-                                | Instruction::ReturnWide(reg)
-                                | Instruction::ReturnObject(reg) => {
-                                    let ret_exp = Exp::from(AccessPath::without_fields(
-                                        reg_to_var(&code, reg.a, &mut fdat.locals),
-                                    ));
-                                    let empty_exp = Exp::new_bytes(Vec::new());
-                                    TerminatorKind::Return {
-                                        args: smallvec![ret_exp, empty_exp],
-                                    }
-                                }
-                                // Void return
-                                Instruction::ReturnVoid(_) => {
-                                    let empty_exp = Exp::new_bytes(Vec::new());
-                                    TerminatorKind::Return {
-                                        args: smallvec![empty_exp.clone(), empty_exp],
-                                    }
-                                }
-                                // Compute successors for this block using the precalculated vector.
-                                _ => {
-                                    let succ_usizes = &block_successors_vec[i];
-                                    let succs = succ_usizes
-                                        .iter()
-                                        .map(|&b| BasicBlockIdx::new(b))
-                                        .collect::<SmallVec<[BasicBlockIdx; 4]>>();
-
-                                    if succs.is_empty() {
-                                        // No successors - this block should return
-                                        let empty_exp = Exp::new_bytes(Vec::new());
-                                        TerminatorKind::Return {
-                                            args: smallvec![empty_exp.clone(), empty_exp],
-                                        }
-                                    } else {
-                                        TerminatorKind::Goto { targets: succs }
-                                    }
-                                }
-                            }
-                        } else {
-                            // Empty block or block with only payloads – create a return.
-                            let empty_exp = Exp::new_bytes(Vec::new());
-                            TerminatorKind::Return {
-                                args: smallvec![empty_exp.clone(), empty_exp],
-                            }
-                        };
-                        fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
-                    }
+                    let params = fdat.params.clone();
+                    self.split_merged(
+                        parser,
+                        &code,
+                        &artifact_key,
+                        builders,
+                        &sig,
+                        (&class_name, &method_name, &method_descr),
+                        &params,
+                    )?;
                 } else {
                     // Method without code – no basic blocks should be generated.
                     // We just set the return type.
@@ -475,38 +372,27 @@ impl Context {
 
         // define extern funcs and parameters/return value
         {
-            let funcs: HashSet<String> = builders
-                .program
-                .functions
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
-            let mut call_to: Vec<_> = self.call_to.iter().cloned().collect();
-            // Clear so that multiple calls to 'process' don't work on old data
-            self.call_to.clear();
+            // Drained so that a later `process` does not work on old data.
+            let mut call_to: Vec<_> = self.call_to.drain().collect();
             call_to.sort();
-            for extern_id in call_to.drain(..) {
-                let full_sig = parser
+            for extern_id in call_to {
+                let java_sig = parser
                     .method_signature(&extern_id)
                     .err_context(|| format!("method_signature: {extern_id:?}"))?;
-                if funcs.contains(&full_sig) {
-                    continue;
-                }
-                if self.defined.contains_key(&full_sig) {
+                if self.defined.contains_key(&java_sig) {
                     continue;
                 }
                 let fidx = builders.program.new_function();
-                self.defined.insert(full_sig.clone(), fidx);
+                self.defined.insert(java_sig.clone(), fidx);
                 let fdat = &mut builders.program.functions[fidx];
-                let java_sig = parser.method_signature(&extern_id)?;
                 fdat.name = java_sig.clone();
                 for ty in parser.method_parameters(&extern_id)?.types {
                     let ty = parser.get_type(ty.into()).unwrap();
                     let descr = parser.get_string(ty.descriptor_idx.try_into().unwrap())?;
                     fdat.params.push(if !descr.starts_with("L") {
-                        ParameterType::ByVal
+                        ParameterType::SharedFields
                     } else {
-                        ParameterType::ByRef
+                        ParameterType::Shared
                     });
                 }
                 // All functions return 2 values: (normal_return, exception_return)
@@ -529,9 +415,247 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
+    /// Lowers one method body into `fdat`, whose parameters are already set. `narrow` maps the pc
+    /// of a switch to the pc it must jump to, for a clone of a merged class's method.
+    fn lower_code(
+        &mut self,
+        parser: &DexParser<'_>,
+        code: &CodeItem,
+        artifact_key: &ArtifactKey,
+        source_info_builder: &mut source_info::SourceInfoBuilder,
+        fdat: &mut FunctionData,
+        narrow: &HashMap<usize, usize>,
+    ) -> Result<(), Error> {
+        let items = decode_code_item(code);
+        // Compute Dex basic blocks.
+        let bb_vec = basic_blocks(code, &items);
+
+        // Compute successors for each basic block using dex-reader.
+        let block_successors_vec = block_successors(code, &items);
+
+        // Ensure MIR has a block for each Dex basic block.
+        for _ in &bb_vec {
+            fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+        }
+
+        let mut offset_to_bb: HashMap<usize, BasicBlockIdx> = HashMap::new();
+        for (i, bb) in bb_vec.iter().enumerate() {
+            let offset = items[bb.start].offset();
+            offset_to_bb.insert(offset, BasicBlockIdx::new(i));
+        }
+
+        // All Java functions return 2 values: (normal_return, exception_return)
+        fdat.return_type = ReturnType { arity: 2 };
+
+        // Populate each MIR block.
+        for (i, bb) in bb_vec.iter().enumerate() {
+            let block_idx = BasicBlockIdx::new(i);
+            let range = &items[bb.start..bb.end];
+            for dci in range {
+                if let DecodedCodeItem::Instruction { inst, offset } = dci {
+                    self.pc = *offset;
+                    let item_offset = code.absolute_offset(dci);
+                    let source_info = SourceInfo::new(source_info_builder.span_for(
+                        artifact_key.clone(),
+                        item_offset.try_into().unwrap(),
+                        SpanLen::ByteLen(2),
+                    ));
+                    if let Some(mut stmt) = self.decode_call(parser, code, inst, &mut fdat.locals) {
+                        stmt.source_info = source_info;
+                        fdat.blocks[block_idx].push_back(stmt);
+                    } else {
+                        for mut stmt in
+                            self.dataflow_to_assign(parser, code, inst, &mut fdat.locals)?
+                        {
+                            stmt.source_info = source_info;
+                            fdat.blocks[block_idx].push_back(stmt);
+                        }
+                    }
+                }
+            }
+
+            // Determine the terminator for this block using the last instruction in the block.
+            let last = range.iter().rev().find_map(|dci| {
+                if let DecodedCodeItem::Instruction { inst, offset } = dci {
+                    Some((*offset, inst))
+                } else {
+                    None
+                }
+            });
+            let last_inst = last.map(|(_, inst)| inst);
+            let arm = last
+                .and_then(|(pc, _)| narrow.get(&pc))
+                .and_then(|target| offset_to_bb.get(target));
+
+            let term = if let Some(&arm) = arm {
+                TerminatorKind::Goto {
+                    targets: smallvec![arm],
+                }
+            } else if let Some(inst) = last_inst {
+                // Return instructions end the function.
+                match inst {
+                    // Throw instruction - jump to handlers if protected, else return exception
+                    Instruction::Throw(f) => {
+                        let succ_usizes = &block_successors_vec[i];
+                        let succs = succ_usizes
+                            .iter()
+                            .map(|&b| BasicBlockIdx::new(b))
+                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+
+                        if succs.is_empty() {
+                            let throw_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                                code,
+                                f.a,
+                                &mut fdat.locals,
+                            )));
+                            let empty_exp = Exp::new_bytes(Vec::new());
+                            TerminatorKind::Return {
+                                args: smallvec![empty_exp, throw_exp],
+                            }
+                        } else {
+                            TerminatorKind::Goto { targets: succs }
+                        }
+                    }
+                    // Return with a value (register)
+                    Instruction::Return(reg)
+                    | Instruction::ReturnWide(reg)
+                    | Instruction::ReturnObject(reg) => {
+                        let ret_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                            code,
+                            reg.a,
+                            &mut fdat.locals,
+                        )));
+                        let empty_exp = Exp::new_bytes(Vec::new());
+                        TerminatorKind::Return {
+                            args: smallvec![ret_exp, empty_exp],
+                        }
+                    }
+                    // Void return
+                    Instruction::ReturnVoid(_) => {
+                        let empty_exp = Exp::new_bytes(Vec::new());
+                        TerminatorKind::Return {
+                            args: smallvec![empty_exp.clone(), empty_exp],
+                        }
+                    }
+                    // Compute successors for this block using the precalculated vector.
+                    _ => {
+                        let succ_usizes = &block_successors_vec[i];
+                        let succs = succ_usizes
+                            .iter()
+                            .map(|&b| BasicBlockIdx::new(b))
+                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+
+                        if succs.is_empty() {
+                            // No successors - this block should return
+                            let empty_exp = Exp::new_bytes(Vec::new());
+                            TerminatorKind::Return {
+                                args: smallvec![empty_exp.clone(), empty_exp],
+                            }
+                        } else {
+                            TerminatorKind::Goto { targets: succs }
+                        }
+                    }
+                }
+            } else {
+                // Empty block or block with only payloads – create a return.
+                let empty_exp = Exp::new_bytes(Vec::new());
+                TerminatorKind::Return {
+                    args: smallvec![empty_exp.clone(), empty_exp],
+                }
+            };
+            fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
+        }
+        Ok(())
+    }
+
+    /// Clones method `sig` of a class-merged class once per class id, into the class split off
+    /// for that id, with each switch on the id narrowed to that id's arm. See [`merged`].
+    #[allow(clippy::too_many_arguments)]
+    fn split_merged(
+        &mut self,
+        parser: &DexParser<'_>,
+        code: &CodeItem,
+        artifact_key: &ArtifactKey,
+        builders: &mut ProgramInfoBuilder,
+        sig: &str,
+        (class, simple, descr): (&str, &str, &str),
+        params: &Params,
+    ) -> Result<(), Error> {
+        let Some(class_info) = self.merged.class(class) else {
+            return Ok(());
+        };
+        let Some(switches) = class_info.switches(sig) else {
+            return Ok(());
+        };
+        let switches = switches.to_vec();
+        let ids: Vec<i64> = class_info.ids.iter().copied().collect();
+        for id in ids {
+            let split = merged::split_class(class, id);
+            let split_sig = merged::split_method(sig, &split);
+            self.counter.reset();
+            self.retag = self.merged.retags(sig, Some(id));
+            let fidx = builders.program.new_function();
+            self.defined.insert(split_sig.clone(), fidx);
+            let fdat = &mut builders.program[fidx];
+            fdat.name = split_sig.clone();
+            fdat.params = params.clone();
+            self.lower_code(
+                parser,
+                code,
+                artifact_key,
+                &mut builders.source_info_builder,
+                fdat,
+                &merged::narrowed(&switches, id),
+            )?;
+            // The narrowed switch leaves every other id's arm unreachable. Without this each
+            // clone stores the whole merged body, so a class with n ids stores it n times over.
+            // The index would prune the same blocks
+            // before SSA anyway; doing it here keeps them out of the stored program.
+            ctadl_ir::ssa::prune_unreachable_nodes(fdat);
+            self.clone_statements += statement_count(fdat);
+            if let VirtualMethodTable::Java {
+                methods, hierarchy, ..
+            } = &mut builders.vmt
+            {
+                methods.push((
+                    JavaClass(split.as_str().into()),
+                    JavaSimpleName(simple.into()),
+                    JavaSignature(descr.into()),
+                    JavaMethod(split_sig.as_str().into()),
+                ));
+                let parents = hierarchy
+                    .entry(JavaClass(split.as_str().into()))
+                    .or_default();
+                let parent = JavaClass(class.into());
+                if !parents.contains(&parent) {
+                    parents.push(parent);
+                }
+            }
+        }
+        self.retag.clear();
+        Ok(())
+    }
+
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let program = builders.program;
         log::trace!("program: {program}");
+        // Guardrail: the clones of merged methods should be a modest share of the program. Each
+        // stores only its own arm, so a large share means they are storing the whole merged body
+        // again; with the arms pruned they are 2-24% of the apps measured.
+        if self.clone_statements > 0 {
+            let total: usize = program.functions.iter().map(statement_count).sum();
+            log::info!(
+                "merged classes guardrail: clones hold {} of {total} statements",
+                self.clone_statements
+            );
+            if self.clone_statements * 100 > total * 35 {
+                log::warn!(
+                    "merged classes: the clones of merged methods hold {} of the program's {total} \
+                     statements; a clone should keep only its own id's arm",
+                    self.clone_statements
+                );
+            }
+        }
         // Verify the generated program.
         program.verify()?;
         let mut ext: Vec<_> = self.ext.drain().collect();
@@ -570,10 +694,8 @@ impl Context {
         enclosing.superclass.clone()
     }
 
-    /// Decode a call instruction into a `StatementKind::CallAssign`.
-    /// Returns `None` for non‑call instructions.
-    /// The return value is a single element which can be used to process subsequent 'move-result'
-    /// type instructions. It is stored into `self.call_result`
+    /// Decodes a call instruction into a `StatementKind::CallAssign` (see
+    /// [`Context::call_assign`]); `None` for an instruction that is not a call.
     fn decode_call(
         &mut self,
         parser: &DexParser<'_>,
@@ -583,6 +705,20 @@ impl Context {
     ) -> Option<Statement> {
         // If this instruction is not a call, bail out.
         let args_regs = inst.call_args()?; // returns &[Reg]
+
+        // invoke-custom names a call site, not a method: a bootstrap method picks the target at
+        // run time. Record the call with an unknown target, so that the move-result after it
+        // reads this call's result rather than an earlier call's.
+        if matches!(
+            inst,
+            Instruction::InvokeCustom(_) | Instruction::InvokeCustomRange(_)
+        ) {
+            let args = args_regs
+                .iter()
+                .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
+                .collect();
+            return Some(self.call_assign(CallStyle::Unknown, args, locals));
+        }
 
         // Resolve the method index from the specific invoke variant, and with it the
         // dispatch kind.
@@ -597,20 +733,21 @@ impl Context {
             Instruction::InvokeDirectRange(fmt) => (fmt.idx, None),
             Instruction::InvokeStaticRange(fmt) => (fmt.idx, None),
             Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
+            // invoke-polymorphic calls a signature-polymorphic method (`MethodHandle.invoke`,
+            // `invokeExact`, ...) on the handle in its first argument, like invoke-virtual.
+            Instruction::InvokePolymorphic(fmt) => (fmt.method_id, Some(JavaDispatch::Virtual)),
+            Instruction::InvokePolymorphicRange(fmt) => {
+                (fmt.method_id, Some(JavaDispatch::Virtual))
+            }
             _ => return None,
         };
         let is_static = dispatch.is_none();
 
         // Resolve the callee name (human‑readable signature).
-        let (cls, simple_name, descriptor) = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            self.call_to.insert(*mi);
-            parser.method_triple(mi).ok()?
-        };
-        let method_id = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            parser.method_signature(mi).ok()?
-        };
+        let mi = parser.get_method(method_idx.0 as usize)?;
+        self.call_to.insert(*mi);
+        let (cls, simple_name, descriptor) = parser.method_triple(mi).ok()?;
+        let method_id = parser.method_signature(mi).ok()?;
 
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
@@ -636,20 +773,42 @@ impl Context {
             }
         };
 
+        let args = if is_static {
+            args
+        } else {
+            args.into_iter().skip(1).collect()
+        };
+        Some(self.call_assign(style, args, locals))
+    }
+
+    /// A call statement returning into the result and exception temporaries, which the next
+    /// move-result or move-exception reads.
+    fn call_assign(
+        &mut self,
+        style: CallStyle,
+        args: ctadl_ir::ThinVec<Exp>,
+        locals: &mut Locals,
+    ) -> Statement {
         // Dex returns into a special register, so just create a temporary.
         let retval = Context::ret(locals);
         let throwval = Context::except(locals);
         self.call_result = Some(retval.clone());
         self.catch_result = Some(throwval.clone());
-        Some(Statement::new_kind(StatementKind::CallAssign {
+        Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: ctadl_ir::thin_vec![retval, throwval],
-            args: if is_static {
-                args
-            } else {
-                args.into_iter().skip(1).collect()
-            },
-        }))
+            args,
+        })
+    }
+
+    /// A new object of the class or array type `idx` names, or `None` when the
+    /// type cannot be read.
+    fn allocation_exp(parser: &DexParser<'_>, idx: TypeIdx) -> Option<Exp> {
+        let tid = parser.constant_pool().type_ids.get(idx.0 as usize)?;
+        let desc = tid.descriptor(&parser.constant_pool().strings).ok()?;
+        Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
+            desc.into(),
+        ))))
     }
 
     fn dataflow_to_assign(
@@ -659,15 +818,8 @@ impl Context {
         inst: &Instruction,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, DexError> {
-        let DataFlow {
-            source,
-            dest,
-            ret: _,
-        } = inst.data_flow();
+        let DataFlow { source, dest } = inst.data_flow();
         let mut stmts: Vec<Statement> = Vec::new();
-
-        // We have to iterate over dest multiple times, sadly, so we need to store the dest items.
-        let dest: SmallVec<[Reg; 4]> = dest.owned().collect();
 
         if let Some(const_exp) = match inst {
             // 8-bit signed constant
@@ -714,17 +866,25 @@ impl Context {
                 }
             }
             // NewInstance – resolved to a JavaObject reference
-            Instruction::NewInstance(f) => {
-                if let Some(tid) = parser.constant_pool().type_ids.get(f.idx.0 as usize)
-                    && let Ok(desc) = tid.descriptor(&parser.constant_pool().strings)
-                {
-                    Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
-                        desc.into(),
-                    ))))
-                } else {
-                    None
-                }
-            }
+            // ... or the class split off a merged class for the site's id.
+            Instruction::NewInstance(f) => match self.retag.get(&self.pc) {
+                Some(split) => Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
+                    split.as_str().into(),
+                )))),
+                None => Self::allocation_exp(parser, f.idx),
+            },
+            // A new-array is a new object of its array type. Its size register does
+            // not flow into it: copying the size in would make every array built from
+            // one size register a copy of that register, so taint in one would reach the
+            // others.
+            Instruction::NewArray(f) => Self::allocation_exp(parser, f.idx),
+            // A method handle or method type constant is an object of that class
+            Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodHandle;".into()),
+            ))),
+            Instruction::ConstMethodType(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodType;".into()),
+            ))),
             _ => None,
         } {
             for d in dest {
@@ -761,7 +921,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
                     source
-                        .cloned()
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 // flow temp into field update
@@ -802,12 +962,13 @@ impl Context {
             | Instruction::IPutObject(f)
             | Instruction::IPutWide(f) => {
                 let temp_var = self.counter.temp(locals);
-                // flow sources to temp
+                // flow the stored value to temp. Take it from vA by position, not by filtering the
+                // object out of `source`: in `iput-object p0, p0, F` the value is the object.
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::IPutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let object = reg_to_var(code_item, f.b, locals);
@@ -870,11 +1031,13 @@ impl Context {
             | Instruction::APutObject(f)
             | Instruction::APutWide(f) => {
                 let temp_var = self.counter.temp(locals);
+                // As for iput: the value is vA by position, since it may share a register with
+                // the array (`a[i] = a`) or the index (`a[i] = i`).
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::APutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b && *r != f.c)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let array_var = reg_to_var(code_item, f.b, locals);
@@ -895,13 +1058,12 @@ impl Context {
             }
             _ => {
                 // Flows all the sources to each dest
-                let sources: Vec<_> = source.copied().collect();
-                if !sources.is_empty() {
+                if !source.is_empty() {
                     for dest in dest.iter() {
                         let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            sources
+                            source
                                 .iter()
                                 .map(|s| reg_to_var(code_item, *s, locals).into()),
                         )));
@@ -944,7 +1106,7 @@ impl Context {
         Ok(stmts)
     }
 
-    /// Returns 'ret' temporary for move-result
+    /// The `retval` temporary a call returns into and `move-result` reads.
     fn ret(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("retval"))
     }
@@ -954,20 +1116,21 @@ impl Context {
     }
 }
 
+/// The registers holding the value a store writes: `a`, or the pair `a, a+1` when `wide`.
+fn stored_value_regs(a: Reg, wide: bool) -> SmallVec<[Reg; 2]> {
+    if wide {
+        smallvec![a, a.next_reg()]
+    } else {
+        smallvec![a]
+    }
+}
+
 fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRef {
     if let Some(pidx) = code_item.reg_to_p(reg.0.try_into().expect("reg too big")) {
         VariableRef::new_parameter(pidx.into())
     } else {
         VariableRef::new_local_idx(locals.get_or_intern(&format!("v{}", reg.0)))
     }
-}
-
-fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let path = path.as_ref();
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }
 
 #[derive(Debug, Clone, Default)]

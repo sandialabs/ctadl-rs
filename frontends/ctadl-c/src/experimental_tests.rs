@@ -143,7 +143,7 @@ fn simple_for() {
 
     dump_ir(&dump);
     //assert!(check_match(&dump, "assign %b = @p0"));
-    //assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
+    //assert!(check_match(&dump, "what(@p0[shared_fields], @p1[shared])"));
 }
 //todo:  comma operator
 //

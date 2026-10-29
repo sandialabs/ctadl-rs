@@ -2,7 +2,7 @@
 """Generate synthetic Flowy (`.tnt`) programs that drive the `locals` store into a chosen shape.
 
 `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` is stored by
-`ctadl-ascent/src/index_engine/locals_trie.rs` as one group per `(F,V)` holding the
+`ctadl-index/src/index_engine/locals_trie.rs` as one group per `(F,V)` holding the
 `(P, FormalIndex, Fp)` leaves. Group *size* is the shape parameter the whole module design
 turns on (a linear-probing set under 64 leaves, a Swiss table above), so this generator
 makes it a knob and scales it from 1 to tens of thousands while keeping the total row count

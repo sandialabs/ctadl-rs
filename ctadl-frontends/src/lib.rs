@@ -16,7 +16,7 @@ order to avoid it.
 # Features
 
 A program that uses this crate says which languages it reads. The default set is `dex`, `jvm`
-and `apk`. `pcode`, `lua`, `c`, `xapk` and `flowy` are off unless asked for. Each one adds a
+and `apk`. `pcode`, `lua`, `c`, `xapk`, `flowy` and `cil` are off unless asked for. Each one adds a
 single front-end crate and the matching `ctadl-import` error variants.
 
 [`ArtifactLanguage`] always lists every language, whatever is enabled. It is an enum, so the
@@ -43,21 +43,28 @@ use ctadl_ir::{ProgramInfo, ssa};
 
 /// Settings for one import, beyond the artifact itself and its language.
 ///
-/// Every field here matters only for an APK. An APK is the one artifact that imports other
-/// artifacts out of itself: its native libraries. See [`apk_native`]. [`Default`] gives the
-/// simple behavior, which is to import everything and reuse nothing.
+/// The first three fields matter only for an APK, the one artifact that imports other
+/// artifacts out of itself: its native libraries. See [`apk_native`]. Then come the CIL front
+/// end's assembly selection and Ghidra's thread count. [`Default`] gives the simple behavior,
+/// which is to import everything an APK holds, reuse nothing, leave the .NET framework out,
+/// and let Ghidra use every core.
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
-    /// matches, instead of importing it again. `main` does the same check for the parent
-    /// artifact. This field carries the flag down to the sub-imports, where skipping the work
-    /// saves much more time, because each one is a full disassembly run.
+    /// matches, instead of importing it again. [`Default`] leaves it off. Skipping saves much
+    /// time, because each sub-import is a full disassembly run.
     pub skip_existing: bool,
     /// Import the native libraries packaged inside an APK. On by default.
     pub native_libs: bool,
     /// Import the libraries for this ABI instead of the preferred one. See
     /// `dex_reader::apk::ABI_PREFERENCE`.
     pub native_abi: Option<&'a str>,
+    /// Import a .NET directory's framework assemblies too, rather than only reading their
+    /// metadata. Off by default.
+    pub cil_include_framework: bool,
+    /// How many threads Ghidra may use to disassemble native code. `0`, the default, leaves
+    /// it to Ghidra, which uses every core the OS reports.
+    pub jobs: usize,
 }
 
 impl Default for ImportOptions<'_> {
@@ -66,6 +73,8 @@ impl Default for ImportOptions<'_> {
             skip_existing: false,
             native_libs: true,
             native_abi: None,
+            cil_include_framework: false,
+            jobs: 0,
         }
     }
 }
@@ -106,7 +115,8 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
         feature = "pcode",
         feature = "lua",
         feature = "c",
-        feature = "flowy"
+        feature = "flowy",
+        feature = "cil"
     )),
     allow(unreachable_code)
 )]
@@ -153,7 +163,7 @@ pub fn import_artifact(
         Jvm => return Err(unsupported(Jvm, "jvm")),
 
         #[cfg(feature = "pcode")]
-        Pcode => ctadl_pcode::import_pcode(import)?,
+        Pcode => ctadl_pcode::import_pcode(import, opts.jobs)?,
         #[cfg(not(feature = "pcode"))]
         Pcode => return Err(unsupported(Pcode, "pcode")),
 
@@ -171,6 +181,17 @@ pub fn import_artifact(
         C => ctadl_c::import_c(&import.artifact_path)?,
         #[cfg(not(feature = "c"))]
         C => return Err(unsupported(C, "c")),
+
+        #[cfg(feature = "cil")]
+        Cil => ctadl_cil::import_path_with(
+            &import.artifact_path,
+            &ctadl_cil::ImportOptions {
+                include_framework: opts.cil_include_framework,
+                ..Default::default()
+            },
+        )?,
+        #[cfg(not(feature = "cil"))]
+        Cil => return Err(unsupported(Cil, "cil")),
     };
     log::info!(
         "'{}': imported {} function(s)",
@@ -261,8 +282,8 @@ fn record_sub_imports(import: &ArtifactImport, sub_imports: Vec<String>) -> Resu
 /// `artifact` is the file on disk. `name` is what the import is called in the store. The import
 /// is redone when the store holds nothing under that name, or when the content hash recorded
 /// for it no longer matches `artifact`. The IR then comes back through
-/// [`ctadl_import::open_import`], so the version check and the preprocessing passes are the
-/// same ones `ctadl index` uses.
+/// [`ctadl_import::open_import`], so it gets the same version check as `ctadl index`, and the
+/// passes `pipeline` names.
 pub fn open_or_import(
     name: &str,
     artifact: &std::path::Path,
@@ -272,8 +293,7 @@ pub fn open_or_import(
 ) -> Result<ProgramInfo, Error> {
     if !ArtifactImport::is_up_to_date(name, artifact)? {
         let import = ArtifactImport::try_create(name, language, artifact)?;
-        let program_info = import_artifact(&import, opts)?;
-        ctadl_import::save_program_info(program_info, &import)?;
+        import_and_save(&import, opts)?;
         // `import_artifact` may have rewritten the config, adding sub-imports or a Ghidra
         // image base. So record the hash on a freshly loaded copy, not on the one created
         // above.

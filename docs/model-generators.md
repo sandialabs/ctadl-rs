@@ -83,6 +83,7 @@ chosen by the frontend's method table:
 | dex, apk, jvm, jar | `java-index.ctadl` |
 | pcode | `native-index.ctadl` |
 | lua | `lua-index.ctadl` |
+| cil | `cil-index.ctadl` |
 | flowy | *(none)* |
 
 Each `.ctadl` file sits next to the `.jsonl` it was migrated from. The `.ctadl` is what an index
@@ -309,7 +310,7 @@ fields. The main ones:
 | `constraint`       | Fields | Matches |
 | ------------------ | ------ | ------- |
 | `name`             | `pattern` | Regex match against a function/variable **name**. |
-| `signature_match`  | `name` / `names`, `parent` / `parents`, `qualified-id` / `qualified-ids` | Structured match on a method signature: a simple name (or list), an owning class (`parent`/`parents`, Java only), or an exact fully-qualified id. This is the workhorse for library modeling. Fields given together are ANDed; a list field ORs within itself. |
+| `signature_match`  | `name` / `names`, `parent` / `parents`, `qualified-id` / `qualified-ids` | Structured match on a method signature: a simple name (or list), an owning class (`parent`/`parents`, Java and CIL only), or an exact fully-qualified id. This is the workhorse for library modeling. Fields given together are ANDed; a list field ORs within itself. |
 | `signature` / `signature_pattern` | `pattern` | Regex against the whole mangled signature, e.g. `".*\\(\\)Ljava/lang/String;"`. |
 | `qualified-id` / `qualified-ids` | (on `signature_match`) | **Exact, whole-string** match — not a regex — on the method's fully-qualified id. See below. |
 
@@ -344,9 +345,9 @@ An id that names no function in the program matches nothing (it does not match e
 > **On lua, do not use `%anonN` ids.** A function with no name of its own — one
 > assigned into a table literal, say `["/acme"] = { POST = function(self) … }` — is
 > named `<module>.%anonN` from a counter that runs across the whole *import*, not
-> per file. Adding or removing any file renumbers every later one (the same Kong
-> handler is `%anon449` importing `kong/` alone and `%anon451` importing the whole
-> repo), so an id that works under one import set silently matches nothing under
+> per file. Adding or removing any file renumbers every later one (the same
+> handler can be `%anon449` importing one directory alone and `%anon451` importing
+> the whole repo), so an id that works under one import set silently matches nothing under
 > another. Pin such a function by its enclosing module plus a `uses_field` or
 > `number_parameters` constraint instead, or give it a real name in the source.
 
@@ -354,8 +355,8 @@ An id that names no function in the program matches nothing (it does not match e
 
 | `constraint`   | Fields | Matches |
 | -------------- | ------ | ------- |
-| `parent`       | `inner` | **Java-only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On non-Java frontends this warns and matches nothing. |
-| `extends`      | `inner` | **Java-only.** A superclass/interface of the method's owning class satisfies `inner`. On non-Java frontends this warns and matches nothing. |
+| `parent`       | `inner` | **Java and CIL only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On other frontends this warns and matches nothing. |
+| `extends`      | `inner` | **Java and CIL only.** A superclass/interface of the method's owning class satisfies `inner`. On other frontends this warns and matches nothing. |
 | `uses_field`   | `name` / `names` | The function reads or writes the named field(s) (via an IR `Load`/`Store`). |
 
 ### Predicates on the element
@@ -427,6 +428,7 @@ port must match:
 | Frontend | Array element segment | Port spelling |
 | --- | --- | --- |
 | dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
+| cil | `Symbol("[]")`, and `deref` for what a struct receiver or a `ref`/`out` parameter points at | `Argument(0).\[]`, `Argument(2).deref` |
 | lua | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal key | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
 | C (tree-sitter) | a real `Offset` then `Symbol("[]")` — `a[3]` is `.[3].\[]`, and `a[0]` and `a[n]` are both a bare `.\[]` | `Argument(0).[3].\[]`, `Argument(0).\[]` |
 | pcode | a real `Offset` | `Argument(0).[8]` |
@@ -497,6 +499,11 @@ Source ports carry one extra knob:
     ]}
   }
   ```
+
+  A precise source on a *pointer value* does reach an address computed from
+  it: `q = &p[2]` in C, or `p + 8` in pcode, carries a taint on `p` to `q`.
+  What it does not reach is the memory at that address, `p[2]`; that is what
+  saturation adds.
 
   Saturation is purely internal to the search: reported flows (SARIF) are
   unchanged in shape — a saturating source just reconstructs flows a precise
@@ -601,7 +608,7 @@ The practical consequence is for testing: probe at the level the port *predicts*
 not at one fixed depth. A fixture that always reads `u.f` scores nothing on rows
 2 and 3 above while the models are doing exactly what they say. The worked matrix
 is `ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and
-`ctadl-ascent/tests/port_semantics.rs` (Lua).
+`ctadl-ascent/tests/integration/port_semantics.rs` (Lua).
 
 One asymmetry worth knowing: a **sink** port materializes over the paths reachable
 at its vertex, so a sink written `Return` also seeds `Return.f`. Reading a whole
@@ -934,13 +941,14 @@ call sites' signature keys contain it by construction.
 a function, and a signature is not one. (`in_function` is refused for a second reason — the
 policy is deliberately per signature, not per site.)
 
-`model` carries **exactly one** of:
+`model` carries **exactly one** of these, except that `resolve` may come with a `propagation`:
 
 | Key | Meaning |
 | --- | --- |
 | `propagation` | The site's summary, with the same port semantics as a `find: methods` propagation: the receiver is `Argument(0)`, the nth argument `Argument(n)`, the result `Return`. |
 | `propagation: []` | An **empty** list is the spelling of "this call moves nothing". Written explicitly, so "forgot the model" and "meant to discard" are different documents. |
 | `resolve: "inline"` | Send every site of this signature to hybrid inlining whatever its target count, except a site with exactly one target, which stays exact. For a signature whose bodies must stay reachable but whose target set is too wide for CHA — `close`, `dispose`, and the rest of the resource contract. |
+| `resolve: "inline"` + `propagation` | Both: the site goes to hybrid inlining *and* calls the synthetic summary. For a contract implemented both by the program, whose bodies inlining reaches, and by a library, whose objects have no methods in the import for inlining to find — `IEnumerable<T>.GetEnumerator` over a `yield` iterator or over a `List<T>`. The summary adds flows and hides nothing, so the source/sink guard does not refuse it. |
 | `closure_shaped: true` | A note for `ctadl report`, not a resolution rule. Marks arbitrary code behind a one-method interface, which is what hybrid inlining is for, so the report can say which closure-shaped signatures no model covers. |
 
 Omitting all four is a load error, and so is any other `model` key: an endpoint and a `modes`
@@ -949,7 +957,7 @@ directive live on a function, and there is none here.
 When several generators match one signature, the disposition that keeps the most of the program
 reachable wins: `inline` > `propagation` > empty. So a user overrides a shipped discard by
 adding a propagation and a shipped model by adding `resolve: inline`; going the other way needs
-`--no-default-models`. Two propagation lists on one signature union.
+`--no-default-models`. Two propagation lists on one signature union, as do two `inline` ones'.
 
 ### What not to model
 
@@ -968,6 +976,7 @@ design is drawn on.
 | Take a contract method's callees out of the call graph | `dispatch` | `propagation` |
 | Discard a call whose only output is a shape primitive | `dispatch` | `propagation: []` |
 | Keep a signature's bodies reachable but off CHA | `dispatch` | `resolve: "inline"` |
+| ... and summarize it for receivers the program does not implement | `dispatch` | `resolve: "inline"` + `propagation` |
 | Mark a function's output as untrusted input | `methods` | `sources` |
 | Mark a whole value (all offsets/fields) as untrusted, e.g. `argv` | `methods` | `sources` + `saturating: true` |
 | Flag a dangerous API | `methods` | `sinks` |

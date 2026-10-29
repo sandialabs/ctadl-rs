@@ -9,7 +9,6 @@ of a variable that is defined exactly once and used exactly once — with the
 def and use in the same basic block — into its use, then deletes the def:
 
 - `t = a, b; x = t`          becomes `x = a, b`
-- `t = y.f; x = t.g`         becomes `x = y.f.g`
 - `t = y; f(t, z)`           becomes `f(y, z)`
 - `t = y; return t`          becomes `return y`
 
@@ -29,7 +28,6 @@ dataflow edges the def/use pair induced, minus the intermediate hop.
 */
 use std::collections::HashMap;
 
-use internment::ArcIntern;
 use smallvec::SmallVec;
 
 use crate::index::idx::Idx;
@@ -52,7 +50,7 @@ struct Pending {
     /// The def's right-hand side.
     sources: SmallVec<[Exp; 2]>,
     /// Variables read by `sources`; a write to any of these kills the entry.
-    src_vars: SmallVec<[ArcIntern<Variable>; 2]>,
+    src_vars: SmallVec<[Variable; 2]>,
 }
 
 /// Runs copy coalescing on one function, returning the number of fused copy
@@ -64,33 +62,31 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 
     // Def/use counts over the whole function. Only variables with exactly one
     // def and one use are candidates.
-    let mut defs: HashMap<ArcIntern<Variable>, u32> = HashMap::new();
-    let mut uses: HashMap<ArcIntern<Variable>, u32> = HashMap::new();
+    let mut defs: HashMap<Variable, u32> = HashMap::new();
+    let mut uses: HashMap<Variable, u32> = HashMap::new();
     for (_, block) in function.blocks.iter_enumerated() {
         for stmt in block.statements.iter() {
             for v in stmt.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
             for v in stmt.iter_dst_var() {
-                *defs.entry(v.variable.clone()).or_default() += 1;
+                *defs.entry(v.variable).or_default() += 1;
             }
         }
         if let Some(term) = block.terminator_opt() {
             for v in term.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
         }
     }
 
-    let is_candidate_var = |var: &ArcIntern<Variable>| {
-        matches!(var.as_ref(), Variable::Local(_))
-            && defs.get(var) == Some(&1)
-            && uses.get(var) == Some(&1)
+    let is_candidate_var = |var: &Variable| {
+        matches!(var, Variable::Local(_)) && defs.get(var) == Some(&1) && uses.get(var) == Some(&1)
     };
 
     let mut removed = 0usize;
     for block in function.blocks.blocks_mut_preserves_cfg().iter_mut() {
-        let mut pending: HashMap<ArcIntern<Variable>, Pending> = HashMap::new();
+        let mut pending: HashMap<Variable, Pending> = HashMap::new();
         // Def statement positions that were fused and must be deleted.
         let mut dead: Vec<usize> = Vec::new();
 
@@ -111,7 +107,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         && v.version.is_none()
                         && pending.contains_key(&v.variable)
                     {
-                        Some(v.variable.clone())
+                        Some(v.variable)
                     } else {
                         None
                     };
@@ -149,10 +145,10 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             // written by this statement. Calls may write through their
             // arguments (by-ref), so treat their reads as writes too.
             if !pending.is_empty() {
-                let mut written: SmallVec<[ArcIntern<Variable>; 4]> =
-                    stmt.iter_dst_var().map(|v| v.variable.clone()).collect();
+                let mut written: SmallVec<[Variable; 4]> =
+                    stmt.iter_dst_var().map(|v| v.variable).collect();
                 if matches!(stmt.kind, StatementKind::CallAssign { .. }) {
-                    written.extend(stmt.iter_src_var().map(|v| v.variable.clone()));
+                    written.extend(stmt.iter_src_var().map(|v| v.variable));
                 }
                 if !written.is_empty() {
                     pending.retain(|_, p| !p.src_vars.iter().any(|sv| written.contains(sv)));
@@ -165,7 +161,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                 && is_candidate_var(&dest.variable)
                 && !sources.is_empty()
             {
-                let mut src_vars: SmallVec<[ArcIntern<Variable>; 2]> = SmallVec::new();
+                let mut src_vars: SmallVec<[Variable; 2]> = SmallVec::new();
                 let mut ok = true;
                 for src in sources.iter() {
                     // Any source that reads a variable (a bare copy or an address expression)
@@ -176,12 +172,12 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                             ok = false;
                             break;
                         }
-                        src_vars.push(v.variable.clone());
+                        src_vars.push(v.variable);
                     }
                 }
                 if ok {
                     pending.insert(
-                        dest.variable.clone(),
+                        dest.variable,
                         Pending {
                             stmt_pos: pos,
                             sources: sources.clone(),
@@ -220,15 +216,11 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 }
 
 /// If `exp` is the (single) read of a pending pure-copy def, substitute the
-/// def's source into it and mark the def dead. Since a field read is no longer
-/// expressible as an [`Exp`] (field reads are [`StatementKind::Load`]s, which
-/// this pass leaves untouched), substitution is a plain variable/const copy:
+/// def's source into it and mark the def dead. A field read is not an [`Exp`]
+/// (field reads are [`StatementKind::Load`]s, which this pass leaves
+/// untouched), so substitution is a plain variable/const copy:
 /// `t = y; use t` becomes `use y`.
-fn try_subst_exp(
-    exp: &mut Exp,
-    pending: &mut HashMap<ArcIntern<Variable>, Pending>,
-    dead: &mut Vec<usize>,
-) {
+fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: &mut Vec<usize>) {
     let Exp::Variable(vref) = exp else {
         return;
     };
@@ -250,10 +242,10 @@ fn try_subst_exp(
 
 /// [`try_subst_exp`] for a bare [`AccessPath`] read position (indirect-call
 /// callee). Only a variable-copy source substitutes here; the callee's own
-/// field path is preserved, with its base variable rewritten to the def's source.
+/// offsets are preserved, with its base variable rewritten to the def's source.
 fn try_subst_access_path(
     ap: &mut AccessPath,
-    pending: &mut HashMap<ArcIntern<Variable>, Pending>,
+    pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
     if ap.base.version.is_some() {

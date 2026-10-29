@@ -58,8 +58,8 @@ pub struct MapItem {
 ///
 /// A DEX file stores strings as UTF-16 code units in modified UTF-8, so an
 /// entry may legally hold surrogates that no Rust `str` can represent:
-/// generated lexers abuse string constants as packed UTF-16 tables, and
-/// `smaliFlexLexer` has 25 deliberately unpaired ones. Well-formed *pairs* are
+/// generated lexers abuse string constants as packed UTF-16 tables, with
+/// deliberately unpaired surrogates among them. Well-formed *pairs* are
 /// the far more common case -- every emoji, CJK extension and supplementary
 /// symbol in a literal is one -- and those recombine into ordinary scalar
 /// values.
@@ -116,9 +116,7 @@ impl DexString {
     }
 
     /// The exact UTF-16 code units, for callers that need the data rather than
-    /// text. The smali printer is one: baksmali renders every non-ASCII code
-    /// unit as `\uXXXX`, unpaired surrogates included, so matching it means
-    /// working in code units rather than `char`s.
+    /// text.
     pub fn code_units(&self) -> Box<dyn Iterator<Item = u16> + '_> {
         match self {
             DexString::Utf8(s) => Box::new(s.encode_utf16()),
@@ -588,6 +586,7 @@ pub struct DexConstantPool<'a> {
     pub proto_ids: Vec<ProtoId>,
     pub field_ids: Vec<FieldId>,
     pub method_ids: Vec<MethodId>,
+    pub method_handles: Vec<MethodHandle>,
 }
 
 impl<'a> DexConstantPool<'a> {
@@ -599,6 +598,7 @@ impl<'a> DexConstantPool<'a> {
         proto_ids: Vec<ProtoId>,
         field_ids: Vec<FieldId>,
         method_ids: Vec<MethodId>,
+        method_handles: Vec<MethodHandle>,
     ) -> Self {
         Self {
             data: file_buf,
@@ -607,11 +607,10 @@ impl<'a> DexConstantPool<'a> {
             proto_ids,
             field_ids,
             method_ids,
+            method_handles,
         }
     }
 }
-
-// Decode operands lazily by opcode.
 
 // Top-level container
 pub struct Dex<'a> {

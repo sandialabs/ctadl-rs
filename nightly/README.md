@@ -8,7 +8,7 @@ repo root (`xtask/src/`), not in shell scripts.
 ## Running
 
 Run the suite through the flake check. It is one hermetic derivation that does
-**everything** — builds `ctadl` and `dex-reader` and supplies every other tool
+**everything** — builds `ctadl` and the reader dumpers and supplies every other tool
 (javac, dx, Ghidra, gcc/addr2line, the Android SDK) from Nix, then runs all the
 cases. No dev shell, no PATH setup, no prebuilt binaries:
 
@@ -27,7 +27,7 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, or `jni` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, `android-icc`, or `cil` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
@@ -35,12 +35,15 @@ the odd one out: its cases build both halves of a JNI boundary, so they need the
 Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 `--frontend pcode --filter funcptr`.
 
+`android-icc` discovers external benchmark specs under `tests/android-icc/`. Their APKs
+come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it they report `SKIP`.
+
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
 > metatable-based OOP (method calls resolve through the recovered `__index` hierarchy;
 > instance fields flow across calls). All of them are expected to pass — there are no Lua
 > XFAILs. `closure-flow` (a closure returned out of one function and called in another)
-> was one until the engine gained return-direction propagation of call-target objects;
+> needs call-target objects to propagate in the return direction;
 > `tests/c/funcptrfactory.c` is the language-neutral regression guard on that rule.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
@@ -54,7 +57,7 @@ they are picked up automatically; no list to edit.
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`.The pair registers under *both* C
+  back to a shared `tests/c/query.json`. The pair registers under *both* C
   frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
 
 - **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
@@ -84,25 +87,39 @@ they are picked up automatically; no list to edit.
 
 ## Checks that are not taint cases
 
-Not everything the suite reports comes from `tests/`. Four families are written in Rust in the
+Not everything the suite reports comes from `tests/`. These families are written in Rust in the
 `xtask` crate and folded into the same report, because they are expensive, or need a toolchain, or
 both — the same reasons the taint cases are nightly:
 
 - **`dex:*`** — `dex-reader` over the compiled samples (parse, line map, UTF-8 constants) and
   against `baksmali` as ground truth, plus `dex:apk`, which parses every `classes*.dex` in the
   real-world APK. Needs `javac`/`dx` for the sample-derived checks; `dex:apk` does not.
+  `dex:opcodes-replay` judges dex-reader's `data_flow()` and `can_throw()` against ART's
+  saved observations of every opcode (`xtask/tests/dex/opcodes-art.txt`); it needs `smali`.
 - **`jvm:*`** — `jvm-reader` over the same samples compiled to `.class`/`.jar`. Needs `javac`.
+  `jvm:asm-flow` compares jvm-reader's dataflow for every instruction with ASM's analyzer, over
+  the samples, the Java cases in `tests/java` and a generated class that holds every opcode
+  (`xtask/src/asm_flow/`). `jvm:opcodes` runs each opcode on the JVM, changing one input at
+  a time, and checks that every input that changes an output is one jvm-reader lists as a source.
+  Both need ASM (`asm-classpath`, from the flake).
 - **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
   (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked
   in, so all these need is the `ctadl` binary.
 - **`models:*`** — the model files ctadl ships, validated against the model generator schema it
   publishes. Reads three small files and runs no tool.
+- **`cil:*`** — `cil-reader` held to Mono.Cecil (byte-identical dumps over Cecil's own test corpus
+  and the compiled fixtures, against committed goldens and a live CecilDump), plus the flow layer,
+  the `ctadl-cil` frontend and the default .NET models checked against .NET itself. Needs the Cecil
+  checkout and the compiled fixtures (the dev shell and the flake check supply both); without them
+  the checks skip. `xtask/src/cil.rs` lists each check.
+- **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
+  `tests/android-icc/`. Each spec names a flake-fetched APK, a model file, whether a flow is expected,
+  and optional `intent_pair.parquet` counts.
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live
-here — they used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they accounted for ~60 s of
-the ~77 s the workspace's tests spent executing, and moving them out halved `cargo test
---workspace`. The import is done **once** and the checks below read the store it wrote:
+here rather than in `cargo test`. The import is done **once** and the checks below read the store
+it wrote:
 
 | Check | What it claims |
 | --- | --- |
@@ -111,7 +128,7 @@ the ~77 s the workspace's tests spent executing, and moving them out halved `car
 | `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
 | `apk:report` | `ctadl report` runs on the import, its first line names the static tier, the JSON carries every section a Java program has, four aggregate counts plus the site count of each dispatch kind are pinned to this APK, and nothing is written into the store. |
 | `apk:report-invariants` | The report's numbers add up — the census sums to its total, the target split sums to the virtual sites, the dispatch kinds partition those sites and their per-kind edge, excess and RTA totals sum back to the pooled ones, every distribution is monotone, RTA never exceeds CHA, the edge shares are ordered, and removing the interface edges cannot grow the call graph — and two runs over one import are byte-identical. |
-| `apk:skip-existing` | `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one: falsify the recorded hash and the same command re-imports. |
+| `apk:reimport` | A re-import skips an unchanged artifact, and only an unchanged one: falsify the recorded hash and the same command re-imports; `--force` re-imports an unchanged one. |
 
 They select with `--frontend dex` (the app is a Dex artifact) and, like `dex:apk`, self-skip when
 no APK resolves. `cargo xtask regression --frontend dex --filter apk:` runs just these, and needs
@@ -159,6 +176,15 @@ reported byte offset back to a source line via the dex linemap. A positive test
 **empty** `expected_lines` makes it a *negative* test: it passes only if **no**
 flow is reported (see `Reassignment.java` / `reassignment.json`).
 
+**Pure copies drop out of the code flow.** The query collapses each pure copy
+(`local = obj.data`, `local = arr[1]`, the body of a getter, setter or other
+callee that only passes its argument through) onto what it copies, through the
+`copy_alias` union-find (`compute_copy_alias` in
+`ctadl-ascent/src/query_engine/mod.rs`). The copy's line then appears in neither
+the human code flow nor the machine tainted-instructions, though the taint still
+reaches the sink, so it does not belong in `expected_lines`. A spec that leaves
+such a line out says which one and points here.
+
 ## Adding a pcode/C test
 
 1. Write `tests/c/foo.c` with functions matching the query's `source`/`sink`
@@ -184,11 +210,8 @@ to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
 maturing, so a short quarantine list in `xtask/src/regression.rs`
 (`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
 suite; every other `C:` case is enforced. Remove an entry once its case passes so
-a later regression is caught. Two cases are quarantined today:
+a later regression is caught. One case is quarantined today:
 
-- `C:ptrarith` — a *subscript* now lowers to an offset address, so `arr[2]` and
-  `&arr[2]` compose, but the binary `+` in `*(p + 2)` does not yet, so taint
-  stored that way is not resolved back to the aliased array slot.
 - `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
   which only a Native (pcode) import loads. Its chain lives in
   `native-index.jsonl`, and a `-l c` import has no method table, so it gets no
@@ -200,8 +223,8 @@ a later regression is caught. Two cases are quarantined today:
 1. Write `tests/jni/Foo.java` with a `source()`, a `sink(...)`, and one or more
    `native` methods, plus `tests/jni/Foo.c` implementing them under their mangled
    `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
-   friends) rather than including `<jni.h>`: the flake ships no NDK, and only the
-   arity and the dataflow shape matter.
+   friends) rather than including `<jni.h>`: the regression check's SDK has no NDK,
+   and only the arity and the dataflow shape matter.
 2. Write `tests/jni/foo.json` exactly as a Java/DEX config. `expected_lines` and
    `unexpected_lines` there refer to the **Java** source; the optional
    `expected_native_lines` refers to the **C** source (see below).
@@ -272,9 +295,9 @@ consumer cannot read is a defect on its own. The report lists every diagnostic
 and the path to the validation log, which is left in the case's scratch
 directory as `checksarif-log.sarif`.
 
-This is the one check the JVM allowlist cannot demote to XFAIL. The allowlist
-exists for the maturity of that frontend's *taint results*, which the shape of
-the log says nothing about.
+This is the one check the known-failure lists (`JVM_KNOWN_FAILURES`,
+`C_KNOWN_FAILURES`) cannot demote to XFAIL. Those lists exist for a frontend's
+*taint results*, which the shape of the log says nothing about.
 
 Rules are configured in `nix/sarif-multitool/sarif-validation.xml`. A rule that
 cannot apply to a binary/bytecode analyzer belongs there, turned off with a

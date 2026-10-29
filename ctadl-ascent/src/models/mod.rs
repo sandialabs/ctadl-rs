@@ -57,6 +57,10 @@ pub const LUA_DEFAULT_MODELS: (&str, &[u8]) = (
     "lua-index.jsonl",
     include_bytes!("defaults/lua-index.jsonl"),
 );
+pub const CIL_DEFAULT_MODELS: (&str, &[u8]) = (
+    "cil-index.jsonl",
+    include_bytes!("defaults/cil-index.jsonl"),
+);
 
 /// Every shipped default file, whether or not a given import loads it. Exists so a test can
 /// parse all of them against one program: the loader hard-errors on unknown keys and on
@@ -66,6 +70,7 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
     JAVA_DEFAULT_MODELS,
     NATIVE_DEFAULT_MODELS,
     LUA_DEFAULT_MODELS,
+    CIL_DEFAULT_MODELS,
 ];
 
 /// The DSL form of each shipped default: what an index actually loads.
@@ -84,6 +89,7 @@ pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
         include_str!("defaults/native-index.ctadl"),
     ),
     ("lua-index.ctadl", include_str!("defaults/lua-index.ctadl")),
+    ("cil-index.ctadl", include_str!("defaults/cil-index.ctadl")),
 ];
 
 /// Returns the built-in default models for the program `index` was built from, selected by its
@@ -91,14 +97,14 @@ pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
 ///
 /// The VMT is the key rather than [`crate::project::ArtifactLanguage`] because dex and jvm want
 /// the same file and differ only in language, and because it gives `Unknown` (flowy) the right
-/// answer -- nothing -- for free. Loading every file for every import, as this used to, meant a
-/// Lua import ran a full match pass over 55 Java generators and 14 C ones, contributing nothing.
+/// answer -- nothing -- for free. An import never runs a match pass over another language's
+/// generators.
 ///
 /// This is deliberately *not* how a user's `in` scope is resolved. The VMT is the right key for
 /// "which shipped file"; `in` is the right key for "which import did the user mean", and it can
 /// tell `dex` from `apk` from `jar`, which the VMT variant cannot.
-// TODO load summary parquet models as well as json. Such a decoder now builds
-// `PropagationMatch`es directly rather than re-deriving them from an Arrow encoding.
+// TODO load summary parquet models as well as json. Such a decoder would build
+// `PropagationMatch`es directly.
 pub fn try_load_default_models(
     index: &ProgramMatchIndex<'_>,
     out: &mut ProgramModelMatches,
@@ -125,14 +131,12 @@ pub fn try_load_default_models(
 /// The built-in default model file a program with this [`VirtualMethodTable`] selects, as
 /// `(name, contents)`. The JSON original; see [`default_dsl_model_file`] for the one an index
 /// loads.
-///
-/// Split out of [`try_load_default_models`] so a caller that reports on the defaults rather
-/// than merely loading them names the same file the index would.
 pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static [u8])> {
     match vmt {
         VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
         VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
         VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
+        VirtualMethodTable::Cil { .. } => Some(CIL_DEFAULT_MODELS),
         // flowy, and anything else with no method table: a default model file has nothing to
         // match against, and shipping one would be a language guess.
         VirtualMethodTable::Unknown => None,
@@ -167,6 +171,7 @@ pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str,
         VirtualMethodTable::Java { .. } => 0,
         VirtualMethodTable::Native { .. } => 1,
         VirtualMethodTable::Lua { .. } => 2,
+        VirtualMethodTable::Cil { .. } => 3,
         VirtualMethodTable::Unknown => return None,
     };
     DEFAULT_DSL_MODELS.get(index).copied()
@@ -198,35 +203,16 @@ pub fn try_load_jsonl_models_named<B: BufRead>(
     try_load_models_from_values_named(index, jsonl_items(rdr), out, source)
 }
 
-// Load models from a JSON file containing `{ "model_generators": [...] }`.
-///
-/// The entries in the `model_generators` array are streamed into
-/// `load_models_from_values`, preserving the existing batch‑processing logic.
+/// Load models from a JSON file containing `{ "model_generators": [...] }`.
 pub fn try_load_json_models<P: AsRef<std::path::Path>>(
     index: &ProgramMatchIndex<'_>,
     path: P,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    // Open and parse the JSON file
-    let file = File::open(&path)
-        .err_context(|| format!("opening model JSON file: {}", path.as_ref().display()))?;
-    let root: serde_json::Value = serde_json::from_reader(file)
-        .err_context(|| format!("reading model JSON file: {}", path.as_ref().display()))?;
-
-    // Extract the `model_generators` array; error if missing or not an array
-    let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => {
-            return Err(Error::from(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing or invalid 'model_generators' array",
-            )));
-        }
-    };
-
-    // Stream each entry into the existing loader
-    let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values_named(index, items, out, &path.as_ref().display().to_string())
+    let path = path.as_ref();
+    let root = read_json_root(path)?;
+    let items = model_generators(&root)?.iter().cloned().map(Ok);
+    try_load_models_from_values_named(index, items, out, &path.display().to_string())
 }
 
 /// Load models from a JSON5 file containing `{ "model_generators": [...] }`.
@@ -235,28 +221,10 @@ pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
     path: P,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let mut file = File::open(&path)
-        .err_context(|| format!("opening model JSON5 file: {}", path.as_ref().display()))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .err_context(|| format!("reading model JSON5 file: {}", path.as_ref().display()))?;
-    let root: serde_json::Value = json5::from_str(&content)
-        .err_context(|| format!("parsing model JSON5 file: {}", path.as_ref().display()))?;
-
-    // Extract the `model_generators` array; error if missing or not an array
-    let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => {
-            return Err(Error::from(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing or invalid 'model_generators' array",
-            )));
-        }
-    };
-
-    // Stream each entry into the existing loader
-    let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values_named(index, items, out, &path.as_ref().display().to_string())
+    let path = path.as_ref();
+    let root = read_json5_root(path)?;
+    let items = model_generators(&root)?.iter().cloned().map(Ok);
+    try_load_models_from_values_named(index, items, out, &path.display().to_string())
 }
 
 /// Load models from a file. The file extension is used to decide whether to load as `json`,
@@ -298,13 +266,11 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
 ///
 /// # Errors leave `out` partially written
 ///
-/// On `Err`, `out` holds every row appended before the error. This is not new: JSON model
-/// errors are *collected* across a batch and returned only at the end (see
-/// [`json::ModelGeneratorIngest::encode_models_from`]), long after rows have been emitted --
-/// the out-param merely makes the existing partial-append semantic visible in the caller's
-/// accumulator instead of hiding it in a batch that was discarded. Every production caller
-/// propagates with `?` and aborts, so nothing observable depends on it; `json_error_handling.rs`
-/// pins that rows emitted before a collected error stay readable.
+/// On `Err`, `out` holds every row appended before the error: JSON model errors are *collected*
+/// across a batch and returned only at the end (see
+/// [`json::ModelGeneratorIngest::encode_models_from`]), long after rows have been emitted.
+/// Every production caller propagates with `?` and aborts, so nothing observable depends on it;
+/// `json_error_handling.rs` pins that rows emitted before a collected error stay readable.
 pub fn try_load_models_from_values(
     index: &ProgramMatchIndex<'_>,
     items: impl Iterator<Item = Result<serde_json::Value, Error>>,
@@ -423,17 +389,7 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
             } else {
                 read_json_root(path)
             };
-            let generators = match root.and_then(|root| {
-                root.get("model_generators")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .ok_or_else(|| {
-                        Error::from(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "missing or invalid 'model_generators' array",
-                        ))
-                    })
-            }) {
+            let generators = match root.and_then(|root| model_generators(&root).cloned()) {
                 Ok(generators) => generators,
                 Err(e) => {
                     return (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]);
@@ -469,6 +425,18 @@ pub fn try_check_jsonl_models<B: BufRead>(
         "<models>",
     );
     outcome.into_check()
+}
+
+/// The `model_generators` array of a JSON or JSON5 model file's root object.
+fn model_generators(root: &serde_json::Value) -> Result<&Vec<serde_json::Value>, Error> {
+    root.get("model_generators")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            Error::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "missing or invalid 'model_generators' array",
+            ))
+        })
 }
 
 fn read_json_root(path: &std::path::Path) -> Result<serde_json::Value, Error> {
@@ -566,9 +534,9 @@ fn run_batches(
                 Ok(value) => batch.push(value),
                 Err(e) => {
                     stream_error = Some(e);
-                    // Aborting drops the partial batch, as it always has. A lenient load
-                    // visits it first: those generators were read successfully, and the
-                    // linter's job is to report on every one it could read.
+                    // Aborting drops the partial batch. A lenient load visits it first: those
+                    // generators were read successfully, and the linter's job is to report on
+                    // every one it could read.
                     if abort_on_error {
                         break 'outer;
                     }
@@ -618,8 +586,8 @@ pub struct ModelLoadReport {
     /// declared a port of that direction; a zero `endpoints_matched` means it matched
     /// nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
     ///
-    /// Deliberately *not* keyed by model file: two of the loader entry points take a reader
-    /// and a value stream, which have no path, so file identity belongs to the caller.
+    /// Deliberately *not* keyed by model file: some loader entry points take a reader or a
+    /// value stream, which have no path, so file identity belongs to the caller.
     /// `cli::query` re-keys each file's stats by file before merging them, which is also what
     /// keeps two files that number their generators the same from conflating.
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,

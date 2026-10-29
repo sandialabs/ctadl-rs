@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -179,16 +179,20 @@ pub struct ImportArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
-    /// Skip the import if an import of the same name already exists whose stored
-    /// artifact path and content hash match the artifact being imported. This
-    /// avoids re-doing the (potentially expensive) translation when nothing has
-    /// changed.
+    /// Re-import even when an up-to-date import already exists.
+    ///
+    /// By default, an import is skipped when an import of the same name already
+    /// exists whose stored artifact path and content hash match the artifact being
+    /// imported, and likewise each of an APK's native libraries whose bytes are
+    /// unchanged. This avoids re-doing the (potentially expensive) translation, above
+    /// all the disassembly of native libraries. Pass this to redo it anyway, e.g. to
+    /// pick up import-time output that a newer ctadl produces.
     #[arg(long)]
-    pub skip_existing: bool,
+    pub force: bool,
 
     /// Do not import the native libraries packaged inside an APK.
     ///
@@ -205,6 +209,29 @@ pub struct ImportArgs {
     /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too (`System.*`,
+    /// `Microsoft.Extensions.*`, `mscorlib`, ...).
+    ///
+    /// By default only the application's own assemblies are imported, and the framework's
+    /// are read for their metadata alone: base types, interfaces, type forwarders. A
+    /// self-contained publish ships some 200 of them.
+    #[arg(long)]
+    pub include_framework: bool,
+
+    /// Number of threads Ghidra may use to analyze and decompile native code.
+    ///
+    /// `0`, the default, or `-j` with no value, leaves it to Ghidra, which uses every core the
+    /// OS reports. Any other value caps Ghidra, and the JVM it runs in, at that many.
+    #[arg(
+        short = 'j',
+        long,
+        num_args = 0..=1,
+        default_value_t = 0,
+        default_missing_value = "0",
+        value_name = "N"
+    )]
+    pub jobs: usize,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -231,6 +258,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe`), or a directory of them (a published app)
+    Cil,
     /// Infer from extension/content
     Auto,
 }
@@ -307,59 +336,9 @@ pub struct ReportArgs {
     pub dispatch_order: DispatchOrder,
 }
 
-#[derive(Debug, Args)]
-pub struct IndexArgs {
-    /// Name for the analysis project (index name)
-    pub name: String,
-
-    /// One or more imported program names to co-index (from import step). If none given, assumes
-    /// the project name also refers to the import.
-    pub progs: Vec<String>,
-
-    /// Load summaries from one or more previously indexed projects and map them into the current project.
-    /// The summaries will be filtered to only include functions that exist in the current project.
-    /// Can be specified multiple times to load from multiple projects.
-    #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
-    pub summary: Vec<String>,
-
-    /// Load additional models from one or more files. Can be specified multiple times to load
-    /// multiple model files. This option is used primarily to provide propagation models, which
-    /// provide function summaries for indexing external or hard-to-analyze code.
-    ///
-    /// A `.ctadl` (or `.dl`) file is written in the model DSL, which is what the engine runs;
-    /// `.json`, `.json5` and `.jsonl` are the older model-generator format and still work.
-    /// `ctadl migrate-models` converts one to the other.
-    #[arg(long, short, action = clap::ArgAction::Append)]
-    pub models: Vec<PathBuf>,
-
-    /// Do not load the built-in default propagation models for the imported language.
-    ///
-    /// CTADL ships one default model file per frontend family (Java, native, Lua) and loads the
-    /// one matching each import. Pass this to index against `--models` alone -- for an A/B
-    /// measurement of what the defaults add, or when a model file is meant to be the complete
-    /// story.
-    #[arg(long)]
-    pub no_default_models: bool,
-
-    /// Do not link Java `native` methods to their native implementations.
-    ///
-    /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
-    /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
-    /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
-    /// measure what the bridge contributes. See `ctadl_ascent::languages::jni`.
-    #[arg(long)]
-    pub no_jni_bridge: bool,
-
-    /// Ignore the `RegisterNatives` tables recovered from a native library at import time.
-    ///
-    /// Most Android apps bind their natives at run time, from `JNI_OnLoad`, rather than through
-    /// the `Java_…` symbol convention; CTADL recovers those bindings out of the library's data
-    /// sections when it imports it. Pass this to link by symbol name alone -- an A/B measurement
-    /// of what the registry contributes, with no re-import needed. Implied by
-    /// `--no-jni-bridge`. See `ctadl_ascent::languages::jni::registry`.
-    #[arg(long)]
-    pub no_jni_registry: bool,
-
+/// The call-resolution strategy, and the ladder flags `--strategy mixed` reads.
+#[derive(Debug, Clone, Args)]
+pub struct CallPolicyArgs {
     /// Call resolution strategy: cha, hi, mixed, legacy-mixed
     ///
     /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
@@ -400,6 +379,105 @@ pub struct IndexArgs {
     /// matches it, for a precision-sensitive run.
     #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
     pub dispatch_order: DispatchOrder,
+}
+
+impl CallPolicyArgs {
+    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
+    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
+    /// for the population that behaves differently.
+    ///
+    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
+    /// recorded in the index config as given either way, so a silent no-op would be
+    /// indistinguishable from a policy that took effect.
+    pub fn call_policy(&self) -> CallPolicy {
+        let policy = CallPolicy {
+            cha_threshold: self.cha_threshold,
+            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
+            dispatch_models: !self.no_dispatch_models,
+            dispatch_models_interface: !self.no_dispatch_models
+                && !self.no_dispatch_models_interface,
+            order: self.dispatch_order,
+        };
+        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
+            log::warn!(
+                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
+                self.strategy
+            );
+        }
+        policy
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct IndexArgs {
+    /// Name for the analysis project (index name)
+    pub name: String,
+
+    /// One or more imported program names to co-index (from import step). If none given, assumes
+    /// the project name also refers to the import.
+    pub progs: Vec<String>,
+
+    /// Load summaries from one or more previously indexed projects and map them into the current project.
+    /// The summaries are filtered to functions that exist in the current project, including native
+    /// targets linked by the JNI bridge: a summary project's native libraries (their symbol and
+    /// `RegisterNatives` tables, not their code) are available to link this project's Java
+    /// `native` methods against. Can be specified multiple times to load from multiple projects.
+    #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
+    pub summary: Vec<String>,
+
+    /// Do not co-index the native libraries imported out of an APK or XAPK.
+    ///
+    /// The index-time counterpart of `ctadl import --no-native-libs`: naming an APK normally
+    /// also indexes every `.so` imported out of it, and this drops those (the `pcode`
+    /// sub-imports) while keeping an XAPK's split APKs. An import named explicitly is always
+    /// kept. Use it with `--summary` to index the Java half of an app against a project that
+    /// indexed one of its libraries on its own:
+    ///
+    ///   ctadl index xproj app__arm64-v8a__libX
+    ///   ctadl index appproj app --no-native-libs --summary xproj
+    #[arg(long)]
+    pub no_native_libs: bool,
+
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. This option is used primarily to provide propagation models, which
+    /// provide function summaries for indexing external or hard-to-analyze code.
+    ///
+    /// A `.ctadl` (or `.dl`) file is written in the model DSL, which is what the engine runs;
+    /// `.json`, `.json5` and `.jsonl` are the older model-generator format and still work.
+    /// `ctadl migrate-models` converts one to the other.
+    #[arg(long, short, action = clap::ArgAction::Append)]
+    pub models: Vec<PathBuf>,
+
+    /// Do not load the built-in default propagation models for the imported language.
+    ///
+    /// CTADL ships one default model file per frontend family (Java, native, Lua) and loads the
+    /// one matching each import. Pass this to index against `--models` alone -- for an A/B
+    /// measurement of what the defaults add, or when a model file is meant to be the complete
+    /// story.
+    #[arg(long)]
+    pub no_default_models: bool,
+
+    /// Do not link Java `native` methods to their native implementations.
+    ///
+    /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
+    /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
+    /// shift so taint flows both ways. Pass this to measure what the bridge contributes. See
+    /// `ctadl_ascent::languages::jni`.
+    #[arg(long)]
+    pub no_jni_bridge: bool,
+
+    /// Ignore the `RegisterNatives` tables recovered from a native library at import time.
+    ///
+    /// Most Android apps bind their natives at run time, from `JNI_OnLoad`, rather than through
+    /// the `Java_…` symbol convention; CTADL recovers those bindings out of the library's data
+    /// sections when it imports it. Pass this to link by symbol name alone -- an A/B measurement
+    /// of what the registry contributes, with no re-import needed. Implied by
+    /// `--no-jni-bridge`. See `ctadl_ascent::languages::jni::registry`.
+    #[arg(long)]
+    pub no_jni_registry: bool,
+
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
@@ -443,36 +521,64 @@ pub struct IndexArgs {
     ///
     /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
     /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
-    /// reports. Both engines evaluate the same rules and derive the same relations.
+    /// reports. Both engines evaluate the same rules and derive the same relations. The IR
+    /// passes that run before the engine (SSA and its cleanups) use the same number of threads.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Experimental: keep the largest relations in memory-mapped LSM files instead of in-memory
+    /// tries.
+    ///
+    /// The relations that dominate the index's memory (`locals`, `assign_like` and the
+    /// propagation relations built from them) then live mostly in run files under `$TMPDIR`,
+    /// read through the page cache, with only a write buffer per index in memory: a run that
+    /// would not fit in RAM can finish, at some cost in time. Runs the serial engine, so it
+    /// cannot be combined with `-j`.
+    #[arg(long, conflicts_with = "jobs")]
+    pub lsm: bool,
+
+    /// With `--lsm`, how many entries each index buffers in memory before writing them out as
+    /// a run file. Larger buffers mean fewer, larger runs (faster lookups) and more memory.
+    #[arg(long, requires = "lsm", value_name = "ENTRIES")]
+    pub lsm_memtable_limit: Option<usize>,
+
+    /// With `--lsm`, the most memory the LSM's write buffers may hold at once, all of them
+    /// together, e.g. `512M` or `4G` (powers of 1024; a bare number is bytes).
+    ///
+    /// Over the budget, a buffer that takes a new tuple is written out as a run file, so a
+    /// machine with little RAM can index a program that would otherwise not fit. The runs
+    /// themselves are read through the page cache, which the OS shrinks under pressure. The
+    /// budget does not cover the rest of the index: the relations kept in memory and the
+    /// program's facts still take what they take.
+    #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
+    pub lsm_memory_budget: Option<usize>,
 }
 
-impl IndexArgs {
-    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
-    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
-    /// for the population that behaves differently.
-    ///
-    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
-    /// recorded in the index config as given either way, so a silent no-op would be
-    /// indistinguishable from a policy that took effect.
-    pub fn call_policy(&self) -> CallPolicy {
-        let policy = CallPolicy {
-            cha_threshold: self.cha_threshold,
-            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
-            dispatch_models: !self.no_dispatch_models,
-            dispatch_models_interface: !self.no_dispatch_models
-                && !self.no_dispatch_models_interface,
-            order: self.dispatch_order,
-        };
-        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
-            log::warn!(
-                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
-                self.strategy
-            );
-        }
-        policy
-    }
+/// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
+/// `T` suffix (powers of 1024, any case, optionally followed by `B` or `iB`).
+fn parse_size(s: &str) -> Result<usize, String> {
+    let s = s.trim();
+    let digits = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    let (number, unit) = s.split_at(digits);
+    let number: f64 = number
+        .parse()
+        .map_err(|_| format!("`{s}` is not a size, like 512M or 4G"))?;
+    let unit = unit.trim().to_ascii_uppercase();
+    let unit = unit
+        .strip_suffix("IB")
+        .or_else(|| unit.strip_suffix('B'))
+        .unwrap_or(&unit);
+    let scale: u64 = match unit {
+        "" => 1,
+        "K" => 1 << 10,
+        "M" => 1 << 20,
+        "G" => 1 << 30,
+        "T" => 1 << 40,
+        _ => return Err(format!("unknown size unit in `{s}`; use K, M, G or T")),
+    };
+    Ok((number * scale as f64) as usize)
 }
 
 #[derive(Debug, Args)]
@@ -542,56 +648,17 @@ pub struct GoArgs {
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
 
-    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
-    ///
-    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
-    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
-    /// when the site has exactly one target and hybrid inlining otherwise.
-    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
-    pub strategy: CallResolutionStrategy,
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
-    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
-    /// hybrid inlining above that. `--strategy mixed` only.
-    ///
-    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
-    /// to hybrid inlining but costs the index engine: on a program with a large recursive
-    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
-    /// default is where that cost starts; going higher is worth it only when the extra
-    /// precision is.
-    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
-    pub cha_threshold: usize,
-
-    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
-    /// about a tenth of them resolve to a single target against four fifths of ordinary
-    /// virtual calls. Defaults to `--cha-threshold`.
-    #[arg(long)]
-    pub cha_threshold_interface: Option<usize>,
-
-    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
-    #[arg(long)]
-    pub no_dispatch_models: bool,
-
-    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
-    #[arg(long)]
-    pub no_dispatch_models_interface: bool,
-
-    /// Whether a matched dispatch model beats the threshold or the other way round.
-    ///
-    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
-    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
-    /// matches it, for a precision-sensitive run.
-    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
-    pub dispatch_order: DispatchOrder,
-
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
-    /// Skip importing an artifact when an import of the same name already exists
-    /// whose stored artifact path and content hash match. Applies to the import
-    /// step of this one-shot flow.
+    /// Re-import artifacts even when an up-to-date import already exists.
+    /// See `ctadl import --help`.
     #[arg(long)]
-    pub skip_existing: bool,
+    pub force: bool,
 
     /// Do not import the native libraries packaged inside an APK.
     /// See `ctadl import --help`.
@@ -602,6 +669,17 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub include_framework: bool,
+
+    /// Number of threads to import and index with. Unset, the import uses every core and the
+    /// index runs serially, as `ctadl import` and `ctadl index` do by default.
+    /// See `ctadl import --help` and `ctadl index --help`.
+    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -675,9 +753,11 @@ fn main() -> anyhow::Result<()> {
                     artifact: artifact.clone(),
                     name: None,
                     language: args.language,
-                    skip_existing: args.skip_existing,
+                    force: args.force,
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
+                    include_framework: args.include_framework,
+                    jobs: args.jobs.unwrap_or(0),
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -689,21 +769,20 @@ fn main() -> anyhow::Result<()> {
                 name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
                 no_jni_registry: args.no_jni_registry,
-                strategy: args.strategy,
-                cha_threshold: args.cha_threshold,
-                cha_threshold_interface: args.cha_threshold_interface,
-                no_dispatch_models: args.no_dispatch_models,
-                no_dispatch_models_interface: args.no_dispatch_models_interface,
-                dispatch_order: args.dispatch_order,
+                call: args.call.clone(),
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
-                jobs: None,
+                jobs: args.jobs,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -869,10 +948,13 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 artifact: index_args.facts_path.clone(),
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
-                skip_existing: false,
+                // This legacy path always re-imports.
+                force: true,
                 // Not an APK: this legacy path imports a directory of pcode facts.
                 no_native_libs: false,
                 native_abi: None,
+                include_framework: false,
+                jobs: 0,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -881,21 +963,27 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 name: legacy_name.to_string(),
                 progs: vec![legacy_name.to_string()],
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: false,
                 no_jni_bridge: false,
                 no_jni_registry: false,
-                strategy: CallResolutionStrategy::Mixed,
-                cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
-                cha_threshold_interface: None,
-                no_dispatch_models: false,
-                no_dispatch_models_interface: false,
-                dispatch_order: DispatchOrder::ModelFirst,
+                call: CallPolicyArgs {
+                    strategy: CallResolutionStrategy::Mixed,
+                    cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
+                    cha_threshold_interface: None,
+                    no_dispatch_models: false,
+                    no_dispatch_models_interface: false,
+                    dispatch_order: DispatchOrder::ModelFirst,
+                },
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
                 jobs: None,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -947,6 +1035,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
+            ImportLanguage::Cil => Cil,
             ImportLanguage::Auto => unreachable!(),
         }
     };
@@ -959,9 +1048,10 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     .to_str()
     .ok_or(anyhow::anyhow!("error converting filename to string"))?;
 
-    // If requested, skip the import when an up-to-date one already exists: the
+    // Unless forced, skip the import when an up-to-date one already exists: the
     // destination is present and the stored artifact path and content hash match.
-    if args.skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
+    let skip_existing = !args.force;
+    if skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
         log::info!(
             "skipping import '{}': destination exists and artifact hash matches",
             name
@@ -974,18 +1064,19 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     cli::import(
         &config,
         cli::ImportOptions {
-            skip_existing: args.skip_existing,
+            skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            cil_include_framework: args.include_framework,
+            jobs: args.jobs,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
     // (e.g. the pcode importer records `image_base`), then record the artifact's
-    // content hash (and path) so a later `--skip-existing` import can tell the import
-    // is up to date.
+    // content hash (and path) so a later import can tell the import is up to date.
     let mut config = project::ArtifactImport::load_by_name(name)?;
     // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
-    // hash for it; `--skip-existing` simply re-imports such artifacts each time.
+    // hash for it; such artifacts are simply re-imported each time.
     if !project::is_ghidra_server_url(&config.artifact_path) {
         config.record_artifact_hash()?;
     }
@@ -996,15 +1087,27 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// # Errors
 ///
-/// If there ary any loading or writing errors
+/// If there are any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
+    if args.lsm {
+        log::warn!("--lsm is experimental");
+    }
+    if let Some(limit) = args.lsm_memtable_limit {
+        lsm::ascent_provider::set_memtable_limit(limit);
+    }
+    lsm::set_memory_budget(args.lsm_memory_budget);
     // Determine the list of program names to index. If the user did not supply any, use the project name.
     let import_names: Vec<String> = if args.progs.is_empty() {
         vec![args.name.clone()]
     } else {
         args.progs.clone()
     };
-    let project = project::AnalysisProject::try_create(&args.name, &import_names)?;
+    let sub_imports = if args.no_native_libs {
+        project::SubImports::NoNativeLibs
+    } else {
+        project::SubImports::All
+    };
+    let project = project::AnalysisProject::try_create(&args.name, &import_names, sub_imports)?;
     cli::index(
         &project,
         &args.summary,
@@ -1013,13 +1116,18 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         cli::IndexOptions {
             no_jni_bridge: args.no_jni_bridge,
             no_jni_registry: args.no_jni_registry,
-            strategy: args.strategy,
-            call_policy: args.call_policy(),
+            strategy: args.call.strategy,
+            call_policy: args.call.call_policy(),
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             hybrid_context: args.hybrid_context,
             context_join: args.context_join,
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
+            storage: if args.lsm {
+                Storage::Lsm
+            } else {
+                Storage::Memory
+            },
         },
     )?;
     Ok(())
@@ -1080,7 +1188,7 @@ fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
 /// has ever run there is no project to load -- and that is exactly when checking a model file
-/// against the import is most useful. Falling back to [`AnalysisProject::ephemeral`] gives
+/// against the import is most useful. Falling back to [`project::AnalysisProject::ephemeral`] gives
 /// `ctadl query` the same import list, with the same `sub_imports` expansion (an APK's native
 /// libraries), and writes nothing to the store. The query itself then finds no index and says
 /// so; see [`cli::query`].
@@ -1088,7 +1196,11 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
     match project::AnalysisProject::try_load_name(name) {
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
-            Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            Ok(_) => Ok(project::AnalysisProject::ephemeral(
+                name,
+                &[name],
+                project::SubImports::All,
+            )),
             Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
                 Err(import_error).with_context(|| format!("loading import '{name}'"))
             }
@@ -1207,6 +1319,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if path.is_dir() && dir_contains_lua(path) {
                 return Ok(ImportLanguage::Lua);
             }
+            // A published .NET app is a directory of assemblies.
+            if path.is_dir() && ctadl_ascent::languages::cil::dir_has_cli_image(path) {
+                return Ok(ImportLanguage::Cil);
+            }
 
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
@@ -1218,6 +1334,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
+                // A PE file is .NET when it has CLI metadata, and native otherwise.
+                Some("dll" | "exe") if ctadl_ascent::languages::cil::is_cli_image(path) => {
+                    ImportLanguage::Cil
+                }
                 // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
                 // A C source file or header.
@@ -1283,6 +1403,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn sizes_parse() {
+        assert_eq!(parse_size("4096"), Ok(4096));
+        assert_eq!(parse_size("512M"), Ok(512 << 20));
+        assert_eq!(parse_size("4g"), Ok(4 << 30));
+        assert_eq!(parse_size("1.5GiB"), Ok(3 << 29));
+        assert_eq!(parse_size("64 KB"), Ok(64 << 10));
+        assert!(parse_size("4X").is_err());
+        assert!(parse_size("lots").is_err());
+    }
 
     /// The two dump modes read different things -- one an import's IR, the other a project's
     /// index -- so asking for both at once is a usage error, not a silent pick.
