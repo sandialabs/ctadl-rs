@@ -1,0 +1,434 @@
+[module]
+name=NoRoot.dll
+mvid=b0b73c78-c2fa-40d4-b084-212f89bec514
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=NoRoot, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000002=System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000003=Microsoft.VisualBasic, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000004=System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=My.MyApplication flags=0x00000000
+	base=Microsoft.VisualBasic.ApplicationServices.ApplicationBase
+0x02000003=My.MyComputer flags=0x00000000
+	base=Microsoft.VisualBasic.Devices.Computer
+0x02000004=My.MyProject flags=0x00100100
+	base=System.Object
+0x02000005=Form1 flags=0x00000001
+	base=System.Windows.Forms.Form
+0x02000006=My.MyProject/MyWebServices flags=0x00000105
+	base=System.Object
+0x02000007=My.MyProject/ThreadSafeObjectProvider`1 flags=0x00000105
+	base=System.Object
+	generic-param 0 name=T flags=0x0010
+[fields]
+0x04000001=My.MyProject/ThreadSafeObjectProvider`1<My.MyComputer> My.MyProject::m_ComputerObjectProvider flags=0x0031
+0x04000002=My.MyProject/ThreadSafeObjectProvider`1<My.MyApplication> My.MyProject::m_AppObjectProvider flags=0x0031
+0x04000003=My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> My.MyProject::m_UserObjectProvider flags=0x0031
+0x04000004=My.MyProject/ThreadSafeObjectProvider`1<My.MyProject/MyWebServices> My.MyProject::m_MyWebServicesObjectProvider flags=0x0031
+0x04000005=System.ComponentModel.IContainer Form1::components flags=0x0001
+0x04000006=Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1::m_Context flags=0x0021
+[methods]
+0x06000001=System.Void My.MyApplication::.ctor() flags=0x1806 impl=0x0000 rva=0x00002050
+0x06000002=System.Void My.MyComputer::.ctor() flags=0x1806 impl=0x0000 rva=0x00002058
+0x06000003=System.Void My.MyProject::.cctor() flags=0x1811 impl=0x0000 rva=0x00002062
+0x06000004=My.MyComputer My.MyProject::get_Computer() flags=0x0813 impl=0x0000 rva=0x0000208c semantics=0x0002
+0x06000005=My.MyApplication My.MyProject::get_Application() flags=0x0813 impl=0x0000 rva=0x000020a8 semantics=0x0002
+0x06000006=Microsoft.VisualBasic.ApplicationServices.User My.MyProject::get_User() flags=0x0813 impl=0x0000 rva=0x000020c4 semantics=0x0002
+0x06000007=My.MyProject/MyWebServices My.MyProject::get_WebServices() flags=0x0813 impl=0x0000 rva=0x000020e0 semantics=0x0002
+0x06000008=System.Void Form1::.ctor() flags=0x1806 impl=0x0000 rva=0x000020fc
+0x06000009=System.Void Form1::Dispose(System.Boolean) flags=0x02c4 impl=0x0000 rva=0x0000210c
+	param 1 name=disposing flags=0x0000
+0x0600000a=System.Void Form1::InitializeComponent() flags=0x0001 impl=0x0000 rva=0x0000215c
+0x0600000b=System.Boolean My.MyProject/MyWebServices::Equals(System.Object) flags=0x02c6 impl=0x0000 rva=0x00002180
+	param 1 name=o flags=0x0000
+0x0600000c=System.Int32 My.MyProject/MyWebServices::GetHashCode() flags=0x02c6 impl=0x0000 rva=0x000021a0
+0x0600000d=System.Type My.MyProject/MyWebServices::GetType() flags=0x0083 impl=0x0000 rva=0x000021b8
+0x0600000e=System.String My.MyProject/MyWebServices::ToString() flags=0x02c6 impl=0x0000 rva=0x000021d4
+0x0600000f=T My.MyProject/MyWebServices::Create__Instance__(T) flags=0x0011 impl=0x0000 rva=0x000021ec
+	generic-param 0 name=T flags=0x0010
+	param 0 name=instance flags=0x0000
+0x06000010=System.Void My.MyProject/MyWebServices::Dispose__Instance__(T&) flags=0x0001 impl=0x0000 rva=0x00002215
+	generic-param 0 name=T flags=0x0000
+	param 1 name=instance flags=0x0000
+0x06000011=System.Void My.MyProject/MyWebServices::.ctor() flags=0x1806 impl=0x0000 rva=0x0000221f
+0x06000012=T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance() flags=0x0803 impl=0x0000 rva=0x0000222c semantics=0x0002
+0x06000013=System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor() flags=0x1806 impl=0x0000 rva=0x0000226d
+[properties]
+0x17000001=My.MyComputer My.MyProject::Computer() flags=0x0000 getter=0x06000004
+0x17000002=My.MyApplication My.MyProject::Application() flags=0x0000 getter=0x06000005
+0x17000003=Microsoft.VisualBasic.ApplicationServices.User My.MyProject::User() flags=0x0000 getter=0x06000006
+0x17000004=My.MyProject/MyWebServices My.MyProject::WebServices() flags=0x0000 getter=0x06000007
+0x17000005=T My.MyProject/ThreadSafeObjectProvider`1::GetInstance() flags=0x0000 getter=0x06000012
+[events]
+[custom-attributes]
+ca parent=0x17000001 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Computer"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.5.2")) property FrameworkDisplayName=(String:".NET Framework 4.5.2")
+ca parent=0x06000002 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000002 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x02000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000002 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Application"))
+ca parent=0x02000003 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x02000003 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000003 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.User"))
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x17000004 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.WebServices"))
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void Microsoft.VisualBasic.CompilerServices.DesignerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000006 ctor=System.Void Microsoft.VisualBasic.MyGroupCollectionAttribute::.ctor(System.String,System.String,System.String,System.String) args=((String:"System.Web.Services.Protocols.SoapHttpClientProtocol"), (String:"Create__Instance__"), (String:"Dispose__Instance__"), (String:""))
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000007 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x06000009 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600000b ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000d ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600000d ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000e ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600000e ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000f ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000010 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000011 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000012 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000013 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void Microsoft.VisualBasic.ApplicationServices.ApplicationBase::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void Microsoft.VisualBasic.Devices.Computer::.ctor()
+	IL_0007: nop
+	IL_0008: ret
+0x06000003 max-stack=8 init-locals=false code-size=41
+	IL_0000: newobj System.Void My.MyProject/ThreadSafeObjectProvider`1<My.MyComputer>::.ctor()
+	IL_0005: stsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyComputer> My.MyProject::m_ComputerObjectProvider
+	IL_000a: newobj System.Void My.MyProject/ThreadSafeObjectProvider`1<My.MyApplication>::.ctor()
+	IL_000f: stsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyApplication> My.MyProject::m_AppObjectProvider
+	IL_0014: newobj System.Void My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::.ctor()
+	IL_0019: stsfld My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> My.MyProject::m_UserObjectProvider
+	IL_001e: newobj System.Void My.MyProject/ThreadSafeObjectProvider`1<My.MyProject/MyWebServices>::.ctor()
+	IL_0023: stsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyProject/MyWebServices> My.MyProject::m_MyWebServicesObjectProvider
+	IL_0028: ret
+0x06000004 max-stack=1 init-locals=true code-size=16
+	local 0=My.MyComputer
+	IL_0000: nop
+	IL_0001: ldsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyComputer> My.MyProject::m_ComputerObjectProvider
+	IL_0006: callvirt T My.MyProject/ThreadSafeObjectProvider`1<My.MyComputer>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000005 max-stack=1 init-locals=true code-size=16
+	local 0=My.MyApplication
+	IL_0000: nop
+	IL_0001: ldsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyApplication> My.MyProject::m_AppObjectProvider
+	IL_0006: callvirt T My.MyProject/ThreadSafeObjectProvider`1<My.MyApplication>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000006 max-stack=1 init-locals=true code-size=16
+	local 0=Microsoft.VisualBasic.ApplicationServices.User
+	IL_0000: nop
+	IL_0001: ldsfld My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> My.MyProject::m_UserObjectProvider
+	IL_0006: callvirt T My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000007 max-stack=1 init-locals=true code-size=16
+	local 0=My.MyProject/MyWebServices
+	IL_0000: nop
+	IL_0001: ldsfld My.MyProject/ThreadSafeObjectProvider`1<My.MyProject/MyWebServices> My.MyProject::m_MyWebServicesObjectProvider
+	IL_0006: callvirt T My.MyProject/ThreadSafeObjectProvider`1<My.MyProject/MyWebServices>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000008 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Windows.Forms.Form::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: call System.Void Form1::InitializeComponent()
+	IL_000c: ret
+0x06000009 max-stack=2 init-locals=true code-size=49
+	local 0=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.1
+	IL_0003: brfalse.s IL_0010
+	IL_0005: ldarg.0
+	IL_0006: ldfld System.ComponentModel.IContainer Form1::components
+	IL_000b: ldnull
+	IL_000c: cgt.un
+	IL_000e: br.s IL_0011
+	IL_0010: ldc.i4.0
+	IL_0011: stloc.0
+	IL_0012: ldloc.0
+	IL_0013: brfalse.s IL_0022
+	IL_0015: ldarg.0
+	IL_0016: ldfld System.ComponentModel.IContainer Form1::components
+	IL_001b: callvirt System.Void System.IDisposable::Dispose()
+	IL_0020: nop
+	IL_0021: nop
+	IL_0022: nop
+	IL_0023: leave.s IL_002f
+	IL_0025: nop
+	IL_0026: ldarg.0
+	IL_0027: ldarg.1
+	IL_0028: call System.Void System.Windows.Forms.Form::Dispose(System.Boolean)
+	IL_002d: nop
+	IL_002e: endfinally
+	IL_002f: nop
+	IL_0030: ret
+	.try IL_0001 to IL_0025 finally handler IL_0025 to IL_002f
+0x0600000a max-stack=8 init-locals=false code-size=33
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: newobj System.Void System.ComponentModel.Container::.ctor()
+	IL_0007: stfld System.ComponentModel.IContainer Form1::components
+	IL_000c: ldarg.0
+	IL_000d: ldc.i4.1
+	IL_000e: call System.Void System.Windows.Forms.ContainerControl::set_AutoScaleMode(System.Windows.Forms.AutoScaleMode)
+	IL_0013: nop
+	IL_0014: ldarg.0
+	IL_0015: ldstr "Form1"
+	IL_001a: callvirt System.Void System.Windows.Forms.Form::set_Text(System.String)
+	IL_001f: nop
+	IL_0020: ret
+0x0600000b max-stack=2 init-locals=true code-size=18
+	local 0=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: call System.Object System.Runtime.CompilerServices.RuntimeHelpers::GetObjectValue(System.Object)
+	IL_0008: call System.Boolean System.Object::Equals(System.Object)
+	IL_000d: stloc.0
+	IL_000e: br.s IL_0010
+	IL_0010: ldloc.0
+	IL_0011: ret
+0x0600000c max-stack=1 init-locals=true code-size=12
+	local 0=System.Int32
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Int32 System.Object::GetHashCode()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x0600000d max-stack=1 init-locals=true code-size=16
+	local 0=System.Type
+	IL_0000: nop
+	IL_0001: ldtoken My.MyProject/MyWebServices
+	IL_0006: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x0600000e max-stack=1 init-locals=true code-size=12
+	local 0=System.String
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.String System.Object::ToString()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x0600000f max-stack=2 init-locals=true code-size=29
+	local 0=T
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: box T
+	IL_0007: ldnull
+	IL_0008: ceq
+	IL_000a: stloc.1
+	IL_000b: ldloc.1
+	IL_000c: brfalse.s IL_0016
+	IL_000e: call !!0 System.Activator::CreateInstance<T>()
+	IL_0013: stloc.0
+	IL_0014: br.s IL_001b
+	IL_0016: nop
+	IL_0017: ldarg.0
+	IL_0018: stloc.0
+	IL_0019: br.s IL_001b
+	IL_001b: ldloc.0
+	IL_001c: ret
+0x06000010 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.1
+	IL_0002: initobj T
+	IL_0008: ret
+0x06000011 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: ret
+0x06000012 max-stack=2 init-locals=true code-size=53
+	local 0=T
+	local 1=T
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldfld Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1<T>::m_Context
+	IL_0007: callvirt !0 Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T>::get_Value()
+	IL_000c: stloc.1
+	IL_000d: ldloc.1
+	IL_000e: box T
+	IL_0013: ldnull
+	IL_0014: ceq
+	IL_0016: stloc.2
+	IL_0017: ldloc.2
+	IL_0018: brfalse.s IL_002e
+	IL_001a: call !!0 System.Activator::CreateInstance<T>()
+	IL_001f: stloc.1
+	IL_0020: ldarg.0
+	IL_0021: ldfld Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1<T>::m_Context
+	IL_0026: ldloc.1
+	IL_0027: callvirt System.Void Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T>::set_Value(!0)
+	IL_002c: nop
+	IL_002d: nop
+	IL_002e: nop
+	IL_002f: ldloc.1
+	IL_0030: stloc.0
+	IL_0031: br.s IL_0033
+	IL_0033: ldloc.0
+	IL_0034: ret
+0x06000013 max-stack=8 init-locals=false code-size=20
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: ldarg.0
+	IL_0009: newobj System.Void Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T>::.ctor()
+	IL_000e: stfld Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1<T>::m_Context
+	IL_0013: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x1b000001 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000002 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000003 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000004 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000005 -> -
+0x1b000006 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000007 -> -
+0x1b000008 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000013 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000014 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000015 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000016 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000017 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000018 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000019 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> NoRoot.dll!0x04000006 Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1::m_Context
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x06000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000003 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000007 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x0600000b ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x0600000c ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x0600000d ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x0600000e ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+[fields-resolved]

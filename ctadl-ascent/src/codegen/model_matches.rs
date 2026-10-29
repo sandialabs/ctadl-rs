@@ -115,7 +115,7 @@ fn dispatch_propagations(
     matches: &ProgramModelMatches,
 ) -> impl Iterator<Item = PropagationMatch> + '_ {
     matches.dispatch.iter().flat_map(|(key, model)| {
-        let Disposition::Model(ports) = &model.disposition else {
+        let (Disposition::Model(ports) | Disposition::Inline(ports)) = &model.disposition else {
             return Vec::new();
         };
         let function = facts::Str::from(
@@ -172,13 +172,13 @@ fn codegen_propagations(
             facts.formal_param.push((
                 func_id,
                 FlowVariable::formal_index(*dst_index),
-                FormalType::ByRef,
+                FormalType::Shared,
             ));
             for src_index in &src_index {
                 facts.formal_param.push((
                     func_id,
                     FlowVariable::formal_index(*src_index),
-                    FormalType::ByRef,
+                    FormalType::Shared,
                 ));
                 if dst_index == src_index {
                     continue;
@@ -417,12 +417,12 @@ fn emit_bridge(
         facts.formal_param.push((
             a,
             FlowVariable::formal_index(port.from.index),
-            FormalType::ByRef,
+            FormalType::Shared,
         ));
         facts.formal_param.push((
             b,
             FlowVariable::formal_index(port.to.index),
-            FormalType::ByRef,
+            FormalType::Shared,
         ));
 
         if collapses(port) {
@@ -458,7 +458,7 @@ fn emit_bridge(
         // `assign` is keyed on the packed instruction site, from which the function is derived.
         // (The function-keyed shape is the persisted parquet form only.)
         if port.direction.inward() {
-            facts.assign.push((site, callee.clone(), caller.clone()));
+            facts.assign.push((site, callee, caller));
         }
         if port.direction.outward() {
             facts.assign.push((site, caller, callee));

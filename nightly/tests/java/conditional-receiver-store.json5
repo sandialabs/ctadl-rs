@@ -1,0 +1,17 @@
+{
+  // Flow: (c ? a : b).data = source() (16) -> sink(a.data) (17). The putfield's
+  // object is a stack value defined on two branches.
+  "expected_lines": [16, 17],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LConditionalReceiverStore;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LConditionalReceiverStore;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

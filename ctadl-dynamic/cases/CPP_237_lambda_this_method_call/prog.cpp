@@ -1,4 +1,4 @@
-/* C++ lambdas capturing this (spec 040), POSITIVE (`t4_this_method_call`). `set(x)` on the captured `this` is dispatched, but the member is read only by the callee: F4 (OPEN, known gap). s=none d=flow. */
+/* C++ lambdas capturing this (spec 040), POSITIVE (`t4_this_method_call`). `set(x)` on the captured `this` is dispatched, and the method copies the slot back member by member. s=flow d=flow agree (an F4 known gap until 2026-10-20). */
 extern "C" int source();
 extern "C" void sink(int);
 

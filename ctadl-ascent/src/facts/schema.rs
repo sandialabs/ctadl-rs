@@ -26,8 +26,7 @@ macro_rules! save_load {
             items: impl IntoIterator<Item = Record>,
         ) -> Result<(), Error> {
             let path = path.as_ref();
-            parquet::Writer::new(path.join(FILENAME))
-                .write_vec(&COLUMNS, items.into_iter().collect())
+            parquet::Writer::new(path.join(FILENAME)).write_iter(&COLUMNS, items)
         }
 
         pub fn try_load<P: AsRef<path::Path>>(path: P) -> Result<Vec<Record>, Error> {
@@ -248,6 +247,30 @@ mod tests {
         PackedInsnSiteId, Path,
     };
 
+    /// A table larger than a row group is written as several, and reads back whole and in
+    /// order; an empty one still makes a readable file.
+    #[test]
+    fn tables_round_trip_across_row_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: Vec<super::resolved_call::Record> = (0..super::parquet::ROWS_PER_GROUP * 2 + 7)
+            .map(|i| {
+                (
+                    FunctionId::new(i as u32 % 1000),
+                    InsnId::new(i as u64),
+                    FunctionId::new(7),
+                )
+            })
+            .collect();
+        super::resolved_call::try_save(dir.path(), rows.clone()).unwrap();
+        assert_eq!(super::resolved_call::try_load(dir.path()).unwrap(), rows);
+        super::resolved_call::try_save(dir.path(), Vec::new()).unwrap();
+        assert!(
+            super::resolved_call::try_load(dir.path())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
     /// plus nullable function-id and symbol columns; every variant must survive a parquet
     /// round-trip, and the payload of each variant must land in the right column. `Symbol` and
@@ -277,6 +300,13 @@ mod tests {
                 var,
                 Path::empty(),
                 CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+            ),
+            (
+                FunctionId::new(4),
+                InsnId::new(40),
+                var,
+                Path::empty(),
+                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
             ),
         ];
 
@@ -318,6 +348,16 @@ mod tests {
                 Path::empty(),
                 CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
             ),
+            (
+                FunctionId::new(4),
+                InsnId::new(40),
+                var,
+                Path::empty(),
+                CallDispatchKey::Cil(
+                    ctadl_ir::Symbol::from("Parse"),
+                    ctadl_ir::Symbol::from("(System.String)->System.Int32"),
+                ),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -351,6 +391,14 @@ mod tests {
                 CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
                 CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
                 FunctionId::new(42),
+            ),
+            (
+                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
+                CallDispatchKey::Cil(
+                    ctadl_ir::Symbol::from("Parse"),
+                    ctadl_ir::Symbol::from("(System.String)->System.Int32"),
+                ),
+                FunctionId::new(43),
             ),
         ];
 

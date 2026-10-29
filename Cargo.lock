@@ -463,6 +463,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ascent-tc-lsm-bench"
+version = "0.1.4"
+dependencies = [
+ "ascent",
+ "ascent-byods-rels",
+ "bytemuck",
+ "criterion",
+ "lsm",
+]
+
+[[package]]
 name = "ascent_base"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -840,6 +851,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cil-dump"
+version = "0.1.4"
+dependencies = [
+ "cil-reader",
+]
+
+[[package]]
+name = "cil-reader"
+version = "0.1.4"
+dependencies = [
+ "flate2",
+ "memmap2",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1112,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ascent"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1125,6 +1151,7 @@ dependencies = [
  "clap",
  "csv",
  "ctadl-c",
+ "ctadl-cil",
  "ctadl-dex",
  "ctadl-flowy",
  "ctadl-frontends",
@@ -1149,6 +1176,7 @@ dependencies = [
  "libc",
  "log",
  "log-once",
+ "lsm",
  "memmap",
  "object",
  "packed_struct",
@@ -1185,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-c"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "ctadl-ascent",
@@ -1206,8 +1234,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctadl-cil"
+version = "0.1.4"
+dependencies = [
+ "cil-reader",
+ "ctadl-import",
+ "ctadl-ir",
+ "hashbrown 0.16.1",
+ "log",
+ "sha1",
+ "smallvec",
+ "source-info",
+]
+
+[[package]]
 name = "ctadl-dex"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1216,7 +1258,6 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
- "streaming-iterator",
  "test-log",
 ]
 
@@ -1234,14 +1275,13 @@ dependencies = [
 
 [[package]]
 name = "ctadl-flowy"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
  "internment",
  "log",
- "pest",
- "pest_derive",
+ "peg",
  "serde",
  "smallvec",
  "source-info",
@@ -1250,10 +1290,11 @@ dependencies = [
 
 [[package]]
 name = "ctadl-frontends"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitcode",
  "ctadl-c",
+ "ctadl-cil",
  "ctadl-dex",
  "ctadl-flowy",
  "ctadl-import",
@@ -1267,9 +1308,10 @@ dependencies = [
 
 [[package]]
 name = "ctadl-import"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitcode",
+ "cil-reader",
  "ctadl-flowy",
  "ctadl-ir",
  "dex-reader",
@@ -1287,7 +1329,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ir"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bit-set",
  "bitcode",
@@ -1306,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-jvm"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1315,11 +1357,12 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+ "tempfile",
 ]
 
 [[package]]
 name = "ctadl-lua"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1335,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-pcode"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -2160,10 +2203,10 @@ dependencies = [
 
 [[package]]
 name = "dex-reader"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "log",
- "streaming-iterator",
+ "smallvec",
  "thiserror",
  "zip 0.6.6",
 ]
@@ -2769,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "immortal"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hashbrown 0.15.5",
  "parking_lot 0.12.5",
@@ -2915,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "jvm-reader"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "zip 8.2.0",
 ]
@@ -3070,6 +3113,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsm"
+version = "0.1.4"
+dependencies = [
+ "ascent",
+ "bytemuck",
+ "criterion",
+ "hashbrown 0.16.1",
+ "memmap2",
+ "smallvec",
+]
+
+[[package]]
 name = "lz4_flex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3120,6 +3175,15 @@ checksum = "6585fd95e7bb50d6cc31e20d4cf9afb4e2ba16c5846fc76793f11218da9c475b"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -3403,7 +3467,7 @@ dependencies = [
 
 [[package]]
 name = "pcode-reader"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ascent",
  "ascent_base",
@@ -3418,6 +3482,33 @@ dependencies = [
  "thiserror",
  "tokio",
 ]
+
+[[package]]
+name = "peg"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aad070be5b63aa72103f2fcdd70a83adbd5e90112ce5b574171ff1c65501773"
+dependencies = [
+ "peg-macros",
+ "peg-runtime",
+]
+
+[[package]]
+name = "peg-macros"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd8ef6825cae95355031ae26a99b616a2a21f22ba2de0197c43dfb05acbe7ee"
+dependencies = [
+ "peg-runtime",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "peg-runtime"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7011d97b484a5ebdc4b1fdb3b12d5e4bbbea56e9d22b688f2e79e04b65a7d8a6"
 
 [[package]]
 name = "percent-encoding"
@@ -3825,7 +3916,7 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_graphviz"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "rustc_version"
@@ -4097,7 +4188,7 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "source-info"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arrow",
  "datafusion",
@@ -4234,7 +4325,7 @@ dependencies = [
 
 [[package]]
 name = "tailshare"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "immortal",
  "parking_lot 0.12.5",
@@ -4538,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "trie"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "criterion",
  "parking_lot 0.12.5",
@@ -5193,14 +5284,19 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "boon",
+ "cil-dump",
+ "cil-reader",
  "ctadl-ascent",
+ "ctadl-cil",
+ "ctadl-ir",
  "dex-reader",
  "json5",
  "jvm-reader",
+ "regex",
  "serde",
  "serde_json",
  "zip 0.6.6",

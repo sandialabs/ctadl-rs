@@ -208,6 +208,9 @@ macro_rules! make_ast_visitor {
                     CallStyle::LuaCall { receiver, method: _ } => {
                         self.visit_variable_ref(receiver)
                     },
+                    CallStyle::CilCall { receiver, cls: _, simple_name: _, descriptor: _ } => {
+                        self.visit_variable_ref(receiver)
+                    },
                     CallStyle::Unknown => (),
                 }
             }

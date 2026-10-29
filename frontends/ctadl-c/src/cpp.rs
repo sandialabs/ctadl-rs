@@ -724,7 +724,7 @@ fn build_subclasses(ctx: &mut Context<'_>) {
 /// same implicit `this`, plus any member-initializer list lowered before the body. This hook (installed only for C++) finds each class, records its data members and
 /// method names into `Context::classes` (the neutral map the shared core consults for member
 /// resolution and `recv.method(…)` dispatch), and lowers every method body via
-/// `Context::lower_function` with an implicit `this` (`ByRef`) parameter. An out-of-line body
+/// `Context::lower_function` with an implicit `this` (`Shared`) parameter. An out-of-line body
 /// resolves its enclosing class from the qualifier and is otherwise identical to an inline
 /// one (same implicit `this`, same `this.<member>` resolution).
 ///
@@ -1567,6 +1567,7 @@ fn cpp_discover_byval_class_params(
     let mut cursor = QueryCursor::new();
     let mut it = cursor.matches(&query, root, source.as_bytes());
     let mut found: Vec<(String, Vec<Option<String>>)> = Vec::new();
+    let mut found_cells: Vec<(String, Vec<bool>)> = Vec::new();
     while let Some(m) = it.next() {
         let extract = MatchExtractor::new(&query, m);
         let def = extract.get("def")?;
@@ -1581,30 +1582,41 @@ fn cpp_discover_byval_class_params(
             continue;
         };
         let mut pcursor = params.walk();
-        let byval: Vec<Option<String>> = params
+        let decls: Vec<Node<'_>> = params
             .children(&mut pcursor)
             .filter(|pd| pd.kind() == "parameter_declaration")
+            .collect();
+        let byval: Vec<Option<String>> = decls
+            .iter()
             .map(|pd| {
                 pd.child_by_field_name("declarator")
                     .filter(|d| d.kind() == "identifier")
-                    .and_then(|_| declared_class(ctx, pd, source))
+                    .and_then(|_| declared_class(ctx, *pd, source))
             })
             .collect();
+        let cells: Vec<bool> = decls
+            .iter()
+            .map(|pd| super::is_reference_cell_param(ctx, *pd, source))
+            .collect();
+        let key = || {
+            mangle_overload(
+                &ctx.overloads,
+                &base,
+                ptypes.len(),
+                &signature_text(&ptypes),
+            )
+        };
         if byval.iter().any(Option::is_some) {
-            found.push((
-                mangle_overload(
-                    &ctx.overloads,
-                    &base,
-                    ptypes.len(),
-                    &signature_text(&ptypes),
-                ),
-                byval,
-            ));
+            found.push((key(), byval));
+        }
+        if cells.contains(&true) {
+            found_cells.push((key(), cells));
         }
     }
     drop(it);
     drop(cursor);
     ctx.byval_class_params.extend(found);
+    ctx.reference_cell_slots.extend(found_cells);
     Ok(())
 }
 
@@ -1758,7 +1770,7 @@ fn init_args(node: Node<'_>) -> Vec<Node<'_>> {
 /// - **brace** `Box b{args}` — an `init_declarator` whose value is an `initializer_list`.
 ///
 /// Each lowers to: register the local object, then `DirectCall Class::Class` with the
-/// object as the arg-0 (`ByRef`) receiver and the constructor arguments following — so the
+/// object as the arg-0 (`Shared`) receiver and the constructor arguments following — so the
 /// constructor's `this.<member>` writes propagate back into the object (exactly like a
 /// setter call). Returns `true` when it recognized and lowered a construction, `false`
 /// otherwise (e.g. `Box b;`, or a class without a constructor) so the caller handles the
@@ -2101,7 +2113,7 @@ fn reconstruct_mvp_arg<'a>(
 /// Register the constructed local and emit the `DirectCall Class::Class(&obj, args…)`. The
 /// object is registered in `local_types` so a later `obj.method(…)` dispatches, and passed
 /// as the plain arg-0 access path (by-ref semantics come from the constructor's param 0
-/// being `ByRef`, exactly as for an ordinary method receiver). The void constructor's
+/// being `Shared`, exactly as for an ordinary method receiver). The void constructor's
 /// result goes to a throwaway temp, as method-call lowering already does.
 ///
 /// The ctor edge is arity-resolved (spec 010) and then shape-resolved among the ctors of that
@@ -2140,7 +2152,7 @@ fn emit_construction<'a>(
 }
 
 /// Emit the constructor `DirectCall Class::Class#<arity>(&obj, args…)` for an **already-
-/// registered** local `obj_name`. Its access path is the arg-0 (`ByRef`) receiver, so the
+/// registered** local `obj_name`. Its access path is the arg-0 (`Shared`) receiver, so the
 /// constructor's `this.<member>` writes land in the object; the void result goes to a
 /// throwaway temp. The callee name is arity-resolved via the neutral mangler (spec 010), so a
 /// class with ctors of ≥2 arities resolves to the matching `Box::Box#1`/`Box::Box#2` and a
@@ -2188,8 +2200,6 @@ fn emit_ctor_edge(
     copy: bool,
 ) {
     let arity = ctor_args.len();
-    let mut args: ThinVec<Exp> = thin_vec![recv];
-    args.extend(ctor_args);
 
     // A **copy** construction calls the copy constructor's own key, which no arity or signature
     // can name — so it keeps winning over a same-arity sibling (spec 022, 024 FR-2); every other
@@ -2222,6 +2232,19 @@ fn emit_ctor_edge(
             .into_iter()
             .collect()
     };
+    // A reference-cell parameter gets its argument through a temp's cell. There is no argument
+    // node here to copy back into, so only the copy in is made.
+    let mut ctor_args = ctor_args;
+    let positions = ctx.reference_cell_positions(&targets, arity);
+    for (arg, _) in ctor_args
+        .iter_mut()
+        .zip(positions)
+        .filter(|(_, cell)| *cell)
+    {
+        ctx.reference_cell_arg(program, scope_view, arg);
+    }
+    let mut args: ThinVec<Exp> = thin_vec![recv];
+    args.extend(ctor_args);
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -2484,7 +2507,7 @@ fn dtor_cha_targets(ctx: &Context<'_>, static_class: &str, defining: &str) -> Ve
 /// the pointer/reference-receiver machinery) to the referent object and its **static** class; when
 /// that class (or a base) declares a destructor, we emit a `DirectCall` whose targets are the
 /// static type's subtree destructors for a **virtual** destructor ([`dtor_cha_targets`], CHA), or
-/// the single static-type destructor otherwise, with the referent `*p` as the arg-0 (`ByRef`)
+/// the single static-type destructor otherwise, with the referent `*p` as the arg-0 (`Shared`)
 /// receiver — so the destructor body's `this.<member>` reads/writes land on the heap object the
 /// setter already tainted. A destructor-less hierarchy (or a non-class operand) emits nothing,
 /// leaving `delete` a taint no-op exactly as spec 014 left it. Neutral-map-driven, so it never
@@ -2529,7 +2552,7 @@ fn cpp_lower_delete<'a>(
     Ok(())
 }
 
-/// Emit a destructor `DirectCall <targets>(recv)` — the object as the arg-0 (`ByRef`) receiver (a
+/// Emit a destructor `DirectCall <targets>(recv)` — the object as the arg-0 (`Shared`) receiver (a
 /// destructor is niladic beyond its implicit `this`); the void result goes to a throwaway temp.
 /// Shared by the two destructor triggers that differ only in receiver and target set: `delete p`
 /// ([`cpp_lower_delete`], receiver `*p`, CHA-or-single targets) and scope exit ([`cpp_scope_exit`],
@@ -2562,7 +2585,7 @@ fn emit_dtor_call(
 /// ([`dtor_defining_class`]) we emit a **single-target exact-type** destructor `DirectCall` — a
 /// stack object's dynamic type equals its declared type, so scope exit is always the non-virtual
 /// exact-type branch (no CHA; even a `virtual ~Base` stack `Base b` destroys as exactly
-/// `Base::~Base`), reusing [`emit_dtor_call`] with the object itself as the arg-0 (`ByRef`)
+/// `Base::~Base`), reusing [`emit_dtor_call`] with the object itself as the arg-0 (`Shared`)
 /// receiver. A destructor-less object emits nothing (spec 014's no-op). The top frame is empty for
 /// C (which constructs no class objects), so this is inert on the C path.
 fn cpp_scope_exit<'a>(
@@ -2580,7 +2603,7 @@ fn cpp_scope_exit<'a>(
 /// The C++ `scope_unwind` hook (spec 021): a `return`/`break`/`continue` leaves the top `frames`
 /// scopes at once, so it runs the destructors of all of them — **innermost frame first**, reverse
 /// construction order within each, exactly as C++ unwinds. Each object's call is spec 017's
-/// (the single-target exact-type destructor with the object as the arg-0 `ByRef` receiver), so this
+/// (the single-target exact-type destructor with the object as the arg-0 `Shared` receiver), so this
 /// is [`cpp_scope_exit`] repeated over a range of frames instead of just the top one.
 ///
 /// The frames are **read, not popped**: the compound walk that pushed them still pops them on its
@@ -3208,22 +3231,36 @@ fn cpp_function_scan<'a>(
     let mut stack = vec![body];
     while let Some(n) = stack.pop() {
         // A closure in this body that captures `this` may write the object through its slot;
-        // store the slot back into the object after every call (spec 040).
+        // store the slot back into the object after every call (spec 040). Member by member:
+        // assigning `this` itself would rebind the parameter, which never reaches the caller.
         if n.kind() == "lambda_expression"
             && enclosing_body(n).is_some_and(|b| b.id() == body.id())
             && captures_this(ctx, n, source)
+            && let Some(class) = ctx.current_method_class.clone()
         {
-            let this = ctx.build_access_path(
-                "this",
-                Default::default(),
-                scope_view,
-                &mut program[scope_view.fidx].locals,
-            );
-            let slot = RawPath::new(
-                VariableRef::new_global(),
-                thin_vec![PathSegment::symbol(this_slot(n).as_str())],
-            );
-            ctx.post_call_copies.push((this, slot));
+            let mut members: Vec<String> = ctx
+                .classes
+                .get(&class)
+                .map(|info| info.members.iter().cloned().collect())
+                .unwrap_or_default();
+            members.retain(|m| ctx.static_member_class(&class, m).is_none());
+            members.sort();
+            for member in members {
+                let this = ctx.build_access_path(
+                    "this",
+                    thin_vec![PathSegment::symbol(member.as_str())],
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                );
+                let slot = RawPath::new(
+                    VariableRef::new_global(),
+                    thin_vec![
+                        PathSegment::symbol(this_slot(n).as_str()),
+                        PathSegment::symbol(member.as_str())
+                    ],
+                );
+                ctx.post_call_copies.push((this, slot));
+            }
         }
         if n.kind() == "lambda_expression" {
             for (name, capture) in lambda_captures(n, source) {
@@ -3547,7 +3584,7 @@ fn operand_class(
 /// it is a call on the left operand: `a = x` is `a.operator=(x)`, `a += x` is
 /// `a.operator+=(x)`, `a[i]` is `a.operator[](i)`, `f(args)` is `f.operator()(args)`. Each is
 /// lowered through [`Context::emit_method_call`] — the very builder `recv.m(args)` uses — with
-/// the object as the arg-0 (`ByRef`) receiver, so the member writes the operator body performs
+/// the object as the arg-0 (`Shared`) receiver, so the member writes the operator body performs
 /// flow back into the object and a member it returns flows out.
 ///
 /// It answers `None`, leaving the shared arm's built-in lowering untouched, whenever the operand
@@ -3927,11 +3964,19 @@ fn implicit_member_call<'a>(
         return Ok(None);
     };
     let shapes = ctx.arg_shapes(args_node, source);
-    let args = ctx.collect_arguments(program, args_node, source, scope_view)?;
+    let mut args = ctx.collect_arguments(program, args_node, source, scope_view)?;
     let targets: ThinVec<String> = ctx
         .overload_targets(&base, args.len(), &shapes)
         .into_iter()
         .collect();
+    ctx.pass_reference_args(
+        program,
+        scope_view,
+        source,
+        &targets,
+        Some(args_node),
+        &mut args,
+    )?;
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -3943,6 +3988,7 @@ fn implicit_member_call<'a>(
             args,
         },
     ));
+    ctx.emit_post_call_copies(program, scope_view);
     Ok(Some(Exp::Variable(ret)))
 }
 
@@ -3983,12 +4029,21 @@ fn qualified_member_call<'a>(
         return Ok(None);
     };
     let shapes = ctx.arg_shapes(args_node, source);
-    let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(VariableRef::new_parameter(0u32.into()))];
-    args.extend(ctx.collect_arguments(program, args_node, source, scope_view)?);
+    let mut explicit = ctx.collect_arguments(program, args_node, source, scope_view)?;
     let targets: ThinVec<String> = ctx
-        .overload_targets(&format!("{defining}::{method}"), args.len() - 1, &shapes)
+        .overload_targets(&format!("{defining}::{method}"), explicit.len(), &shapes)
         .into_iter()
         .collect();
+    ctx.pass_reference_args(
+        program,
+        scope_view,
+        source,
+        &targets,
+        Some(args_node),
+        &mut explicit,
+    )?;
+    let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(VariableRef::new_parameter(0u32.into()))];
+    args.extend(explicit);
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -4000,6 +4055,7 @@ fn qualified_member_call<'a>(
             args,
         },
     ));
+    ctx.emit_post_call_copies(program, scope_view);
     Ok(Some(Exp::Variable(ret)))
 }
 

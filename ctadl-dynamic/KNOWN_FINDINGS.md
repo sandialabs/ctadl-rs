@@ -14,15 +14,16 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
-| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229, CPP_237 | ❌ **open** (codegen `paths` gate) |
+| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229 | ❌ **open** (codegen `paths` gate) |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 | F7 — a pointer stored in a field does not alias its pointee | soundness | 41, CPP_252 | ❌ **open** (C pointer model / engine) |
+| F8 — a C++ reference parameter outside a reference cell cannot write back | soundness | CPP_280, CPP_281, CPP_282 | ❌ **open** (C++ frontend) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
 Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3–F7
-are open** (2026-10-13).
+are open** (2026-10-13), and **F8** since the 2026-10-20 merge of #154.
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -30,6 +31,33 @@ are open** (2026-10-13).
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F8 — A C++ reference parameter outside a reference cell cannot write back (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F8"` on `CPP_280` (lambda), `CPP_281`
+  (template) and `CPP_282` (constructor). Opened 2026-10-20 by the merge of
+  `treesitter_feature_branch` (#154).
+- **What:** since #154, SSA writes every parameter back at its entry version, so assigning a
+  parameter (`out = v`) never reaches the caller, whatever its `ParameterType`. Before that, a
+  `Shared` (`ByRef`) `T&` carried a root write back. The C++ frontend now lowers a non-const
+  reference to a scalar or a pointer as a **reference cell**: its value is at `@pN.deref`, and a
+  direct call passes the argument through a temp's `.deref` and copies it back
+  (`is_reference_cell_param`, `Context::pass_reference_args`). That covers free, method,
+  virtual, static and dependent calls (`CPP_38`, `CPP_271`–`CPP_279`). Three shapes stay on the
+  root model and lose the write:
+  - a lambda's `int&` parameter, because a closure is called through a pointer that cannot pass
+    the temp (`CPP_280`);
+  - a template parameter's `T&`, whose method calls dispatch on the parameter itself, spec 043
+    (`CPP_281`);
+  - a constructor writing its `int&`: construction copies the argument in, but has no argument
+    node to copy back into (`CPP_282`).
+- **Reads are unaffected:** a reference cell also stores its root into `.deref` on entry, so a
+  caller that passes the plain value (through a function pointer) is still read (`CPP_275`).
+- **Fix direction:** in the frontend. Thread the argument nodes through the constructor paths
+  (`emit_ctor_call`); copy back at a closure call whose lambda is known; and lower `T&` as a cell
+  once spec 043's receivers can be `.deref` paths.
 
 ---
 
@@ -81,7 +109,9 @@ field from the manifest **and** mark the entry below RESOLVED.
 ## F4 — A field path composed across a call is never admissible (OPEN)
 
 - **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C), `CPP_161` (C++
-  member-object receivers) and `CPP_179` (`operator->`). Found 2026-10-13 while adding member-object receivers (spec 030).
+  member-object receivers), `CPP_179` (`operator->`) and `CPP_229`. Found 2026-10-13 while adding member-object receivers (spec 030).
+  `CPP_237` (a method call on a captured `this`) was resolved on 2026-10-20 in the frontend: the
+  method now copies the lambda's slot back member by member, which spells each member path in-block.
 - **What:** taint lives at a path only if that path is in the `paths` gate. Codegen seeds the
   gate with syntactic paths and composes them along a **load chain within one basic block**
   (`cap_path` in `codegen/mod.rs`: `t = load o.in; u = load t.v` yields `.in.v`).

@@ -1,7 +1,6 @@
 {
   "name": "CPP_237_lambda_this_method_call",
-  "description": "C++ lambdas capturing this (spec 040), POSITIVE: `[this, x]() { set(x); }` -- dispatched, blocked by F4. Allowlisted as known_gap F4.",
+  "description": "C++ lambdas capturing this (spec 040), POSITIVE: `[this, x]() { set(x); }`. After its calls the method copies the slot back into its object member by member, which spells the member path in-block; it was a known F4 gap until the 2026-10-20 merge. s=flow d=flow agree.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F4"
+  "expect_flow": true
 }

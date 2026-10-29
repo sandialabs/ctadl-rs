@@ -12,6 +12,7 @@ log = "0.4"
 # variants. A program that reads only Dex therefore builds no tree-sitter grammar and no Ghidra
 # support.
 ctadl-c = { path = "../frontends/ctadl-c", optional = true }
+ctadl-cil = { path = "../frontends/ctadl-cil", optional = true }
 ctadl-dex = { path = "../frontends/ctadl-dex", optional = true }
 ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"], optional = true }
 ctadl-jvm = { path = "../frontends/ctadl-jvm", optional = true }
@@ -41,6 +42,7 @@ pcode = ["dep:ctadl-pcode", "ctadl-import/pcode"]
 lua = ["dep:ctadl-lua", "ctadl-import/ts"]
 c = ["dep:ctadl-c", "ctadl-import/ts"]
 flowy = ["dep:ctadl-flowy", "dep:bitcode", "ctadl-import/flowy"]
+cil = ["dep:ctadl-cil", "ctadl-import/cil"]
 
 [lints]
 workspace = true

@@ -944,7 +944,9 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
 }
 
 /// Variable and access path
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize,
+)]
 pub struct FlowVertex(pub FlowVariable, pub Path);
 
 impl Display for FlowVertex {
@@ -971,6 +973,10 @@ pub enum CallTargetObject {
     /// import and a JVM import sharing one fact base cannot collide in the
     /// `callee_resolvents` key space.
     LuaClass(Symbol),
+    /// A .NET class (`[Asm]Ns.Type`), the projection of
+    /// [`ctadl_ir::mir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
+    /// reason `LuaClass` is: a Xamarin app is Dex and CIL in one fact base.
+    CilClass(Symbol),
 }
 
 impl Display for CallTargetObject {
@@ -979,6 +985,7 @@ impl Display for CallTargetObject {
             CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
             CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
             CallTargetObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
+            CallTargetObject::CilClass(cls) => write!(f, "cil<{cls}>"),
         }
     }
 }
@@ -998,6 +1005,9 @@ impl Display for CallTargetObject {
 ///   this is class-hierarchy analysis, but there is no descriptor — a Lua method is uniquely
 ///   named within its class table — and no static receiver class on the call site, so the class
 ///   comes entirely from the receiver's allocation tag.
+/// - `Cil(simple_name, descriptor)` — a .NET `callvirt`, resolved exactly as `Java` is but in
+///   its own key space: `callee_resolvents(CallTargetObject::CilClass(class), Cil(name, desc),
+///   target)`.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallDispatchKey {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
@@ -1006,6 +1016,8 @@ pub enum CallDispatchKey {
     C,
     /// Lua metatable call: the method's simple name. No descriptor.
     Lua(Symbol),
+    /// .NET virtual call: (method simple name, method descriptor).
+    Cil(Symbol, Symbol),
 }
 
 impl Display for CallDispatchKey {
@@ -1014,6 +1026,7 @@ impl Display for CallDispatchKey {
             CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
             CallDispatchKey::C => write!(f, "c_call"),
             CallDispatchKey::Lua(name) => write!(f, "lua_call<{name}>"),
+            CallDispatchKey::Cil(name, desc) => write!(f, "cil_call<{name}{desc}>"),
         }
     }
 }
@@ -1192,9 +1205,10 @@ pub enum IntentPairKind {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub enum FormalType {
+    Copied,
     #[default]
-    ByVal,
-    ByRef,
+    SharedFields,
+    Shared,
 }
 
 impl From<mir::ParameterType> for FormalType {
@@ -1202,8 +1216,9 @@ impl From<mir::ParameterType> for FormalType {
     fn from(ty: mir::ParameterType) -> Self {
         use mir::ParameterType::*;
         match ty {
-            ByRef => FormalType::ByRef,
-            ByVal => FormalType::ByVal,
+            Copied => FormalType::Copied,
+            Shared => FormalType::Shared,
+            SharedFields => FormalType::SharedFields,
         }
     }
 }
@@ -1220,8 +1235,9 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
     let i: i16 = **formal_index;
     if i >= 0 {
         match formal_type {
-            FormalType::ByRef => true,
-            FormalType::ByVal => !ap.is_empty(),
+            FormalType::Copied => false,
+            FormalType::Shared => true,
+            FormalType::SharedFields => !ap.is_empty(),
         }
     } else {
         true

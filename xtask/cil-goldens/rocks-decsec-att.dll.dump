@@ -1,0 +1,69 @@
+[module]
+name=decsec-att.dll
+mvid=7c05de42-a4c0-4c02-a42e-ebfa80f6089e
+kind=Dll
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=decsec-att, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Library flags=0x00100001
+	base=System.Object
+0x02000003=SubLibrary flags=0x00140001
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Int32 Library::Foo() flags=0x4096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Library::.ctor() flags=0x1886 impl=0x0000 rva=0x00002053
+0x06000003=System.Int32 SubLibrary::Bar() flags=0x0096 impl=0x0000 rva=0x0000205b
+0x06000004=System.Void SubLibrary::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205e
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+sec parent=0x06000001 action=2 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+sec parent=0x06000001 action=3 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+sec parent=0x20000001 action=10 attr=System.Security.Permissions.SecurityPermissionAttribute property SkipVerification=(Boolean:True)
+sec parent=0x20000001 action=8 attr=System.Security.Permissions.SecurityPermissionAttribute property Execution=(Boolean:True)
+sec parent=0x20000001 action=9 !unresolved blob=2e01808453797374656d2e53656375726974792e5065726d697373696f6e732e53656375726974795065726d697373696f6e4174747269627574652c206d73636f726c69622c2056657273696f6e3d322e302e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d62373761356335363139333465303839808d0154557f53797374656d2e53656375726974792e5065726d697373696f6e732e53656375726974795065726d697373696f6e466c61672c206d73636f726c69622c2056657273696f6e3d322e302e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d6237376135633536313933346530383905466c616773ff3f0000
+sec parent=0x02000003 action=4 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=2
+	IL_0000: ldc.i4.1
+	IL_0001: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000003 max-stack=8 init-locals=false code-size=2
+	IL_0000: ldc.i4.2
+	IL_0001: ret
+0x06000004 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+[custom-attributes-resolved]
+[fields-resolved]

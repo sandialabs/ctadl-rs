@@ -173,6 +173,9 @@ impl Reader {
     }
 }
 
+/// Rows per row group of a written file.
+pub const ROWS_PER_GROUP: usize = 64 * 1024;
+
 pub struct Writer {
     path: std::path::PathBuf,
 }
@@ -185,28 +188,59 @@ impl Writer {
         }
     }
 
-    /// Write the vec to a parquet file. The vec rows are written using the given column names
-    pub fn write_vec<T>(&mut self, column_names: &[&str], data: Vec<T>) -> Result<(), Error>
+    /// Writes the rows to a parquet file, using the given column names, [`ROWS_PER_GROUP`] rows
+    /// at a time: each batch is encoded, written out as a row group of its own and dropped
+    /// before the next is taken, so memory holds one batch's columns, not the whole table's.
+    pub fn write_iter<T>(
+        &mut self,
+        column_names: &[&str],
+        rows: impl IntoIterator<Item = T>,
+    ) -> Result<(), Error>
     where
         DefaultEncoder: EncodeColumns<T>,
     {
-        let (fields, arrays) = DefaultEncoder::encode_all(column_names, data);
-        let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
-            .map_err(Error::Arrow)?;
-
+        let context = || format!("writing parquet file: {}", self.path.display());
         let file = File::create(&self.path)
             .map_err(Error::from)
             .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
+            .set_max_row_group_row_count(Some(ROWS_PER_GROUP))
             .build();
-        ArrowWriter::try_new(file, batch.schema(), Some(props))
-            .and_then(|mut wtr| {
-                wtr.write(&batch)?;
-                wtr.close()
-            })
+        let mut file = Some(file);
+        let mut writer: Option<ArrowWriter<File>> = None;
+        let mut rows = rows.into_iter();
+        loop {
+            let batch: Vec<T> = rows.by_ref().take(ROWS_PER_GROUP).collect();
+            let last = batch.len() < ROWS_PER_GROUP;
+            // Past the first batch, an empty one has nothing to add.
+            if batch.is_empty() && writer.is_some() {
+                break;
+            }
+            let (fields, arrays) = DefaultEncoder::encode_all(column_names, batch);
+            let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
+                .map_err(Error::Arrow)?;
+            if writer.is_none() {
+                writer = Some(
+                    ArrowWriter::try_new(file.take().unwrap(), batch.schema(), Some(props.clone()))
+                        .map_err(Error::Parquet)
+                        .err_context(context)?,
+                );
+            }
+            let wtr = writer.as_mut().unwrap();
+            wtr.write(&batch)
+                .and_then(|()| wtr.flush())
+                .map_err(Error::Parquet)
+                .err_context(context)?;
+            if last {
+                break;
+            }
+        }
+        writer
+            .unwrap()
+            .close()
             .map_err(Error::Parquet)
-            .err_context(|| format!("writing parquet file: {}", self.path.display()))?;
+            .err_context(context)?;
         Ok(())
     }
 }
@@ -690,8 +724,9 @@ impl EncodeColumn<facts::FormalType> for DefaultEncoder {
             name,
             col.into_iter()
                 .map(|t| match t {
-                    ByVal => 0,
-                    ByRef => 1,
+                    SharedFields => 0,
+                    Shared => 1,
+                    Copied => 2,
                 })
                 .collect_vec(),
         )
@@ -708,8 +743,9 @@ impl DecodeColumn<facts::FormalType> for DefaultDecoder {
         <Self as DecodeColumn<u8>>::into_decode_array(name, batch)
             .into_iter()
             .map(|i| match i {
-                0 => ByVal,
-                1 => ByRef,
+                0 => SharedFields,
+                1 => Shared,
+                2 => Copied,
                 _ => panic!("bad encoding of FormalType"),
             })
     }
@@ -898,6 +934,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                     FunctionId(_) => 0u8,
                     Symbol(_) => 1,
                     LuaClass(_) => 2,
+                    CilClass(_) => 3,
                 })
                 .collect_vec(),
         );
@@ -907,7 +944,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                 col.iter()
                     .map(|o| match o {
                         FunctionId(f) => Some(*f),
-                        Symbol(_) | LuaClass(_) => None,
+                        Symbol(_) | LuaClass(_) | CilClass(_) => None,
                     })
                     .collect_vec(),
             );
@@ -917,7 +954,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                 col.into_iter()
                     .map(|o| match o {
                         FunctionId(_) => None,
-                        Symbol(s) | LuaClass(s) => Some(s),
+                        Symbol(s) | LuaClass(s) | CilClass(s) => Some(s),
                     })
                     .collect_vec(),
             );
@@ -953,6 +990,7 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
                 0 => FunctionId(func.expect("FunctionId CallTargetObject missing func id")),
                 1 => Symbol(symbol.expect("Symbol CallTargetObject missing symbol")),
                 2 => LuaClass(symbol.expect("LuaClass CallTargetObject missing symbol")),
+                3 => CilClass(symbol.expect("CilClass CallTargetObject missing symbol")),
                 _ => panic!("bad encoding of CallTargetObject"),
             })
             .collect_vec()
@@ -960,9 +998,9 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
 }
 
 // A `CallDispatchKey` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C,
-// 2 = Lua), and nullable `<name>_name` / `<name>_desc` symbol columns (both present iff the
-// variant is `Java`, both null for `C`; `Lua` populates only `<name>_name`). Same tag +
-// nullable pattern as `CallTargetObject`.
+// 2 = Lua, 3 = Cil), and nullable `<name>_name` / `<name>_desc` symbol columns (both present
+// iff the variant is `Java` or `Cil`, both null for `C`; `Lua` populates only `<name>_name`).
+// Same tag + nullable pattern as `CallTargetObject`.
 impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -980,6 +1018,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                     Java(_, _) => 0u8,
                     C => 1,
                     Lua(_) => 2,
+                    Cil(_, _) => 3,
                 })
                 .collect_vec(),
         );
@@ -988,7 +1027,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                 &name_column_name,
                 col.iter()
                     .map(|c| match c {
-                        Java(n, _) | Lua(n) => Some(n.clone()),
+                        Java(n, _) | Lua(n) | Cil(n, _) => Some(n.clone()),
                         C => None,
                     })
                     .collect_vec(),
@@ -998,7 +1037,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                 &desc_column_name,
                 col.into_iter()
                     .map(|c| match c {
-                        Java(_, d) => Some(d),
+                        Java(_, d) | Cil(_, d) => Some(d),
                         C | Lua(_) => None,
                     })
                     .collect_vec(),
@@ -1038,6 +1077,10 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
                 ),
                 1 => C,
                 2 => Lua(name.expect("Lua CallDispatchKey missing method name")),
+                3 => Cil(
+                    name.expect("Cil CallDispatchKey missing simple name"),
+                    desc.expect("Cil CallDispatchKey missing descriptor"),
+                ),
                 _ => panic!("bad encoding of CallDispatchKey"),
             })
             .collect_vec()

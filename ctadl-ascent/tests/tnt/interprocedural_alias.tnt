@@ -1,5 +1,5 @@
-// Test inter-procedural flow with pass-by-reference aliasing
-def SetValue(target byref, val) 
+// Test inter-procedural flow with aliasing through a shared parameter
+def SetValue(target shared, val) 
 where summaries [target.inner <- val]
 {
 start:

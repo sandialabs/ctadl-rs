@@ -1,0 +1,18 @@
+{
+  // No flow: the index i is tainted (13), but x = arr[i] = "clean" (14) copies
+  // only the clean value into x. javac keeps it on the stack with `dup_x2`, under
+  // the array and the index; sending every input to every output would taint x.
+  "expected_lines": [],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LDupX2ArrayChain;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LDupX2ArrayChain;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

@@ -225,7 +225,7 @@ pub fn build_query_endpoints(
             // Register the model function's formal so taint can cross the call boundary
             // for flow-through, independent of how the endpoint is anchored below.
             if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
+                out_formals.push((infunc, var, facts::FormalType::Shared));
             }
             // Anchor at the call sites of `infunc` (the modeled function) so flows that
             // share a formal but differ by call site stay distinct. Anchoring uses the

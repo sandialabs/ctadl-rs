@@ -1,0 +1,56 @@
+[module]
+name=anycpu32bitpreferred.exe
+mvid=a7add4e9-af15-49c7-9de8-6b64eee8b4f5
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00020003
+entry-point=0x06000001
+[assembly]
+full-name=anycpu32bitpreferred, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=<Program>$ flags=0x00100180
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void <Program>$::<Main>$(System.String[]) flags=0x0091 impl=0x0000 rva=0x00002050
+	param 0 name=args flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=12
+	IL_0000: ldstr "anycpu32bitpreferred"
+	IL_0005: call System.Void System.Console::WriteLine(System.String)
+	IL_000a: nop
+	IL_000b: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

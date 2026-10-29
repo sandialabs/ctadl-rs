@@ -15,8 +15,9 @@ use ctadl_ascent::models::{
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::Symbol;
 use ctadl_ir::mir::call::{
-    JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
-    NativeSignature, NativeSimpleName, VirtualMethodTable,
+    CilClass, CilMethod, CilSignature, CilSimpleName, JavaClass, JavaMethod, JavaSignature,
+    JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
+    VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -29,7 +30,7 @@ fn function(name: &str) -> FunctionData {
     let mut f = FunctionData::default();
     f.set_name(name.to_string());
     for _ in 0..3 {
-        f.params.parameters.push(ParameterType::ByVal);
+        f.params.parameters.push(ParameterType::SharedFields);
     }
     let blocks = f.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(None));
@@ -135,6 +136,68 @@ fn lua_program() -> ProgramInfo {
     )
 }
 
+/// The .NET probes: `String.Concat`, and two ports only a pointer reaches, a struct
+/// enumerator's `Current` and a `ValueTuple` constructor's field.
+const CIL_CONCAT: &str =
+    "[System.Private.CoreLib]System.String::Concat(System.String,System.String)->System.String";
+const CIL_CURRENT: &str =
+    "[System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator::get_Current()->!0";
+const CIL_TUPLE: &str = "[System.Private.CoreLib]System.ValueTuple`2::.ctor(!0,!1)->System.Void";
+
+fn cil_program() -> ProgramInfo {
+    let row = |cls: &str, simple: &str, sig: &str, fid: &str| {
+        (
+            CilClass(cls.into()),
+            CilSimpleName(simple.into()),
+            CilSignature(sig.into()),
+            CilMethod(fid.into()),
+        )
+    };
+    let methods = vec![
+        row(
+            "[System.Private.CoreLib]System.String",
+            "Concat",
+            "(System.String,System.String)->System.String",
+            CIL_CONCAT,
+        ),
+        row(
+            "[System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator",
+            "get_Current",
+            "()->!0",
+            CIL_CURRENT,
+        ),
+        row(
+            "[System.Private.CoreLib]System.ValueTuple`2",
+            ".ctor",
+            "(!0,!1)->System.Void",
+            CIL_TUPLE,
+        ),
+        // Bare names that collide with the native and Lua defaults' functions.
+        row(
+            "[App]C",
+            NATIVE_PROBE,
+            "()->System.Void",
+            "[App]C::strcpy()->System.Void",
+        ),
+        row(
+            "[App]C",
+            LUA_PROBE,
+            "()->System.Void",
+            "[App]C::format()->System.Void",
+        ),
+    ];
+    let names: Vec<String> = methods.iter().map(|m| m.3.to_string()).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let vmt = VirtualMethodTable::Cil {
+        methods: methods.clone(),
+        hierarchy: Default::default(),
+        interfaces: Default::default(),
+        abstract_methods: Default::default(),
+        pinvokes: Default::default(),
+    };
+    program(vmt, &names)
+}
+
 /// Flowy: no method table at all.
 fn unknown_program() -> ProgramInfo {
     program(
@@ -198,6 +261,67 @@ fn lua_import_loads_only_the_lua_defaults() {
     );
 }
 
+#[test]
+fn cil_import_loads_only_the_cil_defaults() {
+    let summarized = summarized(&cil_program());
+    for probe in [CIL_CONCAT, CIL_CURRENT, CIL_TUPLE] {
+        assert!(
+            summarized.contains(probe),
+            "expected a .NET summary for {probe}, got {summarized:?}"
+        );
+    }
+    for other in [
+        "[App]C::strcpy()->System.Void",
+        "[App]C::format()->System.Void",
+    ] {
+        assert!(
+            !summarized.contains(other),
+            "{other} picked up another language's defaults: {summarized:?}"
+        );
+    }
+}
+
+/// A struct receiver arrives as a pointer, so a struct enumerator's `Current` reads
+/// `Argument(0).deref.\[]`; and a `ValueTuple` field is a symbol full of dots, which the port
+/// has to escape. Both are silent if wrong: the port parses and names a path no frontend writes.
+#[test]
+fn cil_ports_name_the_pointee_and_the_tuple_field() {
+    use ctadl_ir::mir::PathSegment;
+
+    let program_info = cil_program();
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut matches = ProgramModelMatches::default();
+    try_load_default_models(&match_index, &mut matches).expect("loading default models");
+    let src_of = |fid: &str| -> Vec<Vec<PathSegment>> {
+        matches
+            .propagations
+            .iter()
+            .filter(|p| p.function.to_string() == fid)
+            .map(|p| p.src.path.iter().cloned().collect())
+            .collect()
+    };
+    let dst_of = |fid: &str| -> Vec<Vec<PathSegment>> {
+        matches
+            .propagations
+            .iter()
+            .filter(|p| p.function.to_string() == fid)
+            .map(|p| p.dst.path.iter().cloned().collect())
+            .collect()
+    };
+    let deref = PathSegment::symbol(ctadl_ir::mir::DEREF_FIELD);
+    assert!(
+        src_of(CIL_CURRENT).contains(&vec![deref.clone(), PathSegment::symbol("[]")]),
+        "get_Current does not read deref.[]: {:?}",
+        src_of(CIL_CURRENT)
+    );
+    let item1 = PathSegment::symbol("<[System.Private.CoreLib]System.ValueTuple`2::Item1>");
+    assert!(
+        dst_of(CIL_TUPLE).contains(&vec![deref, item1]),
+        "the ValueTuple constructor does not write deref.Item1: {:?}",
+        dst_of(CIL_TUPLE)
+    );
+}
+
 /// Flowy has no VMT, so there is no default file to pick and nothing is loaded. The program
 /// deliberately contains functions every other default file would model.
 #[test]
@@ -220,6 +344,7 @@ fn every_shipped_default_file_parses() {
         ("java", java_program()),
         ("native", native_program()),
         ("lua", lua_program()),
+        ("cil", cil_program()),
         ("unknown", unknown_program()),
     ];
     for (name, contents) in DEFAULT_MODEL_FILES {

@@ -33,8 +33,9 @@ targets of control flow. Terminator instructions are returns and gotos with mult
   refer to parameters, local variables, or globals.  There are no local variable declarations;
   assignment to a variable is sufficient for it to exist.
 
-- Parameters are unnamed and referred to by number. They can be passed by value or by reference. It
-  is an error to refer to a parameter that is not declared by the enclosing function.
+- Parameters are unnamed and referred to by number. Each has a [`ParameterType`] saying which of
+  its access paths the caller shares. It is an error to refer to a parameter that is not declared
+  by the enclosing function.
 
 - Functions have a return type which is just an arity. Return statements can return multiple values
   and the function declares the arity each return statement must have. This is not necessary to
@@ -503,7 +504,7 @@ pub struct BasicBlockData {
 
 /// A function consists of a name, sequence of parameters, and CFG of basic blocks.
 ///
-/// Functions take parameter by reference and can return a tuple of values.
+/// Functions take parameters, each with a [`ParameterType`], and can return a tuple of values.
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FunctionData {
@@ -630,7 +631,7 @@ impl Locals {
 /// index↔name mapping (so a dump can still be correlated with `%L7_2`-style graph vertices).
 ///
 /// ```text
-/// define f(@p0[byval]) -> 1:
+/// define f(@p0[shared_fields]) -> 1:
 ///   locals: %L0=buf %L1=t0?
 ///   bb0:
 ///     assign %buf = @p0
@@ -711,13 +712,33 @@ mod local_names {
     }
 }
 
-/// Parameters can be passed by value or by reference.
+/// Which of a parameter's access paths the caller shares with the callee: the outputs, where
+/// data the callee flows into the parameter reaches the caller.
+///
+/// This is about what the parameter's paths denote, not about a calling convention. Java passes
+/// every argument by value, yet an object parameter is [`Shared`](Self::Shared): its root, the
+/// empty path, stands for the object's contents, which the caller sees.
+///
+/// Rebinding a parameter -- any instruction that defines the parameter variable, such as
+/// `p = q` -- never reaches the caller, whatever the parameter's type: SSA conversion writes
+/// every parameter back at its entry version, version 0 (see [`crate::ssa::transform`]). What
+/// reaches the caller is what flows into that entry version, which is a write to one of its
+/// fields (`store p.f := v`) or, at a call, a callee's write to the argument it was passed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParameterType {
+    /// Nothing is shared: the callee's parameter is its own copy, fields and all, so no path is
+    /// an output. Right for a C struct passed by value.
+    Copied,
+    /// The root is the callee's own copy, and what it reaches is shared: every path but the
+    /// empty one is an output. A flow into the whole value does not reach the caller.
     #[default]
-    ByVal,
-    ByRef,
+    SharedFields,
+    /// Every path is shared, the root included, so a flow into the whole value reaches the
+    /// caller. Right for a handle whose root stands for contents the caller sees, such as a Java
+    /// object reference or a C pointer: a callee that writes the object it was passed
+    /// (`sb.append(x)`) writes the caller's.
+    Shared,
 }
 
 /// Function's return type. This is simply the arity of returns
@@ -1862,8 +1883,9 @@ impl Display for Params {
 impl Display for ParameterType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParameterType::ByVal => write!(f, "byval"),
-            ParameterType::ByRef => write!(f, "byref"),
+            ParameterType::Copied => write!(f, "copied"),
+            ParameterType::SharedFields => write!(f, "shared_fields"),
+            ParameterType::Shared => write!(f, "shared"),
         }
     }
 }

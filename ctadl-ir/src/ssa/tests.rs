@@ -16,8 +16,8 @@ fn function_f() -> FunctionData {
     let mut f = FunctionData::default();
     f.set_name("F".to_string());
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
+    f.params.push(ParameterType::SharedFields);
     let a_idx = f.intern_local("a");
     let blocks = f.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
@@ -67,7 +67,7 @@ fn function_g() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
@@ -118,7 +118,7 @@ fn function_g1() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
@@ -171,7 +171,7 @@ fn program_h() -> Program {
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -214,7 +214,7 @@ fn program_h_update() -> Program {
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -719,19 +719,7 @@ fn test_pipeline_tag() {
     assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
     assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
-    assert_eq!(
-        Pipeline::ssa_only()
-            .param_write_back(ParamWriteBack::Entry)
-            .tag(),
-        "ssa(prune,entry)"
-    );
-    assert_eq!(
-        Pipeline::ssa_only()
-            .prune(false)
-            .param_write_back(ParamWriteBack::Entry)
-            .tag(),
-        "ssa(entry)"
-    );
+    assert_eq!(Pipeline::ssa_only().prune(false).tag(), "ssa");
     assert_eq!(Pipeline::none().tag(), "none");
     // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
     // ran.
@@ -790,7 +778,7 @@ fn function_diamond() -> FunctionData {
         ..Default::default()
     };
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
     let x = local(&mut f, "x");
     let t = local(&mut f, "t");
     let p = VariableRef::new_parameter(ParameterIdx::new(0));
@@ -919,7 +907,7 @@ fn all_test_functions() -> Vec<FunctionData> {
 fn test_pruned_phis_are_the_live_minimal_phis() {
     for f in all_test_functions() {
         let mut minimal = f.clone();
-        transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+        transform_with(&mut minimal, true, PhiMode::Minimal);
         let mut pruned = f.clone();
         transform(&mut pruned, true);
         check_ssa_func(&pruned);
@@ -937,7 +925,7 @@ fn test_pruned_phis_are_the_live_minimal_phis() {
 fn test_pruned_diamond() {
     let mut f = function_diamond();
     let mut minimal = f.clone();
-    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+    transform_with(&mut minimal, true, PhiMode::Minimal);
     transform(&mut f, true);
     check_ssa_func(&f);
     let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));
@@ -951,21 +939,13 @@ fn test_pruned_diamond() {
     assert_eq!(placements_named(&pruned, &f, "x"), 1, "`x` is returned");
     let p = VariableRef::new_parameter(ParameterIdx::new(0)).variable;
     assert!(
-        pruned
-            .iter()
-            .any(|(bb, v)| *v == p && *bb == BasicBlockIdx::new(3)),
-        "`p` reaches param-flow, so the join merges it"
+        !pruned.iter().any(|(_, v)| *v == p),
+        "`p` is rebound but never read: the param-flow reads `p_0`"
     );
 }
 
-#[test]
-fn test_entry_write_back() {
-    // `p` is reassigned on one branch of the diamond. Under `Entry` the param-flow reads `p_0`,
-    // the caller's argument, and nothing merges `p` at the join.
-    let mut f = function_diamond();
-    transform_with(&mut f, true, PhiMode::Pruned, ParamWriteBack::Entry);
-    check_ssa_func(&f);
-    let p = VariableRef::new_parameter(ParameterIdx::new(0));
+/// The exit param-flow's parameters, in the one param-flow SSA leaves, in the exit block.
+fn exit_param_flow(f: &FunctionData) -> IndexVec<ParameterIdx, VariableRef> {
     let flows: Vec<_> = f
         .blocks
         .iter()
@@ -976,19 +956,34 @@ fn test_entry_write_back() {
         })
         .collect();
     assert_eq!(flows.len(), 1, "one param-flow, in the exit block");
-    assert_eq!(flows[0].len(), 1);
-    assert_eq!(flows[0][ParameterIdx::new(0)], p.with_version(0));
-    assert!(
-        !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
-        "no phi merges `p`"
-    );
+    flows.into_iter().next().unwrap()
+}
+
+#[test]
+fn test_entry_write_back() {
+    // `p` is reassigned on one branch of the diamond. Whatever its type, the param-flow reads
+    // `p_0`, the caller's argument, and nothing merges `p` at the join.
+    for ty in [ParameterType::SharedFields, ParameterType::Shared] {
+        let mut f = function_diamond();
+        f.params.parameters[ParameterIdx::new(0)] = ty;
+        transform(&mut f, true);
+        check_ssa_func(&f);
+        let p = VariableRef::new_parameter(ParameterIdx::new(0));
+        let params = exit_param_flow(&f);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[ParameterIdx::new(0)], p.with_version(0), "{ty}");
+        assert!(
+            !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
+            "{ty}: no phi merges `p`"
+        );
+    }
 }
 
 #[test]
 fn test_pruned_loop() {
     let mut f = function_loop();
     let mut minimal = f.clone();
-    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+    transform_with(&mut minimal, true, PhiMode::Minimal);
     transform(&mut f, true);
     check_ssa_func(&f);
     let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));

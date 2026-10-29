@@ -322,7 +322,7 @@ mod tests {
 
     /// M3 (spec 003) acceptance, end to end: taint flows IN through a setter method and OUT
     /// through a getter method of a `struct`, so the source→sink path runs through two member
-    /// functions. The frontend models each as `Box::m(this: ByRef, …)`, and the existing
+    /// functions. The frontend models each as `Box::m(this: Shared, …)`, and the existing
     /// by-ref/return propagation carries the member across — mirrors the CPP_36 dynamic case.
     #[test_log::test]
     fn cpp_method_flow_through_struct_is_reported() {
@@ -384,7 +384,7 @@ mod tests {
     }
 
     /// M3 (spec 004, FR-2) acceptance, end to end: a non-const `T&` parameter is a write-back
-    /// `ByRef` out-param. `set_ref(int& out, int v){ out = v; }` writes the tainted second
+    /// `Shared` out-param. `set_ref(int& out, int v){ out = v; }` writes the tainted second
     /// argument through the reference, tainting the caller's `x` — mirrors CPP_38.
     #[test_log::test]
     fn cpp_ref_out_param_write_back_is_reported() {
@@ -410,7 +410,7 @@ mod tests {
     }
 
     /// M3 (spec 004, FR-3) acceptance, end to end: a `const T&` parameter is inbound-only
-    /// (`ByVal`). `read(const int& r){ return r; }` flows the tainted argument out through the
+    /// (`SharedFields`). `read(const int& r){ return r; }` flows the tainted argument out through the
     /// return — mirrors CPP_39.
     #[test_log::test]
     fn cpp_const_ref_inbound_through_return_is_reported() {

@@ -86,7 +86,7 @@ fn emit_api_summaries(facts: &mut IndexFacts, ids: &IdMap) -> AndroidIntentStats
     facts.formal_param.extend(
         formals
             .into_iter()
-            .map(|(func_id, var)| (func_id, var, FormalType::ByRef)),
+            .map(|(func_id, var)| (func_id, var, FormalType::Shared)),
     );
     facts.summary.extend(summaries);
 
@@ -164,7 +164,7 @@ fn emit_send_sites(
         };
         for (formal, dst_path) in ports {
             let dst = call_arg_var(bridge.insn_id, FormalIndex::new(*formal));
-            assigns.insert((bridge_site, FlowVertex(dst, *dst_path), intent.clone()));
+            assigns.insert((bridge_site, FlowVertex(dst, *dst_path), intent));
         }
     }
     stats.intent_frames += frames.len();
@@ -425,12 +425,12 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
     let actuals: BTreeMap<_, _> = facts
         .actual_param
         .iter()
-        .map(|(site, idx, vertex)| ((*site, *idx), vertex.clone()))
+        .map(|(site, idx, vertex)| ((*site, *idx), *vertex))
         .collect();
     let constants: BTreeMap<_, _> = facts
         .const_str_assign
         .iter()
-        .map(|(site, vertex, value)| ((*site, vertex.clone()), *value))
+        .map(|(site, vertex, value)| ((*site, *vertex), *value))
         .collect();
     let mut assigns = BTreeSet::new();
     let mut paths = BTreeSet::new();
@@ -476,8 +476,8 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
         }
         let rooted = FlowVertex(recv.0, recv.1.concat(&field_path));
         let row = match op.kind {
-            ExtrasKind::Put => (*site, rooted, value.clone()),
-            ExtrasKind::Get => (*site, value.clone(), rooted),
+            ExtrasKind::Put => (*site, rooted, value),
+            ExtrasKind::Get => (*site, value, rooted),
         };
         assigns.insert(row);
         if matches!(op.kind, ExtrasKind::Get) && matches!(op.owner, ExtrasOwner::Intent) {
@@ -486,7 +486,7 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
                 recv.1.concat(&Path::from_symbol_names(["<extras>"])),
             );
             paths.insert((Path::from_symbol_names(["<extras>"]),));
-            assigns.insert((*site, value.clone(), lumped));
+            assigns.insert((*site, value, lumped));
         }
         if matches!(op.kind, ExtrasKind::Put)
             && matches!(op.owner, ExtrasOwner::Intent)

@@ -7,6 +7,7 @@ members = [
     "ctadl-import",
     "ctadl-ir",
     "frontends/ctadl-c",
+    "frontends/ctadl-cil",
     "frontends/ctadl-dex",
     "frontends/ctadl-flowy",
     "frontends/ctadl-jvm",
@@ -15,7 +16,11 @@ members = [
     "readers/dex-reader",
     "readers/jvm-reader",
     "readers/pcode-reader",
+    "readers/cil-reader/crates/cil-reader",
+    "readers/cil-reader/crates/cil-dump",
     "immortal",
+    "lsm",
+    "lsm/crates/ascent-tc-lsm-bench",
     "tailshare",
     "trie",
     "xtask",
@@ -26,7 +31,7 @@ members = [
 # number. It is what `ctadl --version` prints, and it is what any of these
 # crates would carry if we ever publish them. Bump it here and nowhere else.
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 
 # Section defining rustc compiler lint rules for the workspace
 [workspace.lints.rust]

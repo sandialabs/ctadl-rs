@@ -350,7 +350,7 @@ fn cpp_field_assignment_is_update() {
 #[test_log::test]
 fn cpp_method_discovery_this_param_shape() {
     // FR-1: each inline member function lowers to a `Class::method` function whose parameter 0
-    // is an implicit `this` (`ByRef`), with the declared params following. A `void` setter is
+    // is an implicit `this` (`Shared`), with the declared params following. A `void` setter is
     // arity 0; a value-returning getter is arity 1.
     let src = r"
         struct Box {
@@ -362,10 +362,10 @@ fn cpp_method_discovery_this_param_shape() {
     check_func_params(
         &prog,
         "Box::set",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::set", 0);
-    check_func_params(&prog, "Box::get", &[ParameterType::ByRef]);
+    check_func_params(&prog, "Box::get", &[ParameterType::Shared]);
     check_return_arity(&prog, "Box::get", 1);
 }
 
@@ -438,27 +438,111 @@ fn cpp_method_call_is_direct_with_receiver_arg0() {
 
 #[test_log::test]
 fn cpp_ref_param_is_byref_write_back() {
-    // A non-const reference parameter `int& out` is a write-back `ByRef` formal (param 0),
-    // exactly like a pointer out-param; the trailing value param `v` is `ByVal` (param 1).
-    // The body `out = v` lowers to an assignment of the formal `@p0` from `@p1`, so the
-    // existing out-param propagation carries `v`'s taint back to the caller's argument.
+    // A non-const reference to a scalar, `int& out`, is lowered as the pointer it is: its value
+    // lives at `@p0.deref`, so `out = v` is a store through it, not a rebinding of `@p0` (which
+    // never reaches the caller). The trailing value param `v` is `SharedFields`.
     let src = r"
         void set_ref(int& out, int v) {
             out = v;
         }
+        int main() { int x = 0; set_ref(x, 1); return x; }
     ";
     let prog = program_from_cpp_string(src).0;
     check_func_params(
         &prog,
         "set_ref",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
-    check_func_assign_or_update(&prog, "set_ref", "@p0", ["@p1"]);
+    let callee = format!("{}", function_named(&prog, "set_ref").unwrap());
+    assert!(
+        callee.contains("store @p0.deref := @p1") && !callee.contains("assign @p0"),
+        "{prog}"
+    );
+    // The caller passes `x` through a temp's cell and copies it back after the call.
+    let main = format!("{}", function_named(&prog, "main").unwrap());
+    let lines: Vec<&str> = main.lines().map(str::trim).collect();
+    let call = lines
+        .iter()
+        .position(|l| l.contains("direct-call set_ref("))
+        .expect("the call");
+    assert!(lines[call - 1].starts_with("store %") && lines[call - 1].ends_with(".deref := %L0"));
+    assert!(lines[call + 1].contains("= load %") && lines[call + 1].ends_with(".deref"));
+    assert!(lines[call + 2].starts_with("assign %L0 = "), "{main}");
+}
+
+/// Which reference parameters are cells (`.deref`, passed through a temp) and which keep the
+/// caller's argument as is: a class referent (in a namespace too, seen from anywhere), a const
+/// or rvalue reference, a template parameter's type, and a lambda's parameter keep it; a
+/// reference to a pointer or a typedef'd scalar is a cell.
+#[test]
+fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
+    let src = r"
+        namespace ns { struct Req { int body; }; struct H { void handle(Req& r) { r.body = 1; } }; }
+        typedef unsigned long size;
+        void cells(int*& p, size& n, unsigned& u) { p = 0; n = 1; u = 2; }
+        void kept(const int& c, int&& r, ns::Req& q) { q.body = c + r; }
+        template <class T> void dep(T& t) { t = T(); }
+        int main() {
+            auto f = [](int& x) { x = 3; };
+            int y = 0; f(y);
+            return y;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let body = |name: &str| format!("{}", function_named(&prog, name).unwrap());
+    let cells = body("cells");
+    for p in ["@p0", "@p1", "@p2"] {
+        assert!(
+            cells.contains(&format!("store {p}.deref := ")),
+            "{p}\n{cells}"
+        );
+    }
+    let kept = body("kept");
+    assert!(!kept.contains(".deref"), "{kept}");
+    assert!(!body("ns::H::handle").contains(".deref"), "{prog}");
+    assert!(!body("dep").contains(".deref"), "{prog}");
+    let lambda = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .find(|fun| fun.name.starts_with("lambda@"))
+        .map(|fun| format!("{fun}"))
+        .unwrap_or_default();
+    assert!(!lambda.contains(".deref"), "{lambda}");
+}
+
+/// A reference cell passed on to another reference parameter passes its own value through a
+/// fresh temp and stores it back through `@p0.deref`, which reaches the outer caller; a member
+/// or element argument is copied back into that location.
+#[test]
+fn cpp_reference_cell_args_copy_back_into_their_location() {
+    let src = r"
+        struct B { int v; int a[2]; };
+        void set(int& out, int v) { out = v; }
+        void outer(int& o, int v) { set(o, v); }
+        void fields(B& b, int v) { set(b.v, v); set(b.a[1], v); }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let outer = format!("{}", function_named(&prog, "outer").unwrap());
+    assert!(
+        outer.contains("load @p0.deref") && outer.contains("store @p0.deref := "),
+        "{outer}"
+    );
+    let fields = format!("{}", function_named(&prog, "fields").unwrap());
+    assert!(fields.contains("store @p0.v := "), "{fields}");
+    // The element is read through the loaded array member, and written back the same way.
+    assert!(
+        fields
+            .lines()
+            .any(|l| l.trim().starts_with("store %") && l.contains(".[1].deref := ")),
+        "{fields}"
+    );
 }
 
 #[test_log::test]
 fn cpp_const_ref_param_is_byval_inbound() {
-    // A `const int& r` parameter is read-only: model it `ByVal` (inbound only, no write-back),
+    // A `const int& r` parameter is read-only: model it `SharedFields` (inbound only, no write-back),
     // and the referent's value flows out through the return (`return r` => `return @p0`).
     let src = r"
         int read(const int& r) {
@@ -466,7 +550,7 @@ fn cpp_const_ref_param_is_byval_inbound() {
         }
     ";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "read", &[ParameterType::ByVal]);
+    check_func_params(&prog, "read", &[ParameterType::SharedFields]);
     check_func_returns_path(&prog, "read", "@p0");
 }
 
@@ -512,7 +596,7 @@ fn cpp_const_member_function_parses_and_lowers() {
         };
     ";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "S::get", &[ParameterType::ByRef]);
+    check_func_params(&prog, "S::get", &[ParameterType::Shared]);
     check_func_loads(&prog, "S::get", "@p0.v");
 }
 
@@ -545,7 +629,7 @@ fn cpp_reference_local_aliases_referent() {
 #[test_log::test]
 fn cpp_out_of_line_method_discovered_and_lowered() {
     // FR-1: a method defined out of line (`void Box::set(int){…}`, declarator is a
-    // `qualified_identifier`) is discovered and lowered with the same implicit `this` (`ByRef`,
+    // `qualified_identifier`) is discovered and lowered with the same implicit `this` (`Shared`,
     // param 0) and `this.<member>` resolution as an inline method — the body's `v = x` becomes
     // an update of `@p0.v`, and the prototype-only class still resolves `b.set`/`b.get` calls.
     let src = r#"
@@ -570,7 +654,7 @@ fn cpp_out_of_line_method_discovered_and_lowered() {
     check_func_params(
         &prog,
         "Box::set",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::set", 0);
     check_func_assign_or_update(&prog, "Box::set", "@p0.v", ["@p1"]);
@@ -653,7 +737,7 @@ fn cpp_reference_receiver_dispatches_to_referent() {
 
 // ---------------------------------------------------------------------------
 // Milestone 3 (spec 006) — C++ constructors. A constructor is modeled as the function
-// `Class::Class` with an implicit `this` (`ByRef`) param 0; construction at a declaration
+// `Class::Class` with an implicit `this` (`Shared`) param 0; construction at a declaration
 // is a `DirectCall Class::Class` with the new object as the arg-0 receiver. These assert
 // the *frontend's* lowering; the end-to-end source→sink flows are asserted in
 // `taint_compare::tests::cpp_ctor_*` and validated against DFSan by CPP_47..CPP_50.
@@ -662,7 +746,7 @@ fn cpp_reference_receiver_dispatches_to_referent() {
 #[test_log::test]
 fn cpp_ctor_discovery_this_param_shape() {
     // FR-1: an inline constructor `Box(int x){…}` lowers to the function `Box::Box` whose
-    // parameter 0 is an implicit `this` (`ByRef`) with the declared params following; it
+    // parameter 0 is an implicit `this` (`Shared`) with the declared params following; it
     // returns no value (arity 0). The body's `v = x` writes the member through `this`
     // (`@p0.v := @p1`), exactly like a setter.
     let src = r"
@@ -674,7 +758,7 @@ fn cpp_ctor_discovery_this_param_shape() {
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::Box", 0);
     check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
@@ -694,7 +778,7 @@ fn cpp_ctor_init_list_writes_member() {
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
 }
@@ -718,7 +802,7 @@ fn cpp_ctor_init_list_target_is_member_under_param_shadowing() {
 fn cpp_ctor_out_of_line_discovered_and_lowered() {
     // FR-1: an out-of-line constructor `Box::Box(int x){…}` (declarator is a
     // `qualified_identifier` whose scope and name are both the class) is discovered and
-    // lowered with the same implicit `this` (`ByRef`, param 0) and `this.<member>`
+    // lowered with the same implicit `this` (`Shared`, param 0) and `this.<member>`
     // resolution as an inline one — its body's `v = x` becomes an update of `@p0.v`.
     let src = r"
         struct Box {
@@ -730,7 +814,7 @@ fn cpp_ctor_out_of_line_discovered_and_lowered() {
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::Box", 0);
     check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
@@ -792,7 +876,7 @@ fn cpp_construction_three_syntaxes_all_call_ctor() {
 #[test_log::test]
 fn cpp_destructor_definition_parses_and_is_lowered() {
     // Spec 016 FR-1: a destructor *definition* `~Box(){}` parses (no tree-sitter error) and is
-    // lowered as the niladic `this`-method `Box::~Box` — an implicit `this` (`ByRef`) param 0 and
+    // lowered as the niladic `this`-method `Box::~Box` — an implicit `this` (`Shared`) param 0 and
     // no other params. (Before spec 016 it was ingested-but-not-lowered; spec 014's `delete` was a
     // no-op. Now `delete p` invokes it, so it must be a real function.) The C++ path stays clean:
     // there is no free function named `Box` (the constructor is `Box::Box`) and the destructor's
@@ -810,14 +894,14 @@ fn cpp_destructor_definition_parses_and_is_lowered() {
         "destructor definition should parse without error"
     );
     // Constructor + getter + destructor lowered as members. The destructor is a niladic
-    // `this`-method: exactly one `ByRef` param (`this`), no others.
+    // `this`-method: exactly one `Shared` param (`this`), no others.
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_loads(&prog, "Box::get", "@p0.v");
-    check_func_params(&prog, "Box::~Box", &[ParameterType::ByRef]);
+    check_func_params(&prog, "Box::~Box", &[ParameterType::Shared]);
     assert!(
         function_named(&prog, "Box").is_none(),
         "the inline constructor must not leak as a free function `Box`\n{prog}"
@@ -839,7 +923,7 @@ fn cpp_destructor_definition_parses_and_is_lowered() {
 fn cpp_ref_return_this_method_is_discovered_and_returns_receiver() {
     // FR-1: a reference-returning method (`Box& setV(int){…}`, whose `function_declarator` is
     // wrapped in a `reference_declarator`) is still discovered and lowered with the implicit
-    // `this` (`ByRef`, param 0). Its `return *this` returns the receiver object `@p0` (not a
+    // `this` (`Shared`, param 0). Its `return *this` returns the receiver object `@p0` (not a
     // copy), which is what makes the call result an alias to arg 0.
     let src = r"
         struct Box {
@@ -850,7 +934,7 @@ fn cpp_ref_return_this_method_is_discovered_and_returns_receiver() {
     check_func_params(
         &prog,
         "Box::setV",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     // A reference return is a value (arity 1) return of the receiver object.
     check_return_arity(&prog, "Box::setV", 1);
@@ -949,7 +1033,7 @@ fn cpp_member_reference_getter_returns_member() {
             int& get() { return v; }
         };";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "Box::get", &[ParameterType::ByRef]);
+    check_func_params(&prog, "Box::get", &[ParameterType::Shared]);
     check_return_arity(&prog, "Box::get", 1);
     check_func_loads(&prog, "Box::get", "@p0.v");
 }
@@ -981,7 +1065,7 @@ fn cpp_out_of_line_ref_return_method_is_discovered() {
     check_func_params(
         &prog,
         "Box::setV",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_returns_path(&prog, "Box::setV", "@p0");
     // Chaining works even though the setter body is out of line.
@@ -1044,9 +1128,9 @@ fn cpp_namespaced_method_dispatch() {
     check_func_params(
         &prog,
         "ns::Box::set",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
-    check_func_params(&prog, "ns::Box::get", &[ParameterType::ByRef]);
+    check_func_params(&prog, "ns::Box::get", &[ParameterType::Shared]);
     // Dispatch on the namespaced-class local passes `b` as arg 0.
     check_direct_call_arg0(&prog, "main", "ns::Box::set", "b");
     check_direct_call(&prog, "main", "ns::Box::get", ["b"]);
@@ -1077,7 +1161,7 @@ fn cpp_namespaced_construction_dispatch() {
     check_func_params(
         &prog,
         "ns::Box::ns::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_direct_call_arg0(&prog, "main", "ns::Box::ns::Box", "b");
     check_direct_call(&prog, "main", "ns::Box::get", ["b"]);
@@ -1175,15 +1259,15 @@ fn cpp_overloaded_methods_resolved_by_arity() {
     check_func_params(
         &prog,
         "Box::f#1",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_params(
         &prog,
         "Box::f#2",
         &[
-            ParameterType::ByRef,
-            ParameterType::ByVal,
-            ParameterType::ByVal,
+            ParameterType::Shared,
+            ParameterType::SharedFields,
+            ParameterType::SharedFields,
         ],
     );
     // `this` is param 0, so the 1st explicit arg is `@p1`, the 2nd `@p2`.
@@ -1277,15 +1361,15 @@ fn cpp_ctor_overloads_lowered_distinctly_and_resolved_by_arity() {
     check_func_params(
         &prog,
         "Box::Box#1",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_params(
         &prog,
         "Box::Box#2",
         &[
-            ParameterType::ByRef,
-            ParameterType::ByVal,
-            ParameterType::ByVal,
+            ParameterType::Shared,
+            ParameterType::SharedFields,
+            ParameterType::SharedFields,
         ],
     );
     // Each writes the member from a different parameter (its body is not clobbered).
@@ -1328,7 +1412,7 @@ fn cpp_ctor_default_and_param_overload_resolves() {
     check_func_params(
         &prog,
         "Box::Box#1",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_assign_or_update(&prog, "Box::Box#1", "@p0.v", ["@p1"]);
     // Construction with one explicit argument resolves to the arity-1 ctor.
@@ -1396,7 +1480,7 @@ fn cpp_single_ctor_stays_bare() {
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     assert!(
         function_named(&prog, "Box::Box#1").is_none(),
@@ -1935,7 +2019,7 @@ fn cpp_delete_parses_and_moves_no_taint() {
 #[test_log::test]
 fn cpp_virtual_destructor_recorded_and_this_param_shape() {
     // Spec 016 FR-1: `virtual ~Base(){ sink(v); }` lowers `Base::~Base` as a niladic `this`-method
-    // — exactly one `ByRef` param (`this`), no others — and its body reads the member through
+    // — exactly one `Shared` param (`this`), no others — and its body reads the member through
     // `this` (`@p0.v`) into the sink. The `virtual` keyword marks it for CHA, exercised by the
     // delete-dispatch test below.
     let src = r#"
@@ -1948,7 +2032,7 @@ fn cpp_virtual_destructor_recorded_and_this_param_shape() {
         };
     "#;
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "Base::~Base", &[ParameterType::ByRef]);
+    check_func_params(&prog, "Base::~Base", &[ParameterType::Shared]);
     // The destructor body reads the member through `this` (arg-0 receiver) and sinks it; the
     // read is a load, so the sink's argument is the loaded temp rather than the path itself.
     check_func_loads(&prog, "Base::~Base", "@p0.v");
@@ -2136,7 +2220,7 @@ fn cpp_static_method_has_no_implicit_this() {
         }
     "#;
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "C::identity", &[ParameterType::ByVal]);
+    check_func_params(&prog, "C::identity", &[ParameterType::SharedFields]);
     check_func_returns_path(&prog, "C::identity", "@p0");
     check_has_direct_call(&prog, "main", "C::identity");
 }
@@ -2169,7 +2253,7 @@ fn cpp_static_member_shared_across_instance_and_static_method() {
     check_func_params(
         &prog,
         "Counter::bump",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_assign_or_update(&prog, "Counter::bump", "$globals.Counter::total", ["@p1"]);
     // The static getter has no `this` and reads the same global.
@@ -2817,7 +2901,7 @@ fn cpp_pointer_returning_inline_method_is_discovered() {
     // `function_declarator` in a `pointer_declarator`. Discovery used to demand the bare
     // `function_declarator` (or a `reference_declarator` around it) and silently dropped the
     // body -- spec 130's bug on the C++ side. It is now discovered, lowered with the implicit
-    // `this`, and returns its pointer parameter (`ByVal`, like every pointer: a write through
+    // `this`, and returns its pointer parameter (`SharedFields`, like every pointer: a write through
     // it is a non-empty path and still flows out).
     let src = r"
         struct Box {
@@ -2827,7 +2911,7 @@ fn cpp_pointer_returning_inline_method_is_discovered() {
     check_func_params(
         &prog,
         "Box::pick",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::pick", 1);
     check_func_returns_path(&prog, "Box::pick", "@p1");
@@ -2862,7 +2946,7 @@ fn cpp_pointer_returning_out_of_line_method_is_discovered() {
     check_func_params(
         &prog,
         "Box::pick",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_return_arity(&prog, "Box::pick", 1);
     check_func_returns_path(&prog, "Box::pick", "@p1");
@@ -2876,7 +2960,7 @@ fn cpp_pointer_returning_namespaced_function_is_discovered() {
             char *dup(char *s) { return s; }
         }";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "ns::dup", &[ParameterType::ByVal]);
+    check_func_params(&prog, "ns::dup", &[ParameterType::SharedFields]);
     check_return_arity(&prog, "ns::dup", 1);
     check_func_returns_path(&prog, "ns::dup", "@p0");
 }
@@ -2986,8 +3070,8 @@ fn cpp_method_object_parameter_dispatches_on_p1() {
 #[test_log::test]
 fn cpp_class_parameter_modes_are_unchanged() {
     // FR-2 (the frontend's half): registering a parameter's class must not disturb its passing
-    // mode. `Box b` and `Box* p` are `ByVal` and `Box& b` is `ByRef`. A member write is a
-    // non-empty path, so it flows out of a `ByVal` formal too (`isout`); `ByRef` additionally
+    // mode. `Box b` and `Box* p` are `SharedFields` and `Box& b` is `Shared`. A member write is a
+    // non-empty path, so it flows out of a `SharedFields` formal too (`isout`); `Shared` additionally
     // carries a write at the formal's root, which only a reference can make the caller see. What the analysis *below*
     // the frontend does with a by-value aggregate is its own model (see the CPP_102 case).
     let src = r"
@@ -2997,10 +3081,10 @@ fn cpp_class_parameter_modes_are_unchanged() {
         void by_const_ref(const Box& b) { b.set(1); }
         void by_ptr(Box* p) { p->set(1); }";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "by_value", &[ParameterType::ByVal]);
-    check_func_params(&prog, "by_ref", &[ParameterType::ByRef]);
-    check_func_params(&prog, "by_const_ref", &[ParameterType::ByVal]);
-    check_func_params(&prog, "by_ptr", &[ParameterType::ByVal]);
+    check_func_params(&prog, "by_value", &[ParameterType::SharedFields]);
+    check_func_params(&prog, "by_ref", &[ParameterType::Shared]);
+    check_func_params(&prog, "by_const_ref", &[ParameterType::SharedFields]);
+    check_func_params(&prog, "by_ptr", &[ParameterType::SharedFields]);
 }
 
 #[test_log::test]
@@ -3049,7 +3133,7 @@ fn c_struct_parameter_is_untouched() {
         struct Box { int v; };
         int get(struct Box b) { return b.v; }";
     let prog = program_from_string(src).0;
-    check_func_params(&prog, "get", &[ParameterType::ByVal]);
+    check_func_params(&prog, "get", &[ParameterType::SharedFields]);
     check_func_loads(&prog, "get", "@p0.v");
     assert!(
         direct_calls_in(&prog, "get").is_empty(),
@@ -3076,12 +3160,12 @@ fn cpp_copy_ctor_is_lowered_as_a_function_of_its_own() {
     check_func_params(
         &prog,
         "Box::Box",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_params(
         &prog,
         "Box::Box#copy",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     // Each body writes its own members from its own parameter: the int constructor takes the
     // value, the copy constructor reads the source object's member.
@@ -3098,8 +3182,8 @@ fn cpp_copy_ctor_is_lowered_as_a_function_of_its_own() {
 #[test_log::test]
 fn cpp_copy_ctor_parameter_mode_follows_the_reference_kind() {
     // Spec 022 FR-1: recognizing the copy constructor changes only its *key*; its parameter
-    // mode is the ordinary one `param_head` computes, so `const Box&` is `ByVal` (read-only)
-    // and a non-const `Box&` is `ByRef` (writes reach the source object).
+    // mode is the ordinary one `param_head` computes, so `const Box&` is `SharedFields` (read-only)
+    // and a non-const `Box&` is `Shared` (writes reach the source object).
     let src = r"
         struct ConstRef { int v; ConstRef(int x) : v(x) {} ConstRef(const ConstRef& o) : v(o.v) {} };
         struct MutRef { int v; MutRef(int x) : v(x) {} MutRef(MutRef& o) : v(o.v) {} };";
@@ -3107,12 +3191,12 @@ fn cpp_copy_ctor_parameter_mode_follows_the_reference_kind() {
     check_func_params(
         &prog,
         "ConstRef::ConstRef#copy",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_params(
         &prog,
         "MutRef::MutRef#copy",
-        &[ParameterType::ByRef, ParameterType::ByRef],
+        &[ParameterType::Shared, ParameterType::Shared],
     );
 }
 
@@ -3307,7 +3391,7 @@ fn cpp_operator_assign_is_discovered_with_this() {
     check_func_params(
         &prog,
         "Acc::operator=",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_returns_path(&prog, "Acc::operator=", "@p0");
     check_func_assign_or_update(&prog, "Acc::operator=", "@p0.v", ["@p1"]);
@@ -3327,7 +3411,11 @@ fn cpp_operator_subscript_and_call_are_discovered() {
     "#;
     let prog = program_from_cpp_string(src).0;
     for name in ["Acc::operator[]", "Acc::operator()"] {
-        check_func_params(&prog, name, &[ParameterType::ByRef, ParameterType::ByVal]);
+        check_func_params(
+            &prog,
+            name,
+            &[ParameterType::Shared, ParameterType::SharedFields],
+        );
         check_func_loads(&prog, name, "@p0.v");
     }
     // The punctuation survives into the IR dump intact: nothing downstream parses a function
@@ -3356,7 +3444,7 @@ fn cpp_out_of_line_operator_is_discovered() {
     check_func_params(
         &prog,
         "Acc::operator+=",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_direct_call_arg0(&prog, "main", "Acc::operator+=", "a");
 }
@@ -3628,15 +3716,15 @@ fn cpp_same_arity_ctors_are_two_functions() {
     check_func_params(
         &prog,
         "Box::Box#1(int)",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
-    // A pointer parameter and a plain `int` are both `ByVal` (a write through the pointer is a
+    // A pointer parameter and a plain `int` are both `SharedFields` (a write through the pointer is a
     // non-empty path and still flows out) -- the modes `param_head` computes; only the *key*
     // is new.
     check_func_params(
         &prog,
         "Box::Box#1(Box*)",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_assign_or_update(&prog, "Box::Box#1(int)", "@p0.v", ["@p1"]);
     check_func_loads(&prog, "Box::Box#1(Box*)", "@p1.v");
@@ -3667,17 +3755,17 @@ fn cpp_same_arity_methods_and_free_functions_are_two_functions() {
     check_func_params(
         &prog,
         "Box::set#1(int)",
-        &[ParameterType::ByRef, ParameterType::ByVal],
+        &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_params(
         &prog,
         "Box::set#1(Box&)",
-        &[ParameterType::ByRef, ParameterType::ByRef],
+        &[ParameterType::Shared, ParameterType::Shared],
     );
     check_func_assign_or_update(&prog, "Box::set#1(int)", "@p0.v", ["@p1"]);
     check_func_loads(&prog, "Box::set#1(Box&)", "@p1.v");
-    check_func_params(&prog, "f#1(int)", &[ParameterType::ByVal]);
-    check_func_params(&prog, "f#1(Box*)", &[ParameterType::ByVal]);
+    check_func_params(&prog, "f#1(int)", &[ParameterType::SharedFields]);
+    check_func_params(&prog, "f#1(Box*)", &[ParameterType::SharedFields]);
     check_func_loads(&prog, "f#1(Box*)", "@p0.v");
 }
 
@@ -3693,8 +3781,8 @@ fn cpp_namespaced_same_arity_functions_are_two_functions() {
             int f(Box* p) { return p->v; }
         }";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "ns::f#1(int)", &[ParameterType::ByVal]);
-    check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::ByVal]);
+    check_func_params(&prog, "ns::f#1(int)", &[ParameterType::SharedFields]);
+    check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::SharedFields]);
     check_func_loads(&prog, "ns::f#1(Box*)", "@p0.v");
 }
 
@@ -3999,7 +4087,7 @@ fn c_same_named_prototypes_and_definitions_are_unchanged() {
             return r;
         }";
     let prog = program_from_string(src).0;
-    check_func_params(&prog, "f", &[ParameterType::ByVal]);
+    check_func_params(&prog, "f", &[ParameterType::SharedFields]);
     let calls = direct_calls_in(&prog, "main");
     assert_eq!(calls.len(), 1, "{prog}");
     assert_eq!(calls[0].0, vec!["f".to_string()], "{prog}");
@@ -4293,7 +4381,7 @@ fn cpp_implicit_default_ctor_is_synthesized_for_default_member_initializers() {
         struct Plain { int v; };
         int main() { B b; Plain p; return b.v + p.v; }";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "B::B", &[ParameterType::ByRef]);
+    check_func_params(&prog, "B::B", &[ParameterType::Shared]);
     check_func_assign_or_update(&prog, "B::B", "@p0.v", ["#7"]);
     check_func_assign_or_update(&prog, "B::B", "@p0.w", ["#8"]);
     check_has_direct_call(&prog, "main", "B::B");
@@ -4892,8 +4980,10 @@ fn cpp_lambda_capturing_this_uses_the_object_slot() {
         "members go through the slot\n{prog}"
     );
     let run = format!("{}", function_named(&prog, "S::run").unwrap());
+    // Member by member: assigning `@p0` itself would rebind the parameter, which never reaches
+    // the caller.
     assert!(
-        run.contains("this>") && run.contains("assign @p0 ="),
+        run.contains("this>") && run.contains("store @p0.v :=") && !run.contains("assign @p0 ="),
         "the slot is filled and copied back\n{prog}"
     );
 }

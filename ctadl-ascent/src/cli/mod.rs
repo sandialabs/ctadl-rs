@@ -22,8 +22,8 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
-    taint_index_with_config,
+    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, Storage,
+    source_info::IndexSourceInfo, taint_index_with_config,
 };
 use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
@@ -88,6 +88,8 @@ pub struct IndexOptions {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Where the large relations are stored; see [`Storage`].
+    pub storage: Storage,
 }
 
 impl Default for IndexOptions {
@@ -102,6 +104,7 @@ impl Default for IndexOptions {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
         }
     }
 }
@@ -130,6 +133,7 @@ pub fn index(
         hybrid_context,
         context_join,
         parallelism,
+        storage,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -246,9 +250,7 @@ pub fn index(
         );
         ssa::run_pipeline(
             &mut program_info.program,
-            ssa::Pipeline::index_default()
-                .prune(prune_unreachable_cfg_nodes)
-                .param_write_back(import.language.param_write_back()),
+            ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
         );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
@@ -429,11 +431,13 @@ pub fn index(
     );
     // The native front ends deal in pointers, and every pointer may be dereferenced, so the
     // index admits `<path>.deref` for every program path (see `compute_paths`). Decided from the
-    // imports' languages, not from whether some dereference happens to survive SSA.
+    // imports' languages, not from whether some dereference happens to survive SSA. CIL joins
+    // them: `T*` fields, `ref` fields and addresses stored through a pointer are pointers held
+    // in memory, whose pointee's path the index otherwise never admits.
     let deref_paths = project.iter_imports().filter_map(Result::ok).any(|import| {
         matches!(
             import.language,
-            ArtifactLanguage::C | ArtifactLanguage::Pcode
+            ArtifactLanguage::C | ArtifactLanguage::Pcode | ArtifactLanguage::Cil
         )
     });
     let config = crate::index_engine::IndexConfig {
@@ -441,6 +445,7 @@ pub fn index(
         hybrid_context,
         context_join,
         parallelism,
+        storage,
         deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
@@ -1409,6 +1414,7 @@ impl ImportStats {
                             ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                             ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
                             ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
+                            ctadl_ir::call::CallStyle::CilCall { .. } => "CilCall",
                         };
                         *stats.call_styles.entry(style_name).or_insert(0) += 1;
                     }

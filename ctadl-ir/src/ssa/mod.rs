@@ -7,8 +7,10 @@ the block, so no phi is placed that no later use can observe.
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
 - Right before each `return`, there is a `param-flow` instruction that indicates, for each formal
-  parameter to the function, which variable holds the current version of that parameter. This helps
-  generate code that tracks flows on formal parameters.
+  parameter to the function, which version of that parameter is written back to the caller. This
+  is always the entry version, version 0: rebinding a parameter does not change the caller's
+  argument (see [`ParameterType`]). This helps generate code that tracks flows on formal
+  parameters.
 
 */
 use std::collections::{HashMap, HashSet};
@@ -69,30 +71,12 @@ pub struct Pipeline {
     pub ssa: bool,
     /// Run [`propagate_copies`], which forwards copies through the SSA graph.
     pub copy_prop: bool,
-    /// Passed on to [`transform_program_with`]. Has no effect unless `ssa` is set.
+    /// Passed on to [`transform_program`]. Has no effect unless `ssa` is set.
     ///
     /// Set this whenever the IR comes from a front end that can emit blocks no path reaches.
     /// SSA conversion needs every block to be reachable from the start block and panics
     /// otherwise, and pruning is how a caller makes that true.
     pub prune_unreachable: bool,
-    /// Passed on to [`transform_program_with`]; see [`ParamWriteBack`]. Has no effect unless
-    /// `ssa` is set.
-    pub param_write_back: ParamWriteBack,
-}
-
-/// Which version of each parameter the exit block's param-flow hands back to the parameter's
-/// formal. The param-flow is how a callee's writes through a parameter reach its caller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ParamWriteBack {
-    /// The version live at exit. Right for a front end that writes through a parameter by
-    /// assigning to it.
-    #[default]
-    Exit,
-    /// The entry version, version 0. Right for a front end whose parameter variables are
-    /// ordinary locals that the callee may rebind: the caller's argument cannot change, and a
-    /// write through it is a field store on the entry version. Reassigning a parameter, as in
-    /// `p0 = p0.f` before a return, then does not flow `p0.f` back to the caller's argument.
-    Entry,
 }
 
 impl Pipeline {
@@ -111,7 +95,6 @@ impl Pipeline {
             ssa: true,
             copy_prop: true,
             prune_unreachable: true,
-            param_write_back: ParamWriteBack::Exit,
         }
     }
 
@@ -124,7 +107,6 @@ impl Pipeline {
             ssa: false,
             copy_prop: false,
             prune_unreachable: false,
-            param_write_back: ParamWriteBack::Exit,
         }
     }
 
@@ -147,14 +129,6 @@ impl Pipeline {
         self
     }
 
-    /// Sets [`Pipeline::param_write_back`].
-    #[inline]
-    #[must_use]
-    pub fn param_write_back(mut self, param_write_back: ParamWriteBack) -> Self {
-        self.param_write_back = param_write_back;
-        self
-    }
-
     /// A short name for this pipeline, to record in a log line or a report which passes ran.
     /// For example, `dt+co+ssa(prune)+cp`, or `none`.
     ///
@@ -169,17 +143,10 @@ impl Pipeline {
             parts.push("co".into());
         }
         if self.ssa {
-            let mut opts: Vec<&str> = Vec::new();
-            if self.prune_unreachable {
-                opts.push("prune");
-            }
-            if self.param_write_back == ParamWriteBack::Entry {
-                opts.push("entry");
-            }
-            parts.push(if opts.is_empty() {
-                "ssa".into()
+            parts.push(if self.prune_unreachable {
+                "ssa(prune)".into()
             } else {
-                format!("ssa({})", opts.join(","))
+                "ssa".into()
             });
         }
         if self.copy_prop {
@@ -213,7 +180,7 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
         coalesce_copies(program);
     }
     if p.ssa {
-        transform_program_with(program, p.prune_unreachable, p.param_write_back);
+        transform_program(program, p.prune_unreachable);
     }
     if p.copy_prop {
         propagate_copies(program);
@@ -224,14 +191,9 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
 ///
 /// Every function has to meet the preconditions listed on [`transform`].
 pub fn transform_program(program: &mut Program, prune: bool) {
-    transform_program_with(program, prune, ParamWriteBack::Exit);
-}
-
-/// [`transform_program`], choosing which parameter versions the exit param-flow writes back.
-pub fn transform_program_with(program: &mut Program, prune: bool, write_back: ParamWriteBack) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         log::debug!("f: {f}");
-        transform_with(f, prune, PhiMode::Pruned, write_back);
+        transform_with(f, prune, PhiMode::Pruned);
     }
 }
 
@@ -272,10 +234,11 @@ pub fn transform_program_with(program: &mut Program, prune: bool, write_back: Pa
 /// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
 /// has exactly one `return`, and that `return` is the terminator of the single exit block this
 /// pass adds. Every variable use names a version, and version 0 is the incoming version. The
-/// form is pruned: every phi is reached by some non-phi use (see the module documentation).
+/// form is pruned: every phi is reached by some non-phi use (see the module documentation). The
+/// exit param-flow writes back every parameter at its entry version.
 #[inline]
 pub fn transform(function: &mut FunctionData, prune: bool) {
-    transform_with(function, prune, PhiMode::Pruned, ParamWriteBack::Exit);
+    transform_with(function, prune, PhiMode::Pruned);
 }
 
 /// Which phis [`PhiPlace`] inserts.
@@ -289,39 +252,7 @@ enum PhiMode {
     Pruned,
 }
 
-/// Fills in the exit param-flow's parameters with their entry versions, version 0. Runs after
-/// renaming, on a param-flow that [`complete`] built without parameters.
-fn write_back_entry_params(function: &mut FunctionData) {
-    let params: IndexVec<ParameterIdx, VariableRef> = function
-        .params
-        .iter_enumerated()
-        .map(|(i, _)| VariableRef::new_parameter(i).with_version(0))
-        .collect();
-    let blocks = function.blocks.blocks_mut_preserves_cfg();
-    let exit = blocks
-        .iter_mut()
-        .rev()
-        .find(|b| {
-            b.terminator
-                .as_ref()
-                .is_some_and(|t| matches!(t.kind, TerminatorKind::Return { .. }))
-        })
-        .expect("SSA has a single exit block");
-    for st in exit.statements.iter_mut() {
-        if let StatementKind::ParamFlow { params: p, .. } = &mut st.kind {
-            *p = params;
-            return;
-        }
-    }
-    unreachable!("the exit block has a param-flow");
-}
-
-fn transform_with(
-    function: &mut FunctionData,
-    prune: bool,
-    mode: PhiMode,
-    write_back: ParamWriteBack,
-) {
+fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
     if function.blocks.is_empty() {
         return;
     }
@@ -330,7 +261,7 @@ fn transform_with(
     }
     // Forward returns into the exit block as a new return. Change the former returns into gotos
     log::trace!("begin ssa transform");
-    complete(function, write_back);
+    complete(function);
     let phi = PhiPlace::new(function, mode);
     log::trace!("blocks after phi place: {}", function.blocks);
     SsaRename::new(&mut function.blocks, phi);
@@ -355,9 +286,6 @@ fn transform_with(
             dest: variable.with_version(0),
             sources: smallvec![Exp::Variable(variable)],
         }));
-    }
-    if write_back == ParamWriteBack::Entry {
-        write_back_entry_params(function);
     }
     log::trace!("assume that version 0 is initial version");
     log::trace!("blocks after rename: {}", function);
@@ -438,7 +366,7 @@ fn prune_unreachable_nodes(function: &mut FunctionData) {
 ///
 /// Preconditions: the function has a start block, and every block has a terminator. This runs
 /// as part of [`transform`], so it inherits that function's preconditions.
-fn complete(function: &mut FunctionData, write_back: ParamWriteBack) {
+fn complete(function: &mut FunctionData) {
     // Creates block data for a "return <retvars>" block. Since we're going to rewrite all CFG
     // blocks to add the assignments and gotos, we don't actually wire up the exit block until the
     // end of this function.
@@ -449,17 +377,21 @@ fn complete(function: &mut FunctionData, write_back: ParamWriteBack) {
         })
         .collect();
 
-    // Exit block observes parameters and returns retvars. Under `ParamWriteBack::Entry` the
-    // parameters are left out until after renaming (see `write_back_entry_params`), so that
-    // renaming neither gives them their exit versions nor places phis to merge those.
-    let observed = match write_back {
-        ParamWriteBack::Exit => function.num_parameters(),
-        ParamWriteBack::Entry => 0,
+    // Exit block observes parameters and returns retvars. Every parameter is written back at its
+    // entry version, because rebinding a parameter does not reach the caller. It goes in already
+    // versioned, so that renaming neither gives it its exit version nor places phis to merge
+    // that version.
+    let params = function
+        .params
+        .iter_enumerated()
+        .map(|(i, _)| VariableRef::new_parameter(i).with_version(0))
+        .collect();
+    let param_flow = StatementKind::ParamFlow {
+        params,
+        global: VariableRef::new_global(),
     };
     let exit_block_contents = BasicBlockData::new_stmts(
-        [Statement::new_kind(StatementKind::param_flow(observed))]
-            .into_iter()
-            .collect(),
+        [Statement::new_kind(param_flow)].into_iter().collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
             args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
         })),
@@ -548,7 +480,9 @@ impl PhiPlace {
         let variables = &mut phi_place.variables;
 
         // Initialize `a`, `upward_uses` and `variables`. A statement reads its sources before it
-        // writes its destinations, so `x = x + 1` is an upward-exposed use of `x`.
+        // writes its destinations, so `x = x + 1` is an upward-exposed use of `x`. A use that
+        // already names a version (a parameter's write-back from `complete`) is not a use of
+        // whatever version reaches it, so it keeps nothing live.
         let mut killed: HashSet<ArcIntern<Variable>> = HashSet::new();
         let mut used: HashSet<ArcIntern<Variable>> = HashSet::new();
         for (bb, data) in function.blocks.iter_enumerated() {
@@ -560,7 +494,7 @@ impl PhiPlace {
                 }
             };
             for stmt in data.iter() {
-                for v in stmt.iter_src_var() {
+                for v in stmt.iter_src_var().filter(|v| v.version.is_none()) {
                     variables.insert(v.variable.clone());
                     note_use(v, &killed);
                 }
@@ -692,7 +626,8 @@ impl SsaRename {
         for (_z, stmt) in blocks[x].iter_enumerated_mut() {
             // Ensure to rewrite assignment-uses and param-flow-uses
             if !matches!(stmt.kind, Phi { .. }) {
-                for v in stmt.iter_src_var_mut() {
+                // A use that already names a version is left as it is (see `complete`).
+                for v in stmt.iter_src_var_mut().filter(|v| v.version.is_none()) {
                     let i = *self.s(&v.variable).last().unwrap();
                     // Replace use of v with v_i
                     v.version = Some(i.try_into().unwrap());

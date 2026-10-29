@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -186,6 +186,15 @@ pub struct ImportArgs {
     /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too (`System.*`,
+    /// `Microsoft.Extensions.*`, `mscorlib`, ...).
+    ///
+    /// By default only the application's own assemblies are imported, and the framework's
+    /// are read for their metadata alone: base types, interfaces, type forwarders. A
+    /// self-contained publish ships some 200 of them.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -212,6 +221,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe`), or a directory of them (a published app)
+    Cil,
     /// Infer from extension/content
     Auto,
 }
@@ -439,6 +450,60 @@ pub struct IndexArgs {
     /// reports. Both engines evaluate the same rules and derive the same relations.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Experimental: keep the largest relations in memory-mapped LSM files instead of in-memory
+    /// tries.
+    ///
+    /// The relations that dominate the index's memory (`locals`, `assign_like` and the
+    /// propagation relations built from them) then live mostly in run files under `$TMPDIR`,
+    /// read through the page cache, with only a write buffer per index in memory: a run that
+    /// would not fit in RAM can finish, at some cost in time. Runs the serial engine, so it
+    /// cannot be combined with `-j`.
+    #[arg(long, conflicts_with = "jobs")]
+    pub lsm: bool,
+
+    /// With `--lsm`, how many entries each index buffers in memory before writing them out as
+    /// a run file. Larger buffers mean fewer, larger runs (faster lookups) and more memory.
+    #[arg(long, requires = "lsm", value_name = "ENTRIES")]
+    pub lsm_memtable_limit: Option<usize>,
+
+    /// With `--lsm`, the most memory the LSM's write buffers may hold at once, all of them
+    /// together, e.g. `512M` or `4G` (powers of 1024; a bare number is bytes).
+    ///
+    /// Over the budget, a buffer that takes a new tuple is written out as a run file, so a
+    /// machine with little RAM can index a program that would otherwise not fit. The runs
+    /// themselves are read through the page cache, which the OS shrinks under pressure. The
+    /// budget does not cover the rest of the index: the relations kept in memory and the
+    /// program's facts still take what they take.
+    #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
+    pub lsm_memory_budget: Option<usize>,
+}
+
+/// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
+/// `T` suffix (powers of 1024, any case, optionally followed by `B` or `iB`).
+fn parse_size(s: &str) -> Result<usize, String> {
+    let s = s.trim();
+    let digits = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    let (number, unit) = s.split_at(digits);
+    let number: f64 = number
+        .parse()
+        .map_err(|_| format!("`{s}` is not a size, like 512M or 4G"))?;
+    let unit = unit.trim().to_ascii_uppercase();
+    let unit = unit
+        .strip_suffix("IB")
+        .or_else(|| unit.strip_suffix('B'))
+        .unwrap_or(&unit);
+    let scale: u64 = match unit {
+        "" => 1,
+        "K" => 1 << 10,
+        "M" => 1 << 20,
+        "G" => 1 << 30,
+        "T" => 1 << 40,
+        _ => return Err(format!("unknown size unit in `{s}`; use K, M, G or T")),
+    };
+    Ok((number * scale as f64) as usize)
 }
 
 impl IndexArgs {
@@ -592,6 +657,11 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -668,6 +738,7 @@ fn main() -> anyhow::Result<()> {
                     force: args.force,
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
+                    include_framework: args.include_framework,
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -695,6 +766,9 @@ fn main() -> anyhow::Result<()> {
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
                 jobs: None,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -824,6 +898,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 // Not an APK: this legacy path imports a directory of pcode facts.
                 no_native_libs: false,
                 native_abi: None,
+                include_framework: false,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -848,6 +923,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
                 jobs: None,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -899,6 +977,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
+            ImportLanguage::Cil => Cil,
             ImportLanguage::Auto => unreachable!(),
         }
     };
@@ -930,6 +1009,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            cil_include_framework: args.include_framework,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
@@ -950,6 +1030,13 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// If there ary any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
+    if args.lsm {
+        log::warn!("--lsm is experimental");
+    }
+    if let Some(limit) = args.lsm_memtable_limit {
+        lsm::ascent_provider::set_memtable_limit(limit);
+    }
+    lsm::set_memory_budget(args.lsm_memory_budget);
     // Determine the list of program names to index. If the user did not supply any, use the project name.
     let import_names: Vec<String> = if args.progs.is_empty() {
         vec![args.name.clone()]
@@ -977,6 +1064,11 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             hybrid_context: args.hybrid_context,
             context_join: args.context_join,
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
+            storage: if args.lsm {
+                Storage::Lsm
+            } else {
+                Storage::Memory
+            },
         },
     )?;
     Ok(())
@@ -1168,6 +1260,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if path.is_dir() && dir_contains_lua(path) {
                 return Ok(ImportLanguage::Lua);
             }
+            // A published .NET app is a directory of assemblies.
+            if path.is_dir() && ctadl_ascent::languages::cil::dir_has_cli_image(path) {
+                return Ok(ImportLanguage::Cil);
+            }
 
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
@@ -1179,6 +1275,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
+                // A PE file is .NET when it has CLI metadata, and native otherwise.
+                Some("dll" | "exe") if ctadl_ascent::languages::cil::is_cli_image(path) => {
+                    ImportLanguage::Cil
+                }
                 // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
                 // A C source file or header.
@@ -1244,6 +1344,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn sizes_parse() {
+        assert_eq!(parse_size("4096"), Ok(4096));
+        assert_eq!(parse_size("512M"), Ok(512 << 20));
+        assert_eq!(parse_size("4g"), Ok(4 << 30));
+        assert_eq!(parse_size("1.5GiB"), Ok(3 << 29));
+        assert_eq!(parse_size("64 KB"), Ok(64 << 10));
+        assert!(parse_size("4X").is_err());
+        assert!(parse_size("lots").is_err());
+    }
 
     /// The two dump modes read different things -- one an import's IR, the other a project's
     /// index -- so asking for both at once is a usage error, not a silent pick.

@@ -671,6 +671,9 @@ fn in_cell(mut fields: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
 }
 
 /// A declarator's name and its nearest declarator kind, or `""`.
+///
+/// The kind nearest the name decides what the name is, as in C: `int *a[3]` is an array,
+/// `int (*fp)(int)` a pointer, `int *f(int)` a function, and `""` a plain `int x`.
 fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     let mut node = declarator;
     let mut nearest = "";
@@ -698,6 +701,10 @@ fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
 }
 
 /// Scalar locals and parameters whose address is taken (`&x`, `(T) &x`).
+///
+/// Each one's value lives in a cell at `x.deref` ([`in_cell`]), so a write through `&x` reaches
+/// later reads of `x`; records and arrays already name their own storage. The walk is by name,
+/// not scope: `taken` finds the names, and `declared` keeps the ones that are scalar.
 fn addr_taken_scalars(
     params: Node<'_>,
     body: Node<'_>,
@@ -745,7 +752,9 @@ fn addr_taken_scalars(
             }
         }
     }
-    // Every declaration of every name in `names`: is it scalar?
+    // Every declaration of every name in `names`: is it scalar? A pointer, a non-record type,
+    // or an array parameter (it decays to a pointer) is; a local array, a record or a function
+    // is not. Keyed by name, so one non-scalar declaration anywhere in the function excludes it.
     fn declared<'s>(
         node: Node<'_>,
         source: &'s str,
@@ -826,7 +835,7 @@ struct ClassInfo {
     /// (a `return *this`). Empty for C and for every method that returns by value.
     returns_member: HashMap<String, String>,
     /// Whether the class declares a (user-defined) constructor, modeled as the function
-    /// `Class::Class` with an implicit `this` (`ByRef`) param 0. Set by the C++ method
+    /// `Class::Class` with an implicit `this` (`Shared`) param 0. Set by the C++ method
     /// discovery hook; consulted by the `construct` hook so a class-typed declaration with
     /// arguments (`Box b(args)` etc.) lowers to a `DirectCall Class::Class(&b, args…)`.
     /// Always `false` for C (the `classes` map is empty), so construction never fires there.
@@ -902,7 +911,7 @@ struct ClassInfo {
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
-/// pass as the arg-0 (`ByRef`) receiver, and the object's class (to look up the method).
+/// pass as the arg-0 (`Shared`) receiver, and the object's class (to look up the method).
 /// Produced by [`Context::resolve_recv_obj`] for a plain identifier local, the implicit
 /// `this`, a member object, or a chained call whose callee returns its receiver.
 #[derive(Clone)]
@@ -975,7 +984,7 @@ struct GrammarHooks {
     /// class (so it is never invoked for C, where [`Context::classes`] is empty). C++ uses
     /// it to recognize `Box b(args)` / `Box b = Box(args)` / `Box b{args}` — a construction
     /// of a class that declares a constructor — and lower it to a `DirectCall Class::Class`
-    /// with the new object as the arg-0 (`ByRef`) receiver, so the constructor's member
+    /// with the new object as the arg-0 (`Shared`) receiver, so the constructor's member
     /// writes flow back into the object. Returns `true` if it recognized and fully lowered
     /// the declaration (the caller then skips its normal declarator handling), `false`
     /// otherwise (a plain `Box b;`, a non-class type, or a class with no constructor —
@@ -1039,7 +1048,7 @@ struct GrammarHooks {
     /// the destructor call: when the pointer's static class (or a base) declares a destructor, a
     /// `DirectCall` over the static type's subtree destructors for a **virtual** destructor (CHA),
     /// or the single static-type destructor otherwise, with the referent `*p` as the arg-0
-    /// (`ByRef`) receiver — so taint a destructor body moves at `delete` time is captured. A
+    /// (`Shared`) receiver — so taint a destructor body moves at `delete` time is captured. A
     /// hierarchy with no destructor emits nothing (014's no-op). Driven by the neutral
     /// `classes`/`subclasses`/`local_types` maps (empty for C), so no language branch.
     delete_expr: for<'a, 't> fn(
@@ -1059,7 +1068,7 @@ struct GrammarHooks {
     /// frame ([`Context::dtor_frames`]) in **reverse** construction order (LIFO) and, for each
     /// object whose class (or a base) declares a destructor, emits a single-target exact-type
     /// destructor `DirectCall` (a stack object's dynamic type equals its declared type, so no CHA)
-    /// with the object itself as the arg-0 (`ByRef`) receiver. The frame is empty for C, so this is
+    /// with the object itself as the arg-0 (`Shared`) receiver. The frame is empty for C, so this is
     /// inert on the C path. No language branch: driven by the neutral `classes`/`dtor_frames` state.
     scope_exit: for<'a> fn(&mut Context<'a>, &mut Program, &ScopeView) -> anyhow::Result<(), Error>,
     /// Emit the destructors of the objects a statement leaving one or more scopes **early**
@@ -1112,7 +1121,7 @@ struct GrammarHooks {
     /// [`Context::local_types`]/[`Context::classes`] maps -- is the left operand / callee a known
     /// object whose class (or a base) declares `operator<op>`? -- and, when it is, lowers through
     /// the same receiver + `DirectCall` builder ([`Context::emit_method_call`]) that
-    /// [`Context::dispatch_call`] uses for `recv.m(args)`, with the object as the arg-0 (`ByRef`)
+    /// [`Context::dispatch_call`] uses for `recv.m(args)`, with the object as the arg-0 (`Shared`)
     /// receiver. Both maps are empty for C, so the hook could not fire there even if it were
     /// installed. No language branch.
     operator_call: for<'a, 't> fn(
@@ -1279,6 +1288,18 @@ struct Context<'a> {
     /// slot back into its object, since any call may run the closure. Set by the
     /// `function_scan` hook, reset per function; empty for C.
     post_call_copies: Vec<(RawPath, RawPath)>,
+    /// Which of a defined function's **explicit** parameters are reference cells
+    /// ([`is_reference_cell_param`]), by the IR name a call site resolves to. Filled by the C++
+    /// `collect_aux` hook before any body is lowered, so a call reaching a definition further
+    /// down the file still finds it; [`Context::pass_reference_args`] consults it at every call
+    /// site. Empty for C.
+    reference_cell_slots: HashMap<String, Vec<bool>>,
+    /// The current function's reference-cell parameters, by name: each one's value is at
+    /// `@pN.deref`. Reset per function; empty for C.
+    reference_cells: HashSet<String>,
+    /// Copies back out of the temps [`Context::pass_reference_args`] passed, as `(argument
+    /// location, temp cell)`, made by [`Context::emit_post_call_copies`] right after the call.
+    reference_copies_out: Vec<(RawPath, RawPath)>,
     /// The class type each free function returns by value, by its base IR name (spec 041); see
     /// [`ClassInfo::returns_object`]. Filled by the C++ `collect_aux` hook; empty for C.
     function_returns_object: HashMap<String, String>,
@@ -1663,6 +1684,9 @@ impl Context<'_> {
             using_aliases: HashMap::default(),
             lookup_prefixes: Vec::new(),
             post_call_copies: Vec::new(),
+            reference_cell_slots: HashMap::default(),
+            reference_cells: HashSet::default(),
+            reference_copies_out: Vec::new(),
             function_returns_object: HashMap::default(),
             template_params: HashSet::default(),
             local_dependent: HashSet::default(),
@@ -2909,7 +2933,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
     }
 }
 
-/// The name a parameter's declarator declares, and whether the parameter is a reference.
+/// The name a parameter's declarator declares, and the parameter's type.
 ///
 /// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
 /// `pointer_declarator` inside a `pointer_declarator`, `char *v[]` an `array_declarator`
@@ -2920,15 +2944,15 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
 /// see [`Context::collect_params`], which still owns the slot.
 ///
-/// Every pointer, array and scalar parameter is `ByVal`; writes through a pointer still flow
-/// out (`isout`).
+/// Every pointer, array and scalar parameter is `SharedFields`: a store through it
+/// (`p.deref`) reaches the caller, rebinding it does not.
 ///
 /// A C++ lvalue reference (`T& r`, a `reference_declarator`, which the C grammar does not
 /// have) is different: the formal *is* the caller's storage, so a write at its root must flow
-/// back. A non-const `T&` is therefore `ByRef`; `const T&` is read-only and stays `ByVal`
-/// (the referent's value flows in, nothing flows back). The `const` probe reads `decl`, the
-/// `parameter_declaration`, and is grammar-neutral (`type_qualifier` exists in both grammars);
-/// it is only reached for a reference, so the C path never asks.
+/// back. A non-const `T&` is therefore `Shared`; `const T&` is read-only and stays
+/// `SharedFields` (the referent's value flows in, nothing flows back). The `const` probe reads
+/// `decl`, the `parameter_declaration`, and is grammar-neutral (`type_qualifier` exists in both
+/// grammars); it is only reached for a reference, so the C path never asks.
 fn param_head<'t>(
     decl: Node<'t>,
     declarator: Node<'t>,
@@ -2966,9 +2990,9 @@ fn param_head<'t>(
         }
     }
     let param_type = if is_reference && !node_has_const_qualifier(&decl, source) {
-        ParameterType::ByRef
+        ParameterType::Shared
     } else {
-        ParameterType::ByVal
+        ParameterType::SharedFields
     };
     (name, param_type)
 }
@@ -2982,8 +3006,8 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
 }
 
 /// Whether `node` carries a leading `const` type qualifier (a `type_qualifier` child whose
-/// text is `const`). Used to tell `const T&` (read-only → `ByVal`) from `T&` (write-back →
-/// `ByRef`). `type_qualifier`/`const` are grammar-neutral (both tree-sitter-c and -cpp emit
+/// text is `const`). Used to tell `const T&` (read-only → `SharedFields`) from `T&` (write-back →
+/// `Shared`). `type_qualifier`/`const` are grammar-neutral (both tree-sitter-c and -cpp emit
 /// them), so this carries no language assumption; the C++ classifier is simply the only
 /// caller, since only a reference parameter consults it.
 fn node_has_const_qualifier(node: &Node<'_>, source: &str) -> bool {
@@ -3155,7 +3179,7 @@ fn define_extern_functions(program: &mut Program) {
         let fdat = &mut program.functions[fidx];
         fdat.name = name;
         for _ in 0..arity {
-            fdat.params.push(ParameterType::ByVal);
+            fdat.params.push(ParameterType::SharedFields);
         }
     }
 }
@@ -5189,6 +5213,15 @@ impl<'a> Context<'a> {
                 VariableRef::new_local_idx(locals.get_or_intern(&name)),
                 field_path,
             ),
+            // A reference cell's value is at `@pN.deref`, where its caller passed it.
+            VarKind::Parameter if self.reference_cells.contains(name_pre_scope) => {
+                let Some(param_idx) =
+                    self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
+                else {
+                    panic!("no parameter index for parameters");
+                };
+                RawPath::new(VariableRef::new_parameter(param_idx), in_cell(field_path))
+            }
             // The parameter's value was copied into its cell at entry (`lower_function`).
             VarKind::Parameter if is_cell => RawPath::new(
                 VariableRef::new_local_idx(locals.get_or_intern(&cell_local_name(name_pre_scope))),
@@ -5238,7 +5271,15 @@ impl<'a> Context<'a> {
         // The parameters are the parameter list's own children, walked in order, and a
         // parameter's index is its position among them -- never match order over the whole
         // subtree, which would bind a function pointer's own formals as this function's.
+        // Which of them are reference cells, as discovery recorded it for every call site to
+        // read (a lambda is not recorded, so it has none).
+        let reference_cell_slots = self
+            .reference_cell_slots
+            .get(function_name)
+            .cloned()
+            .unwrap_or_default();
         let mut cursor = param_list.walk();
+        let mut explicit = 0;
         for decl in param_list.named_children(&mut cursor) {
             // `...` is a `variadic_parameter`, not a formal (clang does not count it either);
             // an old-style `f(a, b)` list holds bare `identifier`s, whose types live in the
@@ -5246,6 +5287,8 @@ impl<'a> Context<'a> {
             if decl.kind() != "parameter_declaration" {
                 continue;
             }
+            let is_reference_cell = reference_cell_slots.get(explicit).copied() == Some(true);
+            explicit += 1;
             // A `parameter_declaration` with no declarator declares no parameter here: in
             // well-formed C that shape is `f(void)` (the `void` IS the empty list) or C23's
             // nameless `f(int)`, which real definitions do not write -- and it is also what
@@ -5254,6 +5297,7 @@ impl<'a> Context<'a> {
             let Some(declarator) = decl.child_by_field_name("declarator") else {
                 continue;
             };
+            // A C parameter is `SharedFields`; a C++ `T&` is `Shared` (see [`param_head`]).
             let (param_name, param_type) = param_head(decl, declarator, source);
 
             fdat.params.push(param_type);
@@ -5266,6 +5310,9 @@ impl<'a> Context<'a> {
                         pn.to_string(),
                         VarKind::Parameter,
                     );
+                    if is_reference_cell {
+                        self.reference_cells.insert(pn.to_string());
+                    }
                     // A parameter whose declared type names a known class is a receiver, exactly
                     // like a local of that class: record it so a later `b.m(…)` / `p->m(…)` in
                     // the body dispatches to `Class::m` with this parameter's own access path
@@ -5273,8 +5320,8 @@ impl<'a> Context<'a> {
                     // pointer/reference wrappers to the leaf `identifier`, so `Box* p` and
                     // `Box& b` key on `p` / `b` — the name the receiver is spelled with.
                     //
-                    // The passing mode pushed just above is untouched: `Box&` is `ByRef`, `Box b`
-                    // and `Box* p` are `ByVal`. A member write is a non-empty path, so it flows
+                    // The passing mode pushed just above is untouched: `Box&` is `Shared`, `Box b`
+                    // and `Box* p` are `SharedFields`. A member write is a non-empty path, so it flows
                     // back to the caller's object through either mode (`isout`), which for
                     // `Box b` over-approximates C++'s copy (the labelled CPP_102 gap; spec 020).
                     //
@@ -6044,7 +6091,10 @@ impl<'a> Context<'a> {
             return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
         }
         let operand = unparenthesized_callee(arg);
-        if operand.kind() == "identifier" && self.cells.contains(to_str(&operand, source)) {
+        if operand.kind() == "identifier"
+            && (self.cells.contains(to_str(&operand, source))
+                || self.reference_cells.contains(to_str(&operand, source)))
+        {
             let cell = self.build_access_path(
                 to_str(&operand, source),
                 Default::default(),
@@ -6268,7 +6318,7 @@ impl<'a> Context<'a> {
     }
 
     /// Resolve a C++ instance-method call receiver node into the object to dispatch on — its
-    /// arg-0 (`ByRef`) access-path expression and its class — or `None` if it is not a known
+    /// arg-0 (`Shared`) access-path expression and its class — or `None` if it is not a known
     /// class object. Handles a plain identifier local (`b.m()`), the implicit receiver
     /// (`this`/`*this`), a parenthesized receiver, and a **chained** call whose callee returns
     /// its receiver (`recv.a(…).b(…)` — `a` does `return *this`): the chained case lowers the
@@ -6648,13 +6698,21 @@ impl<'a> Context<'a> {
             .child_by_field_name("arguments")
             .expect("call_expression always has arguments");
         let shapes = self.arg_shapes(arg_node, source);
-        let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
         let targets: ThinVec<String> = owners
             .iter()
             .flat_map(|class| {
                 self.overload_targets(&format!("{class}::{method}"), args.len(), &shapes)
             })
             .collect();
+        self.pass_reference_args(
+            program,
+            scope_view,
+            source,
+            &targets,
+            Some(arg_node),
+            &mut args,
+        )?;
         let location = match recv_node.kind() {
             "identifier" => self.build_access_path(
                 to_str(&recv_node, source),
@@ -6734,11 +6792,19 @@ impl<'a> Context<'a> {
             .child_by_field_name("arguments")
             .expect("call_expression always has arguments");
         let shapes = self.arg_shapes(arg_node, source);
-        let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
         let targets: ThinVec<String> = self
             .overload_targets(&base, args.len(), &shapes)
             .into_iter()
             .collect();
+        self.pass_reference_args(
+            program,
+            scope_view,
+            source,
+            &targets,
+            Some(arg_node),
+            &mut args,
+        )?;
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -6788,9 +6854,88 @@ impl<'a> Context<'a> {
         })
     }
 
-    /// Emit [`Self::post_call_copies`] after a call (spec 040). Nothing for C.
+    /// Pass a call's arguments to the callee's reference-cell parameters
+    /// ([`is_reference_cell_param`]) by address. Each such argument goes through a fresh temp,
+    /// `store t.deref := arg`, and `t` is passed in its place; when the argument is a location
+    /// (`x`, `o.v`, `a[0]`, `*p`), `t.deref` is copied back into it after the call
+    /// ([`Self::emit_post_call_copies`]). A position counts when any of `targets` takes it as a
+    /// reference cell. `arg_list` is `None` where there is no argument node (a constructor's
+    /// arguments), and then only the copy in is made. A no-op for C, which records no slots.
+    fn pass_reference_args(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        source: &'a str,
+        targets: &[String],
+        arg_list: Option<Node<'_>>,
+        args: &mut ThinVec<Exp>,
+    ) -> Result<(), Error> {
+        let positions = self.reference_cell_positions(targets, args.len());
+        if !positions.contains(&true) {
+            return Ok(());
+        }
+        // Indexed as `collect_arguments` collects them.
+        let arg_nodes: Vec<Node<'_>> = arg_list.map_or_else(Vec::new, |list| {
+            let mut cursor = list.walk();
+            list.children(&mut cursor)
+                .filter(|c| c.is_named())
+                .collect()
+        });
+        for (i, arg) in args.iter_mut().enumerate() {
+            if !positions[i] {
+                continue;
+            }
+            let cell = self.reference_cell_arg(program, scope_view, arg);
+            if let Some(node) = arg_nodes
+                .get(i)
+                .copied()
+                .filter(|n| is_plain_lvalue(*n, source))
+            {
+                let location = self.flatten_lvalue(program, node, source, scope_view)?;
+                self.reference_copies_out.push((location, cell));
+            }
+        }
+        Ok(())
+    }
+
+    /// Which of `arity` explicit argument positions any of `targets` takes as a reference cell.
+    fn reference_cell_positions(&self, targets: &[String], arity: usize) -> Vec<bool> {
+        let mut positions = vec![false; arity];
+        for slots in targets
+            .iter()
+            .filter_map(|t| self.reference_cell_slots.get(t))
+        {
+            for (position, &is_cell) in positions.iter_mut().zip(slots) {
+                *position |= is_cell;
+            }
+        }
+        positions
+    }
+
+    /// Copy `arg` into a fresh temp's cell, `store t.deref := arg`, and pass `t` instead. Returns
+    /// the cell, `t.deref`.
+    fn reference_cell_arg(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        arg: &mut Exp,
+    ) -> RawPath {
+        let temp = self.allocator.next_temp();
+        let base = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+        let cell = RawPath::new(base.clone(), in_cell(ThinVec::new()));
+        self.add_assign_to_program(program, scope_view, &cell, arg, None);
+        *arg = Exp::Variable(base);
+        cell
+    }
+
+    /// Emit [`Self::reference_copies_out`] (and drain it), then [`Self::post_call_copies`]
+    /// (spec 040), after a call. Nothing for C.
     fn emit_post_call_copies(&mut self, program: &mut Program, scope_view: &ScopeView) {
-        for (dst, src) in self.post_call_copies.clone() {
+        let reference_copies = std::mem::take(&mut self.reference_copies_out);
+        for (dst, src) in reference_copies
+            .into_iter()
+            .chain(self.post_call_copies.clone())
+        {
             let value = Exp::access_path(self.emit_loads(program, scope_view, src));
             self.add_assign_to_program(program, scope_view, &dst, &value, None);
         }
@@ -6859,7 +7004,7 @@ impl<'a> Context<'a> {
     /// a chained receiver (`recv.a(args).b(args2)`). Returns `None` if it is not an instance-
     /// method call (a plain function call, or a function-pointer *member* call like `s.fp(x)`);
     /// the caller then lowers it as an ordinary call. On success it emits
-    /// `DirectCall Class::method(recv, args…)` — `recv` prepended as the arg-0 (`ByRef`)
+    /// `DirectCall Class::method(recv, args…)` — `recv` prepended as the arg-0 (`Shared`)
     /// receiver, so the callee's `this.<member>` writes flow back and a returned member flows
     /// out — and returns the result value plus, for a **receiver-returning** method
     /// (`return *this`), the object the result aliases (for chaining and `Class& r = call`
@@ -7026,6 +7171,14 @@ impl<'a> Context<'a> {
                 source,
                 &static_targets,
                 arg_node,
+                &mut explicit_args,
+            )?;
+            self.pass_reference_args(
+                program,
+                scope_view,
+                source,
+                &static_targets,
+                Some(arg_node),
                 &mut explicit_args,
             )?;
         }
@@ -7240,14 +7393,12 @@ impl<'a> Context<'a> {
             .then_some((op, operand))
     }
 
-    /// `e + K`, `K + e` or `e - K`, `K` an integer literal, read as an address: `e` and the
-    /// element offset (`-K` for a subtraction).
+    /// `e + K`, `K + e` or `e - K` (`K` an integer literal) as an address: `e` and the
+    /// element offset (`-K` for `e - K`).
     ///
-    /// Only a caller that knows `node` is an address may ask -- the operand of `*`, or a
-    /// subscript's base. There, one operand of the sum is the pointer and a literal is not, so
-    /// the literal is pointer arithmetic. Anywhere else `x + 2` may be integer arithmetic,
-    /// which the untyped parse cannot tell apart, and it still lowers as a merge of its
-    /// operands ([`Self::flatten_binary`]).
+    /// Only for a node known to be an address (the operand of `*`, a subscript's base).
+    /// Elsewhere `x + 2` may be integer arithmetic and lowers as a merge
+    /// ([`Self::flatten_binary`]).
     fn constant_pointer_offset<'t>(
         &self,
         node: Node<'t>,
@@ -7367,6 +7518,14 @@ impl<'a> Context<'a> {
         copy_args(
             self, program, scope_view, source, &callees, arg_node, &mut args,
         )?;
+        self.pass_reference_args(
+            program,
+            scope_view,
+            source,
+            &callees,
+            Some(arg_node),
+            &mut args,
+        )?;
 
         let call_edges = CallEdges::Explicit(callees.into_iter().collect());
 
@@ -7407,12 +7566,10 @@ impl<'a> Context<'a> {
                 })
         };
 
-        // A GNU statement expression in callee position produces a VALUE, and calling a
-        // value is calling through it. The access path cannot say so -- the value node may
-        // resolve to a bare global path, exactly the shape of a global callee that IS a
-        // name -- so ask the construct itself; left as a name, an empty-bodied function
-        // would be invented per call site.
-        // A global variable callee is a value too, unless a function of that name is defined.
+        // A callee that is a VALUE is called through, not by name. Its path can look like a
+        // named global's, so ask the construct: a GNU statement expression, or a global
+        // variable with no function of that name defined. Left as a name, an empty-bodied
+        // function would be invented per call site.
         let callee_is_a_value = is_statement_expression(func_node)
             || (func_node.kind() == "identifier"
                 && self.global_variables.contains(func_name)
@@ -7567,7 +7724,7 @@ impl<'a> Context<'a> {
     ///
     /// Both frontend entry points funnel through here. A free function passes
     /// `class_context = None, has_implicit_this = false`. A C++ **instance** method / constructor
-    /// passes `Some(class_name), true`: an implicit `this` parameter (`ByRef`) is installed at
+    /// passes `Some(class_name), true`: an implicit `this` parameter (`Shared`) is installed at
     /// index 0 (so writes the body makes to `this.<member>` propagate back to the caller's
     /// receiver, exactly like an out-param), the declared parameters number from 1, and
     /// `current_method_class` is set so the body's unqualified member names resolve. A C++
@@ -7606,6 +7763,7 @@ impl<'a> Context<'a> {
         self.reference_aliases.clear();
         self.captured_globals.clear();
         self.post_call_copies.clear();
+        self.reference_cells.clear();
         self.template_params.clear();
         self.local_dependent.clear();
         self.lookup_prefixes = scope_prefixes(func_name);
@@ -7642,13 +7800,13 @@ impl<'a> Context<'a> {
             explainer: "params".to_string(),
         };
 
-        // An instance method / constructor gets an implicit `this` at parameter 0, passed `ByRef`
+        // An instance method / constructor gets an implicit `this` at parameter 0, passed `Shared`
         // so the existing out-param machinery carries member writes back to the caller; the
         // declared params follow, numbered from 1. A **static** method has a class context (for
         // static-member resolution) but *no* `this`, so its declared params number from 0 — like
         // a free function (spec 015).
         if has_implicit_this {
-            fdat.params.push(ParameterType::ByRef);
+            fdat.params.push(ParameterType::Shared);
             self.param_names
                 .entry(func_name.to_string())
                 .or_default()
@@ -7689,6 +7847,9 @@ impl<'a> Context<'a> {
             &self.struct_layouts,
             &self.type_names,
         );
+        // A reference-cell parameter already lives in memory, at `@pN.deref`.
+        let reference_cells = &self.reference_cells;
+        self.cells.retain(|name| !reference_cells.contains(name));
         self.cell_vars.clear();
         let cell_params: Vec<(ParameterIdx, String)> = self
             .param_names
@@ -7713,6 +7874,30 @@ impl<'a> Context<'a> {
                 &block_scope_view,
                 &RawPath::new(cell, in_cell(ThinVec::new())),
                 &Exp::Variable(VariableRef::new_parameter(idx)),
+                None,
+            );
+        }
+        // A call that does not pass a reference cell's argument by address (one through a
+        // function pointer) passes its value: it is also read at `.deref`. A direct call's temp
+        // has nothing at its root, so this adds nothing there.
+        let reference_cell_params: Vec<ParameterIdx> = self
+            .param_names
+            .get(func_name)
+            .map(|names| {
+                names
+                    .iter_enumerated()
+                    .filter(|(_, n)| self.reference_cells.contains(**n))
+                    .map(|(idx, _)| idx)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for idx in reference_cell_params {
+            let param = VariableRef::new_parameter(idx);
+            self.add_assign_to_program(
+                program,
+                &block_scope_view,
+                &RawPath::new(param.clone(), in_cell(ThinVec::new())),
+                &Exp::Variable(param),
                 None,
             );
         }
@@ -7891,6 +8076,23 @@ impl<'a> Context<'a> {
             "identifier" if to_str(&node, source).is_empty() => {
                 self.report_missing_name(node, scope_view)?;
                 Ok(self.dead_temp_path(program, scope_view))
+            }
+            // An initialized declarator (`T *p = v`, `int (*fp)(int) = f`) stores to the name it
+            // declares. `flatten_nested_decl` would load the name, and for a cell the store
+            // would then land on that temp.
+            "pointer_declarator" | "function_declarator" | "array_declarator" => {
+                let (Some(name), _) = declarator_shape(node) else {
+                    return self.not_a_location(program, node, scope_view);
+                };
+                let name = to_str(&name, source);
+                self.scope_tree
+                    .add_variable(scope_view.sidx, name.to_string(), VarKind::Local);
+                Ok(self.build_access_path(
+                    name,
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                ))
             }
             "identifier" => Ok(self.build_access_path(
                 to_str(&node, source),
@@ -8525,6 +8727,150 @@ fn note_pointer(local_pointers: &mut HashSet<String>, name: &str, is_pointer: bo
     } else {
         local_pointers.remove(name);
     }
+}
+
+/// Whether a parameter is a C++ non-const lvalue reference to a scalar or a pointer (`int& out`,
+/// `size_t& n`, `int*& p`). Its referent has no field to name, so a write to it would be a write
+/// to the parameter's root, and rebinding a parameter never reaches the caller (SSA writes each
+/// one back at its entry version). Such a parameter is lowered as the pointer it is: its value
+/// lives at `@pN.deref` ([`Context::reference_cells`]), and every direct call passes the argument
+/// through a temp's `.deref` and copies it back ([`Context::pass_reference_args`]).
+///
+/// Left alone, so the caller's argument is passed as it always was:
+/// - A class referent (`Box& b`), whose members are fields and already reach the caller.
+/// - A `const` reference, which nothing writes through, and an rvalue reference.
+/// - A reference to an array or a function.
+/// - A template parameter's type, whose calls dispatch on the parameter itself (spec 043), and
+///   `auto`.
+/// - A lambda's parameter. A closure is called through a pointer, which cannot pass the temp.
+///
+/// C has no `reference_declarator`, so this is always false there.
+fn is_reference_cell_param(ctx: &Context<'_>, decl: Node<'_>, source: &str) -> bool {
+    if decl.kind() != "parameter_declaration" || node_has_const_qualifier(&decl, source) {
+        return false;
+    }
+    let mut node = decl.child_by_field_name("declarator");
+    let (mut reference, mut pointer) = (false, false);
+    while let Some(current) = node.and_then(unparenthesize) {
+        match current.kind() {
+            "identifier" => break,
+            "pointer_declarator" => pointer = true,
+            "reference_declarator" => {
+                // `&&` is an rvalue reference.
+                if current
+                    .child(0)
+                    .is_some_and(|op| to_str(&op, source) != "&")
+                {
+                    return false;
+                }
+                reference = true;
+            }
+            _ => return false,
+        }
+        node = current
+            .child_by_field_name("declarator")
+            .or_else(|| current.named_child(0));
+    }
+    if !reference {
+        return false;
+    }
+    let mut owner = decl.parent();
+    while let Some(n) = owner {
+        match n.kind() {
+            "lambda_expression" => return false,
+            "function_definition" | "declaration" | "field_declaration" => break,
+            _ => owner = n.parent(),
+        }
+    }
+    if pointer {
+        return true;
+    }
+    let Some(ty) = decl.child_by_field_name("type") else {
+        return false;
+    };
+    match ty.kind() {
+        "primitive_type" | "sized_type_specifier" => true,
+        "type_identifier" | "qualified_identifier" | "template_type" => {
+            !may_name_class(ctx, ty, source)
+                && !names_template_parameter(decl, to_str(&ty, source), source)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a type node may name a class, from any scope: a class or class alias is known by
+/// that name or by its last component. Discovery runs with no enclosing namespace to look
+/// names up from, so an unqualified `Request` inside `namespace http` must still count.
+fn may_name_class(ctx: &Context<'_>, ty: Node<'_>, source: &str) -> bool {
+    let name = template_erased_name(ty, source);
+    let last = |n: &str| n.rsplit("::").next().unwrap_or(n).to_string();
+    let wanted = last(&name);
+    ctx.class_named(&name).is_some()
+        || ctx
+            .classes
+            .keys()
+            .chain(ctx.type_aliases.keys())
+            .any(|known| last(known) == wanted)
+}
+
+/// Whether `name` is a type parameter of a `template` enclosing `node`.
+fn names_template_parameter(node: Node<'_>, name: &str, source: &str) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.kind() == "template_declaration"
+            && let Some(params) = n.child_by_field_name("parameters")
+        {
+            let mut c = params.walk();
+            let found = params.named_children(&mut c).any(|param| {
+                let mut pc = param.walk();
+                matches!(
+                    param.kind(),
+                    "type_parameter_declaration" | "variadic_type_parameter_declaration"
+                ) && param
+                    .named_children(&mut pc)
+                    .any(|p| p.kind() == "type_identifier" && to_str(&p, source) == name)
+            });
+            if found {
+                return true;
+            }
+        }
+        cur = n.parent();
+    }
+    false
+}
+
+/// Whether an argument names a location that can be lowered again without side effects: a
+/// variable, member, element or dereference whose subexpressions call and assign nothing.
+fn is_plain_lvalue(mut node: Node<'_>, source: &str) -> bool {
+    fn side_effect_free(node: Node<'_>) -> bool {
+        if matches!(
+            node.kind(),
+            "call_expression"
+                | "update_expression"
+                | "assignment_expression"
+                | "comma_expression"
+                | "new_expression"
+                | "lambda_expression"
+        ) {
+            return false;
+        }
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor).all(side_effect_free)
+    }
+    while node.kind() == "parenthesized_expression" {
+        let Some(inner) = first_named_child(node) else {
+            return false;
+        };
+        node = inner;
+    }
+    let location = match node.kind() {
+        "identifier" | "qualified_identifier" | "field_expression" | "subscript_expression" => true,
+        "pointer_expression" => node
+            .child_by_field_name("operator")
+            .is_some_and(|op| to_str(&op, source) == "*"),
+        _ => false,
+    };
+    location && side_effect_free(node)
 }
 
 fn declared_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<String> {

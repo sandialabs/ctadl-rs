@@ -71,6 +71,17 @@ pub mod path_group;
 pub mod path_set;
 pub mod source_info;
 
+// Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
+// them are `Copy`, fixed-width and free of padding; `Path` is an interned `&'static` pointer
+// whose interner is never freed, so its bits stay valid for the whole process, which is as long
+// as the provider's run files live.
+lsm::lsm_col!(FunctionId, 1);
+lsm::lsm_col!(FlowVariable, 1);
+lsm::lsm_col!(Path, 1);
+lsm::lsm_col!(FormalIndex, 1);
+lsm::lsm_col!(PackedInsnSiteId, 1);
+lsm::lsm_col!(FlowVertex, 2);
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -320,6 +331,8 @@ pub struct IndexConfig {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Where the large relations are stored. In memory by default.
+    pub storage: Storage,
     /// When set, every program path `p` also admits `p.deref`, as if a loaded summary mentioned
     /// `.deref`.
     pub deref_paths: bool,
@@ -332,6 +345,7 @@ impl Default for IndexConfig {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
             deref_paths: false,
         }
     }
@@ -483,6 +497,20 @@ impl Parallelism {
             _ => Parallelism::Serial,
         }
     }
+}
+
+/// Where the index engine keeps the relations that dominate its memory: `locals`, `assign_like`
+/// and the three propagation relations that share their stores (`locals_key`, `edge_split`,
+/// `ext_dst`). `Lsm` also moves the next largest few relations onto the LSM; every other
+/// relation is an ordinary in-memory Ascent relation either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Storage {
+    /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
+    #[default]
+    Memory,
+    /// The memory-mapped LSM maps of the `lsm` crate, which hold each index of a relation in
+    /// run files under `$TMPDIR` and only a write buffer in memory. Serial engine only.
+    Lsm,
 }
 
 impl std::fmt::Display for Parallelism {
@@ -960,6 +988,41 @@ impl LocalsProbe
     }
 }
 
+impl<const P: u32> LocalsProbe
+    for lsm::ascent_provider::LsmStore<(FunctionId, FlowVariable, Path, FormalIndex, Path), P>
+{
+    fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
+        self.contains(&(*f, *v, *p, *a, *p4))
+    }
+}
+
+/// What `run_engine!` does with the stores of the large relations, which differ by [`Storage`]:
+/// each relation's tuples are in its `ind_common`, a trie or an `LsmStore`, and an LSM
+/// relation's field counts its rows and, when seeded, takes its input rows.
+trait EngineStores {
+    /// Seeds `assign_like` with the program's assignments, before the run.
+    fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
+    /// Takes `assign_like`'s rows out, after the run.
+    fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
+    /// Row counts of the store-backed relations.
+    fn store_sizes(&self) -> StoreSizes;
+    /// One line per store about the heap it holds, where the storage reports one.
+    fn heap_reports(&self) -> Vec<String>;
+    /// The distinct `(f, v)` that `locals` reaches.
+    fn num_reached_variables(&self) -> usize;
+    fn locals_probe(&self) -> &dyn LocalsProbe;
+}
+
+type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
+
+struct StoreSizes {
+    assign_like: usize,
+    locals: usize,
+    edge_split: usize,
+    locals_key: usize,
+    ext_dst: usize,
+}
+
 fn dropped_compositions(
     context_assign: &dyn Rows<ContextAssignRow>,
     context_locals: &dyn Rows<ContextLocalsRow>,
@@ -1127,6 +1190,7 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
                 CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
+                CallTargetObject::CilClass(cls) => format!("cil<{cls}>"),
             };
 
             writeln!(
@@ -1289,9 +1353,11 @@ fn compute_alias_of_formal(
     formal_param: &[(FunctionId, FlowVariable, FormalType)],
     mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
 ) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
-    // Base case: a formal whole-aliases itself.
+    // Base case: a formal whole-aliases itself. A `Copied` formal shares nothing with the caller,
+    // so a store through it or its aliases is no summary, and it gets no aliases at all.
     let alias_base: Vec<_> = formal_param
         .iter()
+        .filter(|(_, _, ty)| *ty != FormalType::Copied)
         .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
         .collect();
     // Keep only the copies that flow AWAY from a formal.
@@ -1414,6 +1480,9 @@ ascent_source! {
 
     // Which indirect / virtual call sites resolved to what
     relation resolved_call(FunctionId, InsnId, FunctionId);
+    // The function-pointer subset of `resolved_call` (C, Lua, pcode, Flowy): edges a call target
+    // crosses as it crosses a direct `call`. Java and Dex virtual dispatch stays out.
+    relation fnptr_call(FunctionId, InsnId, FunctionId);
     relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
 
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
@@ -1674,6 +1743,14 @@ ascent_source! {
         for (key, rest) in &ps.splits(p_tgt).exact,
         locals(caller_func_id, arg, key, n, p_n),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
+    critical_summary(caller_func_id, n, p_nr) <--
+        fnptr_call(caller_func_id, caller_insn_id, tgt),
+        critical_summary(tgt, n_tgt, p_tgt),
+        let arg = call_arg!(*caller_insn_id, *n_tgt),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p_tgt).exact,
+        locals(caller_func_id, arg, key, n, p_n),
+        if let Some(p_nr) = ps.concat(p_n, None, rest);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
@@ -1681,6 +1758,12 @@ ascent_source! {
     establishes_direct(f, d, caller, call_insn) <--
         critical_summary(f, n, p),
         call(caller, call_insn, f),
+        let arg = call_arg!(*call_insn, *n),
+        call_target_assign_like(caller, arg, p, cto),
+        let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
+    establishes_direct(f, d, caller, call_insn) <--
+        critical_summary(f, n, p),
+        fnptr_call(caller, call_insn, f),
         let arg = call_arg!(*call_insn, *n),
         call_target_assign_like(caller, arg, p, cto),
         let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
@@ -1708,6 +1791,12 @@ ascent_source! {
     critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         call(g, insn, f),
+        let arg = call_arg!(*insn, *n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
+    critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
+        critical_summary(f, n, p),
+        fnptr_call(g, insn, f),
         let arg = call_arg!(*insn, *n),
         path_set(ps),
         for (key, rest) in &ps.splits(p).exact;
@@ -1767,6 +1856,11 @@ ascent_source! {
         callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
         call_target_assign_like(func_id, arg, arg_p, cto),
         callee_resolvents(cto, dispatch_key, resolve_tgt);
+
+    fnptr_call(caller, insn, callee) <--
+        resolved_call(caller, insn, callee),
+        callee_info(caller, insn, _, _, key),
+        if *key == CallDispatchKey::C;
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -2003,6 +2097,18 @@ ascent_source! {
     relation tag_closure_func(FunctionId);
     tag_closure_func(f) <-- critical_call(f);
     tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+    tag_closure_func(f) <-- call_target_assign(f, _, _), fnptr_call(_, _, f);
+    // A caller of a function that exports a tag on an out-formal walks its tags too: the
+    // target may have been installed several frames down (`a(&o)` -> `b(o)` storing
+    // `o->f`) and has to climb through frames that make no indirect call of their own
+    // before it meets its call site. Driven by a tag actually reaching an out-formal, so only
+    // frames a tag enters are admitted.
+    tag_closure_func(caller) <--
+        call_target_assign_like(callee, v, p, _),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        call(caller, _, callee);
 
     // Call Target Propagation (function pointers and Java objects alike). The stored
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
@@ -2053,7 +2159,13 @@ ascent_source! {
         if let Some(n) = v.as_formal(),
         if isout(&n, *formal_ty, p),
         call(caller, insn, callee),
-        critical_call(caller),
+        let cv = call_arg!(*insn, n);
+    call_target_assign_like(caller, cv, p.clone(), tgt) <--
+        call_target_assign_like(callee, v, p, tgt),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        fnptr_call(caller, insn, callee),
         let cv = call_arg!(*insn, n);
 
     critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
@@ -2078,6 +2190,7 @@ pub fn taint_index_with_config(
     id_map: Option<&IdMap>,
 ) -> IndexResult {
     let parallelism = config.parallelism;
+    let storage = config.storage;
     // The widening bound is process-global (sets are interned process-wide); one kind of set
     // per run.
     decision::set_widen_bound(match config.hybrid_context {
@@ -2249,7 +2362,7 @@ pub fn taint_index_with_config(
         paths.len(),
         phys_footprint_mb()
     );
-    log::info!("index engine: {parallelism}");
+    log::info!("index engine: {parallelism}, {storage:?} storage");
 
     ascent! {
         #![measure_rule_times]
@@ -2262,6 +2375,123 @@ pub fn taint_index_with_config(
         #![generate_run_timeout]
         struct ParIndexProg;
         include_source!(index_rules);
+    }
+    // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
+    // provider (Ascent keeps a relation's last declaration). Each is `counting`, or `seeded` if it
+    // takes input rows, so none keeps its rows in its field; every one is read back, if at all,
+    // from its store.
+    ascent! {
+        #![measure_rule_times]
+        #![generate_run_timeout]
+        struct LsmIndexProg;
+        include_source!(index_rules);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals_key(FunctionId, FlowVariable, Path, Path, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path));
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        // The next largest: the derived relations that reach hundreds of thousands of rows,
+        // and the inputs that do. The rest stay in memory, where a relation of a few thousand
+        // rows costs less than the LSM's per-index maps.
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation reach_vp(FunctionId, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation prog_store(FunctionId, FlowVariable, Path);
+    }
+
+    macro_rules! trie_stores {
+        ($prog_ty:ty) => {
+            impl EngineStores for $prog_ty {
+                fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>) {
+                    // Through the `FromRows` trait rather than naming a store type: the field's
+                    // type selects the serial `AssignTrie` or the concurrent `CAssignTrie` impl.
+                    self.__assign_like_ind_common = FromRows::from_rows(rows);
+                }
+                fn take_assign_like(&mut self) -> Vec<AssignLikeRow> {
+                    // The physical relation is a `SeedVec` holding no tuples. Take the store by
+                    // value so it drains (frees) as the output Vec fills: this reconstruction is
+                    // the run's peak, so a draining rebuild keeps the transient to ~1x.
+                    std::mem::take(&mut self.__assign_like_ind_common).into_vec()
+                }
+                fn store_sizes(&self) -> StoreSizes {
+                    StoreSizes {
+                        assign_like: self.__assign_like_ind_common.len(),
+                        locals: self.__locals_ind_common.len(),
+                        edge_split: self.__edge_split_ind_common.len(),
+                        locals_key: self.__locals_key_ind_common.len(),
+                        ext_dst: self.__ext_dst_ind_common.len(),
+                    }
+                }
+                fn heap_reports(&self) -> Vec<String> {
+                    vec![
+                        self.__locals_ind_common.heap_report().to_string(),
+                        self.__assign_like_ind_common.heap_report().to_string(),
+                    ]
+                }
+                fn num_reached_variables(&self) -> usize {
+                    self.__locals_ind_common.num_reached_variables()
+                }
+                fn locals_probe(&self) -> &dyn LocalsProbe {
+                    &self.__locals_ind_common
+                }
+            }
+        };
+    }
+    trie_stores!(IndexProg);
+    trie_stores!(ParIndexProg);
+
+    impl EngineStores for LsmIndexProg {
+        fn seed_assign_like(&mut self, mut rows: Vec<AssignLikeRow>) {
+            // Ascent returns a seeded field as given, duplicates included, where the trie's
+            // `FromRows` keeps one of each.
+            rows.sort_unstable();
+            rows.dedup();
+            self.assign_like = rows.into();
+        }
+        fn take_assign_like(&mut self) -> Vec<AssignLikeRow> {
+            let rows = self
+                .__assign_like_ind_common
+                .iter()
+                .map(|(f, vd, pd, vs, ps)| (*f, *vd, *pd, *vs, *ps))
+                .collect();
+            self.__assign_like_ind_common = Default::default();
+            rows
+        }
+        fn store_sizes(&self) -> StoreSizes {
+            StoreSizes {
+                assign_like: self.assign_like.len(),
+                locals: self.locals.len(),
+                edge_split: self.edge_split.len(),
+                locals_key: self.locals_key.len(),
+                ext_dst: self.ext_dst.len(),
+            }
+        }
+        fn heap_reports(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn num_reached_variables(&self) -> usize {
+            let mut reached = hashbrown::HashSet::new();
+            for (f, v, ..) in self.__locals_ind_common.iter() {
+                reached.insert((*f, *v));
+            }
+            reached.len()
+        }
+        fn locals_probe(&self) -> &dyn LocalsProbe {
+            &self.__locals_ind_common
+        }
     }
 
     // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
@@ -2325,10 +2555,7 @@ pub fn taint_index_with_config(
         prog.intent_filter = facts.intent_filter.into_iter().collect();
         prog.intent_component = facts.intent_component.into_iter().collect();
         prog.config = config_val.into_iter().collect();
-        // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
-        // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
-        // or the concurrent `CAssignTrie` impl.
-        prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
+        prog.seed_assign_like(assign_like);
         prog.prog_store = prog_store.into_iter().collect();
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
@@ -2360,13 +2587,14 @@ pub fn taint_index_with_config(
             "[relsizes] index relation sizes:\n{}",
             prog.relation_sizes_summary()
         );
+        let sizes = prog.store_sizes();
         log::debug!(
             "[relsizes] byods-backed: assign_like size: {}\nlocals size: {}\nedge_split size: {}\nlocals_key size: {}\next_dst size: {}",
-            prog.__assign_like_ind_common.len(),
-            prog.__locals_ind_common.len(),
-            prog.__edge_split_ind_common.len(),
-            prog.__locals_key_ind_common.len(),
-            prog.__ext_dst_ind_common.len()
+            sizes.assign_like,
+            sizes.locals,
+            sizes.edge_split,
+            sizes.locals_key,
+            sizes.ext_dst
         );
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
@@ -2376,18 +2604,18 @@ pub fn taint_index_with_config(
             "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
              assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
             prog.reach_vp.len(),
-            prog.__locals_key_ind_common.len(),
+            sizes.locals_key,
             prog.locals_key_wild.len(),
             prog.locals_wild.len(),
             prog.assign_wild.len(),
-            prog.__edge_split_ind_common.len(),
+            sizes.edge_split,
             prog.edge_split_wild.len(),
-            prog.__ext_dst_ind_common.len(),
+            sizes.ext_dst,
             prog.ext_fml.len()
         );
-        // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
-        log::debug!("{}", prog.__locals_ind_common.heap_report());
-        log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        for report in prog.heap_reports() {
+            log::debug!("{report}");
+        }
         // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
         // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
         // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
@@ -2405,17 +2633,8 @@ pub fn taint_index_with_config(
             }
         );
 
-        // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
-        // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
-        // and take the row count from the store rather than the (empty) physical relation. Take the
-        // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
-        // run's peak, so a draining rebuild keeps the transient to ~1×.
-        let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
-
-        // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
-        // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
-        // (func, var) key `num_variables` counts, so the two are directly comparable.
-        let reached_variables = prog.__locals_ind_common.num_reached_variables();
+        let assign_like_out = prog.take_assign_like();
+        let reached_variables = prog.num_reached_variables();
 
         let stats = IndexStats {
             initial_assign,
@@ -2448,7 +2667,7 @@ pub fn taint_index_with_config(
                 dropped_compositions(
                     &prog.context_assign,
                     &prog.context_locals,
-                    &prog.__locals_ind_common,
+                    prog.locals_probe(),
                     &path_set.0,
                     id_map
                 )
@@ -2471,9 +2690,25 @@ pub fn taint_index_with_config(
         }};
     }
 
-    let result = match parallelism {
-        Parallelism::Serial => run_engine!(IndexProg),
-        Parallelism::Threads(threads) => {
+    let result = match (storage, parallelism) {
+        (Storage::Lsm, parallelism) => {
+            if parallelism != Parallelism::Serial {
+                log::warn!("the LSM storage runs the serial engine only; ignoring {parallelism}");
+            }
+            let result = run_engine!(LsmIndexProg);
+            let mib = |bytes: usize| bytes as f64 / f64::from(1 << 20);
+            let budget = lsm::memory_budget().map_or_else(
+                || "no budget".to_string(),
+                |b| format!("budget {:.1} MiB", mib(b)),
+            );
+            log::info!(
+                "LSM write buffers peaked at {:.1} MiB ({budget})",
+                mib(lsm::memory_peak())
+            );
+            result
+        }
+        (Storage::Memory, Parallelism::Serial) => run_engine!(IndexProg),
+        (Storage::Memory, Parallelism::Threads(threads)) => {
             // A dedicated pool rather than rayon's global one, so `-j N` means exactly N index
             // threads no matter what else in the process has touched rayon. The parallel program
             // runs its rules with `rayon::scope` / `par_iter`, which pick up the pool they are
@@ -2622,9 +2857,46 @@ mod tests {
             id_map,
         );
 
+        // The fixture only proves anything if the hybrid machinery actually ran.
+        assert!(
+            serial.stats.hybrid_resolvent > 0,
+            "fixture derived no resolvents"
+        );
+        assert!(
+            serial.stats.hybrid_context_assign > 0,
+            "fixture derived no context_assign rows"
+        );
+        assert_same_index(serial, parallel);
+    }
+
+    /// The LSM storage holds the same relations as the tries, so the engine must derive the
+    /// same index. A tiny write buffer makes every index spill into several runs and merge them.
+    #[test_log::test]
+    fn lsm_storage_matches_memory() {
+        let (program, _) = program_from_string(SRC);
+        let (facts, source_info) = index_program(program);
+        let id_map = Some(&source_info.sites);
+
+        let config = IndexConfig::default();
+        let memory = taint_index_with_config(facts.clone(), config.clone(), id_map);
+        lsm::ascent_provider::set_memtable_limit(4);
+        let on_lsm = taint_index_with_config(
+            facts,
+            IndexConfig {
+                storage: Storage::Lsm,
+                ..config
+            },
+            id_map,
+        );
+        lsm::ascent_provider::set_memtable_limit(lsm::ascent_provider::DEFAULT_MEMTABLE_LIMIT);
+        assert_same_index(memory, on_lsm);
+    }
+
+    /// Asserts two runs of the same facts derived the same index.
+    fn assert_same_index(a: IndexResult, b: IndexResult) {
         // The internal relations first: a count that differs points straight at the rule group
         // that diverged, which the output diff below would only show as a symptom.
-        let (s, p) = (&serial.stats, &parallel.stats);
+        let (s, p) = (&a.stats, &b.stats);
         assert_eq!(s.final_locals, p.final_locals, "locals");
         assert_eq!(
             s.reached_variables, p.reached_variables,
@@ -2647,14 +2919,7 @@ mod tests {
             s.hybrid_context_summary, p.hybrid_context_summary,
             "context_summary"
         );
-        // The fixture only proves anything if the hybrid machinery actually ran.
-        assert!(s.hybrid_resolvent > 0, "fixture derived no resolvents");
-        assert!(
-            s.hybrid_context_assign > 0,
-            "fixture derived no context_assign rows"
-        );
-
-        assert_eq!(canonical(serial), canonical(parallel));
+        assert_eq!(canonical(a), canonical(b));
     }
 
     /// The three context joins are three ways to pair the same two relations, so they must
@@ -2732,7 +2997,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let p = fb.add_param(ParameterType::ByVal);
+        let p = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let ret: Exp = if pass_through {
@@ -2757,7 +3022,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let x = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (fp, r, x) = (
@@ -2793,8 +3058,8 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let callee = fb.add_param(ParameterType::ByVal);
-        let x = fb.add_param(ParameterType::ByVal);
+        let callee = fb.add_param(ParameterType::SharedFields);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, callee, x) = (
@@ -2823,7 +3088,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let a = fb.add_param(ParameterType::ByVal);
+        let a = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, a) = (b.new_local_var("r"), b.new_param_var(a));
@@ -2851,6 +3116,61 @@ mod tests {
         let result =
             taint_index_with_config(facts, IndexConfig::default(), Some(&source_info.sites));
         (result, source_info)
+    }
+
+    /// `fn thrower(x) -> (normal, exception) { return ((), x); }` and
+    /// `fn catcher(a) { r, e = thrower(a); return (e, ()); }`: a value thrown out of a callee
+    /// reaches the caller's exception slot, and from there anything the caller does with it.
+    /// Java and CIL functions return arity 2, and the second slot is a formal like the first,
+    /// with a `formal_param` row of its own.
+    #[test]
+    fn exceptional_return_is_summarized() {
+        let mut thrower = FunctionData {
+            name: "thrower".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut thrower);
+            let x = fb.add_param(ParameterType::SharedFields);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let x = b.new_param_var(x);
+            b.create_ret(vec![Exp::new_bytes(Vec::new()), x.into()]);
+        }
+        let mut catcher = FunctionData {
+            name: "catcher".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut catcher);
+            let a = fb.add_param(ParameterType::SharedFields);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let (r, e, a) = (
+                b.new_local_var("r"),
+                b.new_local_var("e"),
+                b.new_param_var(a),
+            );
+            b.create_call(
+                CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(ctadl_ir::thin_vec!["thrower".to_string()]),
+                },
+                vec![r, e.clone()],
+                vec![a.into()],
+            );
+            b.create_ret(vec![e.into(), Exp::new_bytes(Vec::new())]);
+        }
+        let (result, si) = index_functions([thrower, catcher]);
+        let (thrower, catcher) = (func_id(&si.sites, "thrower"), func_id(&si.sites, "catcher"));
+        let has = |f: FunctionId, dst: i16, src: i16| {
+            result.summary.iter().any(|(sf, d, dp, s, sp)| {
+                *sf == f && **d == dst && dp.is_empty() && **s == src && sp.is_empty()
+            })
+        };
+        assert!(has(thrower, -2, 0), "summary = {:?}", result.summary);
+        assert!(has(catcher, -1, 0), "summary = {:?}", result.summary);
     }
 
     /// A site is resolved by either of two rules -- a target stored in the calling function,

@@ -21,6 +21,10 @@ pub use ctadl_pcode as pcode;
 /// works.
 pub use ctadl_lua as lua;
 
+/// The .NET (CIL) front end. It is its own crate, and it depends on `cil-reader` and nothing
+/// else. Re-exported here so the name `crate::languages::cil::…` works.
+pub use ctadl_cil as cil;
+
 /// The C front end, which is its own crate. Its tests are unlike the other front ends'. They
 /// test the engine as much as the front end, so `ctadl-c` lists `ctadl-ascent` as a
 /// dev-dependency. That makes a cycle, which Cargo allows for dev-dependencies, and it keeps
