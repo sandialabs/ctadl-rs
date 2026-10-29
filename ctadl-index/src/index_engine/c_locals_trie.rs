@@ -174,6 +174,15 @@ impl<K: Clone + Eq + Hash, V> CMap<K, V> {
         }
     }
 
+    /// Applies `f` to `k`'s value, in either state. Takes `k`'s shard read lock when unfrozen.
+    #[inline]
+    pub fn get_with<R>(&self, k: &K, f: impl FnOnce(&V) -> R) -> Option<R> {
+        match self {
+            CMap::Frozen(v) => v.get(k).map(f),
+            CMap::Unfrozen(dm) => dm.get(k).map(|e| f(e.value())),
+        }
+    }
+
     /// Visits every entry, in either state. Takes each shard's read lock in turn when unfrozen.
     pub fn for_each(&self, mut f: impl FnMut(&K, &V)) {
         match self {
@@ -382,11 +391,11 @@ where
     /// are frozen for the whole evaluation phase.
     #[inline]
     pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
-        // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16.
+        // Either state: rules probe the frozen store, and the post-fixpoint debug report
+        // (`dropped_compositions`) probes it unfrozen.
         self.fwd
-            .frozen()
-            .get(&(f.clone(), v.clone()))
-            .is_some_and(|group| group.contains(p, m, fp))
+            .get_with(&(f.clone(), v.clone()), |group| group.contains(p, m, fp))
+            .unwrap_or(false)
     }
 
     /// Insert a full tuple through a **shared** reference. Returns true if it was new to *this*
@@ -1251,6 +1260,13 @@ mod tests {
         want.dedup();
         assert_eq!(store.len(), want.len(), "row count");
         assert_eq!(store.heap_report().rows, want.len(), "unfrozen heap_report");
+        for &(f, v, p, m, fp) in &want {
+            assert!(
+                store.contains(&f, &v, &p, &m, &fp),
+                "missing {f:?} unfrozen"
+            );
+        }
+        assert!(!store.contains(&999, &0, &0, &0, &0));
 
         store.freeze();
 
