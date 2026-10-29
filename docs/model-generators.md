@@ -1,10 +1,13 @@
 # CTADL Model Generators
 
-> **There is a newer format.** The engine executes the **model DSL** —
-> [`model-dsl.md`](model-dsl.md) — and a JSON file is translated into it and then run. Write new
-> models in the DSL; `ctadl migrate-models my-models.jsonl` converts an existing one and reports
-> anything that does not carry across. The JSON format keeps working, and this document is still
-> the reference for it. The *semantics* below — ports, access paths, the prefix-substitution
+> **This format is deprecated.** The engine executes the **model DSL** —
+> [`model-dsl.md`](model-dsl.md) — and a JSON file passed to `--models` is migrated to it in
+> memory and then run; there is no second matcher. Each JSON file draws a deprecation warning,
+> and the format will be removed in a future release. Write new models in the DSL;
+> `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything that does
+> not carry across. A generator that cannot carry across exactly fails `ctadl index` and
+> `ctadl query` the same way, naming the generator. Until then this document is still the
+> reference for the JSON format. The *semantics* below — ports, access paths, the prefix-substitution
 > reading of a port pair, what a bridge does — are shared by both formats and are documented
 > here.
 
@@ -125,7 +128,7 @@ already uses:
 | `CTADL0008` | There was no index, so this is a model check; it also lists what a model check cannot decide (below). |
 | `CTADL0004` | A generator declared a source, a sink, or a propagation and matched nothing — and which of the several reasons it was. |
 | `CTADL0009` | A generator's `in` clause admits none of the programs checked, so it was never evaluated. Not the same thing as matching nothing. |
-| `CTADL0010` | A bridge whose sides cannot be paired, in the same words `ctadl index` would use. |
+| `CTADL0010` | A bridge that paired no functions in any program checked. |
 | `CTADL0011` | What each live generator's `where` selected: the count, and a few of the names. |
 | `CTADL0012` | A model file that could not be read, or a malformed generator. One typo no longer costs the rest of the check. |
 | `CTADL0100` | The totals, in Stage-1 units. |
@@ -135,8 +138,8 @@ default models are not loaded, exactly as `ctadl query` does not load them.
 
 What it deliberately cannot tell you, all of it stated in `CTADL0008` rather than left implicit:
 
-- **`find: callsites`** — Stage 1 matches the callee (and the caller, for `in_function`). The
-  call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
+- **`find: callsites`** — Stage 1 counts the callees some call site names, not the sites, so
+  "3 callees" says nothing about how many sites the endpoints land on.
 - **`Argument(*)`** — expands over an arity computed from actual parameters and call sites
   across every import. It is reported as one port, not as its expansion.
 - **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not

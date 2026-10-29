@@ -671,7 +671,8 @@ pub fn program_facts(
     facts
 }
 
-/// Loads one DSL file against one program, in one shot.
+/// Loads one model file against one program, in one shot; a JSON one is migrated first, see
+/// [`DslFile::read`].
 ///
 /// The shape a caller with a single program in hand wants — a test, `ctadl query` after the
 /// import loop, the flowy codegen path. A run with several imports uses [`DslMatcher`] directly

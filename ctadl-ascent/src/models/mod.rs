@@ -622,10 +622,10 @@ pub struct ModelLoadReport {
     /// Per generator, how many `model.access_paths` entries were registered. Same gating as
     /// [`Self::matched`].
     pub access_path_stats: BTreeMap<usize, usize>,
-    /// Set when the loaded file was written in the DSL. The counters above are filled in from
-    /// it so every diagnostic surface keeps working whichever format the file was in — a rule
-    /// index plays the part of a generator index — and this carries what has no JSON
-    /// counterpart.
+    /// Set when the file was loaded by the DSL engine, which every path-based load is, a JSON
+    /// file through its migration. The counters above are filled in from it so every
+    /// diagnostic surface keeps working — a rule's label plays the part of a generator index,
+    /// and is one for a migrated file — and this carries what has no JSON counterpart.
     pub dsl: Option<dsl::DslReport>,
 }
 
