@@ -413,6 +413,13 @@ It loads what it produced before writing it, so a file that translates but does 
 failure rather than a surprise on the next index. Anything that cannot carry across is reported
 rather than approximated.
 
+#### JSON model files are deprecated
+
+A `.json` / `.json5` / `.jsonl` file passed to `--models` is migrated in memory and run through
+the DSL engine, the same as a `.ctadl` file; there is no second matcher behind it. Each such file
+draws a deprecation warning: JSON model files will be removed in a future release, and
+`ctadl migrate-models` converts one to the DSL.
+
 The interesting case is disjunction. A `where` is a conjunction, but a constraint may be an
 `any_of` or a `not`, so the constraint tree is pushed into negation normal form and then into
 DNF, and **each disjunct becomes one rule with the same heads**. That is how Datalog spells "or",
@@ -510,14 +517,6 @@ propagation model, query it with DSL source/sink models, get a reported taint fl
 
 
 ### 7. What was left out, and why
-
-**The JSON matcher is still there.** [Migration](#migration) says "the json model matchers will disappear."
-`json.rs` remains as the JSON front end; JSON files are *not* routed through migrate→DSL. The
-reason is `json_error_handling.rs`: 49 tests pin JSON-specific error types, per-generator error
-messages, and batch/partial-append semantics that the DSL path would change. The migrator is the
-mechanism for that removal and it already runs over every shipped default, so the deletion is a
-mechanical follow-up — but it changes observable error text, and doing that silently seemed worse
-than saying so.
 
 **A callsite-anchored `bridge` is a load error, not a feature.** The design's
 `S::bridge(arg(1).baz -> G::arg(0).stack[2])` example is rejected. A bridge emits `call` rows that
