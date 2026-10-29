@@ -4,43 +4,27 @@
 //! run holds them as `invocations[0].toolExecutionNotifications` and declares their descriptors
 //! as `tool.driver.notifications`. `ctadl index` carries its imports' notifications into its own
 //! file, and `ctadl query` copies the index's into the SARIF it writes, descriptors included, so
-//! it needs to know none of them.
+//! it needs to know none of them. Both are built as `ctadl query` builds its own notifications
+//! (see [`crate::sarif`]).
 //!
-//! A notification states one fact, never once per site, so the same fact always reads the same
-//! way. Counts a tool may want to check go in its `properties`; sites go in the debug log.
+//! A notification states one fact, never once per site. Its message has both forms: `text`, and
+//! a `message.id` selecting one of its descriptor's `messageStrings` with the `arguments` that
+//! fill it, so a consumer can read it without parsing prose. Counts a tool may want to check go
+//! in its `properties` too; sites go in the debug log.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_sarif::sarif::{
-    Invocation, Message, MultiformatMessageString, Notification, PropertyBag, ReportingDescriptor,
-    ReportingDescriptorReference, Run, Sarif, Tool, ToolComponent,
+    Invocation, Notification, PropertyBag, ReportingDescriptor, Run, Sarif, Tool,
 };
+
+use crate::sarif;
 
 pub const NOTIFICATIONS_FILE: &str = "notifications.sarif";
 
-/// The SARIF `tool.driver` every SARIF file ctadl writes names: its `name`, `version` (also its
-/// `semanticVersion`; the workspace version, so `Cargo.toml` is the one place to change it) and
-/// `informationUri`.
-pub const TOOL_NAME: &str = "ctadl";
-pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const TOOL_INFORMATION_URI: &str = "https://github.com/sandialabs/ctadl-rs";
-
-/// This process's command line, for a SARIF `invocation.commandLine`.
-pub fn command_line() -> String {
-    std::env::args_os()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// This process's arguments after the program name, for a SARIF `invocation.arguments`.
-pub fn arguments() -> Vec<String> {
-    std::env::args_os()
-        .skip(1)
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect()
-}
+/// The `message.id` of a descriptor with a single message string.
+pub const DEFAULT_MESSAGE: &str = "default";
 
 /// A kind of notification: its SARIF `reportingDescriptor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,15 +35,46 @@ pub struct Descriptor {
     pub name: &'static str,
     /// What one of these means for the results, in one sentence.
     pub description: &'static str,
+    /// Its `messageStrings`: each `message.id` and the template its `{n}` arguments fill.
+    pub messages: &'static [(&'static str, &'static str)],
+}
+
+impl Descriptor {
+    /// The text of message `message_id` with `arguments` filled in.
+    ///
+    /// # Panics
+    /// If this descriptor has no message `message_id`.
+    pub fn render(&self, message_id: &str, arguments: &[String]) -> String {
+        let (_, template) = self
+            .messages
+            .iter()
+            .find(|(id, _)| *id == message_id)
+            .unwrap_or_else(|| panic!("{} has no message `{message_id}`", self.id));
+        arguments
+            .iter()
+            .enumerate()
+            .fold(template.to_string(), |text, (i, arg)| {
+                text.replace(&format!("{{{i}}}"), arg)
+            })
+    }
+
+    fn reporting_descriptor(&self) -> ReportingDescriptor {
+        sarif::notification_descriptor_multi(self.id, self.name, self.description, self.messages)
+    }
 }
 
 /// A function `--mem2reg full` promoted fully where an escaped address reaches a promoted slot in
-/// a way the reloads do not cover. One per function.
+/// a way the reloads do not cover. One per function; the arguments are the function and the
+/// kinds of escape.
 pub const STACK_SLOTS_PROMOTED_FULLY: Descriptor = Descriptor {
     id: "CTADL0104.stack-slots-promoted-fully",
     name: "Stack slots promoted fully",
     description: "A function's stack slots were promoted although an escaped address reaches \
                   them, so flows through those slots may be missing.",
+    messages: &[(
+        DEFAULT_MESSAGE,
+        "mem2reg full: {0}: frame address escapes ({1}); flows through those slots may be missed",
+    )],
 };
 
 /// What the dex frontend's split of R8-merged classes did, for the record: its counts are in
@@ -68,24 +83,50 @@ pub const MERGED_CLASSES_SPLIT: Descriptor = Descriptor {
     id: "CTADL0105.merged-classes-split",
     name: "Merged classes split",
     description: "The dex frontend split classes R8 merged into one per class id.",
+    messages: &[(DEFAULT_MESSAGE, "split {0} merged classes")],
 };
 
 /// The split left merged methods live, so calls on a merged object take on every lambda merged
-/// into its class. One per failed check: too many classes over the id cap, too many classes not
-/// closed, or clones holding too much of the program.
+/// into its class. One per failed check, which its `message.id` names.
 pub const MERGED_CLASSES_NOT_SPLIT: Descriptor = Descriptor {
     id: "CTADL0106.merged-classes-not-split",
     name: "Merged classes not split",
     description: "Some R8-merged classes stay merged, so the results may hold false flows \
                   across the lambdas merged into them.",
+    messages: &[
+        (
+            "overCap",
+            "{0} merged classes have more than {1} ids and stay merged; their methods are the \
+             union of every lambda behind them",
+        ),
+        (
+            "notClosed",
+            "{0} of {1} split classes still have live merged methods (an object of the class \
+             itself may exist); calls resolved by class hierarchy reach the union of every arm",
+        ),
+        (
+            "unresolvedAllocations",
+            "{0} of {1} allocations of merged classes have no known id and build the merged class \
+             instead of its split class",
+        ),
+        (
+            "cloneStatements",
+            "the clones of merged methods hold {0} of the program's {1} statements; a clone \
+             should keep only its own id's arm",
+        ),
+    ],
 };
 
-/// How many call edges reach large merged methods the split left live, for the record: its
-/// counts are in `properties`. One per index of a program with such methods.
+/// How many call edges reach large merged methods the split left live, for the record. One per
+/// index of a program with such methods.
 pub const MERGED_METHOD_CALLS: Descriptor = Descriptor {
     id: "CTADL0107.merged-method-calls",
     name: "Calls to live merged methods",
     description: "Calls that reach merged methods the class split left live.",
+    messages: &[(
+        DEFAULT_MESSAGE,
+        "{0} of {1} call edges reach one of {2} large merged methods the class split left live",
+    )],
 };
 
 /// Many calls reach large merged methods the split left live. One per index.
@@ -94,6 +135,11 @@ pub const MERGED_METHOD_CALLS_HIGH: Descriptor = Descriptor {
     name: "Many calls to live merged methods",
     description: "Many calls reach merged methods the class split left live, so the results may \
                   hold false flows across the lambdas merged into them.",
+    messages: &[(
+        DEFAULT_MESSAGE,
+        "{0} call edges reach {1} large merged methods the class split left live; each such call \
+         takes on every lambda merged into the method's class",
+    )],
 };
 
 /// A notification's SARIF `level`.
@@ -114,68 +160,78 @@ impl Level {
     }
 }
 
-/// A set of notifications and the descriptors they use.
+/// Where notifications carried into an index came from, recorded on each as a property.
+#[derive(Debug, Clone, Copy)]
+pub enum Origin<'a> {
+    /// An import the index read: `properties.import` names it.
+    Import(&'a str),
+    /// A summary project the index read: `properties.summaryProject` names it.
+    SummaryProject(&'a str),
+}
+
+/// A set of notifications and the descriptors they use, and when the step that made them began.
 #[derive(Debug, Default, Clone)]
 pub struct Notifications {
+    start_time_utc: Option<String>,
     descriptors: BTreeMap<String, ReportingDescriptor>,
     notifications: Vec<Notification>,
 }
 
 impl Notifications {
-    /// Adds a notification of kind `descriptor`, unless an equal one is already here.
+    /// None yet, for a step that begins now: [`Notifications::save`] records the time as the
+    /// invocation's `startTimeUtc`.
+    pub fn new() -> Self {
+        Notifications {
+            start_time_utc: Some(sarif::utc_timestamp()),
+            ..Notifications::default()
+        }
+    }
+
+    /// Adds a notification of kind `descriptor` with message `message_id` filled from
+    /// `arguments`, unless an equal one is already here.
+    ///
+    /// # Panics
+    /// If `descriptor` has no message `message_id`.
     pub fn push(
         &mut self,
         descriptor: &Descriptor,
+        message_id: &str,
         level: Level,
-        text: impl Into<String>,
+        arguments: Vec<String>,
         properties: BTreeMap<String, serde_json::Value>,
     ) {
+        let text = descriptor.render(message_id, &arguments);
         self.descriptors
             .entry(descriptor.id.to_string())
-            .or_insert_with(|| {
-                ReportingDescriptor::builder()
-                    .id(descriptor.id.to_string())
-                    .name(descriptor.name.to_string())
-                    .short_description(
-                        MultiformatMessageString::builder()
-                            .text(descriptor.description.to_string())
-                            .build(),
-                    )
-                    .build()
-            });
-        let mut notification = Notification::builder()
-            .descriptor(
-                ReportingDescriptorReference::builder()
-                    .id(descriptor.id.to_string())
-                    .build(),
-            )
-            // `level` is `Option<serde_json::Value>` in serde-sarif, so the enum value goes in as
-            // a JSON string.
-            .level(serde_json::json!(level.as_str()))
-            .message(Message::builder().text(text.into()).build())
-            .build();
-        // Set after building: the generated builder is type-state, so an optional field cannot
-        // be assigned conditionally.
-        if !properties.is_empty() {
-            notification.properties = Some(
-                PropertyBag::builder()
-                    .additional_properties(properties)
-                    .build(),
-            );
-        }
-        self.insert(notification);
+            .or_insert_with(|| descriptor.reporting_descriptor());
+        self.insert(sarif::notification_with_message_id(
+            descriptor.id,
+            message_id,
+            level.as_str(),
+            arguments,
+            text,
+            properties,
+        ));
     }
 
-    /// Adds every notification of `other`, and the descriptors they use. With `prefix`, each
-    /// message starts with it: an index says this way which import or summary project a
-    /// notification came from.
-    pub fn extend(&mut self, other: Notifications, prefix: Option<&str>) {
+    /// Adds every notification of `other`, and the descriptors they use. With `origin`, each
+    /// records it in its properties unless it already names one of that kind.
+    pub fn extend(&mut self, other: Notifications, origin: Option<Origin<'_>>) {
+        let origin = origin.map(|origin| match origin {
+            Origin::Import(name) => ("import", name),
+            Origin::SummaryProject(name) => ("summaryProject", name),
+        });
         for (id, descriptor) in other.descriptors {
             self.descriptors.entry(id).or_insert(descriptor);
         }
         for mut notification in other.notifications {
-            if let (Some(prefix), Some(text)) = (prefix, notification.message.text.as_mut()) {
-                *text = format!("{prefix}{text}");
+            if let Some((key, name)) = origin {
+                notification
+                    .properties
+                    .get_or_insert_with(|| PropertyBag::builder().build())
+                    .additional_properties
+                    .entry(key.to_string())
+                    .or_insert_with(|| serde_json::json!(name));
             }
             self.insert(notification);
         }
@@ -211,27 +267,24 @@ impl Notifications {
     }
 
     /// Writes these to `dir`'s `notifications.sarif`, replacing what was there. The invocation
-    /// records this process's command line, which says which step wrote them.
+    /// records this process's command line, which says which step wrote them, and ends now.
     pub fn save(&self, dir: impl AsRef<Path>) -> std::io::Result<()> {
-        let driver = ToolComponent::builder()
-            .name(TOOL_NAME)
-            .version(TOOL_VERSION)
-            .semantic_version(TOOL_VERSION)
-            .information_uri(TOOL_INFORMATION_URI)
-            .notifications(self.descriptors.values().cloned().collect::<Vec<_>>())
-            .build();
-        let invocation = Invocation::builder()
+        let mut driver = sarif::driver();
+        driver.notifications = Some(self.descriptors.values().cloned().collect());
+        let mut invocation = Invocation::builder()
             .execution_successful(true)
-            .command_line(command_line())
-            .arguments(arguments())
+            .command_line(sarif::command_line())
+            .arguments(sarif::arguments())
+            .end_time_utc(sarif::utc_timestamp())
             .tool_execution_notifications(self.notifications.clone())
             .build();
+        invocation.start_time_utc = self.start_time_utc.clone();
         let run = Run::builder()
             .tool(Tool::builder().driver(driver).build())
             .invocations(vec![invocation])
             .build();
-        let sarif = Sarif::builder().version("2.1.0").runs(vec![run]).build();
-        let text = serde_json::to_string_pretty(&sarif).map_err(std::io::Error::other)?;
+        let text = serde_json::to_string_pretty(&sarif::document(None, &run))
+            .map_err(std::io::Error::other)?;
         std::fs::write(dir.as_ref().join(NOTIFICATIONS_FILE), text + "\n")
     }
 
@@ -282,14 +335,18 @@ pub fn text(notification: &Notification) -> &str {
     notification.message.text.as_deref().unwrap_or_default()
 }
 
-/// The integer property `key` of `notification`, if it has one.
-pub fn property_u64(notification: &Notification, key: &str) -> Option<u64> {
+/// The property `key` of `notification`, if it has one.
+pub fn property<'a>(notification: &'a Notification, key: &str) -> Option<&'a serde_json::Value> {
     notification
         .properties
         .as_ref()?
         .additional_properties
-        .get(key)?
-        .as_u64()
+        .get(key)
+}
+
+/// The integer property `key` of `notification`, if it has one.
+pub fn property_u64(notification: &Notification, key: &str) -> Option<u64> {
+    property(notification, key)?.as_u64()
 }
 
 #[cfg(test)]
@@ -300,24 +357,29 @@ mod tests {
         id: "CTADL9999.test-kind",
         name: "Test kind",
         description: "A notification for the tests.",
+        messages: &[
+            (DEFAULT_MESSAGE, "{0} was analyzed loosely"),
+            ("other", "{0} and {1}"),
+        ],
     };
+
+    fn count(n: u64) -> BTreeMap<String, serde_json::Value> {
+        [("count".to_string(), serde_json::json!(n))].into()
+    }
 
     #[test]
     fn save_then_load_keeps_notifications_and_descriptors() {
         let dir = tempfile::tempdir().unwrap();
-        let mut n = Notifications::default();
-        n.push(
-            &KIND,
-            Level::Warning,
-            "f was analyzed loosely",
-            [("count".to_string(), serde_json::json!(3))].into(),
-        );
-        n.push(
-            &KIND,
-            Level::Warning,
-            "f was analyzed loosely",
-            [("count".to_string(), serde_json::json!(3))].into(),
-        );
+        let mut n = Notifications::new();
+        for _ in 0..2 {
+            n.push(
+                &KIND,
+                DEFAULT_MESSAGE,
+                Level::Warning,
+                vec!["f".into()],
+                count(3),
+            );
+        }
         n.save(dir.path()).unwrap();
 
         let back = Notifications::load(dir.path()).unwrap();
@@ -325,19 +387,29 @@ mod tests {
         let only = &back.notifications()[0];
         assert_eq!(descriptor_id(only), Some(KIND.id));
         assert_eq!(text(only), "f was analyzed loosely");
+        assert_eq!(only.message.id.as_deref(), Some(DEFAULT_MESSAGE));
+        assert_eq!(only.message.arguments, Some(vec!["f".to_string()]));
         assert_eq!(property_u64(only, "count"), Some(3));
         assert_eq!(only.level, Some(serde_json::json!("warning")));
-        assert_eq!(back.descriptors().count(), 1);
         assert_eq!(back.of(&KIND).count(), 1);
-        let text = std::fs::read_to_string(dir.path().join(NOTIFICATIONS_FILE)).unwrap();
-        let sarif: Sarif = serde_json::from_str(&text).unwrap();
-        let run = &sarif.runs[0];
-        assert_eq!(run.tool.driver.name, TOOL_NAME);
-        let invocation = &run.invocations.as_ref().unwrap()[0];
+        let declared: Vec<_> = back.descriptors().collect();
+        assert_eq!(declared.len(), 1);
         assert_eq!(
-            invocation.command_line.as_deref(),
-            Some(command_line().as_str())
+            declared[0].message_strings.as_ref().map(|m| m.len()),
+            Some(2)
         );
+
+        let file = std::fs::read_to_string(dir.path().join(NOTIFICATIONS_FILE)).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&file).unwrap();
+        let keys: Vec<_> = doc.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, ["version", "$schema", "runs"]);
+        let run = &doc["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], sarif::TOOL_NAME);
+        assert_eq!(run["tool"]["driver"]["version"], sarif::TOOL_VERSION);
+        let invocation = &run["invocations"][0];
+        assert_eq!(invocation["commandLine"], sarif::command_line());
+        assert!(invocation["startTimeUtc"].is_string());
+        assert!(invocation["endTimeUtc"].is_string());
     }
 
     #[test]
@@ -347,15 +419,46 @@ mod tests {
     }
 
     #[test]
-    fn extend_prefixes_messages() {
-        let mut inner = Notifications::default();
-        inner.push(&KIND, Level::Note, "split 3 classes", BTreeMap::new());
-        let mut outer = Notifications::default();
-        outer.extend(inner, Some("import 'app': "));
-        assert_eq!(
-            text(&outer.notifications()[0]),
-            "import 'app': split 3 classes"
+    fn render_fills_the_selected_message() {
+        assert_eq!(KIND.render("other", &["a".into(), "b".into()]), "a and b");
+    }
+
+    #[test]
+    #[should_panic(expected = "has no message `missing`")]
+    fn an_unknown_message_id_panics() {
+        KIND.render("missing", &[]);
+    }
+
+    #[test]
+    fn extend_records_the_origin_once() {
+        let mut import = Notifications::default();
+        import.push(
+            &KIND,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            vec!["f".into()],
+            BTreeMap::new(),
         );
-        assert_eq!(outer.descriptors().count(), 1);
+        let mut summary_index = Notifications::default();
+        summary_index.extend(import, Some(Origin::Import("lib")));
+        let mut app = Notifications::default();
+        app.extend(summary_index, Some(Origin::SummaryProject("libproj")));
+        let mut again = Notifications::default();
+        again.extend(app.clone(), Some(Origin::Import("other")));
+
+        assert_eq!(app.len(), 1);
+        let only = &app.notifications()[0];
+        assert_eq!(text(only), "f was analyzed loosely");
+        assert_eq!(property(only, "import"), Some(&serde_json::json!("lib")));
+        assert_eq!(
+            property(&again.notifications()[0], "import"),
+            Some(&serde_json::json!("lib")),
+            "an import already named is not renamed"
+        );
+        assert_eq!(
+            property(only, "summaryProject"),
+            Some(&serde_json::json!("libproj"))
+        );
+        assert_eq!(app.descriptors().count(), 1);
     }
 }

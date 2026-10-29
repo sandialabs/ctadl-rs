@@ -190,8 +190,13 @@ fn merged_method_guardrail(
     ]);
     notes.push(
         &notifications::MERGED_METHOD_CALLS,
+        notifications::DEFAULT_MESSAGE,
         Level::Note,
-        "Some call edges reach large merged methods the class split left live.",
+        vec![
+            edges.to_string(),
+            call.len().to_string(),
+            live.len().to_string(),
+        ],
         counts.clone(),
     );
     if edges > MERGED_METHOD_CALL_EDGES {
@@ -202,9 +207,9 @@ fn merged_method_guardrail(
         );
         notes.push(
             &notifications::MERGED_METHOD_CALLS_HIGH,
+            notifications::DEFAULT_MESSAGE,
             Level::Warning,
-            "Many call edges reach large merged methods the class split left live; each such \
-             call takes on every lambda merged into the method's class.",
+            vec![edges.to_string(), live.len().to_string()],
             counts,
         );
     }
@@ -229,8 +234,9 @@ fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
         .collect();
     notes.push(
         &notifications::STACK_SLOTS_PROMOTED_FULLY,
+        notifications::DEFAULT_MESSAGE,
         Level::Warning,
-        note.message(),
+        vec![note.function.clone(), note.kind_names()],
         counts,
     );
 }
@@ -306,7 +312,7 @@ pub fn index(
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
     // Saved next to the index as `notifications.sarif`.
-    let mut notes = Notifications::default();
+    let mut notes = Notifications::new();
     // A summary project's unsound functions reach this index through their summaries.
     for summary_project in &summary_projects {
         let dir = summary_project.index_path()?;
@@ -314,7 +320,7 @@ pub fn index(
             .err_context(|| format!("loading notifications from: {}", dir.display()))?;
         notes.extend(
             loaded,
-            Some(&format!("summary project '{}': ", summary_project.name)),
+            Some(notifications::Origin::SummaryProject(&summary_project.name)),
         );
     }
     let mut live_merged_methods: Vec<String> = Vec::new();
@@ -323,7 +329,7 @@ pub fn index(
         let dir = import.import_path();
         let loaded = Notifications::load(&dir)
             .err_context(|| format!("loading notifications from: {}", dir.display()))?;
-        notes.extend(loaded, Some(&format!("import '{}': ", import.name)));
+        notes.extend(loaded, Some(notifications::Origin::Import(&import.name)));
         // Everything codegen records from here to the next import belongs to this one. Source
         // spans are per-import indices, so this is what keeps them resolvable afterwards.
         source_info.begin_import(&import.name);
@@ -809,8 +815,8 @@ pub fn query(
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
     let mut diagnostics = query_engine::formatter::QueryDiagnostics {
-        command_line: ctadl_import::notifications::command_line(),
-        arguments: ctadl_import::notifications::arguments(),
+        command_line: ctadl_import::sarif::command_line(),
+        arguments: ctadl_import::sarif::arguments(),
         start_time_utc,
         index_notifications: Notifications::load(&index_path)
             .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
@@ -1043,8 +1049,8 @@ fn query_model_check(
 
     let has_file_errors = outcome.has_file_errors();
     let mut diagnostics = outcome.into_diagnostics();
-    diagnostics.command_line = ctadl_import::notifications::command_line();
-    diagnostics.arguments = ctadl_import::notifications::arguments();
+    diagnostics.command_line = ctadl_import::sarif::command_line();
+    diagnostics.arguments = ctadl_import::sarif::arguments();
     diagnostics.start_time_utc = start_time_utc;
 
     let execution_successful =

@@ -226,16 +226,22 @@ pub struct EscapeNote {
 }
 
 impl EscapeNote {
-    /// The message that names this function in the index's `notifications.sarif`. It holds no
-    /// counts or sites, so the same fact reads the same way every time.
+    /// This note in one line, without counts or sites, for the debug log. The index's
+    /// `notifications.sarif` states the same fact from [`Self::function`] and
+    /// [`Self::kind_names`].
     pub fn message(&self) -> String {
-        let kinds: Vec<String> = self.kinds.keys().map(ToString::to_string).collect();
         format!(
             "mem2reg full: {}: frame address escapes ({}); flows through those slots may be \
              missed",
             self.function,
-            kinds.join(", ")
+            self.kind_names()
         )
+    }
+
+    /// The kinds of escape that reach a promoted slot, as `copied, stored`.
+    pub fn kind_names(&self) -> String {
+        let kinds: Vec<String> = self.kinds.keys().map(ToString::to_string).collect();
+        kinds.join(", ")
     }
 }
 

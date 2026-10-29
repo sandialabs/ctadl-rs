@@ -1065,7 +1065,7 @@ mod tests {
     /// and fails without the file, without the notification, or with a not-split one.
     #[test]
     fn merged_classes_are_read_from_notifications() {
-        use ctadl_import::notifications::Level;
+        use ctadl_import::notifications::{Level, DEFAULT_MESSAGE};
         use std::collections::BTreeMap;
 
         let dir = std::env::temp_dir().join(format!("xtask_merged_{}", std::process::id()));
@@ -1089,22 +1089,36 @@ mod tests {
                 .collect()
         };
         let mut moved = Notifications::default();
-        moved.push(&MERGED_CLASSES_SPLIT, Level::Note, "split", counts(a + 1));
+        let split = |n: u64| vec![n.to_string()];
+        moved.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a + 1),
+            counts(a + 1),
+        );
         moved.save(&dir).unwrap();
         fails_with("Re-pin");
 
-        found.push(&MERGED_CLASSES_SPLIT, Level::Note, "split", counts(a));
+        found.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a),
+            counts(a),
+        );
         found.save(&dir).unwrap();
         check_merged_classes(&dir).unwrap();
 
         found.push(
             &MERGED_CLASSES_NOT_SPLIT,
+            "notClosed",
             Level::Warning,
-            "too many classes not closed",
+            vec!["30".into(), "140".into()],
             BTreeMap::new(),
         );
         found.save(&dir).unwrap();
-        fails_with("too many classes not closed");
+        fails_with("30 of 140 split classes still have live merged methods");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

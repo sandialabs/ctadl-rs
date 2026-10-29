@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bitcode = { version = "0.6", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 hashbrown = "0.16"
 json5 = "1.3"

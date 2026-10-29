@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use hashbrown::hash_map::HashMap;
 
 use ctadl_import::notifications::{
-    Level, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, Notifications,
+    DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, Notifications,
 };
 
 use dex_reader::DexParser;
@@ -75,16 +75,23 @@ struct Counts {
 /// and the counts behind it.
 #[derive(Debug, Clone)]
 struct Check {
-    text: String,
+    /// Which of [`MERGED_CLASSES_NOT_SPLIT`]'s messages, and the arguments that fill it.
+    message_id: &'static str,
+    arguments: Vec<String>,
     properties: BTreeMap<String, serde_json::Value>,
 }
 
 impl Check {
-    fn new(text: String, counts: &[(&str, usize)]) -> Self {
+    fn new(message_id: &'static str, arguments: &[usize], counts: &[(&str, usize)]) -> Self {
         Self {
-            text,
+            message_id,
+            arguments: arguments.iter().map(ToString::to_string).collect(),
             properties: properties(counts),
         }
+    }
+
+    fn text(&self) -> String {
+        MERGED_CLASSES_NOT_SPLIT.render(self.message_id, &self.arguments)
     }
 }
 
@@ -271,29 +278,22 @@ impl MergedClasses {
         let mut failed = Vec::new();
         if over_cap > 0 && over_cap * 10 > split + over_cap {
             failed.push(Check::new(
-                format!(
-                    "{over_cap} merged classes have more than {MAX_IDS} ids and stay merged; their \
-                     methods are the union of every lambda behind them"
-                ),
+                "overCap",
+                &[over_cap, MAX_IDS],
                 &[("overCap", over_cap), ("split", split)],
             ));
         }
         if split >= 20 && open * 10 > split {
             failed.push(Check::new(
-                format!(
-                    "{open} of {split} split classes still have live merged methods (an object of \
-                     the class itself may exist); calls resolved by class hierarchy reach the union \
-                     of every arm"
-                ),
+                "notClosed",
+                &[open, split],
                 &[("notClosed", open), ("split", split)],
             ));
         }
         if allocs >= 100 && unresolved * 50 > allocs {
             failed.push(Check::new(
-                format!(
-                    "{unresolved} of {allocs} allocations of merged classes have no known id and \
-                     build the merged class instead of its split class"
-                ),
+                "unresolvedAllocations",
+                &[unresolved, allocs],
                 &[
                     ("unresolvedAllocations", unresolved),
                     ("allocations", allocs),
@@ -301,7 +301,7 @@ impl MergedClasses {
             ));
         }
         for check in &failed {
-            log::warn!("merged classes: {}", check.text);
+            log::warn!("merged classes: {}", check.text());
         }
         failed
     }
@@ -344,28 +344,24 @@ impl MergedClasses {
             let clones = [("cloneStatements", clone_statements), ("statements", total)];
             counts.extend(properties(&clones));
             if clone_statements * 100 > total * 35 {
-                let check = Check::new(
-                    format!(
-                        "the clones of merged methods hold {clone_statements} of the program's \
-                         {total} statements; a clone should keep only its own id's arm"
-                    ),
-                    &clones,
-                );
-                log::warn!("merged classes: {}", check.text);
+                let check = Check::new("cloneStatements", &[clone_statements, total], &clones);
+                log::warn!("merged classes: {}", check.text());
                 failed.push(check);
             }
         }
         out.push(
             &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
             Level::Note,
-            format!("split {split} merged classes"),
+            vec![split.to_string()],
             counts,
         );
         for check in failed {
             out.push(
                 &MERGED_CLASSES_NOT_SPLIT,
+                check.message_id,
                 Level::Warning,
-                check.text,
+                check.arguments,
                 check.properties,
             );
         }

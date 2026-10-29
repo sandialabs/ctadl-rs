@@ -2721,7 +2721,7 @@ fn scratch_path(name: &str) -> PathBuf {
 mod tests {
     use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
     use ctadl_import::notifications::{
-        Level, Notifications, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 
@@ -2751,8 +2751,9 @@ mod tests {
         let mut found = Notifications::default();
         found.push(
             &MERGED_CLASSES_NOT_SPLIT,
+            "notClosed",
             Level::Warning,
-            "import 'app': 3 classes not closed",
+            vec!["3".into(), "20".into()],
             BTreeMap::new(),
         );
         found.save(&index).unwrap();
@@ -2764,15 +2765,16 @@ mod tests {
 
         found.push(
             &STACK_SLOTS_PROMOTED_FULLY,
+            DEFAULT_MESSAGE,
             Level::Warning,
-            "mem2reg full: main: ...",
+            vec!["main".into(), "call input".into()],
             BTreeMap::new(),
         );
         found.save(&index).unwrap();
         let outcome = explain_lost_flow(&work, "full:0", lost());
         assert!(matches!(
             &outcome,
-            Outcome::Xfail(why) if why.contains("mem2reg full: main") && !why.contains("not closed")
+            Outcome::Xfail(why) if why.contains("mem2reg full: main") && !why.contains("live merged methods")
         ));
         assert!(matches!(
             explain_lost_flow(&work, "full:0", Outcome::Pass),
