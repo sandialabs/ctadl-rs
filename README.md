@@ -147,6 +147,7 @@ cross this way, so a flow in the library that depends on resolving an indirect c
 
 ## Documentation
 
+- [Specification](docs/spec.md) — purpose, requirements, and high-level design.
 - [Model generators](docs/model-generators.md) — the declarative language for
   sources, sinks, and propagation through code CTADL cannot see.
 - [Debugging](docs/debugging.md).
