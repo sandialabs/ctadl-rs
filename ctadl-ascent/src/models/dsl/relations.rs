@@ -166,7 +166,9 @@ pub struct ProgramFacts {
     /// against a program collected without one matches nothing rather than erroring: the same
     /// posture `fun`'s body-dependent attributes take on a bodyless callee.
     pub callsigs: Vec<CallSigRow>,
-    /// Grouped by site: the edges of one site are adjacent.
+    /// In scan order: each caller's rows are contiguous, and within a caller they are sorted by
+    /// `(block, stmt)`, so the edges of one site are adjacent. The site and caller lookups rely
+    /// on that layout instead of indexing every row.
     pub callsites: Vec<CallSiteRow>,
     /// `(function, field)` pairs from every `Load`/`Store`.
     pub uses_field: Vec<(Str, Str)>,
@@ -186,12 +188,10 @@ pub struct ProgramFacts {
     by_parent: HashMap<Str, Vec<usize>>,
     by_signature: HashMap<Str, Vec<usize>>,
     by_qualified_id: HashMap<Str, Vec<usize>>,
-    callsites_by_caller: HashMap<Str, Vec<usize>>,
+    /// Each caller's rows. One entry per caller, not per row or per site: a site is found by
+    /// binary search within its caller's range (see [`Self::callsites_with_id`]).
+    callsites_by_caller: HashMap<Str, Range<usize>>,
     callsites_by_callee: HashMap<Str, Vec<usize>>,
-    callsites_by_site: HashMap<SiteId, Range<usize>>,
-    /// `0..callsites.len()`, so a site's rows can be handed out as a slice of indices like
-    /// every other lookup's.
-    callsite_indices: Vec<usize>,
     uses_field_by_fun: HashMap<Str, Vec<usize>>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
@@ -324,17 +324,15 @@ impl ProgramFacts {
         } else {
             Default::default()
         };
-        let mut callsites_by_caller: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut callsites_by_caller: HashMap<Str, Range<usize>> = HashMap::new();
         let mut callsites_by_callee: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut callsites_by_site: HashMap<SiteId, Range<usize>> = HashMap::new();
         for (i, cs) in callsites.iter().enumerate() {
-            callsites_by_caller.entry(cs.caller).or_default().push(i);
-            callsites_by_callee.entry(cs.callee).or_default().push(i);
-            // A site's edges are adjacent, so extending the range covers them all.
-            callsites_by_site
-                .entry(cs.site())
+            // A caller's rows are adjacent, so extending the range covers them all.
+            callsites_by_caller
+                .entry(cs.caller)
                 .and_modify(|r| r.end = i + 1)
                 .or_insert(i..i + 1);
+            callsites_by_callee.entry(cs.callee).or_default().push(i);
         }
         let mut uses_field_by_fun: HashMap<Str, Vec<usize>> = HashMap::new();
         for (i, (f, _)) in uses_field.iter().enumerate() {
@@ -403,7 +401,6 @@ impl ProgramFacts {
         Self {
             funs: rows,
             callsigs,
-            callsite_indices: (0..callsites.len()).collect(),
             callsites,
             uses_field,
             subclass,
@@ -417,7 +414,6 @@ impl ProgramFacts {
             by_qualified_id,
             callsites_by_caller,
             callsites_by_callee,
-            callsites_by_site,
             uses_field_by_fun,
             supers_of,
             subs_of,
@@ -472,11 +468,13 @@ impl ProgramFacts {
         .map_or(&[], |v| v.as_slice())
     }
 
+    /// The rows of one caller, as a range of row indices: they are contiguous.
     #[inline]
-    pub fn callsites_of_caller(&self, caller: Str) -> &[usize] {
+    pub fn callsites_of_caller(&self, caller: Str) -> Range<usize> {
         self.callsites_by_caller
             .get(&caller)
-            .map_or(&[], |v| v.as_slice())
+            .cloned()
+            .unwrap_or(0..0)
     }
 
     #[inline]
@@ -487,12 +485,15 @@ impl ProgramFacts {
     }
 
     /// The rows of one site: one per edge, so more than one for a call CHA resolved several
-    /// ways.
-    #[inline]
-    pub fn callsites_with_id(&self, site: SiteId) -> &[usize] {
-        self.callsites_by_site
-            .get(&site)
-            .map_or(&[], |r| &self.callsite_indices[r.clone()])
+    /// ways. Found by binary search on `(block, stmt)` within the caller's rows, which are
+    /// sorted by it, rather than through a map with an entry per site.
+    pub fn callsites_with_id(&self, site: SiteId) -> Range<usize> {
+        let rows = self.callsites_of_caller(site.caller);
+        let in_caller = &self.callsites[rows.clone()];
+        let key = (site.block, site.stmt);
+        let start = in_caller.partition_point(|r| (r.block, r.stmt) < key);
+        let end = start + in_caller[start..].partition_point(|r| (r.block, r.stmt) == key);
+        rows.start + start..rows.start + end
     }
 
     #[inline]
@@ -577,6 +578,9 @@ fn closure(edges: &HashMap<Str, Vec<Str>>, cls: Str, reflexive: bool, deep: bool
 
 /// One pass over every function body, collecting whichever of the two relations that need one
 /// `needs` asks for.
+///
+/// Call sites come out in the layout [`ProgramFacts::callsites`] documents: `lowered` names each
+/// function once, and a body is walked block by block, statement by statement.
 fn scan_bodies(
     lowered: &[(Str, &FunctionData)],
     needs: &Needs,

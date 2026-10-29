@@ -966,7 +966,7 @@ fn a_call_site_id_is_never_interned() {
         // The printed spelling still names the site.
         let site = SiteId::parse(&id).expect("parses");
         assert_eq!(site.to_string(), id);
-        assert_eq!(facts.callsites_with_id(site), &[stmt as usize]);
+        assert_eq!(facts.callsites_with_id(site), stmt..stmt + 1);
     }
 }
 
@@ -1098,8 +1098,7 @@ fn a_multi_edge_site_keeps_every_edge() {
     };
     let callees: BTreeSet<String> = facts
         .callsites_with_id(site)
-        .iter()
-        .map(|&i| facts.callsites[i].callee.to_string())
+        .map(|i| facts.callsites[i].callee.to_string())
         .collect();
     assert_eq!(callees, BTreeSet::from(["g".to_string(), "h".to_string()]));
 

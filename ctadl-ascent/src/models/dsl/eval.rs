@@ -513,23 +513,13 @@ impl<'a> Machine<'a> {
         let facts = self.facts;
         match &atom.access {
             Access::Column(1) => match self.site_key(atom) {
-                Some(site) => self.each(
-                    atom,
-                    facts
-                        .callsites_with_id(site)
-                        .iter()
-                        .map(|&r| Row::CallSite(r)),
-                    k,
-                ),
+                Some(site) => self.each(atom, facts.callsites_with_id(site).map(Row::CallSite), k),
                 None => true,
             },
             Access::Column(i) => match self.column_key(atom, *i) {
                 Some(caller) => self.each(
                     atom,
-                    facts
-                        .callsites_of_caller(caller)
-                        .iter()
-                        .map(|&r| Row::CallSite(r)),
+                    facts.callsites_of_caller(caller).map(Row::CallSite),
                     k,
                 ),
                 None => true,
