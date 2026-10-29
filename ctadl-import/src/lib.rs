@@ -24,7 +24,9 @@ remove one of the two imports, not to spell out the call.
 */
 
 pub mod error;
+pub mod notifications;
 pub mod project;
+pub mod sarif;
 pub mod store;
 
 pub use error::{Error, ErrorContext};

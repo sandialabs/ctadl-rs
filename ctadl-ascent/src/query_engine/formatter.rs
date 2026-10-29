@@ -42,12 +42,17 @@ use serde_sarif::sarif::{
     Address, ArtifactLocation, CodeFlow, ConfigurationOverride, Invocation, Location,
     LogicalLocation, Message, MultiformatMessageString, Notification, PhysicalLocation,
     PropertyBag, Region, ReportingConfiguration, ReportingDescriptor, ReportingDescriptorReference,
-    Result as SarifResult, ResultKind, ResultLevel, Run, Sarif, ThreadFlow, ThreadFlowLocation,
-    Tool, ToolComponent,
+    Result as SarifResult, ResultKind, ResultLevel, Run, ThreadFlow, ThreadFlowLocation, Tool,
 };
 use source_info::FileSpanId;
 use source_info::{LineMap, offset_to_line_column};
 use std::collections::{BTreeMap, BTreeSet};
+
+pub use ctadl_import::sarif::utc_timestamp;
+use ctadl_import::sarif::{
+    notification, notification_descriptor, notification_descriptor_multi,
+    notification_with_message_id,
+};
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
@@ -178,7 +183,8 @@ const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that rec
 // `invocation.toolConfigurationNotifications` / `toolExecutionNotifications`). The
 // `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
 // describes what running it *did*. See `notification_descriptors` for the message
-// strings, and `build_invocation` for the conditions.
+// strings, and `build_invocation` for the conditions. Ids from `CTADL0104` on belong to the
+// index's notifications (`ctadl_import::notifications`).
 const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
 const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
 const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";
@@ -221,6 +227,8 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
+    /// The index's `notifications.sarif`, copied into the run as they are.
+    pub index_notifications: ctadl_import::notifications::Notifications,
     /// Set only when the project had no index and the run checked the model files against the
     /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
     pub model_check: Option<ModelCheck>,
@@ -845,6 +853,14 @@ fn build_invocation(
         ));
     }
 
+    exec_notifications.extend(
+        diagnostics
+            .index_notifications
+            .notifications()
+            .iter()
+            .cloned(),
+    );
+
     // §3.20.22 / §3.20.21: an error-level notification in either array means the run failed.
     let is_error = |n: &Notification| n.level.as_ref().and_then(|l| l.as_str()) == Some("error");
     let execution_successful =
@@ -1026,13 +1042,6 @@ fn directory_uri(dir: &path::Path) -> String {
         })
 }
 
-/// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
-pub fn utc_timestamp() -> String {
-    chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-        .to_string()
-}
-
 /// Whether `profile` runs the source → sink path search that produces `C0001` results.
 /// This is the same condition the graph construction and the path-result loop use.
 fn profile_finds_paths(profile: SarifProfile) -> bool {
@@ -1062,105 +1071,6 @@ fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
         out.push(ABSORBING_FUNCTION_RULE_ID);
     }
     out
-}
-
-/// Build a notification carrying `message.id` + `arguments` (so consumers can read it
-/// structurally rather than by parsing prose) plus a `properties` bag of raw counts.
-fn notification(
-    descriptor_id: &str,
-    level: &str,
-    arguments: Vec<String>,
-    text: String,
-    properties: BTreeMap<String, serde_json::Value>,
-) -> Notification {
-    notification_with_message_id(descriptor_id, "default", level, arguments, text, properties)
-}
-
-/// [`notification`] for a descriptor that declares more than one message string. `message_id`
-/// selects which (§3.11.7) and must be a key of the descriptor's `messageStrings`, otherwise
-/// a consumer re-rendering the message from `arguments` has nothing to render.
-fn notification_with_message_id(
-    descriptor_id: &str,
-    message_id: &str,
-    level: &str,
-    arguments: Vec<String>,
-    text: String,
-    properties: BTreeMap<String, serde_json::Value>,
-) -> Notification {
-    let mut notif = Notification::builder()
-        .descriptor(
-            ReportingDescriptorReference::builder()
-                .id(descriptor_id.to_string())
-                .build(),
-        )
-        // `level` is `Option<serde_json::Value>` in serde-sarif (unlike `ResultLevel`), so
-        // the enum value goes in as a JSON string.
-        .level(serde_json::json!(level))
-        .message(
-            // Both forms: `text` for a human reading the file, `id` + `arguments` so a
-            // consumer can read the condition without parsing prose.
-            Message::builder()
-                .id(message_id.to_string())
-                .arguments(arguments)
-                .text(text)
-                .build(),
-        )
-        .build();
-    // Set after building: the generated builder is type-state, so an optional field cannot
-    // be assigned conditionally.
-    if !properties.is_empty() {
-        notif.properties = Some(
-            PropertyBag::builder()
-                .additional_properties(properties)
-                .build(),
-        );
-    }
-    notif
-}
-
-/// Declare a notification descriptor with a single `default` message string. The `{n}`
-/// placeholders are filled from each notification's `message.arguments`.
-fn notification_descriptor(
-    id: &str,
-    name: &str,
-    description: &str,
-    message: &str,
-) -> ReportingDescriptor {
-    notification_descriptor_multi(id, name, description, &[("default", message)])
-}
-
-/// [`notification_descriptor`] for a notification whose prose depends on which of several
-/// conditions fired, one `messageStrings` entry per condition (§3.49.11). The entry a given
-/// notification selects is its `message.id`; `default` is the one used when the condition is
-/// not known more precisely.
-fn notification_descriptor_multi(
-    id: &str,
-    name: &str,
-    description: &str,
-    messages: &[(&str, &str)],
-) -> ReportingDescriptor {
-    ReportingDescriptor::builder()
-        .id(id.to_string())
-        .name(name.to_string())
-        .short_description(
-            MultiformatMessageString::builder()
-                .text(description.to_string())
-                .build(),
-        )
-        .message_strings(
-            messages
-                .iter()
-                .map(|(key, text)| {
-                    (
-                        (*key).to_string(),
-                        MultiformatMessageString::builder()
-                            .text((*text).to_string())
-                            .build(),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>(),
-        )
-        .build()
 }
 
 /// The `message.id`s [`unmatched_message`] can select on `CTADL0004`, one per way a declared
@@ -1922,6 +1832,7 @@ pub fn format_model_check_sarif(
         results,
         SarifData::default(),
         Vec::new(),
+        &diagnostics.index_notifications,
     );
     write_sarif(&sarif, profile, output)?;
     Ok(execution_successful)
@@ -2061,7 +1972,14 @@ async fn async_format_sarif(
     let execution_successful = invocation.execution_successful;
 
     Ok((
-        sarif_document(project, invocation, results, sarif_data, parquet_dirs),
+        sarif_document(
+            project,
+            invocation,
+            results,
+            sarif_data,
+            parquet_dirs,
+            &diagnostics.index_notifications,
+        ),
         execution_successful,
     ))
 }
@@ -2070,132 +1988,120 @@ async fn async_format_sarif(
 /// `CTADL01xx` notification descriptors declared once (§3.19.24) so that every `message.id` a
 /// notification selects resolves.
 fn ctadl_tool() -> Tool {
-    const CTADL_FULL_DESCRIPTION: &str = "CTADL (Compositional Taint Analysis in Datalog).";
-    Tool::builder()
-        .driver(
-            ToolComponent::builder()
-                .name("ctadl")
-                .version("2026.1")
-                .information_uri("https://github.com/sandialabs/ctadl-rs")
-                .full_description(
-                    MultiformatMessageString::builder()
-                        .text(CTADL_FULL_DESCRIPTION)
-                        .build(),
-                )
-                .rules(vec![
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_PATH_RULE_ID)
-                        .name(TAINTED_PATH_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_PATH_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is a tainted source-sink path.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_INSTRUCTION_RULE_ID)
-                        .name(TAINTED_INSTRUCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_INSTRUCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This instruction manipulates tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINT_SOURCE_RULE_ID)
-                        .name(TAINT_SOURCE_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINT_SOURCE_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is a source of tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINT_SINK_RULE_ID)
-                        .name(TAINT_SINK_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINT_SINK_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is an desired sink of tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_DATA_RULE_ID)
-                        .name(TAINTED_DATA_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_DATA_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This vertex is tainted.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(ALMOST_PATH_FUNCTION_RULE_ID)
-                        .name(ALMOST_PATH_FUNCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(ALMOST_PATH_FUNCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This function contains source and sink taint.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(ABSORBING_FUNCTION_RULE_ID)
-                        .name(ABSORBING_FUNCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(ABSORBING_FUNCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This external function receives tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                ])
-                .notifications(notification_descriptors())
-                .build(),
-        )
-        .build()
+    let mut driver = ctadl_import::sarif::driver();
+    driver.rules = Some(vec![
+        ReportingDescriptor::builder()
+            .id(TAINTED_PATH_RULE_ID)
+            .name(TAINTED_PATH_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_PATH_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is a tainted source-sink path.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINTED_INSTRUCTION_RULE_ID)
+            .name(TAINTED_INSTRUCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_INSTRUCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This instruction manipulates tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINT_SOURCE_RULE_ID)
+            .name(TAINT_SOURCE_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINT_SOURCE_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is a source of tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINT_SINK_RULE_ID)
+            .name(TAINT_SINK_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINT_SINK_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is an desired sink of tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINTED_DATA_RULE_ID)
+            .name(TAINTED_DATA_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_DATA_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This vertex is tainted.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(ALMOST_PATH_FUNCTION_RULE_ID)
+            .name(ALMOST_PATH_FUNCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(ALMOST_PATH_FUNCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This function contains source and sink taint.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(ABSORBING_FUNCTION_RULE_ID)
+            .name(ABSORBING_FUNCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(ABSORBING_FUNCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This external function receives tainted data.")
+                    .build(),
+            )]))
+            .build(),
+    ]);
+    driver.notifications = Some(notification_descriptors());
+    Tool::builder().driver(driver).build()
 }
 
-/// Assembles the run, and the document around it, out of what a run produced.
+/// Assembles the run, and the document around it, out of what a run produced. The tool declares
+/// `index_notifications`' descriptors beside its own.
 ///
 /// Shared by the indexed path and the model-check one so that the two files differ only in what
 /// they *say* -- same tool, same key order, same shape.
@@ -2205,8 +2111,15 @@ fn sarif_document(
     results: Vec<SarifResult>,
     sarif_data: SarifData,
     parquet_dirs: Vec<String>,
+    index_notifications: &ctadl_import::notifications::Notifications,
 ) -> serde_json::Value {
-    let tool = ctadl_tool();
+    let mut tool = ctadl_tool();
+    let declared = tool.driver.notifications.get_or_insert_with(Vec::new);
+    for descriptor in index_notifications.descriptors() {
+        if !declared.iter().any(|d| d.id == descriptor.id) {
+            declared.push(descriptor.clone());
+        }
+    }
 
     // `parquet_dir` names the source-info tables the locations above came out of. A project has
     // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
@@ -2255,59 +2168,7 @@ fn sarif_document(
     if !original_uri_base_ids.is_empty() {
         run.original_uri_base_ids = Some(original_uri_base_ids);
     }
-    // we need to deconstruct and rebuild the run to ensure a certain order (needs serde_json feature preserve_order)
-    let final_run = match serde_json::to_value(&run).unwrap() {
-        serde_json::Value::Object(mut old_map) => {
-            let mut new_map = serde_json::Map::new();
-            new_map.insert("tool".to_string(), old_map.remove("tool").unwrap());
-            // `invocations` right after `tool`: it is the run's status, and pinning it here
-            // keeps diffs between runs stable.
-            new_map.insert(
-                "invocations".to_string(),
-                old_map.remove("invocations").unwrap(),
-            );
-            // the order of the rest doesn't matter
-            for (k, v) in old_map {
-                new_map.insert(k, v);
-            }
-            serde_json::Value::Object(new_map)
-        }
-        _ => panic!("Failed to extract serde_json sarif run"),
-    };
-
-    // the runs have to be inserted manually since the order would not be preserved if inserted as a runs object
-    let sarif = Sarif::builder()
-        .version("2.1.0")
-        .properties(properties)
-        .build();
-    // rebuild sarif to preserve order
-    match serde_json::to_value(&sarif).unwrap() {
-        serde_json::Value::Object(mut old_map) => {
-            // remove the default (empty array) in the old map
-            old_map.remove("runs");
-            let mut new_map = serde_json::Map::new();
-            new_map.insert("version".to_string(), old_map.remove("version").unwrap());
-            new_map.insert(
-                "properties".to_string(),
-                old_map.remove("properties").unwrap(),
-            );
-            new_map.insert(
-                "$schema".to_string(),
-                serde_json::json!("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json"),
-            );
-            // the order of the rest doesn't matter
-            for (k, v) in old_map {
-                new_map.insert(k, v);
-            }
-            // runs should be last
-            new_map.insert(
-                "runs".to_string(),
-                serde_json::Value::Array(vec![final_run]),
-            );
-            serde_json::Value::Object(new_map)
-        }
-        _ => panic!("Failed to extract serde_json sarif map"),
-    }
+    ctadl_import::sarif::document(Some(properties), &run)
 }
 
 /// Resolves every needed span to a SARIF [`Location`], each against the source-info database of

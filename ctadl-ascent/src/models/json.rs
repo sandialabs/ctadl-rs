@@ -1425,11 +1425,15 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
     /// Records the functions a `modes` directive applies to.
     ///
-    /// `skip-analysis` is the one defined value: codegen never lowers the matched function's
-    /// body, so whatever the same generator's `propagation` list says is that function's entire
-    /// behaviour. Without it a model *adds* to the body-derived summary rather
-    /// than replacing it, which is what makes a hand-written model unable to cut a degenerate
-    /// function down (see `docs/model-generators.md` §`modes`).
+    /// `mem2reg-full` and `mem2reg-window` force and forbid full stack-slot promotion for the
+    /// matched function, whatever its size (see `ctadl_ir::ssa::FullMode`). `frame-store` and
+    /// `frame-update` coarsen or keep its frame updates (see `ctadl_ir::ssa::FrameWrites`).
+    ///
+    /// `skip-analysis`: codegen never lowers the matched function's body, so whatever the same
+    /// generator's `propagation` list says is that function's entire behaviour. Without it a
+    /// model *adds* to the body-derived summary rather than replacing it, which is what makes a
+    /// hand-written model unable to cut a degenerate function down (see
+    /// `docs/model-generators.md` §`modes`).
     ///
     /// Matching is the generator's own `where`, exactly as for a propagation, so this reads the
     /// same `self.methods[n]` set. A generator carrying `modes` and no `propagation` is legal and
@@ -1454,6 +1458,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         }
         let mut skip = false;
+        let mut mem2reg = None;
+        let mut frame = None;
         for item in items {
             let Some(text) = item.as_str() else {
                 self.add_json_error(crate::error::JsonModelError::FieldNotString {
@@ -1464,22 +1470,34 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
             match text {
                 "skip-analysis" => skip = true,
+                "mem2reg-full" => mem2reg = Some(ctadl_ir::ssa::FullMode::Force),
+                "mem2reg-window" => mem2reg = Some(ctadl_ir::ssa::FullMode::Forbid),
+                "frame-store" => frame = Some(ctadl_ir::ssa::FrameWrites::Store),
+                "frame-update" => frame = Some(ctadl_ir::ssa::FrameWrites::Update),
                 other => self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                     index: n,
                     field_name: "modes".to_string(),
                     message: format!(
-                        "unknown mode '{other}'; the defined value is 'skip-analysis'"
+                        "unknown mode '{other}'; the defined values are 'skip-analysis', \
+                         'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'"
                     ),
                 }),
             }
         }
-        if !skip {
+        if !skip && mem2reg.is_none() && frame.is_none() {
             return;
         }
         for func in matched_functions(&self.methods[n], self.index.vmt) {
-            self.out
-                .skip_analysis
-                .insert(facts::Str::from(func.as_str()));
+            let func = facts::Str::from(func.as_str());
+            if let Some(mode) = mem2reg {
+                self.out.mem2reg_modes.insert(func, mode);
+            }
+            if let Some(mode) = frame {
+                self.out.frame_modes.insert(func, mode);
+            }
+            if skip {
+                self.out.skip_analysis.insert(func);
+            }
         }
     }
 

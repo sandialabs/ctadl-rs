@@ -1383,8 +1383,9 @@ impl Visitor for CodegenVisitor<'_> {
                 value,
             } => {
                 // A functional update `dest = update(source, dest.field := value)` lowers to two
-                // flows: the whole-aggregate copy `dest <- source`, then the field write
-                // `dest.field <- value`.
+                // flows: the copy of `source` into `dest` except at the written path, then the
+                // field write `dest.field <- value`. Leaving the written path out of the copy is
+                // what makes the update overwrite the field's old value.
                 let dest_var = self.trans_variable_ref(&dest.base);
                 let source_var = self.trans_variable_ref(source);
                 // The written path is the dest's (offset) address arithmetic, then the field.
@@ -1413,12 +1414,15 @@ impl Visitor for CodegenVisitor<'_> {
                         .call_target_assign
                         .push((site, dest_vertex, object));
                 }
-                // whole-aggregate copy: dest <- source
-                self.facts.assign.push((
-                    site,
-                    FlowVertex::new(dest_var, fx::Path::empty()),
-                    FlowVertex::new(source_var, fx::Path::empty()),
-                ));
+                if let Exp::Str(value) = value {
+                    self.facts
+                        .const_str_assign
+                        .push((site, dest_vertex, Str::from(value.clone())));
+                }
+                // copy: dest <- source, except at the written path
+                self.facts
+                    .update_sans_path
+                    .push((site, dest_var, source_var, dest_vertex.1));
                 // field write: dest.field <- value
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest_vertex, value));

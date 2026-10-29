@@ -35,6 +35,17 @@ pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
 mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
 
+mod frame;
+pub use frame::{FrameWrites, coarsen_frame_updates, coarsen_frame_updates_function};
+
+mod mem2reg;
+use mem2reg::log_escape_note;
+pub use mem2reg::{
+    DEFAULT_FULL_THRESHOLD, EscapeKind, EscapeNote, EscapePolicy, FullMode, Mem2Reg, Mem2RegReport,
+    Mem2RegStats, STACK_TOP, promote_function, promote_stack_slots, promote_stack_slots_function,
+    promote_stack_slots_with,
+};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: BTreeSet<Variable>,
@@ -59,10 +70,16 @@ struct SsaRename {
 /// [`run_pipeline_with_threads`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
+    /// How frame writes reach SSA. [`FrameWrites::Store`] runs [`coarsen_frame_updates`] first,
+    /// which turns the frame's functional updates into stores.
+    pub frame: FrameWrites,
     /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
+    /// Run [`promote_stack_slots`] with this configuration, which turns stack slots into locals
+    /// so SSA versions them. `None` skips it.
+    pub mem2reg: Option<Mem2Reg>,
     /// Run [`transform_program`], which places pruned phi nodes using Cytron's algorithm and renames
     /// variables into SSA form.
     pub ssa: bool,
@@ -84,8 +101,19 @@ impl Pipeline {
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
+            // The frame stays versioned for the slots mem2reg keeps in memory, so a write to one
+            // of them overwrites what it held instead of joining every other value stored there.
+            frame: FrameWrites::Update,
             dead_temps: true,
             coalesce: true,
+            // An escaped frame address is assumed to reach 8 slots. It loses no flow in the
+            // regression suite, where `Exact` loses one through a field of a struct passed by
+            // pointer, and promotes nearly as much as `Exact`, where `Above` promotes almost
+            // nothing.
+            mem2reg: Some(Mem2Reg {
+                escape: EscapePolicy::Window(8),
+                full_above: None,
+            }),
             ssa: true,
             copy_prop: true,
             prune_unreachable: true,
@@ -96,8 +124,10 @@ impl Pipeline {
     #[inline]
     pub fn none() -> Self {
         Pipeline {
+            frame: FrameWrites::Update,
             dead_temps: false,
             coalesce: false,
+            mem2reg: None,
             ssa: false,
             copy_prop: false,
             prune_unreachable: false,
@@ -123,18 +153,40 @@ impl Pipeline {
         self
     }
 
+    /// Sets [`Pipeline::mem2reg`], for the same reason as [`Pipeline::prune`].
+    #[inline]
+    #[must_use]
+    pub fn mem2reg(mut self, mem2reg: Option<Mem2Reg>) -> Self {
+        self.mem2reg = mem2reg;
+        self
+    }
+
+    /// Sets [`Pipeline::frame`], for the same reason as [`Pipeline::prune`].
+    #[inline]
+    #[must_use]
+    pub fn frame(mut self, frame: FrameWrites) -> Self {
+        self.frame = frame;
+        self
+    }
+
     /// A short name for this pipeline, to record in a log line or a report which passes ran.
-    /// For example, `dt+co+ssa(prune)+cp`, or `none`.
+    /// For example, `fs+dt+co+ssa(prune)+cp`, or `none`.
     ///
     /// The same `Pipeline` value always produces the same string, and two pipelines produce the
     /// same string only when they are equal.
     pub fn tag(&self) -> String {
-        let mut parts: Vec<String> = Vec::with_capacity(4);
+        let mut parts: Vec<String> = Vec::with_capacity(6);
+        if self.frame == FrameWrites::Store {
+            parts.push("fs".into());
+        }
         if self.dead_temps {
             parts.push("dt".into());
         }
         if self.coalesce {
             parts.push("co".into());
+        }
+        if let Some(policy) = self.mem2reg {
+            parts.push(format!("m2r({})", policy.tag()));
         }
         if self.ssa {
             parts.push(if self.prune_unreachable {
@@ -171,19 +223,25 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
 }
 
 /// What [`run_function_pipeline`] did to one function, summed over a program for the log.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct PipelineStats {
+    coarsened: usize,
     dead_temps: usize,
     coalesced: usize,
     copy_prop: usize,
+    mem2reg: Mem2RegStats,
+    notes: Vec<EscapeNote>,
 }
 
 impl std::ops::Add for PipelineStats {
     type Output = Self;
     fn add(mut self, o: Self) -> Self {
+        self.coarsened += o.coarsened;
         self.dead_temps += o.dead_temps;
         self.coalesced += o.coalesced;
         self.copy_prop += o.copy_prop;
+        self.mem2reg += o.mem2reg;
+        self.notes.extend(o.notes);
         self
     }
 }
@@ -196,11 +254,31 @@ impl std::ops::Add for PipelineStats {
 /// whole pipeline on the functions it takes. The threads come from a pool built for this call, not
 /// rayon's global one, so `threads` is exactly the number used.
 pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: usize) {
+    run_pipeline_with(program, p, threads, &FunctionModes::default());
+}
+
+/// Per-function overrides of a [`Pipeline`], from a model's `modes`, keyed by function name.
+#[derive(Debug, Default, Clone)]
+pub struct FunctionModes {
+    /// Forces or forbids full stack-slot promotion (see [`promote_stack_slots_with`]).
+    pub mem2reg: HashMap<String, FullMode>,
+    /// Overrides [`Pipeline::frame`].
+    pub frame: HashMap<String, FrameWrites>,
+}
+
+/// [`run_pipeline_with_threads`], with the overrides in `modes` for the functions it names.
+/// Returns what mem2reg did, if it ran, with its notes ordered by function name.
+pub fn run_pipeline_with(
+    program: &mut Program,
+    p: Pipeline,
+    threads: usize,
+    modes: &FunctionModes,
+) -> Option<Mem2RegReport> {
     let functions = &mut program.functions.raw;
-    let stats = if threads <= 1 {
+    let mut stats = if threads <= 1 {
         functions
             .iter_mut()
-            .map(|f| run_function_pipeline(f, p))
+            .map(|f| run_function_pipeline(f, p, modes))
             .fold(PipelineStats::default(), |a, b| a + b)
     } else {
         use rayon::prelude::*;
@@ -224,10 +302,15 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
         pool.install(|| {
             work.into_par_iter()
                 .with_max_len(1)
-                .map(|f| run_function_pipeline(f, p))
+                .map(|f| run_function_pipeline(f, p, modes))
                 .reduce(PipelineStats::default, |a, b| a + b)
         })
     };
+    log::debug!(
+        "frame({}): coarsened {} frame update(s) into stores",
+        p.frame.tag(),
+        stats.coarsened
+    );
     if p.dead_temps {
         log::debug!(
             "dead_temps: deleted {} dead temporary def(s)",
@@ -246,16 +329,35 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
             stats.copy_prop
         );
     }
+    let config = p.mem2reg?;
+    log::info!("mem2reg({}): {:?}", config.tag(), stats.mem2reg);
+    stats.notes.sort_by(|a, b| a.function.cmp(&b.function));
+    Some(Mem2RegReport {
+        stats: stats.mem2reg,
+        notes: stats.notes,
+    })
 }
 
 /// Runs the passes that `p` selects on one function, in pipeline order.
-fn run_function_pipeline(f: &mut FunctionData, p: Pipeline) -> PipelineStats {
+fn run_function_pipeline(
+    f: &mut FunctionData,
+    p: Pipeline,
+    modes: &FunctionModes,
+) -> PipelineStats {
     let mut stats = PipelineStats::default();
+    if modes.frame.get(&f.name).copied().unwrap_or(p.frame) == FrameWrites::Store {
+        stats.coarsened = coarsen_frame_updates_function(f);
+    }
     if p.dead_temps {
         stats.dead_temps = eliminate_dead_temps_function(f);
     }
     if p.coalesce {
         stats.coalesced = coalesce_function(f);
+    }
+    if let Some(config) = p.mem2reg {
+        let (m2r, note) = promote_function(f, config, modes.mem2reg.get(&f.name).copied());
+        stats.mem2reg = m2r;
+        stats.notes.extend(note.inspect(log_escape_note));
     }
     if p.ssa {
         log::debug!("f: {f}");

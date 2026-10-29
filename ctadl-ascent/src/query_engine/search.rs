@@ -134,6 +134,9 @@ pub struct TaintSearchGraph {
     /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
     /// `assign_by_src` step only carries taint that lies under the offset.
     addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
+    /// The copies functional updates make, `x = update (y.w := v)`, indexed by source:
+    /// `(f, y) -> [(x, w)]`. Taint on `y.p` reaches `x.p` unless `p` is `w` or under it.
+    updates_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
@@ -248,6 +251,16 @@ impl TaintSearchGraph {
             });
         }
 
+        let mut updates_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
+            HashMap::default();
+        for (f, x, y, w) in &facts.update_sans_path {
+            updates_by_src.entry((*f, *y)).or_default().push((*x, *w));
+        }
+        for succs in updates_by_src.values_mut() {
+            succs
+                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
+        }
+
         let formal_ty: HashMap<_, _> = facts
             .formal_param
             .iter()
@@ -322,6 +335,7 @@ impl TaintSearchGraph {
             loads_by_dst,
             loads_by_src,
             addrs_by_src,
+            updates_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
@@ -361,6 +375,17 @@ impl LazySuccessors for TaintSearchGraph {
                         ObjectScope::All
                     };
                     out.push(((f, *dst, p2, level, scope2), FlowEdge::Intra));
+                }
+            }
+        }
+
+        // A functional update's copy (`updates_by_src`). Like a whole-variable copy it is
+        // `Fixed`, but it is not an alias: `x` is a new value, so it gets no object hop back to
+        // `y`.
+        if let Some(updates) = self.updates_by_src.get(&(f, v)) {
+            for (x, w) in updates {
+                if !p.is_extension_of(w) && self.paths.contains(&p) {
+                    out.push(((f, *x, p, level, ObjectScope::Fixed), FlowEdge::Intra));
                 }
             }
         }

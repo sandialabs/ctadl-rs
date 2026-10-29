@@ -1209,6 +1209,7 @@ dependencies = [
  "dex-reader",
  "hashbrown 0.16.1",
  "log",
+ "serde_json",
  "smallvec",
  "source-info",
  "test-log",
@@ -1252,6 +1253,7 @@ name = "ctadl-import"
 version = "0.1.6"
 dependencies = [
  "bitcode",
+ "chrono",
  "cil-reader",
  "ctadl-flowy",
  "ctadl-ir",
@@ -1261,6 +1263,7 @@ dependencies = [
  "jvm-reader",
  "log",
  "serde",
+ "serde-sarif",
  "serde_json",
  "source-info",
  "tempfile",
@@ -5131,6 +5134,7 @@ dependencies = [
  "cil-reader",
  "ctadl-ascent",
  "ctadl-cil",
+ "ctadl-import",
  "ctadl-ir",
  "dex-reader",
  "json5",

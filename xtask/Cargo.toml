@@ -48,6 +48,9 @@ regex = "1.12"
 # re-implementing them. This is the one heavy dependency here: it builds the
 # whole analyzer.
 ctadl-ascent = { path = "../ctadl-ascent" }
+# The `--mem2reg` cases and `apk:merged-classes` read the `notifications.sarif` an import or
+# an index writes, through the module that writes it. Already built for ctadl-ascent.
+ctadl-import = { path = "../ctadl-import" }
 # The JNI `+apk` cases package a DEX and a shared library into an APK so the
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in
 # practice: dex-reader already builds `zip` to read APKs.

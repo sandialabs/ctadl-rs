@@ -15,6 +15,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
+use ctadl_import::notifications::Notifications;
 use ctadl_ir::mir::call::{
     CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     VirtualMethodTable,
@@ -50,10 +51,17 @@ fn empty_body(fdat: &mut FunctionData) {
 #[cfg(test)]
 mod tests;
 
-/// The Java half of an APK import: the IR, plus the number of `classes*.dex` entries it
-/// was built from.
+/// A Dex import: the IR, and what the import has to say about it.
+pub struct DexImport {
+    pub program_info: ProgramInfo,
+    pub notifications: Notifications,
+}
+
+/// The Java half of an APK import: the IR, what the import has to say about it, and the number
+/// of `classes*.dex` entries it was built from.
 pub struct ApkImport {
     pub program_info: ProgramInfo,
+    pub notifications: Notifications,
     pub dex_count: usize,
 }
 
@@ -87,13 +95,15 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
         ctx.process(&parser, key, &mut builders)
             .err_context(|| format!("converting '{}' in APK: {}", dex_file_name, file.display()))?;
     }
+    let (program_info, notifications) = ctx.finish(builders)?;
     Ok(ApkImport {
-        program_info: ctx.finish(builders)?,
+        program_info,
+        notifications,
         dex_count,
     })
 }
 
-pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
+pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<DexImport, Error> {
     let file = file.as_ref();
     let data =
         std::fs::read(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
@@ -111,7 +121,11 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
 
     ctx.process(&parser, key, &mut builders)
         .err_context(|| format!("converting Dex file: {}", file.display()))?;
-    ctx.finish(builders)
+    let (program_info, notifications) = ctx.finish(builders)?;
+    Ok(DexImport {
+        program_info,
+        notifications,
+    })
 }
 
 /// The translation of dex files into CTADL IR.
@@ -636,26 +650,17 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
+    fn finish(
+        &mut self,
+        mut builders: ProgramInfoBuilder,
+    ) -> Result<(ProgramInfo, Notifications), Error> {
         let program = builders.program;
         log::trace!("program: {program}");
-        // Guardrail: the clones of merged methods should be a modest share of the program. Each
-        // stores only its own arm, so a large share means they are storing the whole merged body
-        // again; with the arms pruned they are 2-24% of the apps measured.
-        if self.clone_statements > 0 {
-            let total: usize = program.functions.iter().map(statement_count).sum();
-            log::info!(
-                "merged classes guardrail: clones hold {} of {total} statements",
-                self.clone_statements
-            );
-            if self.clone_statements * 100 > total * 35 {
-                log::warn!(
-                    "merged classes: the clones of merged methods hold {} of the program's {total} \
-                     statements; a clone should keep only its own id's arm",
-                    self.clone_statements
-                );
-            }
-        }
+        let notifications = self
+            .merged
+            .guardrail_notifications(self.clone_statements, || {
+                program.functions.iter().map(statement_count).sum()
+            });
         // Verify the generated program.
         program.verify()?;
         let mut ext: Vec<_> = self.ext.drain().collect();
@@ -669,11 +674,14 @@ impl Context {
         let source_info = builders.source_info_builder.finish();
         log::trace!("source_info: {source_info}");
         let vmt = builders.vmt;
-        Ok(ProgramInfo {
-            program,
-            vmt,
-            source_info,
-        })
+        Ok((
+            ProgramInfo {
+                program,
+                vmt,
+                source_info,
+            },
+            notifications,
+        ))
     }
 
     /// Where an `invoke-super` naming `cls` begins method lookup.
