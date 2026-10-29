@@ -2,14 +2,14 @@
 
 > **This format is deprecated.** The engine executes the **model DSL** —
 > [`model-dsl.md`](model-dsl.md) — and a JSON file passed to `--models` is migrated to it in
-> memory and then run; there is no second matcher. Each JSON file draws a deprecation warning,
-> and the format will be removed in a future release. Write new models in the DSL;
-> `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything that does
-> not carry across. A generator that cannot carry across exactly fails `ctadl index` and
-> `ctadl query` the same way, naming the generator. Until then this document is still the
-> reference for the JSON format. The *semantics* below — ports, access paths, the prefix-substitution
-> reading of a port pair, what a bridge does — are shared by both formats and are documented
-> here.
+> memory and then run on the DSL engine; nothing else reads it. Each JSON file draws a
+> deprecation warning, and the format will be removed in a future release. Write new models in
+> the DSL; `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything
+> that does not carry across. A generator that cannot carry across exactly fails `ctadl index`
+> and `ctadl query` the same way, naming the generator. Until then this document is still the
+> reference for the JSON format. The *semantics* below — ports, access paths, the
+> prefix-substitution reading of a port pair, what a bridge does — are shared by both formats
+> and are documented here.
 
 The **model generator** is CTADL's declarative language for telling the taint
 analyzer things it can't discover on its own: which functions produce tainted
@@ -90,8 +90,8 @@ chosen by the frontend's method table:
 | flowy | *(none)* |
 
 Each `.ctadl` file sits next to the `.jsonl` it was migrated from. The `.ctadl` is what an index
-loads; the `.jsonl` is kept as the migrator's input and as the oracle a test checks it against,
-so the two cannot drift.
+loads; the `.jsonl` is kept as the migrator's input, and a test requires each `.ctadl` to be
+exactly what `ctadl migrate-models` writes for it, so the two cannot drift.
 
 Your `--models` files are unioned on top of the selected default. Pass
 `--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving
@@ -104,9 +104,9 @@ ctadl init-model model.json5
 
 ### Checking a model file before you index
 
-Matching is decided **per import**, and only half of it needs an index. Stage 1 evaluates every
-generator's `where` against one program's name / parent / signature / qualified-id tables — it
-reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
+Matching is decided **per import**, and only half of it needs an index. Stage 1 runs every
+generator (as its DSL migration) against one program's functions, method table and call sites —
+it reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
 endpoints out over call sites, and expands wildcard sinks; that half needs the index. Since
 functions are never optimized out, the common case — a source or sink that names a function
 call — is fully decided in Stage 1.
@@ -138,14 +138,14 @@ default models are not loaded, exactly as `ctadl query` does not load them.
 
 What it deliberately cannot tell you, all of it stated in `CTADL0008` rather than left implicit:
 
-- **`find: callsites`** — Stage 1 counts the callees some call site names, not the sites, so
-  "3 callees" says nothing about how many sites the endpoints land on.
+- **`find: callsites`** — Stage 1 counts the callees the matched call sites name, not the sites,
+  so "3 callees" says nothing about how many sites the endpoints land on.
 - **`Argument(*)`** — expands over an arity computed from actual parameters and call sites
   across every import. It is reported as one port, not as its expansion.
 - **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
   contain.
-- **Bridge pair counts.** The two side counts and the diagnosis need no index; the pair count
-  does, so none is reported.
+- **Bridge pair counts.** Whether a bridge paired anything needs no index; how many call pairs
+  it makes does, so none is reported.
 - **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
   only meaningful when the project holds every import the real one will index.
 
@@ -179,7 +179,7 @@ not lines.
 
 The regression suite checks every generator in the built-in files against this
 schema (`cargo xtask regression --filter models:`, one report entry per file),
-so the two cannot drift apart: a keyword added to the loader and used in a
+so the two cannot drift apart: a keyword added to the format and used in a
 shipped default has to land in the schema as well, or the check fails.
 
 ---
@@ -207,13 +207,11 @@ shipped default has to land in the schema as well, or the check fails.
 | `methods`    | Functions / methods (the common case).                        |
 | `callsites`  | Individual call *sites* — a specific call, not the callee everywhere. |
 | `dispatch`   | Java call sites by their own **static signature**, replacing what the site resolves to. See §8.5. |
-| `variables`  | Variables. *(declared in the schema but not yet handled by the loader.)* |
-| `fields`     | Fields of objects/structs. *(declared in the schema but not yet handled by the loader.)* |
+| `variables`  | Variables. *(declared in the schema but not implemented.)* |
+| `fields`     | Fields of objects/structs. *(declared in the schema but not implemented.)* |
 
-> **Implementation note.** The loader
-> ([`models/json.rs`](../ctadl-ascent/src/models/json.rs)) currently only
-> branches on `methods`, `callsites` and `dispatch`; a `find` of `variables` or
-> `fields` raises a parse error today. They're reserved in the schema.
+> Only `methods`, `callsites` and `dispatch` are implemented; a `find` of `variables` or
+> `fields` fails to load. They're reserved in the schema.
 
 ### `in` — which imports
 
@@ -264,7 +262,7 @@ described below. If `where` is omitted, the rule matches everything of that
 `find` kind.
 
 > **Unrecognized constraints are a hard error.** A `where` constraint whose
-> `constraint` discriminator the loader does not recognize (including the removed
+> `constraint` discriminator the format does not define (including the removed
 > `parameter` / `any_parameter`, or a bare integer comparison used outside of
 > `number_parameters`) fails model loading rather than being silently skipped.
 > Model files are versioned alongside the analyzer, and silently skipping unknown
@@ -272,13 +270,13 @@ described below. If `where` is omitted, the rule matches everything of that
 > your model files in sync with the analyzer you run them against.
 
 > **So are unrecognized *fields*, and constraints with no usable field.** A
-> constraint must carry at least one field the loader acts on, and every field it
+> constraint must carry at least one field that selects something, and every field it
 > carries must be one that constraint honors. `{"constraint": "signature", "name":
 > "…"}` — `name` where `pattern` was meant — is rejected on both counts.
 >
-> This matters more than it looks. A generator's working set starts as *every*
-> function, and each constraint narrows it, so a constraint the loader could not
-> act on used to leave the generator matching **the whole program**: a model meant
+> This matters more than it looks. A generator with no constraints matches *every*
+> function, so a constraint that was skipped would leave the generator matching
+> **the whole program**: a model meant
 > to mark one method as a source silently became a global source. The
 > `CTADL0004` diagnostic only reports generators that matched *nothing*, so
 > nothing caught it. This mirrors `additionalProperties: false` in the JSON
@@ -291,11 +289,11 @@ A `model` object carries one or more of: `sources`, `sinks`, `taint`,
 `propagation`, `modes`, `bridge`, `access_paths`, `forward_self`. These are covered in
 [§7](#7-the-model-what-to-attach).
 
-> **What's actually wired up.** As of this branch the loader consumes
-> **`sources`**, **`sinks`**, **`propagation`**, **`bridge`**, and **`access_paths`**.
-> `taint`, `modes`, and `forward_self` are defined in the schema but are **not yet
-> implemented** — a model using them parses but has no effect (the lone
-> `forward_self` line in the jadx defaults is currently inert). They're
+> **What's actually wired up.** Loading consumes **`sources`**, **`sinks`**,
+> **`propagation`**, **`bridge`**, **`access_paths`**, and `modes: ["skip-analysis"]`.
+> `taint` and `forward_self` are defined in the schema but are **not
+> implemented** — a model using them loads, with a migration warning, but has no
+> effect (the lone `forward_self` line in the jadx defaults is inert). They're
 > documented below for completeness and forward compatibility.
 >
 > `forward_call` used to be listed here. It was the same-program special case of `bridge`, was
@@ -548,7 +546,7 @@ Sink ports carry two extra knobs:
 ### `taint` *(schema-only, not yet implemented)*
 
 Same shape as `sources`/`sinks` (a list of `kind`+`port`). Intended to place a
-taint label directly. Not currently consumed by the loader.
+taint label directly. Not implemented: a `taint` entry has no effect.
 
 ### `propagation`
 
@@ -865,8 +863,11 @@ request handlers."
 
 The `in_function` constraint narrows a callsite match by its **caller**: its
 `inner` constraint is evaluated against the containing function. When present,
-CTADL emits callsite-scoped endpoints for the cross product of matched callees
-and matched callers; with no `in_function`, all call sites of the callee match.
+CTADL emits a callsite-scoped endpoint at each call site of a matched callee inside a
+matched caller; with no `in_function`, all call sites of the callee match. A call site
+matches by the callee it **names** (its static target): a call written against `Base.run`
+matches a generator selecting `Base.run`, not one selecting an override `Mid.run` that the
+call may dispatch to.
 
 ```jsonc
 // Only calls to `emit` that occur inside a function named `handleRequest`

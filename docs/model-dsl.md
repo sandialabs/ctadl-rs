@@ -361,7 +361,7 @@ reports it and checks the rest of the file. Diagnostics about a migrated file na
 and the generator index — in provenance, `CTADL0004`, the dead-rule warning and engine errors —
 not a line of a translation the author has never seen. The shipped defaults in
 `ctadl-ascent/src/models/defaults/` are this tool's output, checked in next to the `.jsonl` they
-came from; a test loads both against the same program and requires identical matches.
+came from; a test requires each `.ctadl` to be exactly what this tool writes for its `.jsonl`.
 
 How the JSON constructs map:
 
@@ -389,14 +389,14 @@ How the JSON constructs map:
 | `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)` |
 
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
-A generator the JSON loader rejects fails with the loader's own error. Keys the loader accepts and
-ignores (`taint`, `forward_self`, a `modes` list without `skip-analysis`, an `on-unmatched` or
-`on-ambiguous` other than `"error"`) are warnings. These the loader accepts and the DSL cannot say
-fail the migration, naming the generator:
+A generator the JSON format does not allow fails with the error the JSON loader raised for it.
+Keys the format allows and that have no effect (`taint`, `forward_self`, a `modes` list without
+`skip-analysis`, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
+format allows and the DSL cannot say fail the migration, naming the generator:
 
 - `Variable(...)` ports, which select a local by source name.
-- A `bridge` with no `arguments` map, or an empty one. The JSON loader falls back to an identity
-  map over the arity the two sides share, which needs the fact base; an empty map bridges only the
+- A `bridge` with no `arguments` map, or an empty one. The JSON format means an identity map over
+  the arity the two sides share, which needs the fact base; an empty map bridges only the
   globals. Write the map.
 - `on-unmatched` / `on-ambiguous: "error"`, which fails the run, and a rule cannot.
 

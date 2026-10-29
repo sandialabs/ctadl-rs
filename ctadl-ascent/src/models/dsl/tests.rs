@@ -1397,8 +1397,8 @@ fn a_leading_not_follows_the_atom_that_binds_the_subject() {
     );
 }
 
-/// `in_function` constrains the caller wherever it appears. The JSON matcher applies it to the
-/// callee under `any_of` and `not`, which is a bug in it, not a meaning to carry across.
+/// `in_function` constrains the caller wherever it appears. The JSON matcher applied it to the
+/// callee under `any_of` and `not`, which was a bug in it, not a meaning to carry across.
 #[test]
 fn in_function_under_a_combinator_still_constrains_the_caller() {
     let text = migrate_and_load(

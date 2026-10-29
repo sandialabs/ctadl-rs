@@ -344,9 +344,16 @@ Every relation name is reserved, so an unrecognized one is reported as the typo 
 
 Modified: `cli/mod.rs`, `cli/model_check.rs`, `codegen/model_matches.rs`, `error.rs`, `main.rs`,
 `models/{mod,matches,spec,match_index}.rs`, `tests/{default_models,flowy_tests}.rs`,
-`docs/model-generators.md`. About 590 added lines across those, and 32 removed. The DSL engine
-reads the same `ProgramMatchIndex` tables the JSON matcher did; JSON files reach it through the
-migrator.
+`docs/model-generators.md`. About 590 added lines across those, and 32 removed. JSON files
+reach the engine through the migrator.
+
+Removed: the JSON matcher (`models/json.rs`, `models/universe_set.rs`, about 2,800 lines), the
+value-based JSON loading API in `models/mod.rs`, the JSON bridge scan and pairing
+(`scan_model_files`, `matches::observe_import`, the spec-driven half of
+`codegen/model_matches.rs`), and the `ProgramMatchIndex` tables only it read. What remains of
+the JSON format is input to the migrator: the validator (`models/json_schema.rs`), the
+program-independent parsing it shares with the model check (`models/spec.rs`), and
+`dsl/migrate.rs`.
 
 
 ### 3. Three decisions worth knowing about
@@ -416,29 +423,33 @@ ctadl migrate-models my-models.jsonl --dry-run  # check only
 
 It loads what it produced before writing it, so a file that translates but does not check is a
 failure rather than a surprise on the next index. A generator that cannot carry across exactly
-fails the migration, with the JSON loader's own error where the loader rejects it, rather than
-being approximated or skipped.
+fails the migration rather than being approximated or skipped. A generator the JSON format does
+not allow fails with the error the JSON loader raised for it: the validator in
+`models/json_schema.rs` checks a generator's shape without a program, and reports what the
+loader reported, in the same order.
 
 #### JSON model files are deprecated
 
 A `.json` / `.json5` / `.jsonl` file passed to `--models` is migrated in memory and run through
-the DSL engine, the same as a `.ctadl` file; there is no second matcher behind it. Each such file
-draws a deprecation warning, once per run: JSON model files will be removed in a future release,
-and `ctadl migrate-models` converts one to the DSL. `DslFile::read` does the migration, so every
+the DSL engine, the same as a `.ctadl` file; there is no other matcher. Each such file draws a
+deprecation warning, once per run: JSON model files will be removed in a future release, and
+`ctadl migrate-models` converts one to the DSL. `DslFile::read` does the migration, so every
 path-based entry point — `ctadl index`, `ctadl query`, the model check, `ctadl report`, the flowy
-check — takes a JSON file the same way. The value-based JSON matcher (`json.rs` and
-`try_load_models_from_values`) remains only as the oracle the migration tests check against.
+check — takes a JSON file the same way. `DslFile::from_json_generators` does the same for
+generators already in hand, which is how the tests load them.
 
-Two things the JSON path did came across with it. JSON bridges are DSL rules now, paired by
-the engine's components rather than by `scan_model_files` and `matches::observe_import`, and
-the model check reports one that paired nothing rather than which side failed. And `ctadl index`
-matches the source/sink heads of every file, unreported, because a matched endpoint refuses a
-dispatch model — the JSON matcher loaded the whole file at index time, and a `.ctadl` file's
-endpoints did not gate dispatch until this.
+The JSON matcher that used to run these files has been deleted. Two things it did came across
+with the migration. JSON bridges are DSL rules, paired by the engine's components, and the model
+check reports one that paired nothing rather than which side failed; `on-unmatched` and
+`on-ambiguous` other than `"error"` only changed what the matcher logged, and are migration
+warnings. And `ctadl index` matches the source/sink heads of every file, unreported, because a
+matched endpoint refuses a dispatch model — the JSON matcher loaded the whole file at index time,
+and a `.ctadl` file's endpoints did not gate dispatch until this.
 
 A migrated file means what the JSON meant, with one exception: where the JSON matcher had a bug
 or a limitation, the migration takes the DSL's meaning rather than reproducing it.
-`tests/integration/migration_equivalence.rs` checks every other case against the JSON matcher,
+`tests/integration/migration_equivalence.rs` checks every other case against what the JSON
+matcher matched, recorded in `migration_equivalence.golden` while it existed and frozen since,
 and pins each of these differences exactly:
 
 - **Universe.** A generator with no `where`, or a top-level `not`, ranged over the method table
@@ -480,7 +491,7 @@ which makes the translation exact: `any_of` was already a union over the matched
 
 `java-index.ctadl`, `native-index.ctadl`, `lua-index.ctadl` and `cil-index.ctadl` are this tool's output, checked in
 next to the `.jsonl` they came from. **The `.ctadl` is what an index loads.** The `.jsonl` stays
-as the migrator's input and as the oracle the `.ctadl` is checked against.
+as the migrator's input.
 
 They read well:
 
@@ -492,10 +503,12 @@ propagation(F::return <- F::arg(0)),
   fun(F, name = "append", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
 ```
 
-`tests/default_models.rs::the_dsl_defaults_match_what_the_json_defaults_matched` loads both
-forms against the same program and requires identical matches. That is the validation
-[Validation](#validation) asks for by name, and it is what stops the pair from drifting: edit one
-and not the other and the test fails, naming the file.
+Two tests in `tests/integration/default_models.rs` hold the pair together.
+`the_dsl_defaults_are_the_migration_of_the_json_defaults` requires each `.ctadl` to be, byte for
+byte, what `ctadl migrate-models` writes for its `.jsonl`: edit one and not the other and it
+fails, naming the file. `the_dsl_defaults_match_what_the_json_defaults_matched` runs each `.ctadl`
+on a fixture of every frontend and requires what the JSON matcher matched for the `.jsonl`,
+frozen in `default_models.golden` — the validation [Validation](#validation) asks for by name.
 
 
 ### 5. Diagnostics
@@ -532,7 +545,7 @@ generator index.
 
 A migrated JSON file is reported in the JSON's terms, not its translation's. The migrator
 records which generator each rule came from, and every surface uses that: provenance is
-`file:generator` as the JSON matcher recorded it, `CTADL0004` and the dead-rule warning count a
+`file:generator`, `CTADL0004` and the dead-rule warning count a
 generator once however many disjuncts it became, and an engine error names the generator rather
 than a line of synthetic text. A generator that does not migrate fails `ctadl index` and
 `ctadl query` with the migrator's error, which names it; the model check reports it and checks
@@ -541,21 +554,29 @@ the rest of the file, as it did for a malformed generator before.
 
 ### 6. Testing
 
-483 tests pass. Clippy and `rustfmt` are clean.
+`cargo test --workspace` passes. Clippy and `rustfmt` are clean.
 
-- **39 unit tests** (`models/dsl/tests.rs`) — syntax, mode checking, every error message the
-  design calls for, and the migrator. Includes a drift guard: every shipped default must migrate
+- **74 unit tests** (`models/dsl/tests.rs`) — syntax, mode checking, every error message the
+  design calls for, and the migrator, including the 29 generator shapes the JSON format rejects,
+  each with the loader's error. Includes a drift guard: every shipped default must migrate
   cleanly and load.
-- **29 engine tests** (`tests/model_dsl.rs`) — each input relation against a real program, the
+- **50 engine tests** (`tests/model_dsl.rs`) — each input relation against a real program, the
   operators, every head kind, the two-import bridge, phase separation, and loading through the
   ordinary `try_load_models` entry point.
+- **JSON files on the DSL path** — the tests that used to exercise the JSON matcher
+  (`tests/integration/{json_error_handling,models_loading,bridging_models,dispatch_models,...}.rs`,
+  `models/tests.rs`) load their generators through the migration, with a shared `load_json`
+  helper in `tests/integration/common.rs`.
 - **1 end-to-end fixture** (`tests/tnt/port_bare_dsl.tnt`) — the DSL twin of `port_bare.tnt`,
   driven through the real index pipeline. Verified load-bearing: break the model and the test
   fails.
-- **Equivalence** (`tests/default_models.rs`) — the `.ctadl` and `.jsonl` defaults must match the
-  same things on Java, native, Lua, CIL and flowy programs.
-- **Regression** — `cargo xtask regression --filter models:` and `--frontend lua` both pass, the
-  latter exercising the full import → index → query pipeline with DSL defaults.
+- **Equivalence** — `tests/integration/migration_equivalence.rs` (141 generators) and
+  `class_predicates.rs` against the JSON matcher's frozen answers, and
+  `tests/integration/default_models.rs`, which holds the `.ctadl` defaults to the `.jsonl` they
+  were migrated from on Java, native, Lua, CIL and flowy programs.
+- **Regression** — `cargo xtask regression` passes, including `--filter models:` and
+  `--frontend lua`, the latter exercising the full import → index → query pipeline with DSL
+  defaults.
 
 Manual end-to-end check, for what it looks like in practice: index a flowy program with a DSL
 propagation model, query it with DSL source/sink models, get a reported taint flow.
@@ -567,17 +588,17 @@ propagation model, query it with DSL source/sink models, get a reported taint fl
 `S::bridge(arg(1).baz -> G::arg(0).stack[2])` example is rejected. A bridge emits `call` rows that
 the index fixpoint *consumes*, so a site anchor would name only the statically emitted calls —
 precisely not the ones (a call through a table field, a `dlsym`'d pointer, a virtual dispatch) a
-bridge exists for. This is the same reason the JSON loader rejects `find: callsites` + `bridge`.
+bridge exists for. This is the same reason the JSON format rejects `find: callsites` + `bridge`.
 The requirement that example illustrates — "argument 1's `.baz` of calls to F go to G arg 0's
 `.stack[2]`" — is expressible by anchoring at the callee, which covers every call site of it, and
 the error message says exactly that.
 
 **`Variable(...)` ports have no DSL spelling.** A source or sink on a named local is not
-expressible; migrating a generator that uses one fails, naming it.
-
-**JVM, DEX and pcode regression suites did not run** — this machine has no Java or Ghidra
-toolchain. The Java and native defaults are covered semantically by the equivalence test, not end
-to end.
+expressible; migrating a generator that uses one fails, naming it. Stage 2 still knows how to
+seed a local (`EndpointMatch::local_index`), and `CTADL0004` still has the message ids for the
+reasons only the JSON matcher reported (`localNotFound`, `noCallerMatched`, `portRejected`):
+nothing produces them now, and they stay until a DSL spelling for a local exists or the SARIF
+vocabulary is revised.
 
 **One deliberate departure from strict functional dependence.** `fun(F, name = N)` binds *once per
 published spelling* where a frontend has several — a native symbol known both as `system` and as
