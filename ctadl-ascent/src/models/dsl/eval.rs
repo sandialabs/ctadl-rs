@@ -112,6 +112,9 @@ impl std::fmt::Display for Value {
 
 /// One rule's accumulated solutions: per component, the set of variable tuples that satisfied
 /// it, in that component's `vars` order.
+///
+/// A component whose `vars` is empty binds nothing a head reads. It is a *gate*: its set holds
+/// the empty tuple once anything satisfied it, and nothing until then.
 #[derive(Clone, Debug, Default)]
 pub struct RuleSolutions {
     pub components: Vec<BTreeSet<Vec<Value>>>,
@@ -124,12 +127,21 @@ impl RuleSolutions {
         }
     }
 
-    /// True when some component matched nothing anywhere, so the join is empty.
+    /// True when some component matched nothing anywhere, so the join is empty. A gate that
+    /// never opened is such a component.
     pub fn is_dead(&self) -> bool {
         self.components.iter().any(|c| c.is_empty())
     }
 
-    /// How many groundings the join produces.
+    /// Forgets every solution, keeping the shape.
+    pub fn clear(&mut self) {
+        for c in &mut self.components {
+            c.clear();
+        }
+    }
+
+    /// How many groundings the join produces, saturating at `usize::MAX`. An open gate is a
+    /// factor of one.
     pub fn grounding_count(&self) -> usize {
         self.components
             .iter()
@@ -138,53 +150,84 @@ impl RuleSolutions {
             .unwrap_or(usize::MAX)
     }
 
-    /// The join of every component: each grounding is a full variable binding for the rule.
+    /// The distinct values the join gives `columns`, each a `(component, column)` position, as
+    /// tuples in `columns` order.
     ///
-    /// Components share no variables by construction, so this is a cross product and needs no
-    /// equality check.
-    pub fn groundings<'a>(&'a self, plan: &'a Plan) -> impl Iterator<Item = Binding> + 'a {
-        let lists: Vec<Vec<&Vec<Value>>> =
-            self.components.iter().map(|c| c.iter().collect()).collect();
-        let sizes: Vec<usize> = lists.iter().map(|l| l.len()).collect();
-        let total = if sizes.contains(&0) {
-            0
-        } else {
-            sizes.iter().copied().product::<usize>()
-        };
-        let mut counters = vec![0usize; lists.len()];
-        let mut emitted = 0usize;
+    /// Components share no variables by construction, so the join is a cross product, and only
+    /// the components `columns` names take part in it: every other one is a gate, consulted
+    /// for emptiness alone. Each one taking part is projected onto its columns and
+    /// deduplicated first, which is what makes the product distinct without a seen-set — a
+    /// variable the caller does not read must not multiply its tuples. Lazy: what is held is
+    /// those projections and one counter per component, never the product.
+    pub fn groundings<'a>(
+        &'a self,
+        columns: &[(usize, usize)],
+    ) -> impl Iterator<Item = Vec<Value>> + 'a {
+        // The components taking part, the columns read from each, and for each requested
+        // column, which component's projection holds it and where.
+        let mut parts: Vec<usize> = Vec::new();
+        let mut part_columns: Vec<Vec<usize>> = Vec::new();
+        let mut slots: Vec<(usize, usize)> = Vec::with_capacity(columns.len());
+        for &(ci, col) in columns {
+            let part = match parts.iter().position(|&c| c == ci) {
+                Some(part) => part,
+                None => {
+                    parts.push(ci);
+                    part_columns.push(Vec::new());
+                    parts.len() - 1
+                }
+            };
+            slots.push((part, part_columns[part].len()));
+            part_columns[part].push(col);
+        }
+        let projections: Vec<Vec<Vec<Value>>> = parts
+            .iter()
+            .zip(&part_columns)
+            .map(|(&ci, cols)| {
+                let distinct: BTreeSet<Vec<Value>> = self.components[ci]
+                    .iter()
+                    .map(|row| cols.iter().map(|&col| row[col]).collect())
+                    .collect();
+                distinct.into_iter().collect()
+            })
+            .collect();
+        let mut counters = vec![0usize; projections.len()];
+        let mut done = self.is_dead();
         std::iter::from_fn(move || {
-            if emitted >= total {
+            if done {
                 return None;
             }
-            let mut binding = Binding::default();
-            for (ci, comp) in plan.components.iter().enumerate() {
-                let row = lists[ci][counters[ci]];
-                for (vi, var) in comp.vars.iter().enumerate() {
-                    binding.0.insert(var.clone(), row[vi]);
-                }
-            }
-            // Odometer.
-            for ci in (0..counters.len()).rev() {
-                counters[ci] += 1;
-                if counters[ci] < sizes[ci] {
+            let tuple: Vec<Value> = slots
+                .iter()
+                .map(|&(part, at)| projections[part][counters[part]][at])
+                .collect();
+            // Odometer. It is exhausted when the most significant digit wraps, which with no
+            // digits at all is immediately: the one empty tuple.
+            done = true;
+            for p in (0..counters.len()).rev() {
+                counters[p] += 1;
+                if counters[p] < projections[p].len() {
+                    done = false;
                     break;
                 }
-                counters[ci] = 0;
+                counters[p] = 0;
             }
-            emitted += 1;
-            Some(binding)
+            Some(tuple)
         })
     }
 }
 
-/// One complete grounding of a rule's variables.
-#[derive(Clone, Debug, Default)]
-pub struct Binding(pub BTreeMap<String, Value>);
+/// One grounding of the variables a head reads: `values[i]` is `vars[i]`'s.
+#[derive(Clone, Copy, Debug)]
+pub struct Binding<'a> {
+    pub vars: &'a [String],
+    pub values: &'a [Value],
+}
 
-impl Binding {
+impl Binding<'_> {
     pub fn get(&self, var: &str) -> Option<Value> {
-        self.0.get(var).copied()
+        let i = self.vars.iter().position(|v| v == var)?;
+        self.values.get(i).copied()
     }
 }
 

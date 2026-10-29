@@ -1,26 +1,30 @@
 /*! Head instantiation: groundings → [`ProgramModelMatches`].
 
-Runs once, after the import loop, over the bindings the engine accumulated. Everything it writes
-is named rather than resolved — a function name, not a `FunctionId` — for the same reason the
-JSON path does it: a model names functions that may live in any import, and the id map that
+A rule whose body is one component runs per import, over that import's solutions; a bridging
+rule runs once, after the import loop, over the union (see [`super::DslMatcher`]). Everything it
+writes is named rather than resolved — a function name, not a `FunctionId` — for the same reason
+the JSON path does it: a model names functions that may live in any import, and the id map that
 would resolve them does not hold every import's functions until the loop is over.
 
 # Deduplication
 
-A grounding binds *every* variable in the rule, so two groundings that differ only in a variable
-no head mentions would emit the same row twice. Each head is therefore keyed on its own
-variables and emitted once per distinct key. Without it,
+Two groundings that differ only in a variable a head does not mention would emit that head's row
+twice. Each head is therefore grounded over its own variables only — see
+[`RuleSolutions::groundings`] — so it fires once per distinct key. Without it,
 
 ```text
 source(F::return) :- fun(F, name = "read"), param(F, I);
 ```
 
-would emit one source per parameter of `read`.
+would emit one source per parameter of `read`. A rule emitted per import can meet the same key
+in two imports (a library function both declare); [`RuleEmitter`] remembers the keys it emitted
+for that case. [`ProgramModelMatches`] does not deduplicate, deliberately: see its `endpoints`.
 */
 
 use std::collections::BTreeSet;
 
 use ctadl_ir::mir::PathSegment;
+use hashbrown::{HashMap, HashSet};
 
 use crate::facts::TaintDirection;
 use crate::facts::{self, FormalIndex};
@@ -47,8 +51,12 @@ pub struct RuleStats {
     /// which is reported as *skipped*, never as *matched nothing* — the two are different
     /// problems and only one of them is a problem.
     pub live_heads: usize,
-    /// Distinct groundings of the whole body.
+    /// Groundings of the head variables. Summed over imports for a rule emitted per import, so
+    /// one two imports share counts twice; a count of work, not of rows.
     pub groundings: usize,
+    /// Distinct functions the rule's heads anchored at, exactly: what `functions_matched`
+    /// reports. Not `groundings`, which counts `fun(F, name = N)` once per spelling of `F`.
+    pub functions: usize,
     /// `source` heads the rule declares, whether or not the body matched.
     pub source_heads: usize,
     /// `sink` heads the rule declares.
@@ -87,7 +95,8 @@ impl RuleStats {
 
     pub fn merge(&mut self, other: &Self) {
         self.live_heads = self.live_heads.max(other.live_heads);
-        self.groundings += other.groundings;
+        self.groundings = self.groundings.saturating_add(other.groundings);
+        self.functions += other.functions;
         self.source_heads = self.source_heads.max(other.source_heads);
         self.sink_heads = self.sink_heads.max(other.sink_heads);
         self.propagation_heads = self.propagation_heads.max(other.propagation_heads);
@@ -119,7 +128,8 @@ pub enum Phase {
 }
 
 impl Phase {
-    fn wants(self, head: &HeadKind) -> bool {
+    /// Whether this phase keeps a head of this kind.
+    pub fn wants(self, head: &HeadKind) -> bool {
         matches!(
             (self, head),
             (Phase::All, _)
@@ -138,57 +148,145 @@ impl Phase {
     }
 }
 
-/// Instantiates one rule's heads for `phase`.
-pub fn emit_rule(
-    rule: &Rule,
-    plan: &Plan,
-    solutions: &RuleSolutions,
-    provenance: &str,
-    phase: Phase,
-    out: &mut ProgramModelMatches,
-    errors: &mut DslErrors,
-) -> RuleStats {
-    let mut stats = RuleStats::default();
-    let live: Vec<&Head> = rule.heads.iter().filter(|h| phase.wants(&h.kind)).collect();
-    stats.live_heads = live.len();
-    for head in &live {
-        match head.kind {
-            HeadKind::Source { .. } => stats.source_heads += 1,
-            HeadKind::Sink { .. } => stats.sink_heads += 1,
-            HeadKind::Propagation { .. } => stats.propagation_heads += 1,
-            HeadKind::Dispatch { .. } => stats.dispatch_heads += 1,
-            _ => {}
-        }
-    }
-    if live.is_empty() {
-        return stats;
-    }
-    let groundings: Vec<Binding> = solutions.groundings(plan).collect();
-    stats.groundings = groundings.len();
-    for head in live {
-        let vars = head_vars(head);
-        let mut seen: BTreeSet<Vec<Value>> = BTreeSet::new();
-        for binding in &groundings {
-            let key: Vec<Value> = vars
-                .iter()
-                .map(|v| binding.get(v).unwrap_or(Value::Int(0)))
-                .collect();
-            if !seen.insert(key) {
+/// One rule's emission state, kept across calls so that a rule emitted once per import emits
+/// each row once over the whole run, and its stats describe the run rather than the last import.
+pub struct RuleEmitter {
+    heads: Vec<LiveHead>,
+    /// Whether the rule is emitted once per import rather than once after the loop. Only then
+    /// can a head key recur from one call to the next, so only then is [`LiveHead::seen`] kept.
+    per_import: bool,
+    tally: Tally,
+}
+
+/// A head the phase keeps, with the positions of the variables it reads.
+struct LiveHead {
+    /// Index into `Rule::heads`.
+    head: usize,
+    /// The variables the head reads that some component binds, sorted: the layout of its keys.
+    vars: Vec<String>,
+    /// Parallel to `vars`: the `(component, column)` each is read from.
+    columns: Vec<(usize, usize)>,
+    /// Keys already emitted, for a rule emitted per import. A key holds only the head's own
+    /// variables, so this is no larger than what the head emitted.
+    seen: HashSet<Vec<Value>>,
+}
+
+/// What emission accumulates besides the rows themselves.
+#[derive(Default)]
+struct Tally {
+    stats: RuleStats,
+    /// Every function a head anchored at, for [`RuleStats::functions`].
+    anchored: HashSet<facts::Str>,
+    /// `(from, to)` -> the entry of `ProgramModelMatches::resolved_bridges` its ports join.
+    bridge_slots: HashMap<(facts::Str, facts::Str), usize>,
+}
+
+impl RuleEmitter {
+    /// `per_import` says the caller hands over each import's solutions separately, rather than
+    /// their union once.
+    pub fn new(rule: &Rule, plan: &Plan, phase: Phase, per_import: bool) -> Self {
+        let mut stats = RuleStats::default();
+        let mut heads = Vec::new();
+        for (hi, head) in rule.heads.iter().enumerate() {
+            if !phase.wants(&head.kind) {
                 continue;
             }
-            emit_head(rule, head, binding, provenance, out, &mut stats, errors);
+            match head.kind {
+                HeadKind::Source { .. } => stats.source_heads += 1,
+                HeadKind::Sink { .. } => stats.sink_heads += 1,
+                HeadKind::Propagation { .. } => stats.propagation_heads += 1,
+                HeadKind::Dispatch { .. } => stats.dispatch_heads += 1,
+                _ => {}
+            }
+            let mut vars = Vec::new();
+            let mut columns = Vec::new();
+            for var in head_vars(head) {
+                // A head variable no component binds is one `check` rejects. Leaving it out
+                // reads it as unbound, which emits nothing for the head.
+                let position =
+                    plan.components.iter().enumerate().find_map(|(ci, c)| {
+                        c.vars.iter().position(|v| *v == var).map(|col| (ci, col))
+                    });
+                if let Some(position) = position {
+                    vars.push(var);
+                    columns.push(position);
+                }
+            }
+            heads.push(LiveHead {
+                head: hi,
+                vars,
+                columns,
+                seen: HashSet::new(),
+            });
+        }
+        stats.live_heads = heads.len();
+        Self {
+            heads,
+            per_import,
+            tally: Tally {
+                stats,
+                ..Default::default()
+            },
         }
     }
-    stats
+
+    /// Whether the phase keeps any of the rule's heads. A rule it keeps none of need not be
+    /// evaluated at all.
+    pub fn is_live(&self) -> bool {
+        !self.heads.is_empty()
+    }
+
+    /// Instantiates the live heads over `solutions`.
+    pub fn emit(
+        &mut self,
+        rule: &Rule,
+        solutions: &RuleSolutions,
+        provenance: &str,
+        out: &mut ProgramModelMatches,
+        errors: &mut DslErrors,
+    ) {
+        let Self {
+            heads,
+            per_import,
+            tally,
+        } = self;
+        if heads.is_empty() {
+            return;
+        }
+        tally.stats.groundings = tally
+            .stats
+            .groundings
+            .saturating_add(solutions.grounding_count());
+        for live in heads {
+            let head = &rule.heads[live.head];
+            for key in solutions.groundings(&live.columns) {
+                if *per_import && !live.seen.insert(key.clone()) {
+                    continue;
+                }
+                let binding = Binding {
+                    vars: &live.vars,
+                    values: &key,
+                };
+                emit_head(rule, head, &binding, provenance, out, tally, errors);
+            }
+        }
+    }
+
+    /// The rule's stats over every call.
+    pub fn finish(self) -> RuleStats {
+        let mut stats = self.tally.stats;
+        stats.functions = self.tally.anchored.len();
+        stats
+    }
 }
 
 fn emit_head(
     rule: &Rule,
     head: &Head,
-    binding: &Binding,
+    binding: &Binding<'_>,
     provenance: &str,
     out: &mut ProgramModelMatches,
-    stats: &mut RuleStats,
+    tally: &mut Tally,
     errors: &mut DslErrors,
 ) {
     match &head.kind {
@@ -216,8 +314,8 @@ fn emit_head(
                 callsite_scoped: site.callsite_scoped,
                 local_index: None,
             });
-            stats.sources += 1;
-            note_match(stats, site.function);
+            tally.stats.sources += 1;
+            note_match(tally, site.function);
         }
         HeadKind::Sink {
             port,
@@ -243,8 +341,8 @@ fn emit_head(
                 callsite_scoped: site.callsite_scoped,
                 local_index: None,
             });
-            stats.sinks += 1;
-            note_match(stats, site.function);
+            tally.stats.sinks += 1;
+            note_match(tally, site.function);
         }
         HeadKind::Propagation { flow } => {
             let Some(anchor) = resolve_anchor(head, &flow.left, binding, errors) else {
@@ -280,8 +378,8 @@ fn emit_head(
                     push(right, left);
                 }
             }
-            stats.propagations += if flow.op == FlowOp::Both { 2 } else { 1 };
-            note_match(stats, anchor.function);
+            tally.stats.propagations += if flow.op == FlowOp::Both { 2 } else { 1 };
+            note_match(tally, anchor.function);
         }
         HeadKind::Bridge { flow } => {
             let (Some(from), Some(to)) = (
@@ -316,36 +414,44 @@ fn emit_head(
             };
             // Ports of one (rule, from, to) triple accumulate into one bridge, so the design's
             // three-line stack map is one bridge with three pairs rather than three bridges.
-            let key = (rule.index, from.function, to.function);
-            match out
-                .resolved_bridges
-                .iter_mut()
-                .find(|b| (b.rule, b.from, b.to) == key)
-            {
-                Some(existing) => existing.ports.push(PortPair {
+            // The slot is this rule's own, so two files numbering their rules alike stay apart;
+            // it is re-checked because nothing but convention keeps `out` the same accumulator
+            // from one call to the next.
+            let key = (from.function, to.function);
+            let slot = tally.bridge_slots.get(&key).copied().filter(|&i| {
+                out.resolved_bridges.get(i).is_some_and(|b| {
+                    (b.rule, b.from, b.to) == (rule.index, key.0, key.1)
+                        && b.provenance == provenance
+                })
+            });
+            match slot {
+                Some(i) => out.resolved_bridges[i].ports.push(PortPair {
                     from: left,
                     to: right,
                     direction,
                 }),
-                None => out.resolved_bridges.push(ResolvedBridge {
-                    provenance: provenance.to_string(),
-                    rule: rule.index,
-                    from: from.function,
-                    to: to.function,
-                    ports: vec![PortPair {
-                        from: left,
-                        to: right,
-                        direction,
-                    }],
-                }),
+                None => {
+                    tally.bridge_slots.insert(key, out.resolved_bridges.len());
+                    out.resolved_bridges.push(ResolvedBridge {
+                        provenance: provenance.to_string(),
+                        rule: rule.index,
+                        from: from.function,
+                        to: to.function,
+                        ports: vec![PortPair {
+                            from: left,
+                            to: right,
+                            direction,
+                        }],
+                    })
+                }
             }
-            stats.bridges += 1;
-            note_match(stats, from.function);
+            tally.stats.bridges += 1;
+            note_match(tally, from.function);
         }
         HeadKind::AccessPath { segments, .. } => {
             out.access_paths
                 .insert(facts::Path::from_accesses(segments.iter().cloned()));
-            stats.access_paths += 1;
+            tally.stats.access_paths += 1;
         }
         HeadKind::Dispatch { disposition } => {
             let Some((key, id)) = resolve_callsig(rule, head, disposition, binding, errors) else {
@@ -391,8 +497,8 @@ fn emit_head(
                     );
                 }
             }
-            stats.dispatch += 1;
-            note_match(stats, id);
+            tally.stats.dispatch += 1;
+            note_match(tally, id);
         }
     }
 }
@@ -406,7 +512,7 @@ fn resolve_callsig(
     rule: &Rule,
     head: &Head,
     disposition: &DispatchHead,
-    binding: &Binding,
+    binding: &Binding<'_>,
     errors: &mut DslErrors,
 ) -> Option<(DispatchKey, facts::Str)> {
     let span = match disposition {
@@ -476,7 +582,7 @@ struct Anchor {
 fn resolve_anchor(
     head: &Head,
     port: &PortExpr,
-    binding: &Binding,
+    binding: &Binding<'_>,
     errors: &mut DslErrors,
 ) -> Option<Anchor> {
     let term = port.anchor.as_ref().or(head.anchor.as_ref())?;
@@ -517,7 +623,7 @@ fn resolve_anchor(
 /// The `(tag, index)` a port names, grounding an `arg(I)` selector if there is one.
 fn resolve_base(
     port: &Port,
-    binding: &Binding,
+    binding: &Binding<'_>,
     span: Span,
     errors: &mut DslErrors,
 ) -> Option<(FormalIndexTypeTag, Option<i16>)> {
@@ -549,7 +655,7 @@ fn resolve_base(
 
 fn model_port(
     port: &Port,
-    binding: &Binding,
+    binding: &Binding<'_>,
     span: Span,
     errors: &mut DslErrors,
 ) -> Option<ModelPort> {
@@ -565,7 +671,7 @@ fn model_port(
 /// wildcard has no correspondent on the other side of the bridge.
 fn bridge_port(
     port: &Port,
-    binding: &Binding,
+    binding: &Binding<'_>,
     span: Span,
     errors: &mut DslErrors,
 ) -> Option<BridgePort> {
@@ -597,7 +703,9 @@ fn bridge_port(
 }
 
 /// Records a function a head anchored at, up to the cap.
-fn note_match(stats: &mut RuleStats, function: facts::Str) {
+fn note_match(tally: &mut Tally, function: facts::Str) {
+    tally.anchored.insert(function);
+    let stats = &mut tally.stats;
     if stats.matched_functions.len() < MATCHED_SAMPLE_CAP {
         stats.matched_functions.insert(function.to_string());
     }

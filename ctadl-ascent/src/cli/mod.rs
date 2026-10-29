@@ -182,13 +182,6 @@ fn merged_method_guardrail(
     }
 }
 
-/// Indexes a project
-/// If summary_projects is provided, loads summaries from those projects and maps them into the
-/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
-/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
-/// only in a summary project is linked to it; see [`jni`].
-/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
-/// complete set. See [`IndexOptions`] for the rest.
 /// What a DSL load did, said once, for whichever phase just ran.
 ///
 /// Three things, and they answer three different questions. The *counts* are the design's
@@ -223,6 +216,13 @@ fn report_dsl(report: &crate::models::DslReport) {
     }
 }
 
+/// Indexes a project
+/// If summary_projects is provided, loads summaries from those projects and maps them into the
+/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
+/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
+/// only in a summary project is linked to it; see [`jni`].
+/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
+/// complete set. See [`IndexOptions`] for the rest.
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
@@ -266,11 +266,12 @@ pub fn index(
 
     let file_specs = crate::models::scan_model_files(models)?;
     // DSL files are parsed and checked once, before any artifact is read, and matched by a
-    // single accumulator across the whole loop. That is not symmetry with the JSON path for its
+    // single matcher across the whole loop. That is not symmetry with the JSON path for its
     // own sake: a rule whose body names two programs — a bridge — is satisfied by no single
     // import, so its components have to be collected as the imports stream by and joined after.
     let dsl_models = crate::models::DslModelSet::scan(models)?;
-    let mut dsl_matcher = crate::models::DslMatcher::new(&dsl_models);
+    let mut dsl_matcher =
+        crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Index);
     // Every matched model, instantiated against the IR being indexed. It persists across the import
     // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
     // import cache is a pure function of the artifact, and persisting them would let `ctadl index
@@ -322,12 +323,16 @@ pub fn index(
         // the memory posture streaming rather than "every import's match index resident".
         {
             let scope = crate::models::ImportScope::new(import.language, &import.name);
+            let defaults = if no_default_models {
+                None
+            } else {
+                crate::models::default_dsl_models(&program_info.vmt)?
+            };
             // Only when some generator asks for it: collecting the keys is a pass over every
             // statement, and the defaults are language-selected, so this is decided per import.
             let wants_dispatch = file_specs.finds_dispatch
                 || dsl_models.uses_callsig()
-                || (!no_default_models
-                    && crate::models::default_models_find_dispatch(&program_info.vmt));
+                || defaults.is_some_and(|d| d.uses_callsig());
             let dispatch_keys = wants_dispatch
                 .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
             let match_index = crate::models::ProgramMatchIndex::new_with_dispatch(
@@ -335,8 +340,17 @@ pub fn index(
                 scope,
                 dispatch_keys.as_ref(),
             );
-            if !no_default_models {
-                crate::models::try_load_default_models(&match_index, &mut model_matches)?;
+            // One set of DSL relations for the defaults and the user's rules both, covering
+            // what either reads.
+            let dsl_facts = (defaults.is_some() || !dsl_matcher.is_empty()).then(|| {
+                let mut needs = dsl_matcher.needs();
+                if let Some(defaults) = defaults {
+                    needs.union(defaults.needs());
+                }
+                crate::models::dsl::program_facts(&match_index, &needs)
+            });
+            if let (Some(defaults), Some(facts)) = (defaults, &dsl_facts) {
+                crate::models::load_default_models_from_facts(defaults, facts, &mut model_matches)?;
             }
             for model_path in models {
                 // The DSL files are the matcher's, not this loop's; see above.
@@ -349,7 +363,9 @@ pub fn index(
                     files_declaring_endpoints.insert(model_path);
                 }
             }
-            dsl_matcher.observe_import(&match_index);
+            if let Some(facts) = &dsl_facts {
+                dsl_matcher.observe_facts(facts, &mut model_matches);
+            }
             crate::models::matches::observe_import(
                 &match_index,
                 &file_specs.bridges,
@@ -400,7 +416,7 @@ pub fn index(
     // Every import has been seen, so a rule whose two components matched in two different
     // programs can finally be joined. Index time keeps the propagation / bridge / access-path
     // heads and says how many rules declared only the other phase's.
-    let dsl_report = dsl_matcher.finish(crate::models::DslPhase::Index, &mut model_matches)?;
+    let dsl_report = dsl_matcher.finish(&mut model_matches)?;
     report_dsl(&dsl_report);
 
     // Streaming matching retains only the *matches* -- one interned name plus two
@@ -779,7 +795,8 @@ pub fn query(
         // Parsed and checked once, before any import is read; see `cli::index` for why the DSL
         // needs one accumulator across the whole loop rather than one load per (file, import).
         let dsl_models = crate::models::DslModelSet::scan(models)?;
-        let mut dsl_matcher = crate::models::DslMatcher::new(&dsl_models);
+        let mut dsl_matcher =
+            crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Query);
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
@@ -788,7 +805,7 @@ pub fn query(
                     &program_info,
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
-                dsl_matcher.observe_import(&match_index);
+                dsl_matcher.observe_import(&match_index, &mut model_matches);
                 for model_path in models {
                     if crate::models::is_dsl_path(model_path) {
                         continue;
@@ -819,38 +836,15 @@ pub fn query(
         }
         // Query time keeps the source/sink heads. The rules whose heads are all index-time are
         // counted and reported, exactly as the JSON half's `ignored` counters are.
-        let dsl_report = dsl_matcher.finish(crate::models::DslPhase::Query, &mut model_matches)?;
+        let dsl_report = dsl_matcher.finish(&mut model_matches)?;
         report_dsl(&dsl_report);
         for file in &dsl_report.files {
-            for (rule, stats) in file.rules.iter().enumerate() {
-                for (declared, matched, direction) in [
-                    (
-                        stats.source_heads,
-                        stats.sources,
-                        crate::facts::TaintDirection::Forward,
-                    ),
-                    (
-                        stats.sink_heads,
-                        stats.sinks,
-                        crate::facts::TaintDirection::Backward,
-                    ),
-                ] {
-                    if declared == 0 {
-                        continue;
-                    }
-                    let entry = diagnostics
-                        .generator_stats
-                        .entry((file.path.clone(), rule, direction))
-                        .or_default();
-                    entry.ports_declared += declared;
-                    entry.endpoints_matched += matched;
-                    entry.functions_matched = entry.functions_matched.max(stats.groundings);
-                    if matched == 0 {
-                        entry
-                            .unmatched
-                            .insert(crate::models::UnmatchedReason::NoFunctionMatched);
-                    }
-                }
+            for ((rule, direction), stats) in crate::models::dsl_endpoint_stats(file) {
+                diagnostics
+                    .generator_stats
+                    .entry((file.path.clone(), rule, direction))
+                    .or_default()
+                    .merge(&stats);
             }
         }
         log::debug!(

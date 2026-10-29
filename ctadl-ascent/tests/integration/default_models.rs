@@ -584,10 +584,10 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
             let file = dsl::DslFile::from_text(dsl_name, dsl_source)
                 .unwrap_or_else(|e| panic!("{dsl_name}: {e}"));
             let set = dsl::DslModelSet { files: vec![file] };
-            let mut matcher = dsl::DslMatcher::new(&set);
-            matcher.observe_import(&match_index);
+            let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+            matcher.observe_import(&match_index, &mut from_dsl);
             matcher
-                .finish(dsl::Phase::All, &mut from_dsl)
+                .finish(&mut from_dsl)
                 .unwrap_or_else(|e| panic!("{dsl_name} on {vmt_name}: {e}"));
 
             // Compared as sets: the two loaders visit in different orders, and a duplicate row
