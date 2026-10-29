@@ -265,6 +265,8 @@ fn java_with(extra: Vec<FunctionData>) -> ProgramInfo {
             3,
             Body {
                 loads: &["count"],
+                // Statically `Base.run`; CHA also resolves it to the override `Mid.run`.
+                calls: vec![java_call("Lapp/Base;", "run", "()V")],
                 ..Default::default()
             },
         ),
@@ -1721,8 +1723,46 @@ faithful! {
     unknown, java, native, lua, cil,
 }
 
+/// The callees a `find: callsites` load anchored endpoints at, before any expansion over call
+/// sites.
+fn callsite_callees(m: &ProgramModelMatches) -> BTreeSet<String> {
+    m.endpoints
+        .iter()
+        .filter(|e| e.callsite_scoped)
+        .map(|e| e.function.to_string())
+        .collect()
+}
+
+/// What the call-site comparison above normalizes away. The JSON matcher gives *every*
+/// matching callee a call-site endpoint, and Stage 2 anchors it at the sites the resolved call
+/// graph sends there -- including a virtual call that names the base method (`Base.run`) and
+/// that CHA resolves to an override (`Mid.run`). The DSL joins on the callee the site names, so
+/// it anchors only `Base.run`, and only where a site spells it.
+#[ignore = "migrator divergence: callsite joins the static callee, not the resolved call targets"]
+#[test]
+fn callsites_anchor_at_every_matched_callee() {
+    let generator = callsites(json!([sig_name("run")]));
+    let (scope, program) = frontend("java");
+    let index = ProgramMatchIndex::new(&program, scope);
+    let mut from_json = ProgramModelMatches::default();
+    try_load_models_from_values(
+        &index,
+        std::iter::once(Ok(generator.clone())),
+        &mut from_json,
+    )
+    .expect("json");
+    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(&generator), None);
+    let file = dsl::DslFile::from_text("migrated.ctadl", text).expect("dsl");
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let mut from_dsl = ProgramModelMatches::default();
+    matcher.observe_import(&index, &mut from_dsl);
+    matcher.finish(&mut from_dsl).expect("finish");
+    assert_eq!(callsite_callees(&from_json), callsite_callees(&from_dsl));
+}
+
 faithful! {
-    callsites_uses_field = callsites(json!([{"constraint": "uses_field", "name": "secret"}]));
+    callsites_uses_field =callsites(json!([{"constraint": "uses_field", "name": "secret"}]));
     java,
 }
 
