@@ -8,11 +8,14 @@ the memory budget (100x the imported IR), and before any fix they did not finish
 This branch is off `main` (merged up to `4490f7bf`; `ebd22e01` before it interns the index
 engine's values as 4-byte handles, #170). It has S3 (stack-slot promotion, `window:8`
 by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`); S5's
-design and first measurements are under S5 below. It also has S29's frame updates (steps 1, 2 and
-5) and a pcode frontend fix found through them: taking a frame address no longer writes the
+design and first measurements are under S5 below. It also has S29's frame updates (steps 1, 2, 3
+and 5) and a pcode frontend fix found through them: taking a frame address no longer writes the
 frame. That fix alone brings `ntfs-3g` from 30x over budget to budget and cuts `androidudpbus`'s
 peak by a quarter at the default (S29). Merging #170 then cuts every measured peak by 22-61%
-and changes no relation count or finding (S29, "After merging `main`'s interning"). `improve-native-handling` has the earlier record:
+and changes no relation count or finding (S29, "After merging `main`'s interning"). With S29's
+step 3, mem2reg on frame updates, `--frame update` beats the default on all four binaries but
+`uclited`, where it ties, and brings `androidudpbus` under budget (S29, "Step 3"). The default is
+still `--frame store`. `improve-native-handling` has the earlier record:
 `things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
@@ -21,9 +24,10 @@ and changes no relation count or finding (S29, "After merging `main`'s interning
   suite fails on a lost flow instead of skipping on Darwin).
 - **S5** is on this branch. `ctadl index --mem2reg <policy>` (or `CTADL_MEM2REG`) picks the
   policy: `window:N`, `exact`, `above`, `full[:N]` or `off`.
-- **S29 steps 1, 2 and 5** are on this branch: pcode writes the frame as `Update`,
+- **S29 steps 1, 2, 3 and 5** are on this branch: pcode writes the frame as `Update`,
   `ctadl index --frame store` (the default; `CTADL_FRAME`) coarsens it back to `Store`, and
-  under `--frame update` an update overwrites the slot it writes. See S29.
+  under `--frame update` mem2reg promotes the slots no escape reaches and an update overwrites
+  the slot it writes. See S29.
 - **The PTRSUB fix** (`6b0ab678`): the pcode frontend no longer lowers taking a frame address
   as a write into the frame. It changes the default IR; see S29.
 - **Optional, for native apps that also link libc++abi's demangler** (P4, not P1): `bb9cc766`
@@ -114,6 +118,10 @@ table below:
 The rest of this section, and the firmware sections after it, are from before the fix and before
 #170, so their peaks are higher than today's; #170 changes no row count. `exact`, `full` and
 `full:0` have not been re-run with either, nor have the other binaries.
+
+**Under `--frame update`** (S29, "Step 3"), `androidudpbus` falls to 41.9 M rows and 2.25 GiB,
+**under budget (0.86x)**, and `glxy` to 76.6 M and 2.12 GiB (1.5x). `ntfs-3g` falls to 4.3 M and
+`uclited` stays at 40.7 M. Every finding is the same.
 
 The table above (Measurements) is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
 with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`. The budget is 100x
@@ -375,9 +383,10 @@ After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function 
 
 ## S29: the frame as `Update`, coarsened by default
 
-Steps 1, 2 and 5 of S29 (Ideas for solutions) are done; 3 is not. The current numbers are under
-"After merging `main`'s interning"; "Taking a frame address no longer writes the frame" has the
-same runs before that merge, and "What keeping `Update` costs" is from before step 5 and that fix.
+Steps 1, 2, 3 and 5 of S29 (Ideas for solutions) are done. The current numbers are under
+"Step 3" for `update` and "After merging `main`'s interning" for the default; "Taking a frame
+address no longer writes the frame" has the same runs before that merge and before step 3, and
+"What keeping `Update` costs" is from before steps 3 and 5 and that fix.
 
 - **The frontend** writes into the frame itself, `__stack_top.[k].deref := v`, as
   `__stack_top = update (__stack_top.[k].deref := v)`. A write through anything else (a copy of
@@ -386,8 +395,59 @@ same runs before that merge, and "What keeping `Update` costs" is from before st
   store it stands for, before dead-temp elimination, coalescing and mem2reg, which then see the IR
   they saw before. `ctadl index --frame store|update` (`CTADL_FRAME`) picks the default, `store`;
   model modes `frame-store` and `frame-update` pick one for one function.
-- **Not done:** mem2reg still leaves alone a function that defines `__stack_top` (step 3), so
-  under `update` it promotes nothing in any function that writes its frame.
+- **mem2reg** (step 3) treats a frame update as a direct store to its slot. A slot it promotes
+  becomes a local, and its updates become copies; a slot an escape reaches (under `--mem2reg`'s
+  policy) keeps its updates, so SSA versions the frame for the slots left in it.
+
+### Step 3: mem2reg on `Update`
+
+Before step 3, mem2reg left alone every function that defined `__stack_top`, so under `update` it
+promoted nothing: `androidudpbus` skipped 466 functions and promoted 4 slots, against 3,102 under
+`store`. Now a frame update, `__stack_top = update (__stack_top.[k].deref := v)`, is a direct
+store to slot `k` like any other (`bdcc187e`). Promoting the slot rewrites it into
+`__stack_m<k> = v`; a slot an escape reaches keeps its updates. Any other definition of
+`__stack_top`, or an update that copies the frame into another variable, still skips the
+function. Under `--frame store` there are no updates left when mem2reg runs, so the default is
+unchanged: every relation count and SARIF result is equal to the run before step 3.
+
+Same settings as "After merging `main`'s interning" below, on the imports after `4490f7bf`:
+
+| App | `--frame` | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget | `update` before step 3 |
+|---|---|---|---|---|---|---|---|
+| `uclited` | `store` | `window:8` (default) | 40.4 M | 9.4 s | 0.66 GiB | 3.5x over | |
+| | `update` | `window:8` | 40.7 M | 9.3 s | 0.67 GiB | 3.6x over | 211.9 M, 5.03 GiB |
+| | `update` | `above` | 115.7 M | 21.4 s | 1.68 GiB | 9.0x over | |
+| `ntfs-3g` | `store` | `window:8` (default) | 5.0 M | 2.8 s | 0.40 GiB | under (0.8x) | |
+| | `update` | `window:8` | 4.3 M | 2.2 s | 0.32 GiB | under (0.6x) | 15.9 M, 0.60 GiB |
+| | `update` | `above` | 11.7 M | 4.5 s | 0.48 GiB | under (0.95x) | |
+| `glxy` | `store` | `window:8` (default) | 85.0 M | 36 s | 2.25 GiB | 1.6x over | |
+| | `update` | `window:8` | 76.6 M | 32 s | 2.12 GiB | 1.5x over | 86.6 M, 2.28 GiB |
+| | `update` | `above` | 84.6 M | 34 s | 2.26 GiB | 1.6x over | |
+| `androidudpbus` | `store` | `window:8` (default) | 289.6 M | 98 s | 6.61 GiB | 2.5x over | |
+| | `update` | `window:8` | **41.9 M** | 44 s | **2.25 GiB** | **under (0.86x)** | 283.6 M, 13.65 GiB |
+| | `update` | `above` | 266.9 M | 680 s | 13.77 GiB | 5.2x over | |
+
+"Before step 3" is the `update` row of "After merging `main`'s interning" (`glxy`'s from before
+`4490f7bf`, which moves it by at most 90 rows a relation).
+
+- **`update` with `window:8` now beats the default** on `androidudpbus` (7x fewer rows, 2.9x less
+  peak, under budget), `glxy` (10% fewer rows) and `ntfs-3g` (13%), and ties on `uclited`, whose
+  rows are `inflate`'s loop, not its stack (Analysis). mem2reg promotes exactly the slots it
+  promotes under `store` (416,021 accesses on `androidudpbus`); what changes is the 164,771 it
+  keeps, which are now versioned and overwritten instead of one pool per slot. Only 59,359 frame
+  updates are left there, against 205,273 before.
+- **The versions × paths volume is gone with them:** `androidudpbus`'s distinct
+  `(function, variable, path)` in `locals` are 2.6 M (17.3 M before step 3, 1.0 M under `store`),
+  `locals_key` 8.4 M (58.5 M, 2.8 M), `reach_vp` 2.6 M (17.3 M, 1.0 M).
+- **Every finding is the same** as the default's on all four binaries (79, 75, 1 and 1, by rule,
+  message and location), under `window:8` and `above` alike. The regression suite (`pcode`,
+  `jni`) passes 46 of 46 under `--frame store` and `CTADL_FRAME=update`.
+- **`above` costs what skipping cost.** It keeps every slot at or above an escape, which in these
+  functions is nearly all of them: on `androidudpbus` it promotes 12,289 accesses and keeps
+  568,503, so the rows and peak return to before step 3. It is the only policy that loses no
+  flow, so `update` does not yet replace `window:8`'s guess with something sound at an
+  affordable cost; it makes the slots `window:8` keeps precise.
+- **Not measured:** `full` and `full:0` under `update`, and the other binaries.
 
 ### Step 5: the overwrite rule
 
@@ -454,7 +514,8 @@ Every run reports the same findings as `window:8` before the fix (79, 75, 1 and 
   rows per path rather than 284), and the relations that key each path grow with them:
   `locals_key` 58.5 M against 2.8 M, `ext_dst` 17.8 M against 1.8 M, `reach_vp` 17.3 M against
   1.0 M. That is the versions × paths volume: each frame version carries its own copy of every
-  slot it does not write. Step 3, promoting the slots no escape reaches, is what removes it.
+  slot it does not write. Step 3, promoting the slots no escape reaches, is what removes it
+  (see "Step 3" above).
 
 ### After merging `main`'s interning (#170)
 
@@ -737,9 +798,8 @@ query's SARIF. A slot a returned address reaches stays in memory (the pcode fron
 stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
 forbid it for one function. See Current state for what it does to the apps.
 
-**S29, steps 1, 2 and 5 on this branch: the pcode frontend emits `Update` for the frame, and passes
-coarsen it.** Step 3 is not started (step 4 is SSA itself); what is done and what it costs is
-under S29 below. A frontend should emit the most precise IR, since a later pass can drop
+**S29, steps 1, 2, 3 and 5 on this branch: the pcode frontend emits `Update` for the frame, and
+passes coarsen it.** Step 4 is SSA itself; what is done and what it costs is under S29 below. A frontend should emit the most precise IR, since a later pass can drop
 information but not recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
 frame for the whole function, and mem2reg has to rebuild the order of stack accesses and guess
 how far an escaped address reaches (`window:8`). `Update` (restored in #118, emitted today only by
@@ -803,14 +863,14 @@ What it would and would not do:
 - **It already paid once, indirectly.** The overwrite rule exposed the frontend writing taken
   frame addresses into the frame, and fixing that brought `ntfs-3g` to budget at the default (S29
   above).
-- **The cost is measured** (S29 above). With steps 1, 2 and 5 and the PTRSUB fix, `update` beats
-  `off` (its fair comparison while mem2reg skips its functions) everywhere but `uclited`, and ties
-  today's default only on `glxy`; on `androidudpbus` it is 2.1x the default's peak. The cost is
-  the versions × paths of the frame. Step 2 is the valve, and it stays on (coarsen all) until
-  `update` beats today.
-- **Next:** mem2reg on `Update` (step 3). Compare flows on the regression suite (`pcode`, `jni`),
-  under both `--frame` settings, and `locals` and peak on `uclited`, `ntfs-3g`, `glxy` and
-  `androidudpbus` against the `--frame update` rows in S29 and against `window:8` and `full`.
+- **The cost is measured** (S29 above). With steps 1, 2, 3 and 5 and the PTRSUB fix, `update`
+  with `window:8` beats today's default on `androidudpbus` (under budget), `glxy` and `ntfs-3g`,
+  and ties on `uclited`, with the same findings. Step 2 is the valve, and it stays on (coarsen
+  all) until `update` beats today; it now does on these four.
+- **Next:** decide whether `--frame update` becomes the default, after the regression suite's
+  wider frontends (`android-native`) and more native binaries; and measure `full` under
+  `update`. Making the escaped slots sound (`above`) at an affordable cost needs a better bound
+  on what an escaped address reaches than "every slot above it".
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
