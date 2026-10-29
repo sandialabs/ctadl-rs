@@ -31,7 +31,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 
 ### Out of scope
 
-- Dynamic analysis; proving a flow exploitable; proving no flow exists (soundness).
+- Dynamic analysis; proving a flow exists; proving no flow exists (soundness).
 - Bug finding that is not about data flow (memory safety, type errors).
 - Backward compatibility of commands, flags, model files or on-disk formats.
 
@@ -97,14 +97,18 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 - N3. **No silent loss.** Whatever the analysis drops (an unresolved call, an unlinked native
   method, an unmatched model, a possibly stale summary) is reported in the log or SARIF. A
   quiet result must not be mistaken for a clean one.
-- N4. **Reproducibility.** An index records the options it was built with; known
+- N4. **Traceability.** Every finding, and every step of a flow, points back to the artifact
+  it came from: a file, line and column for source code, an address for a binary. Locations
+  survive every IR pass, and a location that cannot be confirmed against the artifact is
+  flagged, not guessed.
+- N5. **Reproducibility.** An index records the options it was built with; known
   non-determinism is documented ([debugging.md](debugging.md)).
-- N5. **Extensibility.** A new language needs only a front end producing IR (and a VMT); SSA,
+- N6. **Extensibility.** A new language needs only a front end producing IR (and a VMT); SSA,
   summaries, models and output come for free. New library behaviour or endpoints need only
   model generators; new analysis needs only Datalog rules.
-- N6. **Clear errors.** User mistakes (a malformed model, a stale import, a missing
+- N7. **Clear errors.** User mistakes (a malformed model, a stale import, a missing
   toolchain) produce a message that says what to do.
-- N7. **Portable.** One self-contained `ctadl` binary for macOS and Linux; optional tools
+- N8. **Portable.** One self-contained `ctadl` binary for macOS and Linux; optional tools
   (Ghidra for binaries) degrade gracefully when absent.
 
 ## 4. Design
@@ -188,7 +192,16 @@ more of these to a port of each match:
 Propagation, bridge and dispatch models are consumed at index time; sources and sinks at query
 time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
-### 4.4 Output
+### 4.4 Source info
+
+Each IR instruction carries a span id into its import's source-info tables, which map it to
+a byte range in a file of an original artifact, recorded by path and content hash. Front ends
+record spans as they lower, and IR passes carry them along. The formatter resolves them to
+SARIF locations: line and column when the artifact's text is at hand, an absolute and
+section-relative address for a binary, and the enclosing function as a logical location. When
+the artifact is missing, a location falls back to a byte offset and a warning.
+
+### 4.5 Output
 
 One SARIF run, one rule per kind of result: `C0001` source-to-sink paths (a code flow with
 intra-/interprocedural steps), `C0002` tainted instructions, `C0003`/`C0004` source and sink
@@ -197,7 +210,7 @@ data (an "almost" path), `C0007` external functions that absorb taint. `CTADL0xx
 notifications report on the run itself. `--sarif-profile` (`human`, `agent`, `machine`,
 `debug`) selects what is emitted.
 
-### 4.5 Storage
+### 4.6 Storage
 
 The store, under `$XDG_STATE_HOME` by default, holds `imports/` and `projects/`. An import is
 IR and VMT (`bitcode`) plus source info (parquet), stamped with a format version. A project
