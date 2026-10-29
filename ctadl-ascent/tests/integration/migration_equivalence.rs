@@ -3,10 +3,14 @@
 //! JSON model files are run by translating them with [`dsl::migrate::migrate_generators`] and
 //! loading the result on the DSL engine (see `DESIGN.md` §4). That is only sound if the
 //! translation is *faithful*: for every generator, the migrated rules must match exactly what the
-//! JSON matcher (`models/json.rs`) matched. Each test here takes one generator, runs it through
-//! both, and compares the whole [`ProgramModelMatches`] -- propagations, function- and
+//! JSON matcher (`models/json.rs`) matched. Each test here takes one generator, runs its
+//! migration, and compares the whole [`ProgramModelMatches`] -- propagations, function- and
 //! call-site-anchored endpoints, access paths, `skip-analysis` marks, dispatch dispositions,
-//! closure-shaped markers and bridges.
+//! closure-shaped markers and bridges -- against what the JSON matcher matched.
+//!
+//! The JSON matcher's answers are frozen in `migration_equivalence.golden`, one entry per test,
+//! so these tests outlive the matcher. While it exists, [`json_oracle`] re-checks every entry
+//! against it and re-records them on request.
 //!
 //! When the JSON matcher refuses a generator, the faithful outcome is that the migrated form is
 //! refused too: the migration fails, the DSL fails to load or to emit, or migration produced no
@@ -26,15 +30,12 @@
 //! ([`Known`]), so neither side can drift without a test noticing.
 
 use std::collections::BTreeSet;
-use std::io::Write as _;
 
 use serde_json::{Value, json};
 
 use ctadl_ascent::error::JsonModelError;
-use ctadl_ascent::models::matches::observe_import;
 use ctadl_ascent::models::{
-    DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl, scan_model_files,
-    try_load_models_from_values,
+    DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::Idx;
@@ -548,6 +549,7 @@ fn unknown() -> ProgramInfo {
 fn frontend(name: &str) -> (ImportScope, ProgramInfo) {
     match name {
         "java" => (ImportScope::new(ArtifactLanguage::Dex, "app"), java()),
+        "java_anonymous" => (ImportScope::unknown(), java()),
         "java_unnamed" => (
             ImportScope::new(ArtifactLanguage::Dex, "app"),
             java_unnamed(),
@@ -575,7 +577,7 @@ fn frontend(name: &str) -> (ImportScope, ProgramInfo) {
 /// "any caller", or one per matched caller; the DSL writes one per site. Both are expanded over
 /// the program's statically named callees -- the same `callee_string` the DSL's `callsite`
 /// relation reads.
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 struct Matched {
     propagations: BTreeSet<String>,
     endpoints: BTreeSet<String>,
@@ -603,6 +605,29 @@ impl Matched {
             ("closure_shaped", &self.closure_shaped),
             ("bridges", &self.bridges),
         ]
+    }
+
+    /// Adds one row as [`Matched::render`] prints it (without the indent), or `None` if it
+    /// names no field.
+    fn insert_rendered(&mut self, line: &str) -> Option<()> {
+        let fields = [
+            &mut self.propagations,
+            &mut self.endpoints,
+            &mut self.callsite_endpoints,
+            &mut self.access_paths,
+            &mut self.skip_analysis,
+            &mut self.dispatch,
+            &mut self.closure_shaped,
+            &mut self.bridges,
+        ];
+        let names = Matched::default().fields().map(|(name, _)| name);
+        for (name, set) in names.into_iter().zip(fields) {
+            if let Some(row) = line.strip_prefix(name).and_then(|r| r.strip_prefix(": ")) {
+                set.insert(row.to_string());
+                return Some(());
+            }
+        }
+        None
     }
 
     fn render(&self) -> String {
@@ -779,69 +804,9 @@ fn pair_text(pair: &ctadl_ascent::models::spec::PortPair) -> String {
 /// One import: its identity and its program.
 type Import = (ImportScope, ProgramInfo);
 
-/// What the JSON matcher matched for `generator` across `imports`, or why it refused.
-fn run_json(generator: &Value, imports: &[Import]) -> Result<Matched, String> {
-    let mut matched = Matched::default();
-    for (scope, program) in imports {
-        let keys = DispatchKeys::from_program(&program.program);
-        let index = ProgramMatchIndex::new_with_dispatch(program, scope.clone(), Some(&keys));
-        let mut one = ProgramModelMatches::default();
-        try_load_models_from_values(&index, std::iter::once(Ok(generator.clone())), &mut one)
-            .map_err(|e| format!("{e:#}"))?;
-        let sites = static_sites(program);
-        let n = normalize(&one, &sites);
-        merge(&mut matched, n);
-    }
-    if generator.pointer("/model/bridge").is_some() {
-        merge(&mut matched, run_json_bridges(generator, imports)?);
-    }
-    Ok(matched)
-}
-
-/// A JSON bridge is not matched by the per-import loader: it is scanned from a file, both sides
-/// are observed per import, and phase 2 pairs every `from` with every `to`.
-fn run_json_bridges(generator: &Value, imports: &[Import]) -> Result<Matched, String> {
-    let dir = std::env::temp_dir();
-    let mut file = tempfile::Builder::new()
-        .suffix(".jsonl")
-        .tempfile_in(dir)
-        .map_err(|e| e.to_string())?;
-    writeln!(file, "{}", serde_json::to_string(generator).unwrap()).unwrap();
-    file.flush().unwrap();
-    let specs = scan_model_files(&[file.path().to_path_buf()]).map_err(|e| format!("{e:#}"))?;
-    let mut out = ProgramModelMatches::default();
-    out.bridges.prepare(&specs.bridges);
-    for (scope, program) in imports {
-        let index = ProgramMatchIndex::new(program, scope.clone());
-        observe_import(&index, &specs.bridges, &mut out).map_err(|e| format!("{e:#}"))?;
-    }
-    let mut matched = Matched::default();
-    for (i, spec) in specs.bridges.iter().enumerate() {
-        for (from, to) in out.bridges.get(i).pairs() {
-            if !spec.ports_given {
-                matched
-                    .bridges
-                    .insert(format!("{from} -> {to}: <identity over the shared arity>"));
-            }
-            for pair in &spec.ports {
-                matched
-                    .bridges
-                    .insert(format!("{from} -> {to}: {}", pair_text(pair)));
-            }
-        }
-    }
-    Ok(matched)
-}
-
-fn merge(into: &mut Matched, from: Matched) {
-    into.propagations.extend(from.propagations);
-    into.endpoints.extend(from.endpoints);
-    into.callsite_endpoints.extend(from.callsite_endpoints);
-    into.access_paths.extend(from.access_paths);
-    into.skip_analysis.extend(from.skip_analysis);
-    into.dispatch.extend(from.dispatch);
-    into.closure_shaped.extend(from.closure_shaped);
-    into.bridges.extend(from.bridges);
+/// The imports a test runs against, built from the [`frontend`] fixtures it names.
+fn imports(fixtures: &[&str]) -> Vec<Import> {
+    fixtures.iter().map(|name| frontend(name)).collect()
 }
 
 /// What the migrated DSL matched across `imports`, or why it refused.
@@ -864,15 +829,363 @@ fn run_dsl(text: &str, imports: &[Import]) -> Result<Matched, String> {
     Ok(normalize(&out, &sites))
 }
 
-/// Requires the migrated form of `generator` to match exactly what the JSON matcher matched
-/// across `imports`, or to be refused where the JSON matcher refused it.
+// ---------------------------------------------------------------------------
+// The JSON matcher's answers, frozen
+// ---------------------------------------------------------------------------
+
+/// What the JSON matcher did with a test's generator: what it matched, or the errors it refused
+/// the generator with.
+type JsonOutcome = Result<Matched, Vec<String>>;
+
+/// The JSON matcher's answer for every test here, recorded while the matcher existed. The tests
+/// compare the migrated DSL against this file, not against the matcher.
+const GOLDEN_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/integration/migration_equivalence.golden"
+);
+
+/// One test's entry in [`GOLDEN_PATH`]: the generator and fixtures it was recorded from, so an
+/// edited test cannot silently compare against an answer to a different question, and the
+/// answer.
+struct GoldenEntry {
+    generator: Value,
+    fixtures: Vec<String>,
+    outcome: JsonOutcome,
+}
+
+/// Parses [`GOLDEN_PATH`]'s text. The format is the one [`Matched::render`] prints, under a
+/// header per test:
+///
+/// ```text
+/// == <test key>
+/// generator: <the generator, as one line of JSON>
+/// fixtures: <the frontend fixtures, space-separated>
+/// matched:
+///     <field>: <row>
+/// ```
+///
+/// or `refused:` followed by the JSON matcher's error lines, each indented four spaces. Lines
+/// starting with `#` are comments.
+fn parse_golden(text: &str) -> std::collections::BTreeMap<String, GoldenEntry> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut lines = text.lines().enumerate().peekable();
+    while let Some((n, line)) = lines.next() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let bad = |what: &str| -> ! { panic!("{GOLDEN_PATH}:{}: {what}", n + 1) };
+        let Some(key) = line.strip_prefix("== ") else {
+            bad("expected `== <test key>`")
+        };
+        let mut field = |prefix: &str| -> String {
+            match lines.next() {
+                Some((_, l)) if l.starts_with(prefix) => l[prefix.len()..].to_string(),
+                _ => bad(&format!("`{key}` has no `{prefix}` line")),
+            }
+        };
+        let generator: Value = serde_json::from_str(&field("generator: "))
+            .unwrap_or_else(|e| bad(&format!("`{key}`'s generator: {e}")));
+        let fixtures = field("fixtures: ")
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let kind = field("");
+        let mut body = Vec::new();
+        while let Some((_, l)) = lines.peek()
+            && let Some(row) = l.strip_prefix("    ")
+        {
+            body.push(row.to_string());
+            lines.next();
+        }
+        let outcome = match kind.as_str() {
+            "matched:" => {
+                let mut m = Matched::default();
+                for row in body.iter().filter(|r| *r != "(nothing)") {
+                    m.insert_rendered(row)
+                        .unwrap_or_else(|| bad(&format!("`{key}`: no field in `{row}`")));
+                }
+                Ok(m)
+            }
+            "refused:" => Err(body),
+            other => bad(&format!(
+                "`{key}`: expected `matched:` or `refused:`, got `{other}`"
+            )),
+        };
+        let entry = GoldenEntry {
+            generator,
+            fixtures,
+            outcome,
+        };
+        if out.insert(key.to_string(), entry).is_some() {
+            bad(&format!("`{key}` appears twice"));
+        }
+    }
+    out
+}
+
+fn golden() -> &'static std::collections::BTreeMap<String, GoldenEntry> {
+    static GOLDEN: std::sync::OnceLock<std::collections::BTreeMap<String, GoldenEntry>> =
+        std::sync::OnceLock::new();
+    GOLDEN.get_or_init(|| {
+        let text = std::fs::read_to_string(GOLDEN_PATH)
+            .unwrap_or_else(|e| panic!("reading {GOLDEN_PATH}: {e}"));
+        parse_golden(&text)
+    })
+}
+
+/// What the JSON matcher did with `generator` on `fixtures`, as test `key` recorded it.
+///
+/// Fails if `key` has no entry, or if its entry was recorded from a different generator or
+/// fixture list: either way the golden does not answer the question this test asks.
+fn json_answer(key: &str, generator: &Value, fixtures: &[&str]) -> JsonOutcome {
+    if let Some(outcome) = json_oracle::bless(key, generator, fixtures) {
+        return outcome;
+    }
+    let Some(entry) = golden().get(key) else {
+        panic!(
+            "`{key}` has no entry in {GOLDEN_PATH}. A new test needs the JSON matcher's answer \
+             recorded: run it with {BLESS_VAR}=1 (only possible while the JSON matcher exists)"
+        );
+    };
+    assert!(
+        entry.generator == *generator && entry.fixtures == fixtures,
+        "`{key}`'s entry in {GOLDEN_PATH} was recorded from a different test.\n\
+         recorded generator: {}\nrecorded fixtures: {:?}\n\
+         this generator:     {generator}\nthese fixtures:     {fixtures:?}",
+        entry.generator,
+        entry.fixtures,
+    );
+    entry.outcome.clone()
+}
+
+/// Set to regenerate [`GOLDEN_PATH`] from the JSON matcher; see [`json_oracle`].
+const BLESS_VAR: &str = "MIGRATION_GOLDEN_BLESS";
+
+/// Everything in this file that runs the JSON matcher (`models/json.rs`).
+///
+/// It exists only to produce and check [`GOLDEN_PATH`] while the matcher does: when the matcher
+/// is removed, this module and the one call to [`bless`] in [`json_answer`] are deleted, and
+/// nothing else changes.
+///
+/// `MIGRATION_GOLDEN_BLESS=1 cargo test -p ctadl-ascent --test integration migration_equivalence`
+/// re-records the entries of the tests it runs (and adds a new test's). An entry for a test that
+/// no longer exists is not removed: delete the file and bless the whole module to prune.
+mod json_oracle {
+    use super::*;
+    use ctadl_ascent::models::matches::observe_import;
+    use ctadl_ascent::models::{scan_model_files, try_load_models_from_values};
+    use std::io::Write as _;
+
+    /// When [`BLESS_VAR`] is set, records the JSON matcher's answer for test `key` in
+    /// [`GOLDEN_PATH`] and returns it.
+    pub(super) fn bless(key: &str, generator: &Value, fixtures: &[&str]) -> Option<JsonOutcome> {
+        std::env::var_os(BLESS_VAR)?;
+        let outcome = run_json(generator, &imports(fixtures));
+        // The tests run in parallel, and each rewrites the whole file.
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = match std::fs::read_to_string(GOLDEN_PATH) {
+            Ok(text) => parse_golden(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(e) => panic!("reading {GOLDEN_PATH}: {e}"),
+        };
+        all.insert(
+            key.to_string(),
+            GoldenEntry {
+                generator: generator.clone(),
+                fixtures: fixtures.iter().map(|f| f.to_string()).collect(),
+                outcome: outcome.clone(),
+            },
+        );
+        std::fs::write(GOLDEN_PATH, render_golden(&all))
+            .unwrap_or_else(|e| panic!("writing {GOLDEN_PATH}: {e}"));
+        Some(outcome)
+    }
+
+    fn render_golden(all: &std::collections::BTreeMap<String, GoldenEntry>) -> String {
+        let mut out = String::from(
+            "# What the JSON model matcher (models/json.rs) matched for each test in\n\
+             # migration_equivalence.rs, which compares the migrated DSL against it.\n\
+             # Recorded by `MIGRATION_GOLDEN_BLESS=1 cargo test -p ctadl-ascent --test integration\n\
+             # migration_equivalence`, which works only while the JSON matcher exists. Do not\n\
+             # edit by hand.\n",
+        );
+        for (key, entry) in all {
+            out.push_str(&format!(
+                "\n== {key}\ngenerator: {}\nfixtures: {}\n",
+                serde_json::to_string(&entry.generator).unwrap(),
+                entry.fixtures.join(" ")
+            ));
+            match &entry.outcome {
+                Ok(m) => {
+                    out.push_str("matched:\n");
+                    out.push_str(&m.render());
+                }
+                Err(errors) => {
+                    out.push_str("refused:\n");
+                    for e in errors {
+                        out.push_str(&format!("    {e}\n"));
+                    }
+                }
+            }
+        }
+        assert!(
+            parse_golden(&out).len() == all.len(),
+            "the golden does not round-trip"
+        );
+        out
+    }
+
+    /// Every recorded entry is still what the JSON matcher answers. Edit a fixture and this
+    /// fails until the golden is re-blessed.
+    #[test]
+    fn the_golden_is_what_the_json_matcher_answers() {
+        if std::env::var_os(BLESS_VAR).is_some() {
+            return;
+        }
+        let mut stale = Vec::new();
+        for (key, entry) in golden() {
+            let fixtures: Vec<&str> = entry.fixtures.iter().map(String::as_str).collect();
+            let live = run_json(&entry.generator, &imports(&fixtures));
+            if live != entry.outcome {
+                stale.push(key.as_str());
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "the JSON matcher no longer answers what {GOLDEN_PATH} records for {stale:?}; \
+             re-bless with {BLESS_VAR}=1"
+        );
+    }
+
+    /// The JSON matcher's error lines: each context it was wrapped in, then each
+    /// `JsonModelError` as `<variant>: <message>`, one entry per line of text.
+    fn error_lines(e: &ctadl_ascent::error::Error, scrub: Option<&str>) -> Vec<String> {
+        use ctadl_ascent::error::Error;
+        let mut out = Vec::new();
+        let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+        while let Some(err) = cur {
+            if let Some(Error::JsonModel(errors)) = err.downcast_ref::<Error>() {
+                for j in errors.iter() {
+                    let debug = format!("{j:?}");
+                    let variant: String =
+                        debug.chars().take_while(|c| c.is_alphanumeric()).collect();
+                    // A regex error spans several lines; the rest are indented under the first.
+                    let message = j.to_string();
+                    let mut lines = message.lines();
+                    out.push(format!("{variant}: {}", lines.next().unwrap_or_default()));
+                    out.extend(lines.map(|l| format!("    {l}")));
+                }
+                break;
+            }
+            out.extend(err.to_string().lines().map(str::to_string));
+            cur = err.source();
+        }
+        if let Some(scrub) = scrub {
+            for line in &mut out {
+                *line = line.replace(scrub, "<model file>");
+            }
+        }
+        out
+    }
+
+    /// What the JSON matcher matched for `generator` across `imports`, or why it refused.
+    pub(super) fn run_json(generator: &Value, imports: &[Import]) -> JsonOutcome {
+        let mut matched = Matched::default();
+        for (scope, program) in imports {
+            let keys = DispatchKeys::from_program(&program.program);
+            let index = ProgramMatchIndex::new_with_dispatch(program, scope.clone(), Some(&keys));
+            let mut one = ProgramModelMatches::default();
+            try_load_models_from_values(&index, std::iter::once(Ok(generator.clone())), &mut one)
+                .map_err(|e| error_lines(&e, None))?;
+            let sites = static_sites(program);
+            let n = normalize(&one, &sites);
+            merge(&mut matched, n);
+        }
+        if generator.pointer("/model/bridge").is_some() {
+            merge(&mut matched, run_json_bridges(generator, imports)?);
+        }
+        Ok(matched)
+    }
+
+    /// A JSON bridge is not matched by the per-import loader: it is scanned from a file, both
+    /// sides are observed per import, and phase 2 pairs every `from` with every `to`.
+    fn run_json_bridges(generator: &Value, imports: &[Import]) -> JsonOutcome {
+        let mut file = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile_in(std::env::temp_dir())
+            .map_err(|e| vec![e.to_string()])?;
+        writeln!(file, "{}", serde_json::to_string(generator).unwrap()).unwrap();
+        file.flush().unwrap();
+        let path = file.path().display().to_string();
+        let errors = |e: ctadl_ascent::error::Error| error_lines(&e, Some(&path));
+        let specs = scan_model_files(&[file.path().to_path_buf()]).map_err(errors)?;
+        let mut out = ProgramModelMatches::default();
+        out.bridges.prepare(&specs.bridges);
+        for (scope, program) in imports {
+            let index = ProgramMatchIndex::new(program, scope.clone());
+            observe_import(&index, &specs.bridges, &mut out).map_err(errors)?;
+        }
+        let mut matched = Matched::default();
+        for (i, spec) in specs.bridges.iter().enumerate() {
+            for (from, to) in out.bridges.get(i).pairs() {
+                if !spec.ports_given {
+                    matched
+                        .bridges
+                        .insert(format!("{from} -> {to}: <identity over the shared arity>"));
+                }
+                for pair in &spec.ports {
+                    matched
+                        .bridges
+                        .insert(format!("{from} -> {to}: {}", pair_text(pair)));
+                }
+            }
+        }
+        Ok(matched)
+    }
+
+    fn merge(into: &mut Matched, from: Matched) {
+        into.propagations.extend(from.propagations);
+        into.endpoints.extend(from.endpoints);
+        into.callsite_endpoints.extend(from.callsite_endpoints);
+        into.access_paths.extend(from.access_paths);
+        into.skip_analysis.extend(from.skip_analysis);
+        into.dispatch.extend(from.dispatch);
+        into.closure_shaped.extend(from.closure_shaped);
+        into.bridges.extend(from.bridges);
+    }
+
+    /// [`super::JSON_CALLSITE_CALLEES`] is what the JSON matcher anchors a `find: callsites`
+    /// endpoint at, before any expansion over call sites.
+    #[test]
+    fn the_json_matcher_anchors_at_every_matched_callee() {
+        let (scope, program) = frontend("java");
+        let index = ProgramMatchIndex::new(&program, scope);
+        let mut from_json = ProgramModelMatches::default();
+        try_load_models_from_values(
+            &index,
+            std::iter::once(Ok(anchoring_generator())),
+            &mut from_json,
+        )
+        .expect("json");
+        let expected: BTreeSet<String> = JSON_CALLSITE_CALLEES
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(callsite_callees(&from_json), expected);
+    }
+}
+
+/// Requires the migrated form of `generator` to match exactly what the JSON matcher matched on
+/// `fixtures` (as test `key` recorded it), or to be refused where the JSON matcher refused it.
 ///
 /// A migration may also fail outright. That is faithful where the JSON matcher refuses the
 /// generator too, and where the migration says the DSL cannot express it
 /// ([`JsonModelError::Untranslatable`]): a loud refusal never changes what a file matches.
 /// Failing a generator the JSON matcher accepts for any other reason is not.
-fn assert_faithful(generator: &Value, imports: &[Import]) {
-    let json = run_json(generator, imports);
+fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
+    let json = json_answer(key, generator, fixtures);
+    let imports = imports(fixtures);
     let (text, report) = match dsl::migrate::migrate_generators(std::iter::once(generator), None) {
         Ok(migrated) => migrated,
         Err(ctadl_ascent::error::Error::JsonModel(errors)) => {
@@ -893,7 +1206,7 @@ fn assert_faithful(generator: &Value, imports: &[Import]) {
         }
         Err(e) => panic!("migrating {generator}: {e}"),
     };
-    let dsl = run_dsl(&text, imports);
+    let dsl = run_dsl(&text, &imports);
     let context = || {
         format!(
             "generator:\n{}\nmigrated DSL:\n{text}\nmigration warnings:\n{}\n",
@@ -933,19 +1246,15 @@ fn assert_faithful(generator: &Value, imports: &[Import]) {
         (Err(e), Ok(d)) => {
             if !d.is_empty() {
                 panic!(
-                    "the JSON matcher refuses this generator ({e}), but the migrated DSL loads \
+                    "the JSON matcher refuses this generator ({}), but the migrated DSL loads \
                      and matches\n{}DSL matched:\n{}",
+                    e.join("; "),
                     context(),
                     d.render()
                 );
             }
         }
     }
-}
-
-/// [`assert_faithful`] against one named fixture.
-fn assert_faithful_on(frontend_name: &str, generator: &Value) {
-    assert_faithful(generator, &[frontend(frontend_name)]);
 }
 
 /// A deliberate difference between the JSON matcher and the migrated DSL: the JSON matcher's
@@ -965,14 +1274,14 @@ const LUA_CLASSES: &str = "the JSON matcher sees no class on Lua; the DSL sees m
 const IN_FUNCTION_BUG: &str =
     "JSON matcher bug: `in_function` under `not`/`any_of` narrows the callee set";
 
-/// Requires the JSON matcher and the migrated DSL to differ on `frontend_name` by exactly
-/// `known.diff`.
-fn assert_known_on(frontend_name: &str, generator: &Value, known: &Known) {
-    let imports = [frontend(frontend_name)];
+/// Requires what the JSON matcher matched on `frontend_name` (as test `key` recorded it) and
+/// the migrated DSL to differ by exactly `known.diff`.
+fn assert_known_on(key: &str, frontend_name: &str, generator: &Value, known: &Known) {
+    let json = json_answer(key, generator, &[frontend_name])
+        .unwrap_or_else(|e| panic!("the JSON matcher refused the generator: {e:?}"));
     let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None)
         .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
-    let json = run_json(generator, &imports).expect("the JSON matcher accepts the generator");
-    let dsl = run_dsl(&text, &imports)
+    let dsl = run_dsl(&text, &imports(&[frontend_name]))
         .unwrap_or_else(|e| panic!("the migrated DSL fails: {e}\nmigrated DSL:\n{text}"));
     let actual: Vec<String> = json
         .diff(&dsl)
@@ -992,6 +1301,8 @@ fn assert_known_on(frontend_name: &str, generator: &Value, known: &Known) {
 /// migration of `$generator` to be faithful on that frontend's fixture. A frontend may carry
 /// attributes, which is how a known divergence is `#[ignore]`d on just the frontend it shows on,
 /// or `=> Known { … }`, which pins a deliberate difference there instead.
+///
+/// Each test's golden key is `$name::$fe`.
 macro_rules! faithful {
     ($(#[doc = $doc:literal])* $name:ident = $generator:expr; $( $(#[$attr:meta])* $fe:ident $(=> $known:expr)? ),+ $(,)?) => {
         $(#[doc = $doc])*
@@ -1004,10 +1315,11 @@ macro_rules! faithful {
                 $(#[$attr])*
                 #[test]
                 fn $fe() {
+                    let key = concat!(stringify!($name), "::", stringify!($fe));
                     let known: Option<Known> = None $(.or(Some($known)))?;
                     match known {
-                        Some(known) => assert_known_on(stringify!($fe), &generator(), &known),
-                        None => assert_faithful_on(stringify!($fe), &generator()),
+                        Some(known) => assert_known_on(key, stringify!($fe), &generator(), &known),
+                        None => assert_faithful(key, &generator(), &[stringify!($fe)]),
                     }
                 }
             )+
@@ -1824,14 +2136,18 @@ faithful! {
 #[test]
 fn in_scope_across_two_imports() {
     let generator = scoped(json!({"language": "lua"}), json!([sig_name("deposit")]));
-    assert_faithful(&generator, &[frontend("java"), frontend("lua")]);
+    assert_faithful("in_scope_across_two_imports", &generator, &["java", "lua"]);
 }
 
 /// An import with no identity is admitted only by an unscoped generator.
 #[test]
 fn in_scope_on_an_anonymous_import() {
     let generator = scoped(json!({"language": "dex"}), json!([sig_name("get")]));
-    assert_faithful(&generator, &[(ImportScope::unknown(), java())]);
+    assert_faithful(
+        "in_scope_on_an_anonymous_import",
+        &generator,
+        &["java_anonymous"],
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1944,16 +2260,9 @@ fn callsite_callees(m: &ProgramModelMatches) -> BTreeSet<String> {
 /// static meaning; a resolved-callee relation is future work (`DESIGN.md`, `resolves_to`).
 #[test]
 fn callsites_anchor_at_every_matched_callee() {
-    let generator = callsites(json!([sig_name("run")]));
+    let generator = anchoring_generator();
     let (scope, program) = frontend("java");
     let index = ProgramMatchIndex::new(&program, scope);
-    let mut from_json = ProgramModelMatches::default();
-    try_load_models_from_values(
-        &index,
-        std::iter::once(Ok(generator.clone())),
-        &mut from_json,
-    )
-    .expect("json");
     let (text, _) =
         dsl::migrate::migrate_generators(std::iter::once(&generator), None).expect("migrates");
     let file = dsl::DslFile::from_text("migrated.ctadl", text).expect("dsl");
@@ -1962,13 +2271,27 @@ fn callsites_anchor_at_every_matched_callee() {
     let mut from_dsl = ProgramModelMatches::default();
     matcher.observe_import(&index, &mut from_dsl);
     matcher.finish(&mut from_dsl).expect("finish");
-    let callees = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+    let from_dsl = callsite_callees(&from_dsl);
+    assert_eq!(from_dsl, BTreeSet::from([J_BASE_RUN.to_string()]));
+    let json_only: Vec<&str> = JSON_CALLSITE_CALLEES
+        .into_iter()
+        .filter(|c| !from_dsl.contains(*c))
+        .collect();
     assert_eq!(
-        callsite_callees(&from_json),
-        callees(&[J_BASE_RUN, J_MID_RUN])
+        json_only,
+        [J_MID_RUN],
+        "the override only the JSON anchored at"
     );
-    assert_eq!(callsite_callees(&from_dsl), callees(&[J_BASE_RUN]));
 }
+
+/// The `find: callsites` generator [`callsites_anchor_at_every_matched_callee`] loads.
+fn anchoring_generator() -> Value {
+    callsites(json!([sig_name("run")]))
+}
+
+/// The callees the JSON matcher anchored [`anchoring_generator`]'s endpoints at, on the `java`
+/// fixture; `json_oracle` checks it against the matcher.
+const JSON_CALLSITE_CALLEES: [&str; 2] = [J_BASE_RUN, J_MID_RUN];
 
 faithful! {
     callsites_uses_field =callsites(json!([{"constraint": "uses_field", "name": "secret"}]));
@@ -2450,9 +2773,8 @@ fn bridge(from_where: Value, to_where: Value, arguments: Option<Value>) -> Value
     })
 }
 
-fn bridge_imports() -> Vec<Import> {
-    vec![frontend("lua"), frontend("native")]
-}
+/// The fixtures a bridge test runs against.
+const BRIDGE_FIXTURES: &[&str] = &["lua", "native"];
 
 fn arguments() -> Value {
     json!([
@@ -2466,12 +2788,13 @@ fn arguments() -> Value {
 #[test]
 fn bridge_default_direction() {
     assert_faithful(
+        "bridge_default_direction",
         &bridge(
             json!([sig_name("source")]),
             json!([sig_name("strcpy")]),
             Some(json!([{"from": "Argument(2)", "to": "Argument(0)"}])),
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2479,12 +2802,13 @@ fn bridge_default_direction() {
 #[test]
 fn bridge_with_arguments() {
     assert_faithful(
+        "bridge_with_arguments",
         &bridge(
             json!([sig_name("source")]),
             json!([sig_name("strcpy")]),
             Some(arguments()),
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2492,12 +2816,13 @@ fn bridge_with_arguments() {
 #[test]
 fn bridge_cross_product() {
     assert_faithful(
+        "bridge_cross_product",
         &bridge(
             json!([any_of(json!([sig_name("deposit"), sig_name("withdraw")]))]),
             json!([sig_name("bar")]),
             Some(arguments()),
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2505,12 +2830,13 @@ fn bridge_cross_product() {
 #[test]
 fn bridge_not_on_the_from_side() {
     assert_faithful(
+        "bridge_not_on_the_from_side",
         &bridge(
             json!([not(sig_name("source")), {"constraint": "has_code", "value": true}]),
             json!([sig_name("strcpy")]),
             Some(arguments()),
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2518,12 +2844,13 @@ fn bridge_not_on_the_from_side() {
 #[test]
 fn bridge_disjunction_on_the_to_side() {
     assert_faithful(
+        "bridge_disjunction_on_the_to_side",
         &bridge(
             json!([sig_name("source")]),
             json!([any_of(json!([sig_name("strcpy"), sig_name("system")]))]),
             Some(arguments()),
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2532,12 +2859,13 @@ fn bridge_disjunction_on_the_to_side() {
 #[test]
 fn bridge_without_arguments() {
     assert_faithful(
+        "bridge_without_arguments",
         &bridge(
             json!([sig_name("source")]),
             json!([sig_name("strcpy")]),
             None,
         ),
-        &bridge_imports(),
+        BRIDGE_FIXTURES,
     );
 }
 
@@ -2550,5 +2878,5 @@ fn bridge_to_side_out_of_scope() {
         Some(arguments()),
     );
     g["model"]["bridge"]["to"]["in"] = json!({"language": "cil"});
-    assert_faithful(&g, &bridge_imports());
+    assert_faithful("bridge_to_side_out_of_scope", &g, BRIDGE_FIXTURES);
 }
