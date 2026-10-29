@@ -1252,8 +1252,8 @@ fn write_apk(dest: &Path, entries: &[(&str, &Path)]) -> Result<()> {
     let file = std::fs::File::create(dest)
         .with_context(|| format!("failed to create {}", dest.display()))?;
     let mut writer = zip::ZipWriter::new(file);
-    let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     for (entry_name, source) in entries {
         let bytes = std::fs::read(source)
             .with_context(|| format!("failed to read {}", source.display()))?;
