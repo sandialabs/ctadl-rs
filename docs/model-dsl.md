@@ -193,6 +193,7 @@ The point of a model file is to derive these.
 | `access_paths("…")` | a literal access path | — |
 | `K::dispatch(<flow>)` | a flow within **one** call signature | — |
 | `K::dispatch(…)` | — | `resolve` (`"inline"` / `"skip"`), `closure_shaped` |
+| `skip_analysis(F)` | a function | — |
 
 - **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
@@ -218,6 +219,19 @@ The point of a model file is to derive these.
   dispatch model takes the callee bodies out of the analysis along with the edges, it belongs on
   methods whose behaviour is fixed by the interface they implement — see the commentary in
   `ctadl-ascent/src/models/defaults/java-index.ctadl`.
+- **`skip_analysis`** keeps a function's body out of the index: its signature is lowered and its
+  blocks are not, so the function's other models are its *entire* behavior, and the calls its
+  body made are gone from the call graph. Without it a `propagation` *adds* to what the body
+  derives. A marked function with no `propagation` moves nothing.
+
+  ```
+  skip_analysis(F), propagation(F::return <- F::arg(0)) :- fun(F, name = "transfer");
+  ```
+
+  `skip_analysis("transfer");` and `F::skip_analysis()` say the same of one function. The rule
+  must be satisfied within one import — codegen drops the body while that import is being lowered,
+  before a body that spans two programs could be joined — so its body may not split into parts
+  that share no variable.
 
 Each output relation takes exactly one port, flow or path. Several are written as several
 comma-separated heads:
@@ -309,7 +323,7 @@ dropped with it, which is what keeps a multi-artifact index streaming rather tha
 ### Phases
 
 The engine is phased. `ctadl index` keeps the `propagation` / `bridge` / `access_paths` /
-`dispatch` heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
+`dispatch` / `skip_analysis` heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
 it, and a rule contributing at least one head to the running phase is never counted:
 
 ```
@@ -358,6 +372,7 @@ How the JSON constructs map:
 | `model: {resolve: "inline"}` | `K::dispatch(resolve = "inline")` |
 | `model: {resolve: "inline", propagation: [...]}` | `K::dispatch(resolve = "inline", <out> <- <in>)` |
 | `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
+| `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)` |
 
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
 A generator the JSON loader rejects fails with the loader's own error. Keys the loader accepts and
@@ -366,7 +381,6 @@ ignores (`taint`, `forward_self`, a `modes` list without `skip-analysis`, an `on
 fail the migration, naming the generator:
 
 - `Variable(...)` ports, which select a local by source name.
-- `modes: ["skip-analysis"]`: there is no DSL head that drops a function's body.
 - A `bridge` with no `arguments` map, or an empty one. The JSON loader falls back to an identity
   map over the arity the two sides share, which needs the fact base; an empty map bridges only the
   globals. Write the map.

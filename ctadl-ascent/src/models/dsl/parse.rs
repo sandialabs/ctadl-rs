@@ -8,7 +8,8 @@ Second, `<-` is lexed in attribute position (see the note on `attr_op`) precisel
 can be "arrow not allowed here" instead of a parse error pointing one token past the mistake.
 
 The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving one or
-more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`, `dispatch`) from a
+more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`, `dispatch`,
+`skip_analysis`) from a
 conjunction of *input* atoms over the built-in relations. See `models/dsl/mod.rs` for the
 semantics.
 */
@@ -76,6 +77,7 @@ enum RawHeadArg<'s> {
     Flow(RawFlow<'s>),
     Port(RawPortExpr<'s>),
     Lit(Literal, Span),
+    Var(&'s str, Span),
 }
 
 struct RawFlow<'s> {
@@ -171,7 +173,8 @@ peg::parser! {
         // `!name_char()` keeps `sourcefoo` from lexing as `source` followed by junk.
         rule out_rel() -> &'input str
             = quiet!{
-                $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch")
+                $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch"
+                   / "skip_analysis")
                   !name_char())
             }
             / expected!("output relation")
@@ -184,6 +187,7 @@ peg::parser! {
         //   `F::return <- F::arg(0)` is a flow (a port, an arrow, a port)
         //   `F::arg(2)`          is a lone port
         //   `".foo.bar"`         is a literal, which is what `access_paths` takes
+        //   `F`                  is a bare variable, which is what `skip_analysis` takes
         // A flow must come before a lone port: `port_expr` succeeds on the left half of a flow
         // and would leave the arrow dangling.
         rule head_arg() -> RawHeadArg<'input>
@@ -192,6 +196,7 @@ peg::parser! {
             / f:flow() { RawHeadArg::Flow(f) }
             / p:port_expr() { RawHeadArg::Port(p) }
             / s:position!() lit:literal() e:position!() { RawHeadArg::Lit(lit, span(s, e)) }
+            / s:position!() v:var() e:position!() { RawHeadArg::Var(v, span(s, e)) }
 
         rule flow() -> RawFlow<'input>
             = s:position!() left:port_expr() _ op:flow_op() _ right:port_expr() e:position!()
@@ -369,12 +374,77 @@ impl Builder {
             .into_iter()
             .filter_map(|a| self.head_arg(a))
             .collect();
+        if raw.relation == "skip_analysis" {
+            let anchor = self.skip_analysis_subject(raw.anchor, raw.span, args)?;
+            return Some(Head {
+                anchor: Some(anchor),
+                kind: HeadKind::SkipAnalysis,
+                span: raw.span,
+            });
+        }
         let kind = self.head_kind(raw.relation, raw.span, args)?;
         Some(Head {
             anchor: raw.anchor,
             kind,
             span: raw.span,
         })
+    }
+
+    /// The function a `skip_analysis` head marks: `skip_analysis(F)`, a function name
+    /// `skip_analysis("f")`, or the anchor form `F::skip_analysis()`. Exactly one, and nothing
+    /// else -- there is no attribute for a mode that is either on or absent.
+    fn skip_analysis_subject(
+        &mut self,
+        anchor: Option<Term>,
+        span: Span,
+        args: Vec<HeadArg>,
+    ) -> Option<Term> {
+        let mut subjects: Vec<Term> = anchor.into_iter().collect();
+        for arg in args {
+            match arg {
+                HeadArg::Var(v, _) => subjects.push(Term::Var(v)),
+                HeadArg::Lit(Literal::Str(s), _) => subjects.push(Term::Lit(Literal::Str(s))),
+                HeadArg::Lit(other, s) => {
+                    self.error(s, format!("'skip_analysis' takes a function, not {other}"));
+                    return None;
+                }
+                HeadArg::Port(p) => {
+                    self.error(
+                        p.span,
+                        "'skip_analysis' takes a function such as 'F', not a port; it applies \
+                         to the whole body",
+                    );
+                    return None;
+                }
+                HeadArg::Flow(f) => {
+                    self.error(
+                        f.span,
+                        "'skip_analysis' takes a function such as 'F', not a flow; write the \
+                         function's summary as 'propagation' heads",
+                    );
+                    return None;
+                }
+                HeadArg::Attr(name, _, s) => {
+                    self.error(
+                        s,
+                        format!("'{name}' is not an attribute of 'skip_analysis'"),
+                    );
+                    return None;
+                }
+            }
+        }
+        if subjects.len() != 1 {
+            self.error(
+                span,
+                format!(
+                    "'skip_analysis' takes exactly one function; {} were given. Write several \
+                     head atoms separated by ',' instead.",
+                    subjects.len()
+                ),
+            );
+            return None;
+        }
+        subjects.pop()
     }
 
     fn head_kind(&mut self, relation: &str, span: Span, args: Vec<HeadArg>) -> Option<HeadKind> {
@@ -388,6 +458,16 @@ impl Builder {
                 HeadArg::Flow(f) => flows.push(f),
                 HeadArg::Lit(l, s) => literals.push((l, s)),
                 HeadArg::Attr(name, lit, s) => attrs.push((name, lit, s)),
+                HeadArg::Var(v, s) => {
+                    self.error(
+                        s,
+                        format!(
+                            "'{v}' is a bare variable; '{relation}' takes a port such as \
+                             '{v}::return' or '{v}::arg(0)'"
+                        ),
+                    );
+                    return None;
+                }
             }
         }
         // `dispatch` is settled first: its attribute forms carry no subject at all, so the
@@ -669,6 +749,7 @@ impl Builder {
             RawHeadArg::Flow(f) => self.flow(f).map(HeadArg::Flow),
             RawHeadArg::Port(p) => self.port_expr(p).map(HeadArg::Port),
             RawHeadArg::Lit(lit, span) => Some(HeadArg::Lit(lit, span)),
+            RawHeadArg::Var(v, span) => Some(HeadArg::Var(v.to_string(), span)),
         }
     }
 
@@ -870,6 +951,7 @@ enum HeadArg {
     Flow(Flow),
     Port(PortExpr),
     Lit(Literal, Span),
+    Var(String, Span),
 }
 
 /// The taint label a `source`/`sink` head takes when it does not say.

@@ -93,3 +93,6 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"realloc", "reallocarray", "reallocf"});
 
+skip_analysis(F) :-
+  fun(F, name in {"aeabi_unwind_cpp_pr0", "aeabi_unwind_cpp_pr1", "aeabi_unwind_cpp_pr2", "gnu_unwind_frame", "gnu_unwind_execute", "gnu_unwind_pr_common", "gnu_Unwind_Resume", "gnu_Unwind_Resume_or_Rethrow", "gnu_Unwind_RaiseException", "gnu_Unwind_ForcedUnwind", "gnu_Unwind_Backtrace", "unwind_phase1", "unwind_phase2", "unwind_phase2_forced", "Unwind_RaiseException", "Unwind_Resume", "Unwind_Resume_or_Rethrow", "Unwind_ForcedUnwind", "Unwind_DeleteException", "Unwind_Backtrace", "Unwind_Complete", "Unwind_VRS_Get", "Unwind_VRS_Set", "Unwind_VRS_Pop", "Unwind_GetLanguageSpecificData", "Unwind_GetRegionStart", "Unwind_GetDataRelBase", "Unwind_GetTextRelBase", "cxa_begin_cleanup", "cxa_end_cleanup", "cxa_type_match", "cxa_call_unexpected"});
+

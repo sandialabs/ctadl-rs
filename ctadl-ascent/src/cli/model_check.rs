@@ -466,9 +466,10 @@ impl FileState {
                     .heads
                     .iter()
                     .any(|h| matches!(h.kind, HeadKind::AccessPath { .. })),
-                // The DSL has no `modes` directive: the migrator reports `modes` as one of the
-                // JSON keys it cannot carry over, so no rule can declare one.
-                declares_modes: false,
+                declares_modes: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::SkipAnalysis)),
                 declares_dispatch: rule
                     .heads
                     .iter()

@@ -99,6 +99,8 @@ fn dispatch_caller() -> FunctionData {
 /// Java probe, but it needs a class, so it is added per-VMT below.
 const NATIVE_PROBE: &str = "strcpy";
 const LUA_PROBE: &str = "format";
+/// An ARM unwinder the native defaults mark `skip-analysis`.
+const NATIVE_UNWINDER: &str = "Unwind_Resume";
 const JAVA_PROBE: &str = "Ljava/lang/String;->toString()Ljava/lang/String;";
 /// Matches the `List.add` collection generator, whose port names the array element.
 const JAVA_LIST_ADD: &str = "Ljava/util/ArrayList;->add(Ljava/lang/Object;)Z";
@@ -171,7 +173,7 @@ fn java_program() -> ProgramInfo {
 }
 
 fn native_program() -> ProgramInfo {
-    let methods = [NATIVE_PROBE, LUA_PROBE, JAVA_PROBE]
+    let methods = [NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER]
         .into_iter()
         .map(|n| {
             (
@@ -184,7 +186,7 @@ fn native_program() -> ProgramInfo {
         .collect();
     program(
         VirtualMethodTable::Native { methods },
-        &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE],
+        &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER],
     )
 }
 
@@ -635,8 +637,39 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
                 "{dsl_name} and {json_name} disagree on which {vmt_name} signatures are \
                  closure-shaped"
             );
+            assert_eq!(
+                from_json.skip_analysis, from_dsl.skip_analysis,
+                "{dsl_name} and {json_name} disagree on which {vmt_name} bodies are skipped"
+            );
         }
     }
+}
+
+/// The native defaults keep the ARM unwinders' bodies out of the index, and it is the `.ctadl`
+/// an index loads that has to say so.
+#[test]
+fn the_native_dsl_defaults_skip_the_unwinders() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+
+    let program_info = native_program();
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let (name, source) = DEFAULT_DSL_MODELS
+        .iter()
+        .find(|(name, _)| *name == "native-index.ctadl")
+        .expect("a native DSL default");
+    let file = dsl::DslFile::from_text(name, *source).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Index);
+    let mut out = ProgramModelMatches::default();
+    matcher.observe_import(&match_index, &mut out);
+    matcher.finish(&mut out).expect("finish");
+    assert_eq!(
+        out.skip_analysis
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        vec![NATIVE_UNWINDER.to_string()]
+    );
 }
 
 /// The gate that decides whether an import pays to collect its call sites' signature keys.

@@ -68,7 +68,8 @@ impl Rule {
                 HeadKind::Propagation { .. }
                 | HeadKind::Bridge { .. }
                 | HeadKind::AccessPath { .. }
-                | HeadKind::Dispatch { .. } => index_time = true,
+                | HeadKind::Dispatch { .. }
+                | HeadKind::SkipAnalysis => index_time = true,
             }
         }
         (index_time, query_time)
@@ -118,6 +119,10 @@ pub enum HeadKind {
     Dispatch {
         disposition: DispatchHead,
     },
+    /// `skip_analysis(F)` -- codegen does not lower `F`'s body, so the models written for `F`
+    /// are its entire behavior. The function is the head's anchor. The JSON's
+    /// `modes: ["skip-analysis"]`.
+    SkipAnalysis,
 }
 
 /// The three things a `dispatch` head can say. Exactly one per head, which is what keeps
@@ -154,7 +159,10 @@ impl HeadKind {
         match self {
             HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => Some(flow),
             HeadKind::Dispatch { disposition } => disposition.flow(),
-            HeadKind::Source { .. } | HeadKind::Sink { .. } | HeadKind::AccessPath { .. } => None,
+            HeadKind::Source { .. }
+            | HeadKind::Sink { .. }
+            | HeadKind::AccessPath { .. }
+            | HeadKind::SkipAnalysis => None,
         }
     }
 
@@ -166,6 +174,7 @@ impl HeadKind {
             HeadKind::Bridge { .. } => "bridge",
             HeadKind::AccessPath { .. } => "access_paths",
             HeadKind::Dispatch { .. } => "dispatch",
+            HeadKind::SkipAnalysis => "skip_analysis",
         }
     }
 }
@@ -389,6 +398,7 @@ pub const OUTPUT_RELATIONS: &[&str] = &[
     "bridge",
     "access_paths",
     "dispatch",
+    "skip_analysis",
 ];
 
 /// Attribute names each built-in relation honors.

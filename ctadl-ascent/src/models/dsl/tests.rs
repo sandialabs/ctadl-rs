@@ -812,10 +812,6 @@ fn what_the_dsl_cannot_say_does_not_migrate() {
                 .to_string(),
             "port \"Variable(buf)\"",
         ),
-        (
-            r#"{"find":"methods","model":{"modes":["skip-analysis"]}}"#.to_string(),
-            "'modes'",
-        ),
         (bridge(""), "'bridge'"),
         (bridge(r#","arguments":[]"#), "'bridge'"),
         (
@@ -1093,10 +1089,9 @@ fn a_java_array_element_segment_survives_the_round_trip() {
 }
 
 /// The shipped default generators the DSL cannot yet say, as `(file, generator index, what the
-/// error names)`. Each is a model the checked-in `.ctadl` does not carry: `skip-analysis` has
-/// no DSL head, so an index loading the `.ctadl` lowers the unwinders' bodies after all.
-const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] =
-    &[("native-index.jsonl", 28, "'modes'")];
+/// error names)`. Each is a model the checked-in `.ctadl` does not carry. Empty, and it should
+/// stay so.
+const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] = &[];
 
 /// Every shipped default file must migrate and load, but for the generators
 /// [`KNOWN_UNTRANSLATABLE_DEFAULTS`] lists, which must fail exactly as listed. This is the drift
@@ -1307,4 +1302,102 @@ fn a_scoped_dispatch_generator_keeps_its_scope() {
         text.contains(r#"callsig(K, language = "dex", name = "toString")"#),
         "{text}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// skip_analysis
+// ---------------------------------------------------------------------------
+
+/// `skip_analysis(F)`, a literal function name, and the anchor form all name one function, and
+/// the head is index-time.
+#[test]
+fn a_skip_analysis_head_names_one_function() {
+    for text in [
+        r#"skip_analysis(F) :- fun(F, name = "abort");"#,
+        r#"F::skip_analysis() :- fun(F, name = "abort");"#,
+        r#"skip_analysis("abort");"#,
+    ] {
+        let program = parse(text);
+        let head = &program.rules[0].heads[0];
+        assert!(matches!(head.kind, HeadKind::SkipAnalysis), "{text}");
+        assert!(head.anchor.is_some(), "{text}");
+        assert_eq!(program.rules[0].phases(), (true, false), "{text}");
+        check_ok(text);
+    }
+    // Beside the summary that replaces the body, which is what the mode is for.
+    check_ok(r#"skip_analysis(F), propagation(F::return <- F::arg(0)) :- fun(F, name = "f");"#);
+}
+
+#[test]
+fn a_skip_analysis_head_takes_nothing_but_its_function() {
+    let err = check_err(r#"skip_analysis(F::return) :- fun(F);"#);
+    assert!(err.contains("not a port"), "{err}");
+    let err = check_err(r#"skip_analysis(F::return <- F::arg(0)) :- fun(F);"#);
+    assert!(err.contains("not a flow"), "{err}");
+    let err = check_err(r#"skip_analysis(F, kind = "x") :- fun(F);"#);
+    assert!(err.contains("not an attribute of 'skip_analysis'"), "{err}");
+    let err = check_err(r#"skip_analysis(F, G) :- fun(F), fun(G);"#);
+    assert!(err.contains("exactly one function; 2 were given"), "{err}");
+    let err = check_err(r#"F::skip_analysis(F) :- fun(F);"#);
+    assert!(err.contains("exactly one function; 2 were given"), "{err}");
+    let err = check_err(r#"skip_analysis() :- fun(F);"#);
+    assert!(err.contains("exactly one function; 0 were given"), "{err}");
+    let err = check_err(r#"skip_analysis(3);"#);
+    assert!(err.contains("takes a function, not"), "{err}");
+}
+
+#[test]
+fn a_skip_analysis_head_marks_a_bound_function() {
+    let err = check_err(r#"skip_analysis(G) :- fun(F);"#);
+    assert!(err.contains("not bound in the body"), "{err}");
+    let err = check_err(r#"skip_analysis(S) :- callsite(_, S, callee_string = "f");"#);
+    assert!(err.contains("is a call site and cannot be marked"), "{err}");
+    let err = check_err(r#"skip_analysis(K) :- callsig(K, name = "f");"#);
+    assert!(err.contains("cannot be marked 'skip_analysis'"), "{err}");
+}
+
+/// The mark must be known while its import is being lowered, so a rule whose body is joined
+/// across imports after the loop cannot carry one.
+#[test]
+fn a_skip_analysis_head_needs_a_body_one_import_satisfies() {
+    let err = check_err(
+        r#"skip_analysis(F) :- fun(F, name = "f", language = "lua"),
+                                fun(G, name = "g", language = "pcode");"#,
+    );
+    assert!(err.contains("satisfied within one import"), "{err}");
+    // The same body is fine for a bridge, which is what it is for.
+    check_ok(
+        r#"bridge(F::arg(0) -> G::arg(0)) :- fun(F, name = "f", language = "lua"),
+                                              fun(G, name = "g", language = "pcode");"#,
+    );
+}
+
+/// A bare variable is the subject of `skip_analysis` only; elsewhere it is a missing port.
+#[test]
+fn a_bare_variable_in_another_head_is_a_missing_port() {
+    let err = check_err(r#"source(F) :- fun(F);"#);
+    assert!(err.contains("'F' is a bare variable"), "{err}");
+    assert!(err.contains("'F::return'"), "{err}");
+}
+
+#[test]
+fn migrates_skip_analysis_to_its_head() {
+    let text = migrate_and_load(
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"transfer"}],
+            "model":{"modes":["skip-analysis"],
+                     "propagation":[{"input":"Argument(0)","output":"Return"}]}}"#,
+    );
+    assert!(
+        text.contains(
+            "skip_analysis(F),\n  propagation(F::return <- F::arg(0)) :-\n  \
+             fun(F, name = \"transfer\");"
+        ),
+        "{text}"
+    );
+    // On its own: the function moves nothing.
+    let text = migrate_and_load(
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"abort"}],
+            "model":{"modes":["skip-analysis"]}}"#,
+    );
+    assert!(text.contains("skip_analysis(F) :-"), "{text}");
 }

@@ -360,8 +360,27 @@ pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
     }
 
     // ---- 3. components ----
+    let components = components_of(rule, &visible);
+    // Codegen drops a marked body as it lowers each import, so the mark has to be known while
+    // that import is in hand. A rule of two components is joined only after the import loop.
+    if components.len() > 1
+        && let Some(head) = rule
+            .heads
+            .iter()
+            .find(|h| matches!(h.kind, HeadKind::SkipAnalysis))
+    {
+        errors.push(DslError::Rule {
+            message: "a rule with a 'skip_analysis' head must be satisfied within one import: \
+                      its body has parts that share no variable, and those are joined only \
+                      after every import is lowered, too late to keep a body out. Connect the \
+                      parts, or move the 'skip_analysis' head to a rule of its own."
+                .to_string(),
+            span: head.span,
+        });
+        return None;
+    }
     Some(Plan {
-        components: components_of(rule, &visible),
+        components,
         var_types: types,
     })
 }
@@ -987,6 +1006,30 @@ fn check_head(
                         span: flow.span,
                     });
                 }
+            }
+        }
+        HeadKind::SkipAnalysis => {
+            let Some(term) = head.anchor.as_ref() else {
+                return;
+            };
+            require(
+                term,
+                head.span,
+                "the function 'skip_analysis' marks",
+                errors,
+            );
+            if let Term::Var(v) = term
+                && let Some(t) = types.get(v)
+                && !matches!(t, VarType::Function | VarType::Str | VarType::Unknown)
+            {
+                errors.push(DslError::Rule {
+                    message: format!(
+                        "'{v}' is a {} and cannot be marked 'skip_analysis'; the mark applies to \
+                         a function's body. Bind it with 'fun({v})'.",
+                        t.name()
+                    ),
+                    span: head.span,
+                });
             }
         }
         _ => {}

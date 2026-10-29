@@ -27,9 +27,8 @@ warn:
 - **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, a
   `modes` list without `skip-analysis` does nothing, and `on-unmatched` / `on-ambiguous` other
   than `"error"` change only what is logged. These are warnings.
-- **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, the
-  `skip-analysis` mode, a bridge with no `arguments` map (or an empty one), and an `"error"`
-  severity. Each is a [`JsonModelError::Untranslatable`] that says why.
+- **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, a bridge
+  with no `arguments` map (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`] that says why.
 */
 
 use std::fmt::Write as _;
@@ -1046,17 +1045,13 @@ fn migrate_model(
             .as_array()
             .is_some_and(|m| m.iter().any(|m| m.as_str() == Some("skip-analysis")));
         if skip {
-            return Err(untranslatable(
+            heads.plain.push(format!("skip_analysis({anchor})"));
+        } else {
+            report.warn(
                 index,
-                "'modes'",
-                "'skip-analysis' drops the matched functions' bodies from the index, and the \
-                 DSL has no head that says so",
-            ));
+                "'modes' names no mode, so it has no effect in the JSON loader either",
+            );
         }
-        report.warn(
-            index,
-            "'modes' names no mode, so it has no effect in the JSON loader either",
-        );
     }
 
     if let Some(items) = model.get("sources").and_then(|v| v.as_array()) {

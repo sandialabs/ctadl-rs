@@ -72,6 +72,8 @@ pub struct RuleStats {
     pub dispatch_heads: usize,
     /// Signature keys a `dispatch` head attached a model, skip, inline or marker to.
     pub dispatch: usize,
+    /// Functions a `skip_analysis` head marked.
+    pub skip_analysis: usize,
     /// Distinct functions the rule's heads anchored at, capped at [`MATCHED_SAMPLE_CAP`].
     /// This is the DSL's answer to "what did this rule select", which `CTADL0011` reports.
     pub matched_functions: BTreeSet<String>,
@@ -91,6 +93,7 @@ impl RuleStats {
             + self.bridges
             + self.access_paths
             + self.dispatch
+            + self.skip_analysis
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -107,6 +110,7 @@ impl RuleStats {
         self.bridges += other.bridges;
         self.access_paths += other.access_paths;
         self.dispatch += other.dispatch;
+        self.skip_analysis += other.skip_analysis;
         for name in &other.matched_functions {
             if self.matched_functions.len() >= MATCHED_SAMPLE_CAP {
                 break;
@@ -143,6 +147,7 @@ impl Phase {
                         | HeadKind::Bridge { .. }
                         | HeadKind::AccessPath { .. }
                         | HeadKind::Dispatch { .. }
+                        | HeadKind::SkipAnalysis
                 )
         )
     }
@@ -503,6 +508,28 @@ fn emit_head(
             }
             tally.stats.dispatch += 1;
             note_match(tally, id);
+        }
+        HeadKind::SkipAnalysis => {
+            let function = match head.anchor.as_ref() {
+                Some(Term::Lit(Literal::Str(s))) => facts::Str::from(s.as_str()),
+                Some(Term::Var(v)) => match binding.get(v) {
+                    Some(Value::Str(f)) => f,
+                    Some(other) => {
+                        errors.push(DslError::Rule {
+                            message: format!(
+                                "'{other}' is not a function, so 'skip_analysis' cannot mark it"
+                            ),
+                            span: head.span,
+                        });
+                        return;
+                    }
+                    None => return,
+                },
+                _ => return,
+            };
+            out.extend_skip_analysis([function]);
+            tally.stats.skip_analysis += 1;
+            note_match(tally, function);
         }
     }
 }

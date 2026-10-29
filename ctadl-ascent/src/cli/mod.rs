@@ -195,13 +195,15 @@ fn report_dsl(report: &crate::models::DslReport) {
     }
     let totals = report.totals();
     log::info!(
-        "model DSL: {} source, {} sink, {} propagation, {} bridge, {} access-path head(s) kept \
-         for this phase",
+        "model DSL: {} source, {} sink, {} propagation, {} bridge, {} access-path, {} \
+         dispatch, {} skip-analysis head(s) kept for this phase",
         totals.sources,
         totals.sinks,
         totals.propagations,
         totals.bridges,
-        totals.access_paths
+        totals.access_paths,
+        totals.dispatch,
+        totals.skip_analysis
     );
     if let Some(warning) = report.phase_warning() {
         log::warn!("{warning}");
