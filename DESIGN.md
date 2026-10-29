@@ -27,6 +27,54 @@ On the action side, for each method in the set:
 - Argument 2's `.foo` field propagates to the return value
 - Argument 1`.baz` of calls to function F go to function G arg 0`.stack[2]`
 
+### What the DSL can say that the JSON cannot
+
+A JSON generator selects one set of functions (or call sites) with a tree of constraints, each
+asking about that one subject. A DSL rule body is a join, so it can name several things and
+relate them through shared variables. Nearly every JSON model translates (see Migration),
+but these do not translate back:
+
+- **Choose a function by what it calls.** `callsite` is an ordinary relation, so a rule
+  can bind the caller and attach the model there. JSON's call-site matching only works the other
+  way: `find: callsites` attaches to the callee, and `in_function` only narrows by the caller.
+
+  ```
+  source(F::return) :- callsite(F, _, callee_string = G), fun(G, name = "getenv");
+  ```
+
+- **Relate the caller and the callee.** `in_function` checks the caller on its own, so it cannot
+  compare the two, for example to require that they belong to different classes:
+
+  ```
+  sink(S::arg(0)) :- callsite(C, S, callee_string = G),
+                     fun(C, parent = P), fun(G, parent = Q), P != Q;
+  ```
+
+- **Negate a subquery.** `!( … && … )` is an existence check over a join, with the
+  group's own variables bound inside it: "functions that never call `close`". JSON's `not` can
+  only negate a constraint on the same subject.
+
+  ```
+  source(F::return) :- fun(F), !(callsite(F, _, callee_string = G) && fun(G, name = "close"));
+  ```
+
+- **Choose ports with a condition.** `arg(I)` with `I` from `param(F, I)` and an ordinary
+  comparison names "every argument but the receiver" for any arity. JSON offers one argument or
+  `Argument(*)`.
+
+  ```
+  sink(F::arg(I)) :- fun(F, name = "exec"), param(F, I), I >= 1;
+  ```
+
+- **Walk the class hierarchy transitively.** `subclass+` / `subclass*` are the transitive closure;
+  JSON's `extends` looks at the owning class's direct supertypes only. The DSL's `parent` and
+  `subclass` also cover Lua's metatable-recovered classes, where JSON's `parent` / `extends`
+  warn and match nothing.
+
+- **Compare any two values.** Comparisons and `regex_match` work on any bound variable, not only
+  on a fixed attribute of the subject, so two attributes, or attributes of two functions, can be
+  compared.
+
 ## DSL for describing sets of methods
 
 This DSL looks like a Datalog language. It has built-in relations with defined meanings. It has no
