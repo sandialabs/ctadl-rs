@@ -149,6 +149,14 @@ impl DslErrors {
     /// Renders every error against the file it came from, one per line, with a `path:line:col`
     /// prefix an editor can jump to.
     pub fn render(&self, path: &FsPath, source: &str) -> String {
+        self.render_with(path, |span| {
+            let (line, col) = span.line_col(source);
+            format!("{}:{line}:{col}", path.display())
+        })
+    }
+
+    /// [`Self::render`], with each error's location spelled by `locate`.
+    fn render_with(&self, path: &FsPath, locate: impl Fn(Span) -> String) -> String {
         let mut out = String::new();
         if self.errors.len() > 1 {
             out.push_str(&format!(
@@ -158,12 +166,7 @@ impl DslErrors {
             ));
         }
         for e in &self.errors {
-            let (line, col) = e.span().line_col(source);
-            out.push_str(&format!(
-                "> {}:{line}:{col}: {}\n",
-                path.display(),
-                e.message()
-            ));
+            out.push_str(&format!("> {}: {}\n", locate(e.span()), e.message()));
         }
         out
     }
@@ -186,14 +189,44 @@ pub struct DslFile {
     pub program: Program,
     /// Parallel to `program.rules`.
     pub plans: Vec<check::Plan>,
+    /// Set when `path` is a JSON model file and `source` is its migration.
+    pub origin: Option<JsonOrigin>,
+}
+
+/// What a migrated JSON model file keeps of the JSON, so that its diagnostics name what its
+/// author wrote. The rules themselves are synthetic: a line and column in them points at
+/// nothing the author can open.
+#[derive(Clone, Debug)]
+pub struct JsonOrigin {
+    /// Parallel to `program.rules`: the generator each rule was migrated from. A generator with
+    /// a disjunction in its `where` is several rules, and one that derives nothing is none.
+    pub rule_generators: Vec<usize>,
 }
 
 impl DslFile {
     /// Parses and checks `text`. `path` is used only in diagnostics.
     pub fn from_text(path: impl Into<PathBuf>, text: impl Into<String>) -> Result<Self, Error> {
-        let path = path.into();
-        let source = text.into();
-        let program = parse::parse_program(&source).map_err(|e| e.into_error(&path, &source))?;
+        Self::from_parts(path.into(), text.into(), None)
+    }
+
+    fn from_parts(
+        path: PathBuf,
+        source: String,
+        origin: Option<JsonOrigin>,
+    ) -> Result<Self, Error> {
+        let program = match parse::parse_program(&source) {
+            Ok(program) => program,
+            // A syntax error in a migration has no rule to be attributed to. It is the
+            // migrator's bug, so it is reported against the text the migrator wrote.
+            Err(e) if origin.is_some() => {
+                return Err(Error::DslModel(format!(
+                    "{}{}",
+                    e.render(&path, &source),
+                    migrated_note(&path)
+                )));
+            }
+            Err(e) => return Err(e.into_error(&path, &source)),
+        };
         let mut errors = DslErrors::default();
         let mut plans = Vec::with_capacity(program.rules.len());
         for rule in &program.rules {
@@ -205,29 +238,168 @@ impl DslFile {
                 }),
             }
         }
-        if !errors.is_empty() {
-            return Err(errors.into_error(&path, &source));
-        }
-        Ok(DslFile {
+        let file = DslFile {
             path,
             source,
             program,
             plans,
-        })
+            origin,
+        };
+        if !errors.is_empty() {
+            return Err(file.error(errors));
+        }
+        Ok(file)
     }
 
+    /// Reads a model file: a DSL one as written, a JSON / JSON5 / JSONL one through
+    /// [`Self::read_json`]. A path [`is_dsl_path`] does not claim is JSON, as it always was.
     pub fn read(path: impl AsRef<FsPath>) -> Result<Self, Error> {
         let path = path.as_ref();
+        if !is_dsl_path(path) {
+            return Self::read_json(path);
+        }
         let text = std::fs::read_to_string(path)
             .err_context(|| format!("reading model DSL file: {}", path.display()))?;
         Self::from_text(path.to_path_buf(), text)
     }
 
-    /// `path:rule-index`, the provenance every diagnostic carries. The index counts *rules*,
-    /// which is what a DSL file's counterpart of a JSON generator index is.
-    pub fn provenance(&self, rule: usize) -> String {
-        format!("{}:{rule}", self.path.display())
+    /// Migrates a JSON model file and loads the migration, so that it runs on the one engine.
+    ///
+    /// Warns that the format is deprecated, once per file per process, and logs what the
+    /// migration left out. A generator that does not translate exactly fails the load with
+    /// the migrator's errors, each naming its generator.
+    pub fn read_json(path: &FsPath) -> Result<Self, Error> {
+        warn_json_deprecated(path);
+        let (text, report) = migrate::migrate_file(path)
+            .err_context(|| format!("migrating model file: {}", path.display()))?;
+        Self::from_migration(path, text, report)
     }
+
+    /// [`Self::read_json`] for a linter: a generator that does not migrate is left out rather
+    /// than costing the rest of the file. The second half is the error [`Self::read_json`]
+    /// would have failed with, which names every generator left out.
+    pub fn read_json_lenient(path: &FsPath) -> Result<(Self, Option<Error>), Error> {
+        warn_json_deprecated(path);
+        let context = || format!("migrating model file: {}", path.display());
+        let mut generators = Vec::new();
+        crate::models::spec::visit_model_file(path, |_, value| {
+            generators.push(value.clone());
+            Ok(())
+        })
+        .err_context(context)?;
+        let mut rejected = None;
+        let (text, report) = match migrate::migrate_generators(generators.iter(), None) {
+            Err(Error::JsonModel(errors)) => {
+                // A generator with no `model` derives nothing, so standing one in for each that
+                // failed keeps every other generator at its own index.
+                for e in errors.iter() {
+                    generators[e.index()] = serde_json::json!({ "find": "methods" });
+                }
+                rejected = Some(
+                    Err::<(), _>(Error::JsonModel(errors))
+                        .err_context(context)
+                        .unwrap_err(),
+                );
+                migrate::migrate_generators(generators.iter(), None).err_context(context)?
+            }
+            migrated => migrated.err_context(context)?,
+        };
+        Ok((Self::from_migration(path, text, report)?, rejected))
+    }
+
+    fn from_migration(
+        path: &FsPath,
+        text: String,
+        report: migrate::MigrationReport,
+    ) -> Result<Self, Error> {
+        for warning in &report.warnings {
+            log::warn!("{}: {warning}", path.display());
+        }
+        let origin = JsonOrigin {
+            rule_generators: report.rule_generators,
+        };
+        Self::from_parts(path.to_path_buf(), text, Some(origin))
+    }
+
+    /// The index diagnostics name rule `rule` by: its position in a DSL file, its generator's
+    /// in a migrated JSON one. The two play the same part, so every surface that reports one —
+    /// provenance, `CTADL0004`, the dead-rule warning — reads the same whichever was given.
+    pub fn label(&self, rule: usize) -> usize {
+        label(self.origin.as_ref(), rule)
+    }
+
+    /// `path:index`, the provenance every diagnostic carries, with the index of
+    /// [`Self::label`]. For a JSON file it is the `file:generator-index` the JSON matcher
+    /// recorded.
+    pub fn provenance(&self, rule: usize) -> String {
+        format!("{}:{}", self.path.display(), self.label(rule))
+    }
+
+    /// `errors`, rendered against this file. A migrated file's errors name the generator their
+    /// rule came from, rather than a line of text its author has never seen.
+    pub fn error(&self, errors: DslErrors) -> Error {
+        let Some(origin) = &self.origin else {
+            return errors.into_error(&self.path, &self.source);
+        };
+        let rendered = errors.render_with(&self.path, |span| {
+            let rule = self
+                .program
+                .rules
+                .iter()
+                .position(|r| r.span.start <= span.start && span.start <= r.span.end);
+            match rule {
+                Some(rule) => format!(
+                    "{}: generator {}",
+                    self.path.display(),
+                    label(Some(origin), rule)
+                ),
+                None => {
+                    let (line, col) = span.line_col(&self.source);
+                    format!("{} (migrated, {line}:{col})", self.path.display())
+                }
+            }
+        });
+        Error::DslModel(format!("{rendered}{}", migrated_note(&self.path)))
+    }
+}
+
+fn label(origin: Option<&JsonOrigin>, rule: usize) -> usize {
+    origin
+        .and_then(|o| o.rule_generators.get(rule).copied())
+        .unwrap_or(rule)
+}
+
+/// What follows a migrated file's errors: where to read the rules they are about.
+fn migrated_note(path: &FsPath) -> String {
+    format!(
+        "  (in the DSL translation of {0}; `ctadl migrate-models {0} -o -` prints it)\n",
+        path.display()
+    )
+}
+
+/// The warning a JSON model file draws.
+pub fn json_deprecation_warning(path: &FsPath) -> String {
+    format!(
+        "{0}: JSON model files are deprecated and will be removed in a future release; convert \
+         with 'ctadl migrate-models {0}'",
+        path.display()
+    )
+}
+
+/// Logs [`json_deprecation_warning`] for `path` unless this process already has, and returns
+/// whether it did.
+///
+/// Once per process rather than once per load: `ctadl report` loads each file once per import,
+/// and saying the same thing about the same file again tells the reader nothing.
+pub fn warn_json_deprecated(path: &FsPath) -> bool {
+    static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if warned.iter().any(|p| p == path) {
+        return false;
+    }
+    warned.push(path.to_path_buf());
+    log::warn!("{}", json_deprecation_warning(path));
+    true
 }
 
 /// Every DSL file a run was given, parsed once before the import loop.
@@ -237,13 +409,11 @@ pub struct DslModelSet {
 }
 
 impl DslModelSet {
-    /// Parses the DSL files among `paths`, leaving the rest to the JSON loader.
+    /// Parses and checks every file in `paths`, migrating the JSON ones; see [`DslFile::read`].
     pub fn scan(paths: &[PathBuf]) -> Result<Self, Error> {
         let mut files = Vec::new();
         for path in paths {
-            if is_dsl_path(path) {
-                files.push(DslFile::read(path)?);
-            }
+            files.push(DslFile::read(path)?);
         }
         if !files.is_empty() {
             log::debug!(
@@ -266,6 +436,25 @@ impl DslModelSet {
     /// collect, so an import pays for them only when some rule asks.
     pub fn uses_callsig(&self) -> bool {
         self.files.iter().any(|f| f.program.uses_callsig())
+    }
+
+    /// The files with a rule that has a `source` or `sink` head, whether or not it matches.
+    /// What the endpoint digest an index records is taken over, so a property of the files
+    /// alone: `ctadl index` and `ctadl query` must agree on it without matching anything.
+    pub fn endpoint_files(&self) -> impl Iterator<Item = &PathBuf> {
+        self.files
+            .iter()
+            .filter(|f| {
+                f.program.rules.iter().any(|r| {
+                    r.heads.iter().any(|h| {
+                        matches!(
+                            h.kind,
+                            ast::HeadKind::Source { .. } | ast::HeadKind::Sink { .. }
+                        )
+                    })
+                })
+            })
+            .map(|f| &f.path)
     }
 
     /// The input relations some rule in the set reads, so an import builds only those.
@@ -432,12 +621,12 @@ impl<'a> DslMatcher<'a> {
                     path: file.path.clone(),
                     phase,
                     rules: Vec::with_capacity(rules.len()),
+                    labels: (0..rules.len()).map(|ri| file.label(ri)).collect(),
                     skipped_rules: 0,
                 };
                 let mut emitted = DslErrors::default();
                 for (ri, state) in rules.into_iter().enumerate() {
                     let Some(mut state) = state else {
-                        file_report.skipped_rules += 1;
                         file_report.rules.push(RuleStats::default());
                         continue;
                     };
@@ -454,8 +643,12 @@ impl<'a> DslMatcher<'a> {
                 }
                 errors.extend_unique(emitted);
                 if !errors.is_empty() {
-                    return Err(errors.into_error(&file.path, &file.source));
+                    return Err(file.error(errors));
                 }
+                file_report.skipped_rules = file_report
+                    .by_label()
+                    .filter(|(_, rules)| rules.iter().all(|r| r.live_heads == 0))
+                    .count();
                 Ok(file_report)
             })
             .collect()
@@ -525,9 +718,10 @@ impl DslReport {
     pub fn dead_rules(&self) -> Vec<String> {
         let mut out = Vec::new();
         for file in &self.files {
-            for (i, stats) in file.rules.iter().enumerate() {
-                if stats.live_heads > 0 && stats.total_rows() == 0 {
-                    out.push(format!("{}:{i}", file.path.display()));
+            for (label, rules) in file.by_label() {
+                let mut live = rules.iter().filter(|r| r.live_heads > 0).peekable();
+                if live.peek().is_some() && live.all(|r| r.total_rows() == 0) {
+                    out.push(format!("{}:{label}", file.path.display()));
                 }
             }
         }
@@ -574,6 +768,21 @@ pub struct DslFileReport {
     pub phase: Phase,
     /// Parallel to the file's rules.
     pub rules: Vec<RuleStats>,
-    /// Rules whose heads all belong to the other phase.
+    /// Parallel to `rules`: what diagnostics call each, [`DslFile::label`]. The rule's own index
+    /// in a DSL file, its generator's in a migrated JSON one.
+    pub labels: Vec<usize>,
+    /// Rules whose heads all belong to the other phase. Counted by label, so a JSON generator
+    /// migrated to several rules counts once.
     pub skipped_rules: usize,
+}
+
+impl DslFileReport {
+    /// The rules' stats grouped by label, in label order.
+    pub fn by_label(&self) -> impl Iterator<Item = (usize, Vec<&RuleStats>)> + '_ {
+        let mut groups: std::collections::BTreeMap<usize, Vec<&RuleStats>> = Default::default();
+        for (label, stats) in self.labels.iter().zip(&self.rules) {
+            groups.entry(*label).or_default().push(stats);
+        }
+        groups.into_iter()
+    }
 }

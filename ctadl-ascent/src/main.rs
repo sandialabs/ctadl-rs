@@ -247,8 +247,8 @@ pub struct ReportArgs {
     #[arg(long)]
     pub no_recursion: bool,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files, as `ctadl index`
-    /// would. The report reads nothing but writes the `policy` section against them, so this is
+    /// Load additional models from one or more model files (`.ctadl`, or the deprecated JSON
+    /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section against them, so this is
     /// how to see what a `find: "dispatch"` model would cover before re-indexing.
     #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
     pub models: Vec<PathBuf>,
@@ -378,8 +378,8 @@ pub struct IndexArgs {
     /// provide function summaries for indexing external or hard-to-analyze code.
     ///
     /// A `.ctadl` (or `.dl`) file is written in the model DSL, which is what the engine runs;
-    /// `.json`, `.json5` and `.jsonl` are the older model-generator format and still work.
-    /// `ctadl migrate-models` converts one to the other.
+    /// `.json`, `.json5` and `.jsonl` are the older model-generator format, deprecated: such a
+    /// file is migrated to the DSL as it is loaded. `ctadl migrate-models` converts one for good.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -523,7 +523,8 @@ pub struct QueryArgs {
 
     /// The query to run, or load additional models from one or more files. Can be specified
     /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in the
-    /// model DSL; `.json`, `.json5` and `.jsonl` are the older model-generator format.
+    /// model DSL; `.json`, `.json5` and `.jsonl` are the older model-generator format,
+    /// deprecated, and migrated to the DSL as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -548,7 +549,8 @@ pub struct GoArgs {
 
     /// Load additional models from one or more files. Can be specified multiple times to load
     /// multiple model files. A `.ctadl` (or `.dl`) file is written in the model DSL; `.json`,
-    /// `.json5` and `.jsonl` are the older model-generator format.
+    /// `.json5` and `.jsonl` are the older model-generator format, deprecated, and migrated to
+    /// the DSL as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 

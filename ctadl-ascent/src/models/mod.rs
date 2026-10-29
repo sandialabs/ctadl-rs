@@ -7,7 +7,7 @@ a [`ModelLoadReport`] alongside it for the Stage-1 counters the diagnostics need
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, Read};
 
 use crate::error::{Error, ErrorContext, JsonModelError};
 use crate::facts::TaintDirection;
@@ -278,38 +278,23 @@ pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
     try_load_models_from_values_named(index, items, out, &path.display().to_string())
 }
 
-/// Load models from a file. The file extension is used to decide whether to load as `json`,
-/// `jsonl`, or `json5`.
+/// Load models from a file, through the DSL engine. A `.ctadl` / `.dl` file is loaded as
+/// written; any other is a JSON / JSON5 / JSONL file and is migrated first (see
+/// [`dsl::DslFile::read`]).
+///
+/// Both phases' heads are kept: a caller with one program in hand and no phase to declare
+/// wants everything the file says, and `cli::index` / `cli::query` drive [`DslMatcher`]
+/// themselves precisely so they can say which half they are keeping.
 ///
 /// Everything the file matched is *appended* to `out`, which is what lets a caller accumulate
-/// across every (import x model file) pair without a merge step. See
-/// [`try_load_models_from_values`] for the error contract that appending implies.
+/// across every (import x model file) pair without a merge step.
 pub fn try_load_models<P: AsRef<std::path::Path>>(
     index: &ProgramMatchIndex<'_>,
     path: P,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let path = path.as_ref();
-    // A DSL file goes to the engine. Both phases' heads are kept: a caller with one program in
-    // hand and no phase to declare wants everything the file says, and `cli::index` /
-    // `cli::query` drive [`DslMatcher`] themselves precisely so they can say which half they
-    // are keeping.
-    if dsl::is_dsl_path(path) {
-        let report = dsl::try_load_dsl_models(index, path, dsl::Phase::All, out)?;
-        return Ok(ModelLoadReport::from_dsl(report));
-    }
-    let extension = path.extension().and_then(|s| s.to_str());
-    match extension {
-        Some("jsonl") => {
-            let file = File::open(path)
-                .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
-            let rdr = BufReader::new(file);
-            try_load_jsonl_models_named(index, rdr, out, &path.display().to_string())
-                .err_context(|| format!("reading model JSONL file: {}", path.display()))
-        }
-        Some("json5") => try_load_json5_models(index, path, out),
-        _ => try_load_json_models(index, path, out),
-    }
+    let report = dsl::try_load_dsl_models(index, path, dsl::Phase::All, out)?;
+    Ok(ModelLoadReport::from_dsl(report))
 }
 
 /// Load models from a stream of json Values. This processing is batched for efficiency, so the
@@ -392,18 +377,8 @@ impl std::error::Error for ModelCheckError {
 /// [`try_load_models`] for a linter: matches the whole file whatever it finds, and hands back
 /// the errors instead of failing on them.
 ///
-/// `capture` is how many of each generator's matched function names to retain (`usize::MAX`
-/// for all); the counts are recorded either way. See
-/// [`json::ModelGeneratorIngest::capture_matches`].
-///
-/// # Why not `try_load_models`
-///
-/// [`try_load_models_from_values`] builds its [`ModelLoadReport`] only after every batch has
-/// succeeded, so the first batch that collects an error discards the stats of every batch
-/// after it -- one misspelled key would cost the whole file's diagnostics, exactly when a
-/// reader needs them most. Note what that does *not* cost: `encode_models_from` visits every
-/// generator in its batch before returning the collected errors, so the generators after a bad
-/// one in the same batch did match. It is the following batches that the `?` never reaches.
+/// `capture` is how many of each generator's matched function names to retain; the counts are
+/// exact either way.
 pub fn try_check_models<P: AsRef<std::path::Path>>(
     index: &ProgramMatchIndex<'_>,
     path: P,
@@ -414,47 +389,37 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
     // A DSL file is checked by loading it: parse and mode errors are load-time, so there is no
     // second, laxer path for a linter to take. One malformed rule still costs the file, which
     // is the one place the DSL is stricter than the JSON loader — a syntax error has no
-    // resynchronization point.
-    if dsl::is_dsl_path(path) {
-        return match dsl::try_load_dsl_models(index, path, dsl::Phase::All, out) {
-            Ok(report) => (ModelLoadReport::from_dsl(report), Vec::new()),
-            Err(e) => (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]),
-        };
-    }
-    let extension = path.extension().and_then(|s| s.to_str());
-    match extension {
-        Some("jsonl") => match File::open(path) {
-            Ok(file) => try_check_jsonl_models(index, BufReader::new(file), capture, out),
-            Err(e) => (
-                ModelLoadReport::default(),
-                vec![ModelCheckError::Stream(
-                    Err::<(), _>(Error::from(e))
-                        .err_context(|| format!("opening model JSONL file: {}", path.display()))
-                        .unwrap_err(),
-                )],
-            ),
-        },
-        other => {
-            let root = if other == Some("json5") {
-                read_json5_root(path)
-            } else {
-                read_json_root(path)
-            };
-            let generators = match root.and_then(|root| model_generators(&root).cloned()) {
-                Ok(generators) => generators,
-                Err(e) => {
-                    return (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]);
+    // resynchronization point. A JSON file keeps the JSON loader's leniency: a generator that
+    // does not migrate is reported and the rest are checked.
+    let loaded = if dsl::is_dsl_path(path) {
+        dsl::DslFile::read(path).map(|file| (file, None))
+    } else {
+        dsl::DslFile::read_json_lenient(path)
+    };
+    let (file, rejected) = match loaded {
+        Ok(loaded) => loaded,
+        Err(e) => return (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]),
+    };
+    let mut errors: Vec<ModelCheckError> =
+        rejected.into_iter().map(ModelCheckError::Stream).collect();
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    matcher.observe_import(index, out);
+    match matcher.finish(out) {
+        Ok(report) => {
+            let mut load = ModelLoadReport::from_dsl(report);
+            for matched in load.matched.values_mut() {
+                if let MatchedFunctions::Some { names, .. } = matched {
+                    while names.len() > capture {
+                        names.pop_last();
+                    }
                 }
-            };
-            let outcome = run_batches(
-                index,
-                generators.into_iter().map(Ok),
-                out,
-                Some(capture),
-                false,
-                &path.display().to_string(),
-            );
-            outcome.into_check()
+            }
+            (load, errors)
+        }
+        Err(e) => {
+            errors.push(ModelCheckError::Stream(e));
+            (ModelLoadReport::default(), errors)
         }
     }
 }
@@ -680,29 +645,36 @@ impl ModelLoadReport {
             for (key, stats) in dsl_endpoint_stats(file) {
                 endpoint_stats.entry(key).or_default().merge(&stats);
             }
-            for (i, stats) in file.rules.iter().enumerate() {
+            // Keyed by label, so a JSON generator migrated to several rules — one per disjunct
+            // of its `where` — reports once, as the union of its rules.
+            for (&i, stats) in file.labels.iter().zip(&file.rules) {
                 if stats.propagation_heads > 0 {
-                    propagation_stats.insert(
-                        i,
-                        PropagationStats {
+                    propagation_stats
+                        .entry(i)
+                        .or_default()
+                        .merge(&PropagationStats {
                             ports_declared: stats.propagation_heads,
                             rows: stats.propagations,
-                        },
-                    );
+                        });
                 }
                 if stats.access_paths > 0 {
-                    access_path_stats.insert(i, stats.access_paths);
+                    *access_path_stats.entry(i).or_default() += stats.access_paths;
                 }
                 // A rule's match set is the functions its heads anchored at. There is no `All`
                 // case: a rule with an unconstrained `fun(F)` enumerates rather than staying
-                // symbolic, so the count is exact and only the *names* are capped.
-                matched.insert(
-                    i,
-                    MatchedFunctions::Some {
-                        total: stats.functions,
-                        names: stats.matched_functions.clone(),
-                    },
-                );
+                // symbolic, so the count is exact and only the *names* are capped. Over two
+                // rules of one generator the counts sum, so a function both select counts
+                // twice.
+                let rule_matched = MatchedFunctions::Some {
+                    total: stats.functions,
+                    names: stats.matched_functions.clone(),
+                };
+                match matched.get_mut(&i) {
+                    Some(existing) => existing.merge(&rule_matched, dsl::emit::MATCHED_SAMPLE_CAP),
+                    None => {
+                        matched.insert(i, rule_matched);
+                    }
+                }
             }
         }
         let totals = report.totals();
@@ -712,8 +684,8 @@ impl ModelLoadReport {
                 propagations: report
                     .files
                     .iter()
-                    .flat_map(|f| f.rules.iter())
-                    .filter(|r| r.propagation_heads > 0)
+                    .flat_map(|f| f.by_label())
+                    .filter(|(_, rules)| rules.iter().any(|r| r.propagation_heads > 0))
                     .count(),
                 bridges: totals.bridges,
                 // No DSL rule can declare `modes`; see the migrator's unsupported-key list.
@@ -728,13 +700,15 @@ impl ModelLoadReport {
     }
 }
 
-/// The source/sink counters one DSL file's rules project onto, keyed `(rule, direction)`: one
+/// The source/sink counters one DSL file's rules project onto, keyed `(label, direction)`: one
 /// entry per direction a rule declares a head in. `ctadl query` and [`ModelLoadReport::from_dsl`]
-/// both read a DSL load's endpoint stats through this.
+/// both read a DSL load's endpoint stats through this. Two rules with one label — the
+/// disjuncts of one JSON generator — yield two entries under one key, for the caller to
+/// [`EndpointStats::merge`].
 pub fn dsl_endpoint_stats(
     file: &dsl::DslFileReport,
 ) -> impl Iterator<Item = ((usize, TaintDirection), EndpointStats)> + '_ {
-    file.rules.iter().enumerate().flat_map(|(i, stats)| {
+    file.labels.iter().zip(&file.rules).flat_map(|(&i, stats)| {
         [
             (stats.source_heads, stats.sources, TaintDirection::Forward),
             (stats.sink_heads, stats.sinks, TaintDirection::Backward),

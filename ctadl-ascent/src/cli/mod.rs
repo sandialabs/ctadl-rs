@@ -266,24 +266,29 @@ pub fn index(
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
-    let file_specs = crate::models::scan_model_files(models)?;
-    // DSL files are parsed and checked once, before any artifact is read, and matched by a
-    // single matcher across the whole loop. That is not symmetry with the JSON path for its
-    // own sake: a rule whose body names two programs — a bridge — is satisfied by no single
-    // import, so its components have to be collected as the imports stream by and joined after.
+    // Model files are parsed and checked once, before any artifact is read — a JSON one is
+    // migrated to the DSL first — and matched by a single matcher across the whole loop. A rule
+    // whose body names two programs — a bridge — is satisfied by no single import, so its
+    // components have to be collected as the imports stream by and joined after.
     let dsl_models = crate::models::DslModelSet::scan(models)?;
     let mut dsl_matcher =
         crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Index);
+    // The source/sink heads too, though index time does not analyse them: a matched endpoint
+    // in a signature's target set is what refuses a dispatch model (see
+    // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is lowered. Not
+    // reported, since `ctadl query` reports on them.
+    let mut endpoint_matcher =
+        crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Query);
     // Every matched model, instantiated against the IR being indexed. It persists across the import
     // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
     // import cache is a pure function of the artifact, and persisting them would let `ctadl index
     // --models a.json` poison the next `ctadl index --models b.json`.
     let mut model_matches = crate::models::ProgramModelMatches::default();
-    model_matches.bridges.prepare(&file_specs.bridges);
-    // Source/sink models are inert at index time; warn once rather than discarding in silence.
-    // Keyed by file, not counted per (file, import) pair -- declaring an endpoint is a property
-    // of the file, and every file is re-matched once per import.
-    let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
+    // Source/sink models are inert at index time but for that refusal; warn once rather than
+    // discarding them in silence. Keyed by file: declaring an endpoint is a property of the
+    // file, not of what it matched.
+    let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
+        dsl_models.endpoint_files().collect();
 
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
@@ -332,9 +337,8 @@ pub fn index(
             };
             // Only when some generator asks for it: collecting the keys is a pass over every
             // statement, and the defaults are language-selected, so this is decided per import.
-            let wants_dispatch = file_specs.finds_dispatch
-                || dsl_models.uses_callsig()
-                || defaults.is_some_and(|d| d.uses_callsig());
+            let wants_dispatch =
+                dsl_models.uses_callsig() || defaults.is_some_and(|d| d.uses_callsig());
             let dispatch_keys = wants_dispatch
                 .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
             let match_index = crate::models::ProgramMatchIndex::new_with_dispatch(
@@ -344,7 +348,8 @@ pub fn index(
             );
             // One set of DSL relations for the defaults and the user's rules both, covering
             // what either reads.
-            let dsl_facts = (defaults.is_some() || !dsl_matcher.is_empty()).then(|| {
+            let user_rules = !dsl_matcher.is_empty() || !endpoint_matcher.is_empty();
+            let dsl_facts = (defaults.is_some() || user_rules).then(|| {
                 let mut needs = dsl_matcher.needs();
                 if let Some(defaults) = defaults {
                     needs.union(defaults.needs());
@@ -354,25 +359,10 @@ pub fn index(
             if let (Some(defaults), Some(facts)) = (defaults, &dsl_facts) {
                 crate::models::load_default_models_from_facts(defaults, facts, &mut model_matches)?;
             }
-            for model_path in models {
-                // The DSL files are the matcher's, not this loop's; see above.
-                if crate::models::is_dsl_path(model_path) {
-                    continue;
-                }
-                let report =
-                    crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
-                if !report.endpoint_stats.is_empty() {
-                    files_declaring_endpoints.insert(model_path);
-                }
-            }
             if let Some(facts) = &dsl_facts {
                 dsl_matcher.observe_facts(facts, &mut model_matches);
+                endpoint_matcher.observe_facts(facts, &mut model_matches);
             }
-            crate::models::matches::observe_import(
-                &match_index,
-                &file_specs.bridges,
-                &mut model_matches,
-            )?;
         }
 
         // Delete assigned-but-never-read temporaries, then fuse single-use
@@ -420,6 +410,7 @@ pub fn index(
     // heads and says how many rules declared only the other phase's.
     let dsl_report = dsl_matcher.finish(&mut model_matches)?;
     report_dsl(&dsl_report);
+    endpoint_matcher.finish(&mut model_matches)?;
 
     // Streaming matching retains only the *matches* -- one interned name plus two
     // (tag, index, path) triples per propagation -- and drops each import's match index and IR
@@ -427,11 +418,11 @@ pub fn index(
     // when an APK brings its native libraries in as pcode sub-imports (see
     // [`ctadl_frontends::apk_native`]).
     log::debug!(
-        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
-         spec(s) retained): {:.1} MB",
+        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge(s) \
+         retained): {:.1} MB",
         model_matches.propagations.len(),
         model_matches.access_paths.len(),
-        file_specs.bridges.len(),
+        model_matches.resolved_bridges.len(),
         phys_footprint_mb()
     );
 
@@ -453,7 +444,9 @@ pub fn index(
 
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &file_specs.bridges,
+        // No unpaired bridge specs: every bridge, a JSON file's included, is a rule the DSL
+        // engine has already paired into `resolved_bridges`.
+        &[],
         &mut facts,
         &mut source_info,
     )?;
@@ -784,21 +777,16 @@ pub fn query(
         // One accumulator across every (import x model file) pair. Endpoints carry their own
         // `facts::Path`, so accumulation is an append and there is nothing to renumber.
         let mut model_matches = crate::models::ProgramModelMatches::default();
-        // Counted across every file and import, and reported once at the end: bridges and
-        // propagations are index-time constructs, and a query that silently drops them looks
-        // exactly like one whose models did nothing.
-        let mut ignored = crate::models::IndexTimeModelCounts::default();
-        // Which files declare endpoints, by the same test `ctadl index` applies, so the two
-        // digests are over the same thing.
-        let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
-        // Import outer, model file inner: one `ProgramInfo` decode and one match index per
-        // import, reused across every model file, rather than one of each per (file, import)
-        // pair. The match tables are a function of the program alone.
-        // Parsed and checked once, before any import is read; see `cli::index` for why the DSL
-        // needs one accumulator across the whole loop rather than one load per (file, import).
+        // Parsed and checked once, before any import is read — a JSON file is migrated to the
+        // DSL first — and matched by one matcher across the whole loop; see `cli::index` for
+        // why the DSL needs one accumulator rather than one load per (file, import).
         let dsl_models = crate::models::DslModelSet::scan(models)?;
         let mut dsl_matcher =
             crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Query);
+        // Which files declare endpoints, by the same test `ctadl index` applies, so the two
+        // digests are over the same thing.
+        let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
+            dsl_models.endpoint_files().collect();
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
@@ -808,38 +796,15 @@ pub fn query(
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
                 dsl_matcher.observe_import(&match_index, &mut model_matches);
-                for model_path in models {
-                    if crate::models::is_dsl_path(model_path) {
-                        continue;
-                    }
-                    let report = crate::models::try_load_models(
-                        &match_index,
-                        model_path,
-                        &mut model_matches,
-                    )?;
-                    ignored.merge(&report.index_time_models);
-                    if !report.endpoint_stats.is_empty() {
-                        files_declaring_endpoints.insert(model_path);
-                    }
-                    // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
-                    // (generator index, direction) alone, which would conflate two model files
-                    // that happen to number their generators the same. Merging over imports is
-                    // what makes a generator that is dead against one import but live against
-                    // another come out live.
-                    for ((index, direction), stats) in &report.endpoint_stats {
-                        diagnostics
-                            .generator_stats
-                            .entry((model_path.clone(), *index, *direction))
-                            .or_default()
-                            .merge(stats);
-                    }
-                }
             }
         }
         // Query time keeps the source/sink heads. The rules whose heads are all index-time are
-        // counted and reported, exactly as the JSON half's `ignored` counters are.
+        // counted and reported, so a query that drops a propagation says so rather than
+        // looking exactly like one whose models did nothing.
         let dsl_report = dsl_matcher.finish(&mut model_matches)?;
         report_dsl(&dsl_report);
+        // Re-keyed by file: the report is keyed by (rule label, direction) within a file, which
+        // would conflate two model files that happen to number their rules the same.
         for file in &dsl_report.files {
             for ((rule, direction), stats) in crate::models::dsl_endpoint_stats(file) {
                 diagnostics
@@ -856,13 +821,6 @@ pub fn query(
             model_matches.propagations.len(),
             crate::index_engine::phys_footprint_mb()
         );
-        if !ignored.is_empty() {
-            log::warn!(
-                "ignoring {} in the given model file(s); they take effect at \
-                 `ctadl index` time, so re-run `ctadl index` with them to use them",
-                ignored.describe()
-            );
-        }
         warn_on_endpoint_digest_mismatch(indexed_policy.as_ref(), &files_declaring_endpoints)?;
         let mut builder = QueryFactsBuilder::default();
         let mut endpoints = Vec::new();
