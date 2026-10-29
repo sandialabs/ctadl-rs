@@ -618,12 +618,12 @@ fn default_rows(m: &ProgramModelMatches) -> BTreeSet<String> {
         let dst = ModelPort {
             tag: p.dst.tag,
             index: p.dst.index,
-            path: p.dst.path.clone(),
+            path: p.dst.path,
         };
         let src = ModelPort {
             tag: p.src.tag,
             index: p.src.index,
-            path: p.src.path.clone(),
+            path: p.src.path,
         };
         out.insert(format!(
             "propagation: {}: {} <- {}",
