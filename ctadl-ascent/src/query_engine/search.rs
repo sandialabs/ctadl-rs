@@ -257,7 +257,8 @@ impl TaintSearchGraph {
             updates_by_src.entry((*f, *y)).or_default().push((*x, *w));
         }
         for succs in updates_by_src.values_mut() {
-            succs.sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
+            succs
+                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
         }
 
         let formal_ty: HashMap<_, _> = facts

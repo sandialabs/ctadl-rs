@@ -118,7 +118,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             }
             // The value can also be attached: `-j4`, `--jobs=4`.
             other if other.starts_with("--jobs=") || other.starts_with("-j") => {
-                let value = other.strip_prefix("--jobs=").or_else(|| other.strip_prefix("-j"));
+                let value = other
+                    .strip_prefix("--jobs=")
+                    .or_else(|| other.strip_prefix("-j"));
                 opts.jobs = Some(parse_jobs(value.unwrap_or_default())?);
             }
             "--release" => {
