@@ -60,20 +60,47 @@ Largest relations under the default (`profile.json` from the sweep; all reached 
   and `FUN_00144f04` were for P1) or spread out. The `skip-analysis` bisection in How to
   reproduce is the first step.
 
-### 2. Wild relations next to `locals`: `edge_split_wild` and `assign_like`
+### 2. Lua's GC links the running `lua_State` into its own gray list
 
-A second shape: `edge_split` leads with `edge_split_wild` and `assign_like` next, and the context
-relations are small. That is P6 ("Wild relations", `things-to-improve.md` on
-`improve-native-handling`: the offset-keyed relations of the wildcard match), so far seen in
-`a2050` and `conscryptprovider`.
+Was "wild relations next to `locals`" (P6). The wild relations are not a cause. In all 43 sweep
+profiles, problem 1's included, `edge_split` is 3.1-4.4x `assign_like` and `edge_split_wild`
+0.9-1.26x. Both are split from `assign_like`'s source paths. The wildcard joins idle: `ext_fml`
+reaches at most 0.9 M rows, `locals_wild` at most 2,900, and wild rules take 0.9-6.4% of rule time.
+When a hub is skipped, every wild relation falls 25-60x with `assign_like`. P6's mechanism
+(`assign_wild` at 26-31 M, the `ext_dst` join slowing per row) is not what happens here
+(`assign_wild` 0.13-5.6 M). The large `assign_like` is summaries instantiated at call sites: 95-99%
+of its rows. This problem's own binaries split:
 
-| Binary | `edge_split` | `locals` | `edge_split_wild` | `assign_like` | Peak | Against budget |
-|---|---|---|---|---|---|---|
-| Netgear R7000 bitdefender `bin/bdupdater` | 105.0 M | 37.5 M | 32.3 M | 26.6 M | 13.08 GiB | 30x |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | 38.0 M | 26.6 M | 11.9 M | 10.5 M | 4.56 GiB | 22x |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | 25.9 M | 19.2 M | 8.2 M | 7.0 M | 3.18 GiB | 22x |
+- `bdupdater` is problem 4, the allocator. Skipping malloc `FUN_0003f244` takes it from 13.08 GiB
+  to 0.49 GiB (1.14x).
+- `evLua` and `ipsWeb` are a new hub, Lua 5.1's `reallymarkobject`. Skipping it: `evLua` 3.36 GiB
+  (22x) to 0.16 GiB (1.09x), `ipsWeb` 4.74 GiB (22x) to 0.19 GiB (0.93x), and nothing is left.
+  Both call the external `realloc`, so malloc is not involved.
 
-`ipsWeb` keeps 3 stack accesses in memory and `evLua` none, so the stack is out for them.
+**Mechanism.** `reallymarkobject(g, o)`'s summary is 11 rows:
+
+```
+0 .[36].deref            <- 1                 g->gray = o
+1 .[8|24|68|100].deref   <- 0 .[36].deref     o->gclist = g->gray, at 4 offsets
+1 .[8|24|68|100].deref   <- 1                 o->gclist = o
+```
+
+1. **The self-link.** The heap is flow-insensitive, so `o->gclist = g->gray; g->gray = o` gives
+   `o.gclist <- o`.
+2. **All four offsets.** `gclist` sits at a different offset in each GC type (8, 24, 68, 100), and
+   the switch on `o->tt` is not seen, so every object gets all four.
+3. **The running thread points at itself.** `atomic` marks the running thread
+   (`reallymarkobject(g, L)`). Offset 8 of a `lua_State` is `L->top`, so the Lua stack pointer
+   appears to point at the `lua_State`.
+4. **Every field reaches every stack slot.** Through `atomic`, `singlestep` and `luaC_step`, and
+   Lua's 73-function call-graph SCC, 343 functions (every API function that takes `L`) carry the
+   same block of about 5,800 rows `L.<24 paths> <- L.<365 paths>`, 67% dense. Each call site
+   instantiates it.
+
+Steps 1-4 are read from the summaries. The skips are measured: skipping `reallymarkobject` or
+`luaC_step`, `singlestep` or `atomic` removes 97.5% of `locals`. Not settled: whether the self-link
+or the offset mix-up matters more. A propagation model of the 11 rows does not behave like the
+derived summary, so testing it needs a frontend or IR change.
 
 ### 3. `locals` alone: loops that carry pointers, and offsets that pile up
 
