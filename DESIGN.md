@@ -340,8 +340,9 @@ Every relation name is reserved, so an unrecognized one is reported as the typo 
 
 Modified: `cli/mod.rs`, `cli/model_check.rs`, `codegen/model_matches.rs`, `error.rs`, `main.rs`,
 `models/{mod,matches,spec,match_index}.rs`, `tests/{default_models,flowy_tests}.rs`,
-`docs/model-generators.md`. About 590 added lines across those, and 32 removed — the DSL is a
-peer of the existing machinery rather than a rewrite of it.
+`docs/model-generators.md`. About 590 added lines across those, and 32 removed. The DSL engine
+reads the same `ProgramMatchIndex` tables the JSON matcher did; JSON files reach it through the
+migrator.
 
 
 ### 3. Three decisions worth knowing about
