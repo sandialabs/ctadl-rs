@@ -259,18 +259,6 @@ fn migrate_generator(
     };
 
     let scope = scope_attrs(generator.get("in"));
-    if dispatch && !scope.is_empty() {
-        // The loader skips the whole generator for an import its scope excludes. A signature
-        // key is composed from a call site rather than read out of an import's method table, so
-        // it has no `language` or `import` to narrow on, and a second atom naming the import's
-        // language would be a component of its own, joined across *every* import.
-        return Err(untranslatable(
-            index,
-            "'in'",
-            "a 'callsig' key carries no language or import, so a scoped dispatch generator has \
-             no DSL counterpart; drop the scope, or narrow on 'parent' instead",
-        ));
-    }
     if generator.get("on-unmatched").is_some() && generator.pointer("/model/bridge").is_none() {
         report.warn(
             index,
@@ -292,7 +280,6 @@ fn migrate_generator(
         subject,
         callsites,
         relation,
-        nested: false,
     };
     let disjuncts = compile(&expr, false, &ctx, &mut fresh)?;
 
@@ -312,17 +299,11 @@ fn migrate_generator(
         let _ = writeln!(out, "// generator {index}: its 'where' can never match");
         return Ok(());
     }
-    let subject_scope: &[String] = if dispatch { &[] } else { &scope };
 
     if !heads.plain.is_empty() {
         for disjunct in &disjuncts {
             let mut body = base.clone();
-            body.extend(with_subject(
-                disjunct.clone(),
-                relation,
-                subject,
-                subject_scope,
-            ));
+            body.extend(with_subject(disjunct.clone(), relation, subject, &scope));
             write_rule(out, &heads.plain, &body);
             report.rules += 1;
         }
@@ -336,12 +317,7 @@ fn migrate_generator(
         && let Some(side_b) = bridge.side_b
     {
         let mut body = base;
-        body.extend(with_subject(
-            one_of(&disjuncts),
-            relation,
-            subject,
-            subject_scope,
-        ));
+        body.extend(with_subject(one_of(&disjuncts), relation, subject, &scope));
         body.extend(side_b);
         write_rule(out, &bridge.heads, &body);
         report.rules += 1;
@@ -400,7 +376,8 @@ fn write_rule(out: &mut String, heads: &[String], body: &[String]) {
 /// A `where` that narrows the subject already contains a `fun(F, …)`, so the scope attributes
 /// are folded into the first one rather than written as a second atom over the same variable.
 /// A `where` that does not — or an absent one — gets the bare atom, because a head variable has
-/// to be bound by *something*.
+/// to be bound by *something*. Either way that atom goes first: a filter such as a leading
+/// `not` can only test the subject once it is bound.
 fn with_subject(
     mut atoms: Vec<String>,
     relation: &str,
@@ -408,12 +385,21 @@ fn with_subject(
     scope: &[String],
 ) -> Vec<String> {
     let open = format!("{relation}({subject}, ");
-    match atoms.iter().position(|a| a.starts_with(&open)) {
-        Some(i) if !scope.is_empty() => {
-            atoms[i] = format!("{open}{}, {}", scope.join(", "), &atoms[i][open.len()..]);
+    let bare = format!("{relation}({subject})");
+    match atoms
+        .iter()
+        .position(|a| a.starts_with(&open) || *a == bare)
+    {
+        Some(i) => {
+            let mut binder = atoms.remove(i);
+            if !scope.is_empty() {
+                binder = match binder.strip_prefix(&open) {
+                    Some(rest) => format!("{open}{}, {rest}", scope.join(", ")),
+                    None => atom(relation, subject, scope),
+                };
+            }
+            atoms.insert(0, binder);
         }
-        Some(_) => {}
-        None if atoms.iter().any(|a| a == &format!("{relation}({subject})")) => {}
         None => atoms.insert(0, atom(relation, subject, scope)),
     }
     atoms
@@ -463,9 +449,6 @@ struct Ctx<'a> {
     /// `callsig` for `find: dispatch`. The attribute names are the same in both, which is what
     /// lets one constraint compiler serve them.
     relation: &'a str,
-    /// Under an `any_of` or a `not`, which the JSON loader evaluates against a scratch set of
-    /// its own. See the `in_function` arm of [`leaf_atoms`] for why that matters.
-    nested: bool,
 }
 
 /// A disjunction of conjunctions of body atoms, as text. The empty disjunction is false, and a
@@ -535,18 +518,12 @@ fn compile_prim(
                 .iter()
                 .map(Expr::Prim)
                 .collect();
-            let (expr, ctx) = if kind == "all_of" {
-                (Expr::And(inners), *ctx)
+            let expr = if kind == "all_of" {
+                Expr::And(inners)
             } else {
-                (
-                    Expr::Or(inners),
-                    Ctx {
-                        nested: true,
-                        ..*ctx
-                    },
-                )
+                Expr::Or(inners)
             };
-            return compile(&expr, negated, &ctx, fresh);
+            return compile(&expr, negated, ctx, fresh);
         }
         "not" => {
             let inner = value
@@ -555,11 +532,7 @@ fn compile_prim(
                     index: ctx.index,
                     field_name: "inner".to_string(),
                 })?;
-            let ctx = Ctx {
-                nested: true,
-                ..*ctx
-            };
-            return compile(&Expr::Prim(inner), !negated, &ctx, fresh);
+            return compile(&Expr::Prim(inner), !negated, ctx, fresh);
         }
         _ => {}
     }
@@ -699,25 +672,14 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
                 });
             }
             let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
-            // The JSON loader narrows whatever set is current, and under an `any_of` or a `not`
-            // that is the combinator's scratch copy of the *callee* set: its `inner` ends up
-            // constraining the callee, not the caller. Translating that faithfully would write
-            // a model that does not say what it reads as; translating what it reads as would
-            // match something the JSON never did.
-            if ctx.nested {
-                return Err(untranslatable(
-                    index,
-                    "'in_function'",
-                    "under 'any_of' or 'not' the JSON loader applies its 'inner' to the callee \
-                     rather than the caller; move it to the top level of 'where'",
-                ));
-            }
+            // Always the caller, under `any_of` and `not` too. The JSON matcher narrows the
+            // combinator's scratch copy of the *callee* set there, which is a bug in it, not a
+            // meaning to carry across.
             let caller_ctx = Ctx {
                 index,
                 subject: CALLER,
                 callsites: false,
                 relation: "fun",
-                nested: false,
             };
             compile(&Expr::Prim(inner), false, &caller_ctx, fresh)
         }
@@ -1201,42 +1163,43 @@ fn migrate_dispatch_model(
         })
     });
     let propagation = propagation.transpose()?;
-    if let Some(value) = model.get("resolve") {
-        return match value.as_str() {
-            // `resolve` with a `propagation` list is inlining that also carries the summary,
-            // and a DSL `resolve = "inline"` head carries no flows.
-            Some("inline") if propagation.is_some_and(|p| !p.is_empty()) => Err(untranslatable(
-                index,
-                "'resolve' with 'propagation'",
-                "the DSL's 'resolve = \"inline\"' carries no flows, and a separate flow head \
-                 would make the key a model rather than an inlined one",
-            )),
-            Some("inline") => Ok(vec![format!("{anchor}::dispatch(resolve = \"inline\")")]),
-            Some(other) => Err(JsonModelError::UnexpectedField {
+    // `resolve` beside a `propagation` list inlines and summarizes too, which the DSL says with
+    // the flow inside the `resolve = "inline"` head.
+    let resolve = match model.get("resolve").map(|v| v.as_str()) {
+        None => "",
+        Some(Some("inline")) => "resolve = \"inline\", ",
+        Some(Some(other)) => {
+            return Err(JsonModelError::UnexpectedField {
                 index,
                 field_name: "resolve".to_string(),
                 message: format!("unknown value '{other}'; the defined value is 'inline'"),
-            }),
-            None => Err(JsonModelError::FieldNotString {
+            });
+        }
+        Some(None) => {
+            return Err(JsonModelError::FieldNotString {
                 index,
                 field_name: "resolve".to_string(),
-            }),
-        };
-    }
-    let Some(items) = propagation else {
-        return Err(JsonModelError::MissingField {
-            index,
-            field_name: "propagation' / 'resolve' / 'closure_shaped".to_string(),
-        });
+            });
+        }
     };
-    if items.is_empty() {
-        return Ok(vec![format!("{anchor}::dispatch(resolve = \"skip\")")]);
-    }
+    let items = match propagation {
+        Some(items) if !items.is_empty() => items,
+        _ if !resolve.is_empty() => {
+            return Ok(vec![format!("{anchor}::dispatch(resolve = \"inline\")")]);
+        }
+        Some(_) => return Ok(vec![format!("{anchor}::dispatch(resolve = \"skip\")")]),
+        None => {
+            return Err(JsonModelError::MissingField {
+                index,
+                field_name: "propagation' / 'resolve' / 'closure_shaped".to_string(),
+            });
+        }
+    };
     let mut heads = Vec::new();
     for item in items {
         let input = port_text(item.get("input"), "input", index)?;
         let output = port_text(item.get("output"), "output", index)?;
-        heads.push(format!("{anchor}::dispatch({output} <- {input})"));
+        heads.push(format!("{anchor}::dispatch({resolve}{output} <- {input})"));
     }
     Ok(heads)
 }
@@ -1297,7 +1260,6 @@ fn migrate_bridge(
         subject: OTHER,
         callsites: false,
         relation: "fun",
-        nested: false,
     };
     let expr = where_expr(index, to.get("where"), "to.where")?;
     let disjuncts = compile(&expr, false, &ctx, fresh)?;

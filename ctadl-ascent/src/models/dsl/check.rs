@@ -471,11 +471,9 @@ fn collect_head_vars(head: &Head, out: &mut BTreeSet<String>) {
     }
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
-        HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::Dispatch {
-            disposition: DispatchHead::Flow(flow),
-        } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
+        kind => kind
+            .flow()
+            .map_or_else(Vec::new, |f| vec![&f.left, &f.right]),
     };
     for port in ports {
         if let Some(Term::Var(v)) = &port.anchor {
@@ -811,11 +809,9 @@ fn check_head(
 
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
-        HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::Dispatch {
-            disposition: DispatchHead::Flow(flow),
-        } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
+        kind => kind
+            .flow()
+            .map_or_else(Vec::new, |f| vec![&f.left, &f.right]),
     };
 
     // Resolve each port's anchor: its own, else the head atom's.
@@ -947,10 +943,7 @@ fn check_head(
             // Every form anchors at a signature key. The anchor is the whole subject of the
             // attribute forms, so a missing one is reported here rather than by the port loop
             // above, which those forms never enter.
-            let span = match disposition {
-                DispatchHead::Flow(flow) => flow.span,
-                _ => head.span,
-            };
+            let span = disposition.flow().map_or(head.span, |f| f.span);
             match head
                 .anchor
                 .as_ref()
@@ -980,7 +973,7 @@ fn check_head(
             }
             // Both ports of a dispatch flow describe the *same* signature's summary, exactly as
             // a propagation describes one function's.
-            if let DispatchHead::Flow(flow) = disposition {
+            if let Some(flow) = disposition.flow() {
                 let same = match (
                     anchors.first().copied().flatten(),
                     anchors.get(1).copied().flatten(),

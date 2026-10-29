@@ -848,26 +848,6 @@ fn what_the_dsl_cannot_say_does_not_migrate() {
             r#"{"find":"methods","model":{"modes":["skip-analysis"]}}"#.to_string(),
             "'modes'",
         ),
-        (
-            r#"{"find":"dispatch","model":{"resolve":"inline",
-                "propagation":[{"input":"Argument(0)","output":"Return"}]}}"#
-                .to_string(),
-            "'resolve' with 'propagation'",
-        ),
-        (
-            r#"{"find":"callsites","where":[{"constraint":"any_of","inners":[
-                {"constraint":"in_function","inner":{"constraint":"name","pattern":"x"}}]}],
-                "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#
-                .to_string(),
-            "'in_function'",
-        ),
-        (
-            r#"{"find":"callsites","where":[{"constraint":"not","inner":
-                {"constraint":"in_function","inner":{"constraint":"name","pattern":"x"}}}],
-                "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#
-                .to_string(),
-            "'in_function'",
-        ),
         (bridge(""), "'bridge'"),
         (bridge(r#","arguments":[]"#), "'bridge'"),
         (
@@ -1145,17 +1125,10 @@ fn a_java_array_element_segment_survives_the_round_trip() {
 }
 
 /// The shipped default generators the DSL cannot yet say, as `(file, generator index, what the
-/// error names)`. Each is a model the checked-in `.ctadl` does not carry.
-///
-/// - `skip-analysis` has no DSL head, so an index loading the `.ctadl` lowers the unwinders'
-///   bodies after all.
-/// - `resolve: "inline"` with a `propagation` list inlines *and* summarizes, and the DSL's
-///   `resolve = "inline"` head carries no flows, so the `.ctadl` inlines without the summary.
-const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] = &[
-    ("native-index.jsonl", 28, "'modes'"),
-    ("cil-index.jsonl", 194, "'resolve' with 'propagation'"),
-    ("cil-index.jsonl", 195, "'resolve' with 'propagation'"),
-];
+/// error names)`. Each is a model the checked-in `.ctadl` does not carry: `skip-analysis` has
+/// no DSL head, so an index loading the `.ctadl` lowers the unwinders' bodies after all.
+const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] =
+    &[("native-index.jsonl", 28, "'modes'")];
 
 /// Every shipped default file must migrate and load, but for the generators
 /// [`KNOWN_UNTRANSLATABLE_DEFAULTS`] lists, which must fail exactly as listed. This is the drift
@@ -1301,6 +1274,7 @@ fn dispatch_generators_migrate() {
         r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"size"}],"model":{"propagation":[]}}"#,
         r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"close"}],"model":{"resolve":"inline"}}"#,
         r#"{"find":"dispatch","where":[{"constraint":"signature_match","parents":["Ljava/lang/Runnable;"]}],"model":{"closure_shaped":true}}"#,
+        r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"iterator"}],"model":{"resolve":"inline","propagation":[{"input":"Argument(0)","output":"Return"}]}}"#,
     ]
     .iter()
     .map(|l| serde_json::from_str(l).expect("valid json"))
@@ -1315,19 +1289,54 @@ fn dispatch_generators_migrate() {
         dsl.contains(r#"K::dispatch(closure_shaped = true)"#),
         "{dsl}"
     );
+    // Inlined and summarized: the flow rides in the `resolve` head.
+    assert!(
+        dsl.contains(r#"K::dispatch(resolve = "inline", return <- arg(0))"#),
+        "{dsl}"
+    );
     assert!(dsl.contains("callsig(K, "), "{dsl}");
     check_ok(&dsl);
 }
 
-/// `in` narrows by language and import, and a signature key is composed from a call site rather
-/// than read out of an import's method table, so it carries neither. Dropping the scope would
-/// apply the model to every import, so the migration refuses.
+/// The atom that binds the subject goes first, so a leading `not` tests a bound `F`.
 #[test]
-fn a_scoped_dispatch_generator_does_not_migrate() {
-    let errors = migration_errors(
+fn a_leading_not_follows_the_atom_that_binds_the_subject() {
+    let text = migrate_and_load(
+        r#"{"find":"methods","in":{"language":"pcode"},
+            "where":[{"constraint":"not","inner":{"constraint":"has_code","value":false}},
+                     {"constraint":"signature_match","name":"x"}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(
+        text.contains(
+            ":-\n  fun(F, language = \"pcode\", name = \"x\"),\n  !fun(F, has_code = false);"
+        ),
+        "{text}"
+    );
+}
+
+/// `in_function` constrains the caller wherever it appears. The JSON matcher applies it to the
+/// callee under `any_of` and `not`, which is a bug in it, not a meaning to carry across.
+#[test]
+fn in_function_under_a_combinator_still_constrains_the_caller() {
+    let text = migrate_and_load(
+        r#"{"find":"callsites",
+            "where":[{"constraint":"not","inner":{"constraint":"in_function",
+                      "inner":{"constraint":"signature_match","name":"main"}}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(text.contains(r#"!fun(C, name = "main")"#), "{text}");
+}
+
+/// `in` narrows by the import the key's call site was read from, which `callsig` carries as
+/// `fun` does.
+#[test]
+fn a_scoped_dispatch_generator_keeps_its_scope() {
+    let text = migrate_and_load(
         r#"{"find":"dispatch","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"toString"}],"model":{"resolve":"inline"}}"#,
     );
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("cannot migrate 'in'"), "{errors:?}");
-    assert!(errors[0].contains("index 0"), "{errors:?}");
+    assert!(
+        text.contains(r#"callsig(K, language = "dex", name = "toString")"#),
+        "{text}"
+    );
 }

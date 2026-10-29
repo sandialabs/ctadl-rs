@@ -556,7 +556,9 @@ impl Builder {
     /// `resolve = "inline"` / `resolve = "skip"` / `closure_shaped = true`.
     ///
     /// Exactly one of the three, mirroring the JSON loader, so that a generator that forgot its
-    /// model and one that meant to discard the call's targets stay different documents.
+    /// model and one that meant to discard the call's targets stay different documents. The one
+    /// combination is `resolve = "inline"` with a flow, the JSON's `resolve` beside a
+    /// `propagation`: inlined, and summarized too.
     fn dispatch_head(
         &mut self,
         span: Span,
@@ -632,17 +634,21 @@ impl Builder {
                 );
                 return None;
             }
-            if disposition.is_some() {
-                self.error(
-                    span,
-                    "a 'dispatch' head carries a flow or an attribute, never both: a signature \
-                     that is modelled is not also skipped, inlined or closure-shaped",
-                );
-                return None;
-            }
-            return Some(HeadKind::Dispatch {
-                disposition: DispatchHead::Flow(flow),
-            });
+            // Inlining may carry a summary as well; nothing else may.
+            let disposition = match disposition {
+                None => DispatchHead::Flow(flow),
+                Some(DispatchHead::Inline) => DispatchHead::InlineFlow(flow),
+                Some(_) => {
+                    self.error(
+                        span,
+                        "a 'dispatch' head carries a flow or an attribute, never both, except \
+                         'resolve = \"inline\"': a signature that is modelled is not also skipped \
+                         or closure-shaped",
+                    );
+                    return None;
+                }
+            };
+            return Some(HeadKind::Dispatch { disposition });
         }
         match disposition {
             Some(disposition) => Some(HeadKind::Dispatch { disposition }),

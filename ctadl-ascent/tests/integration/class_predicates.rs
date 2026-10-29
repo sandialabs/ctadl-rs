@@ -313,7 +313,8 @@ fn both(
     )
     .unwrap_or_else(|e| panic!("JSON load of {generator}: {e}"));
 
-    let (text, report) = migrate_generators(std::iter::once(generator), None);
+    let (text, report) = migrate_generators(std::iter::once(generator), None)
+        .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
     assert!(
         report.warnings.is_empty(),
         "migrating {generator} warned: {:?}\n{text}",

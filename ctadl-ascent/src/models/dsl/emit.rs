@@ -469,7 +469,7 @@ fn emit_head(
                         DispatchHead::Inline => Disposition::Inline(Vec::new()),
                         DispatchHead::Skip => Disposition::Skip,
                         DispatchHead::ClosureShaped => unreachable!("handled above"),
-                        DispatchHead::Flow(flow) => {
+                        DispatchHead::Flow(flow) | DispatchHead::InlineFlow(flow) => {
                             let (Some(left), Some(right)) = (
                                 model_port(&flow.left.port, binding, flow.span, errors),
                                 model_port(&flow.right.port, binding, flow.span, errors),
@@ -484,7 +484,11 @@ fn emit_head(
                                 FlowOp::ToLeft => vec![(left, right)],
                                 FlowOp::Both => vec![(left, right), (right, left)],
                             };
-                            Disposition::Model(ports)
+                            if matches!(disposition, DispatchHead::InlineFlow(_)) {
+                                Disposition::Inline(ports)
+                            } else {
+                                Disposition::Model(ports)
+                            }
                         }
                     };
                     out.add_dispatch(
@@ -515,18 +519,16 @@ fn resolve_callsig(
     binding: &Binding<'_>,
     errors: &mut DslErrors,
 ) -> Option<(DispatchKey, facts::Str)> {
-    let span = match disposition {
-        DispatchHead::Flow(flow) => flow.span,
-        _ => head.span,
-    };
+    let span = disposition.flow().map_or(head.span, |f| f.span);
     // A flow's ports may carry the anchor instead of the head atom, exactly as a propagation's
     // may.
     let term = head
         .anchor
         .as_ref()
-        .or_else(|| match disposition {
-            DispatchHead::Flow(flow) => flow.left.anchor.as_ref().or(flow.right.anchor.as_ref()),
-            _ => None,
+        .or_else(|| {
+            disposition
+                .flow()
+                .and_then(|flow| flow.left.anchor.as_ref().or(flow.right.anchor.as_ref()))
         })
         .or_else(|| {
             errors.push(DslError::Rule {
@@ -723,11 +725,9 @@ fn head_vars(head: &Head) -> Vec<String> {
     }
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
-        HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::Dispatch {
-            disposition: DispatchHead::Flow(flow),
-        } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
+        kind => kind
+            .flow()
+            .map_or_else(Vec::new, |f| vec![&f.left, &f.right]),
     };
     for port in ports {
         if let Some(Term::Var(v)) = &port.anchor {

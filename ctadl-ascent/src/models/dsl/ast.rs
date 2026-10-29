@@ -129,6 +129,9 @@ pub enum DispatchHead {
     Flow(Flow),
     /// `K::dispatch(resolve = "inline")` -- defer to hybrid inlining.
     Inline,
+    /// `K::dispatch(resolve = "inline", return <- arg(0))` -- inline, and also apply this flow
+    /// of a summary. Several such heads on one key accumulate, as `Flow` heads do.
+    InlineFlow(Flow),
     /// `K::dispatch(resolve = "skip")` -- this call moves nothing. The JSON spells it as an
     /// empty `propagation` list, which has no counterpart in a language whose heads are atoms.
     Skip,
@@ -136,7 +139,25 @@ pub enum DispatchHead {
     ClosureShaped,
 }
 
+impl DispatchHead {
+    pub fn flow(&self) -> Option<&Flow> {
+        match self {
+            DispatchHead::Flow(flow) | DispatchHead::InlineFlow(flow) => Some(flow),
+            DispatchHead::Inline | DispatchHead::Skip | DispatchHead::ClosureShaped => None,
+        }
+    }
+}
+
 impl HeadKind {
+    /// The flows a head's ports belong to: one for a flow head, none for a port or a fact.
+    pub fn flow(&self) -> Option<&Flow> {
+        match self {
+            HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => Some(flow),
+            HeadKind::Dispatch { disposition } => disposition.flow(),
+            HeadKind::Source { .. } | HeadKind::Sink { .. } | HeadKind::AccessPath { .. } => None,
+        }
+    }
+
     pub fn relation_name(&self) -> &'static str {
         match self {
             HeadKind::Source { .. } => "source",
@@ -384,9 +405,17 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
             "import",
             "method_table",
         ],
-        // A signature key has no body and no import of its own, so `arity`, `has_code`,
-        // `language` and `import` are absent rather than always-false.
-        "callsig" => &["name", "parent", "signature", "qualified-id"],
+        // A signature key has no body, so `arity` and `has_code` are absent rather than
+        // always-false. `language` and `import` are those of the import whose call site the
+        // key was read from, as on `fun`.
+        "callsig" => &[
+            "name",
+            "parent",
+            "signature",
+            "qualified-id",
+            "language",
+            "import",
+        ],
         "callsite" => &["callee_string"],
         _ => &[],
     }

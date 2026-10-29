@@ -720,6 +720,8 @@ impl<'a> Machine<'a> {
                     Attr::Parent => AttrValues::Strs(Spellings::one(&row.parent)),
                     Attr::Signature => AttrValues::Strs(Spellings::one(&row.signature)),
                     Attr::QualifiedId => AttrValues::Strs(Spellings::one(&row.id)),
+                    Attr::Language => AttrValues::Strs(Spellings::of(facts.language.as_slice())),
+                    Attr::Import => AttrValues::Strs(Spellings::of(facts.import.as_slice())),
                     _ => AttrValues::Missing,
                 }
             }

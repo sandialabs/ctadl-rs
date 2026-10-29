@@ -27,6 +27,7 @@ use std::io::Write as _;
 
 use serde_json::{Value, json};
 
+use ctadl_ascent::error::JsonModelError;
 use ctadl_ascent::models::matches::observe_import;
 use ctadl_ascent::models::{
     DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl, scan_model_files,
@@ -862,9 +863,33 @@ fn run_dsl(text: &str, imports: &[Import]) -> Result<Matched, String> {
 
 /// Requires the migrated form of `generator` to match exactly what the JSON matcher matched
 /// across `imports`, or to be refused where the JSON matcher refused it.
+///
+/// A migration may also fail outright. That is faithful where the JSON matcher refuses the
+/// generator too, and where the migration says the DSL cannot express it
+/// ([`JsonModelError::Untranslatable`]): a loud refusal never changes what a file matches.
+/// Failing a generator the JSON matcher accepts for any other reason is not.
 fn assert_faithful(generator: &Value, imports: &[Import]) {
-    let (text, report) = dsl::migrate::migrate_generators(std::iter::once(generator), None);
     let json = run_json(generator, imports);
+    let (text, report) = match dsl::migrate::migrate_generators(std::iter::once(generator), None) {
+        Ok(migrated) => migrated,
+        Err(ctadl_ascent::error::Error::JsonModel(errors)) => {
+            let untranslatable = errors
+                .iter()
+                .all(|e| matches!(e, JsonModelError::Untranslatable { .. }));
+            if let Ok(j) = json
+                && !untranslatable
+            {
+                panic!(
+                    "the JSON matcher accepted this generator but its migration fails:\n{errors}\
+                     generator:\n{}\nJSON matched:\n{}",
+                    serde_json::to_string_pretty(generator).unwrap(),
+                    j.render()
+                );
+            }
+            return;
+        }
+        Err(e) => panic!("migrating {generator}: {e}"),
+    };
     let dsl = run_dsl(&text, imports);
     let context = || {
         format!(
@@ -1739,7 +1764,8 @@ fn callsites_anchor_at_every_matched_callee() {
         &mut from_json,
     )
     .expect("json");
-    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(&generator), None);
+    let (text, _) =
+        dsl::migrate::migrate_generators(std::iter::once(&generator), None).expect("migrates");
     let file = dsl::DslFile::from_text("migrated.ctadl", text).expect("dsl");
     let set = dsl::DslModelSet { files: vec![file] };
     let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
