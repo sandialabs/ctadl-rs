@@ -27,38 +27,59 @@ number below was measured; this file keeps only what is still open.
 
 ## Open problems
 
-### 1. The context relations dominate most over-budget firmware
+### 1. The context relations copy the context-free ones under a decision on `$globals`
 
-**Mostly problem 4.** With only `malloc` skipped: `GpioForCrond` 0.13 GB (0.46x, whole allocator
-skipped; was 104x), `sdkmips` 0.24 GB (0.84x; was 16x), `KC_BONJOUR` 0.59 GB (1.6x; was 36x),
-`mxcam` 1.18 GB (2.9x; was 58x). The rest is being checked. What follows is the record before
-that finding.
+The firmware rows that looked like "context relations dominate" are two independent causes that
+compound. The first is the allocator (problem 4). In all 13 members (the 8 below and `iperf.mips`,
+both `aptestmips`, both `SwiRelayAgentmips`), skipping `malloc` alone cuts the peak 7-30x. The
+second is this problem: the context relations are copies.
 
-The largest group. In the 45-binary sweep (Benchmarks), 26 binaries are still at least 10x over
-budget under the default. In most of them the largest relations are not `locals` alone but the
-context-sensitive ones: `edge_split`, `ctx_edge_split` and `context_locals`, together about
-twice `locals`. They keep only tens to hundreds of stack accesses in memory under `window:8`, and
-`--frame update` moved none of them by more than noise.
+- **97-99.9% of the context rows are duplicates.** That holds for `context_locals`,
+  `context_assign` and `context_summary` in every dump at the fixpoint (6 members, and
+  `GpioForCrond` with malloc skipped). Each row also exists, identical with its decision set
+  dropped, in `locals`, `assign_like` or `summary`. Per function, `context_locals` is about equal
+  to `locals`, and `ctx_edge_split` about equal to `edge_split`, inside the decision's reach.
+- **The decision.** uClibc's `exit()` calls `(*__exit_cleanup)(status)`, a function pointer in a
+  global whose target is `__exit_handler`. That makes one hybrid-inlining decision on the globals
+  pseudo-formal, `[arg-32768.[G].deref = ptr<__exit_handler>]`. It reaches the allocator's SCC
+  (43-57 functions with `malloc`, `free`, stdio, `abort` and `exit`) and its callers. 86-99.9% of
+  `context_locals` holds under it. A decision on `$globals` cannot separate callers, since every
+  caller passes the same globals.
+- **No subsumption.** Rule 3.1 seeds `context_assign` from `summary(__exit_handler)`, which is
+  mostly malloc's `$globals` block that the same functions already hold unconditionally.
+  Rule 3.3b (`context_locals <-- ctx_edge_split, locals`) copies every context-free row that
+  reaches a contextual edge's source, without checking that `locals` already holds it. 3.3a closes
+  the copy over the same edges, and 3.4 and 3.2 carry it up as `context_summary` and
+  `context_assign` (rules in `ctadl-index/src/index_engine/mod.rs`, around lines 1947-2030).
+- **Measured.** `--hybrid-context none` removes the context relations and changes `locals` by only
+  0.2-1.7%. The peak falls 1.7-2.4x and the time 3-5.5x (`GpioForCrond` 2,402 s to 730 s).
+  Skipping only the handler target cuts `context_locals` 19-31x on the six small members. On
+  `GpioForCrond` with malloc present it is not enough (killed at 16.6 GiB): other decisions (stdio
+  cookies, RPC/XDR) carry copies there.
+- **Precision not measured.** None of the small members has query endpoints.
 
-Largest relations under the default (`profile.json` from the sweep; all reached the fixpoint):
+| Binary | Default (x budget) | Skip malloc | Skip malloc + `--hybrid-context none` |
+|---|---|---|---|
+| DSP-W115 `GpioForCrond` | 104x | 0.90 GiB, 3.4x | 1.4x |
+| DSP-W115 `testI2C-r-20ms` | 94x | 3.8x | 1.4x |
+| DCS-8200LH `mxcam` | 58x | 2.9x | |
+| DCS-8200LH `iperf` | 41x | 2.7x | 1.1x |
+| LG6100D `upnpd` | 39x | 2.2x | 1.5x |
+| WNDR3700v5 `KC_PRINT` | 38x | 1.8x | 1.0x |
+| WNDR3700v5 `KC_BONJOUR` | 36x | 1.6x | |
+| MVBR1210C `sdkmips` | 16x | 0.8x | 0.6x |
+| DIR-140L `iperf.mips` | 22x | 1.7x | 0.8x |
+| MBR1200 `aptestmips` | 13x | 2.0x | 1.4x |
+| MVBR1210C `aptestmips` | 11x | 1.9x | 1.3x |
+| MVBR1210C `SwiRelayAgentmips` | 10x | 1.2x | 0.7x |
+| MBR1200 `SwiRelayAgentmips` | 9.8x | 1.2x | 0.7x |
 
-| Binary | `edge_split` | `locals` | `ctx_edge_split` | `context_locals` | Peak | Against budget |
-|---|---|---|---|---|---|---|
-| D-Link DSP-W115 `bin/GpioForCrond` | 85.7 M | 74.9 M | 52.8 M | 43.2 M | 27.30 GiB | 104x |
-| D-Link DSP-W115 `bin/testI2C-r-20ms` | 57.6 M | 69.5 M | 29.3 M | 31.6 M | 23.65 GiB | 94x |
-| D-Link DCS-8200LH `usr/sbin/mxcam` | 54.1 M | 44.9 M | 35.1 M | 39.7 M | 22.14 GiB | 58x |
-| D-Link DCS-8200LH `usr/sbin/iperf` | 40.1 M | 22.7 M | 29.9 M | 18.4 M | 16.99 GiB | 41x |
-| Netgear LG6100D `sbin/upnpd` | 69.2 M | 65.4 M | 31.6 M | 28.2 M | 21.81 GiB | 39x |
-| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | 32.4 M | 37.9 M | 19.7 M | 24.9 M | 13.87 GiB | 38x |
-| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | 28.9 M | 34.1 M | 16.7 M | 21.2 M | 12.58 GiB | 36x |
-| Netgear MVBR1210C `usr/sbin/sdkmips` | 13.4 M | 7.6 M | 7.2 M | 5.0 M | 4.28 GiB | 16x |
-
-- **`captival_usockc` and `sdkmips` were looked at more closely** (before P1's frontend fix): the
-  `locals` and `context_locals` joins on `edge_split` take the most rule time in both.
-- **`GpioForCrond`'s query also times out** at 600 s (P1's sweep).
-- **Not yet checked:** which functions hold the rows, and whether it is a few hubs (as `inflate`
-  and `FUN_00144f04` were for P1) or spread out. The `skip-analysis` bisection in How to
-  reproduce is the first step.
+**What is left after both:**
+- **`GpioForCrond` and `testI2C`:** linuxthreads (`__pthread_manager`) and `realloc`, which carries
+  its own copy of the dlmalloc code, hold about 60% of `locals`. Skipping the whole allocator
+  takes `GpioForCrond` to 0.13 GB.
+- **`upnpd`:** an unrelated hub, `FUN_0042b28c` (16.5 k instructions), holds 62.5% of `locals`.
+- **The rest:** 1-2x, spread over 2-4 application functions.
 
 ### 2. Lua's GC links the running `lua_State` into its own gray list
 
@@ -165,7 +186,10 @@ Skipping `malloc` alone (`skip-analysis`) lets both finish: `hnapserver` 2.20 GB
   (`strlen(s) + 24`, a struct field) reaches 138 global paths and becomes the caller's summary,
   and so on up the call graph. `context_assign` (99% `$globals` in `adb`) instantiates the same
   summaries along resolved indirect calls, which is why the context relations grow too.
-- **It is also most of problem 1** (below).
+- **It is also the first half of problem 1.** In those binaries 201-1,129 functions carry the
+  block (2,000-8,300 rows each). It is 60-74% of `summary` and 23-56% of `edge_split`, which is why
+  `edge_split` looked spread out. Inside `malloc` itself, `@p0` sits at about 350 offsets, each
+  reaching about 4,300 `(v, p)`: problem 3's offset pile-up in the hub.
 - **Not run:** the query on the skipped indexes. There is no baseline, since the full index never
   finishes. Taint through the allocator's free lists is spurious anyway: `malloc`'s return should
   carry nothing from its size.
