@@ -1,31 +1,22 @@
-/*! pest → [`ast`]: surface syntax to abstract syntax.
+/*! Surface syntax to [`ast`]: a PEG grammar, then the checks it cannot make.
 
-Two jobs beyond the mechanical walk. First, the argument positions of the output relations are
+The grammar yields a syntax tree that mirrors the text; [`Builder`] turns that into the AST. Two
+jobs beyond the mechanical walk. First, the argument positions of the output relations are
 untyped in the grammar — one `head_arg` production covers attributes, flows, ports and strings —
 so this is where `source(F::return <- F::arg(0))` is rejected as a flow where a port was wanted.
-Second, `<-` is lexed in attribute position (see the grammar's note on maximal munch) precisely
-so the message can be "arrow not allowed here" instead of a parse error pointing one token past
-the mistake.
-*/
+Second, `<-` is lexed in attribute position (see the note on `attr_op`) precisely so the message
+can be "arrow not allowed here" instead of a parse error pointing one token past the mistake.
 
-use pest::Parser;
-use pest::iterators::Pair;
+The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving one or
+more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`, `dispatch`) from a
+conjunction of *input* atoms over the built-in relations. See `models/dsl/mod.rs` for the
+semantics.
+*/
 
 use ctadl_ir::mir::{Offset, PathSegment, Symbol};
 
 use super::ast::*;
 use super::{DslError, DslErrors};
-
-// The generated enum is called `Rule`, and so is the AST's rule type. Keeping the derive in its
-// own module is what lets both be named in this file.
-mod grammar {
-    #[derive(pest_derive::Parser)]
-    #[grammar = "models/dsl/grammar.pest"]
-    pub struct DslParser;
-}
-
-use grammar::DslParser;
-use grammar::Rule as Rule_;
 
 /// Parses one model file's text into a [`Program`].
 ///
@@ -33,32 +24,26 @@ use grammar::Rule as Rule_;
 /// than stopping at the first. A *syntax* error is the exception — the parser cannot resynch,
 /// so it is reported alone.
 pub fn parse_program(text: &str) -> Result<Program, DslErrors> {
-    let mut pairs = match DslParser::parse(Rule_::program, text) {
-        Ok(pairs) => pairs,
+    let raw_rules = match dsl::program(text) {
+        Ok(rules) => rules,
         Err(e) => {
             let mut errors = DslErrors::default();
+            let at = e.location.offset;
             errors.push(DslError::Syntax {
-                message: pest_message(&e),
-                span: pest_span(&e),
+                message: format!("expected {}", e.expected),
+                span: Span { start: at, end: at },
             });
             return Err(errors);
         }
     };
-    let program_pair = pairs.next().expect("program always yields one pair");
     let mut builder = Builder {
         errors: DslErrors::default(),
     };
     let mut rules = Vec::new();
-    for pair in program_pair.into_inner() {
-        match pair.as_rule() {
-            Rule_::rule_stmt => {
-                let index = rules.len();
-                if let Some(rule) = builder.rule_stmt(index, pair) {
-                    rules.push(rule);
-                }
-            }
-            Rule_::EOI => {}
-            other => unreachable!("unexpected top-level {other:?}"),
+    for raw in raw_rules {
+        let index = rules.len();
+        if let Some(rule) = builder.rule_stmt(index, raw) {
+            rules.push(rule);
         }
     }
     if builder.errors.is_empty() {
@@ -68,29 +53,279 @@ pub fn parse_program(text: &str) -> Result<Program, DslErrors> {
     }
 }
 
-fn pest_message(e: &pest::error::Error<Rule_>) -> String {
-    // pest's own rendering names the internal rule identifiers, which mean nothing to a model
-    // author. Keep its position and expectation set, drop the rule-name noise where we can.
-    e.variant.message().to_string()
+// ---------------------------------------------------------------------------
+// Syntax tree
+// ---------------------------------------------------------------------------
+
+/// A rule as written. A head with no body is a fact: `access_paths(".next.next");`
+struct RawRule<'s> {
+    heads: Vec<RawHead<'s>>,
+    body: Vec<RawOr<'s>>,
+    span: Span,
 }
 
-fn pest_span(e: &pest::error::Error<Rule_>) -> Span {
-    match e.location {
-        pest::error::InputLocation::Pos(p) => Span { start: p, end: p },
-        pest::error::InputLocation::Span((s, e)) => Span { start: s, end: e },
+struct RawHead<'s> {
+    anchor: Option<Term>,
+    relation: &'s str,
+    args: Vec<RawHeadArg<'s>>,
+    span: Span,
+}
+
+enum RawHeadArg<'s> {
+    Attr(&'s str, Literal, Span),
+    Flow(RawFlow<'s>),
+    Port(RawPortExpr<'s>),
+    Lit(Literal, Span),
+}
+
+struct RawFlow<'s> {
+    left: RawPortExpr<'s>,
+    op: FlowOp,
+    right: RawPortExpr<'s>,
+    span: Span,
+}
+
+struct RawPortExpr<'s> {
+    anchor: Option<Term>,
+    base: RawPortBase<'s>,
+    path: Vec<RawPathSeg<'s>>,
+    span: Span,
+}
+
+enum RawPortBase<'s> {
+    Return,
+    Arg(RawArgSel<'s>, Span),
+}
+
+enum RawArgSel<'s> {
+    Int(&'s str),
+    Wildcard,
+    Var(&'s str),
+}
+
+enum RawPathSeg<'s> {
+    Offset(&'s str, Span),
+    Symbol(String, Span),
+}
+
+/// `a || b || ...`, each disjunct a conjunction `x && y && ...`.
+type RawOr<'s> = Vec<Vec<RawUnary<'s>>>;
+
+struct RawUnary<'s> {
+    negations: usize,
+    atom: RawAtomExpr<'s>,
+}
+
+enum RawAtomExpr<'s> {
+    Paren(RawOr<'s>),
+    Rel(RawRelAtom<'s>),
+    Test {
+        lhs: Term,
+        op: RawOp<'s>,
+        rhs: Rhs,
+        span: Span,
+    },
+}
+
+struct RawRelAtom<'s> {
+    name: &'s str,
+    args: Vec<RawRelArg<'s>>,
+    span: Span,
+}
+
+enum RawRelArg<'s> {
+    Attr {
+        name: &'s str,
+        op: RawOp<'s>,
+        rhs: Rhs,
+        span: Span,
+    },
+    Term(Term, Span),
+}
+
+/// A comparison operator's text and where it is.
+struct RawOp<'s>(&'s str, Span);
+
+fn span(start: usize, end: usize) -> Span {
+    Span { start, end }
+}
+
+peg::parser! {
+    grammar dsl() for str {
+        pub rule program() -> Vec<RawRule<'input>> = _ rules:(rule_stmt() ** _) _ { rules }
+
+        rule rule_stmt() -> RawRule<'input>
+            = s:position!() heads:(head_atom() ++ (_ "," _)) _
+              body:(":-" _ b:(or_expr() ++ (_ "," _)) _ { b })? ";" e:position!()
+            { RawRule { heads, body: body.unwrap_or_default(), span: span(s, e) } }
+
+        // -------------------------------------------------------------------
+        // Heads
+        // -------------------------------------------------------------------
+
+        rule head_atom() -> RawHead<'input>
+            = s:position!() anchor:(a:anchor() _ { a })? relation:out_rel() _
+              "(" _ args:(head_arg() ** (_ "," _)) _ ")" e:position!()
+            { RawHead { anchor, relation, args, span: span(s, e) } }
+
+        // `!name_char()` keeps `sourcefoo` from lexing as `source` followed by junk.
+        rule out_rel() -> &'input str
+            = quiet!{
+                $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch")
+                  !name_char())
+            }
+            / expected!("output relation")
+
+        // `F::` — the function (or call site) an otherwise bare port hangs off.
+        rule anchor() -> Term = t:term() _ "::" { t }
+
+        // Ordered choice, and the order is the whole trick:
+        //   `saturating = true`  is an attribute (lowercase name, then `=`)
+        //   `F::return <- F::arg(0)` is a flow (a port, an arrow, a port)
+        //   `F::arg(2)`          is a lone port
+        //   `".foo.bar"`         is a literal, which is what `access_paths` takes
+        // A flow must come before a lone port: `port_expr` succeeds on the left half of a flow
+        // and would leave the arrow dangling.
+        rule head_arg() -> RawHeadArg<'input>
+            = s:position!() name:lname() _ "=" _ lit:literal() e:position!()
+              { RawHeadArg::Attr(name, lit, span(s, e)) }
+            / f:flow() { RawHeadArg::Flow(f) }
+            / p:port_expr() { RawHeadArg::Port(p) }
+            / s:position!() lit:literal() e:position!() { RawHeadArg::Lit(lit, span(s, e)) }
+
+        rule flow() -> RawFlow<'input>
+            = s:position!() left:port_expr() _ op:flow_op() _ right:port_expr() e:position!()
+            { RawFlow { left, op, right, span: span(s, e) } }
+
+        rule flow_op() -> FlowOp
+            = "<->" { FlowOp::Both }
+            / "<-" { FlowOp::ToLeft }
+            / "->" { FlowOp::ToRight }
+
+        // -------------------------------------------------------------------
+        // Ports
+        // -------------------------------------------------------------------
+
+        rule port_expr() -> RawPortExpr<'input>
+            = s:position!() anchor:(a:anchor() _ { a })? base:port_base()
+              path:(_ p:path_seg() { p })* e:position!()
+            { RawPortExpr { anchor, base, path, span: span(s, e) } }
+
+        rule port_base() -> RawPortBase<'input>
+            = "return" !name_char() { RawPortBase::Return }
+            / s:position!() ("arg" / "param") !name_char() _ "(" _ sel:arg_sel() _ ")"
+              e:position!()
+              { RawPortBase::Arg(sel, span(s, e)) }
+
+        rule arg_sel() -> RawArgSel<'input>
+            = i:int() { RawArgSel::Int(i) }
+            / wildcard() { RawArgSel::Wildcard }
+            / v:var() { RawArgSel::Var(v) }
+
+        // `.foo`, `[2]`, `.[2]`, `."weird.field[0]"`. The offset alternative is tried first so
+        // that `.[2]` is an offset rather than a symbol whose name begins with `[`.
+        rule path_seg() -> RawPathSeg<'input>
+            = s:position!() ("." _)? "[" _ i:int() _ "]" e:position!()
+              { RawPathSeg::Offset(i, span(s, e)) }
+            / s:position!() "." _ name:(string() / n:$(seg_char()+) { n.to_string() })
+              e:position!()
+              { RawPathSeg::Symbol(name, span(s, e)) }
+
+        rule seg_char()
+            = ['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$' | '-' | '%' | '*' | '#' | '<' | '>']
+
+        // -------------------------------------------------------------------
+        // Bodies
+        // -------------------------------------------------------------------
+
+        rule or_expr() -> RawOr<'input> = and_expr() ++ (_ "||" _)
+
+        rule and_expr() -> Vec<RawUnary<'input>> = unary_expr() ++ (_ "&&" _)
+
+        rule unary_expr() -> RawUnary<'input>
+            = negs:("!" !"=" _)* atom:atom_expr()
+            { RawUnary { negations: negs.len(), atom } }
+
+        rule atom_expr() -> RawAtomExpr<'input>
+            = "(" _ o:or_expr() _ ")" { RawAtomExpr::Paren(o) }
+            / r:rel_atom() { RawAtomExpr::Rel(r) }
+            / s:position!() lhs:term() _ op:attr_op() _ rhs:rhs() e:position!()
+              { RawAtomExpr::Test { lhs, op, rhs, span: span(s, e) } }
+
+        // `subclass*` and `subclass+` are relation names, not postfix operators: there is no
+        // recursion in this language, so the closure is a property of the built-in, not of the
+        // rule.
+        rule rel_atom() -> RawRelAtom<'input>
+            = s:position!() name:$(lname() ("*" / "+")?) _
+              "(" _ args:(rel_arg() ** (_ "," _)) _ ")" e:position!()
+            { RawRelAtom { name, args, span: span(s, e) } }
+
+        rule rel_arg() -> RawRelArg<'input>
+            = s:position!() name:lname() _ op:attr_op() _ rhs:rhs() e:position!()
+              { RawRelArg::Attr { name, op, rhs, span: span(s, e) } }
+            / s:position!() t:term() e:position!() { RawRelArg::Term(t, span(s, e)) }
+
+        // `"<-"` sits between `"<="` and `"<"` on purpose. Maximal munch takes the arrow, so a
+        // mistyped `arity <- 1` parses here and the builder reports "arrow not allowed in this
+        // position" rather than the parser reporting a syntax error pointing at `1`. A real
+        // `arity < -1` is unaffected: the space stops `<-` from matching.
+        rule attr_op() -> RawOp<'input>
+            = s:position!()
+              op:$("<=" / ">=" / "!=" / "<-" / "<" / ">" / "=" / "in" !name_char())
+              e:position!()
+            { RawOp(op, span(s, e)) }
+
+        rule rhs() -> Rhs
+            = "{" _ lits:(literal() ** (_ "," _)) _ "}" { Rhs::Set(lits) }
+            / t:term() { Rhs::Term(t) }
+
+        // -------------------------------------------------------------------
+        // Terminals
+        // -------------------------------------------------------------------
+
+        rule term() -> Term
+            = l:literal() { Term::Lit(l) }
+            / v:var() { Term::Var(v.to_string()) }
+            / wildcard() { Term::Wildcard }
+
+        rule literal() -> Literal
+            = s:string() { Literal::Str(s) }
+            / i:int() { Literal::Int(i.parse::<i64>().unwrap_or_default()) }
+            / b:$("true" / "false") !name_char() { Literal::Bool(b == "true") }
+
+        rule wildcard() = "_" !name_char()
+
+        // Variables are uppercase so they never collide with the many built-in relation names.
+        rule var() -> &'input str
+            = quiet!{ $(['A'..='Z'] name_char()*) } / expected!("variable")
+
+        // Relation and attribute names. The interior `-` is what lets `qualified-id` be one
+        // name; a trailing `-` is excluded so `arity -1` cannot lex as one token.
+        rule lname() -> &'input str
+            = quiet!{ $(['a'..='z' | '_'] name_char()* ("-" name_char()+)*) }
+            / expected!("name")
+
+        rule int() -> &'input str
+            = quiet!{ $(['+' | '-']? ['0'..='9']+) } / expected!("integer")
+
+        rule string() -> String
+            = "\"" s:$((!['"' | '\\'] [_] / "\\" [_])*) "\"" { unescape(s) }
+
+        rule name_char() = ['a'..='z' | 'A'..='Z' | '0'..='9' | '_']
+
+        // Whitespace, `//` and `/* */` comments.
+        rule _ = quiet!{
+            ([' ' | '\t' | '\r' | '\n'] / "//" (!"\n" [_])* / "/*" (!"*/" [_])* "*/")*
+        }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Syntax tree to AST
+// ---------------------------------------------------------------------------
 
 struct Builder {
     errors: DslErrors,
-}
-
-fn span_of(pair: &Pair<'_, Rule_>) -> Span {
-    let s = pair.as_span();
-    Span {
-        start: s.start(),
-        end: s.end(),
-    }
 }
 
 impl Builder {
@@ -101,30 +336,18 @@ impl Builder {
         });
     }
 
-    fn rule_stmt(&mut self, index: usize, pair: Pair<'_, Rule_>) -> Option<Rule> {
-        let span = span_of(&pair);
+    fn rule_stmt(&mut self, index: usize, raw: RawRule<'_>) -> Option<Rule> {
         let before = self.errors.len();
-        let mut heads = Vec::new();
-        let mut body = Vec::new();
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::head_list => {
-                    for head in inner.into_inner() {
-                        if let Some(h) = self.head_atom(head) {
-                            heads.push(h);
-                        }
-                    }
-                }
-                Rule_::body_list => {
-                    for item in inner.into_inner() {
-                        if let Some(b) = self.body_item(item) {
-                            body.push(b);
-                        }
-                    }
-                }
-                other => unreachable!("unexpected {other:?} in rule_stmt"),
-            }
-        }
+        let heads: Vec<Head> = raw
+            .heads
+            .into_iter()
+            .filter_map(|h| self.head_atom(h))
+            .collect();
+        let body: Vec<BodyItem> = raw
+            .body
+            .into_iter()
+            .filter_map(|b| self.or_expr(b))
+            .collect();
         if self.errors.len() != before {
             return None;
         }
@@ -132,7 +355,7 @@ impl Builder {
             index,
             heads,
             body,
-            span,
+            span: raw.span,
         })
     }
 
@@ -140,27 +363,18 @@ impl Builder {
     // Heads
     // -----------------------------------------------------------------------
 
-    fn head_atom(&mut self, pair: Pair<'_, Rule_>) -> Option<Head> {
-        let span = span_of(&pair);
-        let mut anchor = None;
-        let mut relation = String::new();
-        let mut args: Vec<HeadArg> = Vec::new();
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::anchor => anchor = Some(self.anchor(inner)),
-                Rule_::out_rel => relation = inner.as_str().to_string(),
-                Rule_::head_arg_list => {
-                    for arg in inner.into_inner() {
-                        if let Some(a) = self.head_arg(arg) {
-                            args.push(a);
-                        }
-                    }
-                }
-                other => unreachable!("unexpected {other:?} in head_atom"),
-            }
-        }
-        let kind = self.head_kind(&relation, span, args)?;
-        Some(Head { anchor, kind, span })
+    fn head_atom(&mut self, raw: RawHead<'_>) -> Option<Head> {
+        let args: Vec<HeadArg> = raw
+            .args
+            .into_iter()
+            .filter_map(|a| self.head_arg(a))
+            .collect();
+        let kind = self.head_kind(raw.relation, raw.span, args)?;
+        Some(Head {
+            anchor: raw.anchor,
+            kind,
+            span: raw.span,
+        })
     }
 
     fn head_kind(&mut self, relation: &str, span: Span, args: Vec<HeadArg>) -> Option<HeadKind> {
@@ -443,164 +657,86 @@ impl Builder {
         }
     }
 
-    fn head_arg(&mut self, pair: Pair<'_, Rule_>) -> Option<HeadArg> {
-        let inner = pair.into_inner().next().expect("head_arg has one child");
-        let span = span_of(&inner);
-        match inner.as_rule() {
-            Rule_::head_attr => {
-                let mut it = inner.into_inner();
-                let name = it.next().expect("attr name").as_str().to_string();
-                let lit = self.literal(it.next().expect("attr value"));
-                Some(HeadArg::Attr(name, lit, span))
-            }
-            Rule_::flow => self.flow(inner).map(HeadArg::Flow),
-            Rule_::port_expr => self.port_expr(inner).map(HeadArg::Port),
-            Rule_::literal => Some(HeadArg::Lit(self.literal(inner), span)),
-            other => unreachable!("unexpected {other:?} in head_arg"),
+    fn head_arg(&mut self, raw: RawHeadArg<'_>) -> Option<HeadArg> {
+        match raw {
+            RawHeadArg::Attr(name, lit, span) => Some(HeadArg::Attr(name.to_string(), lit, span)),
+            RawHeadArg::Flow(f) => self.flow(f).map(HeadArg::Flow),
+            RawHeadArg::Port(p) => self.port_expr(p).map(HeadArg::Port),
+            RawHeadArg::Lit(lit, span) => Some(HeadArg::Lit(lit, span)),
         }
     }
 
-    fn flow(&mut self, pair: Pair<'_, Rule_>) -> Option<Flow> {
-        let span = span_of(&pair);
-        let mut it = pair.into_inner();
-        let lhs = self.port_expr(it.next().expect("flow lhs"))?;
-        let op = it.next().expect("flow op").as_str().to_string();
-        let rhs = self.port_expr(it.next().expect("flow rhs"))?;
-        let op = match op.as_str() {
-            "->" => FlowOp::ToRight,
-            "<-" => FlowOp::ToLeft,
-            "<->" => FlowOp::Both,
-            other => unreachable!("unexpected flow operator {other}"),
-        };
+    fn flow(&mut self, raw: RawFlow<'_>) -> Option<Flow> {
+        let left = self.port_expr(raw.left)?;
+        let right = self.port_expr(raw.right)?;
         Some(Flow {
-            left: lhs,
-            right: rhs,
-            op,
-            span,
+            left,
+            right,
+            op: raw.op,
+            span: raw.span,
         })
     }
 
-    fn port_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<PortExpr> {
-        let span = span_of(&pair);
-        let mut anchor = None;
-        let mut port = None;
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::anchor => anchor = Some(self.anchor(inner)),
-                Rule_::port => port = self.port(inner),
-                other => unreachable!("unexpected {other:?} in port_expr"),
-            }
-        }
+    fn port_expr(&mut self, raw: RawPortExpr<'_>) -> Option<PortExpr> {
+        let base = self.port_base(raw.base);
+        let path = raw
+            .path
+            .into_iter()
+            .filter_map(|seg| self.path_seg(seg))
+            .collect();
         Some(PortExpr {
-            anchor,
-            port: port?,
-            span,
+            anchor: raw.anchor,
+            port: Port { base: base?, path },
+            span: raw.span,
         })
     }
 
-    fn port(&mut self, pair: Pair<'_, Rule_>) -> Option<Port> {
-        let mut base = None;
-        let mut path = Vec::new();
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::port_base => base = self.port_base(inner),
-                Rule_::path_seg => {
-                    if let Some(seg) = self.path_seg(inner) {
-                        path.push(seg);
-                    }
+    fn port_base(&mut self, raw: RawPortBase<'_>) -> Option<PortBase> {
+        match raw {
+            RawPortBase::Return => Some(PortBase::Return),
+            RawPortBase::Arg(RawArgSel::Int(text), span) => match text.parse::<i16>() {
+                Ok(i) if i >= 0 => Some(PortBase::Arg(i)),
+                Ok(_) => {
+                    self.error(span, "an argument index must not be negative");
+                    None
                 }
-                other => unreachable!("unexpected {other:?} in port"),
-            }
-        }
-        Some(Port { base: base?, path })
-    }
-
-    fn port_base(&mut self, pair: Pair<'_, Rule_>) -> Option<PortBase> {
-        let inner = pair.into_inner().next().expect("port_base has one child");
-        match inner.as_rule() {
-            Rule_::return_kw => Some(PortBase::Return),
-            Rule_::arg_port => {
-                let span = span_of(&inner);
-                let sel = inner
-                    .into_inner()
-                    .find(|p| p.as_rule() == Rule_::arg_sel)
-                    .expect("arg_port has a selector");
-                let sel_inner = sel.into_inner().next().expect("arg_sel has one child");
-                match sel_inner.as_rule() {
-                    Rule_::int => match sel_inner.as_str().parse::<i16>() {
-                        Ok(i) if i >= 0 => Some(PortBase::Arg(i)),
-                        Ok(_) => {
-                            self.error(span, "an argument index must not be negative");
-                            None
-                        }
-                        Err(e) => {
-                            self.error(span, format!("argument index out of range: {e}"));
-                            None
-                        }
-                    },
-                    Rule_::wildcard => Some(PortBase::AnyArg),
-                    Rule_::var => Some(PortBase::ArgVar(sel_inner.as_str().to_string())),
-                    other => unreachable!("unexpected {other:?} in arg_sel"),
+                Err(e) => {
+                    self.error(span, format!("argument index out of range: {e}"));
+                    None
                 }
-            }
-            other => unreachable!("unexpected {other:?} in port_base"),
+            },
+            RawPortBase::Arg(RawArgSel::Wildcard, _) => Some(PortBase::AnyArg),
+            RawPortBase::Arg(RawArgSel::Var(v), _) => Some(PortBase::ArgVar(v.to_string())),
         }
     }
 
-    fn path_seg(&mut self, pair: Pair<'_, Rule_>) -> Option<PathSegment> {
-        let inner = pair.into_inner().next().expect("path_seg has one child");
-        let span = span_of(&inner);
-        match inner.as_rule() {
-            Rule_::offset_seg => {
-                let int = inner
-                    .into_inner()
-                    .next()
-                    .expect("offset_seg carries an integer");
-                match int.as_str().parse::<i64>() {
-                    Ok(v) => Some(PathSegment::Offset(Offset(v))),
-                    Err(e) => {
-                        self.error(span, format!("offset out of range: {e}"));
-                        None
-                    }
+    fn path_seg(&mut self, raw: RawPathSeg<'_>) -> Option<PathSegment> {
+        match raw {
+            RawPathSeg::Offset(text, span) => match text.parse::<i64>() {
+                Ok(v) => Some(PathSegment::Offset(Offset(v))),
+                Err(e) => {
+                    self.error(span, format!("offset out of range: {e}"));
+                    None
                 }
-            }
-            Rule_::symbol_seg => {
-                let name = inner
-                    .into_inner()
-                    .next()
-                    .expect("symbol_seg carries a name");
-                let text = match name.as_rule() {
-                    Rule_::string => unescape(name.into_inner().next().unwrap().as_str()),
-                    _ => name.as_str().to_string(),
-                };
+            },
+            RawPathSeg::Symbol(text, span) => {
                 if text.is_empty() {
                     self.error(span, "an access-path segment cannot be empty");
                     return None;
                 }
                 Some(PathSegment::Symbol(Symbol::from(text.as_str())))
             }
-            other => unreachable!("unexpected {other:?} in path_seg"),
         }
-    }
-
-    fn anchor(&mut self, pair: Pair<'_, Rule_>) -> Term {
-        let term = pair.into_inner().next().expect("anchor has a term");
-        self.term(term)
     }
 
     // -----------------------------------------------------------------------
     // Bodies
     // -----------------------------------------------------------------------
 
-    fn body_item(&mut self, pair: Pair<'_, Rule_>) -> Option<BodyItem> {
-        let inner = pair.into_inner().next().expect("body_item has one child");
-        self.or_expr(inner)
-    }
-
-    fn or_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<BodyItem> {
+    fn or_expr(&mut self, raw: RawOr<'_>) -> Option<BodyItem> {
         let mut parts = Vec::new();
-        for inner in pair.into_inner() {
-            parts.push(self.and_expr(inner)?);
+        for conj in raw {
+            parts.push(self.and_expr(conj)?);
         }
         Some(if parts.len() == 1 {
             parts.pop().expect("checked len")
@@ -609,10 +745,10 @@ impl Builder {
         })
     }
 
-    fn and_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<BodyItem> {
+    fn and_expr(&mut self, raw: Vec<RawUnary<'_>>) -> Option<BodyItem> {
         let mut parts = Vec::new();
-        for inner in pair.into_inner() {
-            parts.push(self.unary_expr(inner)?);
+        for unary in raw {
+            parts.push(self.unary_expr(unary)?);
         }
         Some(if parts.len() == 1 {
             parts.pop().expect("checked len")
@@ -621,105 +757,70 @@ impl Builder {
         })
     }
 
-    fn unary_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<BodyItem> {
-        let mut negations = 0usize;
-        let mut item = None;
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::neg => negations += 1,
-                Rule_::atom_expr => item = self.atom_expr(inner),
-                other => unreachable!("unexpected {other:?} in unary_expr"),
-            }
-        }
-        let mut item = item?;
+    fn unary_expr(&mut self, raw: RawUnary<'_>) -> Option<BodyItem> {
+        let mut item = self.atom_expr(raw.atom)?;
         // `!!a` is `a`; fold rather than nesting, so the checker sees the parity it cares about.
-        for _ in 0..(negations % 2) {
+        for _ in 0..(raw.negations % 2) {
             item = BodyItem::Not(Box::new(item));
         }
         Some(item)
     }
 
-    fn atom_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<BodyItem> {
-        let inner = pair.into_inner().next().expect("atom_expr has one child");
-        match inner.as_rule() {
-            Rule_::paren_expr => {
-                let inner = inner.into_inner().next().expect("paren_expr has one child");
-                self.or_expr(inner)
+    fn atom_expr(&mut self, raw: RawAtomExpr<'_>) -> Option<BodyItem> {
+        match raw {
+            RawAtomExpr::Paren(inner) => self.or_expr(inner),
+            RawAtomExpr::Rel(rel) => Some(BodyItem::Atom(self.rel_atom(rel))),
+            RawAtomExpr::Test { lhs, op, rhs, span } => {
+                self.test_expr(lhs, op, rhs, span).map(BodyItem::Atom)
             }
-            Rule_::rel_atom => self.rel_atom(inner).map(BodyItem::Atom),
-            Rule_::test_expr => self.test_expr(inner).map(BodyItem::Atom),
-            other => unreachable!("unexpected {other:?} in atom_expr"),
         }
     }
 
-    fn rel_atom(&mut self, pair: Pair<'_, Rule_>) -> Option<Atom> {
-        let span = span_of(&pair);
-        let mut name = String::new();
+    fn rel_atom(&mut self, raw: RawRelAtom<'_>) -> Atom {
         let mut columns = Vec::new();
         let mut attrs = Vec::new();
-        for inner in pair.into_inner() {
-            match inner.as_rule() {
-                Rule_::rel_name => name = inner.as_str().to_string(),
-                Rule_::rel_arg_list => {
-                    for arg in inner.into_inner() {
-                        let arg = arg.into_inner().next().expect("rel_arg has one child");
-                        match arg.as_rule() {
-                            Rule_::attr_constraint => {
-                                if let Some(a) = self.attr_constraint(arg) {
-                                    attrs.push(a);
-                                }
-                            }
-                            Rule_::term => {
-                                if !attrs.is_empty() {
-                                    // Positional columns come first; a column written after an
-                                    // attribute reads as though the attribute bound it.
-                                    self.error(
-                                        span_of(&arg),
-                                        "positional columns must come before attribute \
-                                         constraints",
-                                    );
-                                }
-                                columns.push(self.term(arg));
-                            }
-                            other => unreachable!("unexpected {other:?} in rel_arg"),
-                        }
+        for arg in raw.args {
+            match arg {
+                RawRelArg::Attr {
+                    name,
+                    op,
+                    rhs,
+                    span,
+                } => {
+                    if let Some(op) = self.cmp_op(&op) {
+                        attrs.push(AttrConstraint {
+                            name: name.to_string(),
+                            op,
+                            rhs,
+                            span,
+                        });
                     }
                 }
-                other => unreachable!("unexpected {other:?} in rel_atom"),
+                RawRelArg::Term(term, span) => {
+                    if !attrs.is_empty() {
+                        // Positional columns come first; a column written after an attribute
+                        // reads as though the attribute bound it.
+                        self.error(
+                            span,
+                            "positional columns must come before attribute constraints",
+                        );
+                    }
+                    columns.push(term);
+                }
             }
         }
-        Some(Atom {
-            name,
+        Atom {
+            name: raw.name.to_string(),
             columns,
             attrs,
-            span,
-        })
-    }
-
-    fn attr_constraint(&mut self, pair: Pair<'_, Rule_>) -> Option<AttrConstraint> {
-        let span = span_of(&pair);
-        let mut it = pair.into_inner();
-        let name = it.next().expect("attr name").as_str().to_string();
-        let op_pair = it.next().expect("attr op");
-        let op = self.cmp_op(&op_pair)?;
-        let rhs = self.rhs(it.next().expect("attr rhs"));
-        Some(AttrConstraint {
-            name,
-            op,
-            rhs,
-            span,
-        })
+            span: raw.span,
+        }
     }
 
     /// `X = Y` and friends, in atom position. Modeled as a two-column atom named after the
     /// operator so the planner treats every filter the same way.
-    fn test_expr(&mut self, pair: Pair<'_, Rule_>) -> Option<Atom> {
-        let span = span_of(&pair);
-        let mut it = pair.into_inner();
-        let lhs = self.term(it.next().expect("test lhs"));
-        let op_pair = it.next().expect("test op");
-        let op = self.cmp_op(&op_pair)?;
-        let rhs = self.rhs(it.next().expect("test rhs"));
+    fn test_expr(&mut self, lhs: Term, op: RawOp<'_>, rhs: Rhs, span: Span) -> Option<Atom> {
+        let op = self.cmp_op(&op)?;
         Some(Atom {
             name: format!("${op}"),
             columns: vec![lhs],
@@ -733,8 +834,8 @@ impl Builder {
         })
     }
 
-    fn cmp_op(&mut self, pair: &Pair<'_, Rule_>) -> Option<CmpOp> {
-        match pair.as_str() {
+    fn cmp_op(&mut self, op: &RawOp<'_>) -> Option<CmpOp> {
+        match op.0 {
             "=" => Some(CmpOp::Eq),
             "!=" => Some(CmpOp::Ne),
             "<" => Some(CmpOp::Lt),
@@ -743,58 +844,16 @@ impl Builder {
             ">=" => Some(CmpOp::Ge),
             "in" => Some(CmpOp::In),
             "<-" => {
-                // Lexed on purpose; see the grammar's note. `arity <- 1` and `arity < -1` differ
-                // by one space, and maximal munch takes the arrow.
+                // Lexed on purpose; see the note on `attr_op`. `arity <- 1` and `arity < -1`
+                // differ by one space, and maximal munch takes the arrow.
                 self.error(
-                    span_of(pair),
+                    op.1,
                     "'<-' is a flow arrow and is not allowed here. For a comparison against a \
                      negative number write '< -1', with a space.",
                 );
                 None
             }
             other => unreachable!("unexpected comparison operator {other}"),
-        }
-    }
-
-    fn rhs(&mut self, pair: Pair<'_, Rule_>) -> Rhs {
-        let inner = pair.into_inner().next().expect("rhs has one child");
-        match inner.as_rule() {
-            Rule_::set_lit => Rhs::Set(
-                inner
-                    .into_inner()
-                    .map(|lit| self.literal(lit))
-                    .collect::<Vec<_>>(),
-            ),
-            Rule_::term => Rhs::Term(self.term(inner)),
-            other => unreachable!("unexpected {other:?} in rhs"),
-        }
-    }
-
-    fn term(&mut self, pair: Pair<'_, Rule_>) -> Term {
-        let inner = match pair.as_rule() {
-            Rule_::term => pair.into_inner().next().expect("term has one child"),
-            _ => pair,
-        };
-        match inner.as_rule() {
-            Rule_::literal => Term::Lit(self.literal(inner)),
-            Rule_::var => Term::Var(inner.as_str().to_string()),
-            Rule_::wildcard => Term::Wildcard,
-            other => unreachable!("unexpected {other:?} in term"),
-        }
-    }
-
-    fn literal(&mut self, pair: Pair<'_, Rule_>) -> Literal {
-        let inner = match pair.as_rule() {
-            Rule_::literal => pair.into_inner().next().expect("literal has one child"),
-            _ => pair,
-        };
-        match inner.as_rule() {
-            Rule_::string => Literal::Str(unescape(
-                inner.into_inner().next().expect("string body").as_str(),
-            )),
-            Rule_::int => Literal::Int(inner.as_str().parse::<i64>().unwrap_or_default()),
-            Rule_::bool_lit => Literal::Bool(inner.as_str() == "true"),
-            other => unreachable!("unexpected {other:?} in literal"),
         }
     }
 }

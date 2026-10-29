@@ -658,10 +658,7 @@ fn callsig_and_dispatch_do_not_swap() {
     assert!(err.contains("can only appear in a rule head"), "{err}");
 
     let err = check_err(r#"K::callsig(resolve = "skip") :- callsig(K);"#);
-    assert!(
-        err.contains("expected out_rel") || err.contains("callsig"),
-        "{err}"
-    );
+    assert!(err.contains("expected output relation"), "{err}");
 }
 
 #[test]

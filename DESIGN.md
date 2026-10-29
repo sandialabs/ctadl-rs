@@ -241,7 +241,7 @@ The existing tests must all pass, including regression.
 
 ### Implementation
 
-The pest parser is a dependency of this system; parsing should be done with pest.
+Parsing is done with the `peg` crate, which the rest of the system already uses.
 
 Rules must be well-moded otherwise it is a load-time error. Operators on variables must have all
 variables bound or the rule isn't executable, and will throw an error message to that effect. The
@@ -326,9 +326,8 @@ Every relation name is reserved, so an unrecognized one is reported as the typo 
 
 | file | lines | job |
 | --- | --- | --- |
-| `ctadl-ascent/src/models/dsl/grammar.pest` | 120 | the surface syntax |
 | `ctadl-ascent/src/models/dsl/ast.rs` | 353 | abstract syntax; program-independent |
-| `ctadl-ascent/src/models/dsl/parse.rs` | 732 | pest → AST, plus the checks the grammar cannot make |
+| `ctadl-ascent/src/models/dsl/parse.rs` | 901 | the PEG grammar and its tree → AST, plus the checks the grammar cannot make |
 | `ctadl-ascent/src/models/dsl/check.rs` | 904 | relation shapes, **modes**, and the execution plan |
 | `ctadl-ascent/src/models/dsl/relations.rs` | 428 | the input relations, materialized over one program |
 | `ctadl-ascent/src/models/dsl/eval.rs` | 912 | the engine |

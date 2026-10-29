@@ -18,7 +18,7 @@ There is no recursion, so no stratification is needed and the fixpoint is one pa
 | module | job |
 | --- | --- |
 | [`ast`] | the abstract syntax; program-independent |
-| [`parse`] | pest → AST, and the argument-position checks the grammar cannot make |
+| [`parse`] | PEG → AST, and the argument-position checks the grammar cannot make |
 | [`check`] | relation shapes, **modes**, and the execution plan |
 | [`relations`] | the input relations, materialized over one program |
 | [`eval`] | the engine |
