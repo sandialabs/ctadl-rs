@@ -261,6 +261,63 @@ fn the_planner_runs_filters_as_soon_as_they_are_bound() {
     assert_eq!(steps, &vec![0, 1, 2], "unexpected plan {steps:?}");
 }
 
+/// A known value only makes an atom cheap when that column or attribute has an index.
+#[test]
+fn the_cost_model_counts_only_indexed_positions() {
+    for (rule, want) in [
+        // `param` and `uses_field` index their first column only, so a literal in the second
+        // is still a scan, and the keyed `fun` goes first.
+        (
+            r#"sink(F::arg(0)) :- param(F, 0), fun(F, name = "x");"#,
+            vec![1, 0],
+        ),
+        (
+            r#"sink(F::arg(0)) :- uses_field(F, "token"), fun(F, name = "x");"#,
+            vec![1, 0],
+        ),
+        // `callee_string` is indexed.
+        (
+            r#"sink(S::arg(0)) :- fun(C), callsite(C, S, callee_string = "x");"#,
+            vec![1, 0],
+        ),
+        // A known super is a `subs` lookup.
+        (
+            r#"source(F::return) :- fun(F, parent = P), subclass+(P, "Lc/Base;");"#,
+            vec![1, 0],
+        ),
+    ] {
+        let file = check_ok(rule);
+        assert_eq!(file.plans[0].components[0].steps, want, "{rule}");
+    }
+}
+
+/// Two negated groups reusing a local's name are unrelated: neither binds anything the other
+/// sees, so they neither need it bound nor fuse the components they sit in.
+#[test]
+fn negated_group_locals_neither_bind_nor_connect() {
+    let file = check_ok(
+        r#"bridge(F::arg(0) -> G::arg(0)) :-
+             fun(F, language = "lua"), !(fun(F, name = N) && regex_match(N, "^x")),
+             fun(G, language = "pcode"), !(fun(G, name = N) && regex_match(N, "^y"));"#,
+    );
+    let components = &file.plans[0].components;
+    assert_eq!(components.len(), 2);
+    assert_eq!(components[0].vars, vec!["F".to_string()]);
+    assert_eq!(components[1].vars, vec!["G".to_string()]);
+}
+
+/// A component's tuple holds the head variables and nothing else; one no head reads is an
+/// existence check with an empty tuple.
+#[test]
+fn components_keep_only_head_variables() {
+    let file = check_ok(
+        r#"source(F::return) :- fun(F, name = N), param(F, I), !(fun(F, parent = P) && P = "x"),
+                                fun(G, name = "other");"#,
+    );
+    let vars: Vec<&Vec<String>> = file.plans[0].components.iter().map(|c| &c.vars).collect();
+    assert_eq!(vars, vec![&vec!["F".to_string()], &Vec::<String>::new()]);
+}
+
 #[test]
 fn phases_are_read_off_the_heads() {
     let file = check_ok(

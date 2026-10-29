@@ -30,9 +30,14 @@ over imports.
 # Join order
 
 Within a component the planner has already chosen an order (filters as soon as their variables
-exist, cheapest generator otherwise). This walks it with ordinary backtracking. Correctness does
-not depend on the order — only on never running a filter before its variables are bound, which
-the planner guarantees and the load-time mode check reports on.
+exist, cheapest generator otherwise) and compiled each step against what is bound when it runs:
+which index to look rows up by, which columns and attributes test and which bind. This walks
+those steps with ordinary backtracking over a slot per variable, undoing bindings off a trail.
+Correctness does not depend on the order — only on never running a filter before its variables
+are bound, which the planner guarantees and the load-time mode check reports on.
+
+Only head variables are kept (see [`super::check::Component::vars`]), so once the last step that
+binds one has run, the rest of the body needs one witness rather than every solution.
 
 # Negation
 
@@ -41,18 +46,22 @@ requires its variables to be bound. A negated *group* — `!(fun(F, name = N) &&
 "^get"))` — is an existence check over a whole subquery, and the variables local to it (`N`
 here) are existentially quantified. That distinction is what lets "no name of F matches this
 pattern" be expressed at all; without it the group would decompose into two independent tests
-and mean something else entirely.
+and mean something else entirely. Either kind stops at its first witness.
 */
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use hashbrown::hash_map::HashMap;
+use hashbrown::HashSet;
 use regex::Regex;
 
 use crate::facts::Str;
 
 use super::ast::*;
-use super::check::{Plan, collect_vars, is_generator, required_vars};
+use super::check::{
+    Access, AtomPlan, Attr, AttrPat, ColumnPat, Filter, Key, Operand, Pattern, Plan, Relation,
+    Slot, Step,
+};
 use super::relations::{FunKey, ProgramFacts};
 
 /// A value a variable can take.
@@ -189,546 +198,489 @@ impl Binding {
 }
 
 /// Evaluates one rule against one program, folding what it finds into `solutions`.
+///
+/// Everything the body says is in `plan`; the rule itself is not consulted.
 pub fn evaluate_rule(
-    rule: &Rule,
+    _rule: &Rule,
     plan: &Plan,
     facts: &ProgramFacts,
     solutions: &mut RuleSolutions,
 ) {
-    let ev = Evaluator {
-        facts,
-        regexes: compile_regexes(rule),
-    };
     for (ci, component) in plan.components.iter().enumerate() {
-        let items: Vec<&BodyItem> = component.steps.iter().map(|&i| &rule.body[i]).collect();
-        let mut env: Env = BTreeMap::new();
         let out = &mut solutions.components[ci];
-        ev.solve(&items, 0, &mut env, &mut |env| {
-            let row: Vec<Value> = component
-                .vars
-                .iter()
-                .map(|v| env.get(v).copied().unwrap_or(Value::Int(0)))
-                .collect();
-            out.insert(row);
-            true
-        });
-    }
-}
-
-/// Every literal `regex_match` pattern in a rule, compiled once.
-///
-/// A pattern given as a *variable* is compiled at use instead; that is the rare shape, and
-/// caching it would need a mutable evaluator for no measurable gain.
-fn compile_regexes(rule: &Rule) -> HashMap<String, Regex> {
-    let mut out = HashMap::new();
-    fn walk(item: &BodyItem, out: &mut HashMap<String, Regex>) {
-        match item {
-            BodyItem::Atom(atom) if atom.name == "regex_match" => {
-                if let Some(Term::Lit(Literal::Str(p))) = atom.columns.get(1)
-                    && let Ok(rx) = Regex::new(p)
-                {
-                    out.insert(p.clone(), rx);
-                }
-            }
-            BodyItem::Atom(_) => {}
-            BodyItem::Not(inner) => walk(inner, out),
-            BodyItem::And(items) | BodyItem::Or(items) => {
-                for i in items {
-                    walk(i, out);
-                }
-            }
+        // A component no head reads is an existence check, and once one import has witnessed
+        // it another cannot add anything.
+        if component.vars.is_empty() && !out.is_empty() {
+            continue;
         }
-    }
-    for item in &rule.body {
-        walk(item, &mut out);
-    }
-    out
-}
-
-struct Evaluator<'a> {
-    facts: &'a ProgramFacts,
-    regexes: HashMap<String, Regex>,
-}
-
-type Env = BTreeMap<String, Value>;
-/// One way an atom can extend the current bindings.
-type Extension = Vec<(String, Value)>;
-
-impl<'a> Evaluator<'a> {
-    /// Enumerates every solution of `items` from position `at`, calling `out` on each.
-    ///
-    /// `out` returns `false` to stop early, which is what makes an existence check cheap.
-    /// `solve` propagates that: a `false` return means "the caller asked to stop".
-    fn solve(
-        &self,
-        items: &[&BodyItem],
-        at: usize,
-        env: &mut Env,
-        out: &mut dyn FnMut(&Env) -> bool,
-    ) -> bool {
-        if at == items.len() {
-            return out(env);
-        }
-        let item = items[at];
-        if !is_generator(item) {
-            if self.satisfiable(item, env) {
-                return self.solve(items, at + 1, env, out);
-            }
-            return true;
-        }
-        let BodyItem::Atom(atom) = item else {
-            unreachable!("is_generator implies an atom")
+        let mut machine = Machine {
+            facts,
+            env: vec![None; component.slots],
+            trail: Vec::new(),
         };
-        // Materialized before recursing: the recursion mutates `env`, which the generator reads.
-        let mut extensions: Vec<Extension> = Vec::new();
-        self.generate(atom, env, &mut extensions);
-        for ext in extensions {
-            for (k, v) in &ext {
-                env.insert(k.clone(), *v);
-            }
-            let keep_going = self.solve(items, at + 1, env, out);
-            for (k, _) in &ext {
-                env.remove(k);
-            }
-            if !keep_going {
-                return false;
-            }
+        machine.solve(
+            &component.body,
+            0,
+            component.witness_from,
+            &mut |m: &mut Machine<'_>| {
+                let row: Vec<Value> = component
+                    .outputs
+                    .iter()
+                    .map(|&s| m.env[s].expect("the planner binds every output"))
+                    .collect();
+                out.insert(row);
+                true
+            },
+        );
+    }
+}
+
+/// The evaluation state: one slot per rule variable, and the trail of slots bound since the
+/// last choice point, which is what backtracking unwinds.
+struct Machine<'a> {
+    facts: &'a ProgramFacts,
+    env: Vec<Option<Value>>,
+    trail: Vec<Slot>,
+}
+
+/// What a step calls for each way it extends the bindings. Returning `false` stops the
+/// enumeration, which is what makes an existence check stop at its first witness; every
+/// enumerating function propagates that as its own `false` return.
+type Cont<'c, 'a> = dyn FnMut(&mut Machine<'a>) -> bool + 'c;
+
+/// One row of one relation, by position in [`ProgramFacts`].
+#[derive(Copy, Clone)]
+enum Row {
+    Fun(usize),
+    CallSig(usize),
+    /// A function and one of its parameter indices.
+    Param(usize, i64),
+    CallSite(usize),
+    /// `(sub, super)`.
+    Class(Str, Str),
+    UsesField(usize),
+}
+
+/// The values one row has for one attribute.
+enum AttrValues<'a> {
+    /// Every accepted spelling.
+    Strs(&'a [Str]),
+    One(Value),
+    /// The row has no value: `arity` on a bodyless callee. Every constraint fails.
+    Missing,
+}
+
+impl<'a> Machine<'a> {
+    /// Enumerates every solution of `steps` from position `at`, calling `k` on each.
+    ///
+    /// From `witness_from` on, the remaining steps bind nothing `k` reads, so only whether they
+    /// have a solution matters: `k` runs once if they do.
+    fn solve(
+        &mut self,
+        steps: &[Step],
+        at: usize,
+        witness_from: usize,
+        k: &mut Cont<'_, 'a>,
+    ) -> bool {
+        if at == steps.len() {
+            return k(self);
         }
-        true
+        if at == witness_from {
+            return if self.exists(&steps[at..]) {
+                k(self)
+            } else {
+                true
+            };
+        }
+        match &steps[at] {
+            Step::Filter(f) => !self.holds(f) || self.solve(steps, at + 1, witness_from, k),
+            Step::Atom(atom) => self.match_atom(atom, &mut |m: &mut Machine<'a>| {
+                m.solve(steps, at + 1, witness_from, k)
+            }),
+        }
+    }
+
+    /// Whether `steps` have a solution under the current bindings. Leaves them unchanged.
+    fn exists(&mut self, steps: &[Step]) -> bool {
+        let mut found = false;
+        self.solve(steps, 0, usize::MAX, &mut |_: &mut Machine<'a>| {
+            found = true;
+            false
+        });
+        found
+    }
+
+    fn bind(&mut self, slot: Slot, value: Value) {
+        self.env[slot] = Some(value);
+        self.trail.push(slot);
+    }
+
+    fn undo(&mut self, mark: usize) {
+        for slot in self.trail.drain(mark..) {
+            self.env[slot] = None;
+        }
+    }
+
+    /// An operand's value, or `None` for `_` (and for a variable nothing bound, which only a
+    /// negated group's mis-ordered filter can see).
+    fn value(&self, operand: &Operand) -> Option<Value> {
+        match operand {
+            Operand::Const(v) => Some(*v),
+            Operand::Var(s) => self.env[*s],
+            Operand::Any => None,
+        }
     }
 
     // -----------------------------------------------------------------------
     // Generators
     // -----------------------------------------------------------------------
 
-    fn generate(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        match atom.name.as_str() {
-            "fun" => self.generate_fun(atom, env, out),
-            "callsig" => self.generate_callsig(atom, env, out),
-            "param" => self.generate_param(atom, env, out),
-            "callsite" => self.generate_callsite(atom, env, out),
-            "subclass" => self.generate_subclass(atom, env, false, false, out),
-            "subclass*" => self.generate_subclass(atom, env, true, true, out),
-            "subclass+" => self.generate_subclass(atom, env, false, true, out),
-            "uses_field" => self.generate_uses_field(atom, env, out),
-            other => unreachable!("'{other}' is not a generator"),
-        }
-    }
-
-    fn generate_fun(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        let subject = &atom.columns[0];
-        let candidates: Vec<usize> = match self.resolve(subject, env) {
-            Some(Value::Str(fq)) => match self.facts.fun_index(fq) {
-                Some(i) => vec![i],
-                None => return,
-            },
-            Some(_) => return,
-            // Unbound (or `_`): narrow by an indexed attribute if one is usable, else scan.
-            None => match self.keyed_candidates(atom, env) {
-                Some(list) => list,
-                None => (0..self.facts.funs.len()).collect(),
-            },
-        };
-        for i in candidates {
-            let row = &self.facts.funs[i];
-            let Some(mut alternatives) = self.fun_attr_options(atom, row, env) else {
-                continue;
-            };
-            if let Term::Var(v) = subject
-                && !env.contains_key(v)
-            {
-                for ext in &mut alternatives {
-                    ext.push((v.clone(), Value::Str(row.fq)));
-                }
-            }
-            out.append(&mut alternatives);
-        }
-    }
-
-    /// `callsig(K, ...)`: the same shape as [`Self::generate_fun`] over the call-signature
-    /// universe.
-    ///
-    /// A program collected without a dispatch universe has no rows, so such a rule matches
-    /// nothing rather than erroring — the gate that decides whether to collect them lives in
-    /// `cli`, and a rule that asks for one is what opens it.
-    fn generate_callsig(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        let subject = &atom.columns[0];
-        let candidates: Vec<usize> = match self.resolve(subject, env) {
-            Some(Value::Str(id)) | Some(Value::CallSig { id, .. }) => {
-                match self.facts.callsig_index(id) {
-                    Some(i) => vec![i],
-                    None => return,
-                }
-            }
-            Some(_) => return,
-            None => match self.keyed_callsigs(atom, env) {
-                Some(list) => list,
-                None => (0..self.facts.callsigs.len()).collect(),
-            },
-        };
-        for i in candidates {
-            let row = &self.facts.callsigs[i];
-            let Some(mut alternatives) = self.callsig_attr_options(atom, row, env) else {
-                continue;
-            };
-            if let Term::Var(v) = subject
-                && !env.contains_key(v)
-            {
-                let value = Value::CallSig {
-                    id: row.id,
-                    cls: row.parent,
-                    name: row.name,
-                    desc: row.signature,
-                };
-                for ext in &mut alternatives {
-                    ext.push((v.clone(), value));
-                }
-            }
-            out.append(&mut alternatives);
-        }
-    }
-
-    /// [`Self::keyed_candidates`] over the call-signature universe.
-    fn keyed_callsigs(&self, atom: &Atom, env: &Env) -> Option<Vec<usize>> {
-        for attr in &atom.attrs {
-            let key = match attr.name.as_str() {
-                "name" => FunKey::Name,
-                "parent" => FunKey::Parent,
-                "signature" => FunKey::Signature,
-                "qualified-id" => FunKey::QualifiedId,
-                _ => continue,
-            };
-            match (attr.op, &attr.rhs) {
-                (CmpOp::Eq, Rhs::Term(t)) => {
-                    if let Some(Value::Str(s)) = self.resolve(t, env) {
-                        return Some(self.facts.callsigs_by(key, s).to_vec());
+    /// Calls `k` once per way `atom` extends the bindings, with the extension bound.
+    fn match_atom(&mut self, atom: &AtomPlan, k: &mut Cont<'_, 'a>) -> bool {
+        let facts = self.facts;
+        match atom.rel {
+            Relation::Fun => match &atom.access {
+                Access::Column(i) => {
+                    match self.column_key(atom, *i).and_then(|fq| facts.fun_index(fq)) {
+                        Some(r) => self.try_row(atom, Row::Fun(r), k),
+                        None => true,
                     }
                 }
-                (CmpOp::In, Rhs::Set(items)) => {
-                    let mut all: Vec<usize> = Vec::new();
-                    for lit in items {
-                        if let Literal::Str(s) = lit {
-                            all.extend_from_slice(
-                                self.facts.callsigs_by(key, Str::from(s.as_str())),
-                            );
+                Access::Attr(attr, key) => {
+                    let rows = self.keyed(key, |s| facts.funs_by(fun_key(*attr), s));
+                    self.each(atom, rows.iter().map(|&r| Row::Fun(r)), k)
+                }
+                Access::Scan => self.each(atom, (0..facts.funs.len()).map(Row::Fun), k),
+            },
+            // A program collected without a dispatch universe has no rows, so such a rule
+            // matches nothing rather than erroring — the gate that decides whether to collect
+            // them lives in `cli`, and a rule that asks for one is what opens it.
+            Relation::CallSig => match &atom.access {
+                Access::Column(i) => match self
+                    .column_key(atom, *i)
+                    .and_then(|id| facts.callsig_index(id))
+                {
+                    Some(r) => self.try_row(atom, Row::CallSig(r), k),
+                    None => true,
+                },
+                Access::Attr(attr, key) => {
+                    let rows = self.keyed(key, |s| facts.callsigs_by(fun_key(*attr), s));
+                    self.each(atom, rows.iter().map(|&r| Row::CallSig(r)), k)
+                }
+                Access::Scan => self.each(atom, (0..facts.callsigs.len()).map(Row::CallSig), k),
+            },
+            Relation::Param => self.generate_param(atom, k),
+            Relation::CallSite => self.generate_callsite(atom, k),
+            Relation::Subclass { reflexive, deep } => match &atom.access {
+                Access::Column(0) => {
+                    let Some(sub) = self.column_key(atom, 0) else {
+                        return true;
+                    };
+                    let supers = facts.supers(sub, reflexive, deep);
+                    self.each(atom, supers.into_iter().map(|sup| Row::Class(sub, sup)), k)
+                }
+                Access::Column(_) => {
+                    let Some(sup) = self.column_key(atom, 1) else {
+                        return true;
+                    };
+                    let subs = facts.subs(sup, reflexive, deep);
+                    self.each(atom, subs.into_iter().map(|sub| Row::Class(sub, sup)), k)
+                }
+                // The direct relation is its edge list. A closure also has the reflexive pair of
+                // every class, including one with no supertype, which the edges do not name.
+                _ if !reflexive && !deep => self.each(
+                    atom,
+                    facts
+                        .subclass
+                        .iter()
+                        .map(|&(sub, sup)| Row::Class(sub, sup)),
+                    k,
+                ),
+                _ => {
+                    for &sub in &facts.classes {
+                        let supers = facts.supers(sub, reflexive, deep);
+                        if !self.each(atom, supers.into_iter().map(|sup| Row::Class(sub, sup)), k) {
+                            return false;
                         }
                     }
-                    all.sort_unstable();
-                    all.dedup();
-                    return Some(all);
+                    true
                 }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// Every way a signature key can satisfy the atom's attributes.
-    ///
-    /// Unlike a function, a key has exactly one spelling of each attribute — it is composed from
-    /// the site's three components — so each is a one-element slice and the multi-spelling case
-    /// [`Self::fun_attr_options`] exists for cannot arise.
-    fn callsig_attr_options(
-        &self,
-        atom: &Atom,
-        row: &super::relations::CallSigRow,
-        env: &Env,
-    ) -> Option<Vec<Extension>> {
-        let mut alternatives: Vec<Extension> = vec![Vec::new()];
-        for attr in &atom.attrs {
-            let options = match attr.name.as_str() {
-                "name" => self.multi_attr(attr, std::slice::from_ref(&row.name), env),
-                "parent" => self.multi_attr(attr, std::slice::from_ref(&row.parent), env),
-                "signature" => self.multi_attr(attr, std::slice::from_ref(&row.signature), env),
-                "qualified-id" => self.multi_attr(attr, std::slice::from_ref(&row.id), env),
-                _ => None,
-            }?;
-            alternatives = cross(alternatives, options)?;
-        }
-        Some(alternatives)
-    }
-
-    /// Row indices reachable through an indexed attribute (`name`, `parent`, `signature`,
-    /// `qualified-id`) with a value already known. `None` means "no usable index; scan".
-    fn keyed_candidates(&self, atom: &Atom, env: &Env) -> Option<Vec<usize>> {
-        for attr in &atom.attrs {
-            let key = match attr.name.as_str() {
-                "name" => FunKey::Name,
-                "parent" => FunKey::Parent,
-                "signature" => FunKey::Signature,
-                "qualified-id" => FunKey::QualifiedId,
-                _ => continue,
-            };
-            match (attr.op, &attr.rhs) {
-                (CmpOp::Eq, Rhs::Term(t)) => {
-                    if let Some(Value::Str(s)) = self.resolve(t, env) {
-                        return Some(self.facts.funs_by(key, s).to_vec());
-                    }
-                }
-                (CmpOp::In, Rhs::Set(items)) => {
-                    let mut all: Vec<usize> = Vec::new();
-                    for lit in items {
-                        if let Literal::Str(s) = lit {
-                            all.extend_from_slice(self.facts.funs_by(key, Str::from(s.as_str())));
-                        }
-                    }
-                    all.sort_unstable();
-                    all.dedup();
-                    return Some(all);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// Every way this row can satisfy the atom's attributes, or `None` if it cannot.
-    ///
-    /// More than one way arises only when an attribute is an *output* on a function the frontend
-    /// publishes under several spellings — `fun(F, name = N)` on a native symbol known both as
-    /// `system` and as `<EXTERNAL>::system@00101008`. Binding one of them and dropping the other
-    /// would silently narrow what a migrated `name` regex matches; see `relations.rs`.
-    fn fun_attr_options(
-        &self,
-        atom: &Atom,
-        row: &super::relations::FunRow,
-        env: &Env,
-    ) -> Option<Vec<Extension>> {
-        let mut alternatives: Vec<Extension> = vec![Vec::new()];
-        for attr in &atom.attrs {
-            let options = match attr.name.as_str() {
-                "name" => self.multi_attr(attr, &row.names, env),
-                "parent" => self.multi_attr(attr, &row.parents, env),
-                "signature" => self.multi_attr(attr, &row.signatures, env),
-                "qualified-id" => self.multi_attr(attr, &row.qualified_ids, env),
-                "language" => self.multi_attr(attr, opt_slice(&self.facts.language), env),
-                "import" => self.multi_attr(attr, opt_slice(&self.facts.import), env),
-                "arity" => match row.arity {
-                    Some(a) => self.scalar_attr(attr, Value::Int(a), env),
-                    None => None,
+            },
+            Relation::UsesField => match &atom.access {
+                Access::Column(i) => match self.column_key(atom, *i) {
+                    Some(f) => self.each(
+                        atom,
+                        facts.uses_field_of(f).iter().map(|&r| Row::UsesField(r)),
+                        k,
+                    ),
+                    None => true,
                 },
-                "has_code" => match row.has_code {
-                    Some(b) => self.scalar_attr(attr, Value::Bool(b), env),
-                    None => None,
-                },
-                _ => None,
-            }?;
-            alternatives = cross(alternatives, options)?;
+                _ => self.each(atom, (0..facts.uses_field.len()).map(Row::UsesField), k),
+            },
         }
-        Some(alternatives)
     }
 
-    fn generate_param(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        let func = &atom.columns[0];
-        let idx = &atom.columns[1];
-        let rows: Vec<&super::relations::FunRow> = match self.resolve(func, env) {
-            Some(Value::Str(fq)) => self.facts.fun_row(fq).into_iter().collect(),
-            Some(_) => return,
-            None => self.facts.funs.iter().collect(),
+    fn generate_param(&mut self, atom: &AtomPlan, k: &mut Cont<'_, 'a>) -> bool {
+        let facts = self.facts;
+        let funs: Vec<usize> = match &atom.access {
+            Access::Column(i) => self
+                .column_key(atom, *i)
+                .and_then(|fq| facts.fun_index(fq))
+                .into_iter()
+                .collect(),
+            _ => (0..facts.funs.len()).collect(),
         };
-        let want_index = self.resolve(idx, env).and_then(|v| v.as_int());
-        for row in rows {
+        let want_index = match &atom.columns[1] {
+            ColumnPat::Test(op) => self.value(op).and_then(|v| v.as_int()),
+            ColumnPat::Bind(_) => None,
+        };
+        for f in funs {
             // "populated wherever arity is known": a bodyless callee has none, so it
             // contributes no parameter rows at all.
-            let Some(arity) = row.arity else { continue };
-            for i in 0..arity {
-                if let Some(w) = want_index
-                    && w != i
+            let Some(arity) = facts.funs[f].arity else {
+                continue;
+            };
+            let indices = match want_index {
+                Some(w) if (0..arity).contains(&w) => w..w + 1,
+                Some(_) => continue,
+                None => 0..arity,
+            };
+            if !self.each(atom, indices.map(|i| Row::Param(f, i)), k) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn generate_callsite(&mut self, atom: &AtomPlan, k: &mut Cont<'_, 'a>) -> bool {
+        let facts = self.facts;
+        match &atom.access {
+            Access::Column(1) => {
+                match self
+                    .column_key(atom, 1)
+                    .and_then(|id| facts.callsite_index(id))
                 {
-                    continue;
+                    Some(r) => self.try_row(atom, Row::CallSite(r), k),
+                    None => true,
                 }
-                let mut ext = Vec::new();
-                if let Term::Var(v) = func
-                    && !env.contains_key(v)
-                {
-                    ext.push((v.clone(), Value::Str(row.fq)));
-                }
-                if let Term::Var(v) = idx
-                    && !env.contains_key(v)
-                {
-                    ext.push((v.clone(), Value::Int(i)));
-                }
-                out.push(ext);
+            }
+            Access::Column(i) => match self.column_key(atom, *i) {
+                Some(caller) => self.each(
+                    atom,
+                    facts
+                        .callsites_of_caller(caller)
+                        .iter()
+                        .map(|&r| Row::CallSite(r)),
+                    k,
+                ),
+                None => true,
+            },
+            Access::Attr(_, key) => {
+                let rows = self.keyed(key, |s| facts.callsites_of_callee(s));
+                self.each(atom, rows.iter().map(|&r| Row::CallSite(r)), k)
+            }
+            Access::Scan => self.each(atom, (0..facts.callsites.len()).map(Row::CallSite), k),
+        }
+    }
+
+    /// The key an [`Access::Column`] looks up by.
+    fn column_key(&self, atom: &AtomPlan, column: usize) -> Option<Str> {
+        match &atom.columns[column] {
+            ColumnPat::Test(op) => self.value(op).and_then(|v| v.as_str()),
+            ColumnPat::Bind(_) => None,
+        }
+    }
+
+    /// The rows an attribute index reaches for `key`. A set is the union of its members'
+    /// lookups, deduplicated so a row two members reach is visited once.
+    fn keyed(&self, key: &Key, lookup: impl Fn(Str) -> &'a [usize]) -> Cow<'a, [usize]> {
+        match key {
+            Key::One(op) => match self.value(op).and_then(|v| v.as_str()) {
+                Some(s) => Cow::Borrowed(lookup(s)),
+                None => Cow::Borrowed(&[]),
+            },
+            Key::Set(members) => {
+                let mut all: Vec<usize> = members
+                    .iter()
+                    .flat_map(|&s| lookup(s).iter().copied())
+                    .collect();
+                all.sort_unstable();
+                all.dedup();
+                Cow::Owned(all)
             }
         }
     }
 
-    fn generate_callsite(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        let caller = &atom.columns[0];
-        let site = &atom.columns[1];
-        let bound_caller = match self.resolve(caller, env) {
-            Some(Value::Str(f)) => Some(f),
-            Some(_) => return,
-            None => None,
-        };
-        let candidates: Vec<usize> = match self.resolve(site, env) {
-            Some(v) => match v.as_str().and_then(|id| self.facts.callsite_index(id)) {
-                Some(i) => vec![i],
-                None => return,
-            },
-            None => match bound_caller {
-                Some(f) => self.facts.callsites_of_caller(f).to_vec(),
-                None => match self.callee_key(atom, env) {
-                    Some(list) => list,
-                    None => (0..self.facts.callsites.len()).collect(),
-                },
-            },
-        };
-        for i in candidates {
-            let row = &self.facts.callsites[i];
-            if let Some(f) = bound_caller
-                && f != row.caller
-            {
-                continue;
-            }
-            let mut alternatives: Vec<Extension> = vec![Vec::new()];
-            let mut ok = true;
-            for attr in &atom.attrs {
-                let options = if attr.name == "callee_string" {
-                    self.scalar_attr(attr, Value::Str(row.callee), env)
-                } else {
-                    None
-                };
-                match options.and_then(|o| cross(alternatives.clone(), o)) {
-                    Some(next) => alternatives = next,
-                    None => {
+    fn each(
+        &mut self,
+        atom: &AtomPlan,
+        rows: impl IntoIterator<Item = Row>,
+        k: &mut Cont<'_, 'a>,
+    ) -> bool {
+        rows.into_iter().all(|row| self.try_row(atom, row, k))
+    }
+
+    /// Matches one candidate row against the atom's columns and attributes, calling `k` for
+    /// each way it does. The bindings are as they were on return.
+    fn try_row(&mut self, atom: &AtomPlan, row: Row, k: &mut Cont<'_, 'a>) -> bool {
+        let mark = self.trail.len();
+        let mut ok = true;
+        for (i, pat) in atom.columns.iter().enumerate() {
+            match pat {
+                ColumnPat::Test(Operand::Any) => {}
+                ColumnPat::Bind(s) => {
+                    let v = self.column_value(row, i);
+                    self.bind(*s, v);
+                }
+                ColumnPat::Test(op) => {
+                    if let Some(want) = self.value(op)
+                        && !compare(&self.column_value(row, i), CmpOp::Eq, &want)
+                    {
                         ok = false;
                         break;
                     }
                 }
             }
-            if !ok {
-                continue;
-            }
-            for ext in &mut alternatives {
-                if let Term::Var(v) = caller
-                    && !env.contains_key(v)
-                {
-                    ext.push((v.clone(), Value::Str(row.caller)));
-                }
-                if let Term::Var(v) = site
-                    && !env.contains_key(v)
-                {
-                    ext.push((
-                        v.clone(),
-                        Value::Site {
-                            id: row.id,
-                            caller: row.caller,
-                            callee: row.callee,
-                        },
-                    ));
-                }
-            }
-            out.append(&mut alternatives);
+        }
+        let keep_going = !ok || self.match_attrs(atom, row, 0, k);
+        self.undo(mark);
+        keep_going
+    }
+
+    /// Matches attributes `at..` of `atom` against `row`.
+    ///
+    /// More than one way arises only when an attribute is an *output* on a function the frontend
+    /// publishes under several spellings — `fun(F, name = N)` on a native symbol known both as
+    /// `system` and as `<EXTERNAL>::system@00101008`. Binding one of them and dropping the other
+    /// would silently narrow what a migrated `name` regex matches; see `relations.rs`.
+    fn match_attrs(&mut self, atom: &AtomPlan, row: Row, at: usize, k: &mut Cont<'_, 'a>) -> bool {
+        let Some((attr, pat)) = atom.attrs.get(at) else {
+            return k(self);
+        };
+        let values = self.attr_values(row, *attr);
+        let AttrPat::Bind(slot) = pat else {
+            return !self.attr_holds(pat, &values) || self.match_attrs(atom, row, at + 1, k);
+        };
+        let mut alternative = |m: &mut Self, v: Value| {
+            let mark = m.trail.len();
+            m.bind(*slot, v);
+            let keep_going = m.match_attrs(atom, row, at + 1, k);
+            m.undo(mark);
+            keep_going
+        };
+        match values {
+            AttrValues::Strs(list) => list.iter().all(|&s| alternative(self, Value::Str(s))),
+            AttrValues::One(v) => alternative(self, v),
+            AttrValues::Missing => true,
         }
     }
 
-    /// Call-site rows reachable through a known `callee_string`.
-    fn callee_key(&self, atom: &Atom, env: &Env) -> Option<Vec<usize>> {
-        for attr in &atom.attrs {
-            if attr.name != "callee_string" {
-                continue;
+    fn column_value(&self, row: Row, column: usize) -> Value {
+        let facts = self.facts;
+        match (row, column) {
+            (Row::Fun(r), _) => Value::Str(facts.funs[r].fq),
+            (Row::CallSig(r), _) => {
+                let row = &facts.callsigs[r];
+                Value::CallSig {
+                    id: row.id,
+                    cls: row.parent,
+                    name: row.name,
+                    desc: row.signature,
+                }
             }
-            match (attr.op, &attr.rhs) {
-                (CmpOp::Eq, Rhs::Term(t)) => {
-                    if let Some(Value::Str(s)) = self.resolve(t, env) {
-                        return Some(self.facts.callsites_of_callee(s).to_vec());
+            (Row::Param(f, _), 0) => Value::Str(facts.funs[f].fq),
+            (Row::Param(_, i), _) => Value::Int(i),
+            (Row::CallSite(r), 0) => Value::Str(facts.callsites[r].caller),
+            (Row::CallSite(r), _) => {
+                let row = &facts.callsites[r];
+                Value::Site {
+                    id: row.id,
+                    caller: row.caller,
+                    callee: row.callee,
+                }
+            }
+            (Row::Class(sub, _), 0) => Value::Str(sub),
+            (Row::Class(_, sup), _) => Value::Str(sup),
+            (Row::UsesField(r), 0) => Value::Str(facts.uses_field[r].0),
+            (Row::UsesField(r), _) => Value::Str(facts.uses_field[r].1),
+        }
+    }
+
+    /// A call-signature key has exactly one spelling of each attribute — it is composed from the
+    /// site's three components — so each is a one-element slice and the multi-spelling case
+    /// [`Self::match_attrs`] describes cannot arise.
+    fn attr_values(&self, row: Row, attr: Attr) -> AttrValues<'a> {
+        let facts = self.facts;
+        match row {
+            Row::Fun(r) => {
+                let row = &facts.funs[r];
+                match attr {
+                    Attr::Name => AttrValues::Strs(&row.names),
+                    Attr::Parent => AttrValues::Strs(&row.parents),
+                    Attr::Signature => AttrValues::Strs(&row.signatures),
+                    Attr::QualifiedId => AttrValues::Strs(&row.qualified_ids),
+                    // The per-import scope attributes go through the same path as the
+                    // per-function ones, as a zero- or one-element slice.
+                    Attr::Language => AttrValues::Strs(facts.language.as_slice()),
+                    Attr::Import => AttrValues::Strs(facts.import.as_slice()),
+                    Attr::Arity => row
+                        .arity
+                        .map_or(AttrValues::Missing, |a| AttrValues::One(Value::Int(a))),
+                    Attr::HasCode => row
+                        .has_code
+                        .map_or(AttrValues::Missing, |b| AttrValues::One(Value::Bool(b))),
+                    Attr::CalleeString => AttrValues::Missing,
+                }
+            }
+            Row::CallSig(r) => {
+                let row = &facts.callsigs[r];
+                match attr {
+                    Attr::Name => AttrValues::Strs(std::slice::from_ref(&row.name)),
+                    Attr::Parent => AttrValues::Strs(std::slice::from_ref(&row.parent)),
+                    Attr::Signature => AttrValues::Strs(std::slice::from_ref(&row.signature)),
+                    Attr::QualifiedId => AttrValues::Strs(std::slice::from_ref(&row.id)),
+                    _ => AttrValues::Missing,
+                }
+            }
+            Row::CallSite(r) => match attr {
+                Attr::CalleeString => {
+                    AttrValues::Strs(std::slice::from_ref(&facts.callsites[r].callee))
+                }
+                _ => AttrValues::Missing,
+            },
+            Row::Param(..) | Row::Class(..) | Row::UsesField(_) => AttrValues::Missing,
+        }
+    }
+
+    /// Whether a non-binding attribute constraint holds.
+    fn attr_holds(&self, pat: &AttrPat, values: &AttrValues<'_>) -> bool {
+        match (pat, values) {
+            (_, AttrValues::Missing) | (AttrPat::Never, _) => false,
+            (AttrPat::Bind(_), _) => unreachable!("a binding attribute enumerates"),
+            (AttrPat::Present, AttrValues::Strs(list)) => !list.is_empty(),
+            (AttrPat::Present, AttrValues::One(_)) => true,
+            (AttrPat::In(set), AttrValues::Strs(list)) => {
+                list.iter().any(|&s| set.contains(&Value::Str(s)))
+            }
+            (AttrPat::In(set), AttrValues::One(v)) => in_set(v, set),
+            (AttrPat::Cmp(op, rhs), values) => {
+                let Some(rhs) = self.value(rhs) else {
+                    return false;
+                };
+                match values {
+                    // `!=` over a multi-valued attribute is "no spelling equals it". Any other
+                    // reading would make `name != "x"` true for a function that has `x` as one
+                    // of its names.
+                    AttrValues::Strs(list) if *op == CmpOp::Ne => list
+                        .iter()
+                        .all(|&s| !compare(&Value::Str(s), CmpOp::Eq, &rhs)),
+                    AttrValues::Strs(list) => {
+                        list.iter().any(|&s| compare(&Value::Str(s), *op, &rhs))
                     }
+                    AttrValues::One(v) => compare(v, *op, &rhs),
+                    AttrValues::Missing => false,
                 }
-                (CmpOp::In, Rhs::Set(items)) => {
-                    let mut all = Vec::new();
-                    for lit in items {
-                        if let Literal::Str(s) = lit {
-                            all.extend_from_slice(
-                                self.facts.callsites_of_callee(Str::from(s.as_str())),
-                            );
-                        }
-                    }
-                    all.sort_unstable();
-                    all.dedup();
-                    return Some(all);
-                }
-                _ => {}
             }
-        }
-        None
-    }
-
-    fn generate_subclass(
-        &self,
-        atom: &Atom,
-        env: &Env,
-        reflexive: bool,
-        deep: bool,
-        out: &mut Vec<Extension>,
-    ) {
-        let sub = &atom.columns[0];
-        let sup = &atom.columns[1];
-        let subs: Vec<Str> = match self.resolve(sub, env) {
-            Some(Value::Str(s)) => vec![s],
-            Some(_) => return,
-            None => self.facts.classes.clone(),
-        };
-        let want_super = match self.resolve(sup, env) {
-            Some(Value::Str(s)) => Some(s),
-            Some(_) => return,
-            None => None,
-        };
-        for s in subs {
-            for parent in self.facts.supers(s, reflexive, deep) {
-                if let Some(w) = want_super
-                    && w != parent
-                {
-                    continue;
-                }
-                let mut ext = Vec::new();
-                if let Term::Var(v) = sub
-                    && !env.contains_key(v)
-                {
-                    ext.push((v.clone(), Value::Str(s)));
-                }
-                if let Term::Var(v) = sup
-                    && !env.contains_key(v)
-                {
-                    ext.push((v.clone(), Value::Str(parent)));
-                }
-                out.push(ext);
-            }
-        }
-    }
-
-    fn generate_uses_field(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
-        let func = &atom.columns[0];
-        let field = &atom.columns[1];
-        let candidates: Vec<usize> = match self.resolve(func, env) {
-            Some(Value::Str(f)) => self.facts.uses_field_of(f).to_vec(),
-            Some(_) => return,
-            None => (0..self.facts.uses_field.len()).collect(),
-        };
-        let want_field = match self.resolve(field, env) {
-            Some(Value::Str(s)) => Some(s),
-            Some(_) => return,
-            None => None,
-        };
-        for i in candidates {
-            let (f, fld) = self.facts.uses_field[i];
-            if let Some(w) = want_field
-                && w != fld
-            {
-                continue;
-            }
-            let mut ext = Vec::new();
-            if let Term::Var(v) = func
-                && !env.contains_key(v)
-            {
-                ext.push((v.clone(), Value::Str(f)));
-            }
-            if let Term::Var(v) = field
-                && !env.contains_key(v)
-            {
-                ext.push((v.clone(), Value::Str(fld)));
-            }
-            out.push(ext);
         }
     }
 
@@ -736,102 +688,47 @@ impl<'a> Evaluator<'a> {
     // Filters
     // -----------------------------------------------------------------------
 
-    /// Whether an item has at least one solution under `env`.
+    /// Whether a filter holds under the current bindings.
     ///
     /// This is where negation lives. `!x` is "no solution", and a group's local variables are
     /// existentially quantified by the subquery — see the module docs.
-    fn satisfiable(&self, item: &BodyItem, env: &Env) -> bool {
-        match item {
-            BodyItem::Not(inner) => !self.satisfiable(inner, env),
-            BodyItem::Or(items) => items.iter().any(|i| self.satisfiable(i, env)),
-            BodyItem::And(items) => {
-                let refs: Vec<&BodyItem> = items.iter().collect();
-                let ordered = self.order_runtime(&refs, env);
-                let mut e = env.clone();
+    fn holds(&mut self, filter: &Filter) -> bool {
+        match filter {
+            Filter::Exists(atom) => {
                 let mut found = false;
-                self.solve(&ordered, 0, &mut e, &mut |_| {
+                self.match_atom(atom, &mut |_: &mut Machine<'a>| {
                     found = true;
                     false
                 });
                 found
             }
-            BodyItem::Atom(atom) if atom.name.starts_with('$') => self.holds_test(atom, env),
-            BodyItem::Atom(atom) if atom.name == "regex_match" => self.holds_regex(atom, env),
-            BodyItem::Atom(atom) => {
-                let mut out = Vec::new();
-                self.generate(atom, env, &mut out);
-                !out.is_empty()
-            }
-        }
-    }
-
-    /// A binding-consistent order for a subquery, chosen at run time because the bindings a
-    /// negated group sees depend on where it sits in the enclosing rule.
-    fn order_runtime<'b>(&self, items: &[&'b BodyItem], env: &Env) -> Vec<&'b BodyItem> {
-        let mut remaining: Vec<&'b BodyItem> = items.to_vec();
-        let mut bound: BTreeSet<String> = env.keys().cloned().collect();
-        let mut out = Vec::with_capacity(remaining.len());
-        while !remaining.is_empty() {
-            let mut pick = None;
-            for (pos, item) in remaining.iter().enumerate() {
-                if !is_generator(item) {
-                    let mut elsewhere = BTreeSet::new();
-                    for (other, o) in remaining.iter().enumerate() {
-                        if other != pos {
-                            collect_vars(o, &mut elsewhere);
-                        }
-                    }
-                    elsewhere.extend(bound.iter().cloned());
-                    if !required_vars(item, &elsewhere)
-                        .iter()
-                        .all(|v| bound.contains(v))
-                    {
-                        continue;
-                    }
-                    pick = Some(pos);
-                    break;
-                }
-                if pick.is_none() {
-                    pick = Some(pos);
-                }
-            }
-            let pos = pick.unwrap_or(0);
-            let item = remaining.remove(pos);
-            if is_generator(item) {
-                collect_vars(item, &mut bound);
-            }
-            out.push(item);
-        }
-        out
-    }
-
-    fn holds_test(&self, atom: &Atom, env: &Env) -> bool {
-        let Some(lhs) = self.resolve(&atom.columns[0], env) else {
-            // `_ = X` is vacuously true: a wildcard matches anything.
-            return true;
-        };
-        let attr = &atom.attrs[0];
-        match (&attr.rhs, attr.op) {
-            (Rhs::Set(items), CmpOp::In) => items.iter().any(|lit| lit_eq(&lhs, lit)),
-            (Rhs::Set(_), _) => false,
-            (Rhs::Term(t), op) => match self.resolve(t, env) {
-                Some(rhs) => compare(&lhs, op, &rhs),
+            Filter::Group(steps) => self.exists(steps),
+            Filter::Not(inner) => !self.holds(inner),
+            Filter::Or(items) => items.iter().any(|f| self.holds(f)),
+            Filter::Cmp(lhs, op, rhs) => match (self.value(lhs), self.value(rhs)) {
+                // `_ = X` is vacuously true: a wildcard matches anything.
+                (None, _) => true,
+                (Some(lhs), Some(rhs)) => compare(&lhs, *op, &rhs),
                 // `X = _` holds whenever `X` is bound at all.
-                None => op == CmpOp::Eq,
+                (Some(_), None) => *op == CmpOp::Eq,
             },
+            Filter::In(lhs, set) => self.value(lhs).is_none_or(|v| in_set(&v, set)),
+            Filter::Regex(subject, pattern) => self.holds_regex(subject, pattern),
+            Filter::Never => false,
         }
     }
 
-    fn holds_regex(&self, atom: &Atom, env: &Env) -> bool {
-        let Some(subject) = self.resolve(&atom.columns[0], env).and_then(|v| v.as_str()) else {
+    fn holds_regex(&self, subject: &Operand, pattern: &Pattern) -> bool {
+        let Some(subject) = self.value(subject).and_then(|v| v.as_str()) else {
             return false;
         };
-        let Some(pattern) = self.resolve(&atom.columns[1], env).and_then(|v| v.as_str()) else {
-            return false;
+        let pattern = match pattern {
+            Pattern::Compiled(rx) => return rx.is_match(subject.as_str()),
+            Pattern::Var(slot) => match self.env[*slot].and_then(|v| v.as_str()) {
+                Some(p) => p,
+                None => return false,
+            },
         };
-        if let Some(rx) = self.regexes.get(pattern.as_str()) {
-            return rx.is_match(subject.as_str());
-        }
         // A pattern that arrived through a variable. An invalid one matches nothing rather than
         // failing the load: the load could not have seen it.
         match Regex::new(pattern.as_str()) {
@@ -842,159 +739,25 @@ impl<'a> Evaluator<'a> {
             }
         }
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Shared attribute machinery
-    // -----------------------------------------------------------------------
-
-    /// An attribute with several accepted spellings. `None` means the row fails the constraint.
-    fn multi_attr(
-        &self,
-        attr: &AttrConstraint,
-        values: &[Str],
-        env: &Env,
-    ) -> Option<Vec<Extension>> {
-        let pass = || Some(vec![Vec::new()]);
-        match (&attr.rhs, attr.op) {
-            (Rhs::Set(items), CmpOp::In) => {
-                if values
-                    .iter()
-                    .any(|v| items.iter().any(|lit| lit_eq(&Value::Str(*v), lit)))
-                {
-                    pass()
-                } else {
-                    None
-                }
-            }
-            (Rhs::Set(_), _) => None,
-            (Rhs::Term(Term::Wildcard), CmpOp::Eq) => {
-                if values.is_empty() {
-                    None
-                } else {
-                    pass()
-                }
-            }
-            (Rhs::Term(Term::Wildcard), _) => None,
-            (Rhs::Term(t), op) => match self.resolve(t, env) {
-                Some(rhs) => {
-                    let ok = match op {
-                        // `!=` over a multi-valued attribute is "no spelling equals it". Any
-                        // other reading would make `name != "x"` true for a function that has
-                        // `x` as one of its names.
-                        CmpOp::Ne => values
-                            .iter()
-                            .all(|v| !compare(&Value::Str(*v), CmpOp::Eq, &rhs)),
-                        _ => values.iter().any(|v| compare(&Value::Str(*v), op, &rhs)),
-                    };
-                    if ok { pass() } else { None }
-                }
-                None => {
-                    // An unbound variable on the right of `=` is an output: one alternative per
-                    // spelling.
-                    if op != CmpOp::Eq {
-                        return None;
-                    }
-                    let Term::Var(v) = t else { return None };
-                    if values.is_empty() {
-                        return None;
-                    }
-                    Some(
-                        values
-                            .iter()
-                            .map(|value| vec![(v.clone(), Value::Str(*value))])
-                            .collect(),
-                    )
-                }
-            },
-        }
-    }
-
-    /// A single-valued attribute (`arity`, `has_code`, `callee_string`).
-    fn scalar_attr(
-        &self,
-        attr: &AttrConstraint,
-        value: Value,
-        env: &Env,
-    ) -> Option<Vec<Extension>> {
-        let pass = || Some(vec![Vec::new()]);
-        match (&attr.rhs, attr.op) {
-            (Rhs::Set(items), CmpOp::In) => {
-                if items.iter().any(|lit| lit_eq(&value, lit)) {
-                    pass()
-                } else {
-                    None
-                }
-            }
-            (Rhs::Set(_), _) => None,
-            (Rhs::Term(Term::Wildcard), CmpOp::Eq) => pass(),
-            (Rhs::Term(Term::Wildcard), _) => None,
-            (Rhs::Term(t), op) => match self.resolve(t, env) {
-                Some(rhs) => {
-                    if compare(&value, op, &rhs) {
-                        pass()
-                    } else {
-                        None
-                    }
-                }
-                None => {
-                    if op != CmpOp::Eq {
-                        return None;
-                    }
-                    let Term::Var(v) = t else { return None };
-                    Some(vec![vec![(v.clone(), value)]])
-                }
-            },
-        }
-    }
-
-    /// The value of a term under `env`, or `None` for an unbound variable or `_`.
-    fn resolve(&self, term: &Term, env: &Env) -> Option<Value> {
-        match term {
-            Term::Wildcard => None,
-            Term::Var(v) => env.get(v).copied(),
-            Term::Lit(Literal::Str(s)) => Some(Value::Str(Str::from(s.as_str()))),
-            Term::Lit(Literal::Int(i)) => Some(Value::Int(*i)),
-            Term::Lit(Literal::Bool(b)) => Some(Value::Bool(*b)),
-        }
+/// The [`FunKey`] an indexed string attribute looks up by.
+fn fun_key(attr: Attr) -> FunKey {
+    match attr {
+        Attr::Name => FunKey::Name,
+        Attr::Parent => FunKey::Parent,
+        Attr::Signature => FunKey::Signature,
+        Attr::QualifiedId => FunKey::QualifiedId,
+        other => unreachable!("{other:?} is not an indexed attribute"),
     }
 }
 
-/// Combines two independent sets of alternative extensions, dropping any pair that binds one
-/// variable two different ways. `None` when nothing survives.
-fn cross(left: Vec<Extension>, right: Vec<Extension>) -> Option<Vec<Extension>> {
-    let mut out = Vec::with_capacity(left.len() * right.len());
-    for l in &left {
-        'next: for r in &right {
-            let mut merged = l.clone();
-            for (k, v) in r {
-                match merged.iter().find(|(mk, _)| mk == k) {
-                    Some((_, existing)) if existing != v => continue 'next,
-                    Some(_) => {}
-                    None => merged.push((k.clone(), *v)),
-                }
-            }
-            out.push(merged);
-        }
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
-/// `Option<Str>` as a zero-or-one-element slice, so the per-import scope attributes go through
-/// the same path as the per-function ones.
-fn opt_slice(value: &Option<Str>) -> &[Str] {
+/// Membership in an `in {...}` set of literals. A site or a signature key is a member when its
+/// id is, as it is equal to a string when its id is.
+fn in_set(value: &Value, set: &HashSet<Value>) -> bool {
     match value {
-        Some(s) => std::slice::from_ref(s),
-        None => &[],
-    }
-}
-
-fn lit_eq(value: &Value, lit: &Literal) -> bool {
-    match (value, lit) {
-        (Value::Str(s), Literal::Str(l)) => s.as_str() == l,
-        (Value::Site { id, .. }, Literal::Str(l)) => id.as_str() == l,
-        (Value::Int(i), Literal::Int(l)) => i == l,
-        (Value::Bool(b), Literal::Bool(l)) => b == l,
-        _ => false,
+        Value::Int(_) | Value::Bool(_) | Value::Str(_) => set.contains(value),
+        other => other.as_str().is_some_and(|s| set.contains(&Value::Str(s))),
     }
 }
 
@@ -1004,6 +767,10 @@ fn lit_eq(value: &Value, lit: &Literal) -> bool {
 /// instead of failing the load.
 fn compare(lhs: &Value, op: CmpOp, rhs: &Value) -> bool {
     let ord = match (lhs, rhs) {
+        // Interned, so equality is the handle's. Only an ordering needs the text.
+        (Value::Str(a), Value::Str(b)) if matches!(op, CmpOp::Eq | CmpOp::Ne) => {
+            return (a == b) == (op == CmpOp::Eq);
+        }
         (Value::Int(a), Value::Int(b)) => a.partial_cmp(b),
         (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
         (a, b) => match (a.as_str(), b.as_str()) {
