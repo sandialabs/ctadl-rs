@@ -18,6 +18,101 @@ This plan says how to meet `spec.md` and in what order. R*, D* and C* refer to
     `DecisionSet`s (`decision.rs:134`) already stay interned for the whole
     process.
   - The findings are folded into the components below.
+- Steps 0–7 are implemented. The tip passes every gate and meets R1, R2, R3
+  and R15 (Step 7 below). Results are kept outside the repo (R17).
+
+## Where the implementation departs from this plan
+
+- **Gate.**
+  - `scripts/fact-dump-diff.sh` didn't exist. It now does, along with a
+    `CTADL_DUMP_RELATIONS=<dir>` dump that writes every relation by content.
+  - `main` has no dump mode, so the references come from a build of the
+    commit that added it, which derives the same sets as `main`.
+  - udpbus is too large to dump, so the gate runs on glxy and xbot.
+- **xbot is not deterministic on `main`.**
+  - Each `context_summary` decision set grows, and every intermediate value it
+    passes through leaves a row in `context_summary_set`, `set_member` and both
+    `set_establishes_*` relations.
+  - How many intermediate values appear depends on evaluation order.
+  - The rules join those relations against the current `context_summary`, so
+    the stale rows never reach output.
+  - R4 accepts differences in those four relations only; every other relation
+    must match exactly.
+- **A.**
+  - `with_capacity(n)` is `reserve(n)`, since a `static` can't be built with a
+    capacity.
+  - `stats()` returns a `Stats` struct.
+  - `id_handle!` declares each interner as a `static` branded by its handle
+    type.
+  - The exhaustion test uses a private small limit, since a small `S` makes
+    each shard's limit larger, not smaller.
+- **C.** The enums became the content types `CallTargetObjectKind` and
+  `CallDispatchKeyKind`. The handle `CallDispatchKey::c()` is a `LazyLock`
+  forced before the fixpoint.
+- **D.**
+  - `PathNode` is 24 B. Packing it to 12 B would save about 2 MB on glxy, and
+    offsets are `i64`.
+  - `Path::EMPTY` is a value no `PathId` can take, read through
+    `from_raw_unchecked`.
+  - `tailshare` is deleted.
+- **E.**
+  - Every path the rules split is a member, except the empty path, whose split
+    is answered directly. So no extra precomputation over edge paths is needed.
+  - The plan's range `mod.rs:1744-1875` omitted `:1557`, `:1979` and `:1987`.
+    `compute_paths`'s input is also built from `program_paths` and
+    `summary_paths`.
+  - Release builds count and log a split miss, and `profile.json` reports
+    `split_misses` and `fixpoint_interned`.
+  - The R6 test runs in a child process, so no other test interns alongside it.
+- **F.**
+  - Bit 31 of a `DecisionSet` marks the collapsing kind and picks its interner.
+    Both interners keep ids below 2^31 (`IdInterner::with_id_bits`).
+  - The empty set is always exact, and exact ⊤ and collapsing ⊤ are distinct
+    handles. Two kinds never meet in one index.
+- **G.**
+  - `Str` already ordered by id on `main`, so `Function`, `Label`,
+    `FlowVariable`, `FlowVertex` and `QueryEndpoint` did too.
+  - The biggest leak was in neither list: the search breaks ties by successor
+    order, which followed index row order. `TaintSearchGraph::new` now sorts
+    every successor list by content.
+  - Other sites the audit missed: the taint-graph DOT (`cli/mod.rs`),
+    `search.rs:267` and `:544`, and the formatter's endpoint and node-id
+    orders.
+  - `models/spec.rs:827` was an unused alias and is deleted.
+  - The determinism test pre-interns both `Str` and whole `Path`s, and adds
+    filler values so that their ids come out in the requested order.
+- **H.**
+  - `lsm_col!` takes its field types and asserts that their sizes sum to the
+    type's size.
+  - `edge_split` stays `(FlowVariable, Path)`, whose pair impl writes each
+    field into zeroed slots. Switching it to `FlowVertex` would have changed
+    the dump format.
+
+## Step 7 results
+
+| Bench, config | Peak, `main` → tip (GiB) | Wall time |
+|---|---|---|
+| glxy serial | 4.57 → 2.57 | no change |
+| glxy par | 4.75 → 2.77 | +1.6%, noise |
+| glxy lsm | 0.42 → 0.29 | +4.3% on quiet runs |
+| xbot serial, par, lsm | 1.09, 1.28, 0.81 → 0.80, 0.93, 0.56 | faster |
+| udpbus serial | 44.9 → 26 | +5.2% |
+| udpbus par | 49.2 → 28 | +7.4% |
+
+- **Requirements.**
+  - R2: glxy's `locals` fell from 2.61 to 1.41 GB, and peak fell by 2.1 GB.
+  - Scaled to the spec's `--mem2reg` figures, the saving is about 0.97 GB.
+- **udpbus lsm.** It wasn't run: on `main` it never reaches a fixpoint within
+  an hour.
+- **Open performance work.**
+  - glxy lsm spends 4.2% more cycles than `main`, most of it in `edge_split ⋈
+    locals` (+12%), a rule that Step 5 rewrote.
+  - udpbus serial retires 8.7% more instructions than `main`, extra work that
+    was already there by Step 5.
+  - About half of udpbus par's slowdown came with Step 6.
+- **Found on `main`, not fixed here.** With debug logging on, `par` panics
+  (`CMap::frozen() on an unfrozen map`, `c_locals_trie.rs:148`) whenever
+  `context_locals` is non-empty.
 
 ## Step 0. Baseline on `main`
 
