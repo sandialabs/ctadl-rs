@@ -341,7 +341,8 @@ After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function 
 
 ## S29: the frame as `Update`, coarsened by default
 
-Steps 1 and 2 of S29 (Ideas for solutions) are done; 3-5 are not.
+Steps 1, 2 and 5 of S29 (Ideas for solutions) are done; 3 is not. The measurements below are
+from before step 5.
 
 - **The frontend** writes into the frame itself, `__stack_top.[k].deref := v`, as
   `__stack_top = update (__stack_top.[k].deref := v)`. A write through anything else (a copy of
@@ -351,9 +352,33 @@ Steps 1 and 2 of S29 (Ideas for solutions) are done; 3-5 are not.
   they saw before. `ctadl index --frame store|update` (`CTADL_FRAME`) picks the default, `store`;
   model modes `frame-store` and `frame-update` pick one for one function.
 - **Not done:** mem2reg still leaves alone a function that defines `__stack_top` (step 3), so
-  under `update` it promotes nothing in any function that writes its frame; and codegen still
-  lowers `Update` as the copy `x <- y` plus the write `x.f <- v` (step 5, the overwrite rule). So
-  `--frame update` today is the table's "`Update` + SSA, lowered as today" row.
+  under `update` it promotes nothing in any function that writes its frame.
+
+### Step 5: the overwrite rule
+
+Codegen lowers `x = update (y.w := v)` to the write `x.w <- v` and a new fact,
+`update_sans_path(x, y, w)`: `x` is `y` except at `w` and the paths under it. It is not an
+`assign_like` edge. The index derives `ext_dst(x, p, y, p)` for each path `p` of `y` that is not
+`w` or under it, which drives both `locals` and `context_locals`; call targets cross it the same
+way. The index saves it (`update_sans_path.parquet`, index format 6), and both query engines
+follow it. Paths above `w` (the whole variable) still carry everything. It applies to every
+`Update`, flowy's included; `tests/tnt/update.tnt` checks the overwrite.
+
+- **The default is unchanged:** with `--frame store` there are no updates; the regression suite
+  passes 46 of 46.
+- **Under `--frame update` the suite loses two flows, `structptr` and `defaultmodels`,** and
+  both have the same cause, in the frontend. Taking a stack address, `unique = PTRSUB(RSP, -16)`,
+  gives a temporary that constant propagation resolves to `__stack_top + -16`. As the PTRSUB's
+  destination, `convert_vnode` turns that temporary into the slot's address, so the PTRSUB is
+  lowered as a write of the slot's address into the slot itself:
+  `__stack_top = update (__stack_top.[-16].deref := __stack_top.[-16])`, before each call that is
+  passed `&h`. As a `Store` this only added a value. As an overwrite it kills what a callee wrote
+  there (`set_data(&h, source())` in `structptr`, `strcpy(buf, ...)` in `defaultmodels`), so the
+  next read of the slot misses the taint. The fix is in the frontend: a write to a temporary that
+  constant propagation resolves to a stack address writes no memory, since its reads resolve to
+  the address anyway. It changes the default IR too, so today's rows have to be re-measured
+  with it.
+- **Not yet measured:** `locals` and peak under `--frame update` with the rule.
 
 ### Coarsening gives today's results
 
@@ -593,9 +618,10 @@ query's SARIF. A slot a returned address reaches stays in memory (the pcode fron
 stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
 forbid it for one function. See Current state for what it does to the apps.
 
-**S29, steps 1 and 2 on this branch: the pcode frontend emits `Update` for the frame, and passes
-coarsen it.** Steps 3-5 are not started; what is done and what it costs is under S29 below. A frontend should emit the most precise IR, since a later pass can drop information
-but not recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
+**S29, steps 1, 2 and 5 on this branch: the pcode frontend emits `Update` for the frame, and passes
+coarsen it.** Step 3 is not started (step 4 is SSA itself); what is done and what it costs is
+under S29 below. A frontend should emit the most precise IR, since a later pass can drop
+information but not recover it. Today pcode writes the frame with `Store`, which defines nothing, so SSA sees one
 frame for the whole function, and mem2reg has to rebuild the order of stack accesses and guess
 how far an escaped address reaches (`window:8`). `Update` (restored in #118, emitted today only by
 flowy) defines its destination. A frame write emitted as `st = update (st.[k].deref := v)` makes
