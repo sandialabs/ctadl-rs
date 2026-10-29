@@ -31,7 +31,10 @@ mod merged;
 
 /// The statements in a function's body.
 fn statement_count(f: &FunctionData) -> usize {
-    f.blocks.iter_enumerated().map(|(_, b)| b.statements.len()).sum()
+    f.blocks
+        .iter_enumerated()
+        .map(|(_, b)| b.statements.len())
+        .sum()
 }
 
 /// A body that returns at once, with no flows: what a merged method of a class with no object of
@@ -425,149 +428,147 @@ impl Context {
         fdat: &mut FunctionData,
         narrow: &HashMap<usize, usize>,
     ) -> Result<(), Error> {
-            let items = decode_code_item(code);
-            // Compute Dex basic blocks.
-            let bb_vec = basic_blocks(code, &items);
+        let items = decode_code_item(code);
+        // Compute Dex basic blocks.
+        let bb_vec = basic_blocks(code, &items);
 
-            // Compute successors for each basic block using dex-reader.
-            let block_successors_vec = block_successors(code, &items);
+        // Compute successors for each basic block using dex-reader.
+        let block_successors_vec = block_successors(code, &items);
 
-            // Ensure MIR has a block for each Dex basic block.
-            for _ in &bb_vec {
-                fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
-            }
+        // Ensure MIR has a block for each Dex basic block.
+        for _ in &bb_vec {
+            fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+        }
 
-            let mut offset_to_bb: HashMap<usize, BasicBlockIdx> = HashMap::new();
-            for (i, bb) in bb_vec.iter().enumerate() {
-                let offset = items[bb.start].offset();
-                offset_to_bb.insert(offset, BasicBlockIdx::new(i));
-            }
+        let mut offset_to_bb: HashMap<usize, BasicBlockIdx> = HashMap::new();
+        for (i, bb) in bb_vec.iter().enumerate() {
+            let offset = items[bb.start].offset();
+            offset_to_bb.insert(offset, BasicBlockIdx::new(i));
+        }
 
-            // All Java functions return 2 values: (normal_return, exception_return)
-            fdat.return_type = ReturnType { arity: 2 };
+        // All Java functions return 2 values: (normal_return, exception_return)
+        fdat.return_type = ReturnType { arity: 2 };
 
-            // Populate each MIR block.
-            for (i, bb) in bb_vec.iter().enumerate() {
-                let block_idx = BasicBlockIdx::new(i);
-                let range = &items[bb.start..bb.end];
-                for dci in range {
-                    if let DecodedCodeItem::Instruction { inst, offset } = dci {
-                        self.pc = *offset;
-                        let item_offset = code.absolute_offset(dci);
-                        let source_info =
-                            SourceInfo::new(source_info_builder.span_for(
-                                artifact_key.clone(),
-                                item_offset.try_into().unwrap(),
-                                SpanLen::ByteLen(2),
-                            ));
-                        if let Some(mut stmt) =
-                            self.decode_call(parser, code, inst, &mut fdat.locals)
+        // Populate each MIR block.
+        for (i, bb) in bb_vec.iter().enumerate() {
+            let block_idx = BasicBlockIdx::new(i);
+            let range = &items[bb.start..bb.end];
+            for dci in range {
+                if let DecodedCodeItem::Instruction { inst, offset } = dci {
+                    self.pc = *offset;
+                    let item_offset = code.absolute_offset(dci);
+                    let source_info = SourceInfo::new(source_info_builder.span_for(
+                        artifact_key.clone(),
+                        item_offset.try_into().unwrap(),
+                        SpanLen::ByteLen(2),
+                    ));
+                    if let Some(mut stmt) = self.decode_call(parser, code, inst, &mut fdat.locals) {
+                        stmt.source_info = source_info;
+                        fdat.blocks[block_idx].push_back(stmt);
+                    } else {
+                        for mut stmt in
+                            self.dataflow_to_assign(parser, code, inst, &mut fdat.locals)?
                         {
                             stmt.source_info = source_info;
                             fdat.blocks[block_idx].push_back(stmt);
-                        } else {
-                            for mut stmt in self.dataflow_to_assign(
-                                parser,
-                                code,
-                                inst,
-                                &mut fdat.locals,
-                            )? {
-                                stmt.source_info = source_info;
-                                fdat.blocks[block_idx].push_back(stmt);
-                            }
                         }
                     }
                 }
+            }
 
-                // Determine the terminator for this block using the last instruction in the block.
-                let last = range.iter().rev().find_map(|dci| {
-                    if let DecodedCodeItem::Instruction { inst, offset } = dci {
-                        Some((*offset, inst))
-                    } else {
-                        None
-                    }
-                });
-                let last_inst = last.map(|(_, inst)| inst);
-                // A clone of a merged class's method takes only its own arm of a switch on
-                // the class id.
-                let arm = last
-                    .and_then(|(pc, _)| narrow.get(&pc))
-                    .and_then(|target| offset_to_bb.get(target));
+            // Determine the terminator for this block using the last instruction in the block.
+            let last = range.iter().rev().find_map(|dci| {
+                if let DecodedCodeItem::Instruction { inst, offset } = dci {
+                    Some((*offset, inst))
+                } else {
+                    None
+                }
+            });
+            let last_inst = last.map(|(_, inst)| inst);
+            // A clone of a merged class's method takes only its own arm of a switch on
+            // the class id.
+            let arm = last
+                .and_then(|(pc, _)| narrow.get(&pc))
+                .and_then(|target| offset_to_bb.get(target));
 
-                let term = if let Some(&arm) = arm {
-                    TerminatorKind::Goto {
-                        targets: smallvec![arm],
-                    }
-                } else if let Some(inst) = last_inst {
-                    // Return instructions end the function.
-                    match inst {
-                        // Throw instruction - jump to handlers if protected, else return exception
-                        Instruction::Throw(f) => {
-                            let succ_usizes = &block_successors_vec[i];
-                            let succs = succ_usizes
-                                .iter()
-                                .map(|&b| BasicBlockIdx::new(b))
-                                .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+            let term = if let Some(&arm) = arm {
+                TerminatorKind::Goto {
+                    targets: smallvec![arm],
+                }
+            } else if let Some(inst) = last_inst {
+                // Return instructions end the function.
+                match inst {
+                    // Throw instruction - jump to handlers if protected, else return exception
+                    Instruction::Throw(f) => {
+                        let succ_usizes = &block_successors_vec[i];
+                        let succs = succ_usizes
+                            .iter()
+                            .map(|&b| BasicBlockIdx::new(b))
+                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
-                            if succs.is_empty() {
-                                let throw_exp = Exp::from(AccessPath::without_fields(
-                                    reg_to_var(code, f.a, &mut fdat.locals),
-                                ));
-                                let empty_exp = Exp::new_bytes(Vec::new());
-                                TerminatorKind::Return {
-                                    args: smallvec![empty_exp, throw_exp],
-                                }
-                            } else {
-                                TerminatorKind::Goto { targets: succs }
-                            }
-                        }
-                        // Return with a value (register)
-                        Instruction::Return(reg)
-                        | Instruction::ReturnWide(reg)
-                        | Instruction::ReturnObject(reg) => {
-                            let ret_exp = Exp::from(AccessPath::without_fields(
-                                reg_to_var(code, reg.a, &mut fdat.locals),
-                            ));
+                        if succs.is_empty() {
+                            let throw_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                                code,
+                                f.a,
+                                &mut fdat.locals,
+                            )));
                             let empty_exp = Exp::new_bytes(Vec::new());
                             TerminatorKind::Return {
-                                args: smallvec![ret_exp, empty_exp],
+                                args: smallvec![empty_exp, throw_exp],
                             }
+                        } else {
+                            TerminatorKind::Goto { targets: succs }
                         }
-                        // Void return
-                        Instruction::ReturnVoid(_) => {
+                    }
+                    // Return with a value (register)
+                    Instruction::Return(reg)
+                    | Instruction::ReturnWide(reg)
+                    | Instruction::ReturnObject(reg) => {
+                        let ret_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                            code,
+                            reg.a,
+                            &mut fdat.locals,
+                        )));
+                        let empty_exp = Exp::new_bytes(Vec::new());
+                        TerminatorKind::Return {
+                            args: smallvec![ret_exp, empty_exp],
+                        }
+                    }
+                    // Void return
+                    Instruction::ReturnVoid(_) => {
+                        let empty_exp = Exp::new_bytes(Vec::new());
+                        TerminatorKind::Return {
+                            args: smallvec![empty_exp.clone(), empty_exp],
+                        }
+                    }
+                    // Compute successors for this block using the precalculated vector.
+                    _ => {
+                        let succ_usizes = &block_successors_vec[i];
+                        let succs = succ_usizes
+                            .iter()
+                            .map(|&b| BasicBlockIdx::new(b))
+                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+
+                        if succs.is_empty() {
+                            // No successors - this block should return
                             let empty_exp = Exp::new_bytes(Vec::new());
                             TerminatorKind::Return {
                                 args: smallvec![empty_exp.clone(), empty_exp],
                             }
-                        }
-                        // Compute successors for this block using the precalculated vector.
-                        _ => {
-                            let succ_usizes = &block_successors_vec[i];
-                            let succs = succ_usizes
-                                .iter()
-                                .map(|&b| BasicBlockIdx::new(b))
-                                .collect::<SmallVec<[BasicBlockIdx; 4]>>();
-
-                            if succs.is_empty() {
-                                // No successors - this block should return
-                                let empty_exp = Exp::new_bytes(Vec::new());
-                                TerminatorKind::Return {
-                                    args: smallvec![empty_exp.clone(), empty_exp],
-                                }
-                            } else {
-                                TerminatorKind::Goto { targets: succs }
-                            }
+                        } else {
+                            TerminatorKind::Goto { targets: succs }
                         }
                     }
-                } else {
-                    // Empty block or block with only payloads – create a return.
-                    let empty_exp = Exp::new_bytes(Vec::new());
-                    TerminatorKind::Return {
-                        args: smallvec![empty_exp.clone(), empty_exp],
-                    }
-                };
-                fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
-            }
+                }
+            } else {
+                // Empty block or block with only payloads – create a return.
+                let empty_exp = Exp::new_bytes(Vec::new());
+                TerminatorKind::Return {
+                    args: smallvec![empty_exp.clone(), empty_exp],
+                }
+            };
+            fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
+        }
         Ok(())
     }
 
@@ -626,7 +627,9 @@ impl Context {
                     JavaSignature(descr.into()),
                     JavaMethod(split_sig.as_str().into()),
                 ));
-                let parents = hierarchy.entry(JavaClass(split.as_str().into())).or_default();
+                let parents = hierarchy
+                    .entry(JavaClass(split.as_str().into()))
+                    .or_default();
                 let parent = JavaClass(class.into());
                 if !parents.contains(&parent) {
                     parents.push(parent);

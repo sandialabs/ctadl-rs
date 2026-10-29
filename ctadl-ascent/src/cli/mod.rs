@@ -131,7 +131,11 @@ fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
         .functions
         .iter()
         .map(|f| {
-            let n = f.blocks.iter_enumerated().map(|(_, b)| b.statements.len()).sum();
+            let n = f
+                .blocks
+                .iter_enumerated()
+                .map(|(_, b)| b.statements.len())
+                .sum();
             (f.name.as_str(), n)
         })
         .collect();
@@ -144,7 +148,10 @@ fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
             continue;
         };
         let merged = format!("{}{}", &name[..at], &name[at + end..]);
-        if size.get(merged.as_str()).is_some_and(|n| *n >= LARGE_MERGED_METHOD) {
+        if size
+            .get(merged.as_str())
+            .is_some_and(|n| *n >= LARGE_MERGED_METHOD)
+        {
             out.insert(merged);
         }
     }

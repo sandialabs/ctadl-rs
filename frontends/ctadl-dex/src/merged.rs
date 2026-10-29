@@ -178,7 +178,10 @@ impl MergedClasses {
              construction sites in {} methods",
             this.classes.len(),
             this.classes.values().map(|c| c.ids.len()).sum::<usize>(),
-            this.classes.values().map(|c| c.switched.len()).sum::<usize>(),
+            this.classes
+                .values()
+                .map(|c| c.switched.len())
+                .sum::<usize>(),
             this.classes
                 .values()
                 .map(|c| c.ids.len() * c.switched.len())
@@ -390,7 +393,9 @@ impl MergedClasses {
                             && allocates_merged(inst)
                             && !facts.inits.iter().any(|i| i.new_pc == *offset)
                         {
-                            log::debug!("merged classes: no constructor call found in {sig} at {offset}");
+                            log::debug!(
+                                "merged classes: no constructor call found in {sig} at {offset}"
+                            );
                         }
                     }
                 }
@@ -424,7 +429,9 @@ impl MergedClasses {
                     // <init>`), and retagging that object would make it a clone of the
                     // superclass. An object two constructor calls could initialize is not a site
                     // either.
-                    if allocated.get(&init.new_pc) != Some(&init.class) || inits_at[&init.new_pc] > 1 {
+                    if allocated.get(&init.new_pc) != Some(&init.class)
+                        || inits_at[&init.new_pc] > 1
+                    {
                         log::debug!(
                             "merged classes: {} in {sig} at {} is not a site of {}",
                             allocated.get(&init.new_pc).map_or("?", String::as_str),
@@ -457,7 +464,14 @@ impl MergedClasses {
                             continue;
                         }
                     };
-                    found.push((sig.clone(), init.new_pc, Site { class: init.class, id }));
+                    found.push((
+                        sig.clone(),
+                        init.new_pc,
+                        Site {
+                            class: init.class,
+                            id,
+                        },
+                    ));
                 }
             }
         }
@@ -663,9 +677,7 @@ fn step(
         Instruction::ConstHigh16(f) => {
             _ = set(state, f.a, Some(Val::Const(((f.lit as i32) << 16).into())))
         }
-        Instruction::Move(f) | Instruction::MoveObject(f) => {
-            _ = set(state, f.a, get(state, f.b))
-        }
+        Instruction::Move(f) | Instruction::MoveObject(f) => _ = set(state, f.a, get(state, f.b)),
         Instruction::MoveFrom16(f) | Instruction::MoveObjectFrom16(f) => {
             _ = set(state, f.a, get(state, f.b))
         }
