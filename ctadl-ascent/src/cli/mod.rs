@@ -115,6 +115,79 @@ impl Default for IndexOptions {
     }
 }
 
+/// A merged method counts as large from this many statements on.
+const LARGE_MERGED_METHOD: usize = 50;
+/// Call edges into large live merged methods above which the guardrail warns. With the split
+/// working, the apps measured have 0-8; with merged methods left live, an estimated 195-1,073.
+const MERGED_METHOD_CALL_EDGES: usize = 300;
+
+/// The large merged methods of R8-merged classes that the dex frontend split but could not empty:
+/// a function `LC;->m(..)` beside a clone `LC$r8id<k>;->m(..)`, with a body of at least
+/// [`LARGE_MERGED_METHOD`] statements. Such a method is the union of every lambda merged into
+/// the class.
+fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
+    let size: HashMap<&str, usize> = program
+        .functions
+        .iter()
+        .map(|f| {
+            let n = f
+                .blocks
+                .iter_enumerated()
+                .map(|(_, b)| b.statements.len())
+                .sum();
+            (f.name.as_str(), n)
+        })
+        .collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for name in size.keys() {
+        let Some(at) = name.find("$r8id") else {
+            continue;
+        };
+        let Some(end) = name[at..].find(';') else {
+            continue;
+        };
+        let merged = format!("{}{}", &name[..at], &name[at + end..]);
+        if size
+            .get(merged.as_str())
+            .is_some_and(|n| *n >= LARGE_MERGED_METHOD)
+        {
+            out.insert(merged);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Warns when many calls still reach large merged methods. A call resolved by class hierarchy
+/// reaches every target, so one that lands on a live merged method takes on every lambda merged
+/// into its class.
+fn merged_method_guardrail(
+    live: &[String],
+    call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
+    ids: &facts::IdMap,
+) {
+    if live.is_empty() {
+        return;
+    }
+    let targets: std::collections::HashSet<facts::FunctionId> = live
+        .iter()
+        .filter_map(|name| ids.get_function_id(facts::Function(name.as_str().into())))
+        .collect();
+    let edges = call.iter().filter(|(_, t)| targets.contains(t)).count();
+    log::info!(
+        "merged classes guardrail: {edges} of {} call edges reach one of {} large live merged \
+         methods",
+        call.len(),
+        live.len()
+    );
+    if edges > MERGED_METHOD_CALL_EDGES {
+        log::warn!(
+            "merged classes: {edges} call edges reach {} large merged methods that the class split \
+             left live; each such call takes on every lambda merged into the method's class",
+            live.len()
+        );
+    }
+}
+
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the
 /// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
@@ -198,6 +271,7 @@ pub fn index(
                 .map(|line| format!("summary project '{}': {line}", summary_project.name)),
         );
     }
+    let mut live_merged_methods: Vec<String> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
         // Everything codegen records from here to the next import belongs to this one. Source
@@ -299,6 +373,7 @@ pub fn index(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
         );
+        live_merged_methods.extend(large_live_merged_methods(&program_info.program));
         // The match block above has already contributed every `modes: ["skip-analysis"]` name
         // this import can, so codegen can drop those bodies as it goes rather than lowering
         // facts the analysis would then have to ignore.
@@ -328,6 +403,8 @@ pub fn index(
         file_specs.bridges.len(),
         phys_footprint_mb()
     );
+
+    merged_method_guardrail(&live_merged_methods, &facts.call, &source_info.sites);
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
     // Java `native` stub and its `Java_…` implementation to two ids in the same map.

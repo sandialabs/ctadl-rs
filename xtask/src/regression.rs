@@ -47,9 +47,12 @@ const LUA_XFAIL: &[&str] = &[];
 /// JVM E2E cases known to fail today, quarantined as XFAIL. Every other
 /// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
-/// Currently empty. Add an entry only for a known, documented gap, and delete
-/// it once the case passes.
-const JVM_KNOWN_FAILURES: &[&str] = &[];
+/// Add an entry only for a known, documented gap, and delete it once the case passes.
+const JVM_KNOWN_FAILURES: &[&str] = &[
+    // A negative case for the dex frontend's split of R8-merged classes. The jvm frontend
+    // does not split them, so the merged method's every arm reaches the sink there.
+    "Jvm:ClassIdMergedTryFlow",
+];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
 /// stays green while that frontend matures.
