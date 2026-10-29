@@ -1209,6 +1209,7 @@ dependencies = [
  "dex-reader",
  "hashbrown 0.16.1",
  "log",
+ "serde_json",
  "smallvec",
  "source-info",
  "test-log",
