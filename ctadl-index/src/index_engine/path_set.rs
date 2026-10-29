@@ -1,6 +1,6 @@
 //! The admissible access paths, frozen for the fixpoint: a per-index, read-only table that
-//! answers "is `prefix · [adjust] · rest` a path?" without building `prefix · [adjust] · rest`
-//! (spec R8), and hands out each path's splits without interning them (R6).
+//! answers "is `prefix · [adjust] · rest` a path?" without building `prefix · [adjust] · rest`,
+//! and hands out each path's splits without interning them.
 //!
 //! The local propagation rules of the index engine extend an access path across an edge and
 //! then test the result against the admissible paths. Most extensions fail the test: measured
@@ -14,7 +14,7 @@
 //! segments against the new part and checking that the tail where they end is `rest` itself.
 //! A miss means the candidate is not in the set, and nothing is left behind.
 //!
-//! The set is per index, not global (spec C1): the global interner also holds prefix keys,
+//! The set is per index, not global: the global interner also holds prefix keys,
 //! rests and other indexes' paths, so having a handle is not being admissible.
 
 use std::hash::Hasher;

@@ -37,7 +37,7 @@ pub struct IndexProfile {
     pub split_misses: usize,
 }
 
-/// Where the index's bytes are, so a memory regression can be traced to a store (C2).
+/// Where the index's bytes are, so a memory regression can be traced to a store.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MemoryProfile {
     /// The `locals` store's heap report at the fixpoint. `None` under `Storage::Lsm`, whose
@@ -47,7 +47,7 @@ pub struct MemoryProfile {
     /// [`MemoryProfile::read_interned`].
     pub interned: BTreeMap<&'static str, Stats>,
     /// The entries each interner that the fixpoint may only read gained while it ran. All 0
-    /// when this process built one index at a time (R6).
+    /// when this process built one index at a time.
     pub fixpoint_interned: BTreeMap<&'static str, usize>,
 }
 
@@ -55,8 +55,7 @@ impl MemoryProfile {
     /// Reads the size of each `id_handle!` interner into `interned`, beside the frozen path set
     /// that the engine put there (`PathSet`, whose entries are its members). Interned values are
     /// never freed, so the sizes cover every index this process has built, up to the moment of
-    /// the call. The decision sets, one interner per kind, are the one store the fixpoint
-    /// grows (R7).
+    /// the call.
     pub fn read_interned(&mut self) {
         self.interned.extend([
             ("Str", Str::stats()),
@@ -67,7 +66,7 @@ impl MemoryProfile {
         self.interned.extend(decision::interner_stats());
     }
 
-    /// The entries of each interner that the fixpoint may not add to (R6), by name.
+    /// The entries of each interner that the fixpoint may not add to, by name.
     pub fn frozen_interner_entries() -> BTreeMap<&'static str, usize> {
         BTreeMap::from([
             ("Str", Str::stats().entries),

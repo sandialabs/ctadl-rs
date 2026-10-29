@@ -65,7 +65,7 @@ impl<B> Id<B> {
     }
 
     /// The id whose bits are `raw`, unchecked: for bits this process took from an `Id<B>`
-    /// itself and never let leave it (R13), where [`IdInterner::from_raw`]'s check would
+    /// itself and never let leave it, where [`IdInterner::from_raw`]'s check would
     /// cost an atomic load on every read.
     ///
     /// # Safety
@@ -124,7 +124,7 @@ impl<B> fmt::Debug for Id<B> {
     }
 }
 
-/// An interner's size, for the profile (C2).
+/// An interner's size, for the profile.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Stats {
@@ -549,7 +549,7 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
     }
 
     /// Whether this interner issued `id`. Always true for an `Id` that came from it; for
-    /// checking ids read back from storage that bypassed `from_raw` (C6).
+    /// checking ids read back from storage that bypassed `from_raw`.
     pub fn is_valid(&self, id: Id<B>) -> bool {
         self.from_raw(id.raw()).is_some()
     }

@@ -1,4 +1,4 @@
-//! Printed output does not depend on the order values were interned in (spec C3).
+//! Printed output does not depend on the order values were interned in.
 //!
 //! A handle's `Ord` is its intern id, and which id a value gets depends on what was interned
 //! before it. So any output sorted by handle comes out in a different order in a process that

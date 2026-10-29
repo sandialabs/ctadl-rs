@@ -142,10 +142,10 @@ impl Display for DecisionId {
 /// [`COLLAPSING`], names the kind and so which interner the low bits index. The empty set and
 /// the two ⊤s take raw values below [`FIRST_INTERNED`], which neither interner issues. The kind
 /// is a property of each set, not of the process, so indexes of both kinds can be built side by
-/// side (R16).
+/// side.
 ///
 /// `Eq` and `Hash` act on the handle alone. There is no `Ord`: the order is the lattice's
-/// `PartialOrd` (R10).
+/// `PartialOrd`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DecisionSet(NonZeroU32);
 

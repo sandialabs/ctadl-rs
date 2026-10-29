@@ -27,6 +27,16 @@ this.f = 1;
 is a write to an alias of a formal. The aliasing rule turns this into a summary where 1 flows
 to 0.f.
 
+# Interned values
+
+`Path`, `Str`, `CallTargetObject`, `CallDispatchKey` and [`DecisionSet`] are 4-byte handles into
+process-wide interners that never free. Before the fixpoint starts, building an index interns
+every `Path`, `Str`, `CallTargetObject` and `CallDispatchKey` the rules can produce: the path
+set's members and their splits ([`path_set`]), the paths the intent rules match by name, and
+`CallDispatchKey::c()`. The fixpoint only reads them, without a lock. Decision sets are the
+exception: lattice joins intern new ones during the fixpoint ([`decision`]). `profile.json`
+reports each interner's size, and how much the read-only ones grew during the fixpoint.
+
 */
 
 use std::num::NonZeroUsize;
@@ -1383,7 +1393,7 @@ ascent_source! {
     // Analysis drivers:
 
     // Set of syntactic access paths. Computed before the run by `compute_paths`, and read by no
-    // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`] (C9),
+    // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`],
     // which every rule that tests or splits a path asks.
     relation paths(Path);
     relation path_set(PathSetRef);
@@ -2293,8 +2303,7 @@ impl<'a> EngineInput<'a> {
             path_set.len() == paths.len() && paths.iter().all(|(p,)| path_set.contains(p)),
             "the paths relation and the path set differ"
         );
-        // The paths the intent rules match by name, interned here so the rules intern nothing
-        // (R6).
+        // The paths the intent rules match by name: intern them here, not mid-run.
         for p in [&COMPONENT_PATH, &ACTION_PATH, &TYPE_PATH] {
             LazyLock::force(p);
         }
@@ -2498,7 +2507,7 @@ macro_rules! run_engine {
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
         prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
-        // `fnptr_call` compares against `C`'s handle: intern it here, not mid-run (R6).
+        // `fnptr_call` compares against `C`'s handle: intern it here, not mid-run.
         $crate::facts::CallDispatchKey::c();
 
         let interned_before = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();

@@ -223,7 +223,7 @@ impl Path {
     #[inline]
     fn id(self) -> Option<PathId> {
         // SAFETY: a `Path` other than `EMPTY` holds the bits of a `PathId` that `from_id` was
-        // given, or that the LSM provider copied out of such a `Path` (C6).
+        // given, or that the LSM provider copied out of such a `Path`.
         (self != Path::EMPTY).then(|| unsafe { PathId::from_raw_unchecked(self.0.get()) })
     }
 
@@ -298,7 +298,7 @@ impl Path {
     }
 
     /// Whether this handle was handed out by the interner, for handles read back from storage
-    /// that bypassed it (C6). Always true for a `Path` made by safe code.
+    /// that bypassed it. Always true for a `Path` made by safe code.
     pub fn is_valid(&self) -> bool {
         self.is_empty() || PathId::from_raw(self.0.get()).is_some()
     }
@@ -518,7 +518,7 @@ impl Iterator for PathIter {
 }
 
 // serde writes the cons list node by node from the head: `Nil`, or a struct
-// `Node { head, tail }`, inside a newtype `Path` (R11).
+// `Node { head, tail }`, inside a newtype `Path`.
 impl Serialize for Path {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         struct Node(Path);
@@ -1094,7 +1094,7 @@ impl FlowVariable {
     }
 
     /// Whether a `Local`'s [`Str`] was handed out, for variables read back from storage that
-    /// bypassed the interner (C6). True for every other variant.
+    /// bypassed the interner. True for every other variant.
     pub fn is_valid(&self) -> bool {
         !self.is_local() || Str::from_raw((self.0 & DATA_MASK) as u32).is_some()
     }
@@ -1244,7 +1244,7 @@ impl FlowVertex {
     }
 
     /// Whether the handles in this vertex were handed out, for vertices read back from storage
-    /// that bypassed the interners (C6).
+    /// that bypassed the interners.
     pub fn is_valid(&self) -> bool {
         self.0.is_valid() && self.1.is_valid() && self.2 == VertexPad(0)
     }

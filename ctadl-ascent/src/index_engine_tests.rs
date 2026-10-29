@@ -270,10 +270,10 @@ const SRC_NESTED_TARGET: &str = r"
         return call(&c, x) + call(&b, x);
     }";
 
-/// The fixpoint interns no `Path`, `Str`, `CallTargetObject` or `CallDispatchKey` (spec R6),
-/// on every engine. The interners are process-wide and the other tests in this binary intern
-/// into them from other threads, so the test re-runs itself as a child process that runs
-/// nothing else, and the child does the checking.
+/// The fixpoint interns no `Path`, `Str`, `CallTargetObject` or `CallDispatchKey`, on every
+/// engine. The interners are process-wide and the other tests in this binary intern into them
+/// from other threads, so the test re-runs itself as a child process that runs nothing else,
+/// and the child does the checking.
 #[test]
 fn fixpoint_interns_nothing() {
     const CHILD_ENV: &str = "CTADL_TEST_FIXPOINT_INTERNS_NOTHING";

@@ -551,8 +551,7 @@ macro_rules! impl_encode_newtype {
 }
 
 // A `Path` is stored as its canonical string (`Path::to_dot_string`), which `Path::parse` reads
-// back. Both go straight between the string column and the path, so encoding interns no `Str`
-// (R12).
+// back. Both go straight between the string column and the path, so encoding interns no `Str`.
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
