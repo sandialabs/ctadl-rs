@@ -653,14 +653,12 @@ What it would and would not do:
 - **Precision and soundness, not memory, are what it buys.** It replaces `window:8`'s guess and
   `full`'s lost flows. It does not fix the hubs: `inflate` and `ntfs-3g`'s `FUN_0001f97c` hold over
   90% of `locals` with every slot promoted, so what is left there is not the stack.
-- **The cost is unknown.** Every frame write makes a version that carries the frame's paths; in a
-  function with about 900 stack stores that could add rows rather than remove them. Step 2 is the
-  valve, but it has to be measured.
-- **To try it without touching the frontend:** an experimental mem2reg mode that rewrites
-  `__stack_top` stores into `Update`s before SSA, plus the overwrite rule in the index. Compare its
-  flows on the regression suite (`pcode`, `jni`) and its `locals` and peak on `uclited`,
-  `androidudpbus` and `ntfs-3g` against `window:8` and `full`. If it pays, move it into the pcode
-  frontend.
+- **The cost, before steps 3 and 5, is measured** (S29 above): with every update kept, `locals`
+  is 0.8-1.1x `off`'s and 0.9-5.1x today's default, and `androidudpbus` outgrows the 55 GiB
+  guard. Step 2 is the valve, and it stays on (coarsen all) until the other steps beat today.
+- **Next:** the overwrite rule (step 5), then mem2reg on `Update` (step 3). Compare flows on the
+  regression suite (`pcode`, `jni`) and `locals` and peak on `uclited`, `ntfs-3g`, `glxy` and
+  `androidudpbus` against the `--frame update` rows above and against `window:8` and `full`.
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
