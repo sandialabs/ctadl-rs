@@ -738,7 +738,7 @@ fn build_android_icc_apk(
     let file = std::fs::File::create(&apk).unwrap();
     let mut zip = zip::ZipWriter::new(file);
     let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     use std::io::Write as _;
     zip.start_file("AndroidManifest.xml", options).unwrap();
     zip.write_all(manifest.as_bytes()).unwrap();
@@ -973,7 +973,7 @@ fn write_apk(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> Pa
     let path = dir.join(name);
     let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
     let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (entry, contents) in entries {
         writer.start_file(*entry, options).unwrap();
         writer.write_all(contents).unwrap();

@@ -80,7 +80,7 @@ immortal = { path = "../immortal" }
 [dev-dependencies]
 test-log = "0.2.19"
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
-zip = "0.6"
+zip = { version = "9.0.5", default-features = false }
 # For `examples/show-regions.rs` only. Examples see dev-dependencies, so putting
 # it here keeps it out of the shipped binary. The example's other crates (clap,
 # serde, serde_json, url) are already ordinary dependencies above.

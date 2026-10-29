@@ -51,4 +51,4 @@ ctadl-ascent = { path = "../ctadl-ascent" }
 # The JNI `+apk` cases package a DEX and a shared library into an APK so the
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in
 # practice: dex-reader already builds `zip` to read APKs.
-zip = "0.6"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
