@@ -809,17 +809,6 @@ fn imports(fixtures: &[&str]) -> Vec<Import> {
     fixtures.iter().map(|name| frontend(name)).collect()
 }
 
-fn merge(into: &mut Matched, from: Matched) {
-    into.propagations.extend(from.propagations);
-    into.endpoints.extend(from.endpoints);
-    into.callsite_endpoints.extend(from.callsite_endpoints);
-    into.access_paths.extend(from.access_paths);
-    into.skip_analysis.extend(from.skip_analysis);
-    into.dispatch.extend(from.dispatch);
-    into.closure_shaped.extend(from.closure_shaped);
-    into.bridges.extend(from.bridges);
-}
-
 /// What the migrated DSL matched across `imports`, or why it refused.
 fn run_dsl(text: &str, imports: &[Import]) -> Result<Matched, String> {
     let file = dsl::DslFile::from_text("migrated.ctadl", text).map_err(|e| format!("{e:#}"))?;
@@ -1153,6 +1142,17 @@ mod json_oracle {
             }
         }
         Ok(matched)
+    }
+
+    fn merge(into: &mut Matched, from: Matched) {
+        into.propagations.extend(from.propagations);
+        into.endpoints.extend(from.endpoints);
+        into.callsite_endpoints.extend(from.callsite_endpoints);
+        into.access_paths.extend(from.access_paths);
+        into.skip_analysis.extend(from.skip_analysis);
+        into.dispatch.extend(from.dispatch);
+        into.closure_shaped.extend(from.closure_shaped);
+        into.bridges.extend(from.bridges);
     }
 
     /// [`super::JSON_CALLSITE_CALLEES`] is what the JSON matcher anchors a `find: callsites`
@@ -2271,9 +2271,16 @@ fn callsites_anchor_at_every_matched_callee() {
     let mut from_dsl = ProgramModelMatches::default();
     matcher.observe_import(&index, &mut from_dsl);
     matcher.finish(&mut from_dsl).expect("finish");
+    let from_dsl = callsite_callees(&from_dsl);
+    assert_eq!(from_dsl, BTreeSet::from([J_BASE_RUN.to_string()]));
+    let json_only: Vec<&str> = JSON_CALLSITE_CALLEES
+        .into_iter()
+        .filter(|c| !from_dsl.contains(*c))
+        .collect();
     assert_eq!(
-        callsite_callees(&from_dsl),
-        BTreeSet::from([J_BASE_RUN.to_string()])
+        json_only,
+        [J_MID_RUN],
+        "the override only the JSON anchored at"
     );
 }
 

@@ -935,11 +935,7 @@ fn what_the_dsl_cannot_say_does_not_migrate() {
         ),
     ];
     for (json, what) in cases {
-        // The JSON loader accepts each of these; a bridge it scans before loading, and the scan
-        // is what rejects it.
-        if !json.contains("bridge") {
-            json_oracle::loader_says(&json, &[]);
-        }
+        json_oracle::loader_accepts(&json);
         let errors = migration_errors(&json);
         assert_eq!(errors.len(), 1, "{json}: {errors:?}");
         let want = format!("cannot migrate {what} in model generator at index 0: ");
@@ -1169,6 +1165,14 @@ mod json_oracle {
     /// empty list).
     pub(super) fn loader_says(json: &str, expected: &[&str]) {
         assert_eq!(loader_errors(json), expected, "the JSON loader on {json}");
+    }
+
+    /// Requires the JSON loader to accept `json`, unless it is a bridge: a bridge is scanned from
+    /// a file rather than loaded per import, and [`loader_errors`] only loads.
+    pub(super) fn loader_accepts(json: &str) {
+        if !json.contains("bridge") {
+            loader_says(json, &[]);
+        }
     }
 
     /// Requires the JSON matcher to give exactly `expected` a propagation summary for `json`.
