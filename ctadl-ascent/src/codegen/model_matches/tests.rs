@@ -3,12 +3,10 @@
 //! `languages/jni/tests.rs` is the model for this layer, and the JNI-shape case below asserts
 //! the degenerate collapse leaves that pass's rows byte-identical.
 
-use std::path::PathBuf;
-
 use super::*;
 use crate::facts::{FlowVariableKind, Function, InsnSiteId};
-use crate::models::matches::{BridgeSideMatches, ModelPort};
-use crate::models::spec::{BridgePort, Direction, ProgramScope, SideSpec};
+use crate::models::matches::ModelPort;
+use crate::models::spec::{BridgePort, Direction, ResolvedBridge};
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
 // ---------------------------------------------------------------------------
@@ -61,24 +59,6 @@ fn pair(from: BridgePort, to: BridgePort, direction: Direction) -> PortPair {
     }
 }
 
-/// A spec with the given port map, side scopes unconstrained.
-fn spec_with(ports: Vec<PortPair>) -> BridgeSpec {
-    let side = || SideSpec {
-        scope: ProgramScope::default(),
-        where_: Vec::new(),
-        on_unmatched: Severity::Warn,
-    };
-    BridgeSpec {
-        source: PathBuf::from("test.jsonl"),
-        index: 0,
-        from: side(),
-        to: side(),
-        ports_given: !ports.is_empty(),
-        ports,
-        on_ambiguous: Severity::Ignore,
-    }
-}
-
 /// The `(callee index, caller formal index)` pairs a site's `actual_param` rows carry, for
 /// vertices that are plain formals.
 fn actual_formals(facts: &IndexFacts, site: PackedInsnSiteId) -> Vec<(i16, i16)> {
@@ -125,20 +105,28 @@ fn formals_of(facts: &IndexFacts, func: FunctionId) -> Vec<i16> {
     v
 }
 
+/// Bridges every `from` to every `to` with the port map `ports`, as one bridging rule grounded
+/// over those functions would, and emits them.
 fn run(
-    spec: &BridgeSpec,
+    ports: &[PortPair],
     from: &[&str],
     to: &[&str],
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) -> ModelCodegenReport {
     let mut matches = ProgramModelMatches::default();
-    matches.bridges.prepare(std::slice::from_ref(spec));
-    let side: &mut BridgeSideMatches = matches.bridges.side_mut(0);
-    side.from.extend(from.iter().map(|n| facts::Str::from(*n)));
-    side.to.extend(to.iter().map(|n| facts::Str::from(*n)));
-    codegen_model_matches(&matches, std::slice::from_ref(spec), facts, source_info)
-        .expect("emission")
+    for a in from {
+        for b in to {
+            matches.resolved_bridges.push(ResolvedBridge {
+                provenance: "test.ctadl:0".to_string(),
+                rule: 0,
+                from: facts::Str::from(*a),
+                to: facts::Str::from(*b),
+                ports: ports.to_vec(),
+            });
+        }
+    }
+    codegen_model_matches(&matches, facts, source_info)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +141,7 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
     // A site that already exists in the caller, so "the bridge mints a fresh one" is testable.
     let existing = source_info.add_insn_site(id_of(&source_info, "stub"));
 
-    let spec = spec_with(vec![
+    let ports = [
         pair(port(0, ""), port(1, ""), Direction::Both),
         pair(port(1, ""), port(2, ""), Direction::Both),
         pair(
@@ -161,8 +149,8 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
             port(RETURN_INDEX, ""),
             Direction::Both,
         ),
-    ]);
-    run(&spec, &["stub"], &["impl"], &mut facts, &mut source_info);
+    ];
+    run(&ports, &["stub"], &["impl"], &mut facts, &mut source_info);
 
     let stub = id_of(&source_info, "stub");
     let imp = id_of(&source_info, "impl");
@@ -213,7 +201,7 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
 #[test]
 fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
     let (mut facts, mut source_info) = fact_base(&[("mylib.add", 0), ("l_add", 1)]);
-    let spec = spec_with(vec![
+    let ports = [
         pair(port(0, ""), port(0, ".stack.[1]"), Direction::In),
         pair(port(1, ""), port(0, ".stack.[2]"), Direction::In),
         pair(
@@ -221,9 +209,9 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
             port(0, ".stack.[-1]"),
             Direction::Out,
         ),
-    ]);
+    ];
     run(
-        &spec,
+        &ports,
         &["mylib.add"],
         &["l_add"],
         &mut facts,
@@ -278,8 +266,8 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
 #[test]
 fn two_bridge_sites_in_one_caller_get_distinct_temporaries() {
     let (mut facts, mut source_info) = fact_base(&[("a", 1), ("b1", 1), ("b2", 1)]);
-    let spec = spec_with(vec![pair(port(0, ""), port(0, ".slot"), Direction::In)]);
-    run(&spec, &["a"], &["b1", "b2"], &mut facts, &mut source_info);
+    let ports = [pair(port(0, ""), port(0, ".slot"), Direction::In)];
+    run(&ports, &["a"], &["b1", "b2"], &mut facts, &mut source_info);
 
     assert_eq!(facts.call.len(), 2, "one site per pair");
     let sites: Vec<_> = facts.call.iter().map(|(s, _)| *s).collect();
@@ -304,8 +292,8 @@ fn direction_selects_which_assign_rows_exist() {
         (Direction::Both, 2),
     ] {
         let (mut facts, mut source_info) = fact_base(&[("a", 1), ("b", 1)]);
-        let spec = spec_with(vec![pair(port(0, ""), port(0, ".f"), direction)]);
-        run(&spec, &["a"], &["b"], &mut facts, &mut source_info);
+        let ports = [pair(port(0, ""), port(0, ".f"), direction)];
+        run(&ports, &["a"], &["b"], &mut facts, &mut source_info);
         assert_eq!(
             facts.assign.len(),
             want,
@@ -319,8 +307,8 @@ fn direction_selects_which_assign_rows_exist() {
 #[test]
 fn assign_rows_are_keyed_on_the_bridge_site() {
     let (mut facts, mut source_info) = fact_base(&[("a", 1), ("b", 1)]);
-    let spec = spec_with(vec![pair(port(0, ""), port(0, ".f"), Direction::Both)]);
-    run(&spec, &["a"], &["b"], &mut facts, &mut source_info);
+    let ports = [pair(port(0, ""), port(0, ".f"), Direction::Both)];
+    run(&ports, &["a"], &["b"], &mut facts, &mut source_info);
     let site = facts.call[0].0;
     for (s, _, _) in &facts.assign {
         assert_eq!(*s, site);
@@ -335,12 +323,12 @@ fn assign_rows_are_keyed_on_the_bridge_site() {
 fn ports_past_the_callee_arity_are_still_emitted() {
     // The callee declares one parameter; the map names three.
     let (mut facts, mut source_info) = fact_base(&[("a", 3), ("b", 1)]);
-    let spec = spec_with(vec![
+    let ports = [
         pair(port(0, ""), port(0, ""), Direction::Both),
         pair(port(1, ""), port(1, ""), Direction::Both),
         pair(port(2, ""), port(2, ""), Direction::Both),
-    ]);
-    run(&spec, &["a"], &["b"], &mut facts, &mut source_info);
+    ];
+    run(&ports, &["a"], &["b"], &mut facts, &mut source_info);
     let b = id_of(&source_info, "b");
     assert_eq!(
         formals_of(&facts, b),
@@ -355,11 +343,11 @@ fn ports_past_the_callee_arity_are_still_emitted() {
 #[test]
 fn a_shared_callee_index_never_half_collapses() {
     let (mut facts, mut source_info) = fact_base(&[("a", 2), ("b", 1)]);
-    let spec = spec_with(vec![
+    let ports = [
         pair(port(0, ""), port(0, ""), Direction::Both),
         pair(port(1, ""), port(0, ".f"), Direction::Both),
-    ]);
-    run(&spec, &["a"], &["b"], &mut facts, &mut source_info);
+    ];
+    run(&ports, &["a"], &["b"], &mut facts, &mut source_info);
     let site = facts.call[0].0;
     assert_eq!(
         actual_formals(&facts, site),
@@ -369,74 +357,14 @@ fn a_shared_callee_index_never_half_collapses() {
     assert_eq!(actual_temps(&facts, site).len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Reporting semantics
-// ---------------------------------------------------------------------------
-
-fn classify_only(spec: &BridgeSpec, from: &[&str], to: &[&str]) -> Result<(), Error> {
-    let mut side = BridgeSideMatches::default();
-    side.from.extend(from.iter().map(|n| facts::Str::from(*n)));
-    side.to.extend(to.iter().map(|n| facts::Str::from(*n)));
-    classify(spec, &side)
-}
-
+/// Each bridged pair is reported on its own `info` line, as one pair.
 #[test]
-fn an_empty_from_side_suppresses_the_to_side_report() {
-    let mut spec = spec_with(vec![]);
-    spec.from.on_unmatched = Severity::Ignore;
-    // Side B is empty too, but "if the from side doesn't match anything, the to side isn't even
-    // attempted" -- so the `error` setting on the to side must not fire.
-    spec.to.on_unmatched = Severity::Error;
-    assert!(classify_only(&spec, &[], &[]).is_ok());
-}
-
-#[test]
-fn a_matched_from_with_an_empty_to_reports_the_to_side() {
-    let mut spec = spec_with(vec![]);
-    spec.to.on_unmatched = Severity::Error;
-    let err = classify_only(&spec, &["a"], &[]).expect_err("should report");
-    assert!(format!("{err}").contains("'to' side matched none"), "{err}");
-}
-
-#[test]
-fn an_empty_from_side_reports_under_its_own_setting() {
-    let mut spec = spec_with(vec![]);
-    spec.from.on_unmatched = Severity::Error;
-    let err = classify_only(&spec, &[], &["b"]).expect_err("should report");
-    assert!(
-        format!("{err}").contains("'from' side matched no function"),
-        "{err}"
-    );
-}
-
-#[test]
-fn an_ambiguous_pairing_reports_with_counts_and_provenance() {
-    let mut spec = spec_with(vec![]);
-    spec.on_ambiguous = Severity::Error;
-    for (from, to) in [
-        (vec!["a1", "a2"], vec!["b"]),
-        (vec!["a"], vec!["b1", "b2"]),
-        (vec!["a1", "a2"], vec!["b1", "b2", "b3"]),
-    ] {
-        let err = classify_only(&spec, &from, &to).expect_err("should report");
-        let msg = format!("{err}");
-        assert!(msg.contains("test.jsonl:0"), "provenance: {msg}");
-        assert!(
-            msg.contains(&format!("{} pair(s)", from.len() * to.len())),
-            "counts: {msg}"
-        );
-    }
-    // Singleton x singleton is not ambiguous.
-    assert!(classify_only(&spec, &["a"], &["b"]).is_ok());
-}
-
-#[test]
-fn a_unique_pairing_under_warn_is_silent_and_still_emits() {
+fn a_bridge_reports_its_pair() {
     let (mut facts, mut source_info) = fact_base(&[("a", 1), ("b", 1)]);
-    let mut spec = spec_with(vec![pair(port(0, ""), port(0, ""), Direction::Both)]);
-    spec.on_ambiguous = Severity::Warn;
-    let report = run(&spec, &["a"], &["b"], &mut facts, &mut source_info);
+    let ports = [pair(port(0, ""), port(0, ""), Direction::Both)];
+    let report = run(&ports, &["a"], &["b"], &mut facts, &mut source_info);
     assert_eq!(report.bridges.len(), 1);
+    assert_eq!(report.bridges[0].provenance, "test.ctadl:0");
     assert_eq!(report.bridges[0].pairs, 1);
     assert_eq!(report.bridges[0].from_matched, 1);
     assert_eq!(report.bridges[0].to_matched, 1);
@@ -486,7 +414,7 @@ fn any_argument_expands_over_call_sites_from_every_import() {
         dst: model_port(FormalIndexTypeTag::Index, Some(0)),
         src: model_port(FormalIndexTypeTag::AnyArgument, None),
     });
-    codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("codegen");
+    codegen_model_matches(&matches, &mut facts, &mut source_info);
 
     let srcs: Vec<i16> = facts
         .summary
@@ -514,7 +442,7 @@ fn a_propagation_pushes_formals_for_both_ports_and_skips_dst_eq_src() {
         dst: model_port(FormalIndexTypeTag::Index, Some(2)),
         src: model_port(FormalIndexTypeTag::Index, Some(2)),
     });
-    codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("codegen");
+    codegen_model_matches(&matches, &mut facts, &mut source_info);
 
     assert_eq!(facts.summary.len(), 1);
     assert_eq!(formals_of(&facts, f), vec![RETURN_INDEX, 1, 2]);
@@ -536,7 +464,7 @@ fn propagation_paths_do_not_land_in_facts_paths() {
         },
         src: model_port(FormalIndexTypeTag::Index, Some(0)),
     });
-    codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("codegen");
+    codegen_model_matches(&matches, &mut facts, &mut source_info);
     assert_eq!(facts.summary.len(), 1);
     assert!(facts.paths.is_empty());
 }
@@ -548,7 +476,7 @@ fn declared_access_paths_reach_the_initial_indexer_paths() {
     let mut matches = ProgramModelMatches::default();
     let p = crate::models::spec::parse_declared_access_path(".next.next.next", 0).unwrap();
     matches.access_paths.insert(p);
-    let report = codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("cg");
+    let report = codegen_model_matches(&matches, &mut facts, &mut source_info);
     assert_eq!(report.declared_paths, 1);
     assert_eq!(facts.paths, vec![(p,)]);
 }
@@ -564,7 +492,7 @@ fn a_propagation_on_an_absent_function_is_skipped() {
         dst: model_port(FormalIndexTypeTag::Return, None),
         src: model_port(FormalIndexTypeTag::Index, Some(0)),
     });
-    let report = codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("cg");
+    let report = codegen_model_matches(&matches, &mut facts, &mut source_info);
     assert_eq!(report.summaries, 0);
     assert!(facts.summary.is_empty());
 }

@@ -31,7 +31,7 @@ const DEFAULTS_DIR: &str = "defaults";
 /// JSON pointer to the subschema a single generator has to satisfy.
 ///
 /// A `jsonl` file is a stream of `model_generators` elements with no envelope around them (see
-/// `try_load_jsonl_models`), so the elements are what each line is checked against. If the
+/// `dsl::migrate::migrate_file`), so the elements are what each line is checked against. If the
 /// schema is ever restructured so this pointer no longer resolves, compiling it fails loudly
 /// rather than silently checking nothing.
 const GENERATOR_POINTER: &str = "#/properties/model_generators/items";
@@ -130,7 +130,7 @@ fn check_file(path: &Path, schemas: &Schemas, generator: SchemaIndex) -> Result<
         // they are read next to a diagnostic that names one.)
         let line_no = index + 1;
         let trimmed = line.trim_start();
-        // Mirrors `try_load_jsonl_models`: blank lines and `//` lines are commentary.
+        // Mirrors `dsl::migrate::migrate_file`: blank lines and `//` lines are commentary.
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }

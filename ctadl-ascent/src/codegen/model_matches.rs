@@ -23,16 +23,13 @@ use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
-use crate::error::Error;
 use crate::facts::{
     self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
-use crate::models::matches::{
-    BridgeSideMatches, Disposition, ModelPort, PropagationMatch, diagnose,
-};
-use crate::models::spec::{BridgePort, BridgeSpec, PortPair, Severity};
+use crate::models::matches::{Disposition, ModelPort, PropagationMatch};
+use crate::models::spec::PortPair;
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
 /// What phase 2 did with one bridge generator, for the unconditional `info` line.
@@ -77,10 +74,9 @@ pub struct ModelCodegenReport {
 /// Call once, after the import loop and before the facts are saved.
 pub fn codegen_model_matches(
     matches: &ProgramModelMatches,
-    specs: &[BridgeSpec],
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
-) -> Result<ModelCodegenReport, Error> {
+) -> ModelCodegenReport {
     // Both arity snapshots are taken up front, before this phase pushes a single row.
     //
     // `arg_arity` is what `Argument(*)` expands over, and taking it here is what makes the
@@ -97,11 +93,11 @@ pub fn codegen_model_matches(
         .copied()
         .chain(dispatch_propagations(matches))
         .collect();
-    Ok(ModelCodegenReport {
+    ModelCodegenReport {
         summaries: codegen_propagations(&propagations, &arg_arity, facts, source_info),
         declared_paths: codegen_declared_paths(matches, facts),
-        bridges: codegen_bridges(specs, matches, &num_params, facts, source_info)?,
-    })
+        bridges: codegen_bridges(matches, &num_params, facts, source_info),
+    }
 }
 
 /// A matched dispatch model's propagations, against the synthetic function phase 1 named.
@@ -213,8 +209,8 @@ fn expand_port(
             .get(&func_id)
             .map(|n| (0..*n).map(|i| i.into()).collect())
             .unwrap_or_default(),
-        // `Variable(name)` ports are rejected on propagations in Stage 1 (see
-        // `json::visit_propagation`), so they never reach summary codegen.
+        // `Variable(name)` ports are rejected on propagations by the JSON validator and have
+        // no DSL spelling, so they never reach summary codegen.
         Local => unreachable!("Variable(name) is not valid on a propagation port"),
     }
 }
@@ -241,71 +237,11 @@ fn codegen_declared_paths(matches: &ProgramModelMatches, facts: &mut IndexFacts)
 // Bridges
 // ---------------------------------------------------------------------------
 
-/// Pairs each bridge spec's two match sets, reports what it found, and emits the facts.
-fn codegen_bridges(
-    specs: &[BridgeSpec],
-    matches: &ProgramModelMatches,
-    num_params: &HashMap<FunctionId, i16>,
-    facts: &mut IndexFacts,
-    source_info: &mut IndexSourceInfo,
-) -> Result<Vec<BridgeStats>, Error> {
-    let mut stats = Vec::with_capacity(specs.len());
-    for (i, spec) in specs.iter().enumerate() {
-        let side = matches.bridges.get(i);
-        classify(spec, side)?;
-
-        let mut pairs = 0usize;
-        for (a_name, b_name) in side.pairs() {
-            // Both sides must be interned by now; they are, unless the matched function was
-            // named in a VMT but never reached codegen (a method table entry with no lowered
-            // function and no call site).
-            let (Some(a), Some(b)) = (
-                source_info.sites.get_function_id(facts::Function(a_name)),
-                source_info.sites.get_function_id(facts::Function(b_name)),
-            ) else {
-                log::warn!(
-                    "bridge {}: '{}' or '{}' is not in the fact base, so this pair is not \
-                     bridged",
-                    spec.provenance(),
-                    a_name,
-                    b_name
-                );
-                continue;
-            };
-            let ports = resolve_ports(spec, a, b, num_params);
-            emit_bridge(
-                &spec.provenance(),
-                a,
-                b,
-                &ports,
-                num_params,
-                facts,
-                source_info,
-            );
-            pairs += 1;
-        }
-        stats.push(BridgeStats {
-            provenance: spec.provenance(),
-            from_matched: side.from.len(),
-            to_matched: side.to.len(),
-            pairs,
-        });
-    }
-    stats.extend(codegen_resolved_bridges(
-        matches,
-        num_params,
-        facts,
-        source_info,
-    ));
-    Ok(stats)
-}
-
-/// Emits the bridges the DSL engine already grounded.
+/// Emits the bridges the DSL engine grounded, and reports each.
 ///
 /// No pairing and no diagnosis: a DSL rule is grounded before its heads are instantiated, so
-/// both sides are function names by the time they arrive here. What is left is exactly the
-/// emission half of [`codegen_bridges`], and it goes through the same [`emit_bridge`].
-fn codegen_resolved_bridges(
+/// both sides are function names by the time they arrive here.
+fn codegen_bridges(
     matches: &ProgramModelMatches,
     num_params: &HashMap<FunctionId, i16>,
     facts: &mut IndexFacts,
@@ -335,8 +271,8 @@ fn codegen_resolved_bridges(
             });
             continue;
         };
-        // The globals pair is added here for the same reason `resolve_ports` adds it: without
-        // it heap flows do not cross the boundary at all, and it is not user-writable.
+        // The globals pseudo-parameter is mapped unconditionally and is not user-writable:
+        // without it heap flows do not cross the boundary at all.
         let mut ports = bridge.ports.clone();
         ports.push(PortPair::globals());
         emit_bridge(
@@ -356,75 +292,6 @@ fn codegen_resolved_bridges(
         });
     }
     stats
-}
-
-/// Acts on the verdict [`diagnose`] returns: the reporting semantics deferred from streaming.
-///
-/// The verdict itself needs no fact base -- see [`diagnose`] -- so it lives next to the match
-/// sets it reads. All that is left here is turning a severity into a warning, an error, or
-/// silence.
-fn classify(spec: &BridgeSpec, side: &BridgeSideMatches) -> Result<(), Error> {
-    diagnose(spec, side).map_or(Ok(()), |(severity, message)| report(severity, message))
-}
-
-fn report(severity: Severity, message: String) -> Result<(), Error> {
-    match severity {
-        Severity::Ignore => Ok(()),
-        Severity::Warn => {
-            log::warn!("{message}");
-            Ok(())
-        }
-        Severity::Error => Err(Error::Model { message }),
-    }
-}
-
-/// The port map to emit for one pair, including the ports the user never writes.
-///
-/// The globals pseudo-parameter is mapped **unconditionally** and is not user-visible: without
-/// it heap flows do not cross the boundary at all. When `arguments` was omitted entirely the map
-/// is the identity over the arity the two sides share, plus `Return`.
-fn resolve_ports(
-    spec: &BridgeSpec,
-    a: FunctionId,
-    b: FunctionId,
-    num_params: &HashMap<FunctionId, i16>,
-) -> Vec<PortPair> {
-    let mut ports = if spec.ports_given {
-        spec.ports.clone()
-    } else {
-        let shared = num_params
-            .get(&a)
-            .copied()
-            .unwrap_or(0)
-            .min(num_params.get(&b).copied().unwrap_or(0));
-        if shared <= 0 {
-            // The two sides share no recovered parameter, so an identity map is empty. That is
-            // exactly the case a bodyless stub produces, and it is the silent-failure mode this
-            // whole design is about, so say it.
-            log::warn!(
-                "bridge {}: no 'arguments' port map was given and the two sides share no \
-                 recovered parameter, so only the return value and globals cross. Write an \
-                 'arguments' map naming the argument correspondence.",
-                spec.provenance()
-            );
-        }
-        (0..shared.max(0))
-            .map(|i| {
-                let port = BridgePort {
-                    index: FormalIndex::new(i),
-                    path: facts::Path::empty(),
-                };
-                PortPair {
-                    from: port,
-                    to: port,
-                    direction: crate::models::Direction::Both,
-                }
-            })
-            .chain(std::iter::once(PortPair::ret()))
-            .collect()
-    };
-    ports.push(PortPair::globals());
-    ports
 }
 
 /// Emits the facts for one bridged pair `(a, b)`.

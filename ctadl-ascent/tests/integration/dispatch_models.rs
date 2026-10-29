@@ -216,11 +216,9 @@ fn index_with(generators: Vec<serde_json::Value>, endpoint_functions: &[&str]) -
     );
     ctadl_ascent::codegen::model_matches::codegen_model_matches(
         &matches,
-        &[],
         &mut facts,
         &mut source_info,
-    )
-    .expect("phase 2");
+    );
     let summary = taint_index(facts.clone()).summary;
     Indexed {
         facts,

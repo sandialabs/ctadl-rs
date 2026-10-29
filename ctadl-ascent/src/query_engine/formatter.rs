@@ -250,7 +250,7 @@ pub struct ModelCheck {
     pub matched: Vec<GeneratorMatch>,
     /// Generators declaring an index-time construct that matched nothing.
     pub index_time_dead: Vec<IndexTimeDead>,
-    /// A bridge whose sides cannot be paired, as `models::matches::diagnose` describes it.
+    /// A bridge that paired nothing in the checked imports.
     pub bridges: Vec<BridgeDiagnosis>,
 }
 
@@ -280,9 +280,7 @@ pub struct GeneratorMatch {
     /// The generator's `find`, which says what unit `total` counts: functions, or the callees
     /// of call sites.
     pub find: Option<String>,
-    /// `None` for a generator no `where` narrowed: it matches every function in the import,
-    /// a count that exists only relative to that import and must never be reported as zero.
-    pub total: Option<usize>,
+    pub total: usize,
     /// A few of the matched names, for a reader checking that the `where` selected what was
     /// meant.
     pub sample: Vec<String>,
@@ -297,14 +295,11 @@ pub struct IndexTimeDead {
     pub kind: String,
 }
 
-/// One bridge's verdict, carried verbatim from `models::matches::diagnose`.
+/// One bridge's verdict.
 #[derive(Debug, Clone)]
 pub struct BridgeDiagnosis {
     pub file: path::PathBuf,
     pub index: usize,
-    /// The spec's own `on-unmatched`/`on-ambiguous` setting, which is what decides whether this
-    /// is an error or a warning -- exactly as it does at index time.
-    pub error: bool,
     pub message: String,
 }
 
@@ -585,15 +580,14 @@ fn build_invocation(
             ));
         }
 
-        // CTADL0010: `diagnose`'s verdict, verbatim, at the severity the spec itself set --
-        // the same text and the same severity `ctadl index` would raise. No pair count: pairing
-        // needs the fact base.
+        // CTADL0010: a bridge that paired nothing, as a warning. No pair count: pairing needs
+        // the fact base.
         for bridge in &check.bridges {
             let file = bridge.file.display().to_string();
             config_notifications.push(at_file(
                 notification(
                     NOTIF_BRIDGE_DIAGNOSIS,
-                    if bridge.error { "error" } else { "warning" },
+                    "warning",
                     vec![
                         bridge.index.to_string(),
                         file.clone(),
@@ -627,20 +621,13 @@ fn build_invocation(
             } else {
                 format!(" (e.g. {})", matched.sample.join(", "))
             };
-            // "all functions" rather than a number: an unnarrowed generator's count exists only
-            // relative to one import, and printing it as a number invites subtracting it.
-            let count = match matched.total {
-                Some(total) => format!("{total} {unit}(s)"),
-                None => format!("every {unit} in the program(s) checked"),
-            };
-            let mut properties = BTreeMap::from([
+            let count = format!("{} {unit}(s)", matched.total);
+            let properties = BTreeMap::from([
                 ("generatorIndex".to_string(), serde_json::json!(index)),
                 ("unit".to_string(), serde_json::json!(unit)),
                 ("sample".to_string(), serde_json::json!(matched.sample)),
+                ("matched".to_string(), serde_json::json!(matched.total)),
             ]);
-            if let Some(total) = matched.total {
-                properties.insert("matched".to_string(), serde_json::json!(total));
-            }
             config_notifications.push(at_file(
                 notification(
                     NOTIF_GENERATOR_MATCHED,

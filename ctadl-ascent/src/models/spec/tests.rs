@@ -1,30 +1,49 @@
 //! Parse/validate tests for bridge specs, `in` scopes and port maps.
 //!
 //! None of these needs a program: everything under test here is a property of the model file's
-//! shape. That is the whole point of hoisting the scan out of the import loop.
+//! shape, which is what lets the validator check it before migrating.
 
 use std::io::Write;
 
 use super::*;
 use crate::project::ArtifactLanguage::*;
 
-/// Writes `text` to a temp file with the given extension and scans it.
-fn scan(ext: &str, text: &str) -> Result<ModelFileSpecs, Error> {
+/// The bridges of one model file, as the validator parses them.
+struct Specs {
+    bridges: Vec<BridgeSpec>,
+}
+
+impl Specs {
+    fn is_empty(&self) -> bool {
+        self.bridges.is_empty()
+    }
+}
+
+/// Writes `text` to a temp file with the given extension and parses every bridge in it, failing
+/// with every generator's errors.
+fn scan(ext: &str, text: &str) -> Result<Specs, Error> {
     let mut file = tempfile::Builder::new()
         .suffix(&format!(".{ext}"))
         .tempfile()
         .expect("temp file");
     file.write_all(text.as_bytes()).expect("write");
     file.flush().expect("flush");
-    let path = file.path().to_path_buf();
-    let result = scan_model_files(&[path]);
-    // Keep the file alive until after the scan.
-    drop(file);
-    result
+    let mut bridges = Vec::new();
+    let mut errors = crate::error::JsonModelErrors::default();
+    visit_model_file(file.path(), |n, value| {
+        if let Some(bridge) = value.pointer("/model/bridge") {
+            bridges.extend(parse_bridge(file.path(), n, value, bridge, &mut errors));
+        }
+        Ok(())
+    })?;
+    if !errors.is_empty() {
+        return Err(Error::JsonModel(errors));
+    }
+    Ok(Specs { bridges })
 }
 
 /// One generator, in JSONL, wrapped so the caller writes only the interesting part.
-fn scan_one(generator: serde_json::Value) -> Result<ModelFileSpecs, Error> {
+fn scan_one(generator: serde_json::Value) -> Result<Specs, Error> {
     scan("jsonl", &serde_json::to_string(&generator).unwrap())
 }
 
@@ -46,7 +65,7 @@ fn a_bridge() -> serde_json::Value {
 
 /// The whole error chain, flattened. `Error::Context` renders only its own context, so the
 /// loader message a test cares about lives one or more `source()` hops down.
-fn errors_of(result: Result<ModelFileSpecs, Error>) -> String {
+fn errors_of(result: Result<Specs, Error>) -> String {
     let err = match result {
         Ok(_) => panic!("expected the scan to fail"),
         Err(e) => e,

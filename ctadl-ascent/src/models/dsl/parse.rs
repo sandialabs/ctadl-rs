@@ -635,7 +635,7 @@ impl Builder {
     /// A `dispatch` head: `K::dispatch(return <- arg(0))`, or one of the attribute forms
     /// `resolve = "inline"` / `resolve = "skip"` / `closure_shaped = true`.
     ///
-    /// Exactly one of the three, mirroring the JSON loader, so that a generator that forgot its
+    /// Exactly one of the three, mirroring the JSON format, so that a generator that forgot its
     /// model and one that meant to discard the call's targets stay different documents. The one
     /// combination is `resolve = "inline"` with a flow, the JSON's `resolve` beside a
     /// `propagation`: inlined, and summarized too.
@@ -689,7 +689,7 @@ impl Builder {
                 },
                 "closure_shaped" => match lit {
                     Literal::Bool(true) => set(self, DispatchHead::ClosureShaped, aspan),
-                    // `false` is not a head: it derives nothing, exactly as in the JSON loader.
+                    // `false` is not a head: it derives nothing, exactly as in the JSON format.
                     Literal::Bool(false) => return None,
                     other => self.error(
                         aspan,

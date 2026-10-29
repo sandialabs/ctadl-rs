@@ -351,14 +351,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         crate::codegen::CallPolicy::default(),
         &model_matches,
     );
-    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
-    // them is about pairing two bridge sides.
     crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &[],
         &mut index_facts,
         &mut source_info,
-    )?;
+    );
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);

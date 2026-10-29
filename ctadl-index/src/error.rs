@@ -236,12 +236,6 @@ pub enum Error {
     /// to resolve a byte span against.
     #[error("model DSL error\n{0}")]
     DslModel(String),
-    /// A model was well-formed but could not be applied: a bridge side that matched nothing
-    /// under `on-unmatched: error`, or an ambiguous pairing under `on-ambiguous: error`.
-    /// Distinct from [`Error::JsonModel`], which is about the file's *syntax*; this one needs a
-    /// program to detect.
-    #[error("model error: {message}")]
-    Model { message: String },
     #[error("{context}")]
     Context {
         context: String,

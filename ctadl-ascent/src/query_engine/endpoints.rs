@@ -1,7 +1,7 @@
 //! Stage 2 of source/sink matching: map name-based matched elements → `QueryEndpoint`s.
 //!
-//! Stage 1 (`models::json::ModelGeneratorIngest`) matches MIR elements — function
-//! names, signatures, arity, regexes — and emits name-based
+//! Stage 1 (the model DSL engine, [`crate::models::DslMatcher`]) matches MIR elements —
+//! function names, signatures, arity, regexes — and emits name-based
 //! [`EndpointMatch`](crate::models::EndpointMatch) rows. Stage 2, here, consumes those rows
 //! together with the index facts and resolves them into concrete
 //! [`QueryEndpoint`](super::QueryEndpoint)s for the query engine.

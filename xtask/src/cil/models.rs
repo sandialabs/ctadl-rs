@@ -4,11 +4,11 @@
 //! **Which methods.** Every class a generator names in `parents` is listed by `model-run`
 //! (`frontends/ctadl-cil/tools/ModelRun`), which spells each public method and constructor by
 //! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::Cil`, and
-//! the shipped file is matched against it by the loader `ctadl index` uses, so the methods
-//! checked are exactly the overloads the generators select, and the ports are the ones the
-//! loader decodes. A class that does not load, or lives in another assembly than the one named
-//! (the frontend canonicalizes through forwarders), fails, as does a generator that selects
-//! nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
+//! the shipped file is migrated and run against it on the DSL engine, as the `.ctadl` default
+//! `ctadl index` loads was migrated from it, so the methods checked are exactly the overloads the
+//! generators select, and the ports are the ones the engine emits. A class that does not load,
+//! or lives in another assembly than the one named (the frontend canonicalizes through
+//! forwarders), fails, as does a generator that selects nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
 //! method, so it is held to the same spellings, but nothing calls it: it names a contract,
 //! not a method, and the `find: methods` entries it repeats are the ones checked by calling.
 //!
@@ -32,14 +32,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use ctadl_ascent::models::{
-    try_check_jsonl_models, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions,
-    ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
+    DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase, FormalIndexTypeTag, ImportScope,
+    ModelLoadReport, ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
@@ -284,17 +283,22 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         Some(&dispatch_keys),
     );
     let mut matches = ProgramModelMatches::default();
-    let (report, errors) =
-        try_check_jsonl_models(&index, BufReader::new(contents), usize::MAX, &mut matches);
-    if let Some(e) = errors.first() {
-        bail!("{name} does not load: {e:?}");
-    }
+    let values = generators
+        .iter()
+        .map(|g| serde_json::from_str(g))
+        .collect::<Result<Vec<Value>, _>>()
+        .with_context(|| format!("{name}: a generator line"))?;
+    let report = DslFile::from_json_generators(name, &values)
+        .and_then(|file| {
+            let set = DslModelSet { files: vec![file] };
+            let mut matcher = DslMatcher::new(&set, DslPhase::All);
+            matcher.observe_import(&index, &mut matches);
+            matcher.finish(&mut matches)
+        })
+        .map(ModelLoadReport::from_dsl)
+        .map_err(|e| anyhow::anyhow!("{name} does not load: {e:?}"))?;
     for (n, g) in generators.iter().enumerate() {
-        let live = match report.matched.get(&n) {
-            Some(MatchedFunctions::All) => true,
-            Some(MatchedFunctions::Some { total, .. }) => *total > 0,
-            None => false,
-        };
+        let live = report.matched.get(&n).is_some_and(|m| m.total > 0);
         let only_unavailable = parents(g).iter().all(|c| unavailable.contains(c.as_str()));
         if !live && !only_unavailable {
             failures.push(format!("{name}: generator {n} selects no method: {g}"));

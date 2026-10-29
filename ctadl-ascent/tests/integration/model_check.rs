@@ -120,7 +120,7 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
     let matched = &outcome.check.matched;
     assert_eq!(matched.len(), 1, "{matched:?}");
     assert_eq!(matched[0].index, 0);
-    assert_eq!(matched[0].total, Some(1));
+    assert_eq!(matched[0].total, 1);
     assert_eq!(matched[0].sample, vec!["sink".to_string()]);
 
     // [1] matched nothing: the same zero-row counters an indexed query turns into `CTADL0004`.
@@ -189,11 +189,11 @@ fn an_error_in_one_file_does_not_suppress_the_others() {
             .unwrap_or_else(|| panic!("no match reported for generator {index}"))
     };
     // The generator after the bad one, in the same batch...
-    assert_eq!(matched_in(bad.path(), 1).total, Some(1));
+    assert_eq!(matched_in(bad.path(), 1).total, 1);
     // ... and the last one, three batches later: the stats the abort-on-error loader discards.
-    assert_eq!(matched_in(bad.path(), 2100).total, Some(1));
+    assert_eq!(matched_in(bad.path(), 2100).total, 1);
     // The second file is untouched.
-    assert_eq!(matched_in(good.path(), 0).total, Some(1));
+    assert_eq!(matched_in(good.path(), 0).total, 1);
 }
 
 /// A bridge whose `to` side matches nothing is reported against its generator, and gets no
@@ -244,7 +244,7 @@ fn the_name_sample_is_capped_but_the_count_is_not() {
     let names = ["f1", "f2", "f3", "f4", "f5", "f6", "f7"];
     let outcome = check(&names, &[&file]);
     let matched = &outcome.check.matched[0];
-    assert_eq!(matched.total, Some(names.len()));
+    assert_eq!(matched.total, names.len());
     assert!(
         matched.sample.len() < names.len(),
         "the sample is capped: {:?}",
@@ -312,9 +312,7 @@ fn a_failed_import_does_not_end_the_run() {
         ]}"#,
     );
     let programs = vec![
-        Err(ctadl_ascent::error::Error::Model {
-            message: "no such import".to_string(),
-        }),
+        Err(std::io::Error::other("no such import").into()),
         Ok((scope(), program(&["sink"]))),
     ];
     let outcome = cli::check_programs(programs, &[file.path().to_path_buf()]).expect("checking");
@@ -322,7 +320,7 @@ fn a_failed_import_does_not_end_the_run() {
     assert_eq!(outcome.check.imports.len(), 1, "one import did load");
     assert!(outcome.has_file_errors());
     // The import that did load was still matched.
-    assert_eq!(outcome.check.matched[0].total, Some(1));
+    assert_eq!(outcome.check.matched[0].total, 1);
 }
 
 /// The whole point of routing this through the SARIF writer: what the check found comes out in

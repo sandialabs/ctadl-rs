@@ -17,9 +17,9 @@ approximate: `any_of` was already a union over the matched set. The empty disjun
 
 # What does not translate
 
-A migration either says what the JSON loader means or fails; it never writes a rule that
-matches more or less. Where the JSON matcher has a bug (`in_function` under `any_of` / `not`
-narrows the callee, not the caller) the DSL's meaning is the one written. Three cases fail or
+A migration either says what the JSON format means or fails; it never writes a rule that
+matches more or less. Where the retired JSON matcher had a bug (`in_function` under `any_of` /
+`not` narrowed the callee, not the caller) the DSL's meaning is the one written. Three cases fail or
 warn:
 
 - **The loader rejects the generator.** The migration fails with the loader's own error, because
@@ -42,7 +42,7 @@ use ctadl_ir::mir::PathSegment;
 use crate::error::{Error, JsonModelError, JsonModelErrors};
 use crate::models::json_schema;
 
-/// What a migration produced, and what it left out because the JSON loader ignores it too.
+/// What a migration produced, and what it left out because the JSON format ignores it too.
 #[derive(Clone, Debug, Default)]
 pub struct MigrationReport {
     /// One line per construct that was not translated because it has no effect, in generator
@@ -66,8 +66,8 @@ impl MigrationReport {
 /// Translates a whole `model_generators` list into DSL source.
 ///
 /// Fails with every generator's errors if any generator cannot be translated exactly: either
-/// the JSON loader rejects it, and the error is the one the loader raises, or it means something
-/// the DSL cannot say, which is a [`JsonModelError::Untranslatable`].
+/// the JSON format does not allow it, and the error is the one the JSON loader raised, or it
+/// means something the DSL cannot say, which is a [`JsonModelError::Untranslatable`].
 pub fn migrate_generators<'a>(
     generators: impl IntoIterator<Item = &'a Value>,
     header: Option<&str>,
@@ -95,7 +95,7 @@ pub fn migrate_generators<'a>(
         }
         if out.len() == before {
             // Every way of losing a head is an error, so what reaches here derives nothing in
-            // the JSON loader either: no `model`, empty lists, only inert keys.
+            // the JSON format either: no `model`, empty lists, only inert keys.
             let _ = writeln!(out, "// generator {i}: produced no rule");
         }
         out.push('\n');
@@ -106,7 +106,7 @@ pub fn migrate_generators<'a>(
     Ok((out, report))
 }
 
-/// A construct the JSON loader accepts and the DSL cannot express.
+/// A construct the JSON format allows and the DSL cannot express.
 fn untranslatable(index: usize, what: &str, message: impl Into<String>) -> JsonModelError {
     JsonModelError::Untranslatable {
         index,
@@ -274,7 +274,7 @@ fn migrate_generator(
 }
 
 /// A `where` list, as a conjunction. An absent one is the empty conjunction, which matches
-/// everything, as it does in the JSON loader.
+/// everything, as it does in the JSON format.
 fn where_expr<'a>(
     index: usize,
     value: Option<&'a Value>,
@@ -435,7 +435,7 @@ fn compile(
             for item in items {
                 acc.extend(compile(item, negated, ctx, fresh)?);
             }
-            // Empty for an empty `any_of`, which matches nothing in the JSON loader too.
+            // Empty for an empty `any_of`, which matches nothing in the JSON format too.
             Ok(acc)
         }
         (Expr::Prim(value), n) => compile_prim(value, n, ctx, fresh),
@@ -522,7 +522,7 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
             let mut attrs = Vec::new();
             for (single, plural) in pairs {
                 // A field that is present and names nothing narrows to nothing, as it does in
-                // the JSON loader: leaving it out would match every function.
+                // the JSON format: leaving it out would match every function.
                 if value.get(single).is_none() && value.get(plural).is_none() {
                     continue;
                 }
@@ -577,7 +577,7 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
             }
             let names = collect_strings(value, "name", "names");
             match names.len() {
-                // Present and naming nothing: no function matches, as in the JSON loader.
+                // Present and naming nothing: no function matches, as in the JSON format.
                 0 => Ok(Vec::new()),
                 1 => Ok(vec![vec![format!(
                     "uses_field({subject}, {})",
@@ -620,8 +620,8 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
                 });
             }
             let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
-            // Always the caller, under `any_of` and `not` too. The JSON matcher narrows the
-            // combinator's scratch copy of the *callee* set there, which is a bug in it, not a
+            // Always the caller, under `any_of` and `not` too. The JSON matcher narrowed the
+            // combinator's scratch copy of the *callee* set there, which was a bug in it, not a
             // meaning to carry across.
             let caller_ctx = Ctx {
                 index,
@@ -781,8 +781,8 @@ enum ClassFormula {
     Or(Vec<ClassFormula>),
 }
 
-/// Reads a class predicate the way the JSON's `eval_predicate` does, folding what it can decide
-/// without a class. Every error is one the JSON loader's `validate_predicate` raises too.
+/// Reads a class predicate the way the JSON matcher evaluated it, folding what it can decide
+/// without a class. Every error is one the JSON loader raised too.
 fn class_formula(inner: &Value, ctx: &Ctx<'_>) -> Result<ClassFormula, JsonModelError> {
     let index = ctx.index;
     let kind = inner
@@ -840,7 +840,7 @@ fn class_formula(inner: &Value, ctx: &Ctx<'_>) -> Result<ClassFormula, JsonModel
                     field_name: "name' / 'names".to_string(),
                 });
             }
-            // Present and naming nothing: no class is equal to it, as in the JSON loader.
+            // Present and naming nothing: no class is equal to it, as in the JSON format.
             let names = collect_strings(inner, "name", "names");
             Ok(if names.is_empty() {
                 ClassFormula::Const(false)
@@ -976,7 +976,7 @@ fn migrate_model(
     let Some(model) = generator.get("model") else {
         report.warn(
             index,
-            "no 'model'; nothing to derive, as in the JSON loader",
+            "no 'model'; nothing to derive, as in the JSON format",
         );
         return Ok(heads);
     };
@@ -985,7 +985,7 @@ fn migrate_model(
         if model.get(key).is_some() {
             report.warn(
                 index,
-                format!("'{key}' has no effect in the JSON loader either, and is not translated"),
+                format!("'{key}' has no effect in the JSON format either, and is not translated"),
             );
         }
     }
@@ -998,7 +998,7 @@ fn migrate_model(
         } else {
             report.warn(
                 index,
-                "'modes' names no mode, so it has no effect in the JSON loader either",
+                "'modes' names no mode, so it has no effect in the JSON format either",
             );
         }
     }
@@ -1077,7 +1077,7 @@ fn migrate_dispatch_model(
     if let Some(value) = model.get("closure_shaped") {
         return match value.as_bool() {
             Some(true) => Ok(vec![format!("{anchor}::dispatch(closure_shaped = true)")]),
-            // `false` derives nothing, exactly as in the JSON loader.
+            // `false` derives nothing, exactly as in the JSON format.
             Some(false) => Ok(Vec::new()),
             None => Err(JsonModelError::FieldNotString {
                 index,
@@ -1154,7 +1154,7 @@ fn bridge_severity(
             report.warn(
                 index,
                 format!(
-                    "'{key}' only changes what the JSON loader logs about the pairing, and is \
+                    "'{key}' only changed what the JSON loader logged about the pairing, and is \
                      not translated"
                 ),
             );
@@ -1212,7 +1212,7 @@ fn migrate_bridge(
             return Err(untranslatable(
                 index,
                 "'bridge'",
-                "with no 'arguments' map the JSON loader pairs the arguments the two sides \
+                "with no 'arguments' map the JSON format pairs the arguments the two sides \
                  share, which needs the fact base and cannot be written as a rule; write the map",
             ));
         }
@@ -1222,7 +1222,7 @@ fn migrate_bridge(
     for pair in pairs {
         let from = port_text(pair.get("from"), "from", index)?;
         let to_port = port_text(pair.get("to"), "to", index)?;
-        // An absent direction is both ways, as in the JSON loader.
+        // An absent direction is both ways, as in the JSON format.
         let arrow = match pair.get("direction").and_then(|v| v.as_str()) {
             Some("in") => "->",
             Some("out") => "<-",

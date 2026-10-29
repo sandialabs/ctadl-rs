@@ -1,20 +1,16 @@
 /*! The shape of a JSON model generator, checked without a program.
 
-[`generator_errors`] reports what the JSON loader reports against one generator, in the order it
-reports it, by walking the generator's structure alone: unknown and missing keys, `find`, every
-`where` constraint and predicate tree, the `in` scope, the `model` object of each `find`, ports,
-access paths, `modes` and bridges. It is what lets the migrator reject exactly what the loader
-rejects without running the loader.
+[`generator_errors`] reports what the JSON format does not allow in one generator, by walking
+its structure alone: unknown and missing keys, `find`, every `where` constraint and predicate
+tree, the `in` scope, the `model` object of each `find`, ports, access paths, `modes` and
+bridges. The migrator runs it first, so a generator the format rejects fails the migration with
+the error the JSON loader raised for it, in the order the loader raised them, rather than being
+translated.
 
-Nothing the loader reports depends on the program it matches against. Every check runs before
-or independently of the match: a `parent` predicate is validated before the frontend is
-consulted, and an unresolvable `Variable(...)` local is a log line, not an error. The one
-program-dependent behavior is the reverse, a generator whose `in` scope excludes the import is
-skipped *unchecked*. Here every scope admits, so a generator scoped to another import is checked
-as well.
+Every check is program-independent. A generator scoped by `in` to another import is checked as
+well: a model file is either valid or not, whatever it is run against.
 
-Also home to [`parse_port`], the port grammar shared by the JSON loader, bridges and the
-migrator.
+Also home to [`parse_port`], the port grammar bridges and the migrator share.
 */
 
 use std::sync::OnceLock;
@@ -38,12 +34,11 @@ pub enum FindMethod {
     Dispatch,
 }
 
-/// Everything the JSON loader reports against generator `index`, in the order it reports it.
+/// Everything wrong with generator `index`, in the order the JSON loader reported it.
 ///
-/// A bridge is scanned first, as [`spec::scan_model_files`] does before any import is loaded,
-/// and a malformed bridge or `in` scope stops there, as it does in the loader. A clean scan is
-/// followed by the generator's own shape, then by side B's `where`, which the loader evaluates as
-/// a `find: methods` generator once a bridge's scope admits an import.
+/// A bridge is checked first, and a malformed bridge or `in` scope stops there. A clean one is
+/// followed by the generator's own shape, then by side B's `where`, which is checked as a
+/// `find: methods` generator's.
 pub fn generator_errors(index: usize, generator: &Value) -> Vec<JsonModelError> {
     let mut errors = Vec::new();
     let bridge = match generator.pointer("/model/bridge") {
@@ -85,7 +80,7 @@ enum SubjectKind {
 }
 
 /// One generator's walk. `find` is what its `find` parsed to, `None` when it did not: the
-/// checks that depend on it are skipped then, as the loader skips them.
+/// checks that depend on it are skipped then.
 struct Walk {
     index: usize,
     find: Option<FindMethod>,
@@ -673,45 +668,40 @@ fn variable_regex() -> &'static Regex {
     VARIABLE_REGEX.get_or_init(|| Regex::new(r#"^Variable\(([^)]+)\)(.*)$"#).unwrap())
 }
 
-/// A parsed source/sink/propagation port. `var_name` is `Some` only for a `Variable(name)`
-/// port (`tag == Local`); `index` is `Some` only for a positional `Argument(n)` port
-/// (`tag == Index`). Both `var_name` and `ap` borrow from the port `text`.
+/// A parsed source/sink/propagation port. `index` is `Some` only for a positional
+/// `Argument(n)` port (`tag == Index`); a `Variable(name)` port is `tag == Local`, which the
+/// migrator refuses.
 #[derive(Debug)]
-pub(crate) struct ParsedPort<'a> {
+pub(crate) struct ParsedPort {
     pub(crate) tag: FormalIndexTypeTag,
     pub(crate) index: Option<i16>,
-    pub(crate) var_name: Option<&'a str>,
-    /// The port's access path, parsed with the canonical grammar. Owned; the lifetime survives
-    /// only for `var_name`. A `PathSegment::Offset` here is what lets a port name a real offset
-    /// (`Argument(1).[8].deref`) and so match the offsets pcode emits.
+    /// The port's access path, parsed with the canonical grammar. A `PathSegment::Offset` here
+    /// is what lets a port name a real offset (`Argument(1).[8].deref`) and so match the
+    /// offsets pcode emits.
     pub(crate) ap: Vec<PathSegment>,
 }
 
 /// Entry point for parsing propagation inputs and outputs, which are called ports
-pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, JsonModelError> {
+pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonModelError> {
     // Note the absence of `?` in the two `if let` arms: an early return would skip the
     // index-patching `map_err` below, and the error would name generator 0.
     let parsed = if let Some(m) = variable_regex().captures(text) {
-        // `Variable(name)` — name-based local selector. The base `LocalIdx` is resolved
-        // per-function later (in `emit_endpoints`), so no index is known here.
+        // `Variable(name)` — name-based local selector, which no index can stand for.
         parse_access_path(m.get(2).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Local,
             index: None,
-            var_name: m.get(1).map(|m| m.as_str()),
             ap,
         })
     } else if let Some(m) = return_regex().captures(text) {
         parse_access_path(m.get(1).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Return,
             index: None,
-            var_name: None,
             ap,
         })
     } else {
         parse_argument(text).map(|(tag, idx, ap)| ParsedPort {
             tag,
             index: idx,
-            var_name: None,
             ap,
         })
     };
@@ -788,7 +778,6 @@ mod parse_port_tests {
     fn parses_variable_selector() {
         let p = parse_port("Variable(buf)", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.var_name, Some("buf"));
         assert_eq!(p.index, None);
         assert!(p.ap.is_empty());
     }
@@ -797,7 +786,6 @@ mod parse_port_tests {
     fn parses_variable_selector_with_access_path() {
         let p = parse_port("Variable(buf).headers", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.var_name, Some("buf"));
         assert_eq!(p.ap, vec![PathSegment::symbol("headers")]);
     }
 
@@ -806,11 +794,9 @@ mod parse_port_tests {
         let a = parse_port("Argument(1)", 0).expect("parse");
         assert_eq!(a.tag, FormalIndexTypeTag::Index);
         assert_eq!(a.index, Some(1));
-        assert_eq!(a.var_name, None);
 
         let r = parse_port("Return", 0).expect("parse");
         assert_eq!(r.tag, FormalIndexTypeTag::Return);
-        assert_eq!(r.var_name, None);
     }
 
     /// A model port can name an offset: `Argument(1).[8]` is `Offset(8)`, which is what pcode's

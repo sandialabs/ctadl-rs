@@ -707,8 +707,8 @@ fn a_malformed_ctadl_file_fails_the_load_naming_the_line() {
     assert!(text.contains("'G' appears in the head"), "{text}");
 }
 
-/// The `.ctadl` and `.dl` extensions both select the engine; anything else goes to the JSON
-/// loader, which is what keeps the files already in the wild working.
+/// The `.ctadl` and `.dl` extensions are read as written; anything else is a JSON model file and
+/// is migrated first, which is what keeps the files already in the wild working.
 #[test]
 fn the_extension_selects_the_loader() {
     use std::path::Path;

@@ -444,12 +444,9 @@ pub fn index(
 
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        // No unpaired bridge specs: every bridge, a JSON file's included, is a rule the DSL
-        // engine has already paired into `resolved_bridges`.
-        &[],
         &mut facts,
         &mut source_info,
-    )?;
+    );
     let android_intent_stats = android_intent::emit_phase2_facts(&mut facts, &source_info.sites);
     log::info!(
         "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \

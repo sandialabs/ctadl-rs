@@ -27,7 +27,7 @@ There is no recursion, so no stratification is needed and the fixpoint is one pa
 
 # Two phases, and the streaming posture
 
-[`DslMatcher`] is used the way the JSON matcher is: built before the import loop, fed one
+[`DslMatcher`] is built before the import loop, fed one
 program at a time, and finished after. Nearly every rule is emitted during the import that
 satisfies it. What is retained between imports is only the *bindings* of bridging rules, plus
 the head keys already emitted — never a program's tables, never its IR.
@@ -342,8 +342,7 @@ impl DslFile {
     }
 
     /// `path:index`, the provenance every diagnostic carries, with the index of
-    /// [`Self::label`]. For a JSON file it is the `file:generator-index` the JSON matcher
-    /// recorded.
+    /// [`Self::label`]. For a JSON file it is `file:generator-index`.
     pub fn provenance(&self, rule: usize) -> String {
         format!("{}:{}", self.path.display(), self.label(rule))
     }

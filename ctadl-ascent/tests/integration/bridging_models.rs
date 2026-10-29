@@ -358,8 +358,7 @@ fn declared_access_paths_survive_loading_and_reach_the_facts() {
 
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
-    let report =
-        codegen_model_matches(&matches, &[], &mut facts, &mut source_info).expect("codegen");
+    let report = codegen_model_matches(&matches, &mut facts, &mut source_info);
     assert_eq!(report.declared_paths, 2);
     assert_eq!(facts.paths.len(), 2);
 }

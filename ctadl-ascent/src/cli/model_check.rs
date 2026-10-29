@@ -43,8 +43,8 @@ use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
 use crate::models::spec::{self, ProgramScope};
 use crate::models::{
-    self, EndpointStats, ImportScope, MatchedFunctions, ModelCheckError, ProgramMatchIndex,
-    ProgramModelMatches, PropagationStats,
+    self, EndpointStats, ImportScope, MatchedFunctions, ProgramMatchIndex, ProgramModelMatches,
+    PropagationStats,
 };
 use crate::project::{AnalysisProject, ArtifactImport};
 use crate::query_engine::formatter::{
@@ -56,8 +56,7 @@ use ctadl_ir::ProgramInfo;
 /// How many matched function names to keep per generator, for the `CTADL0011` sample.
 ///
 /// A cap and not a flag: the names answer "did this `where` select what I meant", which a
-/// handful answers, and the exact count is reported beside them. Nothing here ever enumerates
-/// an unnarrowed generator's match set -- see [`MatchedFunctions`].
+/// handful answers, and the exact count is reported beside them.
 const SAMPLE_CAP: usize = 5;
 
 /// Everything the check found, in the two pieces `cli::query` hands the SARIF writer.
@@ -277,10 +276,7 @@ pub fn check_programs(
                     models::ModelLoadReport::from_dsl(models::DslReport { files: vec![file] }),
                     Vec::new(),
                 ),
-                Err(e) => (
-                    models::ModelLoadReport::default(),
-                    vec![ModelCheckError::Stream(e)],
-                ),
+                Err(e) => (models::ModelLoadReport::default(), vec![e]),
             };
             files[owner].absorb(load, errors);
         }
@@ -455,7 +451,7 @@ impl FileState {
     }
 
     /// Folds in the load of this file, over every import.
-    fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<ModelCheckError>) {
+    fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<Error>) {
         for file in load.dsl.iter().flat_map(|report| &report.files) {
             for (label, stats) in file.labels.iter().zip(&file.rules) {
                 if let Some(generator) = self.generator_mut(*label) {
@@ -479,10 +475,7 @@ impl FileState {
             if let Some(generator) = self.generator_mut(*index) {
                 generator
                     .matched
-                    .get_or_insert(MatchedFunctions::Some {
-                        total: 0,
-                        names: Default::default(),
-                    })
+                    .get_or_insert_with(MatchedFunctions::default)
                     .merge(matched, SAMPLE_CAP);
             }
         }
@@ -557,17 +550,14 @@ impl FileState {
                 outcome.check.bridges.push(BridgeDiagnosis {
                     file: self.path.clone(),
                     index: generator.index,
-                    error: false,
                     message: "the bridge matched no pair of functions in the checked import(s)"
                         .to_string(),
                 });
             }
             // A `modes` directive that matched no function. Reported off the match set rather
             // than an emitted-row count, because the directive emits no rows at all: what it
-            // does is take rows *away*. `MatchedFunctions::All` has no count and is never dead.
-            if generator.declares_modes
-                && generator.matched.as_ref().and_then(MatchedFunctions::total) == Some(0)
-            {
+            // does is take rows *away*.
+            if generator.declares_modes && generator.matched.as_ref().map(|m| m.total) == Some(0) {
                 outcome.check.index_time_dead.push(IndexTimeDead {
                     file: self.path.clone(),
                     index: generator.index,
@@ -580,15 +570,15 @@ impl FileState {
             let Some(matched) = &generator.matched else {
                 continue;
             };
-            if !declares_a_model || matched.total() == Some(0) {
+            if !declares_a_model || matched.total == 0 {
                 continue;
             }
             outcome.check.matched.push(GeneratorMatch {
                 file: self.path.clone(),
                 index: generator.index,
                 find: generator.find.clone(),
-                total: matched.total(),
-                sample: matched.names().iter().cloned().collect(),
+                total: matched.total,
+                sample: matched.names.iter().cloned().collect(),
             });
         }
     }
@@ -612,7 +602,7 @@ fn render_chain(error: &dyn std::error::Error) -> String {
     let mut source = error.source();
     while let Some(cause) = source {
         let next = cause.to_string();
-        // A delegating `Display` (as `ModelCheckError` has) would otherwise repeat itself.
+        // A delegating `Display` would otherwise repeat itself.
         if !text.ends_with(&next) {
             text.push_str(": ");
             text.push_str(&next);

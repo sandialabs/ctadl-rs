@@ -1,23 +1,14 @@
-/*! The match state a model generator's `where` is evaluated against.
+/*! The per-import program view the model DSL's relations are built from.
 
-Matching is a function of a program's name / parent / signature / qualified-id tables plus its
-function universe. Those live here, in one struct with one construction path, and both matching
-pipelines borrow it:
-
-- [`super::json::ModelGeneratorIngest`], which runs the full source/sink/propagation visit and
-  is what `ctadl query --models` uses per import;
-- the index-time streaming matcher ([`super::matches::observe_import`]), which evaluates both
-  sides of every bridge as the IR streams by.
-
-There are permanently two pipelines, so the rule that keeps them from drifting is that there is
-only one evaluator and only one index. A second implementation of `where` is how
-`signature_match` ends up meaning two different things in two places.
+One import's method table, its functions' IR, which import it is (for the `language` and
+`import` attributes), and, when some rule reads `callsig`, the signature keys its call sites
+name. [`super::dsl::relations::ProgramFacts`] is built from it.
 
 # Why it borrows the program
 
 The index holds `&'p str` into the [`ProgramInfo`] rather than owned strings, because under the
-streaming posture it never outlives one. Each import builds an index, every applicable generator
-is evaluated against it, the *matches* are copied into
+streaming posture it never outlives one. Each import builds an index, every rule is evaluated
+against it, the *matches* are copied into
 [`ProgramModelMatches`](super::matches::ProgramModelMatches) as owned data, and the index and the
 IR are both dropped before the next import is loaded. Owning the strings would buy retention
 across the import loop, which is exactly what streaming exists not to need.
@@ -33,48 +24,24 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 
 use super::dsl::relations::FunKey;
 use super::spec::ImportScope;
-use super::universe_set::UniverseSet;
 
 /// One program's matchable metadata, keyed the way each frontend spells its functions.
 pub struct ProgramMatchIndex<'p> {
     /// Which import this is, for [`super::spec::ProgramScope::admits`].
     pub scope: ImportScope,
     pub(crate) vmt: &'p VirtualMethodTable,
-    /// Maps simple names to fully qualified names.
-    pub(crate) program_method_names: HashMap<&'p str, Vec<&'p str>>,
-    /// Maps parent class to fully qualified name.
-    pub(crate) program_method_parents: HashMap<&'p str, Vec<&'p str>>,
-    /// Maps signatures to fully qualified name.
-    pub(crate) program_method_signatures: HashMap<&'p str, Vec<&'p str>>,
-    /// Maps a method's fully-qualified id to its fq-name, backing the exact-match
-    /// `qualified-id` constraint. The key is whatever spelling uniquely names the
-    /// method on this frontend: the `JavaMethod` id on jvm/dex, the
-    /// namespace-qualified (but address-free) name on native, the module-qualified
-    /// IR name on lua. Unlike [`Self::program_method_names`] this is never keyed on
-    /// a bare name, so it can disambiguate two same-named methods in different
-    /// namespaces.
-    pub(crate) program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>>,
-    /// fq-name (== `FunctionData.name`) → the function's IR data. Backs the
-    /// `has_code` / `number_parameters` / `uses_field` constraints, which need
-    /// per-function body/parameter/field information.
-    ///
-    /// A function with no IR body has no entry, which is why those three constraints cannot
-    /// match a Lua external or a dex/jvm `ext` stub. `signature_match` is the supported shape
-    /// for a bodyless callee.
+    /// fq-name (== `FunctionData.name`) → the function's IR data: arity, body, parameters and
+    /// the fields it uses. A function with no IR body (a Lua external, a dex/jvm `ext` stub) has
+    /// no entry.
     pub(crate) program_functions: HashMap<&'p str, &'p FunctionData>,
-    /// The full set of function fq-names, always [`UniverseSet::Explicit`]. Mirrors
-    /// what [`matched_functions`](super::json::matched_functions)`(&All)` enumerates for this
-    /// frontend, so a top-level `not X` can be materialized to `universe \ X`.
-    pub(crate) universe: UniverseSet<&'p str>,
-    /// What a `find: "dispatch"` generator matches: the distinct static signatures the
-    /// program's Java and CIL call sites name. `None` unless some loaded generator asked for them,
-    /// because collecting them costs a pass over every statement.
+    /// What `callsig` ranges over: the distinct static signatures the program's Java and CIL
+    /// call sites name. `None` unless some loaded rule asked for them, because collecting them
+    /// costs a pass over every statement.
     ///
-    /// Unlike the method universe above, this contains types the app never declares. The
-    /// method universe is built from VMT `methods`, i.e. implementations, and about half of an
-    /// app's interface sites name a type that is not among them -- `java.util.Iterator` has no
-    /// row there, so `find: methods` cannot name it. The keys of the call sites do, by
-    /// construction.
+    /// Unlike the method table, this contains types the app never declares. The table is built
+    /// from implementations, and about half of an app's interface sites name a type that is not
+    /// among them -- `java.util.Iterator` has no row there, so `fun` cannot name it. The keys of
+    /// the call sites do, by construction.
     pub(crate) dispatch: Option<DispatchUniverse<'p>>,
 }
 
@@ -153,45 +120,24 @@ impl DispatchKeys {
     }
 }
 
-/// The signature keys of a program's Java and CIL call sites, indexed the way the `where` evaluator
-/// reads them. Each map mirrors the shape of the method universe's, so no constraint
-/// implementation has to know which universe it is narrowing: the values are canonical key ids
-/// where the method maps' values are function fq-names.
+/// The signature keys of a program's Java and CIL call sites, as `callsig` reads them.
 pub(crate) struct DispatchUniverse<'p> {
-    pub(crate) by_name: HashMap<&'p str, Vec<&'p str>>,
-    pub(crate) by_parent: HashMap<&'p str, Vec<&'p str>>,
-    pub(crate) by_signature: HashMap<&'p str, Vec<&'p str>>,
-    pub(crate) by_qualified_id: HashMap<&'p str, Vec<&'p str>>,
     /// Key id -> its `(cls, simple_name, descriptor)`, so a match can be turned back into the
     /// triple codegen keys on.
     pub(crate) parts: HashMap<&'p str, (&'p str, &'p str, &'p str)>,
-    /// Every key id, always [`UniverseSet::Explicit`], so a top-level `not` can complement.
-    pub(crate) universe: UniverseSet<&'p str>,
 }
 
 impl<'p> DispatchUniverse<'p> {
     fn new(keys: &'p DispatchKeys) -> Self {
-        let mut by_name: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut by_parent: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut by_signature: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut by_qualified_id: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut parts: HashMap<&'p str, (&'p str, &'p str, &'p str)> = HashMap::new();
-        for (id, (cls, name, desc)) in keys.ids.iter().zip(keys.parts.iter()) {
-            let (id, cls, name, desc) = (id.as_str(), cls.as_str(), name.as_str(), desc.as_str());
-            by_name.entry(name).or_default().push(id);
-            by_parent.entry(cls).or_default().push(id);
-            by_signature.entry(desc).or_default().push(id);
-            by_qualified_id.entry(id).or_default().push(id);
-            parts.insert(id, (cls, name, desc));
-        }
-        Self {
-            by_name,
-            by_parent,
-            by_signature,
-            by_qualified_id,
-            parts,
-            universe: keys.ids.iter().map(|s| s.as_str()).collect(),
-        }
+        let parts = keys
+            .ids
+            .iter()
+            .zip(keys.parts.iter())
+            .map(|(id, (cls, name, desc))| {
+                (id.as_str(), (cls.as_str(), name.as_str(), desc.as_str()))
+            })
+            .collect();
+        Self { parts }
     }
 }
 
@@ -202,109 +148,32 @@ impl<'p> ProgramMatchIndex<'p> {
         Self::new_with_dispatch(program_info, scope, None)
     }
 
-    /// [`Self::new`], plus the dispatch universe a `find: "dispatch"` generator matches
-    /// against. Pass `None` when no loaded generator uses that form; the dispatch constraints
-    /// then match nothing rather than costing a pass over every statement.
+    /// [`Self::new`], plus the signature keys `callsig` ranges over. Pass `None` when no loaded
+    /// rule reads `callsig`; it is then empty rather than costing a pass over every statement.
     pub fn new_with_dispatch(
         program_info: &'p ProgramInfo,
         scope: ImportScope,
         dispatch_keys: Option<&'p DispatchKeys>,
     ) -> Self {
         let vmt = &program_info.vmt;
-        let mut program_method_names: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-
-        let lua = matches!(vmt, VirtualMethodTable::Lua { .. });
-        for_each_spelling(vmt, |fq, key, spelling| {
-            let map = match key {
-                FunKey::Name => &mut program_method_names,
-                // Lua's metatable-recovered classes are the DSL's alone: the JSON `parent`
-                // constraint is Java/CIL-only and fails closed elsewhere (see `json.rs`).
-                FunKey::Parent if lua => return,
-                FunKey::Parent => &mut program_method_parents,
-                FunKey::Signature => &mut program_method_signatures,
-                FunKey::QualifiedId => &mut program_method_qualified_ids,
-            };
-            map.entry(spelling).or_default().push(fq);
-        });
-        if let VirtualMethodTable::Unknown = vmt {
-            // Fallback (Unknown): use the IR function names directly.
-            for func in &program_info.program.functions.functions {
-                let name = func.name.as_str();
-                program_method_signatures
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-                program_method_names.entry(name).or_default().push(name);
-                program_method_qualified_ids
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-            }
-        }
-        // Index every IR function by its fq-name for the body/parameter/field
-        // constraints (`has_code`, `number_parameters`, `uses_field`).
+        // Index every IR function by its fq-name for the arity / body / field attributes.
         let mut program_functions: HashMap<&'p str, &'p FunctionData> = HashMap::new();
         for func in &program_info.program.functions.functions {
             program_functions.entry(func.name.as_str()).or_insert(func);
         }
 
-        let universe: UniverseSet<&'p str> = match vmt {
-            VirtualMethodTable::Java { methods, .. } => {
-                methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
-            }
-            VirtualMethodTable::Cil { methods, .. } => {
-                methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
-            }
-            VirtualMethodTable::Native { methods } => {
-                methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
-            }
-            // Every lowered function, class method or not, plus the externals: the same set
-            // `matched_functions(&All)` enumerates, so a top-level `not` sees everything a model
-            // can name.
-            VirtualMethodTable::Lua {
-                functions,
-                externals,
-                ..
-            } => functions
-                .iter()
-                .chain(externals.iter())
-                .map(|(_, fq)| fq.as_ref())
-                .collect(),
-            VirtualMethodTable::Unknown => UniverseSet::empty(),
-        };
-
         Self {
             scope,
             vmt,
-            program_method_names,
-            program_method_parents,
-            program_method_signatures,
-            program_method_qualified_ids,
             program_functions,
-            universe,
             dispatch: dispatch_keys.map(DispatchUniverse::new),
         }
-    }
-
-    /// The `(cls, simple_name, descriptor)` a matched dispatch key id stands for.
-    pub(crate) fn dispatch_parts(&self, id: &str) -> Option<(&'p str, &'p str, &'p str)> {
-        self.dispatch.as_ref()?.parts.get(id).copied()
     }
 
     /// The virtual method table this index was built from.
     #[inline]
     pub fn vmt(&self) -> &'p VirtualMethodTable {
         self.vmt
-    }
-
-    /// Resolves a matched set to the fq-names it denotes, consulting the VMT when the set is
-    /// still `All`.
-    #[inline]
-    pub fn functions_of(&self, set: &UniverseSet<&'p str>) -> Vec<String> {
-        super::json::matched_functions(set, self.vmt)
     }
 
     /// Every function with IR data, as `(fq-name, data)`.
@@ -320,14 +189,13 @@ impl<'p> ProgramMatchIndex<'p> {
 
 /// Every spelling `vmt` publishes for its functions, as `(fq, attribute, spelling)`.
 ///
-/// The one statement of what each frontend makes matchable. Both the JSON index above and the
-/// DSL's `fun` relation ([`ProgramFacts`](super::dsl::relations::ProgramFacts)) read it, so a
-/// name a model can match under one cannot be missing under the other. Spellings come in the
-/// frontend's order, and within one function the canonical spelling of an attribute first: the
-/// DSL binds an output attribute to the first.
+/// The one statement of what each frontend makes matchable, read by the DSL's `fun` relation
+/// ([`ProgramFacts`](super::dsl::relations::ProgramFacts)). Spellings come in the frontend's
+/// order, and within one function the canonical spelling of an attribute first: the DSL binds an
+/// output attribute to the first.
 ///
-/// Lua's metatable classes are reported as [`FunKey::Parent`] although the JSON index does not
-/// key on them; a [`VirtualMethodTable::Unknown`] table publishes nothing.
+/// Lua's metatable classes are reported as [`FunKey::Parent`]; a [`VirtualMethodTable::Unknown`]
+/// table publishes nothing.
 pub(crate) fn for_each_spelling<'p>(
     vmt: &'p VirtualMethodTable,
     mut f: impl FnMut(&'p str, FunKey, &'p str),
