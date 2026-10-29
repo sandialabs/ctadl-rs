@@ -61,10 +61,6 @@ pub enum Command {
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
     /// analysis; no index is read, and none is written.
     Report(ReportArgs),
-
-    /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
-    #[command(name = "legacy-pcode-cli")]
-    LegacyPcodeCli(LegacyPcodeCliArgs),
 }
 
 #[derive(Debug, Args)]
@@ -72,67 +68,6 @@ pub struct InitModelArgs {
     /// Path where the template model file will be written (defaults to model.json5)
     #[arg(default_value = "model.json5")]
     pub output: PathBuf,
-}
-
-#[derive(Debug, Args)]
-pub struct LegacyPcodeCliArgs {
-    /// Directory where the index/store is located
-    #[arg(long)]
-    pub directory: Option<PathBuf>,
-
-    #[command(subcommand)]
-    pub cmd: LegacyPcodeSubcommand,
-
-    #[arg(long, short, action = clap::ArgAction::Append)]
-    pub models: Vec<PathBuf>,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum LegacyPcodeSubcommand {
-    /// Legacy index command compatible with Ghidra
-    Index(LegacyIndexArgs),
-    /// Legacy query command compatible with Ghidra
-    Query(LegacyQueryArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct LegacyIndexArgs {
-    /// Number of parallel jobs (ignored)
-    #[arg(short = 'j', default_value_t = 8)]
-    pub jobs: usize,
-
-    /// Path to the directory containing pcode facts
-    #[arg(short = 'f')]
-    pub facts_path: PathBuf,
-}
-
-#[derive(Debug, Args)]
-pub struct LegacyQueryArgs {
-    /// Taint direction to compute slices for
-    #[arg(long, value_name = "DIRECTION")]
-    pub compute_slices: Option<LegacyTaintDirection>,
-
-    /// Skip compiling analysis (ignored)
-    #[arg(long)]
-    pub no_compile_analysis: bool,
-
-    /// Number of parallel jobs (ignored)
-    #[arg(short = 'j', default_value_t = 8)]
-    pub jobs: usize,
-
-    /// Output format
-    #[arg(long, default_value = "sarif")]
-    pub format: String,
-
-    /// Query file path
-    pub query_file: PathBuf,
-}
-
-#[derive(Debug, Clone, ValueEnum, Copy)]
-pub enum LegacyTaintDirection {
-    All,
-    Fwd,
-    Bwd,
 }
 
 impl Command {
@@ -720,8 +655,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Apply the global store override before any store interaction. This sets the
-    // store root directly to the given directory (no `ctadl` subdirectory), the
-    // same mechanism `legacy-pcode-cli --directory` uses.
+    // store root directly to the given directory (no `ctadl` subdirectory).
     if let Some(dir) = &cli.store {
         project::init_store_path(Some(dir))
             .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
@@ -830,9 +764,6 @@ fn main() -> anyhow::Result<()> {
             })
             .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
-        Command::LegacyPcodeCli(args) => {
-            handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
-        }
         Command::InitModel(args) => {
             handle_init_model(args).context("running 'init-model'")?;
         }
@@ -921,93 +852,6 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     std::fs::write(&args.output, template)
         .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
-    Ok(())
-}
-
-fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
-    // Initialize the store path to the directory provided by Ghidra, if provided.
-    if let Some(dir) = &args.directory {
-        project::init_store_path(Some(dir))
-            .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
-    }
-
-    let legacy_name = "legacy_pcode";
-
-    match &args.cmd {
-        LegacyPcodeSubcommand::Index(index_args) => {
-            log::info!("Legacy Index: facts='{}'", index_args.facts_path.display());
-
-            // 1. Import pcode facts
-            let import_args = ImportArgs {
-                artifact: index_args.facts_path.clone(),
-                name: Some(legacy_name.to_string()),
-                language: ImportLanguage::Pcode,
-                // This legacy path always re-imports.
-                force: true,
-                // Not an APK: this legacy path imports a directory of pcode facts.
-                no_native_libs: false,
-                native_abi: None,
-                include_framework: false,
-                jobs: 0,
-            };
-            import_artifact_to_store(&import_args)?;
-
-            // 2. Index the imported program
-            let index_args = IndexArgs {
-                name: legacy_name.to_string(),
-                progs: vec![legacy_name.to_string()],
-                summary: vec![],
-                no_native_libs: false,
-                models: args.models.clone(),
-                no_default_models: false,
-                no_jni_bridge: false,
-                no_jni_registry: false,
-                call: CallPolicyArgs {
-                    strategy: CallResolutionStrategy::Mixed,
-                    cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
-                    cha_threshold_interface: None,
-                    no_dispatch_models: false,
-                    no_dispatch_models_interface: false,
-                    dispatch_order: DispatchOrder::ModelFirst,
-                },
-                prune_unreachable_cfg_nodes: None,
-                alias_rule: None,
-                hybrid_context: HybridContext::default(),
-                context_join: ContextJoin::default(),
-                jobs: None,
-                lsm: false,
-                lsm_memtable_limit: None,
-                lsm_memory_budget: None,
-                mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
-                frame: ctadl_ir::ssa::Pipeline::index_default().frame,
-            };
-            index_artifacts_to_store(&index_args)?;
-        }
-        LegacyPcodeSubcommand::Query(query_args) => {
-            log::info!("Legacy Query: file='{}'", query_args.query_file.display());
-            if let Some(dir) = query_args.compute_slices {
-                log::warn!(
-                    "--compute-slices {:?} is currently ignored; the direction is controlled by the query file",
-                    dir
-                );
-            }
-            if query_args.no_compile_analysis {
-                log::warn!("--no-compile-analysis is currently ignored");
-            }
-
-            let mut models = args.models.clone();
-            models.push(query_args.query_file.clone());
-            let q_args = QueryArgs {
-                name: legacy_name.to_string(),
-                models,
-                output: PathBuf::from("results.sarif"),
-                sarif_profile: SarifProfile::Human,
-                dump_taint_graph: None,
-            };
-            query_project(&q_args)?;
-        }
-    }
-
     Ok(())
 }
 
