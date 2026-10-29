@@ -110,9 +110,11 @@ This plan says how to meet `spec.md` and in what order. R*, D* and C* refer to
   - udpbus serial retires 8.7% more instructions than `main`, extra work that
     was already there by Step 5.
   - About half of udpbus par's slowdown came with Step 6.
-- **Found on `main`, not fixed here.** With debug logging on, `par` panics
-  (`CMap::frozen() on an unfrozen map`, `c_locals_trie.rs:148`) whenever
-  `context_locals` is non-empty.
+- **Found on `main`, fixed here.** With debug logging on, `par` panicked
+  (`CMap::frozen() on an unfrozen map`) whenever `context_locals` was non-empty.
+  The debug-only `dropped_compositions` report probed the contextual `locals`
+  store after the fixpoint, when it is left unfrozen. Its `contains()` now
+  works in either state.
 
 ## Step 0. Baseline on `main`
 
