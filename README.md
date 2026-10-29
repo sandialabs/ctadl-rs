@@ -19,7 +19,6 @@ current set of flags.
 | `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
 | `report` | Measure an imported program's call graph. Needs only an import; reads no index. |
-| `legacy-pcode-cli` | Legacy `index`/`query` commands kept for Ghidra pcode integration. |
 
 One-shot APK analysis:
 
