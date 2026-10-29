@@ -24,7 +24,6 @@ members = [
     "immortal",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
-    "tailshare",
     "trie",
     "xtask",
 ]
@@ -34,7 +33,7 @@ members = [
 # number. It is what `ctadl --version` prints, and it is what any of these
 # crates would carry if we ever publish them. Bump it here and nowhere else.
 [workspace.package]
-version = "0.1.4"
+version = "0.1.6"
 
 [workspace.lints.rust]
 rust-2018-idioms = "deny"

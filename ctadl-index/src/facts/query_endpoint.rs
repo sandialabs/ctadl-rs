@@ -60,6 +60,17 @@ impl QueryEndpoint {
         }
     }
 
+    /// `Ord`'s field order, with the vertex and label compared by content rather than by id.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.infunc
+            .cmp(&other.infunc)
+            .then_with(|| self.vertex.content_cmp(&other.vertex))
+            .then_with(|| self.label.content_cmp(&other.label))
+            .then_with(|| self.direction.cmp(&other.direction))
+            .then_with(|| self.call_site.cmp(&other.call_site))
+            .then_with(|| self.saturating.cmp(&other.saturating))
+    }
+
     pub fn from_taint_endpoint(sites: &IdMap, endpoint: TaintEndpoint) -> Self {
         QueryEndpoint {
             infunc: sites.get_function_id(endpoint.infunc).unwrap(),
@@ -104,7 +115,7 @@ impl QueryEndpoint {
             };
             out.push(QueryEndpoint {
                 infunc: insn_site.func_id,
-                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                vertex: FlowVertex::new(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),
@@ -150,7 +161,7 @@ impl QueryEndpoint {
             };
             out.push(QueryEndpoint {
                 infunc: insn_site.func_id,
-                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                vertex: FlowVertex::new(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),

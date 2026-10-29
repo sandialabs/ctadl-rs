@@ -399,13 +399,13 @@ pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
 fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
     match exp {
         Exp::ObjectRef(CallObject::JavaObject(cls)) => {
-            Some(fx::CallTargetObject::Symbol(cls.0.clone()))
+            Some(fx::CallTargetObjectKind::Symbol(cls.0.clone()).into())
         }
         Exp::ObjectRef(CallObject::LuaClass(cls)) => {
-            Some(fx::CallTargetObject::LuaClass(cls.clone()))
+            Some(fx::CallTargetObjectKind::LuaClass(cls.clone()).into())
         }
         Exp::ObjectRef(CallObject::CilObject(cls)) => {
-            Some(fx::CallTargetObject::CilClass(cls.0.clone()))
+            Some(fx::CallTargetObjectKind::CilClass(cls.0.clone()).into())
         }
         _ => None,
     }
@@ -682,9 +682,11 @@ impl<'a> CodegenVisitor<'a> {
                 self.deferred_dispatch
                     .insert((simple_name.clone(), descriptor.clone()));
                 let key = self.cha.dispatch_key(simple_name, descriptor);
-                self.facts
-                    .callee_info
-                    .push((site, FlowVertex(recv_var, fx::Path::empty()), key));
+                self.facts.callee_info.push((
+                    site,
+                    FlowVertex::new(recv_var, fx::Path::empty()),
+                    key,
+                ));
             }
         }
     }
@@ -803,8 +805,8 @@ impl<'a> CodegenVisitor<'a> {
             .callee_resolvents
             .extend(funcptr_targets.into_iter().map(|f| {
                 (
-                    fx::CallTargetObject::FunctionId(f),
-                    fx::CallDispatchKey::C,
+                    fx::CallTargetObjectKind::FunctionId(f).into(),
+                    fx::CallDispatchKey::c(),
                     f,
                 )
             }));
@@ -998,8 +1000,8 @@ impl Visitor for CodegenVisitor<'_> {
                         let target = self.source_info.sites.get_or_add_function(target);
                         self.facts.call_target_assign.push((
                             site,
-                            FlowVertex(dest, fx::Path::empty()),
-                            fx::CallTargetObject::FunctionId(target),
+                            FlowVertex::new(dest, fx::Path::empty()),
+                            fx::CallTargetObjectKind::FunctionId(target).into(),
                         ));
                         self.funcptr_targets.insert(target);
                     }
@@ -1007,7 +1009,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         self.facts.call_target_assign.push((
                             site,
-                            FlowVertex(dest, fx::Path::empty()),
+                            FlowVertex::new(dest, fx::Path::empty()),
                             object,
                         ));
                     }
@@ -1015,7 +1017,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         self.facts.const_str_assign.push((
                             site,
-                            FlowVertex(dest, fx::Path::empty()),
+                            FlowVertex::new(dest, fx::Path::empty()),
                             Str::from(value.clone()),
                         ));
                     }
@@ -1025,17 +1027,17 @@ impl Visitor for CodegenVisitor<'_> {
                     let dest = self.trans_variable_ref(dest);
                     self.facts
                         .assign
-                        .push((site, FlowVertex(dest, fx::Path::empty()), src));
+                        .push((site, FlowVertex::new(dest, fx::Path::empty()), src));
                 }
             }
             Phi {
                 dest: out,
                 operands,
             } => {
-                let dst = FlowVertex(self.trans_variable_ref(out), fx::Path::empty());
+                let dst = FlowVertex::new(self.trans_variable_ref(out), fx::Path::empty());
                 let mut seen_phi = BTreeSet::new();
                 for (_, op) in operands {
-                    let src = FlowVertex(self.trans_variable_ref(op), fx::Path::empty());
+                    let src = FlowVertex::new(self.trans_variable_ref(op), fx::Path::empty());
                     if seen_phi.insert(src) {
                         self.facts.assign.push((site, dst, src));
                     }
@@ -1049,8 +1051,8 @@ impl Visitor for CodegenVisitor<'_> {
                     let dst = FlowVariable::formal_index(i.try_into().unwrap());
                     let src = self.trans_variable_ref(op);
                     if seen_param.insert((dst, src)) {
-                        let dst = FlowVertex(dst, fx::Path::empty());
-                        let src = FlowVertex(src, fx::Path::empty());
+                        let dst = FlowVertex::new(dst, fx::Path::empty());
+                        let src = FlowVertex::new(src, fx::Path::empty());
                         self.facts.assign.push((site, dst, src));
                     }
                 }
@@ -1058,8 +1060,8 @@ impl Visitor for CodegenVisitor<'_> {
                 let dst = FlowVariable::formal_index(GLOBALS_INDEX.into());
                 let src = self.trans_variable_ref(global);
                 if seen_param.insert((dst, src)) {
-                    let dst = FlowVertex(dst, fx::Path::empty());
-                    let src = FlowVertex(src, fx::Path::empty());
+                    let dst = FlowVertex::new(dst, fx::Path::empty());
+                    let src = FlowVertex::new(src, fx::Path::empty());
                     self.facts.assign.push((site, dst, src));
                 }
             }
@@ -1133,8 +1135,8 @@ impl Visitor for CodegenVisitor<'_> {
                         // dispatch key at analysis time.
                         let deferred = (
                             site,
-                            FlowVertex(recv_var, fx::Path::empty()),
-                            fx::CallDispatchKey::Lua(method.clone()),
+                            FlowVertex::new(recv_var, fx::Path::empty()),
+                            fx::CallDispatchKeyKind::Lua(method.clone()).into(),
                         );
                         match self.strategy {
                             CallResolutionStrategy::Cha => {
@@ -1197,7 +1199,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let vertex = self.trans_access_path(callee);
                         self.facts
                             .callee_info
-                            .push((site, vertex, fx::CallDispatchKey::C));
+                            .push((site, vertex, fx::CallDispatchKey::c()));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }
@@ -1225,8 +1227,8 @@ impl Visitor for CodegenVisitor<'_> {
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
                         self.facts.call_target_assign.push((
                             site,
-                            FlowVertex(call_arg_var, fx::Path::empty()),
-                            fx::CallTargetObject::FunctionId(target),
+                            FlowVertex::new(call_arg_var, fx::Path::empty()),
+                            fx::CallTargetObjectKind::FunctionId(target).into(),
                         ));
                         self.funcptr_targets.insert(target);
                     }
@@ -1240,7 +1242,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
                         self.facts.call_target_assign.push((
                             site,
-                            FlowVertex(call_arg_var, fx::Path::empty()),
+                            FlowVertex::new(call_arg_var, fx::Path::empty()),
                             object,
                         ));
                     }
@@ -1254,7 +1256,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
                         self.facts.const_str_assign.push((
                             site,
-                            FlowVertex(call_arg_var, fx::Path::empty()),
+                            FlowVertex::new(call_arg_var, fx::Path::empty()),
                             Str::from(value.clone()),
                         ));
                     }
@@ -1273,14 +1275,14 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.actual_param.push((
                         site,
                         i.into(),
-                        FlowVertex(ret, fx::Path::empty()),
+                        FlowVertex::new(ret, fx::Path::empty()),
                     ));
                 }
                 // pass globals
                 self.facts.actual_param.push((
                     site,
                     GLOBALS_INDEX.into(),
-                    FlowVertex(
+                    FlowVertex::new(
                         FlowVariable::formal_index(GLOBALS_INDEX.into()),
                         fx::Path::empty(),
                     ),
@@ -1315,8 +1317,8 @@ impl Visitor for CodegenVisitor<'_> {
                 // dest <- root.<composed path>
                 self.facts.assign.push((
                     site,
-                    FlowVertex(dest, fx::Path::empty()),
-                    FlowVertex(source_var, path),
+                    FlowVertex::new(dest, fx::Path::empty()),
+                    FlowVertex::new(source_var, path),
                 ));
             }
             Store { dest, field, value } => {
@@ -1346,7 +1348,7 @@ impl Visitor for CodegenVisitor<'_> {
                 );
                 self.paths_dedup.insert((path,));
                 // dest.field <- value
-                let dest = FlowVertex(dest_var, path);
+                let dest = FlowVertex::new(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`).
                 // This is the field-store form of the `Assign` arm's object-ref handling:
                 // record the store at its field path so indirect-call resolution can follow
@@ -1358,7 +1360,7 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.call_target_assign.push((
                         site,
                         dest,
-                        fx::CallTargetObject::FunctionId(target),
+                        fx::CallTargetObjectKind::FunctionId(target).into(),
                     ));
                     self.funcptr_targets.insert(target);
                 }
@@ -1394,7 +1396,7 @@ impl Visitor for CodegenVisitor<'_> {
                         ),
                     );
                 self.paths_dedup.insert((path,));
-                let dest_vertex = FlowVertex(dest_var, path);
+                let dest_vertex = FlowVertex::new(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
                 // `Store` arm.
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
@@ -1403,7 +1405,7 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.call_target_assign.push((
                         site,
                         dest_vertex,
-                        fx::CallTargetObject::FunctionId(target),
+                        fx::CallTargetObjectKind::FunctionId(target).into(),
                     ));
                     self.funcptr_targets.insert(target);
                 }
@@ -1448,7 +1450,9 @@ impl Visitor for CodegenVisitor<'_> {
                 };
                 let dv = FlowVariable::formal_index(i.into());
                 let dpath = fx::Path::empty();
-                self.facts.assign.push((site, FlowVertex(dv, dpath), src));
+                self.facts
+                    .assign
+                    .push((site, FlowVertex::new(dv, dpath), src));
             }
         }
     }
@@ -1472,7 +1476,10 @@ impl CodegenVisitor<'_> {
     #[inline]
     fn trans_exp(&mut self, exp: &Exp) -> Option<FlowVertex> {
         match exp {
-            Exp::Variable(v) => Some(FlowVertex(self.trans_variable_ref(v), fx::Path::empty())),
+            Exp::Variable(v) => Some(FlowVertex::new(
+                self.trans_variable_ref(v),
+                fx::Path::empty(),
+            )),
             // An address expression `x.[k]` flows structurally from x's offset field.
             Exp::AccessPath(ap) => Some(self.trans_access_path(ap)),
             // A constant is not a vertex. The taint index tracks flow between storage
@@ -1487,7 +1494,7 @@ impl CodegenVisitor<'_> {
     fn trans_access_path(&mut self, ap: &AccessPath) -> FlowVertex {
         let v = self.trans_variable_ref(&ap.base);
         let fields = &ap.accesses;
-        FlowVertex(v, fields.into())
+        FlowVertex::new(v, fields.into())
     }
 
     #[inline]
@@ -1725,9 +1732,11 @@ impl ClassHierarchyAnalysis {
     /// table's language. Lua sites build their own key, since theirs has no descriptor.
     pub(crate) fn dispatch_key(&self, name: &Symbol, descriptor: &Symbol) -> fx::CallDispatchKey {
         match self.language {
-            ChaLanguage::Cil => fx::CallDispatchKey::Cil(name.clone(), descriptor.clone()),
+            ChaLanguage::Cil => {
+                fx::CallDispatchKeyKind::Cil(name.clone(), descriptor.clone()).into()
+            }
             ChaLanguage::Java | ChaLanguage::Lua => {
-                fx::CallDispatchKey::Java(name.clone(), descriptor.clone())
+                fx::CallDispatchKeyKind::Java(name.clone(), descriptor.clone()).into()
             }
         }
     }
@@ -1910,27 +1919,25 @@ fn emit_callee_resolvents(
         if !wanted.contains(&(name.clone(), desc.clone())) {
             continue;
         }
-        let (object, key) = match cha.language {
+        let (object, key): (fx::CallTargetObject, fx::CallDispatchKey) = match cha.language {
             ChaLanguage::Java => (
-                fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
+                fx::CallTargetObjectKind::Symbol(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Java(name.clone(), desc.clone()).into(),
             ),
             ChaLanguage::Lua => (
-                fx::CallTargetObject::LuaClass(cls.clone()),
-                fx::CallDispatchKey::Lua(name.clone()),
+                fx::CallTargetObjectKind::LuaClass(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Lua(name.clone()).into(),
             ),
             ChaLanguage::Cil => (
-                fx::CallTargetObject::CilClass(cls.clone()),
-                fx::CallDispatchKey::Cil(name.clone(), desc.clone()),
+                fx::CallTargetObjectKind::CilClass(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Cil(name.clone(), desc.clone()).into(),
             ),
         };
         for target in targets {
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .callee_resolvents
-                .push((object.clone(), key.clone(), func_id));
+            facts.callee_resolvents.push((object, key, func_id));
         }
     }
 }

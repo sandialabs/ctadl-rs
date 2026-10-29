@@ -249,7 +249,7 @@ pub mod manifest_node_attr {
 #[cfg(test)]
 mod tests {
     use crate::facts::{
-        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, IntentPairKind,
+        CallTargetObjectKind, FlowEdge, FlowVariable, FunctionId, InsnId, IntentPairKind,
         PackedInsnSiteId, Path,
     };
 
@@ -291,28 +291,28 @@ mod tests {
                 InsnId::new(10),
                 var,
                 Path::empty(),
-                CallTargetObject::FunctionId(FunctionId::new(99)),
+                CallTargetObjectKind::FunctionId(FunctionId::new(99)).into(),
             ),
             (
                 FunctionId::new(2),
                 InsnId::new(20),
                 var,
                 Path::empty(),
-                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+                CallTargetObjectKind::Symbol(ctadl_ir::Symbol::from("com/example/Foo")).into(),
             ),
             (
                 FunctionId::new(3),
                 InsnId::new(30),
                 var,
                 Path::empty(),
-                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+                CallTargetObjectKind::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")).into(),
             ),
             (
                 FunctionId::new(4),
                 InsnId::new(40),
                 var,
                 Path::empty(),
-                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
+                CallTargetObjectKind::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")).into(),
             ),
         ];
 
@@ -327,7 +327,7 @@ mod tests {
     /// round-trip; `Lua` populates the name column but leaves the descriptor null.
     #[test]
     fn callee_info_dispatch_key_round_trips() {
-        use crate::facts::CallDispatchKey;
+        use crate::facts::{CallDispatchKey, CallDispatchKeyKind};
         let var = FlowVariable::default();
         let records: Vec<super::callee_info::Record> = vec![
             (
@@ -335,34 +335,36 @@ mod tests {
                 InsnId::new(10),
                 var,
                 Path::empty(),
-                CallDispatchKey::Java(
+                CallDispatchKeyKind::Java(
                     ctadl_ir::Symbol::from("doThing"),
                     ctadl_ir::Symbol::from("(I)V"),
-                ),
+                )
+                .into(),
             ),
             (
                 FunctionId::new(2),
                 InsnId::new(20),
                 var,
                 Path::empty(),
-                CallDispatchKey::C,
+                CallDispatchKey::c(),
             ),
             (
                 FunctionId::new(3),
                 InsnId::new(30),
                 var,
                 Path::empty(),
-                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+                CallDispatchKeyKind::Lua(ctadl_ir::Symbol::from("deposit")).into(),
             ),
             (
                 FunctionId::new(4),
                 InsnId::new(40),
                 var,
                 Path::empty(),
-                CallDispatchKey::Cil(
+                CallDispatchKeyKind::Cil(
                     ctadl_ir::Symbol::from("Parse"),
                     ctadl_ir::Symbol::from("(System.String)->System.Int32"),
-                ),
+                )
+                .into(),
             ),
         ];
 
@@ -378,32 +380,34 @@ mod tests {
     /// .NET CHA (`CilClass`/`Cil`) resolutions must all round-trip.
     #[test]
     fn callee_resolvents_round_trips() {
-        use crate::facts::CallDispatchKey;
+        use crate::facts::{CallDispatchKey, CallDispatchKeyKind};
         let records: Vec<super::callee_resolvents::Record> = vec![
             (
-                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
-                CallDispatchKey::Java(
+                CallTargetObjectKind::Symbol(ctadl_ir::Symbol::from("com/example/Foo")).into(),
+                CallDispatchKeyKind::Java(
                     ctadl_ir::Symbol::from("doThing"),
                     ctadl_ir::Symbol::from("(I)V"),
-                ),
+                )
+                .into(),
                 FunctionId::new(99),
             ),
             (
-                CallTargetObject::FunctionId(FunctionId::new(7)),
-                CallDispatchKey::C,
+                CallTargetObjectKind::FunctionId(FunctionId::new(7)).into(),
+                CallDispatchKey::c(),
                 FunctionId::new(7),
             ),
             (
-                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
-                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+                CallTargetObjectKind::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")).into(),
+                CallDispatchKeyKind::Lua(ctadl_ir::Symbol::from("deposit")).into(),
                 FunctionId::new(42),
             ),
             (
-                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
-                CallDispatchKey::Cil(
+                CallTargetObjectKind::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")).into(),
+                CallDispatchKeyKind::Cil(
                     ctadl_ir::Symbol::from("Parse"),
                     ctadl_ir::Symbol::from("(System.String)->System.Int32"),
-                ),
+                )
+                .into(),
                 FunctionId::new(43),
             ),
         ];

@@ -27,11 +27,21 @@ this.f = 1;
 is a write to an alias of a formal. The aliasing rule turns this into a summary where 1 flows
 to 0.f.
 
+# Interned values
+
+`Path`, `Str`, `CallTargetObject`, `CallDispatchKey` and [`DecisionSet`] are 4-byte handles into
+process-wide interners that never free. Before the fixpoint starts, building an index interns
+every `Path`, `Str`, `CallTargetObject` and `CallDispatchKey` the rules can produce: the path
+set's members and their splits ([`path_set`]), the paths the intent rules match by name, and
+`CallDispatchKey::c()`. The fixpoint only reads them, without a lock. Decision sets are the
+exception: lattice joins intern new ones during the fixpoint ([`decision`]). `profile.json`
+reports each interner's size, and how much the read-only ones grew during the fixpoint.
+
 */
 
 use std::num::NonZeroUsize;
 use std::path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use ascent::ascent_run;
 use ascent::ascent_source;
@@ -43,9 +53,9 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
-    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
-    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind,
-    PackedInsnSiteId, Path, Str,
+    CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVariableKind,
+    FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind,
+    IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
@@ -54,6 +64,7 @@ pub mod assign_like_trie;
 pub mod c_assign_like_trie;
 pub mod c_locals_trie;
 pub mod decision;
+pub mod dump;
 pub mod hybrid_set;
 pub mod locals_trie;
 pub mod notifications;
@@ -63,15 +74,20 @@ pub mod profile;
 pub mod source_info;
 
 // Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
-// them are `Copy`, fixed-width and free of padding; `Path` is an interned `&'static` pointer
-// whose interner is never freed, so its bits stay valid for the whole process, which is as long
-// as the provider's run files live.
-lsm::lsm_col!(FunctionId, 1);
-lsm::lsm_col!(FlowVariable, 1);
-lsm::lsm_col!(Path, 1);
-lsm::lsm_col!(FormalIndex, 1);
-lsm::lsm_col!(PackedInsnSiteId, 1);
-lsm::lsm_col!(FlowVertex, 2);
+// them are `Copy`, fixed-width and free of padding. `Path` and a local `FlowVariable`'s `Str` are
+// 4-byte ids into interners that never free, so their bits stay valid for the whole process,
+// which is as long as the provider's run files live.
+lsm::lsm_col!(FunctionId, 1, [u32]);
+lsm::lsm_col!(FlowVariable, 1, [u64], valid = FlowVariable::is_valid);
+lsm::lsm_col!(Path, 1, [std::num::NonZeroU32], valid = Path::is_valid);
+lsm::lsm_col!(FormalIndex, 1, [i16]);
+lsm::lsm_col!(PackedInsnSiteId, 1, [[u8; 8]]);
+lsm::lsm_col!(
+    FlowVertex,
+    2,
+    [FlowVariable, Path, crate::facts::VertexPad],
+    valid = FlowVertex::is_valid
+);
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
@@ -156,7 +172,7 @@ impl IndexFacts {
                 .map(|(site_id, formal_index, vertex)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
+                    let FlowVertex(variable, path, ..) = vertex;
                     (func_id, insn_id, *formal_index, *variable, *path)
                 }),
         )?;
@@ -175,8 +191,8 @@ impl IndexFacts {
                 .map(|(site_id, vertex, target)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, *variable, *path, target.clone())
+                    let FlowVertex(variable, path, ..) = vertex;
+                    (func_id, insn_id, *variable, *path, *target)
                 }),
         )?;
         callee_info::try_save(
@@ -186,8 +202,8 @@ impl IndexFacts {
                 .map(|(site_id, vertex, dispatch_key)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, *variable, *path, dispatch_key.clone())
+                    let FlowVertex(variable, path, ..) = vertex;
+                    (func_id, insn_id, *variable, *path, *dispatch_key)
                 }),
         )?;
         callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
@@ -217,7 +233,7 @@ impl IndexFacts {
                         (
                             site_id.try_into().expect("error packing site_id"),
                             formal_index,
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                         )
                     })
                     .collect(),
@@ -238,7 +254,7 @@ impl IndexFacts {
                         let site_id = InsnSiteId { func_id, insn_id };
                         (
                             site_id.try_into().expect("error packing site_id"),
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                             target,
                         )
                     })
@@ -251,7 +267,7 @@ impl IndexFacts {
                         let site_id = InsnSiteId { func_id, insn_id };
                         (
                             site_id.try_into().expect("error packing site_id"),
-                            FlowVertex(variable, path),
+                            FlowVertex::new(variable, path),
                             context,
                         )
                     })
@@ -649,10 +665,13 @@ impl IndexResult {
         external_function::try_save(&dir, self.external_function)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         intent_pair::try_save(&dir, self.intent_pair)?;
+        // After the tables, so the sizes include anything writing them interned.
+        let mut profile = self.stats.profile;
+        profile.memory.read_interned();
         let profile_path = dir.as_ref().join(profile::PROFILE_FILE);
         let file = std::fs::File::create(&profile_path)
             .err_context(|| format!("creating {}", profile_path.display()))?;
-        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &self.stats.profile)
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &profile)
             .err_context(|| format!("writing {}", profile_path.display()))?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
@@ -992,11 +1011,15 @@ pub trait EngineStores {
     fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
     /// Row counts of the store-backed relations.
     fn store_sizes(&self) -> StoreSizes;
-    /// One line per store about the heap it holds, where the storage reports one.
+    /// The `locals` store's heap report, where the storage keeps one.
+    fn locals_heap_report(&self) -> Option<locals_trie::HeapReport>;
+    /// One line per other store about the heap it holds, where the storage reports one.
     fn heap_reports(&self) -> Vec<String>;
     /// The distinct `(f, v)` that `locals` reaches.
     fn num_reached_variables(&self) -> usize;
     fn locals_probe(&self) -> &dyn LocalsProbe;
+    /// Writes the store-backed relations, whose fields hold no rows, to `dump`.
+    fn dump_stores(&self, dump: &mut dump::RelationDump<'_>);
 }
 
 pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
@@ -1046,7 +1069,7 @@ pub fn dropped_compositions(
     let mut rows = context_locals.stream();
     while let Some((f, v, p, a, p4, ds)) = rows.next() {
         let mut hit: Option<DecisionSet> = None;
-        for (key, _) in &path_set.splits(p).exact {
+        for (key, _) in path_set.splits(p).exact {
             if let Some(e) = edge_src.get(&(*f, *v, *key)) {
                 hit = Some(hit.map_or(*e, |h| h.union(*e)));
             }
@@ -1152,14 +1175,14 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         let mut rows = self.call_target_assign_like.stream();
         while let Some((func_id, var, path, tgt)) = rows.next() {
             let name = func_name(self.id_map, *func_id);
-            let tgt_str = match tgt {
-                CallTargetObject::FunctionId(tgt) => {
+            let tgt_str = match tgt.kind() {
+                CallTargetObjectKind::FunctionId(tgt) => {
                     let tgt_name = func_name(self.id_map, *tgt);
                     format!("ptr {}({})", tgt_name, tgt.id)
                 }
-                CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
-                CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
-                CallTargetObject::CilClass(cls) => format!("cil<{cls}>"),
+                CallTargetObjectKind::Symbol(cls) => format!("java<{cls}>"),
+                CallTargetObjectKind::LuaClass(cls) => format!("lua<{cls}>"),
+                CallTargetObjectKind::CilClass(cls) => format!("cil<{cls}>"),
             };
 
             writeln!(
@@ -1311,6 +1334,14 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
+/// `<component>`, the path of an intent's target component.
+pub static COMPONENT_PATH: LazyLock<Path> =
+    LazyLock::new(|| Path::from_symbol_names(["<component>"]));
+/// `<action>`, the path of an intent's action.
+pub static ACTION_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_names(["<action>"]));
+/// `<type>`, the path of an intent's MIME type.
+pub static TYPE_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_names(["<type>"]));
+
 /// Computes `paths`, the admissible access paths: the syntactic program paths, the paths the
 /// input summaries mention, and each one-level concatenation of the two. Its own small
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
@@ -1376,8 +1407,9 @@ ascent_source! {
 
     // Analysis drivers:
 
-    // Set of syntactic access paths. Computed before the run by `compute_paths`; `path_set`
-    // holds the same set as a [`PathSet`], for the rules that test a concatenation.
+    // Set of syntactic access paths. Computed before the run by `compute_paths`, and read by no
+    // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`],
+    // which every rule that tests or splits a path asks.
     relation paths(Path);
     relation path_set(PathSetRef);
     relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -1486,22 +1518,24 @@ ascent_source! {
     locals_key(f, v, key, rest, p) <--
         reach_vp(f, v, p),
         path_set(ps),
-        for (key, rest) in &ps.splits(p).exact;
+        for (key, rest) in ps.splits(p).exact;
     relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
     locals_key_wild(f, v, key, rest, p) <--
         reach_vp(f, v, p),
         path_set(ps),
-        for (key, rest) in &ps.splits(p).wild;
+        for (key, rest) in ps.splits(p).wild;
     // A `locals` path ending in an offset, keyed without it, for the wild match.
     relation locals_wild(FunctionId, FlowVariable, Path, i64, Path);
     locals_wild(f, v, key, m, p) <--
         reach_vp(f, v, p),
-        if let Some((key, m)) = p.split_trailing_offset();
+        path_set(ps),
+        if let Some((key, m)) = ps.split_trailing_offset(p);
     // An edge whose source path ends in an offset, keyed without it, for the wild match.
     relation assign_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path);
     assign_wild(f, v2, key, m, v1, p1) <--
         assign_like(f, v1, p1, v2, p2),
-        if let Some((key, m)) = p2.split_trailing_offset();
+        path_set(ps),
+        if let Some((key, m)) = ps.split_trailing_offset(p2);
     // The exact and wild keys of an edge's source path. The destination vertex rides as one
     // tuple column so that the relation fits the `locals` store's five-column shape.
     #[ds($crate::index_engine::locals_trie)]
@@ -1509,12 +1543,12 @@ ascent_source! {
     edge_split(f, v2, key, rest, (*v1, *p1)) <--
         assign_like(f, v1, p1, v2, p2),
         path_set(ps),
-        for (key, rest) in &ps.splits(p2).exact;
+        for (key, rest) in ps.splits(p2).exact;
     relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
     edge_split_wild(f, v2, key, rest, v1, p1) <--
         assign_like(f, v1, p1, v2, p2),
         path_set(ps),
-        for (key, rest) in &ps.splits(p2).wild;
+        for (key, rest) in ps.splits(p2).wild;
 
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
     // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)
@@ -1574,7 +1608,7 @@ ascent_source! {
         actual_param(call_site_slice, n, vx),
         let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
         let cv = call_arg!(insn_id, *n),
-        let FlowVertex(v, p) = vx;
+        let FlowVertex(v, p, ..) = vx;
 
     // Compute assignments from summaries
     assign_like(func_id, v1, p1, v2, p2) <--
@@ -1593,20 +1627,19 @@ ascent_source! {
         intent_frame(func_id),
         const_reaches(func_id, v2, p_context, s),
         assign_like(func_id, v1, p1, v2, p2),
-        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
         path_set(ps),
-        if ps.contains(&p_new);
+        if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
 
     intent_pair(func_id, bridge_insn, recv, IntentPairKind::Explicit) <--
         intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let component_path = Path::from_symbol_names(["<component>"]),
+        let component_path = *COMPONENT_PATH,
         let arg = call_arg!(*send_insn, *n),
         const_reaches(func_id, arg, component_path, cls),
         intent_component(cls, kind, recv);
 
     intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
         intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let action_path = Path::from_symbol_names(["<action>"]),
+        let action_path = *ACTION_PATH,
         let arg = call_arg!(*send_insn, *n),
         const_reaches(func_id, arg, action_path, action),
         intent_filter(action, filter_mime, kind, recv),
@@ -1614,8 +1647,8 @@ ascent_source! {
 
     intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
         intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let action_path = Path::from_symbol_names(["<action>"]),
-        let type_path = Path::from_symbol_names(["<type>"]),
+        let action_path = *ACTION_PATH,
+        let type_path = *TYPE_PATH,
         let arg = call_arg!(*send_insn, *n),
         const_reaches(func_id, arg, action_path, action),
         const_reaches(func_id, arg, type_path, mime),
@@ -1672,7 +1705,7 @@ ascent_source! {
         critical_summary(tgt, n_tgt, p_tgt),
         let arg = call_arg!(*caller_insn_id, *n_tgt),
         path_set(ps),
-        for (key, rest) in &ps.splits(p_tgt).exact,
+        for (key, rest) in ps.splits(p_tgt).exact,
         locals(caller_func_id, arg, key, n, p_n),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
     critical_summary(caller_func_id, n, p_nr) <--
@@ -1680,7 +1713,7 @@ ascent_source! {
         critical_summary(tgt, n_tgt, p_tgt),
         let arg = call_arg!(*caller_insn_id, *n_tgt),
         path_set(ps),
-        for (key, rest) in &ps.splits(p_tgt).exact,
+        for (key, rest) in ps.splits(p_tgt).exact,
         locals(caller_func_id, arg, key, n, p_n),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
 
@@ -1723,13 +1756,13 @@ ascent_source! {
         call(g, insn, f),
         let arg = call_arg!(*insn, *n),
         path_set(ps),
-        for (key, rest) in &ps.splits(p).exact;
+        for (key, rest) in ps.splits(p).exact;
     critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         fnptr_call(g, insn, f),
         let arg = call_arg!(*insn, *n),
         path_set(ps),
-        for (key, rest) in &ps.splits(p).exact;
+        for (key, rest) in ps.splits(p).exact;
     relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
     critical_reach(g, n2, p2r, f, insn, n, p) <--
         locals(g, arg, key, n2, p2),
@@ -1790,7 +1823,7 @@ ascent_source! {
     fnptr_call(caller, insn, callee) <--
         resolved_call(caller, insn, callee),
         callee_info(caller, insn, _, _, key),
-        if *key == CallDispatchKey::C;
+        if *key == CallDispatchKey::c();
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -1939,19 +1972,20 @@ ascent_source! {
     ctx_edge_wild(f, v2, key, m, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
         if !decision::spills(*ds),
-        if let Some((key, m)) = p2.split_trailing_offset();
+        path_set(ps),
+        if let Some((key, m)) = ps.split_trailing_offset(p2);
     lattice ctx_edge_split(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
     ctx_edge_split(f, v2, key, rest, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
         if !decision::spills(*ds),
         path_set(ps),
-        for (key, rest) in &ps.splits(p2).exact;
+        for (key, rest) in ps.splits(p2).exact;
     lattice ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
     ctx_edge_split_wild(f, v2, key, rest, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
         if !decision::spills(*ds),
         path_set(ps),
-        for (key, rest) in &ps.splits(p2).wild;
+        for (key, rest) in ps.splits(p2).wild;
     lattice ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
     ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
         locals_key(f, v2, key, rest, p23),
@@ -2042,7 +2076,7 @@ ascent_source! {
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
     // downstream, where the call is actually resolved.
     call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-        call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+        call_target_assign(func_id, vx, tgt), let FlowVertex(v, p, ..) = vx,
         tag_closure_func(func_id);
 
     call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
@@ -2050,8 +2084,8 @@ ascent_source! {
         tag_closure_func(func_id),
         call_target_assign_like(func_id, v2, p_context, tgt),
         assign_like(func_id, v1, p1, v2, p2),
-        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-        paths(&p_new);
+        path_set(ps),
+        if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
 
     call_target_assign_like(func_id, x.clone(), p.clone(), tgt) <--
         tag_closure_func(func_id),
@@ -2274,11 +2308,11 @@ impl<'a> EngineInput<'a> {
             facts
                 .actual_param
                 .iter()
-                .map(|(_, _, FlowVertex(_, p))| (*p,)),
+                .map(|(_, _, FlowVertex(_, p, ..))| (*p,)),
         );
         // The receiver access path of an indirect / virtual call is also a syntactic program path.
         // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
-        // version of the receiver (the transitive rules gate on `paths(p_new)`). Without this, a
+        // version of the receiver (the transitive rules gate on the path set). Without this, a
         // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or
         // `fps[0]=id; fps[1]=id; fps[0](s)`) creates a new receiver version whose call path was
         // never an `actual_param`, so the binding fails to reach the call and taint is dropped.
@@ -2286,7 +2320,7 @@ impl<'a> EngineInput<'a> {
             facts
                 .callee_info
                 .iter()
-                .map(|(_, FlowVertex(_, p), _)| (*p,)),
+                .map(|(_, FlowVertex(_, p, ..), _)| (*p,)),
         );
         let paths = compute_paths(
             all_program_paths.into_iter().collect(),
@@ -2294,6 +2328,14 @@ impl<'a> EngineInput<'a> {
             deref_paths,
         );
         let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
+        debug_assert!(
+            path_set.len() == paths.len() && paths.iter().all(|(p,)| path_set.contains(p)),
+            "the paths relation and the path set differ"
+        );
+        // The paths the intent rules match by name: intern them here, not mid-run.
+        for p in [&COMPONENT_PATH, &ACTION_PATH, &TYPE_PATH] {
+            LazyLock::force(p);
+        }
         log::debug!(
             "[mem cp] + paths ({} rows), about to enter ascent_run: {:.1} MB",
             paths.len(),
@@ -2339,8 +2381,8 @@ impl<'a> EngineInput<'a> {
 /// included, so each engine crate glob-imports this.
 pub mod rules_prelude {
     pub use super::{
-        ContextJoin, Decision, DecisionId, DecisionSet, HybridContext, IndexConfig, decision,
-        mime_matches,
+        ACTION_PATH, COMPONENT_PATH, ContextJoin, Decision, DecisionId, DecisionSet, HybridContext,
+        IndexConfig, TYPE_PATH, decision, mime_matches,
     };
     pub use crate::call_arg;
     pub use crate::facts::{
@@ -2385,17 +2427,34 @@ macro_rules! trie_stores {
                     ext_dst: self.__ext_dst_ind_common.len(),
                 }
             }
+            fn locals_heap_report(&self) -> Option<$crate::index_engine::locals_trie::HeapReport> {
+                Some(self.__locals_ind_common.heap_report())
+            }
             fn heap_reports(&self) -> Vec<String> {
-                vec![
-                    self.__locals_ind_common.heap_report().to_string(),
-                    self.__assign_like_ind_common.heap_report().to_string(),
-                ]
+                vec![self.__assign_like_ind_common.heap_report().to_string()]
             }
             fn num_reached_variables(&self) -> usize {
                 self.__locals_ind_common.num_reached_variables()
             }
             fn locals_probe(&self) -> &dyn $crate::index_engine::LocalsProbe {
                 &self.__locals_ind_common
+            }
+            fn dump_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
+                dump.relation("locals", |w| {
+                    self.__locals_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("locals_key", |w| {
+                    self.__locals_key_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("edge_split", |w| {
+                    self.__edge_split_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("assign_like", |w| {
+                    self.__assign_like_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("ext_dst", |w| {
+                    self.__ext_dst_ind_common.for_each_row(|r| w.row(&r))
+                });
             }
         }
     };
@@ -2485,10 +2544,20 @@ macro_rules! run_engine {
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
         prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
+        // `fnptr_call` compares against `C`'s handle: intern it here, not mid-run.
+        $crate::facts::CallDispatchKey::c();
 
+        let interned_before = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
         let fixpoint_start = std::time::Instant::now();
         let reached_fixpoint = prog.run_timeout(index_timeout);
         let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
+        let interned_after = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
+        if path_set.split_misses() > 0 {
+            log::warn!(
+                "the path set was asked to split {} non-member path(s); their wild rows are missing",
+                path_set.split_misses()
+            );
+        }
         if !reached_fixpoint {
             log::warn!(
                 "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
@@ -2524,7 +2593,8 @@ macro_rules! run_engine {
             sizes.locals_key,
             sizes.ext_dst
         );
-        let profile = $crate::index_engine::profile::IndexProfile {
+        let locals_heap = prog.locals_heap_report();
+        let mut profile = $crate::index_engine::profile::IndexProfile {
             reached_fixpoint,
             timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
             fixpoint_secs,
@@ -2557,8 +2627,29 @@ macro_rules! run_engine {
             sizes.ext_dst,
             prog.ext_fml.len()
         );
+        if let Some(report) = &locals_heap {
+            log::debug!("{report}");
+        }
         for report in prog.heap_reports() {
             log::debug!("{report}");
+        }
+        profile.memory.locals = locals_heap;
+        profile.memory.fixpoint_interned = interned_after
+            .into_iter()
+            .map(|(name, n)| (name, n - interned_before[name]))
+            .collect();
+        profile.memory.interned.insert(
+            "PathSet",
+            $crate::index_engine::profile::Stats {
+                entries: path_set.len(),
+                bytes: path_set.bytes(),
+            },
+        );
+        profile.split_misses = path_set.split_misses();
+        if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
+            $crate::dump_relations!(&mut dump, prog);
+            prog.dump_stores(&mut dump);
+            dump.finish(&prog.relation_sizes_summary());
         }
         log::trace!(
             "hybrid inlining relations:\n{}",
