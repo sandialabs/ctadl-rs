@@ -142,13 +142,13 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
 }
 
 /// A shape error in one file must not suppress the other file's report -- nor the rest of its
-/// own file's, including generators in *later* batches. The loader processes 1024 generators at
-/// a time, and the abort-on-error entry point never reaches the batch after a bad one.
+/// own file's, however far past the bad generator the rest goes: the model check leaves a
+/// generator that does not migrate out and checks every other one.
 #[test]
 fn an_error_in_one_file_does_not_suppress_the_others() {
-    // > 1024 generators, so the last one is in the third batch, well past the error in the
-    // first. The typo (`wehre`) is a hard error the matcher collects rather than a parse
-    // failure, so everything after it was still visited.
+    // Over two thousand generators, the last well past the error in the first. The typo
+    // (`wehre`) fails that generator's migration rather than the file's parse, so everything
+    // after it is still checked.
     let mut generators = vec![
         r#"{"find": "methods", "wehre": [], "model": {"sinks": [{"kind": "k", "port": "Return"}]}}"#
             .to_string(),
@@ -188,9 +188,9 @@ fn an_error_in_one_file_does_not_suppress_the_others() {
             .find(|m| m.file == path && m.index == index)
             .unwrap_or_else(|| panic!("no match reported for generator {index}"))
     };
-    // The generator after the bad one, in the same batch...
+    // The generator after the bad one...
     assert_eq!(matched_in(bad.path(), 1).total, 1);
-    // ... and the last one, three batches later: the stats the abort-on-error loader discards.
+    // ... and the last one.
     assert_eq!(matched_in(bad.path(), 2100).total, 1);
     // The second file is untouched.
     assert_eq!(matched_in(good.path(), 0).total, 1);
@@ -201,7 +201,7 @@ fn an_error_in_one_file_does_not_suppress_the_others() {
 ///
 /// The verdict no longer says which side failed. The bridge is a migrated rule whose body
 /// joins both sides, so all the engine knows is that the rule paired nothing; the JSON
-/// matcher's per-side `diagnose` is gone with it.
+/// matcher's per-side verdict went with it.
 #[test]
 fn an_unmatched_bridge_side_is_diagnosed() {
     let file = model_file(

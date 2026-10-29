@@ -20,7 +20,6 @@ pub mod spec;
 pub mod stats;
 
 pub use dsl::{DslFile, DslMatcher, DslModelSet, DslReport, Phase as DslPhase, is_dsl_path};
-pub use json_schema::FindMethod;
 pub use match_index::{DispatchKeys, ProgramMatchIndex};
 pub use matches::{
     DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort, ProgramModelMatches,
@@ -178,7 +177,7 @@ pub fn default_dsl_models(
 /// Whether the built-in defaults for a program with this [`VirtualMethodTable`] ask for the
 /// call-site signature keys.
 ///
-/// The other half of the gate [`ModelFileSpecs::finds_dispatch`](spec::ModelFileSpecs) opens:
+/// The other half of the gate [`DslModelSet::uses_callsig`] opens for the `--models` files:
 /// together they decide whether an import pays for collecting its call sites' signature keys.
 ///
 /// Read off the DSL defaults, because those are what [`try_load_default_models`] runs.

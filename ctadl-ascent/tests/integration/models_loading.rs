@@ -81,7 +81,7 @@ fn test_load_models_json5() {
 /// `endpoint_stats`, so an index that restarted part-way would both misname generators and
 /// collide their match counts.
 #[test]
-fn test_load_models_across_batch_boundary() {
+fn test_load_models_keeps_every_generator_index() {
     const COUNT: usize = 1030;
     let program_info = ProgramInfo::default();
     let mut file = NamedTempFile::new().unwrap();
@@ -108,7 +108,7 @@ fn test_load_models_across_batch_boundary() {
     assert_eq!(
         indices.len(),
         COUNT,
-        "every generator should be accounted for, including #1025"
+        "every generator should be accounted for"
     );
     assert_eq!(indices.first().copied(), Some(0));
     assert_eq!(indices.last().copied(), Some(COUNT - 1));
