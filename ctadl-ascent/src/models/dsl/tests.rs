@@ -482,6 +482,131 @@ fn migrates_extends_through_subclass() {
     assert!(text.contains(r#"= "Lb/Base;""#), "{text}");
 }
 
+/// The JSON's `parent` and `extends` read the Java and CIL method tables only; the DSL's also
+/// see Lua's metatable classes, so the migrated atom says which tables it means.
+#[test]
+fn a_class_predicate_names_the_tables_it_reads() {
+    let text = migrate_and_load(
+        r#"{"find":"methods",
+            "where":[{"constraint":"parent",
+                      "inner":{"constraint":"signature_match","name":"Lb/Base;"}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(
+        text.contains(
+            r#"fun(F, parent = P0, method_table in {"java", "cil"}),
+  P0 = "Lb/Base;""#
+        ),
+        "{text}"
+    );
+    // A signature key's class is the call site's, which the JSON reads on any frontend.
+    let text = migrate_and_load(
+        r#"{"find":"dispatch",
+            "where":[{"constraint":"parent","inner":{"constraint":"name","pattern":"^Lb/"}}],
+            "model":{"closure_shaped":true}}"#,
+    );
+    assert!(text.contains("callsig(K, parent = P0),"), "{text}");
+    assert!(!text.contains("method_table"), "{text}");
+}
+
+/// One supertype has to satisfy the whole predicate, so the predicate is one formula over one
+/// bound class rather than a rule-level conjunction with a class per leaf.
+#[test]
+fn an_extends_all_of_binds_one_supertype() {
+    let (text, report) = migrate_one(
+        r#"{"find":"methods",
+            "where":[{"constraint":"extends","inner":{"constraint":"all_of","inners":[
+                {"constraint":"signature_match","name":"La;"},
+                {"constraint":"not","inner":{"constraint":"name","pattern":"b"}}]}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    check_ok(&text);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(report.rules, 1, "{text}");
+    assert_eq!(text.matches("subclass(").count(), 1, "{text}");
+    assert!(
+        text.contains(
+            r#"subclass(P0, Sup1),
+  Sup1 = "La;",
+  !regex_match(Sup1, "b")"#
+        ),
+        "{text}"
+    );
+}
+
+/// `not`, `any_of` and `all_of` nest inside a class predicate as an expression, and the whole of
+/// it goes under an outer `not` as one negated group.
+#[test]
+fn a_class_predicate_nests_and_negates_as_one_formula() {
+    let text = migrate_and_load(
+        r#"{"find":"methods",
+            "where":[{"constraint":"not","inner":{"constraint":"parent","inner":
+                {"constraint":"any_of","inners":[
+                    {"constraint":"not","inner":{"constraint":"signature_match","name":"La;"}},
+                    {"constraint":"all_of","inners":[
+                        {"constraint":"name","pattern":"^Lp/"},
+                        {"constraint":"signature_match","names":["Lb;","Lc;"]}]}]}}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(
+        text.contains(
+            r#"!(fun(F, parent = P0, method_table in {"java", "cil"}) && (P0 != "La;" || (regex_match(P0, "^Lp/") && P0 in {"Lb;", "Lc;"})))"#
+        ),
+        "{text}"
+    );
+}
+
+/// An empty `all_of` holds of every class and an empty `any_of` of none, as in the JSON; the
+/// first still needs there to *be* a class.
+#[test]
+fn empty_class_combinators_fold() {
+    let text = migrate_and_load(
+        r#"{"find":"methods",
+            "where":[{"constraint":"parent","inner":{"constraint":"all_of","inners":[]}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(
+        text.contains(r#"fun(F, parent = _, method_table in {"java", "cil"});"#),
+        "{text}"
+    );
+    let text = migrate_and_load(
+        r#"{"find":"methods",
+            "where":[{"constraint":"not","inner":{"constraint":"extends",
+                      "inner":{"constraint":"all_of","inners":[]}}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(
+        text.contains(
+            r#"!(fun(F, parent = P0, method_table in {"java", "cil"}) && subclass(P0, _))"#
+        ),
+        "{text}"
+    );
+    let text = migrate_and_load(
+        r#"{"find":"methods",
+            "where":[{"constraint":"parent","inner":{"constraint":"any_of","inners":[]}}],
+            "model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
+    );
+    assert!(text.contains(r#""" = "unsatisfiable""#), "{text}");
+}
+
+/// What the JSON loader rejects inside a class predicate is reported, not translated.
+#[test]
+fn a_malformed_class_predicate_is_reported() {
+    for inner in [
+        r#"{"constraint":">","value":1}"#,
+        r#"{"constraint":"signature_match"}"#,
+        r#"{"constraint":"signature_match","name":"La;","parent":"Lb;"}"#,
+        r#"{"constraint":"name"}"#,
+        r#"{"constraint":"not"}"#,
+    ] {
+        let (_, report) = migrate_one(&format!(
+            r#"{{"find":"methods","where":[{{"constraint":"parent","inner":{inner}}}],
+                "model":{{"sinks":[{{"kind":"k","port":"Argument(0)"}}]}}}}"#
+        ));
+        assert!(!report.warnings.is_empty(), "no warning for {inner}");
+    }
+}
+
 #[test]
 fn migrates_callsites_through_the_callsite_relation() {
     let text = migrate_and_load(

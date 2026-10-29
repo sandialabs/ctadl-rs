@@ -6,6 +6,7 @@ mod common;
 mod absorbing_functions;
 mod bridging_end_to_end;
 mod bridging_models;
+mod class_predicates;
 mod cli;
 mod default_models;
 mod determinism;
