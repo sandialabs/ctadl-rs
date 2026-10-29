@@ -13,9 +13,10 @@ and 5) and a pcode frontend fix found through them: taking a frame address no lo
 frame. That fix alone brings `ntfs-3g` from 30x over budget to budget and cuts `androidudpbus`'s
 peak by a quarter at the default (S29). Merging #170 then cuts every measured peak by 22-61%
 and changes no relation count or finding (S29, "After merging `main`'s interning"). With S29's
-step 3, mem2reg on frame updates, `--frame update` beats the default on all four binaries but
-`uclited`, where it ties, and brings `androidudpbus` under budget (S29, "Step 3"). The default is
-still `--frame store`. `improve-native-handling` has the earlier record:
+step 3, mem2reg on frame updates, `--frame update` beats `--frame store` on all four binaries
+but `uclited`, where it ties, and brings `androidudpbus` under budget (S29, "Step 3"); across 45
+more firmware binaries and the whole regression suite it changes no finding. It is the default
+since `b696edc1`. `improve-native-handling` has the earlier record:
 `things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
@@ -24,10 +25,10 @@ still `--frame store`. `improve-native-handling` has the earlier record:
   suite fails on a lost flow instead of skipping on Darwin).
 - **S5** is on this branch. `ctadl index --mem2reg <policy>` (or `CTADL_MEM2REG`) picks the
   policy: `window:N`, `exact`, `above`, `full[:N]` or `off`.
-- **S29 steps 1, 2, 3 and 5** are on this branch: pcode writes the frame as `Update`,
-  `ctadl index --frame store` (the default; `CTADL_FRAME`) coarsens it back to `Store`, and
-  under `--frame update` mem2reg promotes the slots no escape reaches and an update overwrites
-  the slot it writes. See S29.
+- **S29 steps 1, 2, 3 and 5** are on this branch: pcode writes the frame as `Update`; under
+  `ctadl index --frame update` (the default; `CTADL_FRAME`) mem2reg promotes the slots no escape
+  reaches and an update overwrites the slot it writes, and `--frame store` coarsens every update
+  back to `Store`, the pipeline before S29. See S29.
 - **The PTRSUB fix** (`6b0ab678`): the pcode frontend no longer lowers taking a frame address
   as a write into the frame. It changes the default IR; see S29.
 - **Optional, for native apps that also link libc++abi's demangler** (P4, not P1): `bb9cc766`
@@ -104,24 +105,22 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
 
 ## Current state
 
-**Since the PTRSUB fix** (S29, "Taking a frame address no longer writes the frame") and merging
-`main`'s interning (#170), the default (`--frame store`, `window:8`) is, same settings as the
-table below:
+**Since `--frame update` became the default** (S29, "Step 3"), after the PTRSUB fix (S29,
+"Taking a frame address no longer writes the frame") and merging `main`'s interning (#170), the
+default (`--frame update`, `window:8`) is, same settings as the table below:
 
-| App | `locals` | Fixpoint | Peak | Against budget | Before #170 | Before the fix |
-|---|---|---|---|---|---|---|
-| `uclited` | 40.4 M | 9.9 s | 0.65 GiB | 3.5x over | 1.24 GiB, 6.7x | 41.4 M, 1.21 GiB |
-| `ntfs-3g` | 5.0 M | 2.9 s | 0.39 GiB | **under (0.8x)** | 0.50 GiB, 1.0x | 283.8 M, 14.93 GiB |
-| `glxy` | 85.0 M | 36 s | 2.25 GiB | 1.6x over | 3.79 GiB, 2.7x | 100.4 M, 4.10 GiB |
-| `androidudpbus` | 289.6 M | 93 s | 6.53 GiB | 2.5x over | 9.88 GiB, 3.8x | 337.9 M, 13.31 GiB |
+| App | `locals` | Fixpoint | Peak | Against budget | `--frame store` | Before #170 (`store`) | Before the fix |
+|---|---|---|---|---|---|---|---|
+| `uclited` | 40.7 M | 9.3 s | 0.67 GiB | 3.6x over | 40.4 M, 0.66 GiB | 1.24 GiB, 6.7x | 41.4 M, 1.21 GiB |
+| `ntfs-3g` | 4.3 M | 2.2 s | 0.32 GiB | **under (0.6x)** | 5.0 M, 0.40 GiB | 0.50 GiB, 1.0x | 283.8 M, 14.93 GiB |
+| `glxy` | 76.6 M | 32 s | 2.12 GiB | 1.5x over | 85.0 M, 2.25 GiB | 3.79 GiB, 2.7x | 100.4 M, 4.10 GiB |
+| `androidudpbus` | 41.9 M | 44 s | 2.25 GiB | **under (0.86x)** | 289.6 M, 6.61 GiB | 9.88 GiB, 3.8x | 337.9 M, 13.31 GiB |
 
-The rest of this section, and the firmware sections after it, are from before the fix and before
-#170, so their peaks are higher than today's; #170 changes no row count. `exact`, `full` and
-`full:0` have not been re-run with either, nor have the other binaries.
-
-**Under `--frame update`** (S29, "Step 3"), `androidudpbus` falls to 41.9 M rows and 2.25 GiB,
-**under budget (0.86x)**, and `glxy` to 76.6 M and 2.12 GiB (1.5x). `ntfs-3g` falls to 4.3 M and
-`uclited` stays at 40.7 M. Every finding is the same.
+Every finding is the same under both `--frame` settings. The rest of this section, and the
+firmware sections after it, are from before the fix, before #170 and under `--frame store`, so
+their peaks are higher than today's; #170 changes no row count. `exact`, `full` and `full:0` have
+not been re-run with them, nor have the other binaries; the 45-binary sweep in S29 has the other
+firmware binaries under both `--frame` settings.
 
 The table above (Measurements) is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
 with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`. The budget is 100x
@@ -381,7 +380,7 @@ query could see named it. Two causes, both fixed:
 After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function (`main` or
 `handler`).
 
-## S29: the frame as `Update`, coarsened by default
+## S29: the frame as `Update`, versioned by default
 
 Steps 1, 2, 3 and 5 of S29 (Ideas for solutions) are done. The current numbers are under
 "Step 3" for `update` and "After merging `main`'s interning" for the default; "Taking a frame
@@ -393,8 +392,9 @@ address no longer writes the frame" has the same runs before that merge and befo
   the frame address, a loaded pointer) is a `Store`, as before.
 - **The pipeline's first pass**, `coarsen_frame_updates`, turns each frame update back into the
   store it stands for, before dead-temp elimination, coalescing and mem2reg, which then see the IR
-  they saw before. `ctadl index --frame store|update` (`CTADL_FRAME`) picks the default, `store`;
-  model modes `frame-store` and `frame-update` pick one for one function.
+  they saw before. It runs only under `ctadl index --frame store`; `--frame update` (`CTADL_FRAME`)
+  keeps the updates and is the default since `b696edc1`. Model modes `frame-store` and
+  `frame-update` pick one for one function.
 - **mem2reg** (step 3) treats a frame update as a direct store to its slot. A slot it promotes
   becomes a local, and its updates become copies; a slot an escape reaches (under `--mem2reg`'s
   policy) keeps its updates, so SSA versions the frame for the slots left in it.
@@ -478,7 +478,8 @@ runs are in `/Volumes/Shampoo/s29/sweep` (`one.sh`, `summary.py`, `summary.txt`)
 
 `update` never cost a finding or more than noise in memory on these 49 binaries and the
 regression suite, and it is where the stack is the hub that it pays: `androidudpbus` under
-budget, the `ntfs` tools 13-38% smaller.
+budget, the `ntfs` tools 13-38% smaller. So it is the default since `b696edc1`; the regression
+suite passes 250 of 253 with no `CTADL_FRAME` set, the same three expected failures.
 
 ### Step 5: the overwrite rule
 
@@ -896,11 +897,10 @@ What it would and would not do:
   above).
 - **The cost is measured** (S29 above). With steps 1, 2, 3 and 5 and the PTRSUB fix, `update`
   with `window:8` beats today's default on `androidudpbus` (under budget), `glxy` and `ntfs-3g`,
-  and ties on `uclited`, with the same findings. Step 2 is the valve, and it stays on (coarsen
-  all) until `update` beats today; it now does on these four.
-- **Next:** decide whether `--frame update` becomes the default, after the regression suite's
-  wider frontends (`android-native`) and more native binaries; and measure `full` under
-  `update`. Making the escaped slots sound (`above`) at an affordable cost needs a better bound
+  and ties on `uclited`, with the same findings, and across 45 more firmware binaries and the
+  whole regression suite it changes no finding. It is the default since `b696edc1`; step 2
+  (`--frame store`) stays as the valve, globally or per function.
+- **Next:** making the escaped slots sound (`above`) at an affordable cost needs a better bound
   on what an escaped address reaches than "every slot above it".
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
