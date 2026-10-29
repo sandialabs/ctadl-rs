@@ -467,7 +467,10 @@ impl<'a> Machine<'a> {
                 Access::Column(i) => match self.column_key(atom, *i) {
                     Some(f) => self.each(
                         atom,
-                        facts.uses_field_of(f).iter().map(|&r| Row::UsesField(r as usize)),
+                        facts
+                            .uses_field_of(f)
+                            .iter()
+                            .map(|&r| Row::UsesField(r as usize)),
                         k,
                     ),
                     None => true,
@@ -698,6 +701,9 @@ impl<'a> Machine<'a> {
                     // per-function ones, as zero spellings or one.
                     Attr::Language => AttrValues::Strs(Spellings::of(facts.language.as_slice())),
                     Attr::Import => AttrValues::Strs(Spellings::of(facts.import.as_slice())),
+                    Attr::MethodTable => {
+                        AttrValues::Strs(Spellings::of(facts.method_table.as_slice()))
+                    }
                     Attr::Arity => row
                         .arity
                         .map_or(AttrValues::Missing, |a| AttrValues::One(Value::Int(a))),

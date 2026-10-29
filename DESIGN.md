@@ -309,7 +309,7 @@ Everything the design specifies is in:
 
 | | |
 | --- | --- |
-| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
+| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`, `method_table`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
 | **Output relations** | `source` (`kind`, `saturating`), `sink` (`kind`, `wildcard`), `propagation`, `bridge`, `access_paths` |
 | **Ports** | `return`, `arg(0)`, `arg(_)`, `arg(I)`, `arg(0).foo[2]`, `arg(4)."weird.field[0]"`, anchored as `F::port` |
 | **Flows** | `A -> B`, `A <- B`, `A <-> B` |
@@ -435,7 +435,7 @@ which makes the translation exact: `any_of` was already a union over the matched
 | `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)` |
 | `has_code`, `number_parameters` | `fun(F, has_code = …)`, `fun(F, arity <op> …)` |
 | `uses_field` | `uses_field(F, …)` |
-| `parent` / `extends` | `fun(F, parent = P)`, plus `subclass(P, S)` for `extends` |
+| `parent` / `extends` | `fun(F, parent = P, method_table in {"java", "cil"})` and one formula over `P`, plus `subclass(P, S)` for `extends`, over `S` |
 | `any_of` | several rules with the same head |
 | `not` | `!atom`, or `!(a && b)` when the constraint needs two atoms |
 | `in_function` | constraints on `C`, the caller column of `callsite` |
