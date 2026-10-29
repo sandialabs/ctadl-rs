@@ -205,6 +205,11 @@ impl Context {
     /// `__stack_top = update (__stack_top.[k].deref := src)`, so that SSA can version the frame.
     /// The pipeline coarsens it into a store unless told otherwise (see
     /// `ctadl_ir::ssa::FrameWrites`).
+    ///
+    /// A `dest` that is a frame address, `__stack_top.[k]`, writes nothing. It comes from a
+    /// register or temporary that holds the address (the stack pointer, or `&local` that constant
+    /// propagation resolved), and every read of that varnode resolves to the address too
+    /// ([`Self::convert_vnode`]). Writing it to the slot at that address would overwrite the slot.
     fn push_assign_or_store(
         &mut self,
         stmts: &mut Vec<Statement>,
@@ -213,6 +218,11 @@ impl Context {
         locals: &mut Locals,
     ) {
         if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
+            if let Variable::Local(base) = dest.base.variable
+                && locals.name(base) == ssa::STACK_TOP
+            {
+                return;
+            }
             dest.push_deref();
         }
         if let Variable::Local(base) = dest.base.variable
