@@ -184,7 +184,7 @@ const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that rec
 // `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
 // describes what running it *did*. See `notification_descriptors` for the message
 // strings, and `build_invocation` for the conditions. Ids from `CTADL0104` on belong to the
-// index's notifications (`ctadl_import::notifications`), which the run carries as they are.
+// index's notifications (`ctadl_import::notifications`).
 const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
 const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
 const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";

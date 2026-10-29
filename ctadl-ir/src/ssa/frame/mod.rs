@@ -15,8 +15,7 @@ __stack_top = update (__stack_top.[k].deref := v)   =>   store __stack_top.[k].d
 ```
 
 which leaves one frame for the whole function, where every load of a slot sees every store to it.
-It must run before SSA, after which the versions are separate variables, and before mem2reg, so
-that mem2reg sees stores.
+It must run before SSA, after which the versions are separate variables.
 
 Only updates of the frame by itself are coarsened. A write through a copy of the frame address
 (`%stack = %__stack_top`, then `store %stack.[k].deref`) is a `Store` to begin with.

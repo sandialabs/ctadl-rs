@@ -141,10 +141,10 @@ pub fn import_artifact(
         import.name,
         import.artifact_path.display()
     );
-    // The type is written out because in a build with no language enabled, every arm returns
-    // early and there is nothing for the compiler to infer from.
     #[cfg_attr(not(feature = "dex"), allow(unused_mut))]
     let mut notifications = Notifications::new();
+    // The type is written out because in a build with no language enabled, every arm returns
+    // early and there is nothing for the compiler to infer from.
     let program_info: ProgramInfo = match &import.language {
         #[cfg(feature = "dex")]
         Dex => {

@@ -614,8 +614,7 @@ pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
-    /// [`IndexFacts::update_sans_path`], keyed by function. The query follows these copies as
-    /// the index does.
+    /// [`IndexFacts::update_sans_path`], keyed by function.
     pub update_sans_path: Vec<(FunctionId, FlowVariable, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,

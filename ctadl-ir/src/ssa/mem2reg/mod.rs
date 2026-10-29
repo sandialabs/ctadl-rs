@@ -56,6 +56,7 @@ A slot a returned address reaches stays in memory even so. The pcode frontend re
 held in a stack slot as that slot's address (`return __stack_top.[4]`), so promoting the slot
 would drop the function's return flow. Only small functions do this; the large ones that full
 promotion is for do not.
+
 There is no write-back before calls: memory is flow-insensitive, so a value written back before
 one call would reach every read of the slot, which mixes the slot again.
 
@@ -226,9 +227,7 @@ pub struct EscapeNote {
 }
 
 impl EscapeNote {
-    /// This note in one line, without counts or sites, for the debug log. The index's
-    /// `notifications.sarif` states the same fact from [`Self::function`] and
-    /// [`Self::kind_names`].
+    /// This note in one line, without counts or sites, for the debug log.
     pub fn message(&self) -> String {
         format!(
             "mem2reg full: {}: frame address escapes ({}); flows through those slots may be \

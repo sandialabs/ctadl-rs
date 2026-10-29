@@ -71,11 +71,11 @@ struct Counts {
     unresolved: usize,
 }
 
-/// A failed guardrail check: what it says, without the `merged classes: ` prefix of its log line,
-/// and the counts behind it.
+/// A failed guardrail check: the message it selects, the arguments that fill it, and the counts
+/// behind it.
 #[derive(Debug, Clone)]
 struct Check {
-    /// Which of [`MERGED_CLASSES_NOT_SPLIT`]'s messages, and the arguments that fill it.
+    /// Which of [`MERGED_CLASSES_NOT_SPLIT`]'s messages.
     message_id: &'static str,
     arguments: Vec<String>,
     properties: BTreeMap<String, serde_json::Value>,

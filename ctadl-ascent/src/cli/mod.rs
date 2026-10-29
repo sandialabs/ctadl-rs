@@ -313,7 +313,7 @@ pub fn index(
     let mut codegen_report = crate::codegen::CodegenReport::default();
     // Saved next to the index as `notifications.sarif`.
     let mut notes = Notifications::new();
-    // A summary project's unsound functions reach this index through their summaries.
+    // A summary project's notifications reach this index through its summaries.
     for summary_project in &summary_projects {
         let dir = summary_project.index_path()?;
         let loaded = Notifications::load(&dir)

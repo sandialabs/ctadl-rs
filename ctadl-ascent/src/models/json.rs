@@ -1431,8 +1431,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     ///
     /// `skip-analysis`: codegen never lowers the matched function's body, so whatever the same
     /// generator's `propagation` list says is that function's entire behaviour. Without it a
-    /// model *adds* to the body-derived summary rather than replacing it, which is what makes a hand-written model unable to cut a degenerate
-    /// function down (see `docs/model-generators.md` §`modes`).
+    /// model *adds* to the body-derived summary rather than replacing it, which is what makes a
+    /// hand-written model unable to cut a degenerate function down (see
+    /// `docs/model-generators.md` §`modes`).
     ///
     /// Matching is the generator's own `where`, exactly as for a propagation, so this reads the
     /// same `self.methods[n]` set. A generator carrying `modes` and no `propagation` is legal and

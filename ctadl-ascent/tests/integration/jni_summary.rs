@@ -160,8 +160,8 @@ fn provenance_says_when_it_cannot_check_staleness() {
 
 /// A summary project's notifications reach the app through its summaries, so the app's index
 /// repeats them, naming the project in their properties as it names an import for its imports'
-/// notifications, and the app's query reports them under their own descriptor. Indexing the app again without the summary project
-/// drops the summary project's.
+/// notifications, and the app's query reports them under their own descriptor. Indexing the app
+/// again without the summary project drops the summary project's.
 #[test]
 fn summary_project_notifications_reach_the_app_and_its_sarif() {
     use ctadl_ascent::query_engine::formatter::SarifProfile;

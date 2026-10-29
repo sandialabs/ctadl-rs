@@ -10,6 +10,8 @@ use serde_sarif::sarif::{
     ReportingDescriptorReference, ToolComponent,
 };
 
+use crate::notifications::DEFAULT_MESSAGE;
+
 /// The tool every SARIF file names as its `tool.driver`.
 pub const TOOL_NAME: &str = "ctadl";
 /// The driver's `version` and `semanticVersion`: the workspace version, so `Cargo.toml` is the
@@ -66,7 +68,14 @@ pub fn notification(
     text: String,
     properties: BTreeMap<String, serde_json::Value>,
 ) -> Notification {
-    notification_with_message_id(descriptor_id, "default", level, arguments, text, properties)
+    notification_with_message_id(
+        descriptor_id,
+        DEFAULT_MESSAGE,
+        level,
+        arguments,
+        text,
+        properties,
+    )
 }
 
 /// [`notification`] for a descriptor that declares more than one message string. `message_id`
@@ -90,8 +99,6 @@ pub fn notification_with_message_id(
         // the enum value goes in as a JSON string.
         .level(serde_json::json!(level))
         .message(
-            // Both forms: `text` for a human reading the file, `id` + `arguments` so a
-            // consumer can read the condition without parsing prose.
             Message::builder()
                 .id(message_id.to_string())
                 .arguments(arguments)
@@ -119,7 +126,7 @@ pub fn notification_descriptor(
     description: &str,
     message: &str,
 ) -> ReportingDescriptor {
-    notification_descriptor_multi(id, name, description, &[("default", message)])
+    notification_descriptor_multi(id, name, description, &[(DEFAULT_MESSAGE, message)])
 }
 
 /// [`notification_descriptor`] for a notification whose prose depends on which of several
