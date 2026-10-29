@@ -415,8 +415,18 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
 /// report might compare.
 #[test]
 fn test_pipeline_tag() {
-    assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
-    assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
+    assert_eq!(
+        Pipeline::index_default().tag(),
+        "dt+co+m2r(w8)+ssa(prune)+cp"
+    );
+    assert_eq!(
+        Pipeline::index_default().prune(false).tag(),
+        "dt+co+m2r(w8)+ssa+cp"
+    );
+    assert_eq!(
+        Pipeline::index_default().frame(FrameWrites::Store).tag(),
+        "fs+dt+co+m2r(w8)+ssa(prune)+cp"
+    );
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::ssa_only().prune(false).tag(), "ssa");
     assert_eq!(Pipeline::none().tag(), "none");

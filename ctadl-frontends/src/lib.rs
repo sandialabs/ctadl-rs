@@ -38,6 +38,7 @@ pub mod flowy;
 pub mod xapk;
 
 use ctadl_import::error::{Error, ErrorContext};
+use ctadl_import::notifications::{NOTIFICATIONS_FILE, Notifications};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 use ctadl_ir::{ProgramInfo, ssa};
 
@@ -97,12 +98,21 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
     }
 }
 
-/// Imports one artifact into a [`ProgramInfo`], picking the front end from its language.
+/// What a front end built out of one artifact.
+#[derive(Debug, Default)]
+pub struct Imported {
+    pub program_info: ProgramInfo,
+    /// What the import has to say about the program; see [`ctadl_import::notifications`].
+    pub notifications: Notifications,
+}
+
+/// Imports one artifact into a [`ProgramInfo`] and its notifications, picking the front end from
+/// its language.
 ///
 /// This writes to the store only when an artifact produces other imports, such as an APK's
 /// native libraries or a bundle's split APKs. Those have to be finished before this function
-/// returns. Saving the returned program is up to the caller. See
-/// [`ctadl_import::save_program_info`], or [`open_or_import`] for the whole round trip.
+/// returns. Saving the result is up to the caller. See [`import_and_save`], or
+/// [`open_or_import`] for the whole round trip.
 // Only the container-format arms read `opts`, and the log line at the end cannot be reached in
 // a build with no language enabled at all. Both depend on the feature set, not on the code.
 #[cfg_attr(not(feature = "apk"), allow(unused_variables))]
@@ -123,7 +133,7 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
 pub fn import_artifact(
     import: &ArtifactImport,
     opts: ImportOptions<'_>,
-) -> Result<ProgramInfo, Error> {
+) -> Result<Imported, Error> {
     use ArtifactLanguage::*;
     log::info!(
         "importing {} artifact '{}' from {}",
@@ -131,16 +141,26 @@ pub fn import_artifact(
         import.name,
         import.artifact_path.display()
     );
+    #[cfg_attr(not(feature = "dex"), allow(unused_mut))]
+    let mut notifications = Notifications::new();
     // The type is written out because in a build with no language enabled, every arm returns
     // early and there is nothing for the compiler to infer from.
     let program_info: ProgramInfo = match &import.language {
         #[cfg(feature = "dex")]
-        Dex => ctadl_dex::import_dex(&import.artifact_path)?,
+        Dex => {
+            let dex = ctadl_dex::import_dex(&import.artifact_path)?;
+            notifications.extend(dex.notifications, None);
+            dex.program_info
+        }
         #[cfg(not(feature = "dex"))]
         Dex => return Err(unsupported(Dex, "dex")),
 
         #[cfg(feature = "apk")]
-        Apk => import_apk(import, opts)?,
+        Apk => {
+            let apk = import_apk(import, opts)?;
+            notifications.extend(apk.notifications, None);
+            apk.program_info
+        }
         #[cfg(not(feature = "apk"))]
         Apk => return Err(unsupported(Apk, "apk")),
 
@@ -198,17 +218,21 @@ pub fn import_artifact(
         import.name,
         program_info.program.functions.len()
     );
-    Ok(program_info)
+    Ok(Imported {
+        program_info,
+        notifications,
+    })
 }
 
 /// Imports an APK: first the Java half from `classes*.dex`, then the native half from
 /// `lib/<abi>/`.
 #[cfg(feature = "apk")]
-fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<ProgramInfo, Error> {
+fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Imported, Error> {
     // Do the Dex half first. It is cheap, and it is what fails quickly on a file that is not
     // really an APK, before any native library is extracted or handed to Ghidra.
     let ctadl_dex::ApkImport {
         program_info,
+        notifications,
         dex_count,
     } = ctadl_dex::import_apk(&import.artifact_path)?;
     if dex_count > 0 {
@@ -242,14 +266,35 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
         }
     }
     record_sub_imports(import, apk_native::import_native_libs(import, opts)?)?;
-    Ok(program_info)
+    Ok(Imported {
+        program_info,
+        notifications,
+    })
 }
 
 /// Runs [`import_artifact`] and then writes the result to the store. This is what `ctadl
 /// import` does for one artifact, and what a container format does for each artifact it
-/// unpacks.
+/// unpacks. The notifications go to the import's `notifications.sarif`; with none, the file is
+/// removed, so an earlier import's do not outlive it.
 pub fn import_and_save(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
-    let program_info = import_artifact(import, opts)?;
+    let Imported {
+        program_info,
+        notifications,
+    } = import_artifact(import, opts)?;
+    let dir = import.import_path();
+    if notifications.is_empty() {
+        let path = dir.join(NOTIFICATIONS_FILE);
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).err_context(|| format!("removing {}", path.display()));
+            }
+            _ => {}
+        }
+    } else {
+        notifications
+            .save(&dir)
+            .err_context(|| format!("writing notifications to {}", dir.display()))?;
+    }
     log::debug!("encoding");
     ctadl_import::save_program_info(program_info, import)
 }

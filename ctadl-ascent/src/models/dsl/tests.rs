@@ -831,7 +831,7 @@ fn what_the_json_loader_rejects_does_not_migrate() {
         (
             r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
             &[
-                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined value is 'skip-analysis'",
+                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined values are 'skip-analysis', 'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'",
             ],
         ),
         (
@@ -1438,7 +1438,10 @@ fn a_skip_analysis_head_names_one_function() {
     ] {
         let program = parse(text);
         let head = &program.rules[0].heads[0];
-        assert!(matches!(head.kind, HeadKind::SkipAnalysis), "{text}");
+        assert!(
+            matches!(head.kind, HeadKind::Mode(FunctionMode::SkipAnalysis)),
+            "{text}"
+        );
         assert!(head.anchor.is_some(), "{text}");
         assert_eq!(program.rules[0].phases(), (true, false), "{text}");
         check_ok(text);
@@ -1629,4 +1632,55 @@ fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
         "{rejected}"
     );
     assert_eq!(dsl.origin.unwrap().rule_generators, vec![1]);
+}
+
+/// The SSA modes are heads of the same shape as `skip_analysis`, one per JSON `modes` value.
+#[test]
+fn every_mode_is_a_head_of_its_own() {
+    for mode in FunctionMode::ALL {
+        let name = mode.relation_name();
+        let text = format!(r#"{name}(F) :- fun(F, name = "f");"#);
+        let program = parse(&text);
+        assert!(
+            matches!(program.rules[0].heads[0].kind, HeadKind::Mode(m) if m == mode),
+            "{text}"
+        );
+        assert_eq!(program.rules[0].phases(), (true, false), "{text}");
+        check_ok(&text);
+        let err = check_err(&format!(
+            r#"{name}(F) :- fun(F, name = "f", language = "lua"),
+                           fun(G, name = "g", language = "pcode");"#
+        ));
+        assert!(err.contains("satisfied within one import"), "{err}");
+        let err = check_err(&format!(r#"{name}(F::return) :- fun(F);"#));
+        assert!(err.contains(&format!("'{name}' takes a function")), "{err}");
+    }
+}
+
+/// Each JSON mode becomes its head; within one generator the last of each pair wins, as in the
+/// JSON loader.
+#[test]
+fn migrates_each_mode_to_its_head() {
+    let generator = |modes: &str| {
+        format!(
+            r#"{{"find":"methods","where":[{{"constraint":"signature_match","name":"f"}}],
+                "model":{{"modes":{modes}}}}}"#
+        )
+    };
+    for mode in FunctionMode::ALL {
+        let text = migrate_and_load(&generator(&format!(r#"["{}"]"#, mode.json_name())));
+        assert!(
+            text.contains(&format!("{}(F) :-", mode.relation_name())),
+            "{text}"
+        );
+    }
+    let text = migrate_and_load(&generator(
+        r#"["mem2reg-full","frame-update","skip-analysis","mem2reg-window","frame-store"]"#,
+    ));
+    assert!(
+        text.contains("mem2reg_window(F),\n  frame_store(F),\n  skip_analysis(F) :-"),
+        "{text}"
+    );
+    assert!(!text.contains("mem2reg_full"), "{text}");
+    assert!(!text.contains("frame_update"), "{text}");
 }

@@ -27,9 +27,13 @@ This is sound because the field is final: the id an object is constructed with i
 method sees. R8 marks the field `synthetic` as well, but nothing here depends on that.
 */
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use hashbrown::hash_map::HashMap;
+
+use ctadl_import::notifications::{
+    DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, Notifications,
+};
 
 use dex_reader::DexParser;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
@@ -47,6 +51,56 @@ pub(crate) struct MergedClasses {
     classes: HashMap<String, MergedClass>,
     /// By the signature of the method the site is in, then by the pc of its `new-instance`.
     sites: HashMap<String, HashMap<usize, Site>>,
+    /// What the split did, for the guardrail; set by [`MergedClasses::scan`].
+    counts: Counts,
+    /// The guardrail's checks that failed in [`MergedClasses::scan`].
+    failed: Vec<Check>,
+}
+
+/// What the split of a program's merged classes did.
+#[derive(Debug, Default, Clone, Copy)]
+struct Counts {
+    /// Classes split.
+    split: usize,
+    /// Split classes not closed: their merged methods stay live.
+    open: usize,
+    /// Classes with more than [`MAX_IDS`] ids, left merged.
+    over_cap: usize,
+    /// `new-instance`s of split classes, and those whose id is not known.
+    allocs: usize,
+    unresolved: usize,
+}
+
+/// A failed guardrail check: the message it selects, the arguments that fill it, and the counts
+/// behind it.
+#[derive(Debug, Clone)]
+struct Check {
+    /// Which of [`MERGED_CLASSES_NOT_SPLIT`]'s messages.
+    message_id: &'static str,
+    arguments: Vec<String>,
+    properties: BTreeMap<String, serde_json::Value>,
+}
+
+impl Check {
+    fn new(message_id: &'static str, arguments: &[usize], counts: &[(&str, usize)]) -> Self {
+        Self {
+            message_id,
+            arguments: arguments.iter().map(ToString::to_string).collect(),
+            properties: properties(counts),
+        }
+    }
+
+    fn text(&self) -> String {
+        MERGED_CLASSES_NOT_SPLIT.render(self.message_id, &self.arguments)
+    }
+}
+
+/// `counts` as notification properties.
+fn properties(counts: &[(&str, usize)]) -> BTreeMap<String, serde_json::Value> {
+    counts
+        .iter()
+        .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+        .collect()
 }
 
 #[derive(Debug)]
@@ -172,7 +226,18 @@ impl MergedClasses {
             this.classes.values().filter(|c| c.closed).count(),
             this.classes.len()
         );
-        this.guardrail(over_cap);
+        this.counts = Counts {
+            split: this.classes.len(),
+            open: this.classes.values().filter(|c| !c.closed).count(),
+            over_cap,
+            allocs: this.classes.values().map(|c| c.allocs).sum(),
+            unresolved: this
+                .classes
+                .values()
+                .map(|c| c.allocs.saturating_sub(c.known_allocs))
+                .sum(),
+        };
+        this.failed = this.guardrail();
         log::info!(
             "merged classes: {} split into {} ids, {} switching methods cloned into {} clones, {} \
              construction sites in {} methods",
@@ -196,39 +261,111 @@ impl MergedClasses {
     /// objects it cannot tell the id of. Each of these leaves merged methods, the union of every
     /// arm, live, and with them false flows across the merged lambdas. The thresholds sit between
     /// the apps measured with the split working (2-4% of classes not closed, about 0.1% of
-    /// allocations unresolved) and with it not working (12-15%, 2-4%).
-    fn guardrail(&self, over_cap: usize) {
-        let split = self.classes.len();
-        let open = self.classes.values().filter(|c| !c.closed).count();
-        let allocs: usize = self.classes.values().map(|c| c.allocs).sum();
-        let unresolved: usize = self
-            .classes
-            .values()
-            .map(|c| c.allocs.saturating_sub(c.known_allocs))
-            .sum();
+    /// allocations unresolved) and with it not working (12-15%, 2-4%). Returns the checks that
+    /// failed.
+    fn guardrail(&self) -> Vec<Check> {
+        let Counts {
+            split,
+            open,
+            over_cap,
+            allocs,
+            unresolved,
+        } = self.counts;
         log::info!(
             "merged classes guardrail: {split} split, {open} not closed, {over_cap} over {MAX_IDS} \
              ids, {unresolved} of {allocs} allocations with no known id"
         );
+        let mut failed = Vec::new();
         if over_cap > 0 && over_cap * 10 > split + over_cap {
-            log::warn!(
-                "merged classes: {over_cap} merged classes have more than {MAX_IDS} ids and stay \
-                 merged; their methods are the union of every lambda behind them"
-            );
+            failed.push(Check::new(
+                "overCap",
+                &[over_cap, MAX_IDS],
+                &[("overCap", over_cap), ("split", split)],
+            ));
         }
         if split >= 20 && open * 10 > split {
-            log::warn!(
-                "merged classes: {open} of {split} split classes still have live merged methods (an \
-                 object of the class itself may exist); calls resolved by class hierarchy reach the \
-                 union of every arm"
-            );
+            failed.push(Check::new(
+                "notClosed",
+                &[open, split],
+                &[("notClosed", open), ("split", split)],
+            ));
         }
         if allocs >= 100 && unresolved * 50 > allocs {
-            log::warn!(
-                "merged classes: {unresolved} of {allocs} allocations of merged classes have no known \
-                 id and build the merged class instead of its split class"
+            failed.push(Check::new(
+                "unresolvedAllocations",
+                &[unresolved, allocs],
+                &[
+                    ("unresolvedAllocations", unresolved),
+                    ("allocations", allocs),
+                ],
+            ));
+        }
+        for check in &failed {
+            log::warn!("merged classes: {}", check.text());
+        }
+        failed
+    }
+
+    /// The guardrail's notifications, none for a program with no merged classes: one
+    /// [`MERGED_CLASSES_SPLIT`] with the split's counts, then one [`MERGED_CLASSES_NOT_SPLIT`] per
+    /// failed check. `clone_statements` is the statements in the clones of merged methods;
+    /// when there are any, this also checks that they are a modest share of the program's
+    /// `statements`. Each clone stores only its own arm, so a large share means they are storing
+    /// the whole merged body again; with the arms pruned they are 2-24% of the apps measured.
+    pub(crate) fn guardrail_notifications(
+        &self,
+        clone_statements: usize,
+        statements: impl FnOnce() -> usize,
+    ) -> Notifications {
+        let mut out = Notifications::default();
+        let Counts {
+            split,
+            open,
+            over_cap,
+            allocs,
+            unresolved,
+        } = self.counts;
+        if split + over_cap == 0 {
+            return out;
+        }
+        let mut counts = properties(&[
+            ("split", split),
+            ("notClosed", open),
+            ("overCap", over_cap),
+            ("unresolvedAllocations", unresolved),
+            ("allocations", allocs),
+        ]);
+        let mut failed = self.failed.clone();
+        if clone_statements > 0 {
+            let total = statements();
+            log::info!(
+                "merged classes guardrail: clones hold {clone_statements} of {total} statements"
+            );
+            let clones = [("cloneStatements", clone_statements), ("statements", total)];
+            counts.extend(properties(&clones));
+            if clone_statements * 100 > total * 35 {
+                let check = Check::new("cloneStatements", &[clone_statements, total], &clones);
+                log::warn!("merged classes: {}", check.text());
+                failed.push(check);
+            }
+        }
+        out.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            vec![split.to_string()],
+            counts,
+        );
+        for check in failed {
+            out.push(
+                &MERGED_CLASSES_NOT_SPLIT,
+                check.message_id,
+                Level::Warning,
+                check.arguments,
+                check.properties,
             );
         }
+        out
     }
 
     pub(crate) fn class(&self, name: &str) -> Option<&MergedClass> {
@@ -796,6 +933,91 @@ mod tests {
         assert_eq!(s.target(5), 30);
         assert_eq!(s.target(2), 6);
         assert_eq!(narrowed(&[s], 0), HashMap::from([(4, 10)]));
+    }
+
+    fn with_counts(counts: Counts) -> MergedClasses {
+        let mut merged = MergedClasses {
+            counts,
+            ..Default::default()
+        };
+        merged.failed = merged.guardrail();
+        merged
+    }
+
+    #[test]
+    fn no_merged_classes_no_notifications() {
+        let merged = with_counts(Counts::default());
+        assert!(merged.guardrail_notifications(0, || 0).is_empty());
+    }
+
+    #[test]
+    fn guardrail_notes_the_split_and_each_failed_check() {
+        use ctadl_import::notifications::{descriptor_id, property_u64, text};
+        let merged = with_counts(Counts {
+            split: 30,
+            open: 10,
+            over_cap: 1,
+            allocs: 200,
+            unresolved: 1,
+        });
+        let n = merged.guardrail_notifications(40, || 100);
+
+        let split: Vec<_> = n.of(&MERGED_CLASSES_SPLIT).collect();
+        assert_eq!(split.len(), 1);
+        let split = split[0];
+        assert_eq!(text(split), "split 30 merged classes");
+        assert_eq!(split.level, Some(serde_json::json!("note")));
+        for (key, value) in [
+            ("split", 30),
+            ("notClosed", 10),
+            ("overCap", 1),
+            ("unresolvedAllocations", 1),
+            ("allocations", 200),
+            ("cloneStatements", 40),
+            ("statements", 100),
+        ] {
+            assert_eq!(property_u64(split, key), Some(value), "{key}");
+        }
+
+        // Too many classes not closed, and clones over 35% of the program; one class over the
+        // cap of 31 and 1 unresolved of 200 allocations are under their thresholds.
+        let failed: Vec<_> = n.of(&MERGED_CLASSES_NOT_SPLIT).collect();
+        assert_eq!(failed.len(), 2);
+        assert!(
+            failed
+                .iter()
+                .all(|f| f.level == Some(serde_json::json!("warning")))
+        );
+        assert!(text(failed[0]).starts_with("10 of 30 split classes"));
+        assert_eq!(property_u64(failed[0], "notClosed"), Some(10));
+        assert!(text(failed[1]).starts_with("the clones of merged methods hold 40"));
+        assert_eq!(property_u64(failed[1], "cloneStatements"), Some(40));
+        assert_eq!(property_u64(failed[1], "statements"), Some(100));
+        assert_eq!(
+            descriptor_id(&n.notifications()[0]),
+            Some(MERGED_CLASSES_SPLIT.id)
+        );
+    }
+
+    #[test]
+    fn without_clones_the_split_has_no_clone_counts() {
+        use ctadl_import::notifications::property_u64;
+        let merged = with_counts(Counts {
+            split: 2,
+            allocs: 4,
+            ..Default::default()
+        });
+        let mut statements_counted = false;
+        let n = merged.guardrail_notifications(0, || {
+            statements_counted = true;
+            0
+        });
+        assert!(!statements_counted);
+        assert_eq!(n.len(), 1);
+        let split = &n.notifications()[0];
+        assert_eq!(property_u64(split, "split"), Some(2));
+        assert_eq!(property_u64(split, "cloneStatements"), None);
+        assert_eq!(property_u64(split, "statements"), None);
     }
 
     #[test]

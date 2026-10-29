@@ -68,6 +68,15 @@ pub mod assign {
     save_load!();
 }
 
+pub mod update_sans_path {
+    use super::*;
+    /// `dst` is `src` except at `path` and the paths under it.
+    pub type Record = (FunctionId, FlowVariable, FlowVariable, Path);
+    pub const COLUMNS: [&str; 4] = ["func_id", "dst_var", "src_var", "path"];
+    pub const FILENAME: &str = "update_sans_path.parquet";
+    save_load!();
+}
+
 pub mod call_target_assign {
     use super::*;
     use crate::facts::CallTargetObject;

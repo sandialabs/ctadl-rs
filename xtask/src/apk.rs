@@ -21,6 +21,9 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{ensure, Context, Result};
+use ctadl_import::notifications::{
+    self, Notifications, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE,
+};
 use serde_json::Value;
 
 use crate::exec;
@@ -49,13 +52,23 @@ pub const CHECKS: &[&str] = &[
 const INDEX_CHECK: &str = "apk:manifest-and-intents";
 const MERGED_CHECK: &str = "apk:merged-classes";
 
-/// What the dex frontend's split of R8-merged classes does with this app, from its guardrail
-/// line: classes split, split classes it could not close (their merged methods stay live), classes
-/// over the id cap, and allocations of split classes with no known id, of all of them. Pinned
-/// because a regression in the split moves them. Re-pin from the `merged classes guardrail:` line
-/// of `RUST_LOG=info ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in
-/// the commit message which change moved them.
+/// What the dex frontend's split of R8-merged classes does with this app, from the properties of
+/// its `MERGED_CLASSES_SPLIT` notification: classes split, split classes it could not close (their
+/// merged methods stay live), classes over the id cap, and allocations of split classes with no
+/// known id, of all of them. Pinned because a regression in the split moves them. Re-pin from the
+/// notification in `imports/app/notifications.sarif` under the store of
+/// `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in the commit message
+/// which change moved them.
 const MERGED_CLASSES: (u64, u64, u64, u64, u64) = (140, 3, 0, 3, 667);
+
+/// The [`MERGED_CLASSES`] properties, in order.
+const MERGED_CLASSES_KEYS: [&str; 5] = [
+    "split",
+    "notClosed",
+    "overCap",
+    "unresolvedAllocations",
+    "allocations",
+];
 
 // The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
 // even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
@@ -134,16 +147,13 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
     let store = state.join("ctadl");
     let apk = std::fs::canonicalize(apk)
         .with_context(|| format!("failed to canonicalize {}", apk.display()))?;
-    let log = match import_logged(work, &state, &apk) {
-        Ok(log) => log,
-        Err(err) => {
-            let why = format!("{err:#}");
-            return Ok(vec![
-                (INDEX_CHECK.to_string(), Outcome::Fail(why.clone())),
-                (MERGED_CHECK.to_string(), Outcome::Fail(why)),
-            ]);
-        }
-    };
+    if let Err(err) = import(work, &state, &apk, &[]) {
+        let why = format!("{err:#}");
+        return Ok(vec![
+            (INDEX_CHECK.to_string(), Outcome::Fail(why.clone())),
+            (MERGED_CHECK.to_string(), Outcome::Fail(why)),
+        ]);
+    }
     Ok(vec![
         (
             INDEX_CHECK.to_string(),
@@ -151,55 +161,49 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
         ),
         (
             MERGED_CHECK.to_string(),
-            to_outcome(check_merged_classes(&log)),
+            to_outcome(check_merged_classes(&import_dir(&store))),
         ),
     ])
 }
 
-/// Like [`import`], with the log at `info` returned.
-fn import_logged(work: &Path, state: &Path, apk: &Path) -> Result<String> {
-    let apk = apk.to_string_lossy();
-    let mut cmd = command(
-        work,
-        state,
-        &["import", "-l", "apk", "--name", IMPORT, &apk],
-    )?;
-    cmd.env("RUST_LOG", "info");
-    let out = cmd.output().context("running ctadl import")?;
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    ensure!(out.status.success(), "ctadl import failed:\n{log}");
-    Ok(log)
-}
-
-/// The split of R8-merged classes still works on this app: its guardrail line reports
-/// [`MERGED_CLASSES`], and the guardrail warned about nothing.
-fn check_merged_classes(log: &str) -> Result<()> {
-    let re = regex::Regex::new(
-        r"merged classes guardrail: (\d+) split, (\d+) not closed, (\d+) over \d+ ids, (\d+) of (\d+) allocations",
-    )?;
-    let caps = re
-        .captures(log)
-        .context("the import logged no `merged classes guardrail:` line")?;
-    let n = |i: usize| caps[i].parse::<u64>().unwrap_or(u64::MAX);
-    let got = (n(1), n(2), n(3), n(4), n(5));
+/// The split of R8-merged classes still works on this app: the `notifications.sarif` in `dir`,
+/// an import's directory, has a `MERGED_CLASSES_SPLIT` notification whose properties are
+/// [`MERGED_CLASSES`], and no `MERGED_CLASSES_NOT_SPLIT` one.
+fn check_merged_classes(dir: &Path) -> Result<()> {
+    let path = dir.join(NOTIFICATIONS_FILE);
+    ensure!(path.is_file(), "the import wrote no {}", path.display());
+    let found = Notifications::load(dir).with_context(|| format!("reading {}", path.display()))?;
+    let split = found.of(&MERGED_CLASSES_SPLIT).next().with_context(|| {
+        format!(
+            "{} has no {} notification",
+            path.display(),
+            MERGED_CLASSES_SPLIT.id
+        )
+    })?;
+    let n = |i: usize| {
+        notifications::property_u64(split, MERGED_CLASSES_KEYS[i]).with_context(|| {
+            format!(
+                "the {} notification has no integer property {:?}",
+                MERGED_CLASSES_SPLIT.id, MERGED_CLASSES_KEYS[i]
+            )
+        })
+    };
+    let got = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
     ensure!(
         got == MERGED_CLASSES,
-        "merged classes (split, not closed, over the id cap, allocations with no known id, \
-         allocations): the import says {got:?}, this APK has {MERGED_CLASSES:?}. Re-pin \
-         MERGED_CLASSES in xtask/src/apk.rs if a frontend change really moved them"
+        "merged classes {MERGED_CLASSES_KEYS:?}: the import says {got:?}, this APK has \
+         {MERGED_CLASSES:?}. Re-pin MERGED_CLASSES in xtask/src/apk.rs if a frontend change \
+         really moved them"
     );
-    let warnings: Vec<&str> = log
-        .lines()
-        .filter(|l| l.contains("merged classes:") && l.to_lowercase().contains("warn"))
+    let not_split: Vec<&str> = found
+        .of(&MERGED_CLASSES_NOT_SPLIT)
+        .map(notifications::text)
         .collect();
     ensure!(
-        warnings.is_empty(),
-        "the merged-classes guardrail warned:\n{}",
-        warnings.join("\n")
+        not_split.is_empty(),
+        "the import left merged classes unsplit ({}):\n{}",
+        MERGED_CLASSES_NOT_SPLIT.id,
+        not_split.join("\n")
     );
     Ok(())
 }
@@ -1055,6 +1059,67 @@ mod tests {
             CHECKS.iter().all(|n| n.starts_with("apk:")),
             "the family prefix is what --filter selects on: {CHECKS:?}"
         );
+    }
+
+    /// The merged-classes check reads the pinned counts off the split notification's properties,
+    /// and fails without the file, without the notification, or with a not-split one.
+    #[test]
+    fn merged_classes_are_read_from_notifications() {
+        use ctadl_import::notifications::{Level, DEFAULT_MESSAGE};
+        use std::collections::BTreeMap;
+
+        let dir = std::env::temp_dir().join(format!("xtask_merged_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails_with = |needle: &str| {
+            let err = format!("{:#}", check_merged_classes(&dir).unwrap_err());
+            assert!(err.contains(needle), "{needle:?} not in {err:?}");
+        };
+        fails_with("wrote no");
+
+        let mut found = Notifications::default();
+        found.save(&dir).unwrap();
+        fails_with("has no CTADL0105");
+
+        let (a, b, c, d, e) = MERGED_CLASSES;
+        let counts = |split: u64| -> BTreeMap<String, serde_json::Value> {
+            MERGED_CLASSES_KEYS
+                .iter()
+                .zip([split, b, c, d, e])
+                .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+                .collect()
+        };
+        let mut moved = Notifications::default();
+        let split = |n: u64| vec![n.to_string()];
+        moved.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a + 1),
+            counts(a + 1),
+        );
+        moved.save(&dir).unwrap();
+        fails_with("Re-pin");
+
+        found.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a),
+            counts(a),
+        );
+        found.save(&dir).unwrap();
+        check_merged_classes(&dir).unwrap();
+
+        found.push(
+            &MERGED_CLASSES_NOT_SPLIT,
+            "notClosed",
+            Level::Warning,
+            vec!["30".into(), "140".into()],
+            BTreeMap::new(),
+        );
+        found.save(&dir).unwrap();
+        fails_with("30 of 140 split classes still have live merged methods");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The model file the model check is run with has to be a model file. It is written from a

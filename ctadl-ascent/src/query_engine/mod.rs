@@ -39,6 +39,9 @@ pub struct QueryFacts {
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
     pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
+    /// The index's `update_sans_path`: `dst` is `src` except at the path and below it.
+    #[builder(default)]
+    pub update_sans_path: Vec<(FunctionId, FlowVariable, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     /// External (unmodeled) functions. Used to derive `absorbing_functions`: an
@@ -241,6 +244,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation call(PackedInsnSiteId, FunctionId);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        relation update_sans_path(FunctionId, FlowVariable, FlowVariable, Path);
         relation paths(Path);
         relation sources(QueryEndpoint);
 
@@ -277,6 +281,22 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             assign_like(infunc, v2, p2, v1, p1),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
+
+        // A functional update's copy carries taint on every path but the written one and those
+        // under it, in either direction, as the index's copy does.
+        taint(infunc, ts, x.clone(), p.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, x.clone(), p.clone(), infunc, y.clone(), p.clone(), a.direction) <--
+            taint(infunc, ts, y, p, a),
+            if a.direction == TaintDirection::Forward,
+            update_sans_path(infunc, x, y, w),
+            if !p.is_extension_of(w);
+
+        taint(infunc, ts, y.clone(), p.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, y.clone(), p.clone(), infunc, x.clone(), p.clone(), a.direction) <--
+            taint(infunc, ts, x, p, a),
+            if a.direction == TaintDirection::Backward,
+            update_sans_path(infunc, x, y, w),
+            if !p.is_extension_of(w);
 
         // Address computations: `addr_of(f, dst, dp, src, k)` for an edge `dst.dp =
         // src.(k·[n])` -- C's `&a[2]`, pcode's `PTRADD`. The address depends on the value at
@@ -459,6 +479,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         formal_param: facts.formal_param,
         call: facts.call,
         assign_like: facts.assign,
+        update_sans_path: facts.update_sans_path,
         paths: facts.paths,
         external_function: facts.external_function,
         sources: facts.endpoints,

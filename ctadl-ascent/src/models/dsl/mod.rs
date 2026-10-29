@@ -37,7 +37,7 @@ programs in one body, and no single import satisfies it; the body's connected co
 accumulated separately and joined at the end. See [`eval`].
 
 The phase is fixed when the matcher is built. `index` keeps the propagation / bridge /
-access-path / dispatch / skip-analysis heads and `query` keeps the source / sink ones, and a rule with no head
+access-path / dispatch / mode heads and `query` keeps the source / sink ones, and a rule with no head
 for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
 dropping them in silence; a rule contributing at least one head to the running phase is never
 counted.
@@ -752,7 +752,7 @@ impl DslReport {
             Phase::Index => ("index", "source/sink"),
             Phase::Query => (
                 "query",
-                "propagation/bridge/access_paths/dispatch/skip_analysis",
+                "propagation/bridge/access_paths/dispatch/mode",
             ),
             Phase::All => return None,
         };

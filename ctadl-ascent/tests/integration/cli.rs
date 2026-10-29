@@ -527,6 +527,97 @@ fn android_tools_available() -> bool {
     which::which("javac").is_ok() && which::which("dx").is_ok()
 }
 
+/// Compiles `source`, a Java file declaring the top-level class `class`, into `dir/<class>.dex`.
+fn build_dex(dir: &std::path::Path, class: &str, source: &str) -> PathBuf {
+    let src = dir.join(format!("{class}-src"));
+    let classes = dir.join(format!("{class}-classes"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&classes).unwrap();
+    let java = src.join(format!("{class}.java"));
+    std::fs::write(&java, source).unwrap();
+    let status = Command::new("javac")
+        .args(["--release", "8", "-encoding", "UTF-8", "-d"])
+        .arg(&classes)
+        .arg(&java)
+        .status()
+        .unwrap();
+    assert!(status.success(), "javac failed");
+    let dex = dir.join(format!("{class}.dex"));
+    let status = Command::new("dx")
+        .current_dir(&classes)
+        .arg("--dex")
+        .arg("--min-sdk-version=24")
+        .arg(format!("--output={}", dex.display()))
+        .args(collect_class_files_for_dx(&classes))
+        .status()
+        .unwrap();
+    assert!(status.success(), "dx failed");
+    dex
+}
+
+/// The shape R8 gives a class merging several lambdas: a final int class id set by the
+/// constructor, and a switch on it.
+const MERGED_CLASS_SOURCE: &str = r#"public final class Merged {
+    final int id;
+    Merged(int id) { this.id = id; }
+    public String apply(String s) {
+        switch (id) {
+            case 0: return s;
+            case 1: return s.trim();
+            default: return "other";
+        }
+    }
+    public static String main(String s) {
+        return new Merged(0).apply(s) + new Merged(1).apply(s) + new Merged(2).apply(s);
+    }
+}"#;
+
+/// Importing Dex with R8-merged classes writes the split's counts to the import's
+/// `notifications.sarif`; importing Dex without them again removes the file.
+#[test]
+fn test_cli_import_dex_merged_classes_notifications() {
+    use ctadl_import::notifications::{self, MERGED_CLASSES_SPLIT, Notifications};
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let name = "test_import_dex_merged_notifications";
+
+        let dex = build_dex(dir.path(), "Merged", MERGED_CLASS_SOURCE);
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Dex, &dex).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        let notes = Notifications::load(import.import_path()).unwrap();
+        let split: Vec<_> = notes.of(&MERGED_CLASSES_SPLIT).collect();
+        assert_eq!(split.len(), 1, "{notes:?}");
+        for (key, value) in [
+            ("split", 1),
+            ("notClosed", 0),
+            ("overCap", 0),
+            ("unresolvedAllocations", 0),
+            ("allocations", 3),
+        ] {
+            assert_eq!(
+                notifications::property_u64(split[0], key),
+                Some(value),
+                "{key}"
+            );
+        }
+        assert!(notifications::property_u64(split[0], "cloneStatements").unwrap() > 0);
+        assert!(notifications::property_u64(split[0], "statements").unwrap() > 0);
+
+        let dex = build_dex(dir.path(), "Plain", "public class Plain { void f() {} }");
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Dex, &dex).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        assert!(
+            !import
+                .import_path()
+                .join(notifications::NOTIFICATIONS_FILE)
+                .exists()
+        );
+    });
+}
+
 /// The final call graph as `query` sees it: codegen's `call` table plus the calls the index
 /// derived (`resolved_call`), which is where ICC pairs are persisted.
 fn final_call_graph(
@@ -738,7 +829,7 @@ fn build_android_icc_apk(
     let file = std::fs::File::create(&apk).unwrap();
     let mut zip = zip::ZipWriter::new(file);
     let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     use std::io::Write as _;
     zip.start_file("AndroidManifest.xml", options).unwrap();
     zip.write_all(manifest.as_bytes()).unwrap();
@@ -973,7 +1064,7 @@ fn write_apk(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> Pa
     let path = dir.join(name);
     let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
     let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (entry, contents) in entries {
         writer.start_file(*entry, options).unwrap();
         writer.write_all(contents).unwrap();

@@ -69,7 +69,7 @@ impl Rule {
                 | HeadKind::Bridge { .. }
                 | HeadKind::AccessPath { .. }
                 | HeadKind::Dispatch { .. }
-                | HeadKind::SkipAnalysis => index_time = true,
+                | HeadKind::Mode(_) => index_time = true,
             }
         }
         (index_time, query_time)
@@ -119,10 +119,66 @@ pub enum HeadKind {
     Dispatch {
         disposition: DispatchHead,
     },
+    /// `skip_analysis(F)`, `mem2reg_full(F)`, … -- a directive about how `F` is lowered, which
+    /// the index reads before it lowers `F`'s import. The function is the head's anchor. The
+    /// JSON's `modes`.
+    Mode(FunctionMode),
+}
+
+/// What a mode head says about how its function is lowered. One per JSON `modes` value.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FunctionMode {
     /// `skip_analysis(F)` -- codegen does not lower `F`'s body, so the models written for `F`
-    /// are its entire behavior. The function is the head's anchor. The JSON's
-    /// `modes: ["skip-analysis"]`.
+    /// are its entire behavior.
     SkipAnalysis,
+    /// `mem2reg_full(F)` -- promote all of `F`'s stack slots, whatever its size.
+    Mem2RegFull,
+    /// `mem2reg_window(F)` -- never promote all of `F`'s stack slots, whatever its size.
+    Mem2RegWindow,
+    /// `frame_store(F)` -- coarsen `F`'s frame updates to stores.
+    FrameStore,
+    /// `frame_update(F)` -- keep `F`'s frame updates.
+    FrameUpdate,
+}
+
+impl FunctionMode {
+    pub const ALL: [FunctionMode; 5] = [
+        FunctionMode::SkipAnalysis,
+        FunctionMode::Mem2RegFull,
+        FunctionMode::Mem2RegWindow,
+        FunctionMode::FrameStore,
+        FunctionMode::FrameUpdate,
+    ];
+
+    /// The head's relation name.
+    pub fn relation_name(self) -> &'static str {
+        match self {
+            FunctionMode::SkipAnalysis => "skip_analysis",
+            FunctionMode::Mem2RegFull => "mem2reg_full",
+            FunctionMode::Mem2RegWindow => "mem2reg_window",
+            FunctionMode::FrameStore => "frame_store",
+            FunctionMode::FrameUpdate => "frame_update",
+        }
+    }
+
+    /// The JSON `modes` value it translates.
+    pub fn json_name(self) -> &'static str {
+        match self {
+            FunctionMode::SkipAnalysis => "skip-analysis",
+            FunctionMode::Mem2RegFull => "mem2reg-full",
+            FunctionMode::Mem2RegWindow => "mem2reg-window",
+            FunctionMode::FrameStore => "frame-store",
+            FunctionMode::FrameUpdate => "frame-update",
+        }
+    }
+
+    pub fn from_relation_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.relation_name() == name)
+    }
+
+    pub fn from_json_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.json_name() == name)
+    }
 }
 
 /// The three things a `dispatch` head can say. Exactly one per head, which is what keeps
@@ -162,7 +218,7 @@ impl HeadKind {
             HeadKind::Source { .. }
             | HeadKind::Sink { .. }
             | HeadKind::AccessPath { .. }
-            | HeadKind::SkipAnalysis => None,
+            | HeadKind::Mode(_) => None,
         }
     }
 
@@ -174,7 +230,7 @@ impl HeadKind {
             HeadKind::Bridge { .. } => "bridge",
             HeadKind::AccessPath { .. } => "access_paths",
             HeadKind::Dispatch { .. } => "dispatch",
-            HeadKind::SkipAnalysis => "skip_analysis",
+            HeadKind::Mode(mode) => mode.relation_name(),
         }
     }
 }
@@ -399,6 +455,10 @@ pub const OUTPUT_RELATIONS: &[&str] = &[
     "access_paths",
     "dispatch",
     "skip_analysis",
+    "mem2reg_full",
+    "mem2reg_window",
+    "frame_store",
+    "frame_update",
 ];
 
 /// Attribute names each built-in relation honors.

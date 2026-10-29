@@ -424,7 +424,7 @@ impl FileState {
                 declares_modes: rule
                     .heads
                     .iter()
-                    .any(|h| matches!(h.kind, HeadKind::SkipAnalysis)),
+                    .any(|h| matches!(h.kind, HeadKind::Mode(_))),
                 declares_dispatch: rule
                     .heads
                     .iter()

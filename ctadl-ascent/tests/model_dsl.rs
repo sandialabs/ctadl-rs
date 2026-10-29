@@ -1402,3 +1402,44 @@ fn groundings_are_projected_onto_head_variables() {
     assert_eq!(report.files[0].rules[0].groundings, 1);
     assert_eq!(out.endpoints.len(), 1);
 }
+
+/// The mode heads fill the maps the SSA pipeline and codegen read, and a later rule that
+/// disagrees on a function wins.
+#[test]
+fn mode_heads_mark_their_functions() {
+    use ctadl_ir::ssa::{FrameWrites, FullMode};
+    let program_info = native_program(&["big", "small", "unwind"]);
+    let m = run(
+        &program_info,
+        r#"
+        mem2reg_full(F), frame_store(F) :- fun(F, name = "big");
+        mem2reg_window(F) :- fun(F, name = "small");
+        frame_update(F) :- fun(F, name = "small");
+        mem2reg_full(F) :- fun(F, name = "small");
+        skip_analysis(F) :- fun(F, name = "unwind");
+        "#,
+    );
+    // A mode keys on a function's full name, which for a native symbol is the decorated one.
+    let full = |n: &str| format!("<EXTERNAL>::{n}@00101008");
+    fn named<T: Copy>(
+        m: &std::collections::BTreeMap<ctadl_ascent::facts::Str, T>,
+    ) -> Vec<(String, T)> {
+        m.iter().map(|(f, mode)| (f.to_string(), *mode)).collect()
+    }
+    assert_eq!(
+        named(&m.mem2reg_modes),
+        [
+            (full("big"), FullMode::Force),
+            (full("small"), FullMode::Force)
+        ]
+    );
+    assert_eq!(
+        named(&m.frame_modes),
+        [
+            (full("big"), FrameWrites::Store),
+            (full("small"), FrameWrites::Update)
+        ]
+    );
+    let skipped: Vec<String> = m.skip_analysis.iter().map(|f| f.to_string()).collect();
+    assert_eq!(skipped, [full("unwind")]);
+}

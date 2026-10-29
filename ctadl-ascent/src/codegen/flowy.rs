@@ -414,6 +414,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         // endpoints to their call-site-anchored forms during the query check.
         call: final_call.clone(),
         assign: index_result.assign_like,
+        update_sans_path: index_result.update_sans_path,
         paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,

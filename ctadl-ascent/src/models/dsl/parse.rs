@@ -174,7 +174,8 @@ peg::parser! {
         rule out_rel() -> &'input str
             = quiet!{
                 $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch"
-                   / "skip_analysis")
+                   / "skip_analysis" / "mem2reg_full" / "mem2reg_window" / "frame_store"
+                   / "frame_update")
                   !name_char())
             }
             / expected!("output relation")
@@ -374,11 +375,11 @@ impl Builder {
             .into_iter()
             .filter_map(|a| self.head_arg(a))
             .collect();
-        if raw.relation == "skip_analysis" {
-            let anchor = self.skip_analysis_subject(raw.anchor, raw.span, args)?;
+        if let Some(mode) = FunctionMode::from_relation_name(raw.relation) {
+            let anchor = self.mode_subject(raw.relation, raw.anchor, raw.span, args)?;
             return Some(Head {
                 anchor: Some(anchor),
-                kind: HeadKind::SkipAnalysis,
+                kind: HeadKind::Mode(mode),
                 span: raw.span,
             });
         }
@@ -390,11 +391,12 @@ impl Builder {
         })
     }
 
-    /// The function a `skip_analysis` head marks: `skip_analysis(F)`, a function name
-    /// `skip_analysis("f")`, or the anchor form `F::skip_analysis()`. Exactly one, and nothing
-    /// else -- there is no attribute for a mode that is either on or absent.
-    fn skip_analysis_subject(
+    /// The function a mode head such as `skip_analysis` marks: `skip_analysis(F)`, a function
+    /// name `skip_analysis("f")`, or the anchor form `F::skip_analysis()`. Exactly one, and
+    /// nothing else -- there is no attribute for a mode that is either on or absent.
+    fn mode_subject(
         &mut self,
+        relation: &str,
         anchor: Option<Term>,
         span: Span,
         args: Vec<HeadArg>,
@@ -405,30 +407,31 @@ impl Builder {
                 HeadArg::Var(v, _) => subjects.push(Term::Var(v)),
                 HeadArg::Lit(Literal::Str(s), _) => subjects.push(Term::Lit(Literal::Str(s))),
                 HeadArg::Lit(other, s) => {
-                    self.error(s, format!("'skip_analysis' takes a function, not {other}"));
+                    self.error(s, format!("'{relation}' takes a function, not {other}"));
                     return None;
                 }
                 HeadArg::Port(p) => {
                     self.error(
                         p.span,
-                        "'skip_analysis' takes a function such as 'F', not a port; it applies \
-                         to the whole body",
+                        format!(
+                            "'{relation}' takes a function such as 'F', not a port; it applies \
+                             to the whole body"
+                        ),
                     );
                     return None;
                 }
                 HeadArg::Flow(f) => {
                     self.error(
                         f.span,
-                        "'skip_analysis' takes a function such as 'F', not a flow; write the \
-                         function's summary as 'propagation' heads",
+                        format!(
+                            "'{relation}' takes a function such as 'F', not a flow; write the \
+                             function's summary as 'propagation' heads"
+                        ),
                     );
                     return None;
                 }
                 HeadArg::Attr(name, _, s) => {
-                    self.error(
-                        s,
-                        format!("'{name}' is not an attribute of 'skip_analysis'"),
-                    );
+                    self.error(s, format!("'{name}' is not an attribute of '{relation}'"));
                     return None;
                 }
             }
@@ -437,7 +440,7 @@ impl Builder {
             self.error(
                 span,
                 format!(
-                    "'skip_analysis' takes exactly one function; {} were given. Write several \
+                    "'{relation}' takes exactly one function; {} were given. Write several \
                      head atoms separated by ',' instead.",
                     subjects.len()
                 ),

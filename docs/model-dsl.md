@@ -195,6 +195,8 @@ The point of a model file is to derive these.
 | `K::dispatch(<flow>)` | a flow within **one** call signature | — |
 | `K::dispatch(…)` | — | `resolve` (`"inline"` / `"skip"`), `closure_shaped` |
 | `skip_analysis(F)` | a function | — |
+| `mem2reg_full(F)`, `mem2reg_window(F)` | a function | — |
+| `frame_store(F)`, `frame_update(F)` | a function | — |
 
 - **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
@@ -229,10 +231,23 @@ The point of a model file is to derive these.
   skip_analysis(F), propagation(F::return <- F::arg(0)) :- fun(F, name = "transfer");
   ```
 
-  `skip_analysis("transfer");` and `F::skip_analysis()` say the same of one function. The rule
-  must be satisfied within one import — codegen drops the body while that import is being lowered,
-  before a body that spans two programs could be joined — so its body may not split into parts
-  that share no variable.
+  `F::skip_analysis()` is the same head written with an anchor, and `skip_analysis("…")` names a
+  function by its full name — for a native symbol that is the decorated one, such as
+  `<EXTERNAL>::abort@00101008`, so binding through `fun(F, name = …)` is usually what you want.
+- **`mem2reg_full`** / **`mem2reg_window`** force or forbid full stack-slot promotion for a native
+  function, whatever its size and whatever `ctadl index --mem2reg` says. Full promotion gives every
+  stack slot its own local, even one whose address escapes; `ctadl index` names each function
+  where that may lose flows in its `notifications.sarif`.
+- **`frame_store`** / **`frame_update`** coarsen or keep a native function's frame updates,
+  whatever `ctadl index --frame` says. With `frame_update` (the default) SSA versions the stack
+  frame, so a load sees only the writes that reach it; with `frame_store` every load of a slot sees
+  every store to it.
+
+  These five are *mode* heads: each takes one function and is read as that function's import is
+  lowered (SSA, then codegen). So a rule with one must be satisfied within one import — its body
+  may not split into parts that share no variable, because those are joined only after every
+  import is lowered. When two rules give one function conflicting `mem2reg_*` (or `frame_*`)
+  modes, the later rule wins.
 
 Each output relation takes exactly one port, flow or path. Several are written as several
 comma-separated heads:
@@ -324,7 +339,7 @@ dropped with it, which is what keeps a multi-artifact index streaming rather tha
 ### Phases
 
 The engine is phased. `ctadl index` keeps the `propagation` / `bridge` / `access_paths` /
-`dispatch` / `skip_analysis` heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
+`dispatch` / mode heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
 it, and a rule contributing at least one head to the running phase is never counted:
 
 ```
@@ -386,12 +401,11 @@ How the JSON constructs map:
 | `model: {resolve: "inline"}` | `K::dispatch(resolve = "inline")` |
 | `model: {resolve: "inline", propagation: [...]}` | `K::dispatch(resolve = "inline", <out> <- <in>)` |
 | `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
-| `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)` |
+| `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)`, and likewise `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update`; within a generator the last of each pair wins |
 
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
 A generator the JSON format does not allow fails with the error the JSON loader raised for it.
-Keys the format allows and that have no effect (`taint`, `forward_self`, a `modes` list without
-`skip-analysis`, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
+Keys the format allows and that have no effect (`taint`, `forward_self`, an empty `modes` list, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
 format allows and the DSL cannot say fail the migration, naming the generator:
 
 - `Variable(...)` ports, which select a local by source name.

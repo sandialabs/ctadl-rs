@@ -26,8 +26,8 @@ warn:
   each generator is first checked by [`json_schema::generator_errors`], which reports exactly
   what the loader does. A generator whose `in` scope names another import is checked too, where
   the loader would skip it: a migrated file is not tied to one import.
-- **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, a
-  `modes` list without `skip-analysis` does nothing, and `on-unmatched` / `on-ambiguous` other
+- **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, an
+  empty `modes` list does nothing, and `on-unmatched` / `on-ambiguous` other
   than `"error"` change only what is logged. These are warnings.
 - **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, a bridge
   with no `arguments` map (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`] that says why.
@@ -990,16 +990,39 @@ fn migrate_model(
         }
     }
     if let Some(modes) = model.get("modes") {
-        let skip = modes
+        use super::ast::FunctionMode;
+        // Within one generator the last of `mem2reg-full` / `mem2reg-window` wins, and likewise
+        // the last of `frame-store` / `frame-update`; a repeat says nothing new.
+        let mut skip = false;
+        let mut mem2reg = None;
+        let mut frame = None;
+        for mode in modes
             .as_array()
-            .is_some_and(|m| m.iter().any(|m| m.as_str() == Some("skip-analysis")));
-        if skip {
-            heads.plain.push(format!("skip_analysis({anchor})"));
-        } else {
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.as_str().and_then(FunctionMode::from_json_name))
+        {
+            match mode {
+                FunctionMode::SkipAnalysis => skip = true,
+                FunctionMode::Mem2RegFull | FunctionMode::Mem2RegWindow => mem2reg = Some(mode),
+                FunctionMode::FrameStore | FunctionMode::FrameUpdate => frame = Some(mode),
+            }
+        }
+        let chosen: Vec<FunctionMode> =
+            [mem2reg, frame, skip.then_some(FunctionMode::SkipAnalysis)]
+                .into_iter()
+                .flatten()
+                .collect();
+        if chosen.is_empty() {
             report.warn(
                 index,
                 "'modes' names no mode, so it has no effect in the JSON format either",
             );
+        }
+        for mode in chosen {
+            heads
+                .plain
+                .push(format!("{}({anchor})", mode.relation_name()));
         }
     }
 

@@ -160,8 +160,10 @@ engine these output relations:
 - `access_paths(path)`, adds strings to analysis access paths, can be just bare e.g.
   `access_paths(".foo.bar")`
 - `skip_analysis(F)` keeps `F`'s body out of the index, so its other models are its whole
-  behavior (the JSON's `modes: ["skip-analysis"]`). Index-time, and only in a rule one import
-  satisfies: codegen drops the body while that import is lowered.
+  behavior (the JSON's `modes: ["skip-analysis"]`). `mem2reg_full(F)` / `mem2reg_window(F)` and
+  `frame_store(F)` / `frame_update(F)` set how `F`'s stack slots and frame are lowered (the other
+  `modes`). These mode heads are index-time, and only in a rule one import satisfies: they are read
+  while that import is lowered.
 
 Port anchors specify a port anchored in a function: `F::return` means "the return port in F." Ports
 and port flows are a concise way of specifying source, sink, propagation, bridge models in a unified
@@ -260,8 +262,8 @@ ProgramMatchIndex tables.
 
 - `fields` and `all_fields` aren't even used and they aren't in this design
 - `in_function` is subsumed by callsite's caller column
-- no support for the inert schema keys (taint, forward_self); `modes: ["skip-analysis"]` is not
-  inert and is the `skip_analysis` head
+- no support for the inert schema keys (taint, forward_self); `modes` is not inert: each value is a
+  mode head (`skip_analysis`, `mem2reg_full`, …)
 - reserved-but-unimplemented find: variables/fields. generally, all relations are built in so any potential relation name is reserved
 - if the model migrator meets these unsupported keys in the wild, it should warn that they aren't translated
 
@@ -314,7 +316,7 @@ Everything the design specifies is in:
 | | |
 | --- | --- |
 | **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
-| **Output relations** | `source` (`kind`, `saturating`), `sink` (`kind`, `wildcard`), `propagation`, `bridge`, `access_paths`, `dispatch`, `skip_analysis` |
+| **Output relations** | `source` (`kind`, `saturating`), `sink` (`kind`, `wildcard`), `propagation`, `bridge`, `access_paths`, `dispatch`, `skip_analysis`, `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update` |
 | **Ports** | `return`, `arg(0)`, `arg(_)`, `arg(I)`, `arg(0).foo[2]`, `arg(4)."weird.field[0]"`, anchored as `F::port` |
 | **Flows** | `A -> B`, `A <- B`, `A <-> B` |
 | **Attribute operators** | `=`, `!=`, `<`, `>`, `<=`, `>=`, `in { … }` |

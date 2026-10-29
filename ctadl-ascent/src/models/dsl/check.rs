@@ -361,20 +361,22 @@ pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
 
     // ---- 3. components ----
     let components = components_of(rule, &visible);
-    // Codegen drops a marked body as it lowers each import, so the mark has to be known while
+    // A mode is read as each import is lowered (SSA, then codegen), so it has to be known while
     // that import is in hand. A rule of two components is joined only after the import loop.
     if components.len() > 1
-        && let Some(head) = rule
-            .heads
-            .iter()
-            .find(|h| matches!(h.kind, HeadKind::SkipAnalysis))
+        && let Some((head, mode)) = rule.heads.iter().find_map(|h| match h.kind {
+            HeadKind::Mode(mode) => Some((h, mode)),
+            _ => None,
+        })
     {
+        let name = mode.relation_name();
         errors.push(DslError::Rule {
-            message: "a rule with a 'skip_analysis' head must be satisfied within one import: \
-                      its body has parts that share no variable, and those are joined only \
-                      after every import is lowered, too late to keep a body out. Connect the \
-                      parts, or move the 'skip_analysis' head to a rule of its own."
-                .to_string(),
+            message: format!(
+                "a rule with a '{name}' head must be satisfied within one import: its body has \
+                 parts that share no variable, and those are joined only after every import is \
+                 lowered, too late to change how a body is lowered. Connect the parts, or move \
+                 the '{name}' head to a rule of its own."
+            ),
             span: head.span,
         });
         return None;
@@ -1008,14 +1010,15 @@ fn check_head(
                 }
             }
         }
-        HeadKind::SkipAnalysis => {
+        HeadKind::Mode(mode) => {
             let Some(term) = head.anchor.as_ref() else {
                 return;
             };
+            let name = mode.relation_name();
             require(
                 term,
                 head.span,
-                "the function 'skip_analysis' marks",
+                &format!("the function '{name}' marks"),
                 errors,
             );
             if let Term::Var(v) = term
@@ -1024,8 +1027,8 @@ fn check_head(
             {
                 errors.push(DslError::Rule {
                     message: format!(
-                        "'{v}' is a {} and cannot be marked 'skip_analysis'; the mark applies to \
-                         a function's body. Bind it with 'fun({v})'.",
+                        "'{v}' is a {} and cannot be marked '{name}'; the mark applies to a \
+                         function's body. Bind it with 'fun({v})'.",
                         t.name()
                     ),
                     span: head.span,

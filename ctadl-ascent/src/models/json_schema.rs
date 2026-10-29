@@ -572,10 +572,16 @@ impl Walk {
         }
         for item in items {
             match item.as_str() {
-                Some("skip-analysis") => {}
+                Some(
+                    "skip-analysis" | "mem2reg-full" | "mem2reg-window" | "frame-store"
+                    | "frame-update",
+                ) => {}
                 Some(other) => self.unexpected_field(
                     "modes",
-                    format!("unknown mode '{other}'; the defined value is 'skip-analysis'"),
+                    format!(
+                        "unknown mode '{other}'; the defined values are 'skip-analysis', \
+                         'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'"
+                    ),
                 ),
                 None => self.not_string("modes"),
             }

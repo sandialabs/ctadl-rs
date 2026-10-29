@@ -231,6 +231,12 @@ pub struct ProgramModelMatches {
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
     /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
+    /// Functions a `mem2reg_full` or `mem2reg_window` head marked. The SSA pipeline reads this
+    /// before codegen, to force or forbid full stack-slot promotion.
+    pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
+    /// Functions a `frame_store` or `frame_update` head marked. The SSA pipeline reads this
+    /// before codegen, to coarsen or keep the function's frame updates.
+    pub frame_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FrameWrites>,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
     /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
@@ -287,6 +293,8 @@ impl ProgramModelMatches {
             && self.endpoints.is_empty()
             && self.access_paths.is_empty()
             && self.skip_analysis.is_empty()
+            && self.mem2reg_modes.is_empty()
+            && self.frame_modes.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()
             && self.resolved_bridges.is_empty()

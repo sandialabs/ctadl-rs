@@ -72,8 +72,8 @@ pub struct RuleStats {
     pub dispatch_heads: usize,
     /// Signature keys a `dispatch` head attached a model, skip, inline or marker to.
     pub dispatch: usize,
-    /// Functions a `skip_analysis` head marked.
-    pub skip_analysis: usize,
+    /// Functions a mode head (`skip_analysis`, `mem2reg_full`, …) marked.
+    pub modes: usize,
     /// Distinct functions the rule's heads anchored at, capped at [`MATCHED_SAMPLE_CAP`].
     /// This is the DSL's answer to "what did this rule select", which `CTADL0011` reports.
     pub matched_functions: BTreeSet<String>,
@@ -93,7 +93,7 @@ impl RuleStats {
             + self.bridges
             + self.access_paths
             + self.dispatch
-            + self.skip_analysis
+            + self.modes
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -110,7 +110,7 @@ impl RuleStats {
         self.bridges += other.bridges;
         self.access_paths += other.access_paths;
         self.dispatch += other.dispatch;
-        self.skip_analysis += other.skip_analysis;
+        self.modes += other.modes;
         for name in &other.matched_functions {
             if self.matched_functions.len() >= MATCHED_SAMPLE_CAP {
                 break;
@@ -147,7 +147,7 @@ impl Phase {
                         | HeadKind::Bridge { .. }
                         | HeadKind::AccessPath { .. }
                         | HeadKind::Dispatch { .. }
-                        | HeadKind::SkipAnalysis
+                        | HeadKind::Mode(_)
                 )
         )
     }
@@ -509,7 +509,7 @@ fn emit_head(
             tally.stats.dispatch += 1;
             note_match(tally, id);
         }
-        HeadKind::SkipAnalysis => {
+        HeadKind::Mode(mode) => {
             let function = match head.anchor.as_ref() {
                 Some(Term::Lit(Literal::Str(s))) => facts::Str::from(s.as_str()),
                 Some(Term::Var(v)) => match binding.get(v) {
@@ -517,7 +517,8 @@ fn emit_head(
                     Some(other) => {
                         errors.push(DslError::Rule {
                             message: format!(
-                                "'{other}' is not a function, so 'skip_analysis' cannot mark it"
+                                "'{other}' is not a function, so '{}' cannot mark it",
+                                mode.relation_name()
                             ),
                             span: head.span,
                         });
@@ -527,8 +528,25 @@ fn emit_head(
                 },
                 _ => return,
             };
-            out.extend_skip_analysis([function]);
-            tally.stats.skip_analysis += 1;
+            use ctadl_ir::ssa::{FrameWrites, FullMode};
+            // Two rules that disagree on a function: the later one wins, as the JSON's last
+            // generator read did.
+            match mode {
+                FunctionMode::SkipAnalysis => out.extend_skip_analysis([function]),
+                FunctionMode::Mem2RegFull => {
+                    out.mem2reg_modes.insert(function, FullMode::Force);
+                }
+                FunctionMode::Mem2RegWindow => {
+                    out.mem2reg_modes.insert(function, FullMode::Forbid);
+                }
+                FunctionMode::FrameStore => {
+                    out.frame_modes.insert(function, FrameWrites::Store);
+                }
+                FunctionMode::FrameUpdate => {
+                    out.frame_modes.insert(function, FrameWrites::Update);
+                }
+            }
+            tally.stats.modes += 1;
             note_match(tally, function);
         }
     }

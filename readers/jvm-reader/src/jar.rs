@@ -34,7 +34,9 @@ impl JarFileParser {
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-            let name = entry.name();
+            let name = entry
+                .name()
+                .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
             if !name.ends_with(".class") {
                 continue;
             }
