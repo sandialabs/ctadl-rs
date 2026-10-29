@@ -226,8 +226,8 @@ pub struct EscapeNote {
 }
 
 impl EscapeNote {
-    /// The one line that names this function in `notifications.log`. It holds no counts or
-    /// sites, so the same fact reads the same way every time.
+    /// The message that names this function in the index's `notifications.sarif`. It holds no
+    /// counts or sites, so the same fact reads the same way every time.
     pub fn message(&self) -> String {
         let kinds: Vec<String> = self.kinds.keys().map(ToString::to_string).collect();
         format!(

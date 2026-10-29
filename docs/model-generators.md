@@ -617,7 +617,7 @@ like a `propagation`. Five defined values:
   large native function by a large factor. In exchange, a callee or a copy of
   the address no longer sees what the function stored to that slot directly.
   `ctadl index` names each function where this may lose flows in its
-  `notifications.log`, and `ctadl query` repeats it in the SARIF. A
+  `notifications.sarif`, and `ctadl query` repeats it in the SARIF. A
   `mem2reg-full` model works without `--mem2reg full`. When generators
   disagree on a function, the last one read wins.
 - `"frame-store"` and `"frame-update"`: coarsen or keep the matched native

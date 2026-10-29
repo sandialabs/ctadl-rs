@@ -29,6 +29,7 @@ use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
+use ctadl_import::notifications::{self, Level, Notifications};
 use ctadl_ir::ssa;
 
 /// Writes an import to the store. Re-exported here, where the command-line code calls it. The
@@ -159,11 +160,14 @@ fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
 
 /// Warns when many calls still reach large merged methods. A call resolved by class hierarchy
 /// reaches every target, so one that lands on a live merged method takes on every lambda merged
-/// into its class.
+/// into its class. Pushes a [`notifications::MERGED_METHOD_CALLS`] note with the counts when
+/// `live` is not empty, and a [`notifications::MERGED_METHOD_CALLS_HIGH`] warning when the calls
+/// are many.
 fn merged_method_guardrail(
     live: &[String],
     call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
     ids: &facts::IdMap,
+    notes: &mut Notifications,
 ) {
     if live.is_empty() {
         return;
@@ -179,13 +183,56 @@ fn merged_method_guardrail(
         call.len(),
         live.len()
     );
+    let counts = std::collections::BTreeMap::from([
+        ("edges".to_string(), serde_json::json!(edges)),
+        ("callEdges".to_string(), serde_json::json!(call.len())),
+        ("liveMethods".to_string(), serde_json::json!(live.len())),
+    ]);
+    notes.push(
+        &notifications::MERGED_METHOD_CALLS,
+        Level::Note,
+        "Some call edges reach large merged methods the class split left live.",
+        counts.clone(),
+    );
     if edges > MERGED_METHOD_CALL_EDGES {
         log::warn!(
             "merged classes: {edges} call edges reach {} large merged methods that the class split \
              left live; each such call takes on every lambda merged into the method's class",
             live.len()
         );
+        notes.push(
+            &notifications::MERGED_METHOD_CALLS_HIGH,
+            Level::Warning,
+            "Many call edges reach large merged methods the class split left live; each such \
+             call takes on every lambda merged into the method's class.",
+            counts,
+        );
     }
+}
+
+/// The [`notifications::STACK_SLOTS_PROMOTED_FULLY`] warning for `note`, with its escape counts
+/// by kind as properties.
+fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
+    let counts = note
+        .kinds
+        .iter()
+        .map(|(kind, n)| {
+            let key = match kind {
+                ssa::EscapeKind::CallInput => "callInput",
+                ssa::EscapeKind::Copied => "copied",
+                ssa::EscapeKind::FieldAccess => "fieldAccess",
+                ssa::EscapeKind::Returned => "returned",
+                ssa::EscapeKind::Stored => "stored",
+            };
+            (key.to_string(), serde_json::json!(n))
+        })
+        .collect();
+    notes.push(
+        &notifications::STACK_SLOTS_PROMOTED_FULLY,
+        Level::Warning,
+        note.message(),
+        counts,
+    );
 }
 
 /// Indexes a project
@@ -258,22 +305,25 @@ pub fn index(
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
-    // What `notifications.log` says about this index; see [`crate::index_engine::notifications`].
-    let mut notifications: BTreeSet<String> = BTreeSet::new();
+    // Saved next to the index as `notifications.sarif`.
+    let mut notes = Notifications::default();
     // A summary project's unsound functions reach this index through their summaries.
     for summary_project in &summary_projects {
         let dir = summary_project.index_path()?;
-        let lines = crate::index_engine::notifications::load(&dir)
+        let loaded = Notifications::load(&dir)
             .err_context(|| format!("loading notifications from: {}", dir.display()))?;
-        notifications.extend(
-            lines
-                .into_iter()
-                .map(|line| format!("summary project '{}': {line}", summary_project.name)),
+        notes.extend(
+            loaded,
+            Some(&format!("summary project '{}': ", summary_project.name)),
         );
     }
     let mut live_merged_methods: Vec<String> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
+        let dir = import.import_path();
+        let loaded = Notifications::load(&dir)
+            .err_context(|| format!("loading notifications from: {}", dir.display()))?;
+        notes.extend(loaded, Some(&format!("import '{}': ", import.name)));
         // Everything codegen records from here to the next import belongs to this one. Source
         // spans are per-import indices, so this is what keeps them resolvable afterwards.
         source_info.begin_import(&import.name);
@@ -367,7 +417,9 @@ pub fn index(
             },
             &modes,
         ) {
-            notifications.extend(report.notes.iter().map(ssa::EscapeNote::message));
+            for note in &report.notes {
+                push_escape_note(&mut notes, note);
+            }
         }
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
@@ -404,7 +456,12 @@ pub fn index(
         phys_footprint_mb()
     );
 
-    merged_method_guardrail(&live_merged_methods, &facts.call, &source_info.sites);
+    merged_method_guardrail(
+        &live_merged_methods,
+        &facts.call,
+        &source_info.sites,
+        &mut notes,
+    );
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
     // Java `native` stub and its `Java_…` implementation to two ids in the same map.
@@ -590,15 +647,20 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
-    if !notifications.is_empty() {
+    let warnings = notes
+        .notifications()
+        .iter()
+        .filter(|n| n.level == Some(serde_json::json!("warning")))
+        .count();
+    if warnings > 0 {
         log::warn!(
-            "{} function(s) were analyzed in a way that may miss flows; see {}",
-            notifications.len(),
-            path.join(crate::index_engine::notifications::NOTIFICATIONS_FILE)
-                .display()
+            "{warnings} warning(s) about parts of the program analyzed in a way that may miss or \
+             add flows; see {}",
+            path.join(notifications::NOTIFICATIONS_FILE).display()
         );
     }
-    crate::index_engine::notifications::save(&path, &notifications)
+    notes
+        .save(&path, "ctadl index")
         .err_context(|| format!("saving notifications: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
     project.write_index_config(Some(call_policy_record(
@@ -756,7 +818,7 @@ pub fn query(
             .map(|a| a.to_string_lossy().into_owned())
             .collect(),
         start_time_utc,
-        index_notifications: crate::index_engine::notifications::load(&index_path)
+        index_notifications: Notifications::load(&index_path)
             .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
         ..Default::default()
     };
@@ -2270,6 +2332,50 @@ mod tests {
         assert_eq!(
             summary_imports(&app, &summaries),
             [("xproj", "app__x86__libx"), ("yproj", "app__x86__liby")]
+        );
+    }
+
+    /// The guardrail records its counts as a note, and adds a warning once the calls are many.
+    #[test]
+    fn merged_method_guardrail_pushes_its_counts() {
+        let mut ids = facts::IdMap::default();
+        let merged = "LA;->run()V";
+        let target = ids.get_or_add_function(facts::Function(merged.into()));
+        let other = ids.get_or_add_function(facts::Function("LB;->run()V".into()));
+        let edges = |n: u64, to: facts::FunctionId| -> Vec<_> {
+            (0..n)
+                .map(|i| {
+                    let site =
+                        facts::PackedInsnSiteId::try_from_parts(other, facts::InsnId::new(i))
+                            .unwrap();
+                    (site, to)
+                })
+                .collect()
+        };
+        let live = [merged.to_string()];
+
+        let mut call = edges(2, target);
+        call.extend(edges(1, other));
+        let mut notes = Notifications::default();
+        merged_method_guardrail(&live, &call, &ids, &mut notes);
+        let note = notes
+            .of(&notifications::MERGED_METHOD_CALLS)
+            .next()
+            .expect("the counts");
+        assert_eq!(notifications::property_u64(note, "edges"), Some(2));
+        assert_eq!(notifications::property_u64(note, "callEdges"), Some(3));
+        assert_eq!(notifications::property_u64(note, "liveMethods"), Some(1));
+        assert_eq!(
+            notes.of(&notifications::MERGED_METHOD_CALLS_HIGH).count(),
+            0
+        );
+
+        let call = edges(MERGED_METHOD_CALL_EDGES as u64 + 1, target);
+        let mut notes = Notifications::default();
+        merged_method_guardrail(&live, &call, &ids, &mut notes);
+        assert_eq!(
+            notes.of(&notifications::MERGED_METHOD_CALLS_HIGH).count(),
+            1
         );
     }
 }

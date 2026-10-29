@@ -178,7 +178,8 @@ const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that rec
 // `invocation.toolConfigurationNotifications` / `toolExecutionNotifications`). The
 // `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
 // describes what running it *did*. See `notification_descriptors` for the message
-// strings, and `build_invocation` for the conditions.
+// strings, and `build_invocation` for the conditions. Ids from `CTADL0104` on belong to the
+// index's notifications (`ctadl_import::notifications`), which the run carries as they are.
 const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
 const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
 const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";
@@ -195,7 +196,6 @@ const NOTIF_MATCH_SUMMARY: &str = "CTADL0100.endpoint-match-summary";
 const NOTIF_PATHS_DISABLED: &str = "CTADL0101.path-generation-disabled";
 const NOTIF_NO_PATHS: &str = "CTADL0102.no-paths-found";
 const NOTIF_PATH_DROPPED: &str = "CTADL0103.path-dropped-no-location";
-const NOTIF_INDEX: &str = "CTADL0104.index-notification";
 
 /// Everything the SARIF writer needs to explain what the query *did*, independent of what
 /// it *found*. Assembled in `cli::query`, which is the only place that sees both the model
@@ -222,8 +222,8 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
-    /// The lines of the index's `notifications.log`; see [`crate::index_engine::notifications`].
-    pub index_notifications: Vec<String>,
+    /// The index's `notifications.sarif`, copied into the run as they are.
+    pub index_notifications: ctadl_import::notifications::Notifications,
     /// Set only when the project had no index and the run checked the model files against the
     /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
     pub model_check: Option<ModelCheck>,
@@ -848,16 +848,13 @@ fn build_invocation(
         ));
     }
 
-    // Warnings, not notes: a flow these name may be missing from the results.
-    for line in &diagnostics.index_notifications {
-        exec_notifications.push(notification(
-            NOTIF_INDEX,
-            "warning",
-            vec![line.clone()],
-            format!("ctadl index: {line}"),
-            BTreeMap::new(),
-        ));
-    }
+    exec_notifications.extend(
+        diagnostics
+            .index_notifications
+            .notifications()
+            .iter()
+            .cloned(),
+    );
 
     // §3.20.22 / §3.20.21: an error-level notification in either array means the run failed.
     let is_error = |n: &Notification| n.level.as_ref().and_then(|l| l.as_str()) == Some("error");
@@ -1496,12 +1493,6 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             "{0} source-to-sink path(s) were found but discarded because no reporting location \
              could be resolved for them.",
         ),
-        notification_descriptor(
-            NOTIF_INDEX,
-            "Index notification",
-            "ctadl index analyzed part of the program in a way that may miss flows",
-            "ctadl index: {0}",
-        ),
     ]
 }
 
@@ -1942,6 +1933,7 @@ pub fn format_model_check_sarif(
         results,
         SarifData::default(),
         Vec::new(),
+        &diagnostics.index_notifications,
     );
     write_sarif(&sarif, profile, output)?;
     Ok(execution_successful)
@@ -2081,7 +2073,14 @@ async fn async_format_sarif(
     let execution_successful = invocation.execution_successful;
 
     Ok((
-        sarif_document(project, invocation, results, sarif_data, parquet_dirs),
+        sarif_document(
+            project,
+            invocation,
+            results,
+            sarif_data,
+            parquet_dirs,
+            &diagnostics.index_notifications,
+        ),
         execution_successful,
     ))
 }
@@ -2215,7 +2214,8 @@ fn ctadl_tool() -> Tool {
         .build()
 }
 
-/// Assembles the run, and the document around it, out of what a run produced.
+/// Assembles the run, and the document around it, out of what a run produced. The tool declares
+/// `index_notifications`' descriptors beside its own.
 ///
 /// Shared by the indexed path and the model-check one so that the two files differ only in what
 /// they *say* -- same tool, same key order, same shape.
@@ -2225,8 +2225,15 @@ fn sarif_document(
     results: Vec<SarifResult>,
     sarif_data: SarifData,
     parquet_dirs: Vec<String>,
+    index_notifications: &ctadl_import::notifications::Notifications,
 ) -> serde_json::Value {
-    let tool = ctadl_tool();
+    let mut tool = ctadl_tool();
+    let declared = tool.driver.notifications.get_or_insert_with(Vec::new);
+    for descriptor in index_notifications.descriptors() {
+        if !declared.iter().any(|d| d.id == descriptor.id) {
+            declared.push(descriptor.clone());
+        }
+    }
 
     // `parquet_dir` names the source-info tables the locations above came out of. A project has
     // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
