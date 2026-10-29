@@ -5,8 +5,8 @@ relation (which access paths reach which variables) grows to hundreds of million
 because the stack frame acts as one function-wide mixing pool. Apps with this shape need 5-15x
 the memory budget (100x the imported IR), and before any fix they did not finish at all.
 
-This branch is off `main` (merged up to `ebd22e01`, which interns the index engine's values as
-4-byte handles, #170). It has S3 (stack-slot promotion, `window:8`
+This branch is off `main` (merged up to `4490f7bf`; `ebd22e01` before it interns the index
+engine's values as 4-byte handles, #170). It has S3 (stack-slot promotion, `window:8`
 by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`); S5's
 design and first measurements are under S5 below. It also has S29's frame updates (steps 1, 2 and
 5) and a pcode frontend fix found through them: taking a frame address no longer writes the
@@ -490,6 +490,14 @@ imports, same settings as the table above:
   delta). That rule is the same on `main`, so it is #170's concatenation cost on this shape, not
   the merge. No default run shows it.
 - **The regression suite** passes 46 of 46 under `--frame store` and `CTADL_FRAME=update`.
+
+Merging `4490f7bf` next (#168, splitting R8-merged classes in the Dex frontend) bumps the import
+format to 10, so every import must be re-imported (`CTADL_REUSE_FACTS=1 ctadl import --force`
+reuses Ghidra's facts). At the default, `uclited`, `ntfs-3g` and `androidudpbus` are unchanged
+(every relation count and finding). `glxy` has one merged class, which the frontend splits into
+4 ids: 29 relations move by at most 90 rows (`locals` 84,999,293 to 84,999,254), its one finding
+is the same, and its peak is 2.28 GiB (2.25 before, within noise). The suite passes 46 of 46
+under both `--frame` settings.
 
 ### Coarsening gives today's results
 
