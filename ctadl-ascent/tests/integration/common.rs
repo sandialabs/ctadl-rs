@@ -20,3 +20,49 @@ pub fn store_dir() -> &'static Path {
     })
     .path()
 }
+
+/// Every `warn`-level log message any test in this binary has emitted since the first call,
+/// in order.
+///
+/// The logger is process-global and the tests run in parallel, so a test reads only the
+/// messages that name something of its own — a file path, an import name.
+pub fn warnings() -> Vec<String> {
+    log_capture()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// The capture [`warnings`] reads, installed on first call. Nothing else in this binary
+/// installs a logger, so this one always wins.
+fn log_capture() -> &'static std::sync::Mutex<Vec<String>> {
+    static CAPTURE: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+    static INSTALLED: OnceLock<()> = OnceLock::new();
+    INSTALLED.get_or_init(|| {
+        log::set_logger(&CAPTURE).expect("no other logger in this test binary");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    &CAPTURE.0
+}
+
+struct Capture(std::sync::Mutex<Vec<String>>);
+
+impl log::Log for Capture {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            held.push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// Installs the capture [`warnings`] reads, so what follows is recorded.
+pub fn capture_warnings() {
+    log_capture();
+}

@@ -1401,3 +1401,113 @@ fn migrates_skip_analysis_to_its_head() {
     );
     assert!(text.contains("skip_analysis(F) :-"), "{text}");
 }
+
+// ---------------------------------------------------------------------------
+// JSON model files, loaded through the migrator
+// ---------------------------------------------------------------------------
+
+/// A JSONL model file holding `generators`, one per line, with a comment line that must not
+/// consume a generator index.
+fn jsonl_file(generators: &[&str]) -> tempfile::NamedTempFile {
+    use std::io::Write as _;
+    let mut file = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    writeln!(file, "// a comment").unwrap();
+    for g in generators {
+        writeln!(file, "{g}").unwrap();
+    }
+    file.flush().unwrap();
+    file
+}
+
+#[test]
+fn the_deprecation_warning_is_given_once_per_file() {
+    let a = std::path::Path::new("/nonexistent/once-a.jsonl");
+    let b = std::path::Path::new("/nonexistent/once-b.json");
+    assert!(warn_json_deprecated(a), "the first load warns");
+    assert!(
+        !warn_json_deprecated(a),
+        "a second load of the same file does not"
+    );
+    assert!(
+        warn_json_deprecated(b),
+        "another file warns on its own account"
+    );
+    assert_eq!(
+        json_deprecation_warning(a),
+        "/nonexistent/once-a.jsonl: JSON model files are deprecated and will be removed in a \
+         future release; convert with 'ctadl migrate-models /nonexistent/once-a.jsonl'"
+    );
+}
+
+/// A migrated file's rules are labelled with the generator they came from — two rules for the
+/// `any_of`, one for the next generator — and provenance, reports and errors use the label.
+#[test]
+fn a_migrated_file_names_generators_not_rules() {
+    let file = jsonl_file(&[
+        r#"{"find":"methods","where":[{"constraint":"any_of","inners":[
+              {"constraint":"signature_match","name":"a"},
+              {"constraint":"signature_match","name":"b"}]}],
+            "model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}"#
+            .replace('\n', " ")
+            .as_str(),
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
+    ]);
+    let path = file.path();
+    let dsl = DslFile::read(path).expect("loads");
+    assert_eq!(dsl.program.rules.len(), 3);
+    assert_eq!(dsl.origin.as_ref().unwrap().rule_generators, vec![0, 0, 1]);
+    assert_eq!(dsl.provenance(1), format!("{}:0", path.display()));
+    assert_eq!(dsl.provenance(2), format!("{}:1", path.display()));
+
+    // An error inside the third rule names generator 1, and says where to read the rule.
+    let mut errors = DslErrors::default();
+    errors.push(DslError::Rule {
+        message: "something is wrong".to_string(),
+        span: dsl.program.rules[2].span,
+    });
+    let text = dsl.error(errors).to_string();
+    assert!(
+        text.contains(&format!(
+            "> {}: generator 1: something is wrong",
+            path.display()
+        )),
+        "{text}"
+    );
+    assert!(text.contains("ctadl migrate-models"), "{text}");
+
+    // Both rules of generator 0 are dead in an empty program: reported once, as generator 0.
+    // Generator 1 is the other phase's, and counts once among the skipped.
+    let set = DslModelSet { files: vec![dsl] };
+    let matcher = DslMatcher::new(&set, Phase::Index);
+    let report = matcher
+        .finish(&mut ProgramModelMatches::default())
+        .expect("finishes");
+    assert_eq!(report.dead_rules(), vec![format!("{}:0", path.display())]);
+    assert_eq!(report.skipped_rules(), 1);
+}
+
+/// A generator that does not migrate fails a load, naming it; a linter's load leaves it out
+/// and keeps the rest at their own indices.
+#[test]
+fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
+    let file = jsonl_file(&[
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"sources":[{"port":"Variable(x)","kind":"k"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
+    ]);
+    let err = match DslFile::read(file.path()) {
+        Ok(_) => panic!("a Variable port does not migrate"),
+        Err(e) => format!("{:#}", anyhow::Error::from(e)),
+    };
+    assert!(err.contains("model generator at index 0"), "{err}");
+
+    let (dsl, rejected) = DslFile::read_json_lenient(file.path()).expect("lints");
+    let rejected = format!("{:#}", anyhow::Error::from(rejected.expect("reports it")));
+    assert!(
+        rejected.contains("model generator at index 0"),
+        "{rejected}"
+    );
+    assert_eq!(dsl.origin.unwrap().rule_generators, vec![1]);
+}
