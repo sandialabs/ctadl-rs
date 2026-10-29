@@ -214,6 +214,10 @@ each indexed under `window:8` and `full` for 30 s, six at a time, against `uclit
 
 #### `ntfs-3g`'s hub: `FUN_0001f97c`
 
+Measured before the frontend stopped writing taken frame addresses into the frame (S29, "Taking
+a frame address no longer writes the frame"). With that fix the whole binary indexes in 5.0 M
+rows and 0.50 GiB under `window:8`, so what follows describes the artifact as much as the hub.
+
 `full` promotes 5 functions fully. Skipping each one's body in turn (a `skip-analysis` model, as
 for `inflate` in How to reproduce) finds the hub:
 
@@ -341,8 +345,9 @@ After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function 
 
 ## S29: the frame as `Update`, coarsened by default
 
-Steps 1, 2 and 5 of S29 (Ideas for solutions) are done; 3 is not. The measurements below are
-from before step 5.
+Steps 1, 2 and 5 of S29 (Ideas for solutions) are done; 3 is not. The current numbers are under
+"Taking a frame address no longer writes the frame"; "What keeping `Update` costs" is from before
+step 5 and that fix.
 
 - **The frontend** writes into the frame itself, `__stack_top.[k].deref := v`, as
   `__stack_top = update (__stack_top.[k].deref := v)`. A write through anything else (a copy of
@@ -366,19 +371,60 @@ follow it. Paths above `w` (the whole variable) still carry everything. It appli
 
 - **The default is unchanged:** with `--frame store` there are no updates; the regression suite
   passes 46 of 46.
-- **Under `--frame update` the suite loses two flows, `structptr` and `defaultmodels`,** and
-  both have the same cause, in the frontend. Taking a stack address, `unique = PTRSUB(RSP, -16)`,
-  gives a temporary that constant propagation resolves to `__stack_top + -16`. As the PTRSUB's
-  destination, `convert_vnode` turns that temporary into the slot's address, so the PTRSUB is
-  lowered as a write of the slot's address into the slot itself:
-  `__stack_top = update (__stack_top.[-16].deref := __stack_top.[-16])`, before each call that is
-  passed `&h`. As a `Store` this only added a value. As an overwrite it kills what a callee wrote
-  there (`set_data(&h, source())` in `structptr`, `strcpy(buf, ...)` in `defaultmodels`), so the
-  next read of the slot misses the taint. The fix is in the frontend: a write to a temporary that
-  constant propagation resolves to a stack address writes no memory, since its reads resolve to
-  the address anyway. It changes the default IR too, so today's rows have to be re-measured
-  with it.
-- **Not yet measured:** `locals` and peak under `--frame update` with the rule.
+- **Under `--frame update` the rule first lost two flows, `structptr` and `defaultmodels`,** to a
+  frontend artifact; fixed below. With the fix the suite passes 46 of 46 under both settings.
+
+### Taking a frame address no longer writes the frame
+
+Taking a stack address, `unique = PTRSUB(RSP, -16)` for `&h`, gives a temporary that constant
+propagation resolves to `__stack_top + -16`. As the PTRSUB's destination, `convert_vnode` turned
+that temporary into the slot's address, and the write became a write of the slot's address into
+the slot itself: `__stack_top.[-16].deref := __stack_top.[-16]`, before each call passed `&h`. The
+stack pointer, and a register holding `p + 1` for a `p` into the frame, did the same. As a
+`Store` each only added a value; as an overwrite it killed what a callee had written to the slot
+(`set_data(&h, source())` in `structptr`, `strcpy(buf, ...)` in `defaultmodels`).
+
+`push_assign_or_store` now drops a write whose destination is a frame address
+(`__stack_top.[k]`, no `.deref`): every read of such a varnode resolves to the address anyway. It
+removes 499, 1,007, 3,265 and 293 frame writes from `uclited`, `ntfs-3g`, `androidudpbus` and
+`glxy`, and changes nothing else in their IR (`6b0ab678`).
+
+It changes today's default too, by a lot where the artifact fed a hub. Same settings as below,
+110 GiB guard; the frontend's IR differs from the earlier runs only by the dropped writes:
+
+| App | `--frame` | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget | Before the fix |
+|---|---|---|---|---|---|---|---|
+| `uclited` | `store` | `window:8` (default) | 40.4 M | 10.1 s | 1.24 GiB | 6.7x over | 41.4 M, 1.21 GiB |
+| | `update` | `window:8`, skips | 211.9 M | 41.7 s | 12.95 GiB | 69.5x over | 212.2 M, 13.39 GiB |
+| | `store` | `off` | 188.8 M | 31.7 s | 10.96 GiB | 58.8x over | 188.8 M, 10.94 GiB |
+| `ntfs-3g` | `store` | `window:8` (default) | **5.0 M** | 2.8 s | **0.50 GiB** | **1.0x** | 283.8 M, 14.93 GiB |
+| | `update` | `window:8`, skips | 15.9 M | 6.4 s | 0.88 GiB | 1.7x over | 667.9 M, 32.80 GiB |
+| | `store` | `off` | 188.6 M | 147 s | 11.58 GiB | 23.0x over | 676.3 M, 47.70 GiB |
+| `glxy` | `store` | `window:8` (default) | 85.0 M | 36 s | 3.79 GiB | 2.7x over | 100.4 M, 4.10 GiB |
+| | `update` | `window:8`, skips | 86.6 M | 35 s | 3.81 GiB | 2.7x over | 89.7 M, 3.85 GiB |
+| | `store` | `off` | 93.6 M | 44 s | 4.26 GiB | 3.0x over | 109.3 M, 4.61 GiB |
+| `androidudpbus` | `store` | `window:8` (default) | 289.6 M | 93 s | 9.88 GiB | 3.8x over | 337.9 M, 13.31 GiB |
+| | `update` | `window:8`, skips | 283.6 M | 677 s | 22.36 GiB | 8.5x over | no fixpoint in 1800 s, 92 GiB |
+| | `store` | `off` | 1,544.3 M | 677 s | 47.00 GiB | 17.9x over | 1,639.3 M, 47.88 GiB |
+
+"Before the fix" is the table further below; its `update` rows are also from before step 5.
+Every run reports the same findings as `window:8` before the fix (79, 75, 1 and 1).
+
+- **`ntfs-3g`'s blowup was the artifact.** Its default falls 57x in rows and 30x in peak, to
+  budget. A slot that held its own address handed the frame address to everything read from it,
+  and through the address the rest of the frame. Whether all of the drop is in the hub
+  `FUN_0001f97c` (Current state) was not checked.
+- **`androidudpbus` falls 14% in rows and 26% in peak** at the default, and `glxy` 15% and 8%.
+  `uclited` hardly moves.
+- **With the fix and the overwrite rule, `update` beats `off` everywhere,** which is its fair
+  comparison while mem2reg skips its functions: 12x fewer rows on `ntfs-3g`, 5.4x on
+  `androidudpbus`, 8% on `glxy`. Only `uclited` is still above `off` (12%).
+- **It does not yet beat today's default** except to tie on `glxy`. On `androidudpbus` its
+  `locals` equals the default's, but there are 17 M distinct `(variable, path)` against 1 M (16
+  rows per path rather than 284), and the relations that key each path grow with them:
+  `locals_key` 58.5 M against 2.8 M, `ext_dst` 17.8 M against 1.8 M, `reach_vp` 17.3 M against
+  1.0 M. That is the versions × paths volume: each frame version carries its own copy of every
+  slot it does not write. Step 3, promoting the slots no escape reaches, is what removes it.
 
 ### Coarsening gives today's results
 
@@ -397,7 +443,7 @@ Checked against the branch before S29 (`3ff13aa0`) on `uclited`, `ntfs-3g`, `and
 - **The regression suite** (`cargo xtask regression --frontend pcode,jni`) passes 46 of 46, with
   `--frame store` and with `CTADL_FRAME=update` alike.
 
-### What keeping `Update` costs
+### What keeping `Update` costs (before step 5 and the PTRSUB fix)
 
 Same machine and settings as Current state (macOS arm64, one run at a time, peaks from `time -l`,
 budget 100x the IR: `uclited` 2.0 MB, `ntfs-3g` 5.4 MB, `glxy` 15.1 MB, `androidudpbus` 28.2 MB),
