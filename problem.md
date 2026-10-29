@@ -5,12 +5,14 @@ relation (which access paths reach which variables) grows to hundreds of million
 because the stack frame acts as one function-wide mixing pool. Apps with this shape need 5-15x
 the memory budget (100x the imported IR), and before any fix they did not finish at all.
 
-This branch is off `main` (merged up to `7c98b73e`). It has S3 (stack-slot promotion, `window:8`
+This branch is off `main` (merged up to `ebd22e01`, which interns the index engine's values as
+4-byte handles, #170). It has S3 (stack-slot promotion, `window:8`
 by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`); S5's
 design and first measurements are under S5 below. It also has S29's frame updates (steps 1, 2 and
 5) and a pcode frontend fix found through them: taking a frame address no longer writes the
 frame. That fix alone brings `ntfs-3g` from 30x over budget to budget and cuts `androidudpbus`'s
-peak by a quarter at the default (S29). `improve-native-handling` has the earlier record:
+peak by a quarter at the default (S29). Merging #170 then cuts every measured peak by 22-61%
+and changes no relation count or finding (S29, "After merging `main`'s interning"). `improve-native-handling` has the earlier record:
 `things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
@@ -98,18 +100,20 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
 
 ## Current state
 
-**Since the PTRSUB fix** (S29, "Taking a frame address no longer writes the frame"), the
-default (`--frame store`, `window:8`) is, same settings as the table below:
+**Since the PTRSUB fix** (S29, "Taking a frame address no longer writes the frame") and merging
+`main`'s interning (#170), the default (`--frame store`, `window:8`) is, same settings as the
+table below:
 
-| App | `locals` | Fixpoint | Peak | Against budget | Before the fix |
-|---|---|---|---|---|---|
-| `uclited` | 40.4 M | 10.1 s | 1.24 GiB | 6.7x over | 41.4 M, 1.21 GiB |
-| `ntfs-3g` | 5.0 M | 2.8 s | 0.50 GiB | **at budget (1.0x)** | 283.8 M, 14.93 GiB |
-| `glxy` | 85.0 M | 36 s | 3.79 GiB | 2.7x over | 100.4 M, 4.10 GiB |
-| `androidudpbus` | 289.6 M | 93 s | 9.88 GiB | 3.8x over | 337.9 M, 13.31 GiB |
+| App | `locals` | Fixpoint | Peak | Against budget | Before #170 | Before the fix |
+|---|---|---|---|---|---|---|
+| `uclited` | 40.4 M | 9.9 s | 0.65 GiB | 3.5x over | 1.24 GiB, 6.7x | 41.4 M, 1.21 GiB |
+| `ntfs-3g` | 5.0 M | 2.9 s | 0.39 GiB | **under (0.8x)** | 0.50 GiB, 1.0x | 283.8 M, 14.93 GiB |
+| `glxy` | 85.0 M | 36 s | 2.25 GiB | 1.6x over | 3.79 GiB, 2.7x | 100.4 M, 4.10 GiB |
+| `androidudpbus` | 289.6 M | 93 s | 6.53 GiB | 2.5x over | 9.88 GiB, 3.8x | 337.9 M, 13.31 GiB |
 
-The rest of this section, and the firmware sections after it, are from before the fix. `exact`,
-`full` and `full:0` have not been re-run with it, nor have the other binaries.
+The rest of this section, and the firmware sections after it, are from before the fix and before
+#170, so their peaks are higher than today's; #170 changes no row count. `exact`, `full` and
+`full:0` have not been re-run with either, nor have the other binaries.
 
 The table above (Measurements) is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
 with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`. The budget is 100x
@@ -146,7 +150,8 @@ keeps most of the gain with far fewer functions treated unsoundly.
 
 What is left of P1 (before the fix, except where it says):
 
-- **`ntfs-3g`:** at budget under the default since the fix, so it is no longer a P1 sample.
+- **`ntfs-3g`:** at budget under the default since the fix (under it since #170), so it is no
+  longer a P1 sample.
 - **`uclited`:** the fix hardly moves it. `inflate` still holds 98% under `full`. Its stack is done; causes 2 and 3 of the
   Analysis below (the loop's SCC, the offsets) are what remain.
 - **`glxy`:** promoting `FUN_0010b408` fully cuts only 16%, so its rows are not from the stack.
@@ -154,7 +159,8 @@ What is left of P1 (before the fix, except where it says):
 - **`androidudpbus`:** the hub `FUN_00144f04` drops from 243 M rows to 0.2 M. The largest function
   is now `FUN_00156cb8` (11 M rows), below the 1,000-access threshold, so it still runs
   `window:8`. Promoting every function fully (`full:0`) cuts the app a further 25%; it is already
-  under budget without that. The fix takes its default from 5.1x to 3.8x over budget.
+  under budget without that. The fix takes its default from 5.1x to 3.8x over budget, and #170
+  to 2.5x.
 - **The other apps in the table above** have not been run with `full`.
 
 ### Other firmware binaries
@@ -370,8 +376,8 @@ After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function 
 ## S29: the frame as `Update`, coarsened by default
 
 Steps 1, 2 and 5 of S29 (Ideas for solutions) are done; 3 is not. The current numbers are under
-"Taking a frame address no longer writes the frame"; "What keeping `Update` costs" is from before
-step 5 and that fix.
+"After merging `main`'s interning"; "Taking a frame address no longer writes the frame" has the
+same runs before that merge, and "What keeping `Update` costs" is from before step 5 and that fix.
 
 - **The frontend** writes into the frame itself, `__stack_top.[k].deref := v`, as
   `__stack_top = update (__stack_top.[k].deref := v)`. A write through anything else (a copy of
@@ -449,6 +455,41 @@ Every run reports the same findings as `window:8` before the fix (79, 75, 1 and 
   `locals_key` 58.5 M against 2.8 M, `ext_dst` 17.8 M against 1.8 M, `reach_vp` 17.3 M against
   1.0 M. That is the versions × paths volume: each frame version carries its own copy of every
   slot it does not write. Step 3, promoting the slots no escape reaches, is what removes it.
+
+### After merging `main`'s interning (#170)
+
+`main` `ebd22e01` interns paths, strings, call targets and decision sets as 4-byte handles. The
+merge needed one change for this branch: `update_sans_path` joins the relation dump
+(`CTADL_DUMP_RELATIONS`). Built before (`6b0ab678`) and after (`284d2637`) the merge, on the same
+imports, same settings as the table above:
+
+| App | `--frame` | `--mem2reg` | Fixpoint | Peak | Against budget | Before #170 |
+|---|---|---|---|---|---|---|
+| `uclited` | `store` | `window:8` (default) | 9.9 s | 0.65 GiB | 3.5x over | 10.1 s, 1.24 GiB |
+| | `update` | `window:8`, skips | 41.4 s | 5.03 GiB | 27.0x over | 41.7 s, 12.95 GiB |
+| | `store` | `off` | 34.0 s | 5.08 GiB | 27.3x over | 31.7 s, 10.96 GiB |
+| `ntfs-3g` | `store` | `window:8` (default) | 2.9 s | 0.39 GiB | under (0.8x) | 2.8 s, 0.50 GiB |
+| | `update` | `window:8`, skips | 5.9 s | 0.60 GiB | 1.2x over | 6.4 s, 0.88 GiB |
+| | `store` | `off` | **230 s** | 8.11 GiB | 16.1x over | **147 s**, 11.58 GiB |
+| `glxy` | `store` | `window:8` (default) | 36 s | 2.25 GiB | 1.6x over | 36 s, 3.79 GiB |
+| | `update` | `window:8`, skips | 34 s | 2.28 GiB | 1.6x over | 35 s, 3.81 GiB |
+| | `store` | `off` | 41 s | 2.46 GiB | 1.7x over | 44 s, 4.26 GiB |
+| `androidudpbus` | `store` | `window:8` (default) | 93 s | 6.53 GiB | 2.5x over | 93 s, 9.88 GiB |
+| | `update` | `window:8`, skips | 652 s | 13.65 GiB | 5.2x over | 677 s, 22.36 GiB |
+| | `store` | `off` | 651 s | 21.83 GiB | 8.3x over | 677 s, 47.00 GiB |
+
+- **Nothing the index derives changes:** all 57 relations' counts in `profile.json` are equal in
+  every run, and the findings are identical (79, 75, 1 and 1). No path, string or call target is
+  interned during the fixpoint (`fixpoint_interned` is 0), so the overwrite rule's
+  `is_extension_of` test stays read-only.
+- **Peaks fall 22-61%,** least on `ntfs-3g`'s default and most on `uclited` with `update`. The S29 comparisons keep their order: `update` still beats `off` everywhere but
+  `uclited`, and on `androidudpbus` costs 2.1x the default's peak (2.3x before).
+- **Time is unchanged within 8%, except `ntfs-3g` with `off`, 56% slower** (and 57%, 142 s to
+  223 s, on a second pair of runs). All of it is the formal-side `locals` rule, the `edge_split` join that
+  concatenates `p4 · rest` through the path set: 83 s to 157 s (13 s to 20 s for its other
+  delta). That rule is the same on `main`, so it is #170's concatenation cost on this shape, not
+  the merge. No default run shows it.
+- **The regression suite** passes 46 of 46 under `--frame store` and `CTADL_FRAME=update`.
 
 ### Coarsening gives today's results
 
@@ -756,7 +797,7 @@ What it would and would not do:
   above).
 - **The cost is measured** (S29 above). With steps 1, 2 and 5 and the PTRSUB fix, `update` beats
   `off` (its fair comparison while mem2reg skips its functions) everywhere but `uclited`, and ties
-  today's default only on `glxy`; on `androidudpbus` it is 2.3x the default's peak. The cost is
+  today's default only on `glxy`; on `androidudpbus` it is 2.1x the default's peak. The cost is
   the versions × paths of the frame. Step 2 is the valve, and it stays on (coarsen all) until
   `update` beats today.
 - **Next:** mem2reg on `Update` (step 3). Compare flows on the regression suite (`pcode`, `jni`),
