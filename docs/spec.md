@@ -45,6 +45,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
 | **Summary** | How data flows between a function's formals (and return), as pairs of access paths. |
 | **Access path** | A variable followed by fields or offsets (`x.f.g`, `p.[8].deref`); the unit of taint. |
+| **Port** | The part of a matched program element that a model attaches to: an argument, the return, or an access path through one. |
 | **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [model-generators.md](model-generators.md), a guide to the current implementation, not part of this spec. |
 
 ## 3. Requirements
@@ -172,10 +173,19 @@ separately.
 
 ### 4.3 Models
 
-A model generator has a `find` (element kind), `in` (imports), `where` (names, signatures,
-structure) and `model` (sources, sinks, propagation, bridge, dispatch). Propagation, bridge and
-dispatch models are consumed at index time; sources and sinks at query time. Per-language
-defaults ship in `ctadl-ascent/src/models/defaults`.
+A model generator selects program elements (functions or individual call sites), optionally
+limited to some imports and filtered by name, signature and structure, and attaches one or
+more of these to a port of each match:
+
+- a **source** or **sink**, labelled with a kind the user chooses;
+- a **propagation**: how data flows through a function, standing in for code that is absent
+  or too costly to analyze;
+- a **bridge**: a call edge the code does not show (a callback, a framework hook, a call into
+  another import);
+- a **dispatch**: the targets a virtual call resolves to, replacing call resolution there.
+
+Propagation, bridge and dispatch models are consumed at index time; sources and sinks at query
+time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
 ### 4.4 Output
 
@@ -223,4 +233,4 @@ See [limitations.md](limitations.md). Also:
 
 - Only context-free summaries cross a `--summary` boundary.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
-- The `taint` and `forward_self` models are declared but not yet implemented.
+- Some declared model behaviours are accepted but have no effect yet.
