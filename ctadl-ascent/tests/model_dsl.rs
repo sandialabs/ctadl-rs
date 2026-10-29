@@ -921,3 +921,204 @@ fn callsig_is_empty_without_a_dispatch_universe() {
     );
     assert!(out.dispatch.is_empty());
 }
+
+// ---- facts ----
+
+use ctadl_ascent::facts::Str;
+use dsl::relations::{Needs, ProgramFacts, SiteId};
+
+/// A direct call CHA resolved to every one of `callees`.
+fn call_any(callees: &[&str]) -> Statement {
+    Statement::new_kind(StatementKind::CallAssign {
+        style: CallStyle::DirectCall {
+            call_edges: CallEdges::Explicit(callees.iter().map(|c| c.to_string()).collect()),
+        },
+        rets: Default::default(),
+        args: Default::default(),
+    })
+}
+
+/// A program of bodied functions with no method table, the shape flowy produces.
+fn plain_program(functions: Vec<FunctionData>) -> ProgramInfo {
+    ProgramInfo {
+        program: Program::new(Functions::new(functions)),
+        ..Default::default()
+    }
+}
+
+fn needs_of(source: &str) -> Needs {
+    let program = dsl::parse::parse_program(source).unwrap_or_else(|e| panic!("{e:?}"));
+    Needs::of_program(&program)
+}
+
+/// A call site is identified by its position, so building `callsite` interns nothing per site:
+/// the interner never frees, and an id per site would be a permanent cost of every import.
+#[test]
+fn a_call_site_id_is_never_interned() {
+    // A caller no other test names, so nothing else could have interned its site ids.
+    let caller = "facts-leak-caller";
+    let program_info = plain_program(vec![
+        function(
+            caller,
+            0,
+            (0..50).map(|_| call("facts-leak-callee")).collect(),
+        ),
+        function("facts-leak-callee", 0, vec![]),
+    ]);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let facts = ProgramFacts::build(&index, &Needs::all());
+    assert_eq!(facts.callsites.len(), 50);
+    for stmt in [0, 1, 49] {
+        let id = format!("{caller}#0:{stmt}");
+        assert_eq!(Str::try_get(&id), None, "{id} was interned");
+        // The printed spelling still names the site.
+        let site = SiteId::parse(&id).expect("parses");
+        assert_eq!(site.to_string(), id);
+        assert_eq!(facts.callsites_with_id(site), &[stmt as usize]);
+    }
+}
+
+/// Every built-in relation a rule body reads, under a negation and inside `&&` / `||` groups
+/// too, and nothing else.
+#[test]
+fn needs_are_read_from_every_atom_of_every_rule() {
+    assert_eq!(
+        needs_of(r#"source(F::return) :- fun(F, name = "x"), param(F, 0);"#),
+        Needs::default()
+    );
+    assert_eq!(
+        needs_of(
+            r#"source(F::return) :- fun(F), !(callsite(F, _, callee_string = G) && fun(G));
+               sink(F::arg(0)) :- fun(F, parent = P), (subclass+(P, "a") || uses_field(F, "f"));"#
+        ),
+        Needs {
+            callsite: true,
+            uses_field: true,
+            subclass: true,
+            callsig: false,
+        }
+    );
+    let mut needs = needs_of(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "n");"#);
+    assert_eq!(
+        needs,
+        Needs {
+            callsig: true,
+            ..Needs::default()
+        }
+    );
+    needs.union(needs_of(r#"source(F::return) :- subclass*(F, F);"#));
+    assert!(needs.callsig && needs.subclass && !needs.callsite);
+}
+
+/// A table no rule reads is not built; `fun` always is.
+#[test]
+fn only_the_needed_tables_are_built() {
+    let program_info = java_program();
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let none = ProgramFacts::build(&index, &Needs::default());
+    assert_eq!(none.funs.len(), 3);
+    assert!(none.callsites.is_empty() && none.uses_field.is_empty());
+    assert!(none.subclass.is_empty() && none.classes.is_empty());
+
+    let all = ProgramFacts::build(&index, &Needs::all());
+    assert_eq!(all.callsites.len(), 1);
+    assert_eq!(all.uses_field.len(), 1);
+    assert_eq!(all.subclass.len(), 1);
+
+    let fields_only = ProgramFacts::build(
+        &index,
+        &Needs {
+            uses_field: true,
+            ..Needs::default()
+        },
+    );
+    assert!(fields_only.callsites.is_empty());
+    assert_eq!(fields_only.uses_field.len(), 1);
+}
+
+/// `subs` is `supers` inverted, including around a cycle, which an `__index` chain can form.
+#[test]
+fn subs_is_the_converse_of_supers_through_a_cycle() {
+    let edges: &[(&str, &str)] = &[("A", "B"), ("B", "A"), ("C", "B"), ("D", "C")];
+    let mut hierarchy: hashbrown::HashMap<JavaClass, smallvec::SmallVec<[JavaClass; 2]>> =
+        Default::default();
+    for (sub, sup) in edges {
+        hierarchy
+            .entry(JavaClass((*sub).into()))
+            .or_default()
+            .push(JavaClass((*sup).into()));
+    }
+    let program_info = ProgramInfo {
+        vmt: VirtualMethodTable::Java {
+            methods: Vec::new(),
+            hierarchy,
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
+            natives: Vec::new(),
+        },
+        ..Default::default()
+    };
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let facts = ProgramFacts::build(&index, &Needs::all());
+    let s = |c: &str| Str::from(c);
+    let mut direct = vec![s("A"), s("C")];
+    direct.sort_unstable();
+    assert_eq!(facts.subs(s("B"), false, false), direct);
+    for &cls in &facts.classes {
+        for (reflexive, deep) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut want: Vec<Str> = facts
+                .classes
+                .iter()
+                .copied()
+                .filter(|&c| (reflexive && c == cls) || facts.supers(c, false, deep).contains(&cls))
+                .collect();
+            want.sort_unstable();
+            assert_eq!(
+                facts.subs(cls, reflexive, deep),
+                want,
+                "subs({cls}, {reflexive}, {deep})"
+            );
+        }
+    }
+    // Strictly below B, through the cycle: B itself, and D two steps down.
+    let below = facts.subs(s("B"), false, true);
+    assert!(
+        below.contains(&s("B")) && below.contains(&s("D")),
+        "{below:?}"
+    );
+}
+
+/// A call CHA resolved several ways is one site with one row per edge, and a bound site
+/// reaches all of them.
+#[test]
+fn a_multi_edge_site_keeps_every_edge() {
+    let program_info = plain_program(vec![
+        function("caller", 0, vec![call_any(&["g", "h"])]),
+        function("g", 1, vec![]),
+        function("h", 1, vec![]),
+    ]);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let facts = ProgramFacts::build(&index, &Needs::all());
+    let site = SiteId {
+        caller: Str::from("caller"),
+        block: 0,
+        stmt: 0,
+    };
+    let callees: BTreeSet<String> = facts
+        .callsites_with_id(site)
+        .iter()
+        .map(|&i| facts.callsites[i].callee.to_string())
+        .collect();
+    assert_eq!(callees, BTreeSet::from(["g".to_string(), "h".to_string()]));
+
+    // Through a rule: the site found by its edge to `g` is the site whose edges include `h`.
+    let matches = run(
+        &program_info,
+        r#"source(G::return) :- callsite(_, S, callee_string = "g"),
+                                callsite(_, S, callee_string = G);"#,
+    );
+    assert_eq!(
+        endpoint_functions(&matches),
+        BTreeSet::from(["g".to_string(), "h".to_string()])
+    );
+}

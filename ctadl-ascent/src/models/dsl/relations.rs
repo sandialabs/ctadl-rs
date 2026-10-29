@@ -14,15 +14,28 @@ for one callee. A model that says `name = "system"` must match; a model that say
 `fun(F, name = N)` must bind `N` to one name, because the design makes every attribute
 functionally dependent on the columns. Matching generously and binding canonically is what
 satisfies both.
+
+# What this interns
+
+Every value is a [`Str`], whose interner never frees, so what a build interns stays for the
+life of the process. The tables therefore hold only strings the program itself spells — names,
+classes, signatures, fields, callees — each of which the interner keeps once however many
+imports or rows repeat it. Nothing is composed per row: a call site is identified by its
+position ([`SiteId`]) rather than by an interned `caller#block:statement`, and the tables no
+loaded rule reads ([`Needs`]) are not built at all.
 */
+
+use std::ops::{Deref, Range};
 
 use hashbrown::hash_map::HashMap;
 
-use ctadl_ir::mir::call::{CallEdges, CallStyle, VirtualMethodTable};
+use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
-use crate::models::match_index::ProgramMatchIndex;
+use crate::models::dsl::ast::{BodyItem, Program};
+use crate::models::match_index::{ProgramMatchIndex, for_each_spelling};
+use ctadl_ir::mir::call::VirtualMethodTable;
 
 /// One function, as the DSL sees it.
 #[derive(Clone, Debug)]
@@ -43,17 +56,81 @@ pub struct FunRow {
     pub has_code: Option<bool>,
 }
 
-/// One call site.
+impl FunRow {
+    fn new(fq: Str) -> Self {
+        Self {
+            fq,
+            names: Vec::new(),
+            parents: Vec::new(),
+            signatures: Vec::new(),
+            qualified_ids: Vec::new(),
+            arity: None,
+            has_code: None,
+        }
+    }
+
+    fn spellings_mut(&mut self, key: FunKey) -> &mut Vec<Str> {
+        match key {
+            FunKey::Name => &mut self.names,
+            FunKey::Parent => &mut self.parents,
+            FunKey::Signature => &mut self.signatures,
+            FunKey::QualifiedId => &mut self.qualified_ids,
+        }
+    }
+}
+
+/// Which call site a row is: the function it sits in and the statement's position there.
+/// Stable within one import, which is all a rule can join on.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SiteId {
+    pub caller: Str,
+    pub block: u32,
+    pub stmt: u32,
+}
+
+impl SiteId {
+    /// Reads back a [`Display`](std::fmt::Display)ed id. Interns nothing: a caller that was
+    /// never interned is in no table, so its spelling names no site.
+    pub fn parse(text: &str) -> Option<Self> {
+        let (caller, pos) = text.rsplit_once('#')?;
+        let (block, stmt) = pos.split_once(':')?;
+        Some(Self {
+            caller: Str::try_get(caller)?,
+            block: block.parse().ok()?,
+            stmt: stmt.parse().ok()?,
+        })
+    }
+}
+
+/// `caller#block:statement`, the spelling a site prints as and a literal names it by.
+impl std::fmt::Display for SiteId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}:{}", self.caller, self.block, self.stmt)
+    }
+}
+
+/// One call site, or one of its edges: a direct call CHA resolved several ways is one row per
+/// callee, all with the same [`SiteId`].
 #[derive(Clone, Debug)]
 pub struct CallSiteRow {
     /// The function the site sits in.
     pub caller: Str,
-    /// A stable per-program identity: `caller#block:statement`. Stable within one import, which
-    /// is all a rule can join on.
-    pub id: Str,
+    /// The statement's block and its index in that block.
+    pub block: u32,
+    pub stmt: u32,
     /// The callee as the site names it: a fully qualified function name (joinable with `fun`)
     /// or, for an indirect call, the variable the program text calls through.
     pub callee: Str,
+}
+
+impl CallSiteRow {
+    pub fn site(&self) -> SiteId {
+        SiteId {
+            caller: self.caller,
+            block: self.block,
+            stmt: self.stmt,
+        }
+    }
 }
 
 /// One distinct static call-site signature: what `callsig` ranges over and what a `dispatch`
@@ -79,6 +156,9 @@ pub struct CallSigRow {
 }
 
 /// Every built-in relation, materialized for one program.
+///
+/// A table no loaded rule reads (see [`Needs`]) is left empty; `fun` and `param` are always
+/// there.
 pub struct ProgramFacts {
     pub funs: Vec<FunRow>,
     /// The distinct static call-site signatures, empty unless the import was indexed with a
@@ -86,6 +166,7 @@ pub struct ProgramFacts {
     /// against a program collected without one matches nothing rather than erroring: the same
     /// posture `fun`'s body-dependent attributes take on a bodyless callee.
     pub callsigs: Vec<CallSigRow>,
+    /// Grouped by site: the edges of one site are adjacent.
     pub callsites: Vec<CallSiteRow>,
     /// `(function, field)` pairs from every `Load`/`Store`.
     pub uses_field: Vec<(Str, Str)>,
@@ -107,9 +188,13 @@ pub struct ProgramFacts {
     by_qualified_id: HashMap<Str, Vec<usize>>,
     callsites_by_caller: HashMap<Str, Vec<usize>>,
     callsites_by_callee: HashMap<Str, Vec<usize>>,
-    callsite_by_id: HashMap<Str, usize>,
+    callsites_by_site: HashMap<SiteId, Range<usize>>,
+    /// `0..callsites.len()`, so a site's rows can be handed out as a slice of indices like
+    /// every other lookup's.
+    callsite_indices: Vec<usize>,
     uses_field_by_fun: HashMap<Str, Vec<usize>>,
     supers_of: HashMap<Str, Vec<Str>>,
+    subs_of: HashMap<Str, Vec<Str>>,
     callsigs_by_id: HashMap<Str, usize>,
     callsigs_by_name: HashMap<Str, Vec<usize>>,
     callsigs_by_parent: HashMap<Str, Vec<usize>>,
@@ -117,12 +202,19 @@ pub struct ProgramFacts {
 }
 
 /// Which input relations some loaded rule reads, so `ProgramFacts::build` can skip the tables
-/// nobody asks for.
+/// nobody asks for. `fun` and `param` read only the function table, which is always built.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Needs {
+    /// `callsite`: a pass over every statement.
     pub callsite: bool,
+    /// `uses_field`: the same pass.
     pub uses_field: bool,
+    /// `subclass`, `subclass*`, `subclass+`.
     pub subclass: bool,
+    /// `callsig`. The universe itself is collected only when someone asks for it (see
+    /// `Program::uses_callsig`), but a JSON `find: "dispatch"` generator can be the one that
+    /// did.
+    pub callsig: bool,
 }
 
 impl Needs {
@@ -132,122 +224,80 @@ impl Needs {
             callsite: true,
             uses_field: true,
             subclass: true,
+            callsig: true,
         }
     }
 
-    /// The tables the rules of `program` read.
-    pub fn of_program(_program: &crate::models::dsl::ast::Program) -> Self {
-        Self::all()
+    /// The tables the rules of `program` read, under negations and inside groups too: a
+    /// filter reads its relation as surely as a generator does.
+    pub fn of_program(program: &Program) -> Self {
+        fn visit(item: &BodyItem, needs: &mut Needs) {
+            match item {
+                BodyItem::Atom(atom) => match atom.name.as_str() {
+                    "callsite" => needs.callsite = true,
+                    "uses_field" => needs.uses_field = true,
+                    "subclass" | "subclass*" | "subclass+" => needs.subclass = true,
+                    "callsig" => needs.callsig = true,
+                    _ => {}
+                },
+                BodyItem::Not(inner) => visit(inner, needs),
+                BodyItem::And(items) | BodyItem::Or(items) => {
+                    items.iter().for_each(|i| visit(i, needs))
+                }
+            }
+        }
+        let mut needs = Self::default();
+        for rule in &program.rules {
+            rule.body.iter().for_each(|i| visit(i, &mut needs));
+        }
+        needs
     }
 
     pub fn union(&mut self, other: Self) {
         self.callsite |= other.callsite;
         self.uses_field |= other.uses_field;
         self.subclass |= other.subclass;
+        self.callsig |= other.callsig;
     }
 }
 
 impl ProgramFacts {
-    /// Materializes the relations for the program `index` was built from.
-    pub fn build(index: &ProgramMatchIndex<'_>, _needs: &Needs) -> Self {
+    /// Materializes the relations `needs` asks for, over the program `index` was built from.
+    pub fn build(index: &ProgramMatchIndex<'_>, needs: &Needs) -> Self {
         let mut rows: Vec<FunRow> = Vec::new();
         let mut by_fq: HashMap<Str, usize> = HashMap::new();
 
-        // `row_for` is what gives one row per function even when a frontend publishes several
-        // table entries for it (a Java method under two classes, a native symbol under its
-        // simple and decorated names).
-        macro_rules! row_for {
-            ($fq:expr) => {{
-                let fq: Str = $fq;
-                match by_fq.get(&fq) {
-                    Some(&i) => i,
-                    None => {
-                        let i = rows.len();
-                        rows.push(FunRow {
-                            fq,
-                            names: Vec::new(),
-                            parents: Vec::new(),
-                            signatures: Vec::new(),
-                            qualified_ids: Vec::new(),
-                            arity: None,
-                            has_code: None,
-                        });
-                        by_fq.insert(fq, i);
-                        i
-                    }
-                }
-            }};
-        }
-
-        match index.vmt() {
-            VirtualMethodTable::Java { methods, .. } => {
-                for (cls, name, sig, fid) in methods {
-                    let i = row_for!(Str::from(fid.as_ref()));
-                    push_unique(&mut rows[i].names, Str::from(name.as_ref()));
-                    push_unique(&mut rows[i].parents, Str::from(cls.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(sig.as_ref()));
-                    push_unique(&mut rows[i].qualified_ids, Str::from(fid.as_ref()));
-                }
+        // One row per function even when a frontend publishes several table entries for it (a
+        // Java method under two classes, a native symbol under its simple and decorated names).
+        // A function's spellings arrive together, so its handle is interned once rather than
+        // once per spelling.
+        let mut current: (&str, usize) = ("", usize::MAX);
+        for_each_spelling(index.vmt(), |fq, key, spelling| {
+            if !std::ptr::eq(fq, current.0) {
+                current = (fq, row_for(&mut rows, &mut by_fq, Str::from(fq)));
             }
-            // The Java arm over .NET spellings. An override alias names its class's own
-            // implementation, so it lands on that method's row with the base method's name.
-            VirtualMethodTable::Cil { methods, .. } => {
-                for (cls, name, sig, fid) in methods {
-                    let i = row_for!(Str::from(fid.as_ref()));
-                    push_unique(&mut rows[i].names, Str::from(name.as_ref()));
-                    push_unique(&mut rows[i].parents, Str::from(cls.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(sig.as_ref()));
-                    push_unique(&mut rows[i].qualified_ids, Str::from(fid.as_ref()));
-                }
-            }
-            VirtualMethodTable::Native { methods } => {
-                for (simple, sig, fq, qualified) in methods {
-                    let i = row_for!(Str::from(fq.as_ref()));
-                    // The simple name first: it is the canonical one, and it is what a model
-                    // written against a stripped or a decorated binary can share.
-                    push_unique(&mut rows[i].names, Str::from(simple.as_ref()));
-                    push_unique(&mut rows[i].names, Str::from(fq.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(sig.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(fq.as_ref()));
-                    push_unique(&mut rows[i].qualified_ids, Str::from(qualified.as_ref()));
-                    push_unique(&mut rows[i].qualified_ids, Str::from(fq.as_ref()));
-                }
-            }
-            VirtualMethodTable::Lua {
-                methods,
-                functions,
-                externals,
-                ..
-            } => {
-                for (simple, fq) in functions.iter().chain(externals.iter()) {
-                    let i = row_for!(Str::from(fq.as_ref()));
-                    push_unique(&mut rows[i].names, Str::from(simple.as_ref()));
-                    push_unique(&mut rows[i].names, Str::from(fq.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(simple.as_ref()));
-                    push_unique(&mut rows[i].signatures, Str::from(fq.as_ref()));
-                    // Only the fq name is a qualified id: keying the bare name here would hand
-                    // `qualified-id` exactly the collisions it exists to remove.
-                    push_unique(&mut rows[i].qualified_ids, Str::from(fq.as_ref()));
-                }
-                // The metatable-recovered class methods give Lua its `parent`.
-                for (cls, _name, fq) in methods {
-                    let i = row_for!(Str::from(fq.as_ref()));
-                    push_unique(&mut rows[i].parents, Str::from(cls.as_ref()));
-                }
-            }
-            VirtualMethodTable::Unknown => {}
-        }
+            let row = &mut rows[current.1];
+            let value = if spelling == fq {
+                row.fq
+            } else {
+                Str::from(spelling)
+            };
+            push_unique(row.spellings_mut(key), value);
+        });
 
         // Every lowered function, whether or not the method table names it. This is what gives
         // flowy and pcode a `fun` relation at all, and it is where arity / has_code come from.
+        let mut lowered: Vec<(Str, &FunctionData)> = Vec::new();
         for (fq, data) in index.functions_with_data() {
-            let i = row_for!(Str::from(fq));
+            let i = row_for(&mut rows, &mut by_fq, Str::from(fq));
             let row = &mut rows[i];
-            push_unique(&mut row.names, Str::from(fq));
-            push_unique(&mut row.signatures, Str::from(fq));
-            push_unique(&mut row.qualified_ids, Str::from(fq));
+            let fq = row.fq;
+            push_unique(&mut row.names, fq);
+            push_unique(&mut row.signatures, fq);
+            push_unique(&mut row.qualified_ids, fq);
             row.arity = Some(data.num_parameters() as i64);
             row.has_code = Some(!data.blocks.is_empty());
+            lowered.push((fq, data));
         }
 
         let mut by_name: HashMap<Str, Vec<usize>> = HashMap::new();
@@ -269,14 +319,22 @@ impl ProgramFacts {
             }
         }
 
-        let (callsites, uses_field) = scan_bodies(index);
+        let (callsites, uses_field) = if needs.callsite || needs.uses_field {
+            scan_bodies(&lowered, needs)
+        } else {
+            Default::default()
+        };
         let mut callsites_by_caller: HashMap<Str, Vec<usize>> = HashMap::new();
         let mut callsites_by_callee: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut callsite_by_id: HashMap<Str, usize> = HashMap::new();
+        let mut callsites_by_site: HashMap<SiteId, Range<usize>> = HashMap::new();
         for (i, cs) in callsites.iter().enumerate() {
             callsites_by_caller.entry(cs.caller).or_default().push(i);
             callsites_by_callee.entry(cs.callee).or_default().push(i);
-            callsite_by_id.insert(cs.id, i);
+            // A site's edges are adjacent, so extending the range covers them all.
+            callsites_by_site
+                .entry(cs.site())
+                .and_modify(|r| r.end = i + 1)
+                .or_insert(i..i + 1);
         }
         let mut uses_field_by_fun: HashMap<Str, Vec<usize>> = HashMap::new();
         for (i, (f, _)) in uses_field.iter().enumerate() {
@@ -284,55 +342,35 @@ impl ProgramFacts {
         }
 
         let mut subclass: Vec<(Str, Str)> = Vec::new();
+        let mut classes: Vec<Str> = Vec::new();
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
-        match index.vmt() {
-            VirtualMethodTable::Java { hierarchy, .. } => {
-                for (cls, supers) in hierarchy {
-                    let sub = Str::from(cls.as_ref());
-                    for sup in supers {
-                        let sup = Str::from(sup.as_ref());
-                        subclass.push((sub, sup));
-                        supers_of.entry(sub).or_default().push(sup);
-                    }
-                }
+        let mut subs_of: HashMap<Str, Vec<Str>> = HashMap::new();
+        if needs.subclass {
+            match index.vmt() {
+                VirtualMethodTable::Java { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+                VirtualMethodTable::Cil { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+                VirtualMethodTable::Lua { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+                _ => {}
             }
-            VirtualMethodTable::Cil { hierarchy, .. } => {
-                for (cls, supers) in hierarchy {
-                    let sub = Str::from(cls.as_ref());
-                    for sup in supers {
-                        let sup = Str::from(sup.as_ref());
-                        subclass.push((sub, sup));
-                        supers_of.entry(sub).or_default().push(sup);
-                    }
-                }
+            subclass.sort_unstable();
+            subclass.dedup();
+            for &(sub, sup) in &subclass {
+                supers_of.entry(sub).or_default().push(sup);
+                subs_of.entry(sup).or_default().push(sub);
             }
-            VirtualMethodTable::Lua { hierarchy, .. } => {
-                for (cls, supers) in hierarchy {
-                    let sub = Str::from(cls.as_ref());
-                    for sup in supers {
-                        let sup = Str::from(sup.as_ref());
-                        subclass.push((sub, sup));
-                        supers_of.entry(sub).or_default().push(sup);
-                    }
-                }
-            }
-            _ => {}
+            classes = subclass
+                .iter()
+                .flat_map(|(a, b)| [*a, *b])
+                .chain(rows.iter().flat_map(|r| r.parents.iter().copied()))
+                .collect();
+            classes.sort_unstable();
+            classes.dedup();
         }
-        subclass.sort_unstable();
-        subclass.dedup();
 
-        let mut classes: Vec<Str> = subclass
-            .iter()
-            .flat_map(|(a, b)| [*a, *b])
-            .chain(rows.iter().flat_map(|r| r.parents.iter().copied()))
-            .collect();
-        classes.sort_unstable();
-        classes.dedup();
-
-        // The call-site signature universe, when the caller asked for one. `parts` is already
-        // the distinct set, so there is nothing to deduplicate here.
+        // The call-site signature universe, when the caller collected one and a rule reads it.
+        // `parts` is already the distinct set, so there is nothing to deduplicate here.
         let mut callsigs: Vec<CallSigRow> = Vec::new();
-        if let Some(universe) = index.dispatch.as_ref() {
+        if let Some(universe) = index.dispatch.as_ref().filter(|_| needs.callsig) {
             callsigs.extend(
                 universe
                     .parts
@@ -365,6 +403,7 @@ impl ProgramFacts {
         Self {
             funs: rows,
             callsigs,
+            callsite_indices: (0..callsites.len()).collect(),
             callsites,
             uses_field,
             subclass,
@@ -378,9 +417,10 @@ impl ProgramFacts {
             by_qualified_id,
             callsites_by_caller,
             callsites_by_callee,
-            callsite_by_id,
+            callsites_by_site,
             uses_field_by_fun,
             supers_of,
+            subs_of,
             callsigs_by_id,
             callsigs_by_name,
             callsigs_by_parent,
@@ -446,9 +486,13 @@ impl ProgramFacts {
             .map_or(&[], |v| v.as_slice())
     }
 
+    /// The rows of one site: one per edge, so more than one for a call CHA resolved several
+    /// ways.
     #[inline]
-    pub fn callsite_index(&self, id: Str) -> Option<usize> {
-        self.callsite_by_id.get(&id).copied()
+    pub fn callsites_with_id(&self, site: SiteId) -> &[usize] {
+        self.callsites_by_site
+            .get(&site)
+            .map_or(&[], |r| &self.callsite_indices[r.clone()])
     }
 
     #[inline]
@@ -459,54 +503,12 @@ impl ProgramFacts {
     /// Superclasses of `cls` at the requested closure. `reflexive` adds `cls` itself, `deep`
     /// walks the chain; `(false, false)` is the direct relation.
     pub fn supers(&self, cls: Str, reflexive: bool, deep: bool) -> Vec<Str> {
-        let mut out: Vec<Str> = Vec::new();
-        if reflexive {
-            out.push(cls);
-        }
-        if !deep {
-            if let Some(direct) = self.supers_of.get(&cls) {
-                out.extend(direct.iter().copied());
-            }
-            out.sort_unstable();
-            out.dedup();
-            return out;
-        }
-        // Depth-first with a seen set: a frontend's `__index` chain can be cyclic, and a cycle
-        // must not become a hang.
-        let mut seen: std::collections::BTreeSet<Str> = std::collections::BTreeSet::new();
-        let mut stack = vec![cls];
-        while let Some(c) = stack.pop() {
-            let Some(direct) = self.supers_of.get(&c) else {
-                continue;
-            };
-            for s in direct {
-                if seen.insert(*s) {
-                    out.push(*s);
-                    stack.push(*s);
-                }
-            }
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
+        closure(&self.supers_of, cls, reflexive, deep)
     }
-}
 
-impl ProgramFacts {
     /// Subclasses of `cls` at the requested closure; the converse of [`Self::supers`].
     pub fn subs(&self, cls: Str, reflexive: bool, deep: bool) -> Vec<Str> {
-        let mut out: Vec<Str> = self
-            .classes
-            .iter()
-            .copied()
-            .filter(|&c| (reflexive && c == cls) || self.supers(c, false, deep).contains(&cls))
-            .collect();
-        if reflexive && !out.contains(&cls) {
-            out.push(cls);
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
+        closure(&self.subs_of, cls, reflexive, deep)
     }
 }
 
@@ -519,32 +521,86 @@ pub enum FunKey {
     QualifiedId,
 }
 
+fn row_for(rows: &mut Vec<FunRow>, by_fq: &mut HashMap<Str, usize>, fq: Str) -> usize {
+    *by_fq.entry(fq).or_insert_with(|| {
+        rows.push(FunRow::new(fq));
+        rows.len() - 1
+    })
+}
+
 fn push_unique(v: &mut Vec<Str>, s: Str) {
     if !v.contains(&s) {
         v.push(s);
     }
 }
 
-/// One pass over every function body, collecting the two relations that need one.
-fn scan_bodies(index: &ProgramMatchIndex<'_>) -> (Vec<CallSiteRow>, Vec<(Str, Str)>) {
+/// A frontend's class hierarchy as `(subclass, superclass)` edges.
+fn push_edges<'a, C, S>(
+    hierarchy: impl IntoIterator<Item = (&'a C, &'a S)>,
+    out: &mut Vec<(Str, Str)>,
+) where
+    C: Deref<Target: AsRef<str>> + 'a,
+    S: Deref<Target = [C]> + 'a,
+{
+    for (cls, supers) in hierarchy {
+        let sub = Str::from((**cls).as_ref());
+        out.extend(supers.iter().map(|sup| (sub, Str::from((**sup).as_ref()))));
+    }
+}
+
+/// `cls`'s neighbors in `edges` at the requested closure, sorted.
+fn closure(edges: &HashMap<Str, Vec<Str>>, cls: Str, reflexive: bool, deep: bool) -> Vec<Str> {
+    let mut out: Vec<Str> = Vec::new();
+    if reflexive {
+        out.push(cls);
+    }
+    if !deep {
+        out.extend(edges.get(&cls).into_iter().flatten().copied());
+    } else {
+        // Depth-first with a seen set: a frontend's `__index` chain can be cyclic, and a cycle
+        // must not become a hang.
+        let mut seen: hashbrown::HashSet<Str> = hashbrown::HashSet::new();
+        let mut stack = vec![cls];
+        while let Some(c) = stack.pop() {
+            for &s in edges.get(&c).into_iter().flatten() {
+                if seen.insert(s) {
+                    out.push(s);
+                    stack.push(s);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// One pass over every function body, collecting whichever of the two relations that need one
+/// `needs` asks for.
+fn scan_bodies(
+    lowered: &[(Str, &FunctionData)],
+    needs: &Needs,
+) -> (Vec<CallSiteRow>, Vec<(Str, Str)>) {
     let mut callsites = Vec::new();
     let mut fields: Vec<(Str, Str)> = Vec::new();
-    for (fq, data) in index.functions_with_data() {
-        let caller = Str::from(fq);
+    for &(caller, data) in lowered {
         for (b, block) in data.blocks.iter().enumerate() {
             for (s, stmt) in block.statements.iter().enumerate() {
                 match &stmt.kind {
-                    StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => {
+                    StatementKind::Load { field, .. } | StatementKind::Store { field, .. }
+                        if needs.uses_field =>
+                    {
                         fields.push((caller, Str::from(field.field.as_ref())));
                     }
-                    StatementKind::CallAssign { style, .. } => {
-                        for callee in callee_strings(style, data) {
-                            callsites.push(CallSiteRow {
+                    StatementKind::CallAssign { style, .. } if needs.callsite => {
+                        callsites.extend(callee_strings(style, data).into_iter().map(|callee| {
+                            CallSiteRow {
                                 caller,
-                                id: Str::from(format!("{fq}#{b}:{s}")),
+                                block: b as u32,
+                                stmt: s as u32,
                                 callee,
-                            });
-                        }
+                            }
+                        }));
                     }
                     _ => {}
                 }
@@ -560,6 +616,10 @@ fn scan_bodies(index: &ProgramMatchIndex<'_>) -> (Vec<CallSiteRow>, Vec<(Str, St
 ///
 /// A direct call can list several edges — that is CHA's answer, not an ambiguity — and each is
 /// one row, so `callsite(F, S, callee_string = G)` joins on any of them.
+///
+/// The Java and CIL spellings are composed, and are the one place a build may intern a string
+/// the program does not already hold whole: the id of a method the import calls but does not
+/// implement. It is per distinct callee, not per site.
 fn callee_strings(style: &CallStyle, data: &FunctionData) -> Vec<Str> {
     match style {
         CallStyle::DirectCall {
@@ -582,11 +642,10 @@ fn callee_strings(style: &CallStyle, data: &FunctionData) -> Vec<Str> {
             // "the variable name from the program text": a local resolves through the
             // function's own declaration table, which is the only place the source name lives.
             let name = match &callee.base.variable {
-                Variable::Local(idx) => data
-                    .locals
-                    .get(*idx)
-                    .map(|d| d.name.clone())
-                    .unwrap_or_else(|| callee.base.to_string()),
+                Variable::Local(idx) => match data.locals.get(*idx) {
+                    Some(d) => return vec![Str::from(d.name.as_str())],
+                    None => callee.base.to_string(),
+                },
                 other => other.to_string(),
             };
             vec![Str::from(name)]

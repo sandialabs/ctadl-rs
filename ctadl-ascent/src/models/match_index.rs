@@ -31,6 +31,7 @@ use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::FunctionData;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
+use super::dsl::relations::FunKey;
 use super::spec::ImportScope;
 use super::universe_set::UniverseSet;
 
@@ -215,139 +216,20 @@ impl<'p> ProgramMatchIndex<'p> {
         let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
         let mut program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
 
-        if let VirtualMethodTable::Java { methods, .. } = vmt {
-            methods
-                .iter()
-                .map(|(_cls, name, _sig, fid)| (name.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(cls, _name, _sig, fid)| (cls.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_parents.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
-
-            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`: descriptor-bearing and
-            // stable, so keying on it is what makes exact fully-qualified matching possible on
-            // jvm/dex.
-            methods
-                .iter()
-                .map(|(_cls, _name, _sig, fid)| (fid.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| {
-                    program_method_qualified_ids
-                        .entry(key)
-                        .or_default()
-                        .push(val)
-                });
-        } else if let VirtualMethodTable::Cil { methods, .. } = vmt {
-            // The Java arm, over .NET spellings: `[Asm]Ns.Type`, `Parse`,
-            // `(System.String)->System.Int32`, and the method id
-            // `[Asm]Ns.Type::Parse(System.String)->System.Int32`. An override alias row
-            // (`VirtualMethodTable::Cil`) makes a method matchable under the base method's
-            // name and descriptor too, which is what a model of an interface method wants.
-            for (cls, name, sig, fid) in methods {
-                let fid = fid.as_ref();
-                program_method_names
-                    .entry(name.as_ref())
-                    .or_default()
-                    .push(fid);
-                program_method_parents
-                    .entry(cls.as_ref())
-                    .or_default()
-                    .push(fid);
-                program_method_signatures
-                    .entry(sig.as_ref())
-                    .or_default()
-                    .push(fid);
-                program_method_qualified_ids
-                    .entry(fid)
-                    .or_default()
-                    .push(fid);
-            }
-        } else if let VirtualMethodTable::Native { methods } = vmt {
-            // Native frontends (pcode, clang) carry, per function, a simple
-            // (un-decorated) name and a best-effort type signature alongside the
-            // fully-qualified IR name. Key matching off the SIMPLE name so a model
-            // pattern like `^system$` resolves even when the IR name is decorated
-            // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
-            // name is also kept matchable for models that spell it out verbatim.
-            for (simple, sig, fq, qualified) in methods {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                program_method_names.entry(simple).or_default().push(fq);
-                program_method_signatures.entry(sig).or_default().push(fq);
-                program_method_names.entry(fq).or_default().push(fq);
-                program_method_signatures.entry(fq).or_default().push(fq);
-                // The namespace-qualified name, e.g. `Foo::bar` or `<EXTERNAL>::system`.
-                // Double-key on the fq id as well, mirroring the names/signatures maps
-                // above, so a model that spells the decorated id out verbatim still
-                // resolves through `qualified-id`.
-                program_method_qualified_ids
-                    .entry(qualified.as_ref())
-                    .or_default()
-                    .push(fq);
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-        } else if let VirtualMethodTable::Lua {
-            functions,
-            externals,
-            ..
-        } = vmt
-        {
-            // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
-            // `direct-flow.source`). Key matching off the simple name as well, so a model can say
-            // `^source$` without spelling the module it happens to live in -- the same treatment
-            // the Native arm gives decorated names. Both spellings resolve to the fully-qualified
-            // IR name.
-            //
-            // The simple name is read from the VMT, where the frontend put the name the definition
-            // site actually wrote; it is not re-derived from the fq name here. The two differ when
-            // a module has two functions of one name: the second's IR name is `<module>.f%1`, whose
-            // trailing component is `f%1`, while the function is still simply named `f`.
-            //
-            // A Lua function has exactly ONE name, so unlike the Native arm there is no separate
-            // id column to key `qualified-id` on: the fq name *is* the qualified id, and one entry
-            // covers both roles. Note the `entry(fq)` below sits OUTSIDE the `keys` loop on
-            // purpose -- keying it on `simple` too would hand `qualified-id` exactly the bare-name
-            // collisions it exists to remove (see the field's doc comment). One consequence of
-            // deriving the id from the module: a single file imported as the root itself has an
-            // empty module name, so there a function's id and its bare name coincide.
-            for (simple, fq) in functions {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
-                for key in keys {
-                    program_method_names.entry(key).or_default().push(fq);
-                    program_method_signatures.entry(key).or_default().push(fq);
-                }
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-            // Externals -- called but never defined (the stdlib, and modules outside the import).
-            // Indexed exactly as `functions` above, with the same reason for keeping the fq name
-            // out of the `keys` loop for `qualified-id`: keying it on the bare name would hand
-            // `qualified-id` the collisions it exists to remove. `os.execute` is reachable both
-            // as `execute` (which also covers the method-call spelling `x:execute()`) and as the
-            // fq `os.execute`.
-            //
-            // Externals have no `FunctionData`, so `has_code` / `number_parameters` / `uses_field`
-            // will not match them -- already true of the dex/jvm `ext` entries. This is what lets
-            // a bridge, or a default propagation model, attach to a bodyless callee at all, and
-            // it is also why the supported shape for such a side is `signature_match`.
-            for (simple, fq) in externals {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
-                for key in keys {
-                    program_method_names.entry(key).or_default().push(fq);
-                    program_method_signatures.entry(key).or_default().push(fq);
-                }
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-        } else {
+        let lua = matches!(vmt, VirtualMethodTable::Lua { .. });
+        for_each_spelling(vmt, |fq, key, spelling| {
+            let map = match key {
+                FunKey::Name => &mut program_method_names,
+                // Lua's metatable-recovered classes are the DSL's alone: the JSON `parent`
+                // constraint is Java/CIL-only and fails closed elsewhere (see `json.rs`).
+                FunKey::Parent if lua => return,
+                FunKey::Parent => &mut program_method_parents,
+                FunKey::Signature => &mut program_method_signatures,
+                FunKey::QualifiedId => &mut program_method_qualified_ids,
+            };
+            map.entry(spelling).or_default().push(fq);
+        });
+        if let VirtualMethodTable::Unknown = vmt {
             // Fallback (Unknown): use the IR function names directly.
             for func in &program_info.program.functions.functions {
                 let name = func.name.as_str();
@@ -433,5 +315,110 @@ impl<'p> ProgramMatchIndex<'p> {
     #[inline]
     pub fn functions_with_data(&self) -> impl Iterator<Item = (&'p str, &'p FunctionData)> + '_ {
         self.program_functions.iter().map(|(fq, data)| (*fq, *data))
+    }
+}
+
+/// Every spelling `vmt` publishes for its functions, as `(fq, attribute, spelling)`.
+///
+/// The one statement of what each frontend makes matchable. Both the JSON index above and the
+/// DSL's `fun` relation ([`ProgramFacts`](super::dsl::relations::ProgramFacts)) read it, so a
+/// name a model can match under one cannot be missing under the other. Spellings come in the
+/// frontend's order, and within one function the canonical spelling of an attribute first: the
+/// DSL binds an output attribute to the first.
+///
+/// Lua's metatable classes are reported as [`FunKey::Parent`] although the JSON index does not
+/// key on them; a [`VirtualMethodTable::Unknown`] table publishes nothing.
+pub(crate) fn for_each_spelling<'p>(
+    vmt: &'p VirtualMethodTable,
+    mut f: impl FnMut(&'p str, FunKey, &'p str),
+) {
+    match vmt {
+        VirtualMethodTable::Java { methods, .. } => {
+            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`, is the qualified id:
+            // descriptor-bearing and stable, so keying on it is what makes exact
+            // fully-qualified matching possible on jvm/dex.
+            for (cls, name, sig, fid) in methods {
+                let fid = fid.as_ref();
+                f(fid, FunKey::Name, name.as_ref());
+                f(fid, FunKey::Parent, cls.as_ref());
+                f(fid, FunKey::Signature, sig.as_ref());
+                f(fid, FunKey::QualifiedId, fid);
+            }
+        }
+        VirtualMethodTable::Cil { methods, .. } => {
+            // The Java arm, over .NET spellings: `[Asm]Ns.Type`, `Parse`,
+            // `(System.String)->System.Int32`, and the method id
+            // `[Asm]Ns.Type::Parse(System.String)->System.Int32`. An override alias row makes a
+            // method matchable under the base method's name and descriptor too, which is what a
+            // model of an interface method wants.
+            for (cls, name, sig, fid) in methods {
+                let fid = fid.as_ref();
+                f(fid, FunKey::Name, name.as_ref());
+                f(fid, FunKey::Parent, cls.as_ref());
+                f(fid, FunKey::Signature, sig.as_ref());
+                f(fid, FunKey::QualifiedId, fid);
+            }
+        }
+        VirtualMethodTable::Native { methods } => {
+            // Native frontends (pcode, clang) carry, per function, a simple (un-decorated) name
+            // and a best-effort type signature alongside the fully-qualified IR name. The simple
+            // name comes first, so a pattern like `^system$` resolves even when the IR name is
+            // decorated (Ghidra's `<EXTERNAL>::system@00101008`); the fq name is also kept
+            // matchable for models that spell it out verbatim. The qualified id is the
+            // namespace-qualified name (`Foo::bar`, `<EXTERNAL>::system`), double-keyed on the
+            // fq id for the same reason.
+            for (simple, sig, fq, qualified) in methods {
+                let fq = fq.as_ref();
+                f(fq, FunKey::Name, simple.as_ref());
+                f(fq, FunKey::Name, fq);
+                f(fq, FunKey::Signature, sig.as_ref());
+                f(fq, FunKey::Signature, fq);
+                f(fq, FunKey::QualifiedId, qualified.as_ref());
+                f(fq, FunKey::QualifiedId, fq);
+            }
+        }
+        VirtualMethodTable::Lua {
+            methods,
+            functions,
+            externals,
+            ..
+        } => {
+            // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
+            // `direct-flow.source`). The simple name is matchable as well, so a model can say
+            // `^source$` without spelling the module it happens to live in -- the same treatment
+            // the Native arm gives decorated names.
+            //
+            // The simple name is read from the VMT, where the frontend put the name the
+            // definition site actually wrote; it is not re-derived from the fq name. The two
+            // differ when a module has two functions of one name: the second's IR name is
+            // `<module>.f%1`, while the function is still simply named `f`.
+            //
+            // A Lua function has exactly ONE name, so the fq name *is* the qualified id. Only it:
+            // keying the bare name there too would hand `qualified-id` exactly the collisions it
+            // exists to remove. One consequence of deriving the id from the module: a single
+            // file imported as the root itself has an empty module name, so there a function's
+            // id and its bare name coincide.
+            //
+            // Externals -- called but never defined (the stdlib, and modules outside the import)
+            // -- are spelled exactly as functions are. `os.execute` is reachable both as
+            // `execute` (which also covers the method-call spelling `x:execute()`) and as the fq
+            // `os.execute`. They have no `FunctionData`, so the body-dependent constraints will
+            // not match them; `signature_match` is the supported shape for such a callee.
+            for (simple, fq) in functions.iter().chain(externals.iter()) {
+                let (simple, fq) = (simple.as_ref(), fq.as_ref());
+                for key in [FunKey::Name, FunKey::Signature] {
+                    if simple != fq {
+                        f(fq, key, simple);
+                    }
+                    f(fq, key, fq);
+                }
+                f(fq, FunKey::QualifiedId, fq);
+            }
+            // The metatable-recovered class methods.
+            for (cls, _name, fq) in methods {
+                f(fq.as_ref(), FunKey::Parent, cls.as_ref());
+            }
+        }
+        VirtualMethodTable::Unknown => {}
     }
 }

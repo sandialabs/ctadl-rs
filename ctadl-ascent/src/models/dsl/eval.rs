@@ -53,7 +53,7 @@ use crate::facts::Str;
 
 use super::ast::*;
 use super::check::{Plan, collect_vars, is_generator, required_vars};
-use super::relations::{FunKey, ProgramFacts};
+use super::relations::{FunKey, ProgramFacts, SiteId};
 
 /// A value a variable can take.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -61,11 +61,13 @@ pub enum Value {
     Str(Str),
     Int(i64),
     Bool(bool),
-    /// A call site. Carries its caller and callee because a port anchored at a site is emitted
-    /// as "the callee, at the sites of it inside this caller" — see `emit.rs`.
+    /// A call site: its identity ([`SiteId`]'s fields) and the callee of the edge that bound
+    /// it. Carries the callee because a port anchored at a site is emitted as "the callee, at
+    /// the sites of it inside this caller" — see `emit.rs`.
     Site {
-        id: Str,
         caller: Str,
+        block: u32,
+        stmt: u32,
         callee: Str,
     },
     /// A static call signature. Carries its three components for the same reason a [`Self::Site`]
@@ -83,8 +85,7 @@ impl Value {
     pub fn as_str(&self) -> Option<Str> {
         match self {
             Value::Str(s) => Some(*s),
-            // A site's identity is its id; joining a site against a string compares that.
-            Value::Site { id, .. } => Some(*id),
+            // A site's identity is a position, not an interned string; see [`text`].
             Value::CallSig { id, .. } => Some(*id),
             _ => None,
         }
@@ -104,7 +105,20 @@ impl std::fmt::Display for Value {
             Value::Str(s) => write!(f, "{s}"),
             Value::Int(i) => write!(f, "{i}"),
             Value::Bool(b) => write!(f, "{b}"),
-            Value::Site { id, .. } => write!(f, "{id}"),
+            Value::Site {
+                caller,
+                block,
+                stmt,
+                ..
+            } => write!(
+                f,
+                "{}",
+                SiteId {
+                    caller: *caller,
+                    block: *block,
+                    stmt: *stmt
+                }
+            ),
             Value::CallSig { id, .. } => write!(f, "{id}"),
         }
     }
@@ -562,10 +576,27 @@ impl<'a> Evaluator<'a> {
             None => None,
         };
         let candidates: Vec<usize> = match self.resolve(site, env) {
-            Some(v) => match v.as_str().and_then(|id| self.facts.callsite_index(id)) {
-                Some(i) => vec![i],
-                None => return,
-            },
+            Some(v) => {
+                let site = match v {
+                    Value::Site {
+                        caller,
+                        block,
+                        stmt,
+                        ..
+                    } => SiteId {
+                        caller,
+                        block,
+                        stmt,
+                    },
+                    // A site spelled out as a string literal.
+                    Value::Str(s) => match SiteId::parse(s.as_str()) {
+                        Some(site) => site,
+                        None => return,
+                    },
+                    _ => return,
+                };
+                self.facts.callsites_with_id(site).to_vec()
+            }
             None => match bound_caller {
                 Some(f) => self.facts.callsites_of_caller(f).to_vec(),
                 None => match self.callee_key(atom, env) {
@@ -612,8 +643,9 @@ impl<'a> Evaluator<'a> {
                     ext.push((
                         v.clone(),
                         Value::Site {
-                            id: row.id,
                             caller: row.caller,
+                            block: row.block,
+                            stmt: row.stmt,
                             callee: row.callee,
                         },
                     ));
@@ -823,19 +855,19 @@ impl<'a> Evaluator<'a> {
     }
 
     fn holds_regex(&self, atom: &Atom, env: &Env) -> bool {
-        let Some(subject) = self.resolve(&atom.columns[0], env).and_then(|v| v.as_str()) else {
+        let Some(subject) = self.resolve(&atom.columns[0], env).and_then(|v| text(&v)) else {
             return false;
         };
         let Some(pattern) = self.resolve(&atom.columns[1], env).and_then(|v| v.as_str()) else {
             return false;
         };
         if let Some(rx) = self.regexes.get(pattern.as_str()) {
-            return rx.is_match(subject.as_str());
+            return rx.is_match(&subject);
         }
         // A pattern that arrived through a variable. An invalid one matches nothing rather than
         // failing the load: the load could not have seen it.
         match Regex::new(pattern.as_str()) {
-            Ok(rx) => rx.is_match(subject.as_str()),
+            Ok(rx) => rx.is_match(&subject),
             Err(_) => {
                 log::warn!("regex_match: invalid pattern {pattern:?}; matching nothing");
                 false
@@ -988,10 +1020,20 @@ fn opt_slice(value: &Option<Str>) -> &[Str] {
     }
 }
 
+/// `value` as text, for a string comparison. A site has no interned spelling, so it is printed:
+/// interning `caller#block:statement` per site would leak one string per call site of every
+/// import.
+fn text(value: &Value) -> Option<std::borrow::Cow<'static, str>> {
+    match value {
+        Value::Site { .. } => Some(std::borrow::Cow::Owned(value.to_string())),
+        v => v.as_str().map(|s| std::borrow::Cow::Borrowed(s.as_str())),
+    }
+}
+
 fn lit_eq(value: &Value, lit: &Literal) -> bool {
     match (value, lit) {
         (Value::Str(s), Literal::Str(l)) => s.as_str() == l,
-        (Value::Site { id, .. }, Literal::Str(l)) => id.as_str() == l,
+        (Value::Site { .. }, Literal::Str(l)) => value.to_string() == *l,
         (Value::Int(i), Literal::Int(l)) => i == l,
         (Value::Bool(b), Literal::Bool(l)) => b == l,
         _ => false,
@@ -1006,8 +1048,8 @@ fn compare(lhs: &Value, op: CmpOp, rhs: &Value) -> bool {
     let ord = match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => a.partial_cmp(b),
         (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
-        (a, b) => match (a.as_str(), b.as_str()) {
-            (Some(a), Some(b)) => a.as_str().partial_cmp(b.as_str()),
+        (a, b) => match (text(a), text(b)) {
+            (Some(a), Some(b)) => a.partial_cmp(&b),
             _ => None,
         },
     };
