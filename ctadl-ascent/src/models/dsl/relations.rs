@@ -249,6 +249,10 @@ pub struct CallSigRow {
     pub signature: Str,
 }
 
+/// A row's position in one of [`ProgramFacts`]'s tables, as the indexes store it. The indexes
+/// hold one per row they list, so a `u32` halves them; no one import has four billion rows.
+pub type RowIdx = u32;
+
 /// Every built-in relation, materialized for one program.
 ///
 /// A table no loaded rule reads (see [`Needs`]) is left empty; `fun` and `param` are always
@@ -277,22 +281,22 @@ pub struct ProgramFacts {
     /// The import's name, if known.
     pub import: Option<Str>,
 
-    by_fq: HashMap<Str, usize>,
-    by_name: HashMap<Str, Vec<usize>>,
-    by_parent: HashMap<Str, Vec<usize>>,
-    by_signature: HashMap<Str, Vec<usize>>,
-    by_qualified_id: HashMap<Str, Vec<usize>>,
+    by_fq: HashMap<Str, RowIdx>,
+    by_name: HashMap<Str, Vec<RowIdx>>,
+    by_parent: HashMap<Str, Vec<RowIdx>>,
+    by_signature: HashMap<Str, Vec<RowIdx>>,
+    by_qualified_id: HashMap<Str, Vec<RowIdx>>,
     /// Each caller's rows. One entry per caller, not per row or per site: a site is found by
     /// binary search within its caller's range (see [`Self::callsites_with_id`]).
-    callsites_by_caller: HashMap<Str, Range<usize>>,
-    callsites_by_callee: HashMap<Str, Vec<usize>>,
-    uses_field_by_fun: HashMap<Str, Vec<usize>>,
+    callsites_by_caller: HashMap<Str, Range<RowIdx>>,
+    callsites_by_callee: HashMap<Str, Vec<RowIdx>>,
+    uses_field_by_fun: HashMap<Str, Vec<RowIdx>>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
-    callsigs_by_id: HashMap<Str, usize>,
-    callsigs_by_name: HashMap<Str, Vec<usize>>,
-    callsigs_by_parent: HashMap<Str, Vec<usize>>,
-    callsigs_by_signature: HashMap<Str, Vec<usize>>,
+    callsigs_by_id: HashMap<Str, RowIdx>,
+    callsigs_by_name: HashMap<Str, Vec<RowIdx>>,
+    callsigs_by_parent: HashMap<Str, Vec<RowIdx>>,
+    callsigs_by_signature: HashMap<Str, Vec<RowIdx>>,
 }
 
 /// Which input relations some loaded rule reads, so `ProgramFacts::build` can skip the tables
@@ -359,7 +363,7 @@ impl ProgramFacts {
     /// Materializes the relations `needs` asks for, over the program `index` was built from.
     pub fn build(index: &ProgramMatchIndex<'_>, needs: &Needs) -> Self {
         let mut rows: Vec<FunRow> = Vec::new();
-        let mut by_fq: HashMap<Str, usize> = HashMap::new();
+        let mut by_fq: HashMap<Str, RowIdx> = HashMap::new();
 
         // One row per function even when a frontend publishes several table entries for it (a
         // Java method under two classes, a native symbol under its simple and decorated names).
@@ -394,12 +398,13 @@ impl ProgramFacts {
             lowered.push((fq, data));
         }
 
-        let mut by_name: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut by_parent: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut by_signature: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut by_qualified_id: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut by_name: HashMap<Str, Vec<RowIdx>> = HashMap::new();
+        let mut by_parent: HashMap<Str, Vec<RowIdx>> = HashMap::new();
+        let mut by_signature: HashMap<Str, Vec<RowIdx>> = HashMap::new();
+        let mut by_qualified_id: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         // The stored spellings only: a row's full name is found through `by_fq`.
         for (i, row) in rows.iter().enumerate() {
+            let i = row_idx(i);
             for n in &row.names {
                 by_name.entry(*n).or_default().push(i);
             }
@@ -419,9 +424,10 @@ impl ProgramFacts {
         } else {
             Default::default()
         };
-        let mut callsites_by_caller: HashMap<Str, Range<usize>> = HashMap::new();
-        let mut callsites_by_callee: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut callsites_by_caller: HashMap<Str, Range<RowIdx>> = HashMap::new();
+        let mut callsites_by_callee: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         for (i, cs) in callsites.iter().enumerate() {
+            let i = row_idx(i);
             // A caller's rows are adjacent, so extending the range covers them all.
             callsites_by_caller
                 .entry(cs.caller)
@@ -429,8 +435,9 @@ impl ProgramFacts {
                 .or_insert(i..i + 1);
             callsites_by_callee.entry(cs.callee).or_default().push(i);
         }
-        let mut uses_field_by_fun: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut uses_field_by_fun: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         for (i, (f, _)) in uses_field.iter().enumerate() {
+            let i = row_idx(i);
             uses_field_by_fun.entry(*f).or_default().push(i);
         }
 
@@ -479,11 +486,12 @@ impl ProgramFacts {
             // canonical id: a rule that scans the universe must enumerate the same way twice.
             callsigs.sort_unstable_by_key(|r| r.id);
         }
-        let mut callsigs_by_id: HashMap<Str, usize> = HashMap::new();
-        let mut callsigs_by_name: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut callsigs_by_parent: HashMap<Str, Vec<usize>> = HashMap::new();
-        let mut callsigs_by_signature: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut callsigs_by_id: HashMap<Str, RowIdx> = HashMap::new();
+        let mut callsigs_by_name: HashMap<Str, Vec<RowIdx>> = HashMap::new();
+        let mut callsigs_by_parent: HashMap<Str, Vec<RowIdx>> = HashMap::new();
+        let mut callsigs_by_signature: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         for (i, row) in callsigs.iter().enumerate() {
+            let i = row_idx(i);
             callsigs_by_id.insert(row.id, i);
             callsigs_by_name.entry(row.name).or_default().push(i);
             callsigs_by_parent.entry(row.parent).or_default().push(i);
@@ -521,12 +529,12 @@ impl ProgramFacts {
 
     #[inline]
     pub fn fun_row(&self, fq: Str) -> Option<&FunRow> {
-        self.by_fq.get(&fq).map(|&i| &self.funs[i])
+        self.by_fq.get(&fq).map(|&i| &self.funs[i as usize])
     }
 
     #[inline]
     pub fn fun_index(&self, fq: Str) -> Option<usize> {
-        self.by_fq.get(&fq).copied()
+        self.by_fq.get(&fq).map(|&i| i as usize)
     }
 
     /// Row indices whose attribute `key` has `value` among its spellings, ascending.
@@ -535,7 +543,7 @@ impl ProgramFacts {
     /// attribute's own map under it, so the two sources are disjoint. Both answer only where a
     /// frontend's simple name collides with another function's full name — a Lua file imported as
     /// the root, say — and only then is the answer a fresh list.
-    pub fn funs_by(&self, key: FunKey, value: Str) -> Cow<'_, [usize]> {
+    pub fn funs_by(&self, key: FunKey, value: Str) -> Cow<'_, [RowIdx]> {
         let map = match key {
             FunKey::Name => &self.by_name,
             FunKey::Parent => &self.by_parent,
@@ -546,7 +554,7 @@ impl ProgramFacts {
         let Some(own) = self
             .by_fq
             .get(&value)
-            .filter(|&&i| self.funs[i].has_fq_spelling(key))
+            .filter(|&&i| self.funs[i as usize].has_fq_spelling(key))
         else {
             return Cow::Borrowed(stored);
         };
@@ -561,13 +569,13 @@ impl ProgramFacts {
 
     #[inline]
     pub fn callsig_index(&self, id: Str) -> Option<usize> {
-        self.callsigs_by_id.get(&id).copied()
+        self.callsigs_by_id.get(&id).map(|&i| i as usize)
     }
 
     /// Row indices a `callsig` attribute lookup reaches. `qualified-id` is the id itself, which
     /// is why it needs no map of its own.
     #[inline]
-    pub fn callsigs_by(&self, key: FunKey, value: Str) -> &[usize] {
+    pub fn callsigs_by(&self, key: FunKey, value: Str) -> &[RowIdx] {
         match key {
             FunKey::Name => self.callsigs_by_name.get(&value),
             FunKey::Parent => self.callsigs_by_parent.get(&value),
@@ -587,12 +595,11 @@ impl ProgramFacts {
     pub fn callsites_of_caller(&self, caller: Str) -> Range<usize> {
         self.callsites_by_caller
             .get(&caller)
-            .cloned()
-            .unwrap_or(0..0)
+            .map_or(0..0, |r| r.start as usize..r.end as usize)
     }
 
     #[inline]
-    pub fn callsites_of_callee(&self, callee: Str) -> &[usize] {
+    pub fn callsites_of_callee(&self, callee: Str) -> &[RowIdx] {
         self.callsites_by_callee
             .get(&callee)
             .map_or(&[], |v| v.as_slice())
@@ -611,7 +618,7 @@ impl ProgramFacts {
     }
 
     #[inline]
-    pub fn uses_field_of(&self, f: Str) -> &[usize] {
+    pub fn uses_field_of(&self, f: Str) -> &[RowIdx] {
         self.uses_field_by_fun.get(&f).map_or(&[], |v| v.as_slice())
     }
 
@@ -636,11 +643,15 @@ pub enum FunKey {
     QualifiedId,
 }
 
-fn row_for(rows: &mut Vec<FunRow>, by_fq: &mut HashMap<Str, usize>, fq: Str) -> usize {
+fn row_for(rows: &mut Vec<FunRow>, by_fq: &mut HashMap<Str, RowIdx>, fq: Str) -> usize {
     *by_fq.entry(fq).or_insert_with(|| {
         rows.push(FunRow::new(fq));
-        rows.len() - 1
-    })
+        row_idx(rows.len() - 1)
+    }) as usize
+}
+
+fn row_idx(i: usize) -> RowIdx {
+    RowIdx::try_from(i).expect("a table has more than u32::MAX rows")
 }
 
 fn push_unique(v: &mut Vec<Str>, s: Str) {

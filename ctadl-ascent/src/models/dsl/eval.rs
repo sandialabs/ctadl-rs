@@ -62,7 +62,7 @@ use super::check::{
     Access, AtomPlan, Attr, AttrPat, ColumnPat, Filter, Key, Operand, Pattern, Plan, Relation,
     Slot, Step,
 };
-use super::relations::{FunKey, ProgramFacts, SiteId, Spellings};
+use super::relations::{FunKey, ProgramFacts, RowIdx, SiteId, Spellings};
 
 /// A value a variable can take.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -405,7 +405,7 @@ impl<'a> Machine<'a> {
                 }
                 Access::Attr(attr, key) => {
                     let rows = self.keyed(key, |s| facts.funs_by(fun_key(*attr), s));
-                    self.each(atom, rows.iter().map(|&r| Row::Fun(r)), k)
+                    self.each(atom, rows.iter().map(|&r| Row::Fun(r as usize)), k)
                 }
                 Access::Scan => self.each(atom, (0..facts.funs.len()).map(Row::Fun), k),
             },
@@ -422,7 +422,7 @@ impl<'a> Machine<'a> {
                 },
                 Access::Attr(attr, key) => {
                     let rows = self.keyed(key, |s| facts.callsigs_by(fun_key(*attr), s));
-                    self.each(atom, rows.iter().map(|&r| Row::CallSig(r)), k)
+                    self.each(atom, rows.iter().map(|&r| Row::CallSig(r as usize)), k)
                 }
                 Access::Scan => self.each(atom, (0..facts.callsigs.len()).map(Row::CallSig), k),
             },
@@ -467,7 +467,7 @@ impl<'a> Machine<'a> {
                 Access::Column(i) => match self.column_key(atom, *i) {
                     Some(f) => self.each(
                         atom,
-                        facts.uses_field_of(f).iter().map(|&r| Row::UsesField(r)),
+                        facts.uses_field_of(f).iter().map(|&r| Row::UsesField(r as usize)),
                         k,
                     ),
                     None => true,
@@ -526,7 +526,7 @@ impl<'a> Machine<'a> {
             },
             Access::Attr(_, key) => {
                 let rows = self.keyed(key, |s| facts.callsites_of_callee(s));
-                self.each(atom, rows.iter().map(|&r| Row::CallSite(r)), k)
+                self.each(atom, rows.iter().map(|&r| Row::CallSite(r as usize)), k)
             }
             Access::Scan => self.each(atom, (0..facts.callsites.len()).map(Row::CallSite), k),
         }
@@ -563,18 +563,18 @@ impl<'a> Machine<'a> {
 
     /// The rows an attribute index reaches for `key`. A set is the union of its members'
     /// lookups, deduplicated so a row two members reach is visited once.
-    fn keyed<L: Into<Cow<'a, [usize]>>>(
+    fn keyed<L: Into<Cow<'a, [RowIdx]>>>(
         &self,
         key: &Key,
         lookup: impl Fn(Str) -> L,
-    ) -> Cow<'a, [usize]> {
+    ) -> Cow<'a, [RowIdx]> {
         match key {
             Key::One(op) => match self.value(op).and_then(|v| v.as_str()) {
                 Some(s) => lookup(s).into(),
                 None => Cow::Borrowed(&[]),
             },
             Key::Set(members) => {
-                let mut all: Vec<usize> = Vec::new();
+                let mut all: Vec<RowIdx> = Vec::new();
                 for &s in members {
                     all.extend_from_slice(&lookup(s).into());
                 }
