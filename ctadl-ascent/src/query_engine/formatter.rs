@@ -1156,8 +1156,6 @@ fn notification_descriptor_multi(
 const DEAD_UNKNOWN: &str = "default";
 const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
 const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
-const DEAD_NO_CALLER: &str = "noCallerMatched";
-const DEAD_PORT_REJECTED: &str = "portRejected";
 const DEAD_MIXED: &str = "mixedReasons";
 /// The one condition that is not about a source/sink port at all: a `propagation` that matched
 /// no function. Its own id because what it contributes nothing to is the *index*, not the query.
@@ -1223,29 +1221,6 @@ fn unmatched_message(
             ),
             variable: Some(name.clone()),
         },
-        (Some(UnmatchedReason::NoCallerMatched), None) => UnmatchedMessage {
-            message_id: DEAD_NO_CALLER,
-            arguments: {
-                let mut a = head;
-                a.push(functions.to_string());
-                a
-            },
-            text: format!(
-                "Model generator {index} in '{file}' declares a {direction} at call sites: its \
-                 'where' constraints matched {functions} function(s), but no caller of them \
-                 satisfied its 'in_function' constraint, so it contributes nothing to the query."
-            ),
-            variable: None,
-        },
-        (Some(UnmatchedReason::PortRejected), None) => UnmatchedMessage {
-            message_id: DEAD_PORT_REJECTED,
-            arguments: head,
-            text: format!(
-                "Model generator {index} in '{file}' declares a {direction} on a port that is not \
-                 valid for its 'find' method, so it contributes nothing to the query."
-            ),
-            variable: None,
-        },
         (Some(_), Some(_)) => {
             let joined = stats
                 .unmatched
@@ -1293,10 +1268,6 @@ fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
         UnmatchedReason::LocalNotFound(name) => {
             format!("no matched function has a local named '{name}'")
         }
-        UnmatchedReason::NoCallerMatched => {
-            "no caller satisfied its 'in_function' constraint".to_string()
-        }
-        UnmatchedReason::PortRejected => "a port is not valid for its 'find' method".to_string(),
     }
 }
 
@@ -1347,17 +1318,6 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
                     "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its \
                      'where' constraints matched {4} function(s), but none of them has a local \
                      variable named '{3}', so it contributes nothing to the query.",
-                ),
-                (
-                    DEAD_NO_CALLER,
-                    "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' \
-                     constraints matched {3} function(s), but no caller of them satisfied its \
-                     'in_function' constraint, so it contributes nothing to the query.",
-                ),
-                (
-                    DEAD_PORT_REJECTED,
-                    "Model generator {0} in '{1}' declares a {2} on a port that is not valid for \
-                     its 'find' method, so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_MIXED,

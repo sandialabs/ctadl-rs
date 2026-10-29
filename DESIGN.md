@@ -595,10 +595,8 @@ the error message says exactly that.
 
 **`Variable(...)` ports have no DSL spelling.** A source or sink on a named local is not
 expressible; migrating a generator that uses one fails, naming it. Stage 2 still knows how to
-seed a local (`EndpointMatch::local_index`), and `CTADL0004` still has the message ids for the
-reasons only the JSON matcher reported (`localNotFound`, `noCallerMatched`, `portRejected`):
-nothing produces them now, and they stay until a DSL spelling for a local exists or the SARIF
-vocabulary is revised.
+seed a local (`EndpointMatch::local_index`), and `CTADL0004` keeps its `localNotFound` message id
+for when a DSL spelling for a local exists; nothing produces it now.
 
 **One deliberate departure from strict functional dependence.** `fun(F, name = N)` binds *once per
 published spelling* where a frontend has several — a native symbol known both as `system` and as

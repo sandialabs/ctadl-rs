@@ -130,10 +130,8 @@ impl EndpointStats {
 
 /// Why a declared port produced no endpoint row.
 ///
-/// The DSL engine reports only [`Self::NoFunctionMatched`]: it has no `Variable(...)` port, its
-/// `in_function` is a body atom like any other, and a port invalid for its rule fails the load.
-/// The other reasons stay because each is a `CTADL0004` `message.id` SARIF consumers may branch
-/// on.
+/// The DSL engine reports only [`Self::NoFunctionMatched`] today. [`Self::LocalNotFound`] is for
+/// `Variable(...)` ports, which the DSL is to gain a spelling for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnmatchedReason {
     /// The generator's `where` constraints selected no function in the program.
@@ -141,9 +139,4 @@ pub enum UnmatchedReason {
     /// Functions matched, but none of them declares a local by this name, so the
     /// `Variable(name)` port resolved in none of them.
     LocalNotFound(String),
-    /// `find: callsites` with an `in_function` constraint that no caller satisfied.
-    NoCallerMatched,
-    /// The port is not usable in this generator's context. Always accompanied by a hard JSON
-    /// error, so in practice the load fails before any SARIF is written.
-    PortRejected,
 }
