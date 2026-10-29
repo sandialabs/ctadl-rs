@@ -75,6 +75,8 @@ lsm::lsm_col!(FlowVertex, 2);
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
+/// A copy of a whole variable except one path; see [`IndexFacts::update_sans_path`].
+pub type UpdateSansPath = (PackedInsnSiteId, FlowVariable, FlowVariable, Path);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
 
 /// Program facts for indexing.
@@ -92,6 +94,10 @@ pub struct IndexFacts {
     /// Assignments from source to destination vertices
     #[builder(default)]
     pub assign: Vec<AssignFlow>,
+    /// The copy half of a functional update `x = update (y.w := v)`: `x` is `y` except at
+    /// `w` and the paths under it, as `(site, x, y, w)`. The write `x.w <- v` is an `assign`.
+    #[builder(default)]
+    pub update_sans_path: Vec<UpdateSansPath>,
     /// A call target ([`CallTargetObject`]) stored at a vertex by an assignment.
     #[builder(default)]
     pub call_target_assign: Vec<(PackedInsnSiteId, FlowVertex, CallTargetObject)>,
@@ -593,6 +599,9 @@ pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
+    /// [`IndexFacts::update_sans_path`], keyed by function. The query follows these copies as
+    /// the index does.
+    pub update_sans_path: Vec<(FunctionId, FlowVariable, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
     pub const_reaches: Vec<(FunctionId, FlowVariable, Path, Str)>,
@@ -629,6 +638,7 @@ impl IndexResult {
             assign_like_rows,
             phys_footprint_mb()
         );
+        update_sans_path::try_save(&dir, self.update_sans_path)?;
         let paths_rows = self.paths.len();
         paths::try_save(&dir, self.paths)?;
         log::debug!(
@@ -655,6 +665,7 @@ impl IndexResult {
         use crate::facts::schema::*;
         let summary = summary::try_load(&dir)?;
         let assign_like = assign::try_load(&dir)?;
+        let update_sans_path = update_sans_path::try_load(&dir)?;
         let paths = paths::try_load(&dir)?;
         let external_function = external_function::try_load(&dir)?;
         let resolved_call = resolved_call::try_load(&dir)?;
@@ -662,6 +673,7 @@ impl IndexResult {
         Ok(IndexResult {
             summary,
             assign_like,
+            update_sans_path,
             call_target_assign_like: Vec::new(),
             resolved_call,
             const_reaches: Vec::new(),
@@ -1354,6 +1366,8 @@ ascent_source! {
     // A call target (`CallTargetObject`) stored at a vertex.
     relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
     relation const_str_assign(FunctionId, FlowVariable, Path, Str);
+    // `x = update (y.w := v)`'s copy: `x` is `y` except at `w` and below (`IndexFacts`).
+    relation update_sans_path(FunctionId, FlowVariable, FlowVariable, Path);
     relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
     relation callee_resolvents(CallTargetObject, CallDispatchKey, FunctionId);
     relation intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind);
@@ -1520,6 +1534,14 @@ ascent_source! {
         if n != *m,
         path_set(ps),
         if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+    // An update's copy carries every path of the source except the written one and those under
+    // it, which is what makes the update overwrite. A path above the written one (the whole
+    // variable) still carries everything. It needs no formal-side rule: its source path is
+    // empty, so `edge_split` would give only the empty-path row this gives.
+    ext_dst(f, x, p, y, p) <--
+        reach_vp(f, y, p),
+        update_sans_path(f, x, y, w),
+        if !p.is_extension_of(w);
     locals(f, v1, p13, a, p4) <--
         ext_dst(f, v1, p13, v2, p23),
         locals(f, v2, p23, a, p4);
@@ -2031,6 +2053,12 @@ ascent_source! {
         if let Some(p_new) = p_context.substitute_prefix(p2, p1),
         paths(&p_new);
 
+    call_target_assign_like(func_id, x.clone(), p.clone(), tgt) <--
+        tag_closure_func(func_id),
+        call_target_assign_like(func_id, y, p, tgt),
+        update_sans_path(func_id, x, y, w),
+        if !p.is_extension_of(w);
+
     // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
     // callee's formal; this is its missing twin, carrying a tag a callee holds on an
     // out-formal UP to the corresponding call-arg vertex in each caller. Without it a target
@@ -2439,6 +2467,14 @@ macro_rules! run_engine {
                 (func_id, vx.0, vx.1, value)
             })
             .collect();
+        prog.update_sans_path = facts
+            .update_sans_path
+            .into_iter()
+            .map(|(site_id, x, y, w)| {
+                let $crate::facts::InsnSiteId { func_id, .. } = $crate::index_engine::unpack_site(&site_id);
+                (func_id, x, y, w)
+            })
+            .collect();
         prog.intent_frame = facts.intent_frame.into_iter().collect();
         prog.intent_send = facts.intent_send.into_iter().collect();
         prog.intent_filter = facts.intent_filter.into_iter().collect();
@@ -2583,6 +2619,7 @@ macro_rules! run_engine {
         $crate::index_engine::IndexResult {
             summary: prog.summary.into_iter().collect(),
             assign_like: assign_like_out,
+            update_sans_path: prog.update_sans_path.into_iter().collect(),
             call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
             resolved_call: prog.resolved_call.into_iter().collect(),
             const_reaches: prog.const_reaches.into_iter().collect(),

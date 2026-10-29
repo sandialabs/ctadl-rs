@@ -827,6 +827,7 @@ pub fn query(
             .actual_param(index_facts.actual_param.clone())
             .call(final_call.clone())
             .assign(index_result.assign_like)
+            .update_sans_path(index_result.update_sans_path)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
         builder.build().unwrap()

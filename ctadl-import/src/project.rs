@@ -157,7 +157,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   wants the final call graph must union the two, as query does.
 /// - `5`: the CIL front end's call-resolution key space: `CallTargetObject::CilClass` and
 ///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
-pub const INDEX_FORMAT_VERSION: &str = "5";
+/// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
+///   which loading an index result now requires.
+pub const INDEX_FORMAT_VERSION: &str = "6";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";

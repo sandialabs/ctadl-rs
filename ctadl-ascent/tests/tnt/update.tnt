@@ -70,3 +70,60 @@ start:
   r = f(p1);
   return r;
 }
+
+// An update overwrites: the copy of the source leaves out the written field, so the field's old
+// value does not survive into the result. The S29 example in problem.md: the frame written
+// twice at one slot.
+def UpdateOverwrites(st) {
+start:
+  a = source(Data);
+  st1 = [st.x := a];
+  x1 = st1.x;
+  sink(x1, Data);
+  zero = 0;
+  st2 = [st1.x := zero];
+  x2 = st2.x;
+  errsink(x2, Data);
+  return;
+}
+
+// The copy leaves out only the written field: the source's other fields come along.
+def UpdateKeepsOtherFields(st) {
+start:
+  a = source(Data);
+  st1 = [st.y := a];
+  zero = 0;
+  st2 = [st1.x := zero];
+  y2 = st2.y;
+  sink(y2, Data);
+  return;
+}
+
+// It also leaves out what is under the written field: a source's `.x.inner` does not survive an
+// update of `.x`.
+def UpdateDropsSubfields(st) {
+start:
+  t = source(Data);
+  box = [st.inner := t];
+  st3 = [st.x := box];
+  x3 = st3.x;
+  i3 = x3.inner;
+  sink(i3, Data);
+  zero = 0;
+  st4 = [st3.x := zero];
+  x4 = st4.x;
+  i4 = x4.inner;
+  errsink(i4, Data);
+  return;
+}
+
+// Overwriting a field leaves the result's summary without the source's old field: `return.f`
+// comes only from `p1`. (`return <- p0` still holds, and still covers `.f` in a caller, since the
+// whole aggregate is above the written field.)
+def UpdateSummary(p0, p1): 1
+where summaries [return.f <- p1, return <- p0]
+{
+start:
+  q = [p0.f := p1];
+  return q;
+}
