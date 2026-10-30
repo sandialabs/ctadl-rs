@@ -286,7 +286,7 @@ Notes worth having:
 
   A function has at most one row; a name wins over a shape. Finding the by-shape rows costs a
   pass over every native function body, so an import pays for it only when some rule reads
-  `allocator`. The native defaults do.
+  `allocator`. The native defaults do: they skip every allocator's body, found either way.
 
 Every relation name is built in. A file cannot define one, so a name that is not in the table is a
 typo and is reported as one.
