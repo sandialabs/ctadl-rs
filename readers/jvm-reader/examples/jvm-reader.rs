@@ -3,8 +3,8 @@ use std::fs::File;
 use std::path::Path;
 
 use jvm_reader::{
-    collect_line_map_entries, disassemble_class_file, disassemble_jar_file, write_line_map_json,
-    ClassFileParser, JarFileParser,
+    ClassFileParser, JarFileParser, collect_line_map_entries, disassemble_class_file,
+    disassemble_jar_file, write_line_map_json,
 };
 
 fn main() {
