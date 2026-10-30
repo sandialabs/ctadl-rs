@@ -25,7 +25,8 @@ bipartite block, and every caller inherits it through summary composition. So:
 
 ## Independent causes
 
-Ordered by how many over-budget binaries they explain.
+Numbered in the order found. Causes 1 and 2 explain most of the firmware, cause 7 shifts every
+number, and the rest are one library each. Fix cause 7 first.
 
 ### 1. A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
 
