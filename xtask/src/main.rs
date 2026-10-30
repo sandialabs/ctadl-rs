@@ -30,7 +30,6 @@ mod discovery;
 mod exec;
 mod jvm;
 mod jvm_opcodes;
-mod models;
 mod regression;
 mod report_eval;
 mod sarif;
@@ -142,10 +141,6 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             "--dex-apk" => {
                 let path = args.next().context("--dex-apk requires a value")?;
                 opts.dex_apk = Some(PathBuf::from(path));
-            }
-            "--models-dir" => {
-                let dir = args.next().context("--models-dir requires a value")?;
-                opts.models_dir = Some(PathBuf::from(dir));
             }
             "--cil-goldens" => {
                 let dir = args.next().context("--cil-goldens requires a value")?;
@@ -410,11 +405,6 @@ Tasks:
                              checks drive `ctadl` itself and need no toolchain,
                              so they run whenever `dex` is selected and this
                              resolves; both self-skip when it does not.
-    --models-dir <dir>       Directory holding the model generator schema and
-                             the built-in model files checked against it
-                             (default: auto-detect `ctadl-ascent/src/models`).
-                             The `models:*` checks self-skip when neither the
-                             flag nor the default directory is present.
     --cil-goldens <dir>      The committed Cecil goldens that `cil:goldens`
                              compares against (default: auto-detect
                              `xtask/cil-goldens`).

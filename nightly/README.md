@@ -105,8 +105,6 @@ both — the same reasons the taint cases are nightly:
 - **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
   (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked
   in, so all these need is the `ctadl` binary.
-- **`models:*`** — the model files ctadl ships, validated against the model generator schema it
-  publishes. Reads three small files and runs no tool.
 - **`cil:*`** — `cil-reader` held to Mono.Cecil (byte-identical dumps over Cecil's own test corpus
   and the compiled fixtures, against committed goldens and a live CecilDump), plus the flow layer,
   the `ctadl-cil` frontend and the default .NET models checked against .NET itself. Needs the Cecil
@@ -214,7 +212,7 @@ a later regression is caught. One case is quarantined today:
 
 - `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
   which only a Native (pcode) import loads. Its chain lives in
-  `native-index.jsonl`, and a `-l c` import has no method table, so it gets no
+  `native-index.ctadl`, and a `-l c` import has no method table, so it gets no
   default model file. The Pcode twin (`defaultmodels`) is what enforces those
   defaults, and it is enforced.
 

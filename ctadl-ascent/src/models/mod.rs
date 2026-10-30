@@ -41,55 +41,7 @@ pub use stats::{
 mod tests;
 
 /// The built-in default model file for each [`VirtualMethodTable`] variant, as
-/// `(name, contents)`. `name` appears in error context and is what [`DEFAULT_MODEL_FILES`]
-/// enumerates for the drift test.
-///
-/// These are the **JSON** originals, the migrator's input. An index loads their migrations,
-/// [`DEFAULT_DSL_MODELS`].
-pub const JAVA_DEFAULT_MODELS: (&str, &[u8]) = (
-    "java-index.jsonl",
-    include_bytes!("defaults/java-index.jsonl"),
-);
-pub const NATIVE_DEFAULT_MODELS: (&str, &[u8]) = (
-    "native-index.jsonl",
-    include_bytes!("defaults/native-index.jsonl"),
-);
-pub const LUA_DEFAULT_MODELS: (&str, &[u8]) = (
-    "lua-index.jsonl",
-    include_bytes!("defaults/lua-index.jsonl"),
-);
-pub const CIL_DEFAULT_MODELS: (&str, &[u8]) = (
-    "cil-index.jsonl",
-    include_bytes!("defaults/cil-index.jsonl"),
-);
-
-/// Every shipped `.jsonl` default, whether or not a given import loads it, parallel to
-/// [`DEFAULT_DSL_MODELS`]. Exists so the tests can check each against the `.ctadl` migrated from
-/// it, and check that each still migrates and loads.
-pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
-    JAVA_DEFAULT_MODELS,
-    NATIVE_DEFAULT_MODELS,
-    LUA_DEFAULT_MODELS,
-    CIL_DEFAULT_MODELS,
-];
-
-/// The languages each of [`DEFAULT_MODEL_FILES`] is loaded for, by
-/// [`ArtifactLanguage`](crate::project::ArtifactLanguage) name: the imports whose
-/// [`VirtualMethodTable`] selects it. Its `.ctadl` is migrated for these
-/// (`ctadl migrate-models --language`), so it leaves out what only another language could match.
-pub const DEFAULT_MODEL_LANGUAGES: &[&[&str]] = &[
-    &["dex", "jvm", "jar", "apk", "xapk"],
-    &["pcode"],
-    &["lua"],
-    &["cil"],
-];
-
-/// The DSL form of each shipped default: what an index actually loads.
-///
-/// Written by `ctadl migrate-models` from the `.jsonl` beside each one and checked in, so a
-/// reader can see what the defaults say without running anything. The pair is pinned by
-/// `tests/integration/default_models.rs`, which requires each `.ctadl` to be the migration of its `.jsonl`
-/// byte for byte — edit one without the other and that fails.
+/// `(name, source)`: what an index loads. `name` appears in error context and in provenance.
 pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
     (
         "java-index.ctadl",

@@ -8,13 +8,12 @@
 //! hard-errors on unknown keys and on malformed access paths, so a stale default file breaks
 //! *every* index of the language that selects it.
 //!
-//! The `.ctadl` defaults an index loads are also pinned to the `.jsonl` originals they were
-//! migrated from: textually, and by what they match, against what the retired JSON matcher
-//! matched for the `.jsonl`, frozen in `default_models.golden`.
+//! What each default matches on the fixture programs is also pinned, in `default_models.golden`;
+//! a deliberate change to a default regenerates it with `CTADL_BLESS=1`.
 
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
-    DEFAULT_MODEL_FILES, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
+    DEFAULT_DSL_MODELS, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
     try_load_default_models, try_load_models,
 };
 use ctadl_ir::mir::ProgramInfo;
@@ -98,8 +97,8 @@ fn dispatch_caller() -> FunctionData {
     f
 }
 
-/// The two probe names. `strcpy` is modeled by `native-index.jsonl` and by nothing else;
-/// `format` by `lua-index.jsonl` and by nothing else. `toString` on `Ljava/lang/String;` is the
+/// The two probe names. `strcpy` is modeled by `native-index.ctadl` and by nothing else;
+/// `format` by `lua-index.ctadl` and by nothing else. `toString` on `Ljava/lang/String;` is the
 /// Java probe, but it needs a class, so it is added per-VMT below.
 const NATIVE_PROBE: &str = "strcpy";
 const LUA_PROBE: &str = "format";
@@ -401,11 +400,10 @@ fn unknown_vmt_loads_no_defaults() {
     assert!(matches.endpoints.is_empty());
 }
 
-/// The cheap guard against drift. Every shipped `.jsonl` is loaded the way any JSON model file
-/// is, migrated and run, against a program of each VMT shape — the format's hard errors (unknown
-/// constraint keys, malformed access paths) do not depend on which functions match, so any one
-/// program would do, but running all four also proves no file panics on a table shape it was
-/// not written for.
+/// The cheap guard against drift. Every shipped `.ctadl` is loaded the way any model file is,
+/// by path, against a program of each VMT shape — a file's load errors do not depend on which
+/// functions match, so any one program would do, but running all of them also proves no file
+/// panics on a table shape it was not written for.
 #[test]
 fn every_shipped_default_file_parses() {
     let programs = [
@@ -416,7 +414,7 @@ fn every_shipped_default_file_parses() {
         ("unknown", unknown_program()),
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/defaults");
-    for (name, _) in DEFAULT_MODEL_FILES {
+    for (name, _) in DEFAULT_DSL_MODELS {
         for (vmt_name, program_info) in &programs {
             let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
             let mut matches = ProgramModelMatches::default();
@@ -430,14 +428,12 @@ fn every_shipped_default_file_parses() {
     }
 }
 
-/// The Java collection generators must name the array element the dex/jvm frontends actually
-/// emit -- `PathSegment::Symbol("[]")`, spelled `.\[]` in a port and `"\\[]"` in JSON.
+/// The Java collection rules must name the array element the dex/jvm frontends actually emit --
+/// `PathSegment::Symbol("[]")`, spelled `."[]"` in a port.
 ///
-/// Getting this wrong fails loudly in one direction and silently in the other. Unescaped,
-/// `Argument(0).[]` is `InvalidOffset("")`, a hard load error caught by
-/// `every_shipped_default_file_parses`. But a synthetic field such as `.rep` parses fine and
-/// simply matches nothing any frontend writes, so `List.add` / `List.get` chains would compose
-/// only with each other. Only an assertion on the decoded segment catches that.
+/// Getting this wrong fails silently: a synthetic field such as `.rep` parses fine and simply
+/// matches nothing any frontend writes, so `List.add` / `List.get` chains would compose only
+/// with each other. Only an assertion on the decoded segment catches that.
 #[test]
 fn java_collection_generators_name_the_real_array_element() {
     use ctadl_ir::mir::PathSegment;
@@ -468,64 +464,29 @@ fn java_collection_generators_name_the_real_array_element() {
     );
 }
 
-/// An access-path escape in a `.jsonl` file needs *two* levels of quoting -- one for JSON, one
-/// for the path grammar -- so `\[]` is written `"\\[]"`. Writing `"\\\\[]"` gets past both the
-/// JSON parser and the path parser and produces a `Symbol` named `\[]`, which matches nothing.
-/// That is a silent failure, and file-generating scripts make it easily.
-///
-/// Checked textually, on the JSON-decoded port, because the semantic check above can only see
-/// generators that matched the toy program; this sees every port in every shipped file.
-#[test]
-fn no_shipped_default_port_is_over_escaped() {
-    for (name, contents) in DEFAULT_MODEL_FILES {
-        for line in String::from_utf8_lossy(contents).lines() {
-            let line = line.trim_start();
-            if line.is_empty() || line.starts_with("//") {
-                continue;
-            }
-            let value: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
-            let props = value["model"]["propagation"]
-                .as_array()
-                .into_iter()
-                .flatten();
-            for prop in props {
-                for key in ["input", "output"] {
-                    let port = prop[key].as_str().expect("port is a string");
-                    assert!(
-                        !port.contains(r"\\"),
-                        "{name}: port {port:?} is over-escaped -- \
-                         a literal backslash reaches the path grammar and escapes the next \
-                         character, so this names a field nothing emits"
-                    );
-                }
-            }
-        }
-    }
-}
-
 /// The defaults are propagation only: CTADL ships no default sources or sinks, and shipping any
 /// would report the cross product of every default source and sink in every program (source and
 /// sink `kind`s do not have to pair).
 #[test]
 fn no_shipped_default_declares_an_endpoint() {
-    for (name, contents) in DEFAULT_MODEL_FILES {
-        for line in String::from_utf8_lossy(contents).lines() {
-            let line = line.trim_start();
-            if line.is_empty() || line.starts_with("//") {
-                continue;
+    use ctadl_ascent::models::portcullis::{self, ast::HeadKind};
+
+    for (name, source) in DEFAULT_DSL_MODELS {
+        let file = portcullis::PortcullisFile::from_text(*name, *source)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rule in &file.program.rules {
+            for head in &rule.heads {
+                assert!(
+                    !matches!(head.kind, HeadKind::Source { .. } | HeadKind::Sink { .. }),
+                    "{name} declares an endpoint, which `cli::index` discards: {head:?}"
+                );
             }
-            let value: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
-            let model = &value["model"];
-            assert!(
-                model.get("sources").is_none() && model.get("sinks").is_none(),
-                "{name} declares an endpoint, which `cli::index` discards: {line}"
-            );
         }
     }
 }
 
-/// Comments and blank lines are what let a default file explain itself. They must not shift the
-/// generator index, which names the generator in error messages and keys `endpoint_stats`.
+/// Comments and blank lines are what let a JSONL model file explain itself. They must not shift
+/// the generator index, which names the generator in error messages and keys `endpoint_stats`.
 #[test]
 fn jsonl_comments_are_skipped_without_consuming_an_index() {
     let program_info = native_program();
@@ -555,41 +516,8 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     );
 }
 
-/// Every shipped `.ctadl` default is exactly what `ctadl migrate-models` writes for the `.jsonl`
-/// next to it, byte for byte.
-///
-/// The `.jsonl` is the migrator's input and the `.ctadl` is what an index loads, so this is what
-/// keeps the pair from drifting: edit one and not the other and this fails, naming the file.
-#[test]
-fn the_portcullis_defaults_are_the_migration_of_the_json_defaults() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, DEFAULT_MODEL_LANGUAGES, portcullis};
-
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/defaults");
-    assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_DSL_MODELS.len());
-    assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_MODEL_LANGUAGES.len());
-    for (((json_name, _), (portcullis_name, portcullis_source)), languages) in DEFAULT_MODEL_FILES
-        .iter()
-        .zip(DEFAULT_DSL_MODELS)
-        .zip(DEFAULT_MODEL_LANGUAGES)
-    {
-        let (migrated, _) =
-            portcullis::migrate::migrate_file(&dir.join(json_name), Some(languages))
-                .unwrap_or_else(|e| panic!("migrating {json_name}: {e}"));
-        let flags: String = languages
-            .iter()
-            .map(|l| format!(" --language {l}"))
-            .collect();
-        assert!(
-            migrated == *portcullis_source,
-            "{portcullis_name} is not what `ctadl migrate-models {json_name}{flags}` writes; \
-             re-run it, or make the same change to both files"
-        );
-    }
-}
-
-/// What the retired JSON matcher matched for each shipped `.jsonl` default on each fixture
-/// program, keyed by the `.ctadl` migrated from it. A frozen record, made while the matcher
-/// existed.
+/// What each shipped default matches on each fixture program. `CTADL_BLESS=1` rewrites it from
+/// what the defaults match now.
 const DEFAULTS_GOLDEN_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/integration/default_models.golden"
@@ -609,7 +537,7 @@ fn default_fixtures() -> [(&'static str, ProgramInfo); 5] {
 /// What a load matched, as the rows [`DEFAULTS_GOLDEN_PATH`] records: propagations, access
 /// paths, dispatch dispositions, closure-shaped keys and skipped bodies.
 ///
-/// Sets, because the golden was recorded from a loader that visited in its own order, and a
+/// Sets, because the golden is not about the order a load visits in, and a
 /// duplicate row is inert (codegen pushes the same summary twice). A disposition's port list
 /// keeps its order. Dispatch models are compared by disposition only: provenance records which
 /// file and which generator or rule a model came from, so two loaders *must* differ there.
@@ -703,73 +631,93 @@ fn parse_defaults_golden(text: &str) -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
-/// Each `.ctadl` default an index loads matches, on every fixture program, exactly what the
-/// retired JSON matcher matched for the `.jsonl` original, as [`DEFAULTS_GOLDEN_PATH`]
-/// records it.
+/// Each default an index loads matches, on every fixture program, exactly what
+/// [`DEFAULTS_GOLDEN_PATH`] records. Run with `CTADL_BLESS=1` after a deliberate change to a
+/// default to rewrite the golden, and review its diff.
 ///
 /// The fixtures include Java call sites for every dispatch shape, so a `callsig` rule the
 /// `.ctadl` dropped is noticed: an index would otherwise silently lose the hybrid call graph for
 /// the language whose defaults dropped it.
 #[test]
-fn the_portcullis_defaults_match_what_the_json_defaults_matched() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, portcullis};
+fn the_defaults_match_their_golden() {
+    use ctadl_ascent::models::portcullis;
 
-    let text = std::fs::read_to_string(DEFAULTS_GOLDEN_PATH)
-        .unwrap_or_else(|e| panic!("reading {DEFAULTS_GOLDEN_PATH}: {e}"));
-    let golden = parse_defaults_golden(&text);
-    let mut seen = BTreeSet::new();
-    for (portcullis_name, portcullis_source) in DEFAULT_DSL_MODELS {
-        let file = portcullis::PortcullisFile::from_text(*portcullis_name, *portcullis_source)
-            .unwrap_or_else(|e| panic!("{portcullis_name}: {e}"));
+    let mut actual: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (name, source) in DEFAULT_DSL_MODELS {
+        let file = portcullis::PortcullisFile::from_text(*name, *source)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         let set = portcullis::PortcullisModelSet { files: vec![file] };
         for (program_name, program) in &default_fixtures() {
             let keys = DispatchKeys::from_program(&program.program);
             let index = default_index(program, &keys);
             let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
-            let mut from_portcullis = ProgramModelMatches::default();
-            matcher.observe_import(&index, &mut from_portcullis);
+            let mut matches = ProgramModelMatches::default();
+            matcher.observe_import(&index, &mut matches);
             matcher
-                .finish(&mut from_portcullis)
-                .unwrap_or_else(|e| panic!("{portcullis_name} on {program_name}: {e}"));
-
-            let key = default_key(portcullis_name, program_name);
-            let Some(expected) = golden.get(&key) else {
-                panic!(
-                    "`{key}` has no entry in {DEFAULTS_GOLDEN_PATH}, which is a frozen record \
-                     of what the retired JSON matcher matched and cannot be extended"
-                );
-            };
-            let actual = default_rows(&from_portcullis);
-            let diff: Vec<String> = expected
-                .difference(&actual)
-                .map(|r| format!("JSON only  {r}"))
-                .chain(
-                    actual
-                        .difference(expected)
-                        .map(|r| format!("DSL only   {r}")),
-                )
-                .collect();
-            assert!(
-                diff.is_empty(),
-                "{portcullis_name} does not match what the JSON default matched on a \
-                 {program_name} program:\n{}",
-                diff.join("\n")
-            );
-            seen.insert(key);
+                .finish(&mut matches)
+                .unwrap_or_else(|e| panic!("{name} on {program_name}: {e}"));
+            actual.insert(default_key(name, program_name), default_rows(&matches));
         }
     }
-    let stale: Vec<&String> = golden.keys().filter(|k| !seen.contains(*k)).collect();
+
+    if std::env::var_os("CTADL_BLESS").is_some() {
+        std::fs::write(DEFAULTS_GOLDEN_PATH, render_defaults_golden(&actual))
+            .unwrap_or_else(|e| panic!("writing {DEFAULTS_GOLDEN_PATH}: {e}"));
+        return;
+    }
+    let text = std::fs::read_to_string(DEFAULTS_GOLDEN_PATH)
+        .unwrap_or_else(|e| panic!("reading {DEFAULTS_GOLDEN_PATH}: {e}"));
+    let golden = parse_defaults_golden(&text);
+    let mut diff = Vec::new();
+    for key in golden.keys().chain(actual.keys()).collect::<BTreeSet<_>>() {
+        let empty = BTreeSet::new();
+        let expected = golden.get(key).unwrap_or(&empty);
+        let now = actual.get(key).unwrap_or(&empty);
+        diff.extend(
+            expected
+                .difference(now)
+                .map(|r| format!("{key}: golden only  {r}")),
+        );
+        diff.extend(
+            now.difference(expected)
+                .map(|r| format!("{key}: now only     {r}")),
+        );
+        if !golden.contains_key(key) || !actual.contains_key(key) {
+            diff.push(format!("{key}: in only one of the golden and this run"));
+        }
+    }
     assert!(
-        stale.is_empty(),
-        "{DEFAULTS_GOLDEN_PATH} has entries no default and program produce: {stale:?}"
+        diff.is_empty(),
+        "the defaults do not match {DEFAULTS_GOLDEN_PATH}; if the change is deliberate, re-run \
+         with CTADL_BLESS=1 and review the diff:\n{}",
+        diff.join("\n")
     );
+}
+
+/// [`DEFAULTS_GOLDEN_PATH`]'s text for `rows`, in the format [`parse_defaults_golden`] reads.
+fn render_defaults_golden(rows: &BTreeMap<String, BTreeSet<String>>) -> String {
+    let mut out = String::from(
+        "# What each shipped default matches on each fixture program in default_models.rs.\n\
+         # Regenerate with CTADL_BLESS=1 cargo test -p ctadl-ascent --test integration \\\n\
+         #   the_defaults_match_their_golden, and review the diff.\n",
+    );
+    for (key, set) in rows {
+        out.push_str(&format!("\n== {key}\n"));
+        if set.is_empty() {
+            out.push_str("    (nothing)\n");
+        }
+        for row in set {
+            out.push_str(&format!("    {row}\n"));
+        }
+    }
+    out
 }
 
 /// The native defaults keep the ARM unwinders' bodies out of the index, and it is the `.ctadl`
 /// an index loads that has to say so.
 #[test]
 fn the_native_portcullis_defaults_skip_the_unwinders() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, portcullis};
+    use ctadl_ascent::models::portcullis;
 
     let program_info = native_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());

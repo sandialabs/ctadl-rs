@@ -89,10 +89,6 @@ chosen by the frontend's method table:
 | cil | `cil-index.ctadl` |
 | flowy | *(none)* |
 
-Each `.ctadl` file sits next to the `.jsonl` it was migrated from. The `.ctadl` is what an index
-loads; the `.jsonl` is kept as the migrator's input, and a test requires each `.ctadl` to be
-exactly what `ctadl migrate-models` writes for it, so the two cannot drift.
-
 Your `--models` files are unioned on top of the selected default. Pass
 `--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving
 `--models` as the complete set. Note the defaults are **propagation only** —
@@ -684,7 +680,7 @@ Reach for it in two situations:
   dispatcher, a hand-written assembly thunk — costs the fixpoint far more than it
   contributes. Suppressing just its summary rows is not enough: the resolvents
   its body manufactures are usually what multiply. This is why the ARM C++
-  exception unwinder is modelled in `native-index.jsonl`, and
+  exception unwinder is modelled in `native-index.ctadl`, and
   `skip_analysis_hybrid.tnt` is the case that pins it.
 
 A generator carrying `modes` and no `propagation` is legal and says *this

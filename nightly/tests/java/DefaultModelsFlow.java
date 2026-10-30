@@ -1,5 +1,5 @@
 /* Exercises the SHIPPED Java propagation defaults
- * (`ctadl-ascent/src/models/defaults/java-index.jsonl`).
+ * (`ctadl-ascent/src/models/defaults/java-index.ctadl`).
  *
  * This case supplies no propagation model of its own -- only a source on
  * source() and a sink on sink(). Every step between them is a JDK method with

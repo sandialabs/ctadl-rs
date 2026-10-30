@@ -1,5 +1,44 @@
-// Migrated from native-index.jsonl by `ctadl migrate-models`. Edit this file, not the original.
-
+// Default propagation models for native frontends (VirtualMethodTable::Native -- pcode today).
+//
+// Propagation only. CTADL ships no default sources or sinks, and `cli::index` uses only the
+// `summary` half of a loaded model batch.
+//
+// ACCESS PATHS. `.deref` is an ordinary symbol segment -- pcode's spelling for a pointee -- so
+// it behaves as written. `.[<n>]` is a real `PathSegment::Offset` and matches what pcode emits;
+// a field whose *name* begins with `[` would have to be quoted (`."[..."`), which pcode never
+// needs. A port pair is a PREFIX SUBSTITUTION, not a filter: `return <- arg(0).deref` unwraps a
+// level, `return.deref <- arg(0)` adds one. See docs/portcullis.md §6 and the fixtures in
+// `tests/tnt/port_*.tnt`.
+//
+// SYMBOL ALIASES. Firmware rarely imports the plain libc name: glibc/uClibc emit `_FORTIFY`
+// wrappers (`__memcpy_chk`, `__strcpy_chk`, ...) and C99-conformance wrappers
+// (`__isoc99_sscanf`), and Mach-O prefixes every C symbol with `_` -- so macOS produces
+// `___strcpy_chk`, with three.
+//
+// They are listed here WITHOUT their leading underscores, because that is the name a model can
+// actually match. The pcode frontend derives a function's VMT simple name with
+// `func_data.name.trim_start_matches('_')` (`frontends/ctadl-pcode/src/lib.rs`), so `__memcpy_chk`,
+// `___strcpy_chk` and `_strdup` reach the matcher as `memcpy_chk`, `strcpy_chk` and `strdup`.
+// A `name` set spelling the underscores back on matches NOTHING -- not the simple name, which
+// has been stripped, and not the fully-qualified one, which still carries Ghidra's
+// `<EXTERNAL>::…@addr`. `nightly/tests/c/defaultmodels.c` is the regression guard: on a
+// fortifying host (macOS/clang fortifies even at -O0) its `strcpy` arrives as `___strcpy_chk`,
+// and the case passes only because `strcpy_chk` is in the list. On a host that does not
+// fortify it arrives as plain `strcpy` and the case still passes -- so it covers the alias path
+// where it can and never depends on it.
+//
+// Every `_chk` variant takes *extra* size/flag arguments, but every model covering them is
+// positional at index 0/1 or uses `arg(_)`, so no index arithmetic is needed -- extending the
+// `name` set is the whole fix. Aliases with no home rule are deliberately absent: `printf_chk`
+// and `isoc99_fscanf` would need `printf` and `fscanf` rules, and neither exists.
+//
+// COST. `compute_arg_arity` takes the max over *actual call sites*, so `arg(_)` on a variadic
+// fans out to the widest call in the program: one 12-argument `snprintf` anywhere makes every
+// `snprintf` summary 12x12 program-wide. The printf and scanf families are the only variadic
+// `arg(_)` users here; keep it that way. The allocator rule also uses `arg(_)`, but on a fixed
+// 1-2 argument signature, so its fan-out is bounded.
+//
+// ---- copying ----
 propagation(F::arg(0).deref <- F::arg(1).deref),
   propagation(F::return.deref <- F::arg(1).deref) :-
   fun(F, name in {"strcpy", "wcscpy", "strncpy", "wcsncpy", "stpcpy", "wcpcpy", "stpncpy", "wcpncpy", "strcat", "wcscat", "strncat", "wcsncat", "strcpy_chk", "strncpy_chk", "stpcpy_chk", "stpncpy_chk", "strcat_chk", "strncat_chk", "wcscpy_chk", "wcsncpy_chk", "wcscat_chk", "wcsncat_chk"});
@@ -16,12 +55,15 @@ propagation(F::arg(0).deref <- F::arg(1).deref),
   fun(F),
   F in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk"};
 
+// `strlcpy(dst, src, siz)` / `strlcat(dst, src, siz)`: only `src` is a pointer. The BSD
+// signature has no `return` buffer either -- it returns the length it tried to create.
 propagation(F::arg(0).deref <- F::arg(1).deref) :-
   fun(F, name in {"strlcpy", "strlcat", "strlcpy_chk", "strlcat_chk"});
 propagation(F::arg(0).deref <- F::arg(1).deref) :-
   fun(F),
   F in {"strlcpy", "strlcat", "strlcpy_chk", "strlcat_chk"};
 
+// ---- formatting and parsing ----
 propagation(F::arg(0).deref <- F::arg(_).deref),
   propagation(F::return.deref <- F::arg(_).deref) :-
   fun(F, name in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "asprintf", "vasprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk", "asprintf_chk", "vasprintf_chk"});
@@ -38,18 +80,23 @@ propagation(F::arg(_).deref <- F::arg(0).deref),
   fun(F),
   F in {"sscanf", "swscanf", "vsscanf", "vswscanf", "isoc99_sscanf", "isoc99_swscanf", "isoc99_vsscanf", "isoc99_vswscanf"};
 
+// ---- duplication ----
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"strdup", "strndup", "wcsdup"});
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"strdup", "strndup", "wcsdup"};
 
+// ---- search: a pointer INTO the argument comes back ----
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strsep", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"});
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strsep", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"};
 
+// `strtok_r(str, delim, saveptr)`: the state pointer keeps a pointer into `str`, so the taint
+// has to survive to the next call. `arg(2).deref.deref` is a two-level shift -- see
+// `tests/tnt/port_two_segment.tnt`.
 propagation(F::return.deref <- F::arg(0).deref),
   propagation(F::arg(2).deref.deref <- F::arg(0).deref) :-
   fun(F, name in {"strtok_r", "wcstok_r"});
@@ -64,6 +111,7 @@ propagation(F::return.deref <- F::arg(1).deref) :-
   fun(F),
   F in {"bsearch", "lsearch", "lfind"};
 
+// ---- length and numeric conversion: the RESULT is a scalar, so no `.deref` on the output ----
 propagation(F::return <- F::arg(0).deref) :-
   fun(F, name in {"strlen", "wcslen", "strnlen", "wcsnlen"});
 propagation(F::return <- F::arg(0).deref) :-
@@ -82,12 +130,15 @@ propagation(F::return <- F::arg(0)) :-
   fun(F),
   F in {"toupper", "tolower", "toascii"};
 
+// Byte-order swaps are pure scalar transforms. Firmware parsers are full of them, and dropping
+// taint at one silently ends a flow that a length or offset field is driving.
 propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"ntohl", "ntohs", "ntohll", "htonl", "htons", "htonll", "bswap_16", "bswap_32", "bswap_64"});
 propagation(F::return <- F::arg(0)) :-
   fun(F),
   F in {"ntohl", "ntohs", "ntohll", "htonl", "htons", "htonll", "bswap_16", "bswap_32", "bswap_64"};
 
+// ---- line readers: a `char **` out-parameter, so the destination is two levels deep ----
 propagation(F::arg(0).deref.deref <- F::arg(2).deref) :-
   fun(F, name = "getline");
 propagation(F::arg(0).deref.deref <- F::arg(2).deref) :-
@@ -100,6 +151,7 @@ propagation(F::arg(0).deref.deref <- F::arg(3).deref) :-
   fun(F),
   F = "getdelim";
 
+// ---- paths ----
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"basename", "dirname"});
 propagation(F::return.deref <- F::arg(0).deref) :-
@@ -120,12 +172,15 @@ propagation(F::arg(1).deref <- F::arg(0).deref) :-
   fun(F),
   F in {"readlink", "readlink_chk"};
 
+// `readlinkat(dirfd, path, buf, bufsiz)` -- one argument to the right of `readlink`.
 propagation(F::arg(2).deref <- F::arg(1).deref) :-
   fun(F, name in {"readlinkat", "readlinkat_chk"});
 propagation(F::arg(2).deref <- F::arg(1).deref) :-
   fun(F),
   F in {"readlinkat", "readlinkat_chk"};
 
+// ---- addresses ----
+// `inet_ntoa(struct in_addr)` takes its argument BY VALUE, so the input port is bare.
 propagation(F::return.deref <- F::arg(0)) :-
   fun(F, name = "inet_ntoa");
 propagation(F::return.deref <- F::arg(0)) :-
@@ -148,6 +203,7 @@ propagation(F::return <- F::arg(0).deref),
   fun(F),
   F in {"inet_addr", "inet_network", "inet_aton"};
 
+// `inet_pton(af, src, dst)` -- one argument to the right of `inet_aton`.
 propagation(F::arg(2).deref <- F::arg(1).deref),
   propagation(F::return <- F::arg(1).deref) :-
   fun(F, name = "inet_pton");
@@ -156,6 +212,7 @@ propagation(F::arg(2).deref <- F::arg(1).deref),
   fun(F),
   F = "inet_pton";
 
+// ---- time ----
 propagation(F::arg(0).deref <- F::arg(3).deref) :-
   fun(F, name in {"strftime", "wcsftime", "strftime_chk"});
 propagation(F::arg(0).deref <- F::arg(3).deref) :-
@@ -168,27 +225,62 @@ propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"ctime", "asctime", "ctime_r", "asctime_r"};
 
+// ---- wide / multibyte ----
 propagation(F::arg(0).deref <- F::arg(1).deref) :-
   fun(F, name in {"mbstowcs", "wcstombs", "mbstowcs_chk", "wcstombs_chk"});
 propagation(F::arg(0).deref <- F::arg(1).deref) :-
   fun(F),
   F in {"mbstowcs", "wcstombs", "mbstowcs_chk", "wcstombs_chk"};
 
+// `mbsrtowcs(dest, &src, len, ps)` -- `src` is a `char **`, one level deeper than `mbstowcs`.
 propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
   fun(F, name in {"mbsrtowcs", "wcsrtombs"});
 propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
   fun(F),
   F in {"mbsrtowcs", "wcsrtombs"};
 
+// ---- allocation ----
+// `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
+// a flow through every grow-the-buffer loop in a parser.
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F, name in {"realloc", "reallocarray", "reallocf"});
 propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"realloc", "reallocarray", "reallocf"};
 
+// ---- the C++ exception unwinder ----
+// These carry NO propagation and exist purely for `skip_analysis(F)`, which tells the
+// indexer to derive nothing from their bodies. That is the whole model: an unwinder moves
+// register and stack state to resume at a landing pad, not application data between a caller's
+// arguments, so "this function propagates nothing" is the accurate summary rather than a
+// convenient one. Taint arriving in a thrown object and leaving at a `catch` never crossed these
+// frames as a data-flow edge anyway -- the personality routine writes it into a register the
+// handler reads, which no access path in the IR names.
+//
+// The cost of NOT modeling them is not a missed flow, it is the analysis not finishing. In ARM
+// native libraries the three `__aeabi_unwind_cpp_pr*` personality routines can summarize to tens
+// of thousands of rows EACH -- against a median of 1 row per function -- because an unwinder
+// makes nearly everything reachable from nearly everything. They are also
+// legitimate indirect-call targets, reached through a pointer in the exception table, so hybrid
+// inlining instantiates those summaries at their call sites and the result multiplies through
+// `context_assign` / `context_locals`. `tests/tnt/skip_analysis_hybrid.tnt` is that shape in
+// miniature.
+//
+// `skip_analysis` and not a `propagation` head: a model ADDS to what a body derives. Only this
+// directive replaces it. And the seed is the point -- suppressing just the summary rows would
+// leave the body's `critical_summary` resolvents, which are what multiply.
+//
+// NAMES have their leading underscores stripped, per the SYMBOL ALIASES note at the top of this
+// file: `__aeabi_unwind_cpp_pr0` reaches the matcher as `aeabi_unwind_cpp_pr0` and
+// `_Unwind_RaiseException` as `Unwind_RaiseException`. Capital `U` in the `_Unwind_*` family is
+// deliberate -- `name = ...` is exact, not case-folded.
 skip_analysis(F) :-
   fun(F, name in {"aeabi_unwind_cpp_pr0", "aeabi_unwind_cpp_pr1", "aeabi_unwind_cpp_pr2", "gnu_unwind_frame", "gnu_unwind_execute", "gnu_unwind_pr_common", "gnu_Unwind_Resume", "gnu_Unwind_Resume_or_Rethrow", "gnu_Unwind_RaiseException", "gnu_Unwind_ForcedUnwind", "gnu_Unwind_Backtrace", "unwind_phase1", "unwind_phase2", "unwind_phase2_forced", "Unwind_RaiseException", "Unwind_Resume", "Unwind_Resume_or_Rethrow", "Unwind_ForcedUnwind", "Unwind_DeleteException", "Unwind_Backtrace", "Unwind_Complete", "Unwind_VRS_Get", "Unwind_VRS_Set", "Unwind_VRS_Pop", "Unwind_GetLanguageSpecificData", "Unwind_GetRegionStart", "Unwind_GetDataRelBase", "Unwind_GetTextRelBase", "cxa_begin_cleanup", "cxa_end_cleanup", "cxa_type_match", "cxa_call_unexpected"});
 skip_analysis(F) :-
   fun(F),
   F in {"aeabi_unwind_cpp_pr0", "aeabi_unwind_cpp_pr1", "aeabi_unwind_cpp_pr2", "gnu_unwind_frame", "gnu_unwind_execute", "gnu_unwind_pr_common", "gnu_Unwind_Resume", "gnu_Unwind_Resume_or_Rethrow", "gnu_Unwind_RaiseException", "gnu_Unwind_ForcedUnwind", "gnu_Unwind_Backtrace", "unwind_phase1", "unwind_phase2", "unwind_phase2_forced", "Unwind_RaiseException", "Unwind_Resume", "Unwind_Resume_or_Rethrow", "Unwind_ForcedUnwind", "Unwind_DeleteException", "Unwind_Backtrace", "Unwind_Complete", "Unwind_VRS_Get", "Unwind_VRS_Set", "Unwind_VRS_Pop", "Unwind_GetLanguageSpecificData", "Unwind_GetRegionStart", "Unwind_GetDataRelBase", "Unwind_GetTextRelBase", "cxa_begin_cleanup", "cxa_end_cleanup", "cxa_type_match", "cxa_call_unexpected"};
 
+// ---- deliberately absent ----
+// `qsort`/`heapsort`/`mergesort`: the obvious `arg(0).deref <- arg(0).deref` is a
+// self-loop that derives nothing: the taint it would propagate is already at the vertex it
+// propagates to.

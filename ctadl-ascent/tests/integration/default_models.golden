@@ -1,7 +1,6 @@
-# What the retired JSON model matcher matched for each shipped .jsonl default on
-# each fixture program in default_models.rs, keyed by the .ctadl migrated from it.
-# A frozen record, made while the matcher existed; it cannot be regenerated.
-# Do not edit by hand.
+# What each shipped default matches on each fixture program in default_models.rs.
+# Regenerate with CTADL_BLESS=1 cargo test -p ctadl-ascent --test integration \
+#   the_defaults_match_their_golden, and review the diff.
 
 == cil-index.ctadl on cil
     propagation: [System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator::get_Current()->!0: Return <- Index(0).deref.\[]

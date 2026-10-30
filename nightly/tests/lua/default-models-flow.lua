@@ -1,4 +1,4 @@
--- Exercises the SHIPPED Lua propagation defaults (`models/defaults/lua-index.jsonl`).
+-- Exercises the SHIPPED Lua propagation defaults (`models/defaults/lua-index.ctadl`).
 --
 -- Unlike every other case here this one defines no `source`/`sink` of its own: the source is
 -- the real `io.read` and the sink the real `os.execute`, and the step between them --

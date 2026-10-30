@@ -10,7 +10,7 @@
 // for rule 1.1 to read, the indirect call never resolves, and neither the summary nor the flow
 // through it exists.
 //
-// This is the case the ARM unwinder models in `native-index.jsonl` rely on: it is not enough to
+// This is the case the ARM unwinder models in `native-index.ctadl` rely on: it is not enough to
 // suppress the summary rows: the resolvents the body manufactures are what multiply through
 // `context_assign` and dominate the run.
 def polyY(obj): 1

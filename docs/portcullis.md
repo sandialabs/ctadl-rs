@@ -632,9 +632,7 @@ format is deprecated, and the migration's own warnings are logged with it. A gen
 not translate fails the command with the errors below, each naming its generator; the model check
 reports it and checks the rest of the file. Diagnostics about a migrated file name the JSON file
 and the generator index — in provenance, `CTADL0004`, the dead-rule warning and engine errors —
-not a line of a translation the author has never seen. The shipped defaults in
-`ctadl-ascent/src/models/defaults/` are this tool's output, checked in next to the `.jsonl` they
-came from; a test requires each `.ctadl` to be exactly what this tool writes for its `.jsonl`.
+not a line of a translation the author has never seen.
 
 How the JSON constructs map:
 
