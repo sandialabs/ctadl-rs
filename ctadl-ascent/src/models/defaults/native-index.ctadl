@@ -51,11 +51,35 @@ propagation(F::arg(0).deref <- F::arg(1).deref),
 
 propagation(F::arg(0).deref <- F::arg(1).deref),
   propagation(F::return.deref <- F::arg(1).deref) :-
-  fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk"});
+  fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"});
 propagation(F::arg(0).deref <- F::arg(1).deref),
   propagation(F::return.deref <- F::arg(1).deref) :-
   fun(F),
-  F in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk"};
+  F in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"};
+
+// `memset(s, c, n)` returns `s`.
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"memset", "memset_chk", ".pic.memset"});
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F),
+  F in {"memset", "memset_chk", ".pic.memset"};
+
+// The bodies of `memcpy` and `memset` are skipped. MIPS uClibc writes them in assembly with
+// `swl`/`swr`/`lwl`, which Ghidra expands into a masked read-modify-write of the aligned word,
+// with mask and shift computed from the low bits of the address. The frontend merges every
+// operand of that arithmetic, so the stored word carries the address and the summary gets
+// `arg(0).deref <- arg(0)`. Through stdio's buffer arithmetic that becomes a complete bipartite
+// self-link of every string, copied at every call site (about 10x the index on uClibc
+// firmware). The models above are what the bodies should contribute.
+//
+// A MIPS non-PIC-to-PIC call goes through a `.pic.<name>` stub that the linker places right
+// before its target and that falls through into it, so Ghidra gives the stub the whole body
+// under that name.
+skip_analysis(F, priority = -100) :-
+  fun(F, name in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset"});
+skip_analysis(F, priority = -100) :-
+  fun(F),
+  F in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset"};
 
 // `strlcpy(dst, src, siz)` / `strlcat(dst, src, siz)`: only `src` is a pointer. The BSD
 // signature has no `return` buffer either -- it returns the length it tried to create.

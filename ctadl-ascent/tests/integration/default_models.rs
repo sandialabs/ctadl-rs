@@ -741,6 +741,60 @@ fn the_native_portcullis_defaults_skip_the_unwinders() {
     );
 }
 
+/// `memcpy` and `memset` are skipped, under their MIPS `.pic.` stub names too, and each keeps a
+/// model. The rest of the copy family is analyzed: `bcopy`'s model has its arguments backwards.
+#[test]
+fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
+    use ctadl_ascent::models::portcullis;
+
+    let names = [
+        "memcpy",
+        ".pic.memcpy",
+        "memset",
+        ".pic.memset",
+        "memmove",
+        "bcopy",
+    ];
+    let signatures = names.map(|n| format!("{n}()"));
+    let program_info = program(
+        test_vmt::native(
+            names
+                .iter()
+                .zip(&signatures)
+                .map(|(n, sig)| (*n, sig.as_str(), *n, *n)),
+        ),
+        &names,
+    );
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let (name, source) = DEFAULT_DSL_MODELS
+        .iter()
+        .find(|(name, _)| *name == "native-index.ctadl")
+        .expect("a native DSL default");
+    let file = portcullis::PortcullisFile::from_text(name, *source)
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Index);
+    let mut out = ProgramModelMatches::default();
+    matcher.observe_import(&match_index, &mut out);
+    matcher.finish(&mut out).expect("finish");
+    let skipped = out
+        .skip_analysis
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<BTreeSet<_>>();
+    let expected = [".pic.memcpy", ".pic.memset", "memcpy", "memset"]
+        .map(String::from)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(skipped, expected);
+    for f in &expected {
+        assert!(
+            out.propagations.iter().any(|p| p.function.to_string() == *f),
+            "{f} is skipped with no model"
+        );
+    }
+}
+
 /// The gate that decides whether an import pays to collect its call sites' signature keys.
 ///
 /// Worth pinning on its own: if it ever answers `false` for Java, every dispatch rule in the
