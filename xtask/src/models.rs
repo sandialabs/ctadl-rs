@@ -2,15 +2,15 @@
 //!
 //! `ctadl-model-generator.schema.json` is the contract users write generators against: it is
 //! what `docs/deprecated-json-model-generators.md` sends readers to, and what a JSON model file
-//! names in its `$schema`. Nothing in the analyzer reads it. The loader
-//! (`ctadl-ascent/src/models/json.rs`) has its own serde types, so a keyword added there and
+//! names in its `$schema`. Nothing in the analyzer reads it. The migrator validates generators
+//! with its own checks (`ctadl-ascent/src/models/json_schema.rs`), so a keyword accepted there and
 //! used in a shipped default file can sit outside the schema indefinitely -- and every editor
 //! validating a user's file against that schema then reports *our own* models as errors.
 //!
 //! This check closes that gap in the direction it can: every generator we ship must validate
 //! against the schema we publish. The other direction -- a schema that permits a shape the
-//! loader rejects -- is not observable from here; only a model file using that shape would
-//! catch it, and the taint cases are what exercise the loader.
+//! migrator rejects -- is not observable from here; only a model file using that shape would
+//! catch it, and the taint cases are what exercise the migrator.
 //!
 //! Files are discovered rather than listed, so a default model file added to the crate is
 //! checked the day it lands rather than the day someone remembers to name it here.
