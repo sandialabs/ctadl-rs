@@ -277,6 +277,37 @@ fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
     );
 }
 
+/// One [`notifications::ALLOCATOR_BY_SHAPE`] per function `facts` found to be an allocator by
+/// its shape, saying whether the models skipped its body, with the measurements as properties.
+fn push_allocator_notes(
+    notes: &mut Notifications,
+    facts: &crate::models::portcullis::relations::ProgramFacts,
+    matches: &crate::models::ProgramModelMatches,
+) {
+    use crate::models::portcullis::allocator::Evidence;
+    for row in &facts.allocators {
+        let Evidence::Shape(shape) = row.by else {
+            continue;
+        };
+        let skipped = matches.skip_analysis.contains(&row.function);
+        notes.push(
+            &notifications::ALLOCATOR_BY_SHAPE,
+            if skipped { "skipped" } else { "analyzed" },
+            if skipped { Level::Warning } else { Level::Note },
+            vec![row.function.to_string(), row.kind.name().to_string()],
+            [
+                ("headerAccesses", shape.header_accesses),
+                ("heapGlobals", shape.heap_globals),
+                ("heapStores", shape.heap_stores),
+                ("callSites", shape.call_sites),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+            .collect(),
+        );
+    }
+}
+
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the
 /// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
@@ -444,6 +475,9 @@ pub fn index(
             // is satisfied within one import. So the winners are final, and a tie is an error
             // before SSA reads them.
             model_matches.check_mode_conflicts()?;
+            if let Some(facts) = &portcullis_facts {
+                push_allocator_notes(&mut notes, facts, &model_matches);
+            }
         }
 
         // Delete assigned-but-never-read temporaries, then fuse single-use

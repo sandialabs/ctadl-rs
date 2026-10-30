@@ -28,11 +28,12 @@ use std::ops::Range;
 
 use hashbrown::hash_map::HashMap;
 
-use ctadl_ir::mir::call::{CallEdges, CallStyle};
+use ctadl_ir::mir::call::{CallEdges, CallStyle, Dispatch};
 use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
 use crate::models::match_index::ProgramMatchIndex;
+use crate::models::portcullis::allocator::{self, AllocatorRow};
 use crate::models::portcullis::ast::{BodyItem, Program};
 
 /// One function, as the DSL sees it.
@@ -195,6 +196,8 @@ pub struct ProgramFacts {
     pub uses_field: Vec<(Str, Str)>,
     /// Every function's declared locals, each function's adjacent and in declaration order.
     pub locals: Vec<LocalRow>,
+    /// The allocator entry points, one row per function, sorted by name. Native programs only.
+    pub allocators: Vec<AllocatorRow>,
     /// Direct `(subclass, superclass)` edges.
     pub subclass: Vec<(Str, Str)>,
     /// Every class name the program mentions, sorted. This is what `subclass*` enumerates over
@@ -219,6 +222,7 @@ pub struct ProgramFacts {
     uses_field_by_fun: HashMap<Str, Vec<RowIdx>>,
     /// Each function's rows, which are adjacent.
     locals_by_fun: HashMap<Str, Range<RowIdx>>,
+    allocators_by_fun: HashMap<Str, RowIdx>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
     callsigs_by_id: HashMap<Str, RowIdx>,
@@ -242,6 +246,8 @@ pub struct Needs {
     /// `callsig`. The universe itself is collected only when some loaded rule reads it (see
     /// `Program::uses_callsig`).
     pub callsig: bool,
+    /// `allocator`: a pass over every native function body, for the by-shape rows.
+    pub allocator: bool,
 }
 
 impl Needs {
@@ -253,6 +259,7 @@ impl Needs {
             local: true,
             subclass: true,
             callsig: true,
+            allocator: true,
         }
     }
 
@@ -267,6 +274,7 @@ impl Needs {
                     "local" => needs.local = true,
                     "subclass" | "subclass*" | "subclass+" => needs.subclass = true,
                     "callsig" => needs.callsig = true,
+                    "allocator" => needs.allocator = true,
                     _ => {}
                 },
                 BodyItem::Not(inner) => visit(inner, needs),
@@ -288,6 +296,7 @@ impl Needs {
         self.local |= other.local;
         self.subclass |= other.subclass;
         self.callsig |= other.callsig;
+        self.allocator |= other.allocator;
     }
 }
 
@@ -372,6 +381,17 @@ impl ProgramFacts {
             }
         }
 
+        let allocators = if needs.allocator && matches!(index.vmt().dispatch, Dispatch::Native) {
+            allocator::find(&rows, &lowered)
+        } else {
+            Vec::new()
+        };
+        let allocators_by_fun = allocators
+            .iter()
+            .enumerate()
+            .map(|(i, row)| (row.function, row_idx(i)))
+            .collect();
+
         let mut subclass: Vec<(Str, Str)> = Vec::new();
         let mut classes: Vec<Str> = Vec::new();
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
@@ -439,6 +459,7 @@ impl ProgramFacts {
             callsites,
             uses_field,
             locals,
+            allocators,
             subclass,
             classes,
             language: index.scope.language.map(|l| Str::from(l.name())),
@@ -452,6 +473,7 @@ impl ProgramFacts {
             callsites_by_callee,
             uses_field_by_fun,
             locals_by_fun,
+            allocators_by_fun,
             supers_of,
             subs_of,
             callsigs_by_id,
@@ -540,6 +562,11 @@ impl ProgramFacts {
     #[inline]
     pub fn uses_field_of(&self, f: Str) -> &[RowIdx] {
         self.uses_field_by_fun.get(&f).map_or(&[], |v| v.as_slice())
+    }
+
+    /// The `allocator` row of function `f`, if it is one.
+    pub fn allocator_of(&self, f: Str) -> Option<usize> {
+        self.allocators_by_fun.get(&f).map(|&i| i as usize)
     }
 
     /// The `local` rows of function `f`.

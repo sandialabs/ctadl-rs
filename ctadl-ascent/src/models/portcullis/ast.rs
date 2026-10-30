@@ -488,6 +488,7 @@ pub const BUILTIN_RELATIONS: &[&str] = &[
     "subclass*",
     "subclass+",
     "uses_field",
+    "allocator",
 ];
 
 /// Operators usable in atom position. Not relations: they filter, they never generate.
@@ -534,6 +535,7 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
         ],
         "callsite" => &["callee_string"],
         "local" => &["name"],
+        "allocator" => &["kind", "by"],
         _ => &[],
     }
 }
@@ -549,6 +551,7 @@ pub fn relation_arity(name: &str) -> Option<usize> {
         "callsite" => Some(2),
         "subclass" | "subclass*" | "subclass+" => Some(2),
         "uses_field" => Some(2),
+        "allocator" => Some(1),
         "regex_match" => Some(2),
         _ => None,
     }

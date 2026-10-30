@@ -1135,6 +1135,7 @@ fn needs_are_read_from_every_atom_of_every_rule() {
             subclass: true,
             callsig: false,
             local: false,
+            allocator: false,
         }
     );
     let mut needs = needs_of(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "n");"#);
@@ -1704,4 +1705,174 @@ fn a_user_analyze_overrides_a_default_skip() {
     matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
     out.check_mode_conflicts().unwrap();
     assert_eq!(skipped(&out), ["free", "realloc"]);
+}
+
+// ---------------------------------------------------------------------------
+// allocator
+// ---------------------------------------------------------------------------
+
+/// The `allocator` rows `source` selects, as `name kind by` lines. Each rule's head is
+/// `skip_analysis(F)`, and the `kind` and `by` it reads come back through a second pass.
+fn allocators(program_info: &ProgramInfo, select: &str) -> Vec<String> {
+    let mut rows = Vec::new();
+    for kind in ["malloc", "realloc", "free", "internal"] {
+        for by in ["name", "shape"] {
+            let m = run(
+                program_info,
+                &format!(
+                    r#"skip_analysis(F) :- allocator(F, kind = "{kind}", by = "{by}"), {select};"#
+                ),
+            );
+            rows.extend(skipped(&m).into_iter().map(|f| format!("{f} {kind} {by}")));
+        }
+    }
+    rows.sort();
+    rows
+}
+
+/// Every allocator name is a row, with its kind; other functions are not.
+#[test]
+fn allocator_lists_named_entry_points_by_kind() {
+    let program_info = native_program(&["malloc", "realloc", "free", "mallopt", "strcpy"]);
+    assert_eq!(
+        allocators(&program_info, "fun(F)"),
+        [
+            "free free name",
+            "malloc malloc name",
+            "mallopt internal name",
+            "realloc realloc name",
+        ]
+    );
+}
+
+/// A Java method named like an allocator is not one.
+#[test]
+fn allocator_is_native_only() {
+    let mut program_info = java_program();
+    program_info.vmt = test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
+        methods: vec![(
+            JavaClass("Lc/Pool;".into()),
+            JavaSimpleName("free".into()),
+            JavaSignature("()V".into()),
+            JavaMethod("Lc/Pool;->free()V".into()),
+        )],
+        hierarchy: Default::default(),
+        interfaces: Vec::new(),
+        abstract_methods: Vec::new(),
+        natives: Vec::new(),
+    }));
+    assert!(allocators(&program_info, "fun(F)").is_empty());
+}
+
+/// A stripped program with dlmalloc's shape: `free` and `realloc` read the header word before
+/// their pointer and write the heap state, which `malloc` writes too. `FUN_peek` reads a header
+/// word but writes nothing, `FUN_stats` writes the heap state but has no allocator signature,
+/// and `FUN_lonely` is shaped like `malloc` but has a single caller. `main` calls them.
+fn stripped_allocator() -> ProgramInfo {
+    use ctadl_ir::mir::{Exp, OffsetAccess, ParameterIdx, ReturnType};
+    const HEAP: [i64; 4] = [0x10003010, 0x10003014, 0x10003040, 0x10003044];
+    let heap_stores = |n: usize| -> Vec<Statement> {
+        (0..n)
+            .map(|i| {
+                Statement::new_kind(StatementKind::Store {
+                    dest: AccessPath::new(
+                        VariableRef::new_global(),
+                        [OffsetAccess::Offset(ctadl_ir::mir::Offset(
+                            HEAP[i % HEAP.len()],
+                        ))],
+                    ),
+                    field: FieldRef::symbol("deref"),
+                    value: Exp::Int(i as i64),
+                })
+            })
+            .collect()
+    };
+    let header_load = Statement::new_kind(StatementKind::Load {
+        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
+        source: AccessPath::new(
+            VariableRef::new_parameter(ParameterIdx::new(0)),
+            [OffsetAccess::Offset(ctadl_ir::mir::Offset(0xffff_fffc))],
+        ),
+        field: FieldRef::symbol("deref"),
+    });
+    let with = |name: &str, params: usize, returns: bool, body: Vec<Statement>| {
+        let mut f = function(name, params, body);
+        f.return_type = ReturnType {
+            arity: u8::from(returns),
+        };
+        f
+    };
+    let functions = vec![
+        with(
+            "FUN_free",
+            1,
+            false,
+            [vec![header_load.clone()], heap_stores(120)].concat(),
+        ),
+        with(
+            "FUN_realloc",
+            2,
+            true,
+            [vec![header_load.clone()], heap_stores(160)].concat(),
+        ),
+        with("FUN_malloc", 1, true, heap_stores(700)),
+        with("FUN_peek", 1, true, vec![header_load.clone()]),
+        with("FUN_stats", 3, true, heap_stores(200)),
+        with("FUN_lonely", 1, true, heap_stores(200)),
+        with(
+            "main",
+            0,
+            false,
+            [
+                "FUN_malloc",
+                "FUN_malloc",
+                "FUN_malloc",
+                "FUN_free",
+                "FUN_realloc",
+                "FUN_peek",
+                "FUN_stats",
+                "FUN_lonely",
+            ]
+            .into_iter()
+            .map(call)
+            .collect(),
+        ),
+    ];
+    let names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+    ProgramInfo {
+        vmt: test_vmt::native(
+            names
+                .iter()
+                .map(|n| (n.as_str(), "", n.as_str(), n.as_str())),
+        ),
+        program: Program::new(Functions::new(functions)),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn allocator_finds_a_stripped_dlmalloc_by_shape() {
+    assert_eq!(
+        allocators(&stripped_allocator(), "fun(F)"),
+        [
+            "FUN_free free shape",
+            "FUN_malloc malloc shape",
+            "FUN_realloc realloc shape",
+        ]
+    );
+}
+
+/// A global store sharing a call's statement is the frontend's copy of what the callee may
+/// change, not the function's own write, so a program whose heap stores all sit at calls has
+/// no heap state and no allocator.
+#[test]
+fn stores_at_a_call_are_not_the_functions_own() {
+    let mut program_info = stripped_allocator();
+    for f in program_info.program.functions.functions.iter_mut() {
+        if f.name != "main" {
+            let block = f.blocks.blocks_mut().iter_mut().next().unwrap();
+            block.extend([call("main")]);
+        }
+    }
+    assert!(allocators(&program_info, "fun(F)").is_empty());
 }

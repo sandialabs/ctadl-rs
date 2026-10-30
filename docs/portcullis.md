@@ -232,6 +232,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
 | `subclass+(Sub, Super)` | transitive closure | — |
 | `uses_field(F, Fld)` | function, field it loads, stores or updates | — |
+| `allocator(F)` | a C heap allocator's entry point (native code) | `kind`, `by` |
 
 Notes worth having:
 
@@ -270,6 +271,22 @@ Notes worth having:
   `import` are those of the import the call site was read from. Collecting
   the keys costs a pass over every statement, so an import pays for it only when some rule reads
   `callsig`; a rule that reads it against an import collected without them matches nothing.
+- `allocator` lists the entry points of a C heap allocator, in native code only. `kind` is
+  `"malloc"` (returns a fresh block: `malloc`, `calloc`, `memalign`, …), `"realloc"` (returns a
+  block holding its first argument's contents), `"free"`, or `"internal"` (`mallopt`,
+  `malloc_trim`, `malloc_consolidate`, …). `by` says how it was found:
+  - `"name"`: its simple name, or its full name without leading underscores, is one of the
+    allocator names in `ctadl-ascent/src/models/portcullis/allocator.rs`.
+  - `"shape"`: it has no allocator name, but has dlmalloc's shape. `free` and `realloc` read
+    the header word just before the pointer they are passed. Every entry point writes the globals
+    those two write themselves, hundreds of times. The kind comes from the signature and the
+    number of callers. This is what finds the allocator in a stripped binary. A pick is a
+    heuristic, so `ctadl index` reports every one as `CTADL0109`, saying whether its body was
+    skipped.
+
+  A function has at most one row; a name wins over a shape. Finding the by-shape rows costs a
+  pass over every native function body, so an import pays for it only when some rule reads
+  `allocator`. The native defaults do.
 
 Every relation name is built in. A file cannot define one, so a name that is not in the table is a
 typo and is reported as one.
@@ -755,6 +772,7 @@ looks exactly like a clean program.
 | Register an access path the code never writes | `access_paths("…")` |
 | Trust the model and skip the body | `skip_analysis(F)` |
 | Keep a body another rule, or a default, skips | `analyze(F)`, with a `priority` above the other rule's |
+| Keep a function the allocator detector picked by mistake | `analyze(F) :- fun(F), F = "FUN_0042d400";` |
 | Take a contract method's implementations out of the call graph | `K::dispatch(<flow>)` |
 | Discard a call that moves nothing | `K::dispatch(resolve = "skip")` |
 | Keep a signature's bodies reachable but off CHA | `K::dispatch(resolve = "inline")` |

@@ -1368,6 +1368,13 @@ fn callsig_and_dispatch_do_not_swap() {
 }
 
 #[test]
+fn allocator_takes_kind_and_by() {
+    check_ok(r#"skip_analysis(F) :- allocator(F, kind in {"malloc", "free"}, by = "shape");"#);
+    let err = check_err(r#"skip_analysis(F) :- allocator(F, name = "malloc");"#);
+    assert!(err.contains("not an attribute of 'allocator'"), "{err}");
+}
+
+#[test]
 fn callsig_has_no_body_dependent_attributes() {
     let err = check_err(r#"K::dispatch(resolve = "skip") :- callsig(K, has_code = true);"#);
     assert!(err.contains("not an attribute of 'callsig'"), "{err}");

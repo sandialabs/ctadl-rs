@@ -49,6 +49,7 @@ use crate::error::{Error, ErrorContext};
 use crate::models::ProgramModelMatches;
 use crate::models::match_index::ProgramMatchIndex;
 
+pub mod allocator;
 pub mod ast;
 pub mod check;
 pub mod emit;
