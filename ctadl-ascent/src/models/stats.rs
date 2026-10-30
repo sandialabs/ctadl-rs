@@ -128,19 +128,22 @@ impl EndpointStats {
             self.unmatched.clear();
         } else {
             self.unmatched.extend(other.unmatched.iter().cloned());
+            // Some part selected a function, so the generator as a whole did: one import, or
+            // one disjunct, that selected none says nothing about the others.
+            if self.functions_matched > 0 {
+                self.unmatched.remove(&UnmatchedReason::NoFunctionMatched);
+            }
         }
     }
 }
 
 /// Why a declared port produced no endpoint row.
 ///
-/// The DSL engine reports only [`Self::NoFunctionMatched`] today. [`Self::LocalNotFound`] is for
-/// `Variable(...)` ports, which the DSL is to gain a spelling for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnmatchedReason {
     /// The generator's `where` constraints selected no function in the program.
     NoFunctionMatched,
-    /// Functions matched, but none of them declares a local by this name, so the
-    /// `Variable(name)` port resolved in none of them.
+    /// Functions matched, but none of them declares a local by this name: a `local` atom (a
+    /// migrated `Variable(name)` port) matched nothing.
     LocalNotFound(String),
 }

@@ -42,6 +42,9 @@ pub enum VarType {
     Str,
     Int,
     Bool,
+    /// A local variable of one function, bound by `local`'s second column. Opaque: it is not
+    /// an integer, so it cannot index an argument, nor an argument index a local.
+    Local,
 }
 
 impl VarType {
@@ -55,6 +58,7 @@ impl VarType {
             VarType::Str => "string",
             VarType::Int => "integer",
             VarType::Bool => "boolean",
+            VarType::Local => "local variable",
         }
     }
 
@@ -79,6 +83,9 @@ pub struct Plan {
     pub components: Vec<Component>,
     /// Every variable the body binds, with its inferred type.
     pub var_types: BTreeMap<String, VarType>,
+    /// What each positive `local` atom asks for, by [`AtomPlan::probe`]: the name it constrains,
+    /// as the unmatched-local diagnostic reports it.
+    pub local_probes: Vec<String>,
 }
 
 /// One connected component: a set of body items sharing variables, compiled into the steps the
@@ -125,6 +132,10 @@ pub struct AtomPlan {
     /// In written order. Columns are matched first, then attributes, which is the order the mode
     /// check binds in: a variable's first occurrence binds it and every later one tests it.
     pub attrs: Vec<(Attr, AttrPat)>,
+    /// For a `local` atom the rule's solutions depend on, its index in [`Plan::local_probes`]:
+    /// the engine records whether it ever matched, so a rule that matched nothing because of it
+    /// can say so.
+    pub probe: Option<usize>,
 }
 
 impl AtomPlan {
@@ -150,6 +161,8 @@ pub enum Relation {
     NameOf,
     CallSig,
     Param,
+    /// A function and one of its declared locals.
+    Local,
     CallSite,
     /// `subclass` is neither, `subclass*` both, `subclass+` only `deep`.
     Subclass {
@@ -166,6 +179,7 @@ impl Relation {
             "name_of" => Relation::NameOf,
             "callsig" => Relation::CallSig,
             "param" => Relation::Param,
+            "local" => Relation::Local,
             "callsite" => Relation::CallSite,
             "subclass" => Relation::Subclass {
                 reflexive: false,
@@ -190,7 +204,11 @@ impl Relation {
     /// ranks atoms by the [`Access`] they allow, and the engine follows that same `Access`.
     fn indexed_columns(self) -> &'static [usize] {
         match self {
-            Relation::Fun | Relation::CallSig | Relation::Param | Relation::UsesField => &[0],
+            Relation::Fun
+            | Relation::CallSig
+            | Relation::Param
+            | Relation::Local
+            | Relation::UsesField => &[0],
             // A function's names, the functions with a name.
             Relation::NameOf => &[0, 1],
             // By id, then by caller.
@@ -223,6 +241,10 @@ impl Relation {
             // Every function, once per name.
             Relation::NameOf => 32,
             Relation::CallSite => 40,
+            // Every function, once per local: the biggest table there is. Not indexed by name,
+            // so that whatever selects the function runs first and the unmatched-local report
+            // can say which functions it asked about.
+            Relation::Local => 45,
         }
     }
 }
@@ -388,10 +410,51 @@ pub fn plan_rule(rule: &Rule, errors: &mut PortcullisErrors) -> Option<Plan> {
         });
         return None;
     }
+    let mut components = components;
+    let mut local_probes = Vec::new();
+    for component in &mut components {
+        for (step, &item) in component.body.iter_mut().zip(&component.steps) {
+            if let (Step::Atom(atom), BodyItem::Atom(written)) = (step, &rule.body[item])
+                && atom.rel == Relation::Local
+            {
+                atom.probe = Some(local_probes.len());
+                local_probes.push(local_name_constraint(written));
+            }
+        }
+    }
     Some(Plan {
         components,
         var_types: types,
+        local_probes,
     })
+}
+
+/// How a `local` atom constrains the name, for a diagnostic: `buf` for `name = "buf"`, else the
+/// constraint as written, else `_`.
+fn local_name_constraint(atom: &Atom) -> String {
+    let Some(attr) = atom.attrs.iter().find(|a| a.name == "name") else {
+        return "_".to_string();
+    };
+    match (&attr.rhs, attr.op) {
+        (Rhs::Term(Term::Lit(Literal::Str(s))), CmpOp::Eq) => s.clone(),
+        (Rhs::Term(t), op) => format!("name {op} {}", term_text(t)),
+        (Rhs::Set(items), _) => format!(
+            "name in {{{}}}",
+            items
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn term_text(term: &Term) -> String {
+    match term {
+        Term::Var(v) => v.clone(),
+        Term::Lit(lit) => lit.to_string(),
+        Term::Wildcard => "_".to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,8 +568,8 @@ fn collect_head_vars(head: &Head, out: &mut BTreeSet<String>) {
         if let Some(Term::Var(v)) = &port.anchor {
             out.insert(v.clone());
         }
-        if let PortBase::ArgVar(v) = &port.port.base {
-            out.insert(v.clone());
+        if let Some(v) = port.port.base.var() {
+            out.insert(v.to_string());
         }
     }
 }
@@ -807,6 +870,49 @@ fn levenshtein_close(a: &str, b: &str) -> bool {
 // Head checking
 // ---------------------------------------------------------------------------
 
+/// A `local(L)` port: only a source or sink names one, the way `Variable(...)` was the JSON's
+/// source/sink-only port, and it hangs off the function `L` is a local of, never a call site.
+fn check_local_port(
+    head: &Head,
+    port: &PortExpr,
+    anchor: Option<&Term>,
+    v: &str,
+    bound: &BTreeSet<String>,
+    types: &BTreeMap<String, VarType>,
+    errors: &mut PortcullisErrors,
+) {
+    let mut error = |message: String| {
+        errors.push(PortcullisError::Rule {
+            message,
+            span: port.span,
+        })
+    };
+    if !matches!(head.kind, HeadKind::Source { .. } | HeadKind::Sink { .. }) {
+        error("a 'local(L)' port is valid only on a source or sink".to_string());
+    }
+    if let Some(Term::Var(a)) = anchor
+        && types.get(a) == Some(&VarType::Site)
+    {
+        error(format!(
+            "'{a}' is a call site, and a local belongs to a function; anchor 'local({v})' at the \
+             function 'local' bound it with"
+        ));
+    }
+    if !bound.contains(v) {
+        error(format!(
+            "'{v}' names a local in the head but is not bound in the body; bind it with \
+             'local(F, {v})'"
+        ));
+    } else if let Some(t) = types.get(v)
+        && t.unify(VarType::Local).is_none()
+    {
+        error(format!(
+            "'{v}' names a local but was bound as a {}; bind it with 'local(F, {v})'",
+            t.name()
+        ));
+    }
+}
+
 fn check_head(
     head: &Head,
     bound: &BTreeSet<String>,
@@ -873,6 +979,9 @@ fn check_head(
             }),
         }
         anchors.push(anchor);
+        if let PortBase::Local(v) = &port.port.base {
+            check_local_port(head, port, anchor, v, bound, types, errors);
+        }
         if let PortBase::ArgVar(v) = &port.port.base {
             if !bound.contains(v) {
                 errors.push(PortcullisError::Rule {
@@ -1321,6 +1430,7 @@ impl Compiler {
             access,
             columns,
             attrs,
+            probe: None,
         }
     }
 
@@ -1400,6 +1510,7 @@ fn column_types(name: &str) -> &'static [VarType] {
         "name_of" => &[VarType::Function, VarType::Str],
         "callsig" => &[VarType::CallSig],
         "param" => &[VarType::Function, VarType::Int],
+        "local" => &[VarType::Function, VarType::Local],
         "callsite" => &[VarType::Function, VarType::Site],
         "subclass" | "subclass*" | "subclass+" => &[VarType::Class, VarType::Class],
         "uses_field" => &[VarType::Function, VarType::Str],

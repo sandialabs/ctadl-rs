@@ -97,6 +97,7 @@ struct RawPortExpr<'s> {
 enum RawPortBase<'s> {
     Return,
     Arg(RawArgSel<'s>, Span),
+    Local(&'s str),
 }
 
 enum RawArgSel<'s> {
@@ -222,6 +223,7 @@ peg::parser! {
             / s:position!() ("arg" / "param") !name_char() _ "(" _ sel:arg_sel() _ ")"
               e:position!()
               { RawPortBase::Arg(sel, span(s, e)) }
+            / "local" !name_char() _ "(" _ v:var() _ ")" { RawPortBase::Local(v) }
 
         rule arg_sel() -> RawArgSel<'input>
             = i:int() { RawArgSel::Int(i) }
@@ -797,6 +799,7 @@ impl Builder {
             },
             RawPortBase::Arg(RawArgSel::Wildcard, _) => Some(PortBase::AnyArg),
             RawPortBase::Arg(RawArgSel::Var(v), _) => Some(PortBase::ArgVar(v.to_string())),
+            RawPortBase::Local(v) => Some(PortBase::Local(v.to_string())),
         }
     }
 

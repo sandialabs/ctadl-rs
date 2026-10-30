@@ -302,17 +302,27 @@ pub enum PortBase {
     AnyArg,
     /// `arg(I)` where `I` is bound in the body.
     ArgVar(String),
+    /// `local(L)` where `L` is bound in the body by `local(F, L)`. A source/sink port only.
+    Local(String),
 }
 
 impl PortBase {
-    /// The `(tag, index)` pair the match structures carry, for the two cases that need no
-    /// binding. `ArgVar` has none until the rule is grounded.
+    /// The `(tag, index)` pair the match structures carry, for the cases that need no binding.
+    /// `ArgVar` and `Local` have none until the rule is grounded.
     pub fn tag(&self) -> Option<(FormalIndexTypeTag, Option<i16>)> {
         match self {
             PortBase::Return => Some((FormalIndexTypeTag::Return, None)),
             PortBase::Arg(i) => Some((FormalIndexTypeTag::Index, Some(*i))),
             PortBase::AnyArg => Some((FormalIndexTypeTag::AnyArgument, None)),
-            PortBase::ArgVar(_) => None,
+            PortBase::ArgVar(_) | PortBase::Local(_) => None,
+        }
+    }
+
+    /// The body variable the port reads: `I` in `arg(I)`, `L` in `local(L)`.
+    pub fn var(&self) -> Option<&str> {
+        match self {
+            PortBase::ArgVar(v) | PortBase::Local(v) => Some(v),
+            _ => None,
         }
     }
 }
@@ -437,6 +447,7 @@ pub const BUILTIN_RELATIONS: &[&str] = &[
     "name_of",
     "callsig",
     "param",
+    "local",
     "callsite",
     "subclass",
     "subclass*",
@@ -486,6 +497,7 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
             "import",
         ],
         "callsite" => &["callee_string"],
+        "local" => &["name"],
         _ => &[],
     }
 }
@@ -497,6 +509,7 @@ pub fn relation_arity(name: &str) -> Option<usize> {
         "name_of" => Some(2),
         "callsig" => Some(1),
         "param" => Some(2),
+        "local" => Some(2),
         "callsite" => Some(2),
         "subclass" | "subclass*" | "subclass+" => Some(2),
         "uses_field" => Some(2),

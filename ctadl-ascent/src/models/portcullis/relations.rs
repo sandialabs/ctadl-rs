@@ -162,6 +162,16 @@ pub struct CallSigRow {
     pub signature: Str,
 }
 
+/// One declared local variable: a `local` row.
+#[derive(Clone, Copy, Debug)]
+pub struct LocalRow {
+    pub function: Str,
+    /// Its `LocalIdx` in the function's declarations.
+    pub index: u32,
+    /// Its source name.
+    pub name: Str,
+}
+
 /// A row's position in one of [`ProgramFacts`]'s tables, as the indexes store it. The indexes
 /// hold one per row they list, so a `u32` halves them; no one import has four billion rows.
 pub type RowIdx = u32;
@@ -183,6 +193,8 @@ pub struct ProgramFacts {
     pub callsites: Vec<CallSiteRow>,
     /// `(function, field)` pairs from every `Load`/`Store`.
     pub uses_field: Vec<(Str, Str)>,
+    /// Every function's declared locals, each function's adjacent and in declaration order.
+    pub locals: Vec<LocalRow>,
     /// Direct `(subclass, superclass)` edges.
     pub subclass: Vec<(Str, Str)>,
     /// Every class name the program mentions, sorted. This is what `subclass*` enumerates over
@@ -205,6 +217,8 @@ pub struct ProgramFacts {
     callsites_by_caller: HashMap<Str, Range<RowIdx>>,
     callsites_by_callee: HashMap<Str, Vec<RowIdx>>,
     uses_field_by_fun: HashMap<Str, Vec<RowIdx>>,
+    /// Each function's rows, which are adjacent.
+    locals_by_fun: HashMap<Str, Range<RowIdx>>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
     callsigs_by_id: HashMap<Str, RowIdx>,
@@ -221,6 +235,8 @@ pub struct Needs {
     pub callsite: bool,
     /// `uses_field`: the same pass.
     pub uses_field: bool,
+    /// `local`: a pass over every function's declarations, not its body.
+    pub local: bool,
     /// `subclass`, `subclass*`, `subclass+`.
     pub subclass: bool,
     /// `callsig`. The universe itself is collected only when someone asks for it (see
@@ -235,6 +251,7 @@ impl Needs {
         Self {
             callsite: true,
             uses_field: true,
+            local: true,
             subclass: true,
             callsig: true,
         }
@@ -248,6 +265,7 @@ impl Needs {
                 BodyItem::Atom(atom) => match atom.name.as_str() {
                     "callsite" => needs.callsite = true,
                     "uses_field" => needs.uses_field = true,
+                    "local" => needs.local = true,
                     "subclass" | "subclass*" | "subclass+" => needs.subclass = true,
                     "callsig" => needs.callsig = true,
                     _ => {}
@@ -268,6 +286,7 @@ impl Needs {
     pub fn union(&mut self, other: Self) {
         self.callsite |= other.callsite;
         self.uses_field |= other.uses_field;
+        self.local |= other.local;
         self.subclass |= other.subclass;
         self.callsig |= other.callsig;
     }
@@ -340,6 +359,20 @@ impl ProgramFacts {
             uses_field_by_fun.entry(*f).or_default().push(i);
         }
 
+        let mut locals: Vec<LocalRow> = Vec::new();
+        let mut locals_by_fun: HashMap<Str, Range<RowIdx>> = HashMap::new();
+        if needs.local {
+            for &(function, data) in &lowered {
+                let start = row_idx(locals.len());
+                locals.extend(data.locals.iter_enumerated().map(|(i, decl)| LocalRow {
+                    function,
+                    index: u32::from(i),
+                    name: Str::from(decl.name.as_str()),
+                }));
+                locals_by_fun.insert(function, start..row_idx(locals.len()));
+            }
+        }
+
         let mut subclass: Vec<(Str, Str)> = Vec::new();
         let mut classes: Vec<Str> = Vec::new();
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
@@ -406,6 +439,7 @@ impl ProgramFacts {
             callsigs,
             callsites,
             uses_field,
+            locals,
             subclass,
             classes,
             language: index.scope.language.map(|l| Str::from(l.name())),
@@ -418,6 +452,7 @@ impl ProgramFacts {
             callsites_by_caller,
             callsites_by_callee,
             uses_field_by_fun,
+            locals_by_fun,
             supers_of,
             subs_of,
             callsigs_by_id,
@@ -506,6 +541,13 @@ impl ProgramFacts {
     #[inline]
     pub fn uses_field_of(&self, f: Str) -> &[RowIdx] {
         self.uses_field_by_fun.get(&f).map_or(&[], |v| v.as_slice())
+    }
+
+    /// The `local` rows of function `f`.
+    pub fn locals_of(&self, f: Str) -> Range<usize> {
+        self.locals_by_fun
+            .get(&f)
+            .map_or(0..0, |r| r.start as usize..r.end as usize)
     }
 
     /// Superclasses of `cls` at the requested closure. `reflexive` adds `cls` itself, `deep`

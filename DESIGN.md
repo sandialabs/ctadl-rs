@@ -315,9 +315,9 @@ Everything the design specifies is in:
 
 | | |
 | --- | --- |
-| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`), `param`, `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
+| **Input relations** | `fun` (with `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import`), `param`, `local` (with `name`), `callsite` (with `callee_string`), `subclass`, `subclass*`, `subclass+`, `uses_field` |
 | **Output relations** | `source` (`kind`, `saturating`), `sink` (`kind`, `wildcard`), `propagation`, `bridge`, `access_paths`, `dispatch`, `skip_analysis`, `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update` |
-| **Ports** | `return`, `arg(0)`, `arg(_)`, `arg(I)`, `arg(0).foo[2]`, `arg(4)."weird.field[0]"`, anchored as `F::port` |
+| **Ports** | `return`, `arg(0)`, `arg(_)`, `arg(I)`, `local(L)`, `arg(0).foo[2]`, `arg(4)."weird.field[0]"`, anchored as `F::port` |
 | **Flows** | `A -> B`, `A <- B`, `A <-> B` |
 | **Attribute operators** | `=`, `!=`, `<`, `>`, `<=`, `>=`, `in { … }` |
 | **Atom operators** | `regex_match`, `in`, comparisons, `&&`, `\|\|`, `!` |
@@ -595,10 +595,13 @@ The requirement that example illustrates — "argument 1's `.baz` of calls to F 
 `.stack[2]`" — is expressible by anchoring at the callee, which covers every call site of it, and
 the error message says exactly that.
 
-**`Variable(...)` ports have no DSL spelling.** A source or sink on a named local is not
-expressible; migrating a generator that uses one fails, naming it. Stage 2 still knows how to
-seed a local (`EndpointMatch::local_index`), and `CTADL0004` keeps its `localNotFound` message id
-for when a DSL spelling for a local exists; nothing produces it now.
+**`Variable(...)` ports are `local(L)` ports.** `local(F, L, name = N)` lists every local `F`
+declares, and `F::local(L)` is a source or sink on one. The join resolves the name while the
+import is in memory, so only the local's index (with its function) survives into the bindings,
+and a rule spanning imports needs nothing at `finish`. A `local` atom that ran and never matched
+is reported as `CTADL0004` `localNotFound`. The table is built only when a rule reads `local`.
+Building it is one pass over each function's declarations, not its body. It is indexed by
+function only, so whatever selects the function runs first.
 
 **Functional dependence holds.** An earlier version bound `fun(F, name = N)` once per published
 spelling, which made `fun(F, name != "x")` and `fun(F, name = N), N != "x"` disagree. Each import

@@ -88,6 +88,13 @@ pub enum Value {
         name: Str,
         desc: Str,
     },
+    /// A local variable, bound by `local`'s second column: its index in its function's
+    /// declarations. Carries the function because a local means nothing anchored elsewhere, and
+    /// `emit` checks that it is not.
+    Local {
+        function: Str,
+        index: u32,
+    },
 }
 
 impl Value {
@@ -129,6 +136,7 @@ impl std::fmt::Display for Value {
                 }
             ),
             Value::CallSig { id, .. } => write!(f, "{id}"),
+            Value::Local { function, index } => write!(f, "{function}::local({index})"),
         }
     }
 }
@@ -141,13 +149,39 @@ impl std::fmt::Display for Value {
 #[derive(Clone, Debug, Default)]
 pub struct RuleSolutions {
     pub components: Vec<BTreeSet<Vec<Value>>>,
+    /// One per [`Plan::local_probes`]. Kept across [`Self::clear`]: whether a `local` atom ever
+    /// matched is a question about every import.
+    pub probes: Vec<LocalProbe>,
+}
+
+/// What one `local` atom saw, for reporting a rule that matched nothing because of it.
+#[derive(Clone, Debug, Default)]
+pub struct LocalProbe {
+    /// The atom ran at least once: whatever precedes it in its component matched.
+    pub reached: bool,
+    /// Some row of it matched.
+    pub matched: bool,
+    /// The functions it was asked about, while it had not yet matched. Emptied once it does:
+    /// only an atom that never matched is reported.
+    pub functions: HashSet<Str>,
 }
 
 impl RuleSolutions {
     pub fn for_plan(plan: &Plan) -> Self {
         Self {
             components: vec![BTreeSet::new(); plan.components.len()],
+            probes: vec![LocalProbe::default(); plan.local_probes.len()],
         }
+    }
+
+    /// The probes of the `local` atoms that ran and never matched, with the number of
+    /// functions each was asked about.
+    pub fn missed_locals(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.probes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.reached && !p.matched)
+            .map(|(i, p)| (i, p.functions.len()))
     }
 
     /// True when some component matched nothing anywhere, so the join is empty. A gate that
@@ -156,7 +190,7 @@ impl RuleSolutions {
         self.components.iter().any(|c| c.is_empty())
     }
 
-    /// Forgets every solution, keeping the shape.
+    /// Forgets every solution, keeping the shape and the probes.
     pub fn clear(&mut self) {
         for c in &mut self.components {
             c.clear();
@@ -274,6 +308,7 @@ pub fn evaluate_rule(
             facts,
             env: vec![None; component.slots],
             trail: Vec::new(),
+            probes: &mut solutions.probes,
         };
         machine.solve(
             &component.body,
@@ -298,6 +333,7 @@ struct Machine<'a> {
     facts: &'a ProgramFacts,
     env: Vec<Option<Value>>,
     trail: Vec<Slot>,
+    probes: &'a mut [LocalProbe],
 }
 
 /// What a step calls for each way it extends the bindings. Returning `false` stops the
@@ -314,6 +350,7 @@ enum Row {
     CallSig(usize),
     /// A function and one of its parameter indices.
     Param(usize, i64),
+    Local(usize),
     CallSite(usize),
     /// `(sub, super)`.
     Class(Str, Str),
@@ -351,10 +388,36 @@ impl<'a> Machine<'a> {
         }
         match &steps[at] {
             Step::Filter(f) => !self.holds(f) || self.solve(steps, at + 1, witness_from, k),
-            Step::Atom(atom) => self.match_atom(atom, &mut |m: &mut Machine<'a>| {
-                m.solve(steps, at + 1, witness_from, k)
-            }),
+            Step::Atom(atom) => match atom.probe {
+                Some(p) => self.match_probed(atom, p, &mut |m: &mut Machine<'a>| {
+                    m.solve(steps, at + 1, witness_from, k)
+                }),
+                None => self.match_atom(atom, &mut |m: &mut Machine<'a>| {
+                    m.solve(steps, at + 1, witness_from, k)
+                }),
+            },
         }
+    }
+
+    /// [`Self::match_atom`] for a `local` atom, recording what it was asked and whether it
+    /// answered in its [`LocalProbe`].
+    fn match_probed(&mut self, atom: &AtomPlan, p: usize, k: &mut Cont<'_, 'a>) -> bool {
+        let function = self.column_key(atom, 0);
+        let probe = &mut self.probes[p];
+        probe.reached = true;
+        if !probe.matched
+            && let Some(f) = function
+        {
+            probe.functions.insert(f);
+        }
+        self.match_atom(atom, &mut |m: &mut Machine<'a>| {
+            let probe = &mut m.probes[p];
+            if !probe.matched {
+                probe.matched = true;
+                probe.functions = HashSet::new();
+            }
+            k(m)
+        })
     }
 
     /// Whether `steps` have a solution under the current bindings. Leaves them unchanged.
@@ -455,6 +518,13 @@ impl<'a> Machine<'a> {
                 Access::Scan => self.each(atom, (0..facts.callsigs.len()).map(Row::CallSig), k),
             },
             Relation::Param => self.generate_param(atom, k),
+            Relation::Local => match &atom.access {
+                Access::Column(i) => match self.column_key(atom, *i) {
+                    Some(f) => self.each(atom, facts.locals_of(f).map(Row::Local), k),
+                    None => true,
+                },
+                _ => self.each(atom, (0..facts.locals.len()).map(Row::Local), k),
+            },
             Relation::CallSite => self.generate_callsite(atom, k),
             Relation::Subclass { reflexive, deep } => match &atom.access {
                 Access::Column(0) => {
@@ -689,6 +759,11 @@ impl<'a> Machine<'a> {
             }
             (Row::Param(f, _), 0) => Value::Str(facts.funs[f].fq),
             (Row::Param(_, i), _) => Value::Int(i),
+            (Row::Local(r), 0) => Value::Str(facts.locals[r].function),
+            (Row::Local(r), _) => Value::Local {
+                function: facts.locals[r].function,
+                index: facts.locals[r].index,
+            },
             (Row::CallSite(r), 0) => Value::Str(facts.callsites[r].caller),
             (Row::CallSite(r), _) => {
                 let row = &facts.callsites[r];
@@ -740,6 +815,10 @@ impl<'a> Machine<'a> {
             }
             Row::CallSite(r) => match attr {
                 Attr::CalleeString => str_value(Some(facts.callsites[r].callee)),
+                _ => AttrValues::Missing,
+            },
+            Row::Local(r) => match attr {
+                Attr::Name => str_value(Some(facts.locals[r].name)),
                 _ => AttrValues::Missing,
             },
             Row::NameOf(..) | Row::Param(..) | Row::Class(..) | Row::UsesField(_) => {

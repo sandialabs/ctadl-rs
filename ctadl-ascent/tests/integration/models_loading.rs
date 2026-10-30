@@ -121,7 +121,7 @@ fn test_load_models_keeps_every_generator_index() {
 /// summary compare a count of generators against a count of endpoints.
 ///
 /// A port that produced no endpoint is reported with why: on the DSL path, a rule whose body
-/// selected no function.
+/// selected no function, or whose `local` atom matched none of the functions it did select.
 #[test]
 fn test_endpoint_stats_ports_and_unmatched_reasons() {
     const PROGRAM: &str = r#"
@@ -165,6 +165,18 @@ s:
             "where": [{"constraint": "name", "pattern": "^nosuchfunction$"}],
             "model": {"sinks": [{"port": "Argument(0)", "kind": "S"}]},
         }),
+        // 2: a local `reader` declares.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^reader$"}],
+            "model": {"sources": [{"port": "Variable(x)", "kind": "S"}]},
+        }),
+        // 3: a local neither selected function declares.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^(reader|writer)$"}],
+            "model": {"sinks": [{"port": "Variable(nosuchlocal)", "kind": "S"}]},
+        }),
     ];
     let report = load_json(&match_index, generators, &mut matches).expect("encoding models");
     let stats = &report.endpoint_stats;
@@ -186,6 +198,19 @@ s:
     assert_eq!(
         no_function.unmatched.iter().collect::<Vec<_>>(),
         vec![&UnmatchedReason::NoFunctionMatched]
+    );
+
+    let local = get(2, TaintDirection::Forward);
+    assert_eq!(local.endpoints_matched, 1);
+    assert!(local.unmatched.is_empty());
+
+    // The functions matched; the local resolved in none of them.
+    let no_local = get(3, TaintDirection::Backward);
+    assert_eq!(no_local.endpoints_matched, 0);
+    assert_eq!(no_local.functions_matched, 2);
+    assert_eq!(
+        no_local.unmatched.iter().collect::<Vec<_>>(),
+        vec![&UnmatchedReason::LocalNotFound("nosuchlocal".to_string())]
     );
 }
 

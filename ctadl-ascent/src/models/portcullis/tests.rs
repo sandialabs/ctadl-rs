@@ -255,6 +255,38 @@ fn an_argument_index_variable_must_be_bound() {
 }
 
 #[test]
+fn a_local_port_is_a_source_or_sink_port_bound_by_local() {
+    let file = check_ok(
+        r#"source(F::local(L).headers) :- fun(F, name = "h"), local(F, L, name = "buf");
+           sink(F::local(L)) :- fun(F), local(F, L, name = N), regex_match(N, "^req");"#,
+    );
+    assert!(matches!(
+        file.program.rules[0].heads[0].kind,
+        HeadKind::Source { ref port, .. } if matches!(port.port.base, PortBase::Local(ref v) if v == "L")
+    ));
+    // One probe per positive `local` atom, naming what it asks for.
+    assert_eq!(file.plans[0].local_probes, vec!["buf".to_string()]);
+    assert_eq!(file.plans[1].local_probes, vec!["name = N".to_string()]);
+
+    let err = check_err(r#"source(F::local(L)) :- fun(F);"#);
+    assert!(err.contains("bind it with 'local(F, L)'"), "{err}");
+    let err = check_err(r#"source(F::local(I)) :- fun(F), param(F, I);"#);
+    assert!(
+        err.contains("'I' names a local but was bound as a integer"),
+        "{err}"
+    );
+    let err = check_err(r#"source(F::arg(L)) :- local(F, L);"#);
+    assert!(
+        err.contains("'L' indexes an argument but was bound as a local"),
+        "{err}"
+    );
+    let err = check_err(r#"propagation(F::return <- F::local(L)) :- local(F, L);"#);
+    assert!(err.contains("valid only on a source or sink"), "{err}");
+    let err = check_err(r#"source(S::local(L)) :- callsite(F, S), local(F, L);"#);
+    assert!(err.contains("'S' is a call site"), "{err}");
+}
+
+#[test]
 fn a_body_splits_into_components_on_shared_variables() {
     let file = check_ok(
         r#"bridge(F::arg(0) -> G::arg(0).stack[1]) :-
@@ -376,6 +408,34 @@ fn migrate_and_load(json: &str) -> String {
     check_ok(&text);
     assert!(report.rules > 0, "no rule written for:\n{json}\n{text}");
     text
+}
+
+/// A `Variable(name)` source or sink becomes a `local` port in a rule of its own, so a function
+/// without the local loses only that port, as in the JSON.
+#[test]
+fn migrates_a_variable_port_to_a_local_port() {
+    let text = migrate_and_load(
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"get"}],
+            "model":{"sources":[{"kind":"K","port":"Return"},
+                                {"kind":"K","port":"Variable(buf).headers"}],
+                     "sinks":[{"kind":"S","port":"Variable(out)","wildcard":false}]}}"#,
+    );
+    assert!(
+        text.contains(
+            "source(F::local(L0).headers, kind = \"K\") :-\n  fun(F, name = \"get\"),\n  \
+             local(F, L0, name = \"buf\");"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("sink(F::local(L1), kind = \"S\", wildcard = false) :-"),
+        "{text}"
+    );
+    assert!(text.contains("local(F, L1, name = \"out\");"), "{text}");
+    assert!(
+        text.contains("source(F::return, kind = \"K\") :-\n  fun(F, name = \"get\");"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -942,11 +1002,6 @@ fn what_the_portcullis_cannot_say_does_not_migrate() {
         )
     };
     let cases: Vec<(String, &str)> = vec![
-        (
-            r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Variable(buf)"}]}}"#
-                .to_string(),
-            "port \"Variable(buf)\"",
-        ),
         (bridge(""), "'bridge'"),
         (bridge(r#","arguments":[]"#), "'bridge'"),
         (
@@ -971,7 +1026,7 @@ fn migration_errors_name_every_bad_generator() {
     let values: Vec<serde_json::Value> = [
         r#"{"find":"methods","where":[{"constraint":"name","pattern":"ok"}],"model":{"sinks":[{"kind":"k","port":"Argument(0)"}]}}"#,
         r#"{"find":"methods","where":[{"constraint":"bogus"}],"model":{}}"#,
-        r#"{"find":"methods","model":{"sources":[{"kind":"k","port":"Variable(v)"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"bridge":{"to":{"where":[{"constraint":"signature_match","name":"b"}]}}}}"#,
     ]
     .iter()
     .map(|l| serde_json::from_str(l).expect("valid json"))
@@ -988,7 +1043,7 @@ fn migration_errors_name_every_bad_generator() {
         "{errors:?}"
     );
     assert!(
-        errors[1].contains("Variable") && errors[1].contains("index 2"),
+        errors[1].contains("'bridge'") && errors[1].contains("index 2"),
         "{errors:?}"
     );
 }
@@ -1648,11 +1703,11 @@ fn a_migrated_file_names_generators_not_rules() {
 #[test]
 fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
     let file = jsonl_file(&[
-        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"sources":[{"port":"Variable(x)","kind":"k"}]}}"#,
+        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"bridge":{"to":{"where":[{"constraint":"signature_match","name":"b"}]}}}}"#,
         r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
     ]);
     let err = match PortcullisFile::read(file.path()) {
-        Ok(_) => panic!("a Variable port does not migrate"),
+        Ok(_) => panic!("a bridge with no arguments does not migrate"),
         Err(e) => format!("{:#}", anyhow::Error::from(e)),
     };
     assert!(err.contains("model generator at index 0"), "{err}");

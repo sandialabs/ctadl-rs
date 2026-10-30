@@ -2,7 +2,7 @@
 //!
 //! `models/portcullis/tests.rs` covers syntax, checking and migration, none of which needs an
 //! artifact. Everything here needs one: the built-in relations are a view of a program, so what
-//! `fun`, `param`, `callsite`, `subclass` and `uses_field` actually *contain* can only be pinned by
+//! `fun`, `param`, `local`, `callsite`, `subclass` and `uses_field` actually *contain* can only be pinned by
 //! matching against one.
 
 use std::collections::BTreeSet;
@@ -659,6 +659,130 @@ fn a_skipped_rule_is_not_reported_as_dead() {
     assert!(report.phase_warning().is_some());
 }
 
+/// A flowy program, whose locals keep their source names.
+fn flowy_program() -> ProgramInfo {
+    const PROGRAM: &str = r#"
+def reader(buf):1 {
+s:
+  x = buf;
+  y = x;
+  return y;
+}
+
+def writer(dst):1 {
+s:
+  z = dst;
+  return z;
+}
+"#;
+    ctadl_flowy::compile_program_contents("test.tnt", PROGRAM)
+        .expect("compiling flowy program")
+        .program_info
+}
+
+/// The names of `function`'s locals, by `LocalIdx`.
+fn local_names(program_info: &ProgramInfo, function: &str) -> Vec<String> {
+    let data = program_info
+        .program
+        .functions
+        .iter()
+        .find(|f| f.name == function)
+        .unwrap_or_else(|| panic!("no function {function}"));
+    data.locals
+        .iter_enumerated()
+        .map(|(_, d)| d.name.clone())
+        .collect()
+}
+
+#[test]
+fn local_lists_every_local_and_a_port_names_one() {
+    let program_info = flowy_program();
+    let names = local_names(&program_info, "reader");
+
+    let out = run(
+        &program_info,
+        r#"source(F::local(L).f) :- fun(F, name = "reader"), local(F, L, name = "x");"#,
+    );
+    assert_eq!(out.endpoints.len(), 1);
+    let e = &out.endpoints[0];
+    assert_eq!(e.selector_ty, FormalIndexTypeTag::Local);
+    assert_eq!(e.index, None);
+    let x = names
+        .iter()
+        .position(|n| n == "x")
+        .expect("reader declares x");
+    assert_eq!(e.local_index, Some(x as u32));
+    assert_eq!(e.path.to_string(), ".f");
+
+    // Every local of the function is a row, each a port of its own.
+    let out = run(
+        &program_info,
+        r#"sink(F::local(L)) :- fun(F, name = "reader"), local(F, L);"#,
+    );
+    let mut got: Vec<u32> = out.endpoints.iter().filter_map(|e| e.local_index).collect();
+    got.sort_unstable();
+    assert_eq!(got, (0..names.len() as u32).collect::<Vec<_>>());
+
+    // The name is an ordinary attribute: tested, bound, matched on.
+    let out = run(
+        &program_info,
+        r#"sink(F::local(L)) :- fun(F), local(F, L, name = N), regex_match(N, "^[xz]$");"#,
+    );
+    assert_eq!(endpoint_functions(&out).len(), 2);
+    assert_eq!(out.endpoints.len(), 2);
+}
+
+#[test]
+fn a_local_port_is_anchored_at_its_own_function() {
+    let program_info = flowy_program();
+    let file = portcullis::PortcullisFile::from_text(
+        "test.ctadl",
+        r#"source(G::local(L)) :- fun(F, name = "reader"), local(F, L, name = "x"),
+                                 fun(G, name = "writer");"#,
+    )
+    .expect("loads");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Query);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    matcher.observe_import(&index, &mut out);
+    let err = matcher
+        .finish(&mut out)
+        .expect_err("a local of another function");
+    let err = format!("{err:#}");
+    assert!(err.contains("'L' is a local of 'reader'"), "{err}");
+    assert!(out.endpoints.is_empty());
+}
+
+/// A `local` atom that ran and matched nothing is what the rule reports, with the functions it
+/// was asked about; one that never ran is not.
+#[test]
+fn a_local_that_matches_nothing_is_reported() {
+    let program_info = flowy_program();
+    let file = portcullis::PortcullisFile::from_text(
+        "test.ctadl",
+        r#"source(F::local(L)) :- fun(F), local(F, L, name = "absent");
+           source(F::local(L)) :- fun(F, name = "absent"), local(F, L);
+           source(F::local(L)) :- fun(F), local(F, L, name = "x");"#,
+    )
+    .expect("loads");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Query);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    matcher.observe_import(&index, &mut out);
+    let report = matcher.finish(&mut out).expect("finishes");
+    let rules = &report.files[0].rules;
+    let functions = rules[0].missed_locals[0].1;
+    assert!(functions >= 2, "every function was asked: {functions}");
+    assert_eq!(
+        rules[0].missed_locals,
+        vec![("absent".to_string(), functions)]
+    );
+    assert!(rules[1].missed_locals.is_empty());
+    assert!(rules[2].missed_locals.is_empty());
+}
+
 #[test]
 fn a_rule_that_matches_nothing_is_reported() {
     let program_info = java_program();
@@ -1012,6 +1136,7 @@ fn needs_are_read_from_every_atom_of_every_rule() {
             uses_field: true,
             subclass: true,
             callsig: false,
+            local: false,
         }
     );
     let mut needs = needs_of(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "n");"#);
@@ -1271,6 +1396,7 @@ fn grounding_counts_saturate_and_groundings_stay_lazy() {
     // 10^20 groundings: past `u64::MAX`.
     let solutions = RuleSolutions {
         components: vec![component.clone(); 5],
+        ..Default::default()
     };
     assert_eq!(solutions.grounding_count(), usize::MAX);
     assert_eq!(solutions.groundings(&[(2, 0)]).count(), 10_000);
@@ -1278,11 +1404,13 @@ fn grounding_counts_saturate_and_groundings_stay_lazy() {
     // An open gate is a factor of one; a closed one empties the join.
     let gated = RuleSolutions {
         components: vec![component.clone(), [Vec::new()].into()],
+        ..Default::default()
     };
     assert_eq!(gated.grounding_count(), 10_000);
     assert_eq!(gated.groundings(&[(0, 0)]).count(), 10_000);
     let closed = RuleSolutions {
         components: vec![component, BTreeSet::new()],
+        ..Default::default()
     };
     assert_eq!(closed.groundings(&[(0, 0)]).count(), 0);
 }

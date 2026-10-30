@@ -365,8 +365,17 @@ pub fn portcullis_endpoint_stats(
                 functions_matched: stats.functions,
                 ..Default::default()
             };
-            if rows == 0 {
+            if rows == 0 && stats.missed_locals.is_empty() {
                 entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
+            } else if rows == 0 {
+                // The functions the `local` atom was asked about are the ones the rest of the
+                // body selected; none of the heads anchored at one.
+                for (name, functions) in &stats.missed_locals {
+                    entry.functions_matched = entry.functions_matched.max(*functions);
+                    entry
+                        .unmatched
+                        .insert(UnmatchedReason::LocalNotFound(name.clone()));
+                }
             }
             ((i, direction), entry)
         })

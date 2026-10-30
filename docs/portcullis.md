@@ -44,8 +44,8 @@ Comments are `//` to end of line, or `/* … */`.
 
 **Variables are uppercase.** That is what keeps them apart from the many built-in relation names,
 and it means you never have to remember whether `parent` is a relation or a variable. Reserved,
-never a variable or an attribute name: `_`, `return`, `arg`, `param`, and every built-in relation
-name.
+never a variable or an attribute name: `_`, `return`, `arg`, `param`, `local`, and every built-in
+relation name.
 
 `_` is a placeholder that matches anything and binds nothing. Each occurrence is independent.
 
@@ -64,11 +64,16 @@ name.
   | `arg(2)` | argument 2, 0-based |
   | `arg(_)` | *every* argument, expanded by the engine over the function's arity |
   | `arg(I)` | argument `I`, where `I` is bound in the body |
+  | `local(L)` | local variable `L`, bound in the body by `local(F, L)`; sources and sinks only |
   | `arg(0).foo[2]` | argument 0's `foo` field, then offset 2 |
   | `arg(4)."weird.field[0]"` | a field whose name contains dots and brackets |
 
   `arg(_)` is expanded from the arity for a function, and from the actual-parameter list for a
   call site. If the arity is unknown you get a warning and no expansion.
+
+  A `local(L)` port hangs off the function `L` is a local of, never a call site or another
+  function: `source(F::local(L)) :- fun(F, name = "handle"), local(F, L, name = "buf");`. The
+  local is seeded at its first SSA version, its incoming value.
 
 - **Anchored ports** hang a port off a function or a call site: `F::return` is "the return port
   in `F`". The anchor may be a variable or a literal name.
@@ -91,6 +96,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | `name_of(F, N)` | function, one of its names | — |
 | `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id`, `language`, `import` |
 | `param(F, Index)` | function, parameter index | — |
+| `local(F, L)` | function, one of its declared local variables | `name` |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
 | `subclass(Sub, Super)` | two classes, direct edge | — |
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
@@ -115,7 +121,11 @@ Notes worth having:
   ```
 
   The full name is not a `name_of` row; it is `F`.
-- `arity`, `has_code` and `param` read the IR, so they match nothing for a function with no body,
+- `local` lists every local a function declares, under the name the program text gives it.
+  `L` is opaque: it is not an integer, so it cannot index an argument, nor an argument index
+  a local. A rule whose `local` atom ran and matched nothing is reported by `CTADL0004` as a
+  local not found, naming the local and counting the functions it was asked about.
+- `arity`, `has_code`, `param` and `local` read the IR, so they match nothing for a function with no body,
   such as a Lua external. `name` / `signature` / `name_of` and `F` itself are the supported shape
   for a bodyless callee.
 - `parent` is the declaring class, where the frontend has a class hierarchy (Java, CIL, Lua).
@@ -412,6 +422,7 @@ How the JSON constructs map:
 | `has_code` | `fun(F, has_code = …)` |
 | `number_parameters` | `fun(F, arity <op> …)` |
 | `uses_field` | `uses_field(F, …)` |
+| `Variable(buf).p` source or sink port | `F::local(L).p` with `local(F, L, name = "buf")`, in a rule of its own so the generator's other ports do not depend on it |
 | `parent` / `extends` | `fun(F, parent = P)` and one formula over `P` (`!`, `&&`, `\|\|` for a nested `not` / `all_of` / `any_of`), plus `subclass(P, S)` for `extends`, over `S` |
 | `any_of` | **several rules with the same head** — that is how Datalog spells "or" |
 | `all_of` | more atoms in one body |
@@ -429,7 +440,6 @@ A generator the JSON format does not allow fails with the error the JSON loader 
 Keys the format allows and that have no effect (`taint`, `forward_self`, an empty `modes` list, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
 format allows and Portcullis cannot say fail the migration, naming the generator:
 
-- `Variable(...)` ports, which select a local by source name.
 - A `bridge` with no `arguments` map, or an empty one. The JSON format means an identity map over
   the arity the two sides share, which needs the fact base; an empty map bridges only the
   globals. Write the map.

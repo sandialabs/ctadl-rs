@@ -675,12 +675,14 @@ fn variable_regex() -> &'static Regex {
 }
 
 /// A parsed source/sink/propagation port. `index` is `Some` only for a positional
-/// `Argument(n)` port (`tag == Index`); a `Variable(name)` port is `tag == Local`, which the
-/// migrator refuses.
+/// `Argument(n)` port (`tag == Index`); a `Variable(name)` port is `tag == Local`, and `local`
+/// is its name.
 #[derive(Debug)]
 pub(crate) struct ParsedPort {
     pub(crate) tag: FormalIndexTypeTag,
     pub(crate) index: Option<i16>,
+    /// The local a `Variable(name)` port names.
+    pub(crate) local: Option<String>,
     /// The port's access path, parsed with the canonical grammar. A `PathSegment::Offset` here
     /// is what lets a port name a real offset (`Argument(1).[8].deref`) and so match the
     /// offsets pcode emits.
@@ -696,18 +698,21 @@ pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonMod
         parse_access_path(m.get(2).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Local,
             index: None,
+            local: Some(m[1].to_string()),
             ap,
         })
     } else if let Some(m) = return_regex().captures(text) {
         parse_access_path(m.get(1).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Return,
             index: None,
+            local: None,
             ap,
         })
     } else {
         parse_argument(text).map(|(tag, idx, ap)| ParsedPort {
             tag,
             index: idx,
+            local: None,
             ap,
         })
     };

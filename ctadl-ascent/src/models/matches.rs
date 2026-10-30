@@ -192,7 +192,7 @@ pub struct EndpointMatch {
     /// time. The name has to be resolved against the *matched function's* `locals` during
     /// Stage 1, and it **cannot** be recovered later: Stage 2 sees only the
     /// post-`eliminate_dead_temps`/`coalesce_copies` graph, where the name may no longer exist.
-    /// Portcullis has no spelling for a `Variable(name)` port, so nothing sets it today.
+    /// Portcullis spells it `F::local(L)`, with `L` bound by `local(F, L, name = ...)`.
     pub local_index: Option<u32>,
 }
 

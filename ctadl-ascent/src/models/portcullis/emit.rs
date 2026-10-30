@@ -79,6 +79,9 @@ pub struct RuleStats {
     pub dispatch: usize,
     /// Functions a mode head (`skip_analysis`, `mem2reg_full`, …) marked.
     pub modes: usize,
+    /// The `local` atoms that ran and never matched: the name each asked for (see
+    /// [`super::check::Plan::local_probes`]) and how many functions it was asked about.
+    pub missed_locals: Vec<(String, usize)>,
     /// Distinct functions the rule's heads anchored at, capped at [`MATCHED_SAMPLE_CAP`].
     /// This is the DSL's answer to "what did this rule select", which `CTADL0011` reports.
     pub matched_functions: BTreeSet<String>,
@@ -116,6 +119,11 @@ impl RuleStats {
         self.access_paths += other.access_paths;
         self.dispatch += other.dispatch;
         self.modes += other.modes;
+        for miss in &other.missed_locals {
+            if !self.missed_locals.contains(miss) {
+                self.missed_locals.push(miss.clone());
+            }
+        }
         for name in &other.matched_functions {
             if self.matched_functions.len() >= MATCHED_SAMPLE_CAP {
                 break;
@@ -336,7 +344,8 @@ fn emit_head(
             let Some(site) = resolve_anchor(head, port, binding, errors) else {
                 return;
             };
-            let Some((tag, index)) = resolve_base(&port.port, binding, port.span, errors) else {
+            let Some((tag, index, local_index)) = endpoint_base(port, &site, binding, errors)
+            else {
                 return;
             };
             let endpoint = EndpointMatch {
@@ -350,7 +359,7 @@ fn emit_head(
                 saturating: *saturating,
                 in_function: site.in_function,
                 callsite_scoped: site.callsite_scoped,
-                local_index: None,
+                local_index,
             };
             if !emitted.endpoints.insert((rule_label, endpoint)) {
                 return;
@@ -367,7 +376,8 @@ fn emit_head(
             let Some(site) = resolve_anchor(head, port, binding, errors) else {
                 return;
             };
-            let Some((tag, index)) = resolve_base(&port.port, binding, port.span, errors) else {
+            let Some((tag, index, local_index)) = endpoint_base(port, &site, binding, errors)
+            else {
                 return;
             };
             let endpoint = EndpointMatch {
@@ -381,7 +391,7 @@ fn emit_head(
                 saturating: false,
                 in_function: site.in_function,
                 callsite_scoped: site.callsite_scoped,
-                local_index: None,
+                local_index,
             };
             if !emitted.endpoints.insert((rule_label, endpoint)) {
                 return;
@@ -711,6 +721,45 @@ fn resolve_anchor(
     }
 }
 
+/// [`resolve_base`] for a source or sink, which may also name a local: the `(tag, index,
+/// local_index)` an [`EndpointMatch`] carries.
+///
+/// A local is one of a particular function's, so it only means something anchored there.
+fn endpoint_base(
+    port: &PortExpr,
+    site: &Anchor,
+    binding: &Binding<'_>,
+    errors: &mut PortcullisErrors,
+) -> Option<(FormalIndexTypeTag, Option<i16>, Option<u32>)> {
+    let PortBase::Local(v) = &port.port.base else {
+        let (tag, index) = resolve_base(&port.port, binding, port.span, errors)?;
+        return Some((tag, index, None));
+    };
+    match binding.get(v) {
+        Some(Value::Local { function, index }) if function == site.function => {
+            Some((FormalIndexTypeTag::Local, None, Some(index)))
+        }
+        Some(Value::Local { function, .. }) => {
+            errors.push(PortcullisError::Rule {
+                message: format!(
+                    "'{v}' is a local of '{function}', but the port is anchored at '{}'; anchor \
+                     it at the function 'local' bound it with",
+                    site.function
+                ),
+                span: port.span,
+            });
+            None
+        }
+        _ => {
+            errors.push(PortcullisError::Rule {
+                message: format!("'{v}' names a local but is not bound by 'local(F, {v})'"),
+                span: port.span,
+            });
+            None
+        }
+    }
+}
+
 /// The `(tag, index)` a port names, grounding an `arg(I)` selector if there is one.
 fn resolve_base(
     port: &Port,
@@ -741,6 +790,15 @@ fn resolve_base(
                 None
             }
         },
+        // The checker allows a local port only on a source or sink, which `endpoint_base`
+        // resolves.
+        PortBase::Local(_) => {
+            errors.push(PortcullisError::Rule {
+                message: "a 'local(L)' port is valid only on a source or sink".to_string(),
+                span,
+            });
+            None
+        }
     }
 }
 
@@ -806,7 +864,7 @@ fn path_of(segments: &[PathSegment]) -> facts::Path {
     facts::Path::from_accesses(segments.iter().cloned())
 }
 
-/// The variables a head reads: its anchors and any `arg(I)` selector.
+/// The variables a head reads: its anchors and any `arg(I)` / `local(L)` selector.
 fn head_vars(head: &Head) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     if let Some(Term::Var(v)) = &head.anchor {
@@ -822,8 +880,8 @@ fn head_vars(head: &Head) -> Vec<String> {
         if let Some(Term::Var(v)) = &port.anchor {
             out.insert(v.clone());
         }
-        if let PortBase::ArgVar(v) = &port.port.base {
-            out.insert(v.clone());
+        if let Some(v) = port.port.base.var() {
+            out.insert(v.to_string());
         }
     }
     out.into_iter().collect()

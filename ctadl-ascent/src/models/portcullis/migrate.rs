@@ -29,8 +29,8 @@ warn:
 - **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, an
   empty `modes` list does nothing, and `on-unmatched` / `on-ambiguous` other
   than `"error"` change only what is logged. These are warnings.
-- **The loader accepts it with a meaning the DSL cannot say.** `Variable(...)` ports, a bridge
-  with no `arguments` map (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`] that says why.
+- **The loader accepts it with a meaning the DSL cannot say.** A bridge with no `arguments` map
+  (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`] that says why.
 */
 
 use std::fmt::Write as _;
@@ -247,12 +247,13 @@ fn migrate_generator(
     let heads = if dispatch {
         Heads {
             plain: migrate_dispatch_model(index, generator, anchor)?,
+            local: Vec::new(),
             bridge: None,
         }
     } else {
         migrate_model(index, generator, anchor, &mut fresh, report)?
     };
-    if heads.plain.is_empty() && heads.bridge.is_none() {
+    if heads.plain.is_empty() && heads.local.is_empty() && heads.bridge.is_none() {
         return Ok(());
     }
     if disjuncts.is_empty() {
@@ -265,6 +266,16 @@ fn migrate_generator(
             let mut body = base.clone();
             body.extend(with_subject(disjunct.clone(), relation, subject, &scope));
             write_rule(out, &heads.plain, &body);
+            report.rules += 1;
+            report.rule_generators.push(index);
+        }
+    }
+    for (head, local) in &heads.local {
+        for disjunct in &disjuncts {
+            let mut body = base.clone();
+            body.extend(with_subject(disjunct.clone(), relation, subject, &scope));
+            body.push(local.clone());
+            write_rule(out, std::slice::from_ref(head), &body);
             report.rules += 1;
             report.rule_generators.push(index);
         }
@@ -1089,7 +1100,19 @@ impl ClassFormula {
 struct Heads {
     /// Heads that need nothing but the generator's own body.
     plain: Vec<String>,
+    /// A `Variable(name)` source or sink, with the `local` atom that binds its local. Each is
+    /// a rule of its own, so that a local the function lacks costs only its own port.
+    local: Vec<(String, String)>,
     bridge: Option<BridgeHeads>,
+}
+
+impl Heads {
+    fn push_endpoint(&mut self, head: String, local: Option<String>) {
+        match local {
+            Some(local) => self.local.push((head, local)),
+            None => self.plain.push(head),
+        }
+    }
 }
 
 /// A bridge's port map, as one head per port, and side B's body atoms. `side_b` is `None` when
@@ -1108,6 +1131,7 @@ fn migrate_model(
 ) -> Result<Heads, JsonModelError> {
     let mut heads = Heads {
         plain: Vec::new(),
+        local: Vec::new(),
         bridge: None,
     };
     let Some(model) = generator.get("model") else {
@@ -1165,27 +1189,29 @@ fn migrate_model(
 
     if let Some(items) = model.get("sources").and_then(|v| v.as_array()) {
         for item in items {
-            let port = port_text(item.get("port"), "port", index)?;
+            let (port, local) = endpoint_port_text(item.get("port"), anchor, index, fresh)?;
             let mut attrs = vec![format!("kind = {}", quote(kind_of(item)))];
             if item.get("saturating").and_then(|v| v.as_bool()) == Some(true) {
                 attrs.push("saturating = true".to_string());
             }
-            heads
-                .plain
-                .push(format!("source({anchor}::{port}, {})", attrs.join(", ")));
+            heads.push_endpoint(
+                format!("source({anchor}::{port}, {})", attrs.join(", ")),
+                local,
+            );
         }
     }
     if let Some(items) = model.get("sinks").and_then(|v| v.as_array()) {
         for item in items {
-            let port = port_text(item.get("port"), "port", index)?;
+            let (port, local) = endpoint_port_text(item.get("port"), anchor, index, fresh)?;
             let mut attrs = vec![format!("kind = {}", quote(kind_of(item)))];
             // `wildcard` defaults to true in both formats, so only `false` is written out.
             if item.get("wildcard").and_then(|v| v.as_bool()) == Some(false) {
                 attrs.push("wildcard = false".to_string());
             }
-            heads
-                .plain
-                .push(format!("sink({anchor}::{port}, {})", attrs.join(", ")));
+            heads.push_endpoint(
+                format!("sink({anchor}::{port}, {})", attrs.join(", ")),
+                local,
+            );
         }
     }
     if let Some(items) = model.get("propagation").and_then(|v| v.as_array()) {
@@ -1412,6 +1438,31 @@ fn kind_of(item: &Value) -> &str {
         .unwrap_or(super::parse::default_label())
 }
 
+/// [`port_text`] for a source or sink port, which may also be `Variable(name)`: that becomes
+/// `local(L)`, returned with the `local(F, L, name = "name")` atom that binds `L`. The loader
+/// refuses `Variable(...)` on a call site, so `anchor` is the subject function.
+fn endpoint_port_text(
+    value: Option<&Value>,
+    anchor: &str,
+    index: usize,
+    fresh: &mut Fresh,
+) -> Result<(String, Option<String>), JsonModelError> {
+    let name = value
+        .and_then(|v| v.as_str())
+        .and_then(|text| json_schema::parse_port(text, index).ok())
+        .and_then(|parsed| Some((parsed.local?, parsed.ap)));
+    let Some((name, ap)) = name else {
+        return Ok((port_text(value, "port", index)?, None));
+    };
+    let var = fresh.next("L");
+    let mut port = format!("local({var})");
+    for seg in &ap {
+        port.push_str(&segment_text(seg));
+    }
+    let atom = format!("local({anchor}, {var}, name = {})", quote(&name));
+    Ok((port, Some(atom)))
+}
+
 /// `Argument(0).deref` → `arg(0).deref`, `Return` → `return`, `Argument(*)` → `arg(_)`.
 fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String, JsonModelError> {
     let text = match value {
@@ -1433,11 +1484,13 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
         crate::models::FormalIndexTypeTag::Index => {
             format!("arg({})", parsed.index.expect("Index carries one"))
         }
+        // Only a source or sink takes one, which `endpoint_port_text` translates, and the
+        // loader rejects it everywhere else.
         crate::models::FormalIndexTypeTag::Local => {
             return Err(untranslatable(
                 index,
                 &format!("port {text:?}"),
-                "'Variable(...)' selects a named local, which the DSL does not spell",
+                "'Variable(...)' is valid only on a source or sink port",
             ));
         }
         // `parse_port` never produces it: the globals port has no spelling in either format.
