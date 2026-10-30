@@ -1,11 +1,11 @@
 //! Differential tests for the JSON → DSL model migrator.
 //!
 //! JSON model files are run by translating them with [`portcullis::migrate::migrate_generators`]
-//! and loading the result on the DSL engine (see `DESIGN.md` §4). That is only sound if the
-//! translation is *faithful*: for every generator, the migrated rules must match exactly what the
-//! JSON matcher that used to run these files matched. Each test here takes one generator, runs its
-//! migration, and compares the whole [`ProgramModelMatches`] -- propagations, function- and
-//! call-site-anchored endpoints, access paths, `skip-analysis` marks, dispatch dispositions,
+//! and loading the result on the DSL engine (see `docs/portcullis.md` §9). That is only sound if
+//! the translation is *faithful*: for every generator, the migrated rules must match exactly what
+//! the JSON matcher that used to run these files matched. Each test here takes one generator,
+//! runs its migration, and compares the whole [`ProgramModelMatches`] -- propagations, function-
+//! and call-site-anchored endpoints, access paths, `skip-analysis` marks, dispatch dispositions,
 //! closure-shaped markers and bridges -- against what the JSON matcher matched.
 //!
 //! The JSON matcher has been retired. Its answers are frozen in `migration_equivalence.golden`,
@@ -1995,7 +1995,8 @@ fn callsite_callees(m: &ProgramModelMatches) -> BTreeSet<String> {
 /// graph sends there -- including a virtual call that names the base method (`Base.run`) and
 /// that CHA resolves to an override (`Mid.run`). The DSL joins on the callee the site names, so
 /// it anchors only `Base.run`, and only where a site spells it. The migration keeps the DSL's
-/// static meaning; a resolved-callee relation is future work (`DESIGN.md`, `resolves_to`).
+/// static meaning; a resolved-callee relation is future work (`docs/portcullis.md` §9,
+/// `resolves_to`).
 #[test]
 fn callsites_anchor_at_every_matched_callee() {
     let generator = anchoring_generator();

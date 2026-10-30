@@ -663,6 +663,26 @@ How the JSON constructs map:
 | `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
 | `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)`, and likewise `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update`; within a generator the last of each pair wins |
 
+A migrated file means what the JSON meant, with one exception: where the JSON matcher that used
+to run these files had a bug or a limitation, the migration takes Portcullis's meaning rather than
+reproducing it. `tests/integration/migration_equivalence.rs` pins each of these differences:
+
+- **Universe.** A generator with no `where`, or a top-level `not`, ranged over the method table
+  in the JSON, so it missed a lowered function the table does not name and matched nothing on a
+  program with no table (flowy). `fun(F)` is every function.
+- **Full names.** `name`, `signature` and `signature_match` also accept a function's full name,
+  because Portcullis publishes it as a spelling of every function.
+- **Lua classes.** `parent` and `extends` matched nothing on Lua in the JSON; Portcullis's
+  `parent` and `subclass` include metatable-recovered classes.
+- **`in_function` under `not` or `any_of`.** The JSON matcher narrowed the callee set by the
+  caller's constraint there. Portcullis tests the caller, as the constraint says.
+- **`find: callsites` anchors at the callee a site names.** The JSON attached the endpoint to
+  every matching callee and let the resolved call graph find its sites, so a call naming
+  `Base.run` also picked up a model on the override `Mid.run`. `callsite` joins on the static
+  `callee_string`. Expressing the resolved form needs a relation over resolved targets — a
+  `resolves_to(Site, Callee)` or similar, fed from the call graph rather than the program text
+  — which is future work.
+
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
 A generator the JSON format does not allow fails with the error the JSON loader raised for it.
 Keys the format allows and that have no effect (`taint`, `forward_self`, an empty `modes` list, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the

@@ -244,8 +244,8 @@ fn the_name_sample_is_capped_but_the_count_is_not() {
 ///
 /// The program has a call to `sink`: a migrated `find: callsites` generator joins on the
 /// `callsite` relation, so it selects a callee only through a site that names it. The JSON
-/// matcher counted the callee with no call site at all, which is the difference DESIGN.md
-/// lists as "`find: callsites` anchors at the callee a site names".
+/// matcher counted the callee with no call site at all, which is the difference
+/// `docs/portcullis.md` §9 lists as "`find: callsites` anchors at the callee a site names".
 #[test]
 fn a_callsites_generator_reports_its_find() {
     let file = model_file(

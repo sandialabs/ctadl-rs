@@ -145,7 +145,7 @@ fn test_valid_json_still_works() {
 ///
 /// `read_http_data` has a body calling `get`: the migrated rule joins on the call sites the
 /// program text names (`callsite`'s `callee_string`), where the JSON matcher anchored at the
-/// matched callee and needed no call site at all (DESIGN.md §4).
+/// matched callee and needed no call site at all (`docs/portcullis.md` §9).
 #[test]
 fn test_callsites_matches_callee_and_caller() {
     use ctadl_ir::mir::call::{CallEdges, CallStyle};

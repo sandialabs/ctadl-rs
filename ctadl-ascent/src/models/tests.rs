@@ -386,7 +386,8 @@ mod capture {
     /// the count-that-lies the model check exists to prevent.
     ///
     /// The JSON matcher kept this case symbolic, as "all", and could not count it; its rule's
-    /// `fun(F)` enumerates every function, so the count is exact (DESIGN.md §4, "Universe").
+    /// `fun(F)` enumerates every function, so the count is exact (`docs/portcullis.md` §9,
+    /// "Universe").
     #[test]
     fn a_where_less_generator_counts_every_function() {
         for program_info in [
