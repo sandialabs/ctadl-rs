@@ -11,5 +11,5 @@ repository = "https://github.com/sandialabs/ctadl-rs"
 # `file://` clone and `rev` at a commit in it.
 [grammars.ctadl_models]
 repository = "https://github.com/sandialabs/ctadl-rs"
-rev = "76c38dfffd067c2954e406811edf061c33964a57"
+rev = "c9db0b7ce9e673d47b335b590f8e781cf952c31a"
 path = "ctadl-ascent/tree-sitter-ctadl-models"
