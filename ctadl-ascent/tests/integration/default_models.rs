@@ -707,10 +707,9 @@ fn parse_defaults_golden(text: &str) -> BTreeMap<String, BTreeSet<String>> {
 /// retired JSON matcher matched for the `.jsonl` original, as [`DEFAULTS_GOLDEN_PATH`]
 /// records it.
 ///
-/// This is the check the design asks for by name: a migrated model file has to produce
-/// semantically equivalent matching results. The fixtures include Java call sites for every
-/// dispatch shape, so a `callsig` rule the `.ctadl` dropped is noticed: an index would
-/// otherwise silently lose the hybrid call graph for the language whose defaults dropped it.
+/// The fixtures include Java call sites for every dispatch shape, so a `callsig` rule the
+/// `.ctadl` dropped is noticed: an index would otherwise silently lose the hybrid call graph for
+/// the language whose defaults dropped it.
 #[test]
 fn the_portcullis_defaults_match_what_the_json_defaults_matched() {
     use ctadl_ascent::models::{DEFAULT_DSL_MODELS, portcullis};

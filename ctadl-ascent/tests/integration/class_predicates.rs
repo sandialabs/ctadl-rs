@@ -9,8 +9,8 @@
 //! `parent` sees and the JSON's did not. On Lua the migration takes the DSL's meaning, so the two
 //! are compared everywhere else and the Lua results are pinned on their own.
 //!
-//! The expectations are the answers of the JSON matcher that used to run these generators,
-//! recorded from it while it existed.
+//! The expectations are the retired JSON matcher's answers for these generators, recorded from
+//! it while it existed.
 
 use ctadl_ascent::models::portcullis::migrate::migrate_generators;
 use ctadl_ascent::models::test_vmt;
@@ -247,8 +247,8 @@ fn native_program() -> ProgramInfo {
     )
 }
 
-/// Every program, under both the scope a real import has and none at all. The JSON keys its
-/// class constraints off the method table, not the declared language, so the two must agree
+/// Every program, under both the scope a real import has and none at all. The JSON matcher keyed
+/// its class constraints off the method table, not the declared language, so the two must agree
 /// whichever the scope says.
 fn programs(java: fn() -> ProgramInfo) -> Vec<(String, ProgramInfo, ImportScope)> {
     let mut out = Vec::new();
@@ -359,8 +359,7 @@ const ALL_NATIVE: &[&str] = &["Lp/C;", "system"];
 const ALL_CLASSES: &[&str] = &["Lp/A;", "Lp/B;", "Lp/C;", "Lp/D;", "Lp/E;"];
 
 /// Requires the migrated DSL to select what the JSON matcher selected for `generator`, on each
-/// program but Lua's and under both scopes: the JSON keyed its class constraints off the method
-/// table, not the declared language, so the scope must not matter.
+/// of [`programs`] but Lua's.
 fn selects(generator: Value, expected: Selects) {
     for (name, info, scope) in programs(java_for(&generator)) {
         let want: Selected = match name.split(' ').next() {
@@ -432,7 +431,7 @@ fn parent_leaves() {
             ..NONE
         },
     );
-    // Unanchored, as the JSON's `is_match` is.
+    // Unanchored, as the JSON's `is_match` was.
     selects(
         methods(vec![parent(name("C"))]),
         Selects {
@@ -698,9 +697,9 @@ fn extends_with_a_negated_inner_and_under_an_outer_not() {
 
 /// `parent` and `extends` on a `find: callsites` callee go through the same translation.
 ///
-/// Java only: the JSON attaches a call-site endpoint to every matching callee whether or not
-/// anything calls it, and the DSL only where a call site exists, so on a program with no calls
-/// the two differ for a reason that is not about classes.
+/// Java only: the JSON matcher attached a call-site endpoint to every matching callee whether or
+/// not anything called it, and the DSL attaches one only where a call site exists, so on a
+/// program with no calls the two differ for a reason that is not about classes.
 #[test]
 fn class_predicates_on_call_sites() {
     for (where_, expected) in [

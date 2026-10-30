@@ -2,9 +2,9 @@
 
 A rule whose body is one component runs per import, over that import's solutions; a bridging
 rule runs once, after the import loop, over the union (see [`super::PortcullisMatcher`]).
-Everything it writes is named rather than resolved — a function name, not a `FunctionId` — for the
-same reason the JSON path does it: a model names functions that may live in any import, and the id
-map that would resolve them does not hold every import's functions until the loop is over.
+Everything it writes is named rather than resolved — a function name, not a `FunctionId` —
+because a model names functions that may live in any import, and the id map that would resolve
+them does not hold every import's functions until the loop is over.
 
 # Deduplication
 
@@ -22,7 +22,7 @@ for that case.
 
 The rules of one migrated JSON generator are one generator, so a source, sink or propagation two
 of them derive is derived once: [`Emitted`] holds what each has emitted. A generator becomes
-several rules for each disjunct of its `where`, and those may overlap. Two generators, like two
+one rule for each disjunct of its `where`, and those may overlap. Two generators, like two
 files, each contribute their rows, deliberately: see [`ProgramModelMatches`]'s `endpoints`.
 */
 
@@ -471,8 +471,8 @@ fn emit_head(
                 FlowOp::ToLeft => Direction::Out,
                 FlowOp::Both => Direction::Both,
             };
-            // Ports of one (rule, from, to) triple accumulate into one bridge, so the design's
-            // three-line stack map is one bridge with three pairs rather than three bridges.
+            // Ports of one (rule, from, to) triple accumulate into one bridge, so a rule with
+            // three `bridge` heads is one bridge with three pairs rather than three bridges.
             // The slot is this rule's own, so two files numbering their rules alike stay apart;
             // it is re-checked because nothing but convention keeps `out` the same accumulator
             // from one call to the next.

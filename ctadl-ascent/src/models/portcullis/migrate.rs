@@ -12,25 +12,26 @@ A `where` is a conjunction of constraints, and a constraint may be an `any_of` o
 is no disjunction *inside* a Datalog body, so the constraint tree is pushed into negation normal
 form and then into disjunctive normal form, and **each disjunct becomes one rule** with the same
 heads. That is how Datalog spells "or", and it means the translation is exact rather than
-approximate: `any_of` was already a union over the matched set. The empty disjunction is
+approximate: `any_of` is a union over the matched set. The empty disjunction is
 "false": a generator whose `where` can never match writes no rule, as it derives nothing.
 
 # What does not translate
 
 A migration either says what the JSON format means or fails; it never writes a rule that
 matches more or less. Where the retired JSON matcher had a bug (`in_function` under `any_of` /
-`not` narrowed the callee, not the caller) the DSL's meaning is the one written. Three cases fail or
-warn:
+`not` narrowed the callee, not the caller) the DSL's meaning is the one written. Three cases
+fail or warn:
 
 - **The loader rejects the generator.** The migration fails with the loader's own error, because
   each generator is first checked by [`json_schema::generator_errors`], which reports exactly
   what the loader does. A generator whose `in` scope names another import is checked too, where
   the loader would skip it: a migrated file is not tied to one import.
 - **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, an
-  empty `modes` list does nothing, and `on-unmatched` / `on-ambiguous` other
-  than `"error"` change only what is logged. These are warnings.
+  empty `modes` list does nothing, and `on-unmatched` / `on-ambiguous` other than `"error"`
+  change only what is logged. These are warnings.
 - **The loader accepts it with a meaning the DSL cannot say.** A bridge with no `arguments` map
-  (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`] that says why.
+  (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`]
+  that says why.
 */
 
 use std::fmt::Write as _;
@@ -457,11 +458,7 @@ impl Twin {
     /// The attribute the rule tests the language with, if it needs one.
     fn attrs(self) -> Vec<String> {
         match self {
-            Twin::Some([one]) => vec![format!("language = {}", quote(one))],
-            Twin::Some(many) => vec![format!(
-                "language in {{{}}}",
-                many.iter().map(|l| quote(l)).collect::<Vec<_>>().join(", ")
-            )],
+            Twin::Some(languages) => vec![membership("language", languages)],
             Twin::Never | Twin::Always => Vec::new(),
         }
     }
@@ -735,14 +732,7 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
                     let v = fresh.next("Fld");
                     Ok(vec![vec![
                         format!("uses_field({subject}, {v})"),
-                        format!(
-                            "{v} in {{{}}}",
-                            names
-                                .iter()
-                                .map(|n| quote(n))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
+                        membership(&v, &names),
                     ]])
                 }
             }
@@ -768,9 +758,9 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
                 });
             }
             let inner = value.get("inner").ok_or_else(|| missing("inner"))?;
-            // Always the caller, under `any_of` and `not` too. The JSON matcher narrowed the
-            // combinator's scratch copy of the *callee* set there, which was a bug in it, not a
-            // meaning to carry across.
+            // Always the caller, under `any_of` and `not` too. The retired JSON matcher narrowed
+            // the combinator's scratch copy of the *callee* set there, which was a bug in it, not
+            // a meaning to carry across.
             let caller_ctx = Ctx {
                 subject: CALLER,
                 callsites: false,
@@ -800,8 +790,7 @@ fn int_predicate(
     if let Some(op) = portcullis_op(kind)
         && let Some(v) = inner.get("value").and_then(|v| v.as_i64())
     {
-        // `arity < -1` needs the space: `<-` is the flow arrow. `format!` writes one anyway,
-        // but the rule is worth stating where the string is built.
+        // `arity < -1` needs the space: `<-` is the flow arrow.
         return Ok(vec![vec![atom(
             ctx.relation,
             subject,
@@ -1064,15 +1053,7 @@ impl ClassFormula {
     fn text(&self, var: &str) -> String {
         match self {
             Self::Const(_) => unreachable!("constants are folded before a formula is written"),
-            Self::Is(names) if names.len() == 1 => format!("{var} = {}", quote(&names[0])),
-            Self::Is(names) => format!(
-                "{var} in {{{}}}",
-                names
-                    .iter()
-                    .map(|n| quote(n))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Self::Is(names) => membership(var, names),
             Self::Matches(pattern) => format!("regex_match({var}, {})", quote(pattern)),
             Self::Not(inner) => match &**inner {
                 Self::Is(names) if names.len() == 1 => {
@@ -1385,8 +1366,8 @@ fn migrate_bridge(
     let side_b =
         (!disjuncts.is_empty()).then(|| with_subject(one_of(&disjuncts), "fun", OTHER, &scope));
 
-    // Without a map the loader pairs the arguments the two sides share, which needs the fact
-    // base. With an empty one it still bridges the pair, with only the implicit globals port,
+    // Without a map the JSON format pairs the arguments the two sides share, which needs the
+    // fact base. With an empty one it still bridges the pair, with only the implicit globals port,
     // and a DSL bridge is made of its port heads.
     let pairs = match bridge.get("arguments").and_then(|v| v.as_array()) {
         Some(items) if !items.is_empty() => items,
@@ -1583,7 +1564,6 @@ fn portcullis_op(kind: &str) -> Option<&'static str> {
     }
 }
 
-/// `name`/`names` (or any singular/plural pair) as one attribute constraint.
 /// The ways a JSON `qualified-id` in `ids` matched a pcode function by its namespace-qualified
 /// name, as `(attributes, filters)`, each attribute list starting with `language`.
 ///
@@ -1597,13 +1577,6 @@ fn pcode_id_ways(
     subject: &str,
     fresh: &mut Fresh,
 ) -> Vec<(Vec<String>, Vec<String>)> {
-    let set = |ids: &[&String], var: &str| match ids {
-        [one] => format!("{var} = {}", quote(one)),
-        many => format!(
-            "{var} in {{{}}}",
-            many.iter().map(|s| quote(s)).collect::<Vec<_>>().join(", ")
-        ),
-    };
     let (qualified, bare): (Vec<&String>, Vec<&String>) =
         ids.iter().partition(|id| id.contains("::"));
     let mut ways = Vec::new();
@@ -1611,12 +1584,15 @@ fn pcode_id_ways(
         let q = fresh.next("Q");
         ways.push((
             language.clone(),
-            vec![format!("name_of({subject}, {q})"), set(&qualified, &q)],
+            vec![
+                format!("name_of({subject}, {q})"),
+                membership(&q, &qualified),
+            ],
         ));
     }
     if !bare.is_empty() {
         let o = fresh.next("O");
-        let mut attrs = vec![set(&bare, "name")];
+        let mut attrs = vec![membership("name", &bare)];
         attrs.extend(language);
         ways.push((
             attrs,
@@ -1634,19 +1610,23 @@ fn member_text(value: &Value, single: &str, plural: &str, var: &str) -> String {
     string_attr(value, single, plural, var).expect("the field names something")
 }
 
+/// `name`/`names` (or any singular/plural pair) as one attribute constraint.
 fn string_attr(value: &Value, single: &str, plural: &str, attr: &str) -> Option<String> {
     let items = collect_strings(value, single, plural);
-    match items.len() {
-        0 => None,
-        1 => Some(format!("{attr} = {}", quote(&items[0]))),
-        _ => Some(format!(
-            "{attr} in {{{}}}",
-            items
-                .iter()
-                .map(|s| quote(s))
+    (!items.is_empty()).then(|| membership(attr, &items))
+}
+
+/// `lhs = "a"` for one string, `lhs in {"a", "b"}` for several.
+fn membership(lhs: &str, items: &[impl AsRef<str>]) -> String {
+    match items {
+        [one] => format!("{lhs} = {}", quote(one.as_ref())),
+        many => format!(
+            "{lhs} in {{{}}}",
+            many.iter()
+                .map(|s| quote(s.as_ref()))
                 .collect::<Vec<_>>()
                 .join(", ")
-        )),
+        ),
     }
 }
 
@@ -1661,8 +1641,8 @@ fn collect_strings(value: &Value, single: &str, plural: &str) -> Vec<String> {
     out
 }
 
-/// A DSL string literal. Only `"` and `\` need escaping; a quoted access-path segment carries
-/// its dots and brackets literally.
+/// A DSL string literal. `"`, `\`, newline and tab are escaped; a quoted access-path segment
+/// carries its dots and brackets literally.
 pub fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

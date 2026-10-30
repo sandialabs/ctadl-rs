@@ -3,7 +3,7 @@
 //! JSON model files are run by translating them with [`portcullis::migrate::migrate_generators`]
 //! and loading the result on the DSL engine (see `docs/portcullis.md` §9). That is only sound if
 //! the translation is *faithful*: for every generator, the migrated rules must match exactly what
-//! the JSON matcher that used to run these files matched. Each test here takes one generator,
+//! the retired JSON matcher matched. Each test here takes one generator,
 //! runs its migration, and compares the whole [`ProgramModelMatches`] -- propagations, function-
 //! and call-site-anchored endpoints, access paths, `skip-analysis` marks, dispatch dispositions,
 //! closure-shaped markers and bridges -- against what the JSON matcher matched.
@@ -11,11 +11,11 @@
 //! The JSON matcher has been retired. Its answers are frozen in `migration_equivalence.golden`,
 //! one entry per test, recorded while it existed; the tests compare against that record.
 //!
-//! When the JSON matcher refuses a generator, the faithful outcome is that the migrated form is
+//! When the JSON matcher refused a generator, the faithful outcome is that the migrated form is
 //! refused too: the migration fails, the DSL fails to load or to emit, or migration produced no
-//! row at all. A migration that *warns* and still emits rows is not faithful -- a file the old
-//! loader rejected would start applying models. A migration may also refuse a generator the JSON
-//! matcher accepts, when the DSL cannot express it (`JsonModelError::Untranslatable`): a loud
+//! row at all. A migration that *warns* and still emits rows is not faithful -- a file the JSON
+//! matcher rejected would start applying models. A migration may also refuse a generator the
+//! JSON matcher accepted, when the DSL cannot express it (`JsonModelError::Untranslatable`): a loud
 //! refusal never changes what a file matches.
 //!
 //! The fixtures are deliberately small but discriminating: a multi-level Java hierarchy with a
@@ -24,7 +24,7 @@
 //! sites of several callees from several callers, a Lua metatable hierarchy and externals, native
 //! symbols published under several spellings, and a CIL table with an override alias row.
 //!
-//! Where the JSON matcher has a bug or a limitation, the migration takes the DSL's meaning
+//! Where the JSON matcher had a bug or a limitation, the migration takes the DSL's meaning
 //! rather than reproducing it. Those cases are not ignored: they pin the exact difference
 //! ([`Known`]), so neither side can drift without a test noticing.
 
@@ -561,7 +561,7 @@ fn frontend(name: &str) -> (ImportScope, ProgramInfo) {
 /// Everything a load matched, rendered as sorted strings so a mismatch prints readably.
 ///
 /// Call-site endpoints are compared by what they *denote*: the `(callee, caller)` pairs of the
-/// program's call sites they apply to. The JSON matcher writes one row per matched callee with
+/// program's call sites they apply to. The JSON matcher wrote one row per matched callee with
 /// "any caller", or one per matched caller; the DSL writes one per site. Both are expanded over
 /// the program's statically named callees -- the same `callee_string` the DSL's `callsite`
 /// relation reads.
@@ -948,10 +948,10 @@ fn json_answer(key: &str, generator: &Value, fixtures: &[&str]) -> JsonOutcome {
 /// Requires the migrated form of `generator` to match exactly what the JSON matcher matched on
 /// `fixtures` (as test `key` recorded it), or to be refused where the JSON matcher refused it.
 ///
-/// A migration may also fail outright. That is faithful where the JSON matcher refuses the
+/// A migration may also fail outright. That is faithful where the JSON matcher refused the
 /// generator too, and where the migration says the DSL cannot express it
 /// ([`JsonModelError::Untranslatable`]): a loud refusal never changes what a file matches.
-/// Failing a generator the JSON matcher accepts for any other reason is not.
+/// Failing a generator the JSON matcher accepted for any other reason is not.
 fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
     let json = json_answer(key, generator, fixtures);
     let imports = imports(fixtures);
@@ -1031,7 +1031,7 @@ fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
 }
 
 /// A deliberate difference between the JSON matcher and the migrated DSL: the JSON matcher's
-/// behavior is a bug or a limitation, and the migration keeps the DSL's meaning.
+/// behavior was a bug or a limitation, and the migration keeps the DSL's meaning.
 struct Known {
     /// Which JSON behavior the migration does not reproduce.
     reason: &'static str,
@@ -1537,7 +1537,7 @@ faithful! {
 }
 
 faithful! {
-    /// A field written through an `Update` statement is a use to the JSON matcher.
+    /// A field written through an `Update` statement was a use to the JSON matcher.
     uses_field_update = methods(json!([{"constraint": "uses_field", "name": "flag"}]));
     java,
 }
@@ -1605,7 +1605,7 @@ faithful! {
 }
 
 faithful! {
-    /// The JSON `parent` needs a Java or CIL class hierarchy and matches nothing elsewhere.
+    /// The JSON `parent` needed a Java or CIL class hierarchy and matched nothing elsewhere.
     parent_lua = methods(json!([{"constraint": "parent", "inner": {"constraint": "name", "pattern": "Account"}}]));
     lua => Known {
         reason: LUA_CLASSES,
@@ -1933,7 +1933,7 @@ faithful! {
 }
 
 faithful! {
-    /// `not` *around* `in_function`. The JSON matcher evaluates the inner against the `not`'s
+    /// `not` *around* `in_function`. The JSON matcher evaluated the inner against the `not`'s
     /// scratch set, which narrows the *callee* set by the caller's constraint: callees not named
     /// `main`, called from anywhere. The DSL reads it as "not called from `main`".
     callsites_not_in_function = callsites(json!([
@@ -1990,7 +1990,7 @@ fn callsite_callees(m: &ProgramModelMatches) -> BTreeSet<String> {
         .collect()
 }
 
-/// What the call-site comparison above normalizes away. The JSON matcher gives *every*
+/// What the call-site comparison above normalizes away. The JSON matcher gave *every*
 /// matching callee a call-site endpoint, and Stage 2 anchors it at the sites the resolved call
 /// graph sends there -- including a virtual call that names the base method (`Base.run`) and
 /// that CHA resolves to an override (`Mid.run`). The DSL joins on the callee the site names, so
@@ -2219,7 +2219,7 @@ faithful! {
 }
 
 faithful! {
-    /// `access_paths` needs no match: the JSON loader registers them whatever `where` selected.
+    /// `access_paths` needs no match: the JSON loader registered them whatever `where` selected.
     model_access_paths_unmatched = with_model(json!([sig_name("no_such_method")]), json!({"access_paths": ["a.b"]}));
     java,
 }
@@ -2239,7 +2239,8 @@ faithful! {
 }
 
 faithful! {
-    /// `taint` and `forward_self` are schema-only: both loaders ignore them.
+    /// `taint` and `forward_self` are schema-only: the JSON loader ignored them, and so does
+    /// the migration.
     model_schema_only_keys = with_model(json!([sig_name("get")]), json!({
         "taint": [], "forward_self": true,
         "sources": [{"kind": "S", "port": "Return"}],
@@ -2301,7 +2302,7 @@ faithful! {
 
 faithful! {
     /// A `not` written before the constraint that narrows the subject. `where` is a
-    /// conjunction, so the order means nothing to the JSON matcher.
+    /// conjunction, so the order meant nothing to the JSON matcher.
     not_before_a_positive_constraint = methods(json!([
         not(sig_name("get")),
         {"constraint": "has_code", "value": true},
@@ -2594,7 +2595,7 @@ fn bridge_disjunction_on_the_to_side() {
     );
 }
 
-/// No `arguments`: the JSON loader falls back to an identity map over the shared arity, which
+/// No `arguments`: the JSON loader fell back to an identity map over the shared arity, which
 /// the migration cannot write as a rule.
 #[test]
 fn bridge_without_arguments() {

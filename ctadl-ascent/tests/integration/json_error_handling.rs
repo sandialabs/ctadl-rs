@@ -28,7 +28,6 @@ fn test_missing_field_error() {
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
 
-    // Test individual model generator (this is what encode_models expects)
     let malformed_json = json!({
         "find": "methods",
         "model": {
@@ -622,8 +621,9 @@ fn in_function_with_no_inner_is_hard_error() {
 
 #[test]
 fn fail_open_constraint_does_not_match_everything() {
-    // Treated as a no-op, each of these `where` clauses would select all of {a, b, c}, turning a model meant to mark one method as a source into a global
-    // source. They must fail to load.
+    // Treated as a no-op, each of these `where` clauses would select all of {a, b, c}, turning
+    // a model meant to mark one method as a source into a global source. They must fail to
+    // load.
     for where_c in [
         json!([{"constraint": "signature", "name": ".*sink.*"}]),
         json!([{"constraint": "signature_match"}]),

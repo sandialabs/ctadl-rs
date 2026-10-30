@@ -225,8 +225,8 @@ impl Walk {
         }
     }
 
-    /// One `where` constraint, recursively. `parameter` / `any_parameter` were removed and are
-    /// reported as unknown, like any unrecognized discriminator.
+    /// One `where` constraint, recursively. `parameter` / `any_parameter` are not constraints,
+    /// and are reported as unknown like any unrecognized discriminator.
     fn constraint(&mut self, c: &Value) {
         let is_dispatch = self.find == Some(FindMethod::Dispatch);
         match c["constraint"].as_str() {
@@ -689,7 +689,8 @@ pub(crate) struct ParsedPort {
     pub(crate) ap: Vec<PathSegment>,
 }
 
-/// Entry point for parsing propagation inputs and outputs, which are called ports
+/// Parses a port, `Argument(n)`, `Argument(*)`, `Return` or `Variable(name)`, with an optional
+/// trailing access path. `index` is the generator the port belongs to, for error messages.
 pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonModelError> {
     // Note the absence of `?` in the two `if let` arms: an early return would skip the
     // index-patching `map_err` below, and the error would name generator 0.
@@ -755,7 +756,7 @@ fn parse_argument(
 ) -> Result<(FormalIndexTypeTag, Option<i16>, Vec<PathSegment>), JsonModelError> {
     let m = argument_regex().captures(input_text).ok_or_else(|| {
         JsonModelError::InvalidArgumentFormat {
-            index: 0, // We don't have the index here, will be set by caller
+            index: 0, // filled in by `parse_port`
             text: input_text.to_string(),
         }
     })?;
