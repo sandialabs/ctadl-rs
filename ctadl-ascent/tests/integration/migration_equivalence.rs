@@ -1350,7 +1350,7 @@ faithful! {
 }
 
 faithful! {
-    /// A field the constraint does not honor is a hard error in the JSON loader: dropping it
+    /// A field the constraint does not honor is a hard error in the JSON format: dropping it
     /// would widen the match.
     signature_match_unknown_field = methods(json!([
         {"constraint": "signature_match", "name": "get", "extends": "Lapp/Base;"}
@@ -1819,7 +1819,7 @@ faithful! {
 }
 
 faithful! {
-    /// An unknown constraint is a hard error to the JSON loader.
+    /// An unknown constraint is a hard error in the JSON format.
     unknown_constraint = methods(json!([{"constraint": "parameter", "index": 0}]));
     java,
 }
@@ -2219,7 +2219,7 @@ faithful! {
 }
 
 faithful! {
-    /// `access_paths` needs no match: the JSON loader registered them whatever `where` selected.
+    /// `access_paths` needs no match: the JSON format registers them whatever `where` selects.
     model_access_paths_unmatched = with_model(json!([sig_name("no_such_method")]), json!({"access_paths": ["a.b"]}));
     java,
 }
@@ -2239,8 +2239,8 @@ faithful! {
 }
 
 faithful! {
-    /// `taint` and `forward_self` are schema-only: the JSON loader ignored them, and so does
-    /// the migration.
+    /// `taint` and `forward_self` are schema-only: the JSON format gives them no meaning, and
+    /// the migration drops them with a warning.
     model_schema_only_keys = with_model(json!([sig_name("get")]), json!({
         "taint": [], "forward_self": true,
         "sources": [{"kind": "S", "port": "Return"}],
@@ -2525,7 +2525,7 @@ fn arguments() -> Value {
     ])
 }
 
-/// A port pair with no `direction` is `both` to the JSON loader (`spec::Direction`'s default).
+/// A port pair with no `direction` is `both` in the JSON format (`spec::Direction`'s default).
 #[test]
 fn bridge_default_direction() {
     assert_faithful(
@@ -2595,7 +2595,7 @@ fn bridge_disjunction_on_the_to_side() {
     );
 }
 
-/// No `arguments`: the JSON loader fell back to an identity map over the shared arity, which
+/// No `arguments`: the JSON format means an identity map over the shared arity, which
 /// the migration cannot write as a rule.
 #[test]
 fn bridge_without_arguments() {

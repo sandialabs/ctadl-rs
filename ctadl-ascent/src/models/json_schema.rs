@@ -4,8 +4,7 @@
 its structure alone: unknown and missing keys, `find`, every `where` constraint and predicate
 tree, the `in` scope, the `model` object of each `find`, ports, access paths, `modes` and
 bridges. The migrator runs it first, so a generator the format rejects fails the migration with
-the error the JSON loader raised for it, in the order the loader raised them, rather than being
-translated.
+these errors rather than being translated.
 
 Every check is program-independent. A generator scoped by `in` to another import is checked as
 well: a model file is either valid or not, whatever it is run against.
@@ -34,7 +33,8 @@ pub enum FindMethod {
     Dispatch,
 }
 
-/// Everything wrong with generator `index`, in the order the JSON loader reported it.
+/// Everything wrong with generator `index`, in the order the retired JSON matcher reported it,
+/// which the frozen answers in `migration_equivalence.golden` record.
 ///
 /// A bridge is checked first, and a malformed bridge or `in` scope stops there. A clean one is
 /// followed by the generator's own shape, then by side B's `where`, which is checked as a

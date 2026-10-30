@@ -22,14 +22,14 @@ matches more or less. Where the retired JSON matcher had a bug (`in_function` un
 `not` narrowed the callee, not the caller) the DSL's meaning is the one written. Three cases
 fail or warn:
 
-- **The loader rejects the generator.** The migration fails with the loader's own error, because
-  each generator is first checked by [`json_schema::generator_errors`], which reports exactly
-  what the loader does. A generator whose `in` scope names another import is checked too, where
-  the loader would skip it: a migrated file is not tied to one import.
-- **The loader accepts it and it has no effect.** `taint` and `forward_self` are schema-only, an
+- **The JSON format rejects the generator.** The migration fails with the errors
+  [`json_schema::generator_errors`] reports for it, which checks each generator first. A
+  generator whose `in` scope names another import is checked too: a migrated file is not tied
+  to one import.
+- **The JSON format allows it and it has no effect.** `taint` and `forward_self` are schema-only, an
   empty `modes` list does nothing, and `on-unmatched` / `on-ambiguous` other than `"error"`
   change only what is logged. These are warnings.
-- **The loader accepts it with a meaning the DSL cannot say.** A bridge with no `arguments` map
+- **The JSON format allows it with a meaning the DSL cannot say.** A bridge with no `arguments` map
   (or an empty one), and an `"error"` severity. Each is a [`JsonModelError::Untranslatable`]
   that says why.
 */
@@ -70,8 +70,9 @@ impl MigrationReport {
 /// as one generator's `in` would say. A rule only some other language could match is left out.
 ///
 /// Fails with every generator's errors if any generator cannot be translated exactly: either
-/// the JSON format does not allow it, and the error is the one the JSON loader raised, or it
-/// means something the DSL cannot say, which is a [`JsonModelError::Untranslatable`].
+/// the JSON format does not allow it, and the error is what [`json_schema::generator_errors`]
+/// reports, or it means something the DSL cannot say, which is a
+/// [`JsonModelError::Untranslatable`].
 ///
 /// [`ArtifactLanguage`]: crate::project::ArtifactLanguage
 pub fn migrate_generators<'a>(
@@ -806,7 +807,8 @@ fn int_predicate(
             atom(ctx.relation, subject, &[format!("arity = {var}")]),
             expr,
         ]]),
-        // The loader validates the same tree and rejects every shape that lands here.
+        // `json_schema::generator_errors` validates the same tree first and rejects every shape
+        // that lands here.
         None => Err(JsonModelError::UnexpectedConstraint {
             index: ctx.index,
             constraint_type: kind.to_string(),
@@ -918,8 +920,8 @@ enum ClassFormula {
     Or(Vec<ClassFormula>),
 }
 
-/// Reads a class predicate the way the JSON matcher evaluated it, folding what it can decide
-/// without a class. Every error is one the JSON loader raised too.
+/// Reads a class predicate as the JSON format defines it, folding what it can decide without a
+/// class. Every error is one [`json_schema::generator_errors`] reports too.
 fn class_formula(inner: &Value, ctx: &Ctx<'_>) -> Result<ClassFormula, JsonModelError> {
     let index = ctx.index;
     let kind = inner
@@ -955,7 +957,7 @@ fn class_formula(inner: &Value, ctx: &Ctx<'_>) -> Result<ClassFormula, JsonModel
             Ok(ClassFormula::not(class_formula(i, ctx)?))
         }
         // The subject is already a class, so only `name` / `names` mean anything; the JSON
-        // loader rejects any other key, and a predicate with neither.
+        // format rejects any other key, and a predicate with neither.
         "signature_match" => {
             let other = inner
                 .as_object()
@@ -1420,8 +1422,9 @@ fn kind_of(item: &Value) -> &str {
 }
 
 /// [`port_text`] for a source or sink port, which may also be `Variable(name)`: that becomes
-/// `local(L)`, returned with the `local(F, L, name = "name")` atom that binds `L`. The loader
-/// refuses `Variable(...)` on a call site, so `anchor` is the subject function.
+/// `local(L)`, returned with the `local(F, L, name = "name")` atom that binds `L`.
+/// [`json_schema::generator_errors`] refuses `Variable(...)` on a call site, so `anchor` is the
+/// subject function.
 fn endpoint_port_text(
     value: Option<&Value>,
     anchor: &str,
@@ -1465,8 +1468,8 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
         crate::models::FormalIndexTypeTag::Index => {
             format!("arg({})", parsed.index.expect("Index carries one"))
         }
-        // Only a source or sink takes one, which `endpoint_port_text` translates, and the
-        // loader rejects it everywhere else.
+        // Only a source or sink takes one, which `endpoint_port_text` translates, and
+        // `json_schema::generator_errors` rejects it everywhere else.
         crate::models::FormalIndexTypeTag::Local => {
             return Err(untranslatable(
                 index,

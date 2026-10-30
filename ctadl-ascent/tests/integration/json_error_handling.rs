@@ -1,7 +1,8 @@
 //! What a JSON model file is rejected with, and what its `where` constraints select.
 //!
 //! Every JSON model file is migrated to the DSL as it is loaded, and a generator the JSON format
-//! does not allow fails the migration with the error the JSON loader raised for it. These tests
+//! does not allow fails the migration with the errors `json_schema::generator_errors` reports
+//! for it. These tests
 //! load generators the way a file is loaded, through [`encode`].
 
 use ctadl_ascent::error::{Error, JsonModelError};
@@ -143,8 +144,8 @@ fn test_valid_json_still_works() {
 /// function via `in_function`, emitting one callsite-scoped endpoint carrying both.
 ///
 /// `read_http_data` has a body calling `get`: the migrated rule joins on the call sites the
-/// program text names (`callsite`'s `callee_string`), where the JSON matcher anchored at the
-/// matched callee and needed no call site at all (`docs/portcullis.md` §9).
+/// program text names (`callsite`'s `callee_string`), not at every matched callee whether or
+/// not anything calls it (`docs/portcullis.md` §9).
 #[test]
 fn test_callsites_matches_callee_and_caller() {
     use ctadl_ir::mir::call::{CallEdges, CallStyle};

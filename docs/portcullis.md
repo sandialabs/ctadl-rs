@@ -684,7 +684,7 @@ reproducing it. `tests/integration/migration_equivalence.rs` pins each of these 
   — which is future work.
 
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
-A generator the JSON format does not allow fails with the error the JSON loader raised for it.
+A generator the format does not allow fails, naming the generator and what is wrong with it.
 Keys the format allows and that have no effect (`taint`, `forward_self`, an empty `modes` list, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
 format allows and Portcullis cannot say fail the migration, naming the generator:
 
