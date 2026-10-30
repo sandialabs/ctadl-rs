@@ -1,17 +1,5 @@
 {
   // Flow: holder().set(source()) (23) -> sink(holder.data) (24). The receiver
   // of set() is the result of another call, not a local.
-  "expected_lines": [23, 24],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LCallResultReceiver;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LCallResultReceiver;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": [23, 24]
 }

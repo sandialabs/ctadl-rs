@@ -1,6 +1,6 @@
-// jni-arg-shift.bridge.jsonl -- the JniArgShift boundary, joined by hand.
+// jni-arg-shift.bridge.ctadl -- the JniArgShift boundary, joined by hand.
 //
-// The A/B counterpart of `Jni:JniArgShift`; see `jni-flow.bridge.jsonl` for what the sibling
+// The A/B counterpart of `Jni:JniArgShift`; see `jni-flow.bridge.ctadl` for what the sibling
 // file does and why `--no-jni-bridge` is not optional.
 //
 // This is the case that makes the port map earn its keep. `nativeCat` is an *instance* native,
@@ -15,4 +15,11 @@
 // would mis-wire the pair silently, which is the whole reason the map is the feature rather
 // than a refinement.
 
-{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniArgShift;->nativeCat(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniArgShift_nativeCat"}]},"arguments":[{"from":"Argument(0)","to":"Argument(1)"},{"from":"Argument(1)","to":"Argument(2)"},{"from":"Argument(2)","to":"Argument(3)"},{"from":"Return","to":"Return"}]}}}
+bridge(F::arg(0) <-> G::arg(1)),
+  bridge(F::arg(1) <-> G::arg(2)),
+  bridge(F::arg(2) <-> G::arg(3)),
+  bridge(F::return <-> G::return) :-
+  fun(F, language in {"dex", "apk"}),
+  F = "LJniArgShift;->nativeCat(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+  fun(G, language = "pcode"),
+  !(!fun(G, name = "Java_JniArgShift_nativeCat") && !(fun(G) && G = "Java_JniArgShift_nativeCat"));

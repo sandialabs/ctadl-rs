@@ -1,8 +1,9 @@
 # Nightly regression suite
 
-Source-sink taint regression tests. Each case is a small program plus a JSON
-file holding its **known answer** (the source lines a flow is expected to reach)
-and the ctadl query model. The orchestration lives in the `xtask` crate at the
+Source-sink taint regression tests. Each case is a small program, a JSON config
+holding its **known answer** (the source lines a flow is expected to reach), and
+beside the config a [Portcullis](../docs/portcullis.md) model file (`.ctadl`)
+that is the ctadl query. The orchestration lives in the `xtask` crate at the
 repo root (`xtask/src/`), not in shell scripts.
 
 ## Running
@@ -50,15 +51,21 @@ Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
 
 ## How discovery works
-A test case = a source file paired with its config. Drop the two files in and
-they are picked up automatically; no list to edit.
+A test case = a source file paired with its config and the config's model file.
+Drop the files in and they are picked up automatically; no list to edit.
+
+The model file is the config's name with its extension replaced by `.ctadl`
+(`foo.json` or `foo.json5` → `foo.ctadl`, `foo-query.json` → `foo-query.ctadl`),
+and it is what the case passes to `ctadl query -m`. A config with no model file
+beside it stops discovery with an error rather than being skipped.
 
 - **Java / DEX** — `tests/java/Foo.java` pairs with `tests/java/foo.json`, where
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`. The pair registers under *both* C
-  frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
+  back to a shared `tests/c/query.json` (and `query.ctadl`). The pair registers
+  under *both* C frontends: a `pcode` case named `foo` and a tree-sitter `c` case
+  named `C:foo`.
 
 - **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
   with no matching config is ignored. Cases report as `Lua:foo`. Because Lua is a
@@ -81,9 +88,16 @@ they are picked up automatically; no list to edit.
     both, the way an app bundle (or an XAPK download) ships. The native APK has
     no `classes*.dex` in it at all.
 
-  A sibling `foo.bridge.jsonl` adds a third variant, `Jni:Foo+bridge`, which
-  joins the boundary with a declarative model under `--no-jni-bridge` instead of
-  the built-in pass.
+  A sibling `foo.bridge.ctadl` adds a third variant, `Jni:Foo+bridge`, which
+  joins the boundary with a declarative `bridge` rule (loaded by `ctadl index -m`)
+  under `--no-jni-bridge` instead of the built-in pass.
+- **CIL** — `tests/cil/foo.cs`, or a directory `tests/cil/foo/` of `.cs` files
+  built as separate assemblies, pairs with `tests/cil/foo-query.json5`. Cases
+  report as `Cil:foo`. The query model is generated from the config's
+  `expected_sinks` and `unexpected_sinks` (`Source()`/`SourceInt()` return the
+  source, each named sink takes it in argument 0); an optional
+  `tests/cil/foo-query.ctadl` adds rules of the case's own. See
+  `xtask/src/cil/cases.rs`.
 
 ## Checks that are not taint cases
 
@@ -123,7 +137,7 @@ it wrote:
 | --- | --- |
 | `apk:import` | The app imports, the config records the language, format version, artifact path and content hash, and `ctadl inspect` decodes the stored program and reports functions in it. |
 | `apk:no-native-libs` | This APK carries no `lib/<abi>` entries, so the native-library pass records no sub-imports and stages nothing — the path that must not need Ghidra. |
-| `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
+| `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the model's rule selected, and writes **nothing** into the store. |
 | `apk:report` | `ctadl report` runs on the import, its first line names the static tier, the JSON carries every section a Java program has, four aggregate counts plus the site count of each dispatch kind are pinned to this APK, and nothing is written into the store. |
 | `apk:report-invariants` | The report's numbers add up — the census sums to its total, the target split sums to the virtual sites, the dispatch kinds partition those sites and their per-kind edge, excess and RTA totals sum back to the pooled ones, every distribution is monotone, RTA never exceeds CHA, the edge shares are ordered, and removing the interface edges cannot grow the call graph — and two runs over one import are byte-identical. |
 | `apk:reimport` | A re-import skips an unchanged artifact, and only an unchanged one: falsify the recorded hash and the same command re-imports; `--force` re-imports an unchanged one. |
@@ -149,24 +163,25 @@ store paths they assert on are spelled out in `xtask/src/apk.rs` rather than imp
 
 1. Write `tests/java/Foo.java` with a `source()` and a `sink(...)` (see the
    existing cases). Keep it self-contained; co-located/inner classes are fine.
-2. Write `tests/java/foo.json`:
+2. Write `tests/java/foo.json` (or `foo.json5`, which may carry comments), the
+   known answer:
 
    ```json
    {
-     "expected_lines": [20, 21, 22],
-     "model_generators": [
-       { "find": "methods",
-         "where": [{ "constraint": "signature_match", "name": "source", "parent": "LFoo;" }],
-         "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] } },
-       { "find": "methods",
-         "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LFoo;" }],
-         "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] } }
-     ]
+     "expected_lines": [20, 21, 22]
    }
    ```
 
-   `model_generators` is the query model passed to `ctadl query -m`.
-   `expected_lines` is the known answer.
+3. Write `tests/java/foo.ctadl`, the query model passed to `ctadl query -m`, in
+   Portcullis (`docs/portcullis.md`):
+
+   ```
+   source(F::return, kind = "UserInput") :-
+     fun(F, name = "source", parent = "LFoo;");
+
+   sink(F::arg(0), kind = "TaintedData") :-
+     fun(F, name = "sink", parent = "LFoo;");
+   ```
 
 **Pass criterion (DEX):** the runner compiles to DEX, analyzes, and maps each
 reported byte offset back to a source line via the dex linemap. A positive test
@@ -187,11 +202,31 @@ such a line out says which one and points here.
 
 1. Write `tests/c/foo.c` with functions matching the query's `source`/`sink`
    signature patterns.
-2. Add `expected_lines` + `model_generators` to `tests/c/query.json` (or a
-   dedicated `tests/c/foo-query.json`).
+2. Write a dedicated `tests/c/foo-query.json` holding `expected_lines`, and its
+   model `tests/c/foo-query.ctadl`. `tests/c/query.ctadl`, the shared model, is
+   the usual shape; each head has a second rule matching the function itself
+   (`F = …`) as well as its `name`, which is how `ctadl migrate-models` spells a
+   JSON name match on pcode and C:
 
-The same two files also drive the tree-sitter `c` case; nothing extra is needed
-to add one.
+   ```
+   source(F::return, kind = "UserInput") :-
+     fun(F, name = "source");
+   source(F::return, kind = "UserInput") :-
+     fun(F),
+     F = "source";
+
+   sink(F::arg(0), kind = "Output") :-
+     fun(F, name = "sink");
+   sink(F::arg(0), kind = "Output") :-
+     fun(F),
+     F = "sink";
+   ```
+
+   A `.c` with no `foo-query.json` falls back to the shared `tests/c/query.json`
+   and `tests/c/query.ctadl` instead.
+
+The same files also drive the tree-sitter `c` case; nothing extra is needed to
+add one.
 
 **Pass criterion (pcode):** addresses are mapped to lines with `addr2line`
 (after subtracting Ghidra's `0x100000` base). The test **passes only if every**
@@ -223,9 +258,10 @@ a later regression is caught. One case is quarantined today:
    `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
    friends) rather than including `<jni.h>`: the regression check's SDK has no NDK,
    and only the arity and the dataflow shape matter.
-2. Write `tests/jni/foo.json` exactly as a Java/DEX config. `expected_lines` and
-   `unexpected_lines` there refer to the **Java** source; the optional
-   `expected_native_lines` refers to the **C** source (see below).
+2. Write `tests/jni/foo.json` and `tests/jni/foo.ctadl` exactly as a Java/DEX
+   config and model. `expected_lines` and `unexpected_lines` there refer to the
+   **Java** source; the optional `expected_native_lines` refers to the **C**
+   source (see below).
 
 **Pass criterion (JNI):** the DEX criterion above — a code flow connecting a
 source to a sink, plus `expected_lines` and `unexpected_lines` through the dex
@@ -264,8 +300,7 @@ source lines that must carry **no** flow:
 ```json
 {
   "expected_lines": [26, 31],
-  "unexpected_lines": [30],
-  "model_generators": [ ... ]
+  "unexpected_lines": [30]
 }
 ```
 

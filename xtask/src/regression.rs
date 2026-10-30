@@ -769,15 +769,36 @@ fn index_notifications(dir: &Path, lines: &mut BTreeSet<String>) -> Result<()> {
 
 fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
     match &case.kind {
-        Kind::Dex { java, config } => run_dex(&case.name, java, config),
-        Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
-        Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
-        Kind::C { source, query } => run_c(&case.name, source, query),
-        Kind::Lua { source, query } => run_lua(&case.name, source, query),
+        Kind::Dex {
+            java,
+            config,
+            models,
+        } => run_dex(&case.name, java, config, models),
+        Kind::Jvm {
+            java,
+            config,
+            models,
+        } => run_jvm(&case.name, java, config, models),
+        Kind::Pcode {
+            source,
+            query,
+            models,
+        } => run_pcode(&case.name, source, query, models, worker),
+        Kind::C {
+            source,
+            query,
+            models,
+        } => run_c(&case.name, source, query, models),
+        Kind::Lua {
+            source,
+            query,
+            models,
+        } => run_lua(&case.name, source, query, models),
         Kind::Jni {
             java,
             native,
             config,
+            models,
             bridge,
             packaging,
             abi,
@@ -787,6 +808,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             java,
             native,
             config,
+            models,
             bridge.as_deref(),
             JniBuild {
                 packaging: *packaging,
@@ -796,16 +818,21 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
-        Kind::Cil { source, config } => run_cil(&case.name, source, config),
+        Kind::Cil {
+            source,
+            config,
+            models,
+        } => run_cil(&case.name, source, config, models.as_deref()),
     }
 }
 
 // --- CIL --------------------------------------------------------------------
 
 /// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
-/// frontend, index, query with the model its config implies, and judge the code flows by the
-/// sink functions they end in and the source lines they reach.
-fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
+/// frontend, index, query with the model its config implies (plus `models`, the case's own
+/// rules, if it has any), and judge the code flows by the sink functions they end in and the
+/// source lines they reach.
+fn run_cil(name: &str, source: &Path, config: &Path, models: Option<&Path>) -> Result<Outcome> {
     use crate::cil::cases;
     let Some(dotnet) = cases::dotnet() else {
         return Ok(Outcome::Skip(
@@ -817,11 +844,14 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
     std::fs::create_dir_all(&state)?;
     let cfg = cases::read_config(config)?;
     let artifact = cases::compile(&dotnet, source, &work, &work.join("out"))?;
-    let model = work.join("query.json");
-    std::fs::write(
-        &model,
-        serde_json::to_string_pretty(&cases::query_model(&cfg))?,
-    )?;
+    let model = work.join("query.ctadl");
+    std::fs::write(&model, cases::query_model(&cfg))?;
+    let model = model.to_string_lossy().into_owned();
+    let mut model_args = vec!["-m", &model];
+    let extra = models.map(|m| m.to_string_lossy().into_owned());
+    if let Some(extra) = &extra {
+        model_args.extend(["-m", extra.as_str()]);
+    }
     let project = name.replace(':', "_");
     let sarif = work.join("output.sarif");
     run_ctadl(
@@ -841,13 +871,11 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
         &work,
         &state,
         &[
-            "query",
-            &project,
-            "-m",
-            &model.to_string_lossy(),
-            "-o",
-            &sarif.to_string_lossy(),
-        ],
+            &["query", &project][..],
+            &model_args,
+            &["-o", &sarif.to_string_lossy()],
+        ]
+        .concat(),
     )?;
     let outcome = cases::check(&cfg, &sarif)?;
     with_valid_sarif(&work, &[&sarif], outcome)
@@ -931,7 +959,7 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
 
 // --- DEX / Java -----------------------------------------------------------
 
-fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_dex(name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -957,7 +985,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -969,7 +997,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1027,7 +1055,7 @@ fn compile_dex(work: &Path, java: &Path, stem: &str) -> Result<PathBuf> {
 
 // --- JVM / Java -----------------------------------------------------------
 
-fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_jvm(case_name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     for tool in ["javac", "jar"] {
         if exec::which(tool).is_none() {
             return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
@@ -1088,7 +1116,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1100,7 +1128,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1460,7 +1488,7 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
 ///   2. *Reached lines*: every `expected_lines` entry appears among the
 ///      code-flow `startLine`s.
 ///   3. *Unexpected lines*: no `unexpected_lines` entry is among them.
-fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_lua(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -1482,7 +1510,7 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1530,7 +1558,13 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
 
 // --- Pcode / C ------------------------------------------------------------
 
-fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result<Outcome> {
+fn run_pcode(
+    name: &str,
+    source: &Path,
+    query: &Path,
+    models: &Path,
+    worker: &Worker,
+) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -1570,7 +1604,7 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1806,6 +1840,7 @@ fn run_jni(
     java: &Path,
     native: &Path,
     config: &Path,
+    models: &Path,
     bridge: Option<&Path>,
     build: JniBuild<'_>,
     worker: &Worker,
@@ -2014,7 +2049,7 @@ fn run_jni(
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -2025,7 +2060,7 @@ fn run_jni(
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -2044,6 +2079,7 @@ fn run_jni(
             &format!("{dex_project}__{abi}__{}", file_stem_of(&lib)?),
             &format!("{dex_project}__{abi}__libdummy"),
             config,
+            models,
             &index_log,
         )?;
         if let Some(why) = failed {
@@ -2129,6 +2165,7 @@ fn check_summary_workflow(
     x_import: &str,
     y_import: &str,
     config: &Path,
+    models: &Path,
     index_log: &str,
 ) -> Result<Option<String>> {
     let ctadl = |args: &[&str], log: &str| run_ctadl_logged(work, state, env, args, log);
@@ -2200,7 +2237,7 @@ fn check_summary_workflow(
             "query",
             project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &work.join("graph.sarif").to_string_lossy(),
             "--dump-taint-graph",
@@ -2334,7 +2371,7 @@ fn native_lines(
 
 /// Run one C case through the tree-sitter frontend.
 ///
-/// This is the Pcode case's twin over the very same `.c` source and query JSON,
+/// This is the Pcode case's twin over the very same `.c` source, config and model,
 /// but a much shorter pipeline: the tree-sitter frontend parses the source
 /// directly, so there is no compiler, no Ghidra, and no `addr2line`. The source
 /// lines a flow reaches are read straight off the SARIF regions the frontend
@@ -2343,7 +2380,7 @@ fn native_lines(
 /// It shares no state with `run_pcode` -- its own scratch dir, project name, and
 /// SARIF -- so its outcome is entirely independent: a C failure never touches the
 /// Pcode case for the same source, and vice versa.
-fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_c(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -2370,7 +2407,7 @@ fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],

@@ -2,17 +2,5 @@
   // Flow: a[0] += source() (13) -> sink(a[0]) (14), and the same for a long array
   // (16 -> 17). javac copies the array and index with `dup2` before the element
   // load, and the long element is two stack slots.
-  "expected_lines": [13, 14, 16, 17],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LCompoundArrayAssign;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LCompoundArrayAssign;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": [13, 14, 16, 17]
 }

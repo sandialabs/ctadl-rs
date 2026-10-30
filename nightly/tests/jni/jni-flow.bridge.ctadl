@@ -1,4 +1,4 @@
-// jni-flow.bridge.jsonl -- the JniFlow boundary, joined by hand.
+// jni-flow.bridge.ctadl -- the JniFlow boundary, joined by hand.
 //
 // The presence of this file makes the regression runner discover a second case,
 // `Jni:JniFlow+bridge`, which indexes the same two artifacts with `--no-jni-bridge` and this
@@ -24,7 +24,15 @@
 // connects the two.
 
 // nativeStash(String data) -> void. `data` is Java slot 0, native index 2.
-{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniFlow;->nativeStash(Ljava/lang/String;)V"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniFlow_nativeStash"}]},"arguments":[{"from":"Argument(0)","to":"Argument(2)"}]}}}
+bridge(F::arg(0) <-> G::arg(2)) :-
+  fun(F, language in {"dex", "apk"}),
+  F = "LJniFlow;->nativeStash(Ljava/lang/String;)V",
+  fun(G, language = "pcode"),
+  !(!fun(G, name = "Java_JniFlow_nativeStash") && !(fun(G) && G = "Java_JniFlow_nativeStash"));
 
 // nativeFetch() -> String. No declared parameters; only the return crosses.
-{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniFlow;->nativeFetch()Ljava/lang/String;"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniFlow_nativeFetch"}]},"arguments":[{"from":"Return","to":"Return"}]}}}
+bridge(F::return <-> G::return) :-
+  fun(F, language in {"dex", "apk"}),
+  F = "LJniFlow;->nativeFetch()Ljava/lang/String;",
+  fun(G, language = "pcode"),
+  !(!fun(G, name = "Java_JniFlow_nativeFetch") && !(fun(G) && G = "Java_JniFlow_nativeFetch"));

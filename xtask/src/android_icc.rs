@@ -17,7 +17,7 @@ use crate::regression::Outcome;
 pub struct CaseSpec {
     /// APK file name inside the `CTADL_ANDROID_ICC_APKS` directory.
     pub apk: PathBuf,
-    /// Query model path relative to this spec file, or absolute.
+    /// Query model path relative to this spec file, or absolute: a Portcullis `.ctadl` file.
     pub model: PathBuf,
     /// Whether a source-to-sink path is expected.
     #[serde(default = "default_true")]
@@ -49,7 +49,16 @@ fn default_true() -> bool {
 pub fn load_spec(path: &Path) -> Result<CaseSpec> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    json5::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    let spec: CaseSpec =
+        json5::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if spec.model.extension().and_then(|e| e.to_str()) != Some("ctadl") {
+        bail!(
+            "{}: model {} is not a Portcullis `.ctadl` file",
+            path.display(),
+            spec.model.display()
+        );
+    }
+    Ok(spec)
 }
 
 /// Where the fetched benchmark APKs live; see the module docs.
