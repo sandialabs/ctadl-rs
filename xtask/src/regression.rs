@@ -12,6 +12,7 @@
 //! explicitly; see [`Worker`] and [`scratch_dir`].
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -103,7 +104,7 @@ pub struct Options {
     /// Either way the binary is rebuilt from current source before any case
     /// runs; see [`build_ctadl`].
     pub release: bool,
-    /// The `--mem2reg` policy every `ctadl index` runs with, through [`MEM2REG_ENV`]. `None`
+    /// The `--mem2reg` policy every `ctadl index` runs with; see [`ctadl_command`]. `None`
     /// runs the default. A policy that can lose flows (`full:0` promotes every function fully)
     /// turns a lost flow into a report; see [`explain_lost_flow`].
     pub mem2reg: Option<String>,
@@ -164,17 +165,9 @@ pub(crate) enum Outcome {
 /// Run the suite. Returns `Ok(true)` if every selected case passed or was
 /// skipped, `Ok(false)` if any failed.
 pub fn run(opts: &Options) -> Result<bool> {
-    // Every `ctadl` the cases spawn inherits this, so it is set before any worker starts. Without
-    // `--mem2reg` it is cleared, so a value left in the caller's shell cannot change the default
-    // run.
-    // SAFETY: called from `main` before this process starts any thread, so nothing can read the
-    // environment concurrently.
-    unsafe {
-        match &opts.mem2reg {
-            Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
-            None => std::env::remove_var(MEM2REG_ENV),
-        }
-    }
+    MEM2REG
+        .set(opts.mem2reg.clone())
+        .map_err(|_| anyhow::anyhow!("internal error: regression suite run more than once"))?;
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
 
     let mut cases = discovery::discover(&tests_dir)?;
@@ -781,9 +774,6 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
     }
 }
 
-/// The environment variable `ctadl index` reads its `--mem2reg` default from.
-const MEM2REG_ENV: &str = "CTADL_MEM2REG";
-
 /// Judges a failed case run under `--mem2reg <policy>` by the notifications its indexes wrote.
 ///
 /// A policy like `full:0` is expected to lose flows, and `ctadl index` names each function it
@@ -1364,6 +1354,27 @@ pub(crate) fn ctadl_bin() -> Result<PathBuf> {
     )
 }
 
+/// The `--mem2reg` policy from [`Options::mem2reg`]. Set once by [`run`] before any worker starts.
+static MEM2REG: OnceLock<Option<String>> = OnceLock::new();
+
+/// `ctadl <args>` with [`ctadl_bin`]; see [`ctadl_command_with`].
+pub(crate) fn ctadl_command<S: AsRef<OsStr>>(args: &[S]) -> Result<Command> {
+    Ok(ctadl_command_with(&ctadl_bin()?, args))
+}
+
+/// `<ctadl> <args>`. A `ctadl index` is also passed the suite's `--mem2reg` policy, if one was
+/// given. Every case spawns `ctadl` through here, so none misses the policy.
+pub(crate) fn ctadl_command_with<S: AsRef<OsStr>>(ctadl: &Path, args: &[S]) -> Command {
+    let mut cmd = Command::new(ctadl);
+    cmd.args(args);
+    if let Some(Some(policy)) = MEM2REG.get()
+        && args.first().is_some_and(|a| a.as_ref() == "index")
+    {
+        cmd.arg("--mem2reg").arg(policy);
+    }
+    cmd
+}
+
 /// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
 ///
 /// The default flow rebuilds `ctadl` from the tree under test so a stale binary
@@ -1479,10 +1490,8 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
 }
 
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     exec::run_checked(
         cmd,
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
@@ -1788,10 +1797,8 @@ fn guess_java_home() -> Option<PathBuf> {
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -1812,10 +1819,8 @@ fn run_ctadl_logged(
     args: &[&str],
     log: &str,
 ) -> Result<String> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }

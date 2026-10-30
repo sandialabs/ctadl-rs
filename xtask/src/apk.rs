@@ -27,7 +27,7 @@ use ctadl_import::notifications::{
 use serde_json::Value;
 
 use crate::exec;
-use crate::regression::{Outcome, ctadl_bin};
+use crate::regression::{Outcome, ctadl_command};
 
 /// The import name every check shares. One import, read by all of them.
 const IMPORT: &str = "app";
@@ -999,10 +999,8 @@ fn import(work: &Path, state: &Path, apk: &Path, extra: &[&str]) -> Result<()> {
 /// A `ctadl` invocation against the scratch store. `XDG_STATE_HOME` rather than `--store`, so
 /// the default store resolution is exercised too -- it is what a user gets.
 fn command(work: &Path, state: &Path, args: &[&str]) -> Result<Command> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     Ok(cmd)
 }
 

@@ -43,7 +43,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use cil_reader::flow::FlowOptions;
@@ -353,9 +352,7 @@ fn index_fixture(ctadl: &Path, fixture: &Path, dir: &Path) -> Result<Static> {
             name.to_string(),
         ],
     ] {
-        let mut cmd = Command::new(ctadl);
-        cmd.args(&args);
-        let output = cmd
+        let output = crate::regression::ctadl_command_with(ctadl, &args)
             .output()
             .with_context(|| format!("running {}", ctadl.display()))?;
         let log = dir.join(format!("ctadl-{}.log", args[0]));

@@ -475,13 +475,11 @@ pub struct IndexArgs {
     /// the address no longer sees what the function stored directly. Each function where this
     /// may lose flows is named in the index's `notifications.sarif` and in the query's SARIF. A
     /// model's `modes: ["mem2reg-full"]` or `["mem2reg-window"]` forces or forbids it for one
-    /// function. `CTADL_MEM2REG` in the environment sets the default, for a harness that does
-    /// not pass the flag.
+    /// function.
     #[arg(
         long,
         value_name = "POLICY",
         default_value = "window:8",
-        env = "CTADL_MEM2REG",
         value_parser = parse_mem2reg
     )]
     pub mem2reg: Mem2RegFlag,
@@ -493,12 +491,10 @@ pub struct IndexArgs {
     /// `--mem2reg` leaves in memory, and a write to a slot overwrites what it held. `store`
     /// coarsens every such update into a store, so every load of a slot sees every store to it.
     /// A model's `modes: ["frame-store"]` or `["frame-update"]` picks one for one function.
-    /// `CTADL_FRAME` in the environment sets the default.
     #[arg(
         long,
         value_name = "WRITES",
         default_value = "update",
-        env = "CTADL_FRAME",
         value_parser = parse_frame
     )]
     pub frame: ctadl_ir::ssa::FrameWrites,
