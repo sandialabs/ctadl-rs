@@ -142,7 +142,45 @@ cause roughly doubles what cause 1 leaves.
 - **The handler skip is not enough on `GpioForCrond`.** With `malloc` present it is killed at
   16.6 GiB, against 11.95 GiB under `none`: other decisions (stdio cookies, RPC/XDR, 18,219
   resolvents) carry copies too.
-- **Precision of `none` is not measured.** No small member has query endpoints.
+- **`none` loses no findings.** 15 runs on 14 binaries, 6 of them with real tainted paths (`file`,
+  `signalc`, both `tar`s and two others) and `GpioForCrond` (4 findings once it can be indexed),
+  give identical findings under `decision`, `none` and both experimental fixes below: 60
+  comparisons, by rule, message, logical location, source and sink callee, and taint-vertex count.
+- **The fix: no decision on `GLOBALS_INDEX`.** An env-gated patch (`CTADL_EXP_CTX=noglobals`,
+  `/Volumes/Shampoo/nb-work/r-ctx/out/r-ctx.patch`) closes nearly all of the gap to `none`, with the
+  same findings. On `GpioForCrond` (`malloc` skipped), `context_locals` falls from 2.67 M to 21 K.
+  On the `tar`s it closes half to three quarters of the gap; the rest are real decisions not on
+  globals.
+
+  | Binary | `decision` | `none` | `noglobals` |
+  |---|---|---|---|
+  | `GpioForCrond`, `malloc` skipped | 0.881 GiB, 3.36x | 0.368 GiB | 0.369 GiB, 1.41x |
+  | `testI2C`, `malloc` skipped | 0.887 GiB, 3.53x | 0.352 GiB | 0.362 GiB, 1.44x |
+  | `captival_usockc` | 3.71 GiB | 2.29 GiB | 2.31 GiB |
+  | `signalc` | 2.96 GiB | 2.44 GiB | 2.49 GiB |
+
+- **A plain subsumption filter is not usable** (`CTADL_EXP_CTX=subsume`: drop a `context_*` row
+  whose context-free twin exists).
+  - It cuts `context_locals` 7-17x, but its hash set raises the peak.
+  - It depends on derivation order: on `signalc` it kept 1.11 M of 1.41 M rows.
+  - It loses context-free rows: 7,713 `assign_like` on `signalc`. The context-free summary is
+    applied only at direct calls, while the conditional one also reaches resolved function-pointer
+    calls. No findings changed.
+- **Real decisions cost row width, not rows** (`hnapserver-combo`, 1.17x with the allocator
+  skipped, 0.78x with `none`).
+  - **The decisions.** One call site, `process_request -> soap_serve(param_1)`, makes 22 of the
+    26: one target per gSOAP callback field (`arg0.[24560]`-`[24648]`). It counts only because
+    `soap_done(param_1)`, called later, writes the defaults back, and the heap is
+    flow-insensitive.
+  - **What they separate is a gap.** `main`'s `soap` is a stack struct passed by address, so
+    `soap_init`'s writes never reach `soap_serve`'s argument. That is an analysis gap, not a real
+    difference between callers.
+  - **Width, not count.** `decision` has fewer rows than `none` (6.6 M against 8.3 M, and a
+    subset of them), but a context row takes about 120-170 B against 12-56 B in the context-free
+    tries (estimated).
+  - **What the extra `none` rows are.** Its 1.13 M extra rows sit inside the deciding functions.
+    No rule chains two contextual edges within one function, which would explain them (read from
+    the rules, not measured).
 
 ### 3. Offsets pile up on a loop-incremented pointer (and a loop SCC through merged operands)
 
@@ -476,11 +514,9 @@ gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
 
 ## Not yet explained
 
-What is left after the causes above are removed:
-
-| Binary | What is left |
-|---|---|
-| `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
+Nothing over budget is left unexplained. Every sweep binary, every app and every residual is
+within budget, or within 1.2x of it, once its named causes are removed. The open questions are
+listed per cause: whether a fix keeps findings, and the estimated collapse factors.
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
@@ -492,8 +528,8 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 - **Model the allocator** (cause 1): recognize `malloc`, `realloc`, `calloc` and `free` by name,
   or by shape when stripped, and give them models (a fresh object, no flow from the size)
   instead of their bodies. Measured upper bound: the "whole allocator skipped" column.
-- **Let unconditional rows subsume conditional ones** (cause 2), and make no hybrid decision on
-  `$globals`. Estimated: the `--hybrid-context none` numbers, with no precision loss.
+- **Make no hybrid decision on `$globals`** (cause 2): measured within 3% of `--hybrid-context none`,
+  with identical findings. A plain subsumption filter is not enough (see cause 2).
 - **Collapse offset-only variants of a formal source** (causes 3 and 4): about 50x on `nginx`,
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 1, 3 and 4): `size`
