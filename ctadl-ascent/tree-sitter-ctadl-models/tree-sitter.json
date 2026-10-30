@@ -1,0 +1,20 @@
+{
+  "grammars": [
+    {
+      "name": "ctadl_models",
+      "camelcase": "CtadlModels",
+      "scope": "source.ctadl_models",
+      "path": ".",
+      "file-types": ["ctadl"],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "description": "ctadl model DSL (.ctadl) grammar for tree-sitter",
+    "links": {
+      "repository": "https://github.com/sandialabs/ctadl-rs"
+    }
+  }
+}
