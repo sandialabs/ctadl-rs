@@ -208,7 +208,8 @@ is also inside the hubs of causes 1 and 4.
 - **`a2050` (1.72x):** 30 libc++ `std::__sort<T>` copies hold 51% of `locals`; skipping them
   cuts 51.0% (1.16x). Cause 12 is the rest. Their sources sit
   at about 370 offsets (`first++`/`last--`, element strides 1-16) in 2 distinct sets: about 84x
-  collapse (estimated). `FUN_002a2af4` holds another 19% (not examined).
+  collapse (estimated). `FUN_002a2af4`, libunwind's DWARF expression evaluator, holds another 19%
+  (see cause 12).
 - **`fir.tube` (1.34x, Rust `argon2`):** the rows are spread over 10 functions. Collapse in the
   top function is about 54x (estimated).
 - **Not the uclited shape elsewhere.** In `gzip`, the `tar`s and `unzip` the variables-only SCC is
@@ -474,43 +475,57 @@ gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
   firmware model already declares `memcpy`'s propagation, but the body is analyzed as well.
 - **PIC builds have a second copy.** A skip by name `memcpy` does not match `.pic.memcpy`.
 
-### 12. A forwarding thunk turns its body's summary into self-loops, which the wild join multiplies
+### 12. The call-site write-back writes into an argument that is an address, and the wild join multiplies it
 
-**Binary:** `a2050`, 0.3x of budget on top of cause 3. It is the one place the wild relations
-(P6) cost something.
+**Binary:** `a2050`, 0.3-0.4x of budget on top of cause 3. It is the one place the wild relations
+(P6) cost something, and every wild-relation row in the binary comes from it.
 
-- **The thunk.** `__emplace_back_slow_path<nlohmann::detail::value_t>@002a5020` is a 12-line
-  function that calls the real body (`@001b5f24`) with its own arguments.
-- **The body's summary.** It is an offset cross product (cause 3): 33.7 K rows
-  `@p0.deref.[a] <- @p0.deref.[b]`, 92 x 346 offsets, from libc++'s backward move loop
-  (`p = p.[-16]`). The new buffer pointer `new + (end - begin) * 16` is lowered as a merge, so it
-  carries `begin` and `end`.
-- **The self-loops.** Instantiated in the thunk, every row becomes a self-loop on one argument
-  vertex that is the thunk's own formal. That vertex also has 217 reached paths ending in an
-  offset (`.deref.[m]`).
-- **The wild join.** The wild rule `locals <-- ext_fml` pairs every self-loop with every offset
-  path: 33.8 K x 217 = 7.23 M of the binary's 8.16 M `ext_fml`. That is 1.69 billion derivations
-  for 291 K distinct `locals` (99.98% duplicates), 84.9 s and 21.8% of rule time. The body itself
-  has 1,284 `ext_fml` rows.
-- **Thunks inflate summaries generally.** A thunk's summary is the closure, 96.7 K rows against
-  the body's 33.7 K. Across 477 thunk/body pairs, thunks hold 874 K summary rows against 355 K
-  for the bodies, 41% of `summary` (`vector<float>::__append` 351x). Only the `value_t` thunk
-  also has the offset-ending paths that set off the wild join; why its six siblings lack them was
-  not found.
+- **The trigger.** The call-site rule writes the callee's effects back onto every argument. When
+  the argument is an address, not a variable, the write-back lands on the address path itself.
+  The `value_t` instantiation of nlohmann::json's `__emplace_back_slow_path` is the only one of
+  seven that passes an address, `json_value(&elem->m_value)`, whose argument is the path `v.[8]`.
+  The write-back gives `v.[8] <- call-arg`: an address treated as a memory location. That seeds
+  217 reached paths ending in an offset (`.deref.[m]`).
+- **The thunk amplifies it.** A 12-line thunk (`@002a5020`) forwards its own arguments to the body.
+  The body's summary is an offset cross product (cause 3): 33.7 K rows from libc++'s backward
+  move loop, with the new buffer `new + (end - begin) * 16` merged with `begin` and `end`.
+  Instantiated in the thunk, each row becomes a self-loop on the thunk's formal.
+- **The wild join.** The rule `locals <-- ext_fml` pairs each self-loop with each offset path:
+  33.8 K x 217 = 7.23 M of the binary's 8.16 M `ext_fml`. That is 1.69 billion derivations for
+  291 K distinct `locals`, 84.9 s and 21.8% of rule time.
+- **Thunks inflate summaries generally.** A thunk's summary is the closure of its body's: 41% of
+  `summary` is thunks.
 
-**Measured** (default 9.21 GiB, 1.72x, 407 s):
+**Measured** (default 9.21 GiB, 1.72x; env-gated patch `/Volumes/Shampoo/nb-work/r-a2050b/out/r-a2050b.patch`):
 
-| Skipped | Peak | Against budget |
+| Change | Peak | Against budget |
 |---|---|---|
-| the 14 nlohmann `emplace` functions | 7.58 GiB | 1.42x (`ext_fml` 0.92 M; the rule 84.9 s to 6.8 s; `summary` -21%) |
-| the 30 `std::__sort` copies (cause 3) | 6.18 GiB | 1.16x (`locals` -51.0%) |
-| both | 5.44 GiB | **1.02x** (the savings add) |
+| Write back only the memory below an address argument (`v.p.deref <- cv.deref`; keeps the flows) | 6.88 GiB | 1.29x (`ext_fml` 8.16 M to 0, `locals_wild` to 0, `locals` -12%) |
+| A forwarding thunk takes its callee's summary, renamed (784 thunks) | 7.38 GiB | 1.38x (`ext_fml` to 0.93 M, `edge_split` -26%) |
+| Both | 6.31 GiB | 1.18x |
+| Skip the 14 `emplace` functions (loses their flows) | 7.58 GiB | 1.42x |
+| Drop the write-back entirely (unsound) | | 1.16x, and removes 22.5 M of `__sort`'s rows |
 
-- **The `__sort` claim holds.** Its rows are each body's own pile-up: callers don't inherit them,
-  and 14 of the 15 instantiations are never called. Each body calls itself through its thunk (a
-  cause-6 loop), but skipping only the thunks removes 10.6%.
-- **A skip-model pitfall.** `signature_match` `name` matches only the full `name@addr`
-  form; an address-free name matches nothing, silently.
+Neither change has been checked against the test suite.
+
+**Rule time.** After the `__sort` and `emplace` skips, 210 of 251 s was still in the `edge_split`
+rules. That is libc++abi's demangler: a 25-function recursive group of parse functions, holding
+82.4% of the `edge_split` join's derivations but only 3.2% of `locals`. Each parse function's
+summary carries the cursor at the same 539 offsets and is instantiated at about 47 call sites,
+with 14.7 M derivations per site. That is causes 3, 4 and 6 together, costing time rather than
+rows. Skipping it too takes the fixpoint from 261 s to 91 s.
+
+**What is left of `a2050`.** `FUN_002a2af4` (44.8 M `locals`, 19%) is libunwind's DWARF expression
+evaluator, cause 3 twice over:
+- **The bytecode pointer** steps by operand size, so its sources sit at 539 offsets.
+- **The operand stack:** 100 slots on the frame, walked by ±8, so each of 244 slot offsets holds
+  every source.
+
+Collapsing would give about 24x (counted in the dump). Skipping it gives 1.48x. With the `__sort`
+and `emplace` skips too it is 0.80x, and with the demangler 0.60x at 86 s.
+
+**Skip-model pitfall.** For C++ names, `signature_match` `name` matched only the full `name@addr`
+form; a bare name silently matched nothing.
 
 ## Not yet explained
 
@@ -540,8 +555,10 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 - **Bound a function's `$globals` summary** (causes 1 and 6), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
-- **Instantiate a pure forwarding thunk's callee summary as its own summary** (cause 12), instead
-  of closing it over the thunk's formals. Or make the wild join skip self-loop edges.
+- **Write back only the memory below an address argument** (cause 12): measured 1.72x to 1.29x on
+  `a2050`, with every wild-relation row gone.
+- **Let a forwarding thunk take its callee's summary** (cause 12): measured 1.38x, 1.18x with the
+  write-back fix.
 - **Skip Lua's `reallymarkobject`** with no propagation (cause 5): measured 21-22x to about 1x,
   and sound for taint.
 - **Fix the model loader:** keep same-formal rows whose paths differ, and stop model paths from
