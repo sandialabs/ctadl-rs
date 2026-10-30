@@ -27,10 +27,11 @@ bipartite block, and every caller inherits it through summary composition. So:
 
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
 the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
-(`8e5c4179`), and for stripped allocators by shape (the `allocator` relation).
+(`8e5c4179`), and for stripped allocators by shape (the `allocator` relation). Cause 3 is fixed for
+binaries that name `memcpy` and `memset`, which are all four that still needed it.
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
-  cause in 21 sweep binaries, and cause 3 is still needed in 4. Cause 4 only multiplies cause 2,
+  cause in 21 sweep binaries, and cause 3 was still needed in 4 (now fixed). Cause 4 only multiplies cause 2,
   so it matters after that only on `hnapserver-combo`.
 - **5-9: one library each,** largest first. Cause 5 is 22x on two binaries. Cause 6 covers four
   binaries and sits inside the hubs of causes 2 and 8. Cause 7 never reaches a fixpoint. Cause 9
@@ -312,7 +313,7 @@ for a function with no allocator name, by dlmalloc's shape:
   On the stripped binaries the firmware model, being name-based, matches no endpoint, so their
   findings could not be compared.
 
-### 3. MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
+### 3. FIXED: MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
 
 **Binaries:** 17 of the 34 over-budget sweep binaries: every MIPS uClibc build with the assembly
 string functions. With cause 1 fixed and the allocator skipped, only 4 still need it:
@@ -383,6 +384,29 @@ gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
 - **The fix** is a model for `memcpy` and `memset`, or not merging pointer arithmetic. The
   firmware model already declares `memcpy`'s propagation, but the body is analyzed as well.
 - **PIC builds have a second copy.** A skip by name `memcpy` does not match `.pic.memcpy`.
+
+**The fix.** The native defaults skip the bodies of `memcpy`, `memset`, their `_chk` variants
+and the `.pic.` stub names (a MIPS non-PIC-to-PIC stub that falls through into its target, so
+Ghidra gives it the whole body), at priority -100. `memcpy` keeps its existing model,
+`.pic.memcpy` gets the same one, and `memset` gets `return.deref <- arg(0).deref`. The rest of the
+copy family is still analyzed: it was not measured, and `bcopy`'s model has its arguments
+backwards (`bcopy(src, dst, n)` is modeled as `dst, src`), so skipping its body would leave only a
+wrong model. Matching is by name. The 13 stripped binaries were already at or under 1.11x.
+
+- **Measured** on the commit against its parent (`0043b7e1`), on the 15 named-allocator sweep
+  binaries, as for cause 2 (re-imported with `CTADL_REUSE_FACTS=1`, firmware model, 24 GiB cap).
+  Run in `/Volumes/Shampoo/nb-work/memcpy/` (`scripts/one.sh`, `scripts/sum.sh`, `sum.txt`).
+
+  | Binary | Parent | With the skip |
+  |---|---|---|
+  | WN3500RP `kcairplay` | 3.72 GiB, 9.00x | 0.27 GiB, 0.66x |
+  | DAP-2310B `wifitool` | 1.01 GiB, 5.87x | 0.07 GiB, 0.40x |
+  | TD-W8970 `iptables` | 0.78 GiB, 2.09x | 0.12 GiB, 0.33x |
+  | DAP-2690 `captival_usockc` | 0.26 GiB, 1.30x | 0.08 GiB, 0.42x |
+  | The other 11 | 0.38-22.8x | unchanged within noise, at most +0.24x (`ipsWeb` and `evLua` are cause 5) |
+
+- **Findings are identical** on all 15, by rule, message (site numbers masked) and logical
+  location, including the three with 4 tainted paths each.
 
 ### 4. The context relations copy the context-free ones, under a decision on `$globals`
 
