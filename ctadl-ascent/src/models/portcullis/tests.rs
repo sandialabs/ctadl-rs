@@ -32,7 +32,7 @@ fn check_ok(text: &str) -> PortcullisFile {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn parses_the_design_examples() {
+fn parses_example_rules() {
     let program = parse(
         r#"
         // Flows java.net.URL.openConnection's "this" argument to return and sets return source
@@ -113,8 +113,8 @@ fn comments_are_skipped() {
     assert_eq!(program.rules.len(), 1);
 }
 
-/// The design's parsing note: `arity < -1` and `arity <- 1` differ by one space, maximal munch
-/// takes the arrow, and the parser must say so rather than pointing one token further on.
+/// `arity < -1` and `arity <- 1` differ by one space, maximal munch takes the arrow, and the
+/// parser must say so rather than pointing one token further on.
 #[test]
 fn arrow_in_attribute_position_is_named() {
     let err = check_err(r#"sink(F::arg(0)) :- fun(F, arity <- 1);"#);
@@ -130,8 +130,8 @@ fn arrow_in_attribute_position_is_named() {
 // Checking
 // ---------------------------------------------------------------------------
 
-/// The design's worked example: an operator before the atom that binds its variable is a
-/// load-time error, and the same two atoms the other way round are fine.
+/// An operator before the atom that binds its variable is a load-time error, and the same two
+/// atoms the other way round are fine.
 #[test]
 fn modes_are_checked_left_to_right() {
     let err = check_err(r#"sink(F::arg(0)) :- regex_match(F, ".foo.*"), fun(F);"#);
@@ -773,9 +773,7 @@ fn inert_keys_warn_and_change_nothing() {
 }
 
 /// A generator the JSON loader rejects fails to migrate with the loader's own errors (as the
-/// loader reported them), rather
-/// than a warning and a rule missing the part that was wrong. The old behavior for every one of
-/// these was a warning and a rule matching every function the rest of the `where` allowed.
+/// loader reported them), rather than a warning and a rule missing the part that was wrong.
 #[test]
 fn what_the_json_loader_rejects_does_not_migrate() {
     let cases: [(&str, &[&str]); 29] = [
@@ -1048,8 +1046,9 @@ fn migration_errors_name_every_bad_generator() {
     );
 }
 
-/// A field that is present and names nothing narrows to nothing in the JSON loader. These used
-/// to be "skipped", which kept the rest of the rule and so matched what it alone allowed.
+/// A field that is present and names nothing narrows to nothing in the JSON loader, so the
+/// migration writes no rule. Skipping the field instead would keep the rest of the rule and so
+/// match what it alone allowed.
 #[test]
 fn a_where_that_can_never_match_writes_no_rule() {
     for where_ in [
@@ -1479,8 +1478,8 @@ fn a_leading_not_follows_the_atom_that_binds_the_subject() {
     );
 }
 
-/// `in_function` constrains the caller wherever it appears. The JSON matcher applied it to the
-/// callee under `any_of` and `not`, which was a bug in it, not a meaning to carry across.
+/// `in_function` constrains the caller wherever it appears, under `any_of` and `not` too: one of
+/// the migration's differences from the JSON that `docs/portcullis.md` lists.
 #[test]
 fn in_function_under_a_combinator_still_constrains_the_caller() {
     let text = migrate_and_load(

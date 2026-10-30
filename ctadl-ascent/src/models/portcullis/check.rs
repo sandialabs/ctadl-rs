@@ -234,8 +234,8 @@ impl Relation {
             Relation::Subclass { .. } => 10,
             Relation::UsesField => 20,
             Relation::Param => 25,
-            // Ranked beside `fun`: the same four attributes are indexed, over a universe that is
-            // typically an order of magnitude smaller.
+            // Ranked beside `fun`: the same attributes are indexed, and `qualified-id` too, over a
+            // universe that is typically an order of magnitude smaller.
             Relation::CallSig => 28,
             Relation::Fun => 30,
             // Every function, once per name.
@@ -514,8 +514,8 @@ fn check_item(
 /// source(F::return) :- fun(F), !(name_of(F, N) && regex_match(N, "^get"));
 /// ```
 ///
-/// A negated *atom* is deliberately stricter, and matches the design: every variable in it must
-/// be bound, with `_` as the way to say "any value at all" (`!fun(F, parent = _)`).
+/// A negated *atom* is deliberately stricter: every variable in it must be bound, with `_` as the
+/// way to say "any value at all" (`!fun(F, parent = _)`).
 fn required_vars(item: &BodyItem, visible: &BTreeSet<String>) -> BTreeSet<String> {
     if is_generator(item) {
         return BTreeSet::new();
@@ -870,7 +870,7 @@ fn levenshtein_close(a: &str, b: &str) -> bool {
 // Head checking
 // ---------------------------------------------------------------------------
 
-/// A `local(L)` port: only a source or sink names one, the way `Variable(...)` was the JSON's
+/// A `local(L)` port: only a source or sink names one, the way `Variable(...)` is the JSON's
 /// source/sink-only port, and it hangs off the function `L` is a local of, never a call site.
 fn check_local_port(
     head: &Head,
@@ -1002,19 +1002,21 @@ fn check_head(
         }
     }
 
+    // Whether a flow's two ports resolve to the same anchor term; `None` when either has none.
+    let same_anchor = match (
+        anchors.first().copied().flatten(),
+        anchors.get(1).copied().flatten(),
+    ) {
+        (Some(a), Some(b)) => Some(same_term(a, b)),
+        _ => None,
+    };
+
     match &head.kind {
         HeadKind::Propagation { flow } => {
             // A propagation is one function's summary. Two anchors that are not the same
             // syntactic term cannot be the same function, and a call-site anchor is not a
             // function at all.
-            let same = match (
-                anchors.first().copied().flatten(),
-                anchors.get(1).copied().flatten(),
-            ) {
-                (Some(a), Some(b)) => same_term(a, b),
-                _ => true,
-            };
-            if !same {
+            if !same_anchor.unwrap_or(true) {
                 errors.push(PortcullisError::Rule {
                     message: "a propagation is one function's summary, so both ports must be \
                               anchored at the same function. Use 'bridge' to connect two \
@@ -1038,14 +1040,7 @@ fn check_head(
             }
         }
         HeadKind::Bridge { flow } => {
-            let same = match (
-                anchors.first().copied().flatten(),
-                anchors.get(1).copied().flatten(),
-            ) {
-                (Some(a), Some(b)) => same_term(a, b),
-                _ => false,
-            };
-            if same {
+            if same_anchor.unwrap_or(false) {
                 errors.push(PortcullisError::Rule {
                     message: "both ports of this bridge are anchored at the same function, which \
                               is a propagation. Write 'propagation' instead."
@@ -1108,22 +1103,15 @@ fn check_head(
             }
             // Both ports of a dispatch flow describe the *same* signature's summary, exactly as
             // a propagation describes one function's.
-            if let Some(flow) = disposition.flow() {
-                let same = match (
-                    anchors.first().copied().flatten(),
-                    anchors.get(1).copied().flatten(),
-                ) {
-                    (Some(a), Some(b)) => same_term(a, b),
-                    _ => true,
-                };
-                if !same {
-                    errors.push(PortcullisError::Rule {
-                        message: "a dispatch model is one signature's summary, so both ports \
-                                  must be anchored at the same 'callsig' key."
-                            .to_string(),
-                        span: flow.span,
-                    });
-                }
+            if let Some(flow) = disposition.flow()
+                && !same_anchor.unwrap_or(true)
+            {
+                errors.push(PortcullisError::Rule {
+                    message: "a dispatch model is one signature's summary, so both ports must \
+                              be anchored at the same 'callsig' key."
+                        .to_string(),
+                    span: flow.span,
+                });
             }
         }
         HeadKind::Mode(mode) => {

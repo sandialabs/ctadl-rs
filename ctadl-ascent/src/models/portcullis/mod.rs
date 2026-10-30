@@ -1,9 +1,9 @@
 /*! The model-matching DSL: a small Datalog with an execution engine.
 
 A model file is a list of rules. Each derives one or more *output* atoms — `source`, `sink`,
-`propagation`, `bridge`, `access_paths`, `dispatch` — from a conjunction of atoms over the
-*input* relations the analyzer already has: `fun`, `callsig`, `param`, `callsite`, `subclass`,
-`uses_field`.
+`propagation`, `bridge`, `access_paths`, `dispatch`, and the mode heads such as `skip_analysis` —
+from a conjunction of atoms over the *input* relations the analyzer already has: `fun`,
+`name_of`, `callsig`, `param`, `local`, `callsite`, `subclass`, `uses_field`.
 
 ```text
 // java.net.URL.openConnection: the receiver flows to the return value, which is a source
@@ -37,8 +37,8 @@ programs in one body, and no single import satisfies it; the body's connected co
 accumulated separately and joined at the end. See [`eval`].
 
 The phase is fixed when the matcher is built. `index` keeps the propagation / bridge /
-access-path / dispatch / mode heads and `query` keeps the source / sink ones, and a rule with no head
-for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
+access-path / dispatch / mode heads and `query` keeps the source / sink ones, and a rule with no
+head for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
 dropping them in silence; a rule contributing at least one head to the running phase is never
 counted.
 */
@@ -255,7 +255,7 @@ impl PortcullisFile {
     }
 
     /// Reads a model file: a DSL one as written, a JSON / JSON5 / JSONL one through
-    /// [`Self::read_json`]. A path [`is_portcullis_path`] does not claim is JSON, as it always was.
+    /// [`Self::read_json`]. Any path [`is_portcullis_path`] does not claim is read as JSON.
     pub fn read(path: impl AsRef<FsPath>) -> Result<Self, Error> {
         let path = path.as_ref();
         if !is_portcullis_path(path) {
@@ -266,7 +266,7 @@ impl PortcullisFile {
         Self::from_text(path.to_path_buf(), text)
     }
 
-    /// Migrates a JSON model file and loads the migration, so that it runs on the one engine.
+    /// Migrates a JSON model file and loads the migration.
     ///
     /// Warns that the format is deprecated, once per file per process, and logs what the
     /// migration left out. A generator that does not translate exactly fails the load with
@@ -417,7 +417,7 @@ pub fn warn_json_deprecated(path: &FsPath) -> bool {
     true
 }
 
-/// Every DSL file a run was given, parsed once before the import loop.
+/// Every model file a run was given, parsed once before the import loop.
 #[derive(Default)]
 pub struct PortcullisModelSet {
     pub files: Vec<PortcullisFile>,
@@ -510,9 +510,8 @@ pub struct PortcullisMatcher<'a> {
     phase: Phase,
     /// `[file][rule]`. `None` for a rule the phase skips.
     rules: Vec<Vec<Option<RuleState>>>,
-    /// Per file, what emission reported so far. Held to `finish`, which is where a load has
-    /// always reported them, and deduplicated, since a per-import rule says the same thing about
-    /// every import.
+    /// Per file, what emission reported so far. Held to `finish`, which is where a load reports
+    /// them, and deduplicated, since a per-import rule says the same thing about every import.
     errors: Vec<PortcullisErrors>,
     /// Per file, the rows each label emitted so far.
     emitted: Vec<emit::Emitted>,
@@ -709,9 +708,8 @@ pub fn program_facts(
 /// Loads one model file against one program, in one shot; a JSON one is migrated first, see
 /// [`PortcullisFile::read`].
 ///
-/// The shape a caller with a single program in hand wants — a test, `ctadl query` after the
-/// import loop, the flowy codegen path. A run with several imports uses [`PortcullisMatcher`]
-/// directly so a rule spanning two of them can still fire.
+/// For a caller with a single program in hand. A run with several imports uses
+/// [`PortcullisMatcher`] directly so a rule spanning two of them can still fire.
 pub fn try_load_portcullis_models(
     index: &ProgramMatchIndex<'_>,
     path: impl AsRef<FsPath>,
@@ -801,8 +799,7 @@ pub struct PortcullisFileReport {
     pub phase: Phase,
     /// Parallel to the file's rules.
     pub rules: Vec<RuleStats>,
-    /// Parallel to `rules`: what diagnostics call each, [`PortcullisFile::label`]. The rule's own
-    /// index in a DSL file, its generator's in a migrated JSON one.
+    /// Parallel to `rules`: what diagnostics call each, [`PortcullisFile::label`].
     pub labels: Vec<usize>,
     /// Rules whose heads all belong to the other phase. Counted by label, so a JSON generator
     /// migrated to several rules counts once.

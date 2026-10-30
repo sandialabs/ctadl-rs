@@ -2,8 +2,8 @@
 //!
 //! `models/portcullis/tests.rs` covers syntax, checking and migration, none of which needs an
 //! artifact. Everything here needs one: the built-in relations are a view of a program, so what
-//! `fun`, `param`, `local`, `callsite`, `subclass` and `uses_field` actually *contain* can only be pinned by
-//! matching against one.
+//! `fun`, `param`, `local`, `callsite`, `subclass` and `uses_field` actually *contain* can only be
+//! pinned by matching against one.
 
 use std::collections::BTreeSet;
 
@@ -191,7 +191,7 @@ fn fun_matches_on_name_and_parent() {
     );
 }
 
-/// The design's `parent in {...}` example, which is the whole point of the set syntax.
+/// `parent in {...}` is a union over the set, which is the whole point of the set syntax.
 #[test]
 fn a_parent_set_is_a_union() {
     let program_info = java_program();
@@ -221,7 +221,7 @@ fn arity_and_has_code_read_the_ir() {
     );
 }
 
-/// The design's `sink(F::arg(I)) :- fun(F), param(F, I)` — a port index bound in the body.
+/// `sink(F::arg(I)) :- fun(F), param(F, I)` — a port index bound in the body.
 #[test]
 fn param_expands_a_port_over_the_arity() {
     let program_info = java_program();
@@ -253,7 +253,7 @@ fn callsite_joins_a_caller_to_its_callee() {
     assert_eq!(matches.endpoints.len(), 1);
     let endpoint = &matches.endpoints[0];
     // A port anchored at a site names the callee, restricted to that caller: that is exactly
-    // the shape `find: callsites` with an `in_function` produced.
+    // the shape `find: callsites` with an `in_function` migrates to.
     assert_eq!(
         endpoint.function.to_string(),
         "Lc/Log;->emit(Ljava/lang/String;)V"
@@ -485,7 +485,7 @@ fn source_and_sink_flags_reach_the_match() {
         .expect("a sink");
     assert!(!sink.wildcard);
     assert!(!sink.saturating);
-    // `wildcard` defaults to true, which is the existing sink semantics.
+    // `wildcard` defaults to true.
     let defaulted = run(
         &program_info,
         r#"sink(F::arg(0)) :- fun(F, name = "emit");"#,
@@ -539,8 +539,7 @@ fn a_head_fires_once_per_distinct_binding_of_its_own_variables() {
 // Bridging across imports
 // ---------------------------------------------------------------------------
 
-/// The design's motivating case: one rule names a callee in a Lua import and its implementation
-/// in a pcode one. No single import satisfies the body, so this only works because the body's
+/// One rule names a callee in a Lua import and its implementation in a pcode one. No single import satisfies the body, so this only works because the body's
 /// components are accumulated separately and joined after the loop.
 #[test]
 fn a_bridge_rule_spans_two_imports() {
@@ -882,10 +881,9 @@ fn a_quoted_segment_decodes_to_the_symbol_it_names() {
     );
 }
 
-/// The design's callsite-anchored bridge example. A bridge attaches *inside* a function, so a
-/// site anchor is a load-time error naming the way to write it — not a silent degradation to
-/// the function-anchored form, which would bridge every call site while looking like it bridged
-/// one.
+/// A bridge attaches *inside* a function, so a call-site anchor is a load-time error naming the
+/// way to write it — not a silent degradation to the function-anchored form, which would bridge
+/// every call site while looking like it bridged one.
 #[test]
 fn a_callsite_anchored_bridge_says_how_to_write_it() {
     let result = portcullis::PortcullisFile::from_text(

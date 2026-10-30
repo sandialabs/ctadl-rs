@@ -1,8 +1,8 @@
 /**
  * @file Tree-sitter grammar for Portcullis, the ctadl model language (.ctadl).
  *
- * This is a port of the peg grammar in `../src/models/portcullis/parse.rs` and should accept the same
- * language, except that it cannot reject an integer too large for 64 bits (peg parses it and
+ * This is a port of the peg grammar in `../src/models/portcullis/parse.rs` and should accept the
+ * same language, except that it cannot reject an integer too large for 64 bits (peg parses it and
  * the builder rejects it). Node names follow the peg rules (`rule`, `head_atom`, `anchor`,
  * `out_rel`, `flow`, `port`, `port_base`, `rel_atom`, `attr_op`, ...). Rules that carry no
  * information of their own here (`head_arg`, `rel_arg`, `term`, `literal`, `rhs`, `arg_sel`,

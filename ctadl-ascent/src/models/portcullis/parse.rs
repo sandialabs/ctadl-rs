@@ -7,11 +7,7 @@ so this is where `source(F::return <- F::arg(0))` is rejected as a flow where a 
 Second, `<-` is lexed in attribute position (see the note on `attr_op`) precisely so the message
 can be "arrow not allowed here" instead of a parse error pointing one token past the mistake.
 
-The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving one or
-more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`, `dispatch`,
-`skip_analysis`) from a
-conjunction of *input* atoms over the built-in relations. See `models/portcullis/mod.rs` for the
-semantics.
+The language itself, and its semantics, are described in [`super`].
 */
 
 use ctadl_ir::mir::{Offset, PathSegment, Symbol};
@@ -481,7 +477,7 @@ impl Builder {
             return self.dispatch_head(span, ports, flows, literals, attrs);
         }
         // Every output relation takes exactly one subject; several subjects are written as
-        // several comma-separated head atoms, which is what the design's multi-port examples do.
+        // several comma-separated head atoms.
         let subjects = ports.len() + flows.len() + literals.len();
         if subjects != 1 {
             self.error(
@@ -937,8 +933,7 @@ impl Builder {
             ">=" => Some(CmpOp::Ge),
             "in" => Some(CmpOp::In),
             "<-" => {
-                // Lexed on purpose; see the note on `attr_op`. `arity <- 1` and `arity < -1`
-                // differ by one space, and maximal munch takes the arrow.
+                // Lexed on purpose; see the note on `attr_op`.
                 self.error(
                     op.1,
                     "'<-' is a flow arrow and is not allowed here. For a comparison against a \

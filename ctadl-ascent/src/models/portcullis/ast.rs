@@ -181,7 +181,7 @@ impl FunctionMode {
     }
 }
 
-/// The three things a `dispatch` head can say. Exactly one per head, which is what keeps
+/// What a `dispatch` head says. Exactly one per head, which is what keeps
 /// "forgot the model" and "meant to discard" different documents.
 #[derive(Clone, Debug)]
 pub enum DispatchHead {
@@ -440,7 +440,7 @@ impl Program {
 
 /// Every relation name the language reserves, whether or not a rule can currently use it.
 ///
-/// The design reserves *all* relation names: they are built in, so a model file cannot define
+/// The language reserves *all* relation names: they are built in, so a model file cannot define
 /// one, and a name that is not here is a typo rather than a user relation.
 pub const BUILTIN_RELATIONS: &[&str] = &[
     "fun",
