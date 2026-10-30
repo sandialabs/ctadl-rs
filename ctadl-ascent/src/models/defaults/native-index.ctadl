@@ -251,10 +251,11 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
 // lists. The internals are skipped too, for the callers outside `malloc` and `free` (`mallopt`,
 // `malloc_trim`).
 //
-// `allocator` lists the entry points by name (docs/portcullis.md §3). Only those found by name
-// are skipped here; a stripped allocator is still analyzed.
+// `allocator` finds the entry points by name, or in a stripped binary by dlmalloc's shape
+// (docs/portcullis.md §3). Every by-shape pick is reported as CTADL0109; `analyze(F)` keeps a
+// body picked by mistake.
 skip_analysis(F, priority = -100) :-
-  allocator(F, by = "name", kind in {"malloc", "free", "internal"});
+  allocator(F, kind in {"malloc", "free", "internal"});
 
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
 // a flow through every grow-the-buffer loop in a parser. The body is skipped as for `malloc`:
@@ -262,7 +263,7 @@ skip_analysis(F, priority = -100) :-
 // contribute.
 skip_analysis(F, priority = -100),
   propagation(F::return.deref <- F::arg(0).deref) :-
-  allocator(F, by = "name", kind = "realloc");
+  allocator(F, kind = "realloc");
 
 // ---- the C++ exception unwinder ----
 // These carry NO propagation and exist purely for `skip_analysis(F)`, which tells the

@@ -1876,3 +1876,29 @@ fn stores_at_a_call_are_not_the_functions_own() {
     }
     assert!(allocators(&program_info, "fun(F)").is_empty());
 }
+
+/// The native defaults skip a stripped allocator's bodies too, and an `analyze` keeps one.
+#[test]
+fn the_defaults_skip_an_allocator_found_by_shape() {
+    let program_info = stripped_allocator();
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut out = ProgramModelMatches::default();
+    ctadl_ascent::models::try_load_default_models(&index, &mut out).unwrap();
+    let mut names = skipped(&out);
+    names.sort();
+    assert_eq!(names, ["FUN_free", "FUN_malloc", "FUN_realloc"]);
+
+    let file = portcullis::PortcullisFile::from_text(
+        "user.ctadl",
+        r#"analyze(F) :- fun(F), F = "FUN_malloc";"#,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    matcher.observe_import(&index, &mut out);
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    out.check_mode_conflicts().unwrap();
+    let mut names = skipped(&out);
+    names.sort();
+    assert_eq!(names, ["FUN_free", "FUN_realloc"]);
+}
