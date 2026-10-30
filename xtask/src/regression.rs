@@ -12,6 +12,7 @@
 //! explicitly; see [`Worker`] and [`scratch_dir`].
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,9 +20,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_import::notifications::{
-    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
+    self, NOTIFICATIONS_FILE, Notifications, STACK_SLOTS_PROMOTED_FULLY,
 };
 
 use crate::android_icc;
@@ -103,7 +104,7 @@ pub struct Options {
     /// Either way the binary is rebuilt from current source before any case
     /// runs; see [`build_ctadl`].
     pub release: bool,
-    /// The `--mem2reg` policy every `ctadl index` runs with, through [`MEM2REG_ENV`]. `None`
+    /// The `--mem2reg` policy every `ctadl index` runs with; see [`ctadl_command`]. `None`
     /// runs the default. A policy that can lose flows (`full:0` promotes every function fully)
     /// turns a lost flow into a report; see [`explain_lost_flow`].
     pub mem2reg: Option<String>,
@@ -164,13 +165,9 @@ pub(crate) enum Outcome {
 /// Run the suite. Returns `Ok(true)` if every selected case passed or was
 /// skipped, `Ok(false)` if any failed.
 pub fn run(opts: &Options) -> Result<bool> {
-    // Every `ctadl` the cases spawn inherits this, so it is set before any worker starts. Without
-    // `--mem2reg` it is cleared, so a value left in the caller's shell cannot change the default
-    // run.
-    match &opts.mem2reg {
-        Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
-        None => std::env::remove_var(MEM2REG_ENV),
-    }
+    MEM2REG
+        .set(opts.mem2reg.clone())
+        .map_err(|_| anyhow::anyhow!("internal error: regression suite run more than once"))?;
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
 
     let mut cases = discovery::discover(&tests_dir)?;
@@ -552,17 +549,19 @@ fn run_tasks(
 
     std::thread::scope(|scope| {
         for worker in &workers {
-            scope.spawn(move || loop {
-                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                    break;
-                };
-                let task = &tasks[index];
-                let start = Instant::now();
-                let outcomes = task.run(worker, opts);
-                let elapsed = start.elapsed();
-                // Held only to push a finished result; no test work happens
-                // under the lock.
-                results.lock().unwrap().push((index, outcomes, elapsed));
+            scope.spawn(move || {
+                loop {
+                    let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let task = &tasks[index];
+                    let start = Instant::now();
+                    let outcomes = task.run(worker, opts);
+                    let elapsed = start.elapsed();
+                    // Held only to push a finished result; no test work happens
+                    // under the lock.
+                    results.lock().unwrap().push((index, outcomes, elapsed));
+                }
             });
         }
     });
@@ -774,9 +773,6 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
         other => other,
     }
 }
-
-/// The environment variable `ctadl index` reads its `--mem2reg` default from.
-const MEM2REG_ENV: &str = "CTADL_MEM2REG";
 
 /// Judges a failed case run under `--mem2reg <policy>` by the notifications its indexes wrote.
 ///
@@ -1358,6 +1354,27 @@ pub(crate) fn ctadl_bin() -> Result<PathBuf> {
     )
 }
 
+/// The `--mem2reg` policy from [`Options::mem2reg`]. Set once by [`run`] before any worker starts.
+static MEM2REG: OnceLock<Option<String>> = OnceLock::new();
+
+/// `ctadl <args>` with [`ctadl_bin`]; see [`ctadl_command_with`].
+pub(crate) fn ctadl_command<S: AsRef<OsStr>>(args: &[S]) -> Result<Command> {
+    Ok(ctadl_command_with(&ctadl_bin()?, args))
+}
+
+/// `<ctadl> <args>`. A `ctadl index` is also passed the suite's `--mem2reg` policy, if one was
+/// given. Every case spawns `ctadl` through here, so none misses the policy.
+pub(crate) fn ctadl_command_with<S: AsRef<OsStr>>(ctadl: &Path, args: &[S]) -> Command {
+    let mut cmd = Command::new(ctadl);
+    cmd.args(args);
+    if let Some(Some(policy)) = MEM2REG.get()
+        && args.first().is_some_and(|a| a.as_ref() == "index")
+    {
+        cmd.arg("--mem2reg").arg(policy);
+    }
+    cmd
+}
+
 /// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
 ///
 /// The default flow rebuilds `ctadl` from the tree under test so a stale binary
@@ -1446,10 +1463,11 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
         };
         // The `ctadl` binary's compiler-artifact carries the path we want in its
         // (non-null) `executable` field.
-        if msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "ctadl" {
-            if let Some(path) = msg["executable"].as_str() {
-                exe = Some(PathBuf::from(path));
-            }
+        if msg["reason"] == "compiler-artifact"
+            && msg["target"]["name"] == "ctadl"
+            && let Some(path) = msg["executable"].as_str()
+        {
+            exe = Some(PathBuf::from(path));
         }
     }
 
@@ -1472,10 +1490,8 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
 }
 
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     exec::run_checked(
         cmd,
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
@@ -1781,10 +1797,8 @@ fn guess_java_home() -> Option<PathBuf> {
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -1805,10 +1819,8 @@ fn run_ctadl_logged(
     args: &[&str],
     log: &str,
 ) -> Result<String> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -2048,10 +2060,10 @@ fn run_jni(
         "warn,ctadl=info,ctadl_ascent::languages::jni=debug".to_string(),
     ));
     let index_log = run_ctadl_logged(&work, &state, &index_env, &index_args, "index.log")?;
-    if let Some(expected) = assertions::read_untyped_native_layout(config)? {
-        if let Some(why) = check_native_layout(&index_log, untyped, &expected) {
-            return Ok(Outcome::Fail(why));
-        }
+    if let Some(expected) = assertions::read_untyped_native_layout(config)?
+        && let Some(why) = check_native_layout(&index_log, untyped, &expected)
+    {
+        return Ok(Outcome::Fail(why));
     }
     ctadl(
         &[
@@ -2665,10 +2677,10 @@ impl Worker {
             ),
         ];
         // Guess JAVA_HOME from `java` if the environment did not set it.
-        if std::env::var_os("JAVA_HOME").is_none() {
-            if let Some(java_home) = guess_java_home() {
-                ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
-            }
+        if std::env::var_os("JAVA_HOME").is_none()
+            && let Some(java_home) = guess_java_home()
+        {
+            ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
         }
         Ok(Self { ghidra_env })
     }
@@ -2719,9 +2731,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
+    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
     use ctadl_import::notifications::{
-        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+        DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 

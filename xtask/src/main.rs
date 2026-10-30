@@ -39,7 +39,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::discovery::Frontend;
 
@@ -105,7 +105,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil");
+                    bail!(
+                        "--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil"
+                    );
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -502,7 +504,7 @@ Tasks:
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_regression_args, Frontend};
+    use super::{Frontend, parse_regression_args};
     use std::collections::BTreeSet;
 
     fn frontends(args: &[&str]) -> BTreeSet<Frontend> {

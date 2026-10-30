@@ -66,15 +66,15 @@ pub fn run(inputs: &[Input], fixtures: &Path, goldens: &Path, work: &Path) -> Re
             Ok(swept) => {
                 let line = total.add(&swept);
                 let _ = writeln!(summary, "{} {line}", input.id());
-                if let Some(s) = &swept.stats {
-                    if s.address_disagreements > 0 {
-                        failures.push(format!(
-                            "sweep {}: {} input(s) the flow layer traces and the frontend does \
+                if let Some(s) = &swept.stats
+                    && s.address_disagreements > 0
+                {
+                    failures.push(format!(
+                        "sweep {}: {} input(s) the flow layer traces and the frontend does \
                              not",
-                            input.id(),
-                            s.address_disagreements
-                        ));
-                    }
+                        input.id(),
+                        s.address_disagreements
+                    ));
                 }
             }
             Err(e) => {

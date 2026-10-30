@@ -36,10 +36,10 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_ascent::models::{
-    try_check_jsonl_models, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions,
-    ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
+    CIL_DEFAULT_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions, ModelPort,
+    ProgramMatchIndex, ProgramModelMatches, try_check_jsonl_models,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{

@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use dex_reader::collect_line_map_entries;
 use dex_reader::parser::*;
 use dex_reader::{APKParser, DexParser};
@@ -503,16 +503,15 @@ fn parse_dex_fully(label: &str, buffer: &[u8]) -> Result<()> {
             if let Some(code_item) = method
                 .code(buffer)
                 .with_context(|| format!("code item for {label}"))?
+                && let Some(ref handlers) = code_item.handlers
             {
-                if let Some(ref handlers) = code_item.handlers {
-                    // Handler lookup may legitimately return None; we only care
-                    // that the lookup itself does not panic.
-                    let _looked_up: BTreeSet<bool> = code_item
-                        .tries
-                        .iter()
-                        .map(|t| handlers.get_by_off(t.handler_off).is_some())
-                        .collect();
-                }
+                // Handler lookup may legitimately return None; we only care
+                // that the lookup itself does not panic.
+                let _looked_up: BTreeSet<bool> = code_item
+                    .tries
+                    .iter()
+                    .map(|t| handlers.get_by_off(t.handler_off).is_some())
+                    .collect();
             }
         }
     }

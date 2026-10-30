@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// A single regression test case.
 pub struct TestCase {
@@ -160,7 +160,9 @@ impl FromStr for Frontend {
             "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
             "cil" => Ok(Frontend::Cil),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil)")
+                bail!(
+                    "unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil)"
+                )
             }
         }
     }
@@ -184,7 +186,9 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
             return Ok(path.to_path_buf());
         }
     }
-    bail!("could not find a tests directory (looked for `nightly/tests` and `tests`); pass --tests-dir")
+    bail!(
+        "could not find a tests directory (looked for `nightly/tests` and `tests`); pass --tests-dir"
+    )
 }
 
 /// Discover all cases under `tests_dir`, sorted by name for deterministic order.
@@ -466,7 +470,7 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_android_icc, discover_jni, to_kebab_case, Frontend, Kind, Packaging};
+    use super::{Frontend, Kind, Packaging, discover_android_icc, discover_jni, to_kebab_case};
 
     /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
     /// yields a second, declaratively-bridged case beside it.

@@ -20,14 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use ctadl_import::notifications::{
-    self, Notifications, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE,
+    self, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE, Notifications,
 };
 use serde_json::Value;
 
 use crate::exec;
-use crate::regression::{ctadl_bin, Outcome};
+use crate::regression::{Outcome, ctadl_command};
 
 /// The import name every check shares. One import, read by all of them.
 const IMPORT: &str = "app";
@@ -999,10 +999,8 @@ fn import(work: &Path, state: &Path, apk: &Path, extra: &[&str]) -> Result<()> {
 /// A `ctadl` invocation against the scratch store. `XDG_STATE_HOME` rather than `--store`, so
 /// the default store resolution is exercised too -- it is what a user gets.
 fn command(work: &Path, state: &Path, args: &[&str]) -> Result<Command> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     Ok(cmd)
 }
 
@@ -1065,7 +1063,7 @@ mod tests {
     /// and fails without the file, without the notification, or with a not-split one.
     #[test]
     fn merged_classes_are_read_from_notifications() {
-        use ctadl_import::notifications::{Level, DEFAULT_MESSAGE};
+        use ctadl_import::notifications::{DEFAULT_MESSAGE, Level};
         use std::collections::BTreeMap;
 
         let dir = std::env::temp_dir().join(format!("xtask_merged_{}", std::process::id()));
