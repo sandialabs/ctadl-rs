@@ -31,7 +31,9 @@ number, and the rest are one library each. Fix cause 7 first.
 ### 1. A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
 
 **Binaries:** 25 of the 34 sweep binaries over 1.5x, including both that ran out of memory. All
-link uClibc's `malloc` (dlmalloc).
+link uClibc's `malloc` (dlmalloc). With cause 7 fixed it is still the largest cause in 21 of them,
+at 4-35x. The other cause-7-fixed numbers are in the Benchmarks table. The table below was
+measured before the fix, so its "Default" column includes cause 7.
 
 | Binary | Default (x budget) | `malloc` skipped | Whole allocator skipped |
 |---|---|---|---|
@@ -110,8 +112,16 @@ link uClibc's `malloc` (dlmalloc).
 
 ### 2. The context relations copy the context-free ones, under a decision on `$globals`
 
-**Binaries:** the 13 binaries that were "problem 1", which all link the allocator of cause 1. This
-cause roughly doubles what cause 1 leaves.
+**Binaries:** the 13 binaries that were "problem 1". All of them link the allocator of cause 1.
+
+- **Cause 2 multiplies cause 1's block. It is not a residual of its own.** With cause 7 fixed and
+  the whole allocator skipped, `--hybrid-context none` changes the peak by under 5% in all 14
+  binaries where it applies. The exceptions are `hnapserver-combo` (1.07x to 0.75x, real
+  decisions, below) and `captival_usockc` (1.26x to 1.20x).
+- **With the allocator present it is worth 1.4-3.7x:** `mxcam` 18.5x to 5.0x, `upnpd` 18.9x to
+  8.9x, `adb` 14.4x to 5.7x.
+- **The "`malloc` skipped plus `none`" column below** was measured before cause 7's fix and
+  without `realloc` skipped, so it measured `realloc`'s block, not a cause-2 residual.
 
 - **97-99.9% of the context rows are duplicates.** That holds for `context_locals`,
   `context_assign` and `context_summary`, in 7 dumps. Each row is identical, once its decision set
@@ -424,7 +434,11 @@ rules replaced with `edge_split`.
 ### 11. MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
 
 **Binaries:** 17 of the 34 over-budget sweep binaries: every MIPS uClibc build with the assembly
-string functions. Skipping `memcpy` and `memset` saves about 10x in `kcairplay` and `wifitool`,
+string functions. With cause 7 fixed and the allocator skipped, only 4 still need it:
+`kcairplay` 9.04x, `wifitool` 5.81x, `iptables` 2.12x and `captival_usockc` 1.26x. In the first
+three it is the largest cause. The other 13 are already at or under 1.11x. With `memcpy` and
+`memset` skipped too, all 17 are at or under 0.76x. The table below was measured before cause 7's
+fix. Skipping `memcpy` and `memset` saves about 10x in `kcairplay` and `wifitool`,
 2.2-2.8x in `iptables`, `captival_usockc` and `upnpd`, and 1.2-1.6x in the other 12. It looked like
 a uClibc stdio hub (`fputs_unlocked`, `__stdio_fwrite`), but stdio only spreads it.
 
@@ -543,9 +557,17 @@ form; a bare name silently matched nothing.
 
 ## Not yet explained
 
-Nothing over budget is left unexplained. Every sweep binary, every app and every residual is
-within budget, or within 1.2x of it, once its named causes are removed. The open questions are
-listed per cause: whether a fix keeps findings, and the estimated collapse factors.
+With cause 7 fixed and the named skips, nothing is left over budget. One thing measured in the
+re-baseline is not traced:
+
+- **On DSP-W115, the cause-7 fix makes the allocator's blowup worse.** In `GpioForCrond` and
+  `testI2C`, with `malloc` present, the fix nearly doubles `locals`: `GpioForCrond` under `none` goes
+  from 75.9 M to 139.5 M. Their defaults, and `hnapserver-combo`'s, are still killed at 16 GiB
+  (762-828 s). Partial runs show `context_locals` already above the sweep's final value (42.8 M and
+  44.5 M). With `malloc` skipped, the fix still helps 2.4x, and the allocator skip takes all three
+  to 0.37x, 0.38x and 1.07x. Likely mechanism (not measured): keying temps on the real global's
+  address merges each temp with its global, so the allocator's `$globals` block reaches more
+  real cells than it did through private fake ones.
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
@@ -604,49 +626,61 @@ at a time beside the ct-bench daemon (so times are loose; peaks are per process)
   `/Volumes/Shampoo/datasets/operation-mango-public/firmware/`; the four `fw-*` ids are copies in
   `/Volumes/Shampoo/p1-fw/`.
 
-Every binary at 1.5x or more under the default (`--frame update`, `window:8`), worst first.
-"Kept" is the stack accesses `window:8` leaves in memory:
+Every binary at 1.5x or more under the default (`--frame update`, `window:8`), in the sweep's
+order.
+- **"Sweep"** is the sweep's peak (P1's build; re-indexing `fw-chat`, `fw-sdkmips` and `gzip` on
+  this branch matches it within 1%).
+- **"Cause 7 fixed"** is the same binary re-imported with the cause-7 fix
+  (`CTADL_EXP_GLOBAL_HVAR=addr`), under the defaults.
+- **"Plus the named skips"** removes, in order:
+  - the allocator (`malloc`, `realloc`, `free`, `calloc`; picked by shape when stripped);
+  - `--hybrid-context none` (cause 2);
+  - `memcpy`/`memset` (cause 11);
+  - for causes 3-5, the named hub.
+- **"Causes, largest first"** gives the factor each step removes; factors under 1.3x are left out.
+- **"Kept"** is the stack accesses `window:8` leaves in memory.
+- Each run was checked to skip exactly the bodies its model names. Picks are in
+  `/Volumes/Shampoo/nb-work/r-rebase/{alloc,mm}.tsv`, and runs in `/Volumes/Shampoo/nb-work/r-rebase/out/`.
 
-| Binary | Id | IR | `locals` | Peak | Against budget | Kept | Cause |
+| Binary | Id | IR | Sweep | Cause 7 fixed | Plus the named skips | Causes, largest first | Kept |
 |---|---|---|---|---|---|---|---|
-| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 1 |
-| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 1, 11 |
-| D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 74.9 M | 27.30 GiB | 104x | 367 | 1, 2 |
-| D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 69.5 M | 23.65 GiB | 94x | 357 | 1, 2 |
-| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 44.9 M | 22.14 GiB | 58x | 380 | 1, 2, 11 |
-| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 22.7 M | 16.99 GiB | 41x | 551 | 1, 2, 11 |
-| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 65.4 M | 21.81 GiB | 39x | 1,038 | 1, 2, 11 |
-| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 37.9 M | 13.87 GiB | 38x | 209 | 1, 2, 11 |
-| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1, 2, 11 |
-| Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 37.5 M | 13.08 GiB | 30x | 415 | 1 |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 26.6 M | 4.56 GiB | 22x | 3 | 5 |
-| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | 1, 2, 11 |
-| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | 1, 2, 11 |
-| D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 19.2 M | 3.18 GiB | 22x | 0 | 5 |
-| D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 130.8 M | 7.27 GiB | 20x | 1,489 | 1 |
-| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 1, 11 |
-| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | 1, 11 |
-| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | 1, 11 |
-| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1, 2, 11 |
-| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 1, 11 |
-| D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 33.4 M | 6.68 GiB | 15x | 392 | 1 |
-| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | 1, 2, 11 |
-| Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 107.5 M | 6.43 GiB | 11x | 2,014 | 7, 8 |
-| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 15.9 M | 4.65 GiB | 11x | 1,735 | 1, 2, 11 |
-| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 6.0 M | 2.33 GiB | 10x | 222 | 1, 2, 11 |
-| D-Link DIR-868L `mydlink/signalc` | `817d77ed2df42ecc` | 3.3 MB | 13.3 M | 3.07 GiB | 10x | 45 | 1 |
-| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 6.9 M | 2.49 GiB | 9.8x | 669 | 1, 2, 11 |
-| D-Link DSN-5000 `bin/gzip` | `32a8fd8ec075ee3e` | 2.0 MB | 6.7 M | 1.64 GiB | 9.0x | 2 | 7, 8 |
-| Netgear MBM621 `bin/chat` | `fw-chat` | 1.2 MB | 13.3 M | 0.93 GiB | 8.5x | 80 | 1 |
-| D-Link DSN-5000 `bin/tar` | `c6c8ca0b29fadb65` | 5.2 MB | 54.7 M | 3.03 GiB | 6.3x | 14 | 7, 8 |
-| Tenda AC15 `usr/bin/nginx` | `fw-nginx` | 11.2 MB | 318.9 M | 5.23 GiB | 5.0x | 539 | 3 |
-| D-Link DSN-3200 `bin/tar` | `f10a8a500d6fe5d5` | 5.0 MB | 41.3 M | 1.96 GiB | 4.2x | 14 | 7, 8 |
-| Linksys EA6350v4 `bin/ntfsdebug` | `120cca2b628a34d5` | 5.5 MB | 12.8 M | 0.92 GiB | 1.8x | 1,188 | 4 |
-| Linksys EA6900v2 `bin/ntfslabel` | `d9bd68cc9006e841` | 5.1 MB | 12.1 M | 0.83 GiB | 1.7x | 1,110 | 4 |
+| D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | killed at 32 GiB | killed at 16 GiB, 814 s (≥ 33x) | 0.75x | 1 (≥ 31x), 2 (1.4x; gSOAP, see below) | 1,242 |
+| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | killed at 32 GiB | 8.13 GiB, **14.35x** | 0.60x | 1 (17.6x), 7 (≥ 3.9x), 11 (1.4x) | 484 |
+| D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 27.30 GiB, 104x | killed at 16 GiB, 828 s (≥ 61x) | 0.36x | 1 (≥ 165x), 7 (≥ 1.7x) | 367 |
+| D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 23.65 GiB, 94x | killed at 16 GiB, 762 s (≥ 64x) | 0.37x | 1 (≥ 169x), 7 (≥ 1.5x) | 357 |
+| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 22.14 GiB, 58x | 7.02 GiB, **18.47x** | 0.41x | 1 (23.4x), 7 (3.2x), 11 (1.9x) | 380 |
+| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 16.99 GiB, 41x | 5.46 GiB, **13.18x** | 0.35x | 1 (24.9x), 7 (3.1x), 11 (1.5x) | 551 |
+| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 21.81 GiB, 39x | 10.58 GiB, **18.86x** | 0.34x | 1 (34.6x), 7 (2.1x), 11 (1.6x) | 1,038 |
+| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 13.87 GiB, 38x | 4.06 GiB, **11.09x** | 0.24x | 1 (23.1x), 7 (3.4x), 11 (2.0x) | 209 |
+| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 12.58 GiB, 36x | 3.84 GiB, **10.98x** | 0.23x | 1 (30.8x), 7 (3.3x), 11 (1.5x) | 150 |
+| Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 13.08 GiB, 30x | 1.98 GiB, **4.59x** | 0.97x | **7 (6.6x)**, 1 (4.8x) | 415 |
+| D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 4.56 GiB, 22x | 4.68 GiB, **22.79x** | `reallymarkobject`: 0.91x | 5 (25.0x) | 3 |
+| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 9.04 GiB, 22x | 4.93 GiB, **11.93x** | 0.66x | **11 (13.7x)**, 7 (1.8x), 1 (1.3x) | 263 |
+| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 8.28 GiB, 22x | 3.50 GiB, **9.11x** | 0.28x | 1 (22.1x), 7 (2.4x), 11 (1.5x) | 304 |
+| D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 3.18 GiB, 22x | 3.23 GiB, **21.93x** | `reallymarkobject`: 1.09x | 5 (20.2x) | 0 |
+| D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 7.27 GiB, 20x | 2.84 GiB, **7.76x** | 0.69x | 1 (11.3x), 7 (2.6x) | 1,489 |
+| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 3.84 GiB, 20x | 2.26 GiB, **11.49x** | 0.38x | 1 (9.2x), 11 (3.3x), 7 (1.7x) | 258 |
+| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 7.95 GiB, 19x | 5.09 GiB, **12.28x** | 0.27x | 1 (22.0x), 11 (2.1x), 7 (1.6x) | 487 |
+| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 6.15 GiB, 17x | 3.85 GiB, **10.31x** | 0.35x | **11 (6.0x)**, 1 (4.9x), 7 (1.6x) | 1,413 |
+| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 4.28 GiB, 16x | 1.53 GiB, **5.83x** | 0.44x | 1 (10.0x), 7 (2.8x), 11 (1.3x) | 300 |
+| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 2.66 GiB, 15x | 2.15 GiB, **12.47x** | 0.41x | **11 (14.1x)**, 1 (2.1x) | 92 |
+| D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 6.68 GiB, 15x | 1.83 GiB, **4.06x** | 0.65x | 1 (6.2x), 7 (3.7x) | 392 |
+| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 5.12 GiB, 13x | 1.78 GiB, **4.66x** | 0.76x | 1 (4.2x), 7 (2.9x), 11 (1.5x) | 1,571 |
+| Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 6.43 GiB, 11x | 0.29 GiB, **0.51x** | - | 7 (22.3x) | 2,014 |
+| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 4.65 GiB, 11x | 1.62 GiB, **3.78x** | 0.73x | 1 (3.7x), 7 (2.9x), 11 (1.4x) | 1,735 |
+| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 2.33 GiB, 10x | 0.92 GiB, **4.10x** | 0.42x | 1 (6.7x), 7 (2.5x), 11 (1.5x) | 222 |
+| D-Link DIR-868L `mydlink/signalc` | `817d77ed2df42ecc` | 3.3 MB | 3.07 GiB, 10x | 0.69 GiB, **2.27x** | 0.37x | 1 (6.2x), 7 (4.5x) | 45 |
+| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 2.49 GiB, 9.8x | 1.03 GiB, **4.08x** | 0.44x | 1 (6.8x), 7 (2.4x), 11 (1.4x) | 669 |
+| D-Link DSN-5000 `bin/gzip` | `32a8fd8ec075ee3e` | 2.0 MB | 1.64 GiB, 9.0x | 0.11 GiB, **0.62x** | - | 7 (14.5x) | 2 |
+| Netgear MBM621 `bin/chat` | `fw-chat` | 1.2 MB | 0.93 GiB, 8.5x | 0.41 GiB, **3.71x** | 0.56x | 1 (6.6x), 7 (2.3x) | 80 |
+| D-Link DSN-5000 `bin/tar` | `c6c8ca0b29fadb65` | 5.2 MB | 3.03 GiB, 6.3x | 0.17 GiB, **0.34x** | - | 7 (18.3x) | 14 |
+| Tenda AC15 `usr/bin/nginx` | `fw-nginx` | 11.2 MB | 5.23 GiB, 5.0x | 5.40 GiB, **5.20x** | PCRE `match()`: 0.88x | 3 (5.9x) | 539 |
+| D-Link DSN-3200 `bin/tar` | `f10a8a500d6fe5d5` | 5.0 MB | 1.96 GiB, 4.2x | 0.17 GiB, **0.36x** | - | 7 (11.6x) | 14 |
+| Linksys EA6350v4 `bin/ntfsdebug` | `120cca2b628a34d5` | 5.5 MB | 0.92 GiB, 1.8x | 0.91 GiB, **1.79x** | `ntfs_attr_pwrite`: 0.36x | 4 (5.0x) | 1,188 |
+| Linksys EA6900v2 `bin/ntfslabel` | `d9bd68cc9006e841` | 5.1 MB | 0.83 GiB, 1.7x | 0.85 GiB, **1.78x** | `ntfs_attr_pwrite`: 0.37x | 4 (4.9x) | 1,110 |
 
-Re-indexing `fw-chat`, `fw-sdkmips` and `gzip` on this branch gives the same `locals` and
-`edge_split` and peaks within 1%, so the table still stands. Every row is sorted; "Cause" is the
-section above, and the residual each leaves is in "Not yet explained".
+With cause 7 fixed and the named skips, every binary is at or under 1.09x (`evLua`), and every
+other one under 0.91x, except `hnapserver-combo` at 1.07x before `none` and 0.75x after it.
 
 ### `uclited`
 
