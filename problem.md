@@ -166,9 +166,10 @@ is also inside the hubs of causes 1 and 4.
     variables), and a binary operator is lowered as a merge, so a table pointer indexed by the bit
     buffer shares the buffer's paths.
   - `--mem2reg full`: 11.8 M rows, 0.29 GiB, 1.55x.
-- **`a2050` (1.69x):** 30 libc++ `std::__sort<T>` copies hold 51% of `locals`. Their sources sit
+- **`a2050` (1.72x):** 30 libc++ `std::__sort<T>` copies hold 51% of `locals`; skipping them
+  cuts 51.0% (1.16x). Cause 12 is the rest. Their sources sit
   at about 370 offsets (`first++`/`last--`, element strides 1-16) in 2 distinct sets: about 84x
-  collapse (estimated). `FUN_002a2af4` holds another 19%.
+  collapse (estimated). `FUN_002a2af4` holds another 19% (not examined).
 - **`fir.tube` (1.34x, Rust `argon2`):** the rows are spread over 10 functions. Collapse in the
   top function is about 54x (estimated).
 - **Not the uclited shape elsewhere.** In `gzip`, the `tar`s and `unzip` the variables-only SCC is
@@ -387,6 +388,44 @@ self-link, made by a libc primitive, from the same merge lowering as cause 1.
   why was not examined.
 - **The firmware model declares `memcpy`'s propagation, but its body is analyzed as well.**
 
+### 12. A forwarding thunk turns its body's summary into self-loops, which the wild join multiplies
+
+**Binary:** `a2050`, 0.3x of budget on top of cause 3. It is the one place the wild relations
+(P6) cost something.
+
+- **The thunk.** `__emplace_back_slow_path<nlohmann::detail::value_t>@002a5020` is a 12-line
+  function that calls the real body (`@001b5f24`) with its own arguments.
+- **The body's summary.** It is an offset cross product (cause 3): 33.7 K rows
+  `@p0.deref.[a] <- @p0.deref.[b]`, 92 x 346 offsets, from libc++'s backward move loop
+  (`p = p.[-16]`). The new buffer pointer `new + (end - begin) * 16` is lowered as a merge, so it
+  carries `begin` and `end`.
+- **The self-loops.** Instantiated in the thunk, every row becomes a self-loop on one argument
+  vertex that is the thunk's own formal. That vertex also has 217 reached paths ending in an
+  offset (`.deref.[m]`).
+- **The wild join.** The wild rule `locals <-- ext_fml` pairs every self-loop with every offset
+  path: 33.8 K x 217 = 7.23 M of the binary's 8.16 M `ext_fml`. That is 1.69 billion derivations
+  for 291 K distinct `locals` (99.98% duplicates), 84.9 s and 21.8% of rule time. The body itself
+  has 1,284 `ext_fml` rows.
+- **Thunks inflate summaries generally.** A thunk's summary is the closure, 96.7 K rows against
+  the body's 33.7 K. Across 477 thunk/body pairs, thunks hold 874 K summary rows against 355 K
+  for the bodies, 41% of `summary` (`vector<float>::__append` 351x). Only the `value_t` thunk
+  also has the offset-ending paths that set off the wild join; why its six siblings lack them was
+  not found.
+
+**Measured** (default 9.21 GiB, 1.72x, 407 s):
+
+| Skipped | Peak | Against budget |
+|---|---|---|
+| the 14 nlohmann `emplace` functions | 7.58 GiB | 1.42x (`ext_fml` 0.92 M; the rule 84.9 s to 6.8 s; `summary` -21%) |
+| the 30 `std::__sort` copies (cause 3) | 6.18 GiB | 1.16x (`locals` -51.0%) |
+| both | 5.44 GiB | **1.02x** (the savings add) |
+
+- **The `__sort` claim holds.** Its rows are each body's own pile-up: callers don't inherit them,
+  and 14 of the 15 instantiations are never called. Each body calls itself through its thunk (a
+  cause-6 loop), but skipping only the thunks removes 10.6%.
+- **A skip-model pitfall.** `signature_match` `name` matches only the full `name@addr`
+  form; an address-free name matches nothing, silently.
+
 ## Not yet explained
 
 What is left after the causes above are removed:
@@ -394,7 +433,6 @@ What is left after the causes above are removed:
 | Binary | What is left |
 |---|---|
 | `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
-| `a2050` | nlohmann::json's `__emplace_back_slow_path` holds 7.2 M `ext_fml`, and the wild `locals <-- ext_fml` rule is 22.6% of rule time: the one place P6's mechanism shows |
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
@@ -418,6 +456,8 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 - **Bound a function's `$globals` summary** (causes 1 and 6), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
+- **Instantiate a pure forwarding thunk's callee summary as its own summary** (cause 12), instead
+  of closing it over the thunk's formals. Or make the wild join skip self-loop edges.
 - **Model Lua's `reallymarkobject`** (cause 5), or see the `o->tt` switch.
 - **Use the models of `memcpy`, `memset`, `memmove` and `str*` instead of their bodies** (cause 11).
   The firmware model already declares `memcpy`'s propagation.
