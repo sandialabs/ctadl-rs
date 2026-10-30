@@ -67,9 +67,8 @@ link uClibc's `malloc` (dlmalloc).
 
 **Other details.**
 - **stdio.** In `signalc`, `malloc` and stdio form a 22-function call-graph SCC
-  (`__malloc_consolidate -> sysconf -> config_read -> fopen -> malloc`). In `kcairplay`,
-  `fputs_unlocked` is a second hub of the same kind: 9.04 GiB with neither skipped, 4.00 GiB with
-  `malloc` skipped, 2.21 GiB with both.
+  (`__malloc_consolidate -> sysconf -> config_read -> fopen -> malloc`). The stdio hub in
+  `kcairplay`, `wifitool` and `iptables` is a different cause: 11.
 - **Stripped binaries.** `malloc` is recognizable by shape: one parameter, about 5,200
   instructions, about 1,550 stores to `$globals`, and the most call sites among such functions
   (`/Volumes/Shampoo/nb-work/p4/rankalloc.py`). `realloc` carries its own copy of the code
@@ -161,9 +160,8 @@ is also inside the hubs of causes 1 and 4.
 
 ### 4. A callee's summary relates every offset or field to every other, and every call site copies it
 
-**Binaries:** `libgdx` (`glxy` 1.52x, `retrodrawing` 1.91x, `halma` 1.26x), libntfs
-(`ntfslabel` 1.7x, `ntfsdebug` 1.8x), and uClibc stdio (what `wifitool`, `iptables` and `kcairplay`
-have left after cause 1). A small callee mixes all the offsets of its arguments, and
+**Binaries:** `libgdx` (`glxy` 1.52x, `retrodrawing` 1.91x, `halma` 1.26x), and libntfs
+(`ntfslabel` 1.7x, `ntfsdebug` 1.8x). A small callee mixes all the offsets of its arguments, and
 its O(offsets²)-per-argument-pair summary makes every caller mix them too.
 
 - **`libgdx`:** stb_image's load function (`glxy` `FUN_0010b408`, 87.5% of `locals`) calls a
@@ -187,24 +185,6 @@ its O(offsets²)-per-argument-pair summary makes every caller mix them too.
     9,560 rows.
   - Not a loop SCC (6% without summary edges), not a +1 offset run: the offsets are field
     offsets, stride 4.
-- **uClibc stdio, `__stdio_fwrite`** (`wifitool`, `iptables`, `kcairplay`):
-  - **The block.** Its summary links the return value and the data pointer to every `FILE` field,
-    crossed with every offset of the string: 45 x 30, complete. It grows up the chain to
-    57 x 309 at `puts` (33 K rows), and `printf`/`fprintf` carry 57 x 144 on the format string.
-  - **Mechanism** (read from the IR, not tested). Merges: `n = strlen(s)` carries `s`,
-    `bufpos += n` stores it into `stream->__bufpos`, the `memcpy` and byte loop write every string
-    offset into the `FILE`, and the returned `int` is `n` merged with `__bufstart`.
-  - **Call sites copy it, but callers do not inherit it.** The rows are on the return value and
-    the first argument, not `$globals`. Each call site copies the block even when the return is
-    ignored: stdio call sites are about 95% of `wifitool`'s `assign_like`, and `fputs`/`puts`
-    68% of `iptables`'.
-  - **Measured.** `wifitool`: allocator skipped 6.2x, plus `__stdio_fwrite` 0.77x. `iptables`:
-    `malloc` skipped 2.6x, plus `__stdio_fwrite` 1.23x, plus `__encode_dotted` 1.10x.
-    `--hybrid-context none` changes nothing in either.
-  - **Not every uClibc build has it.** `signalc`'s `__stdio_fwrite` summary is 210 rows.
-  - **What `iptables` has left** is cause 3: `do_command` scans `argv`, plus `__encode_dotted`
-    and `_getopt_internal`, at about 70 offset variants per source.
-  - **The "spread" in `wifitool`** (`print_rrmstats`, `tr069_*`) is these copies.
 - **Fix ideas.** Not lowering integer arithmetic as a merge would remove the libntfs case. The
   offset collapse of cause 3 would shrink `libgdx`'s callee summary. A fix aimed only at the
   caller's loop would not.
@@ -309,6 +289,58 @@ rules replaced with `edge_split`.
 - **`fir.tube`:** 14.3% of rule time.
 - **Elsewhere:** 0-2.6% of rule time on the apps, and absent from the firmware sweep.
 
+### 11. MIPS uClibc's `memcpy` and `memset` store the destination's address into it
+
+**Binaries:** what `kcairplay`, `wifitool` and `iptables` have left after cause 1. It looked like a
+uClibc stdio hub (`fputs_unlocked`, `__stdio_fwrite`). Stdio only spreads it: the source is
+`memcpy` and `memset`.
+
+**The self-link.** Ghidra lowers the unaligned head store (`swl`/`swr`) as a masked
+read-modify-write with the shift `(addr & 3) * 8`. That arithmetic is lowered as a merge, so the
+stored word carries the address, and the summary gets `dst.deref <- dst`. This is cause 5's
+self-link, made by a libc primitive, from the same merge lowering as cause 1.
+
+**How stdio spreads it into strings.**
+1. In `fputs_unlocked`, `strlen` (`p - s`, merged) makes the count point into `s`.
+2. In `__stdio_fwrite`, `bufpos + n` makes the `FILE` buffer pointer alias the string.
+3. `memcpy(bufpos, s, n)` then self-links the string and the return value.
+
+**The blocks.**
+- **They are complete bipartite:** deref chains x string offsets. In `kcairplay`, `puts` has
+  `p0 <- p0` at 102 x 610 and `ret <- p0` at 118 x 610.
+- **The size follows the program's `path_set`, not the libc.** `kcairplay`'s `__stdio_fwrite`
+  block is 83 x 67 against 44 x 30 in `wifitool`.
+- **The rows are not on `$globals`** (0.35%), so callers do not inherit them. Each call site
+  copies them, even when the return is ignored: stdio sites are about 95% of `wifitool`'s
+  `assign_like`.
+- **`memset` does the same.** `_ppfs_init`'s `memset(ppfs, 0, 152)` self-links `vfprintf`'s
+  state.
+
+**Measured** (the other causes removed first):
+
+| Binary | Skipped | Against budget |
+|---|---|---|
+| `kcairplay` | `malloc` | 9.7x |
+| | `malloc` + `fputs_unlocked` | 5.4x |
+| | `malloc` + `__stdio_fwrite` | 2.7x |
+| | `malloc` + `memcpy` | 1.93x |
+| | `malloc` + `memcpy` + `memset`, with `--hybrid-context none` (cause 2) | **0.97x** |
+| `wifitool` | allocator | 5.83x |
+| | allocator + `__stdio_fwrite` | 0.77x |
+| | allocator + `memcpy` | **0.39x** |
+| `iptables` | `malloc` | 2.66x |
+| | `malloc` + `memcpy` | **0.95x** |
+
+- **The residuals that looked like cause 3 were this.** `__encode_dotted` is
+  `memcpy(dest + used, dotted, strlen(dotted))`; in `kcairplay` its `locals` fall from 2.58 M to
+  6 K with `memcpy` skipped. `iptables`' "cause 3" functions (`do_command`, `__encode_dotted`,
+  `getopt`) are therefore in doubt. `vfprintf`'s 3.3 M fall to 0.36 M with `memcpy` and `memset`
+  skipped, and the 0.36 M left is offsets on the format string (cause 3).
+- **It depends on the `memcpy` build.** `signalc` (ARM) has a 149-row `memcpy` with no
+  self-link. `GpioForCrond` and `testI2C` (MIPS-II) have self-link-free `memcpy` and `memset`;
+  why was not examined.
+- **The firmware model declares `memcpy`'s propagation, but its body is analyzed as well.**
+
 ## Not yet explained
 
 What is left after the causes above are removed:
@@ -318,7 +350,6 @@ What is left after the causes above are removed:
 | `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
 | `upnpd` | `FUN_0042b28c` (16.5 K instructions) holds 62.5% of `locals` (2.2x with `malloc` skipped) |
 | `alphapd` | `FUN_00450b80` (1.7x with both skipped) |
-| `kcairplay` | `vfprintf` and `__encode_dotted` `locals` and 1.1 M `context_locals` (5.3x with `malloc` and `fputs_unlocked` skipped) |
 | `a2050` | nlohmann::json's `__emplace_back_slow_path` holds 7.2 M `ext_fml`, and the wild `locals <-- ext_fml` rule is 22.6% of rule time: the one place P6's mechanism shows |
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
@@ -341,6 +372,8 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
 - **Model Lua's `reallymarkobject`** (cause 5), or see the `o->tt` switch.
+- **Use the models of `memcpy`, `memset`, `memmove` and `str*` instead of their bodies** (cause 11).
+  The firmware model already declares `memcpy`'s propagation.
 
 ## Benchmarks
 
@@ -380,15 +413,15 @@ Every binary at 1.5x or more under the default (`--frame update`, `window:8`), w
 | Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1, 2 |
 | Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 37.5 M | 13.08 GiB | 30x | 415 | 1 |
 | D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 26.6 M | 4.56 GiB | 22x | 3 | 5 |
-| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | 1 (+ stdio) |
+| Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | 1, 2, 11 |
 | D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | 1, 2 |
 | D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 19.2 M | 3.18 GiB | 22x | 0 | 5 |
 | D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 130.8 M | 7.27 GiB | 20x | 1,489 | 1 |
 | D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 1 |
 | ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | 1 |
-| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | 1, 4 (stdio) |
+| TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | 1, 11 |
 | Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1, 2 |
-| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 1, 4 (stdio) |
+| D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 1, 11 |
 | D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 33.4 M | 6.68 GiB | 15x | 392 | 1 |
 | Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | 1, 2 |
 | Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 107.5 M | 6.43 GiB | 11x | 2,014 | 7, 8 |
