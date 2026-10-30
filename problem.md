@@ -227,24 +227,52 @@ growing, with no fixpoint.
   grows the summary.
 - **Measured.** Skipping it alone gives the fixpoint in 153 s at 4.30 GiB (0.93x).
 
-### 7. A global-state hub with no allocator: `gzip`, `tar`, `unzip` (mechanism not found)
+### 7. The frontend gives a global's `unique` and `register` temps fake addresses that unrelated globals share
 
-**Binaries:** DSN-5000 `gzip` (9.0x), DSN-5000 and DSN-3200 `tar` (6.3x and 4.2x), R7000 `unzip`
-(11x). They are dynamically linked, and skipping their allocator stubs changes nothing.
+**Binaries:** DSN-5000 `gzip` (9.0x), DSN-5000 and DSN-3200 `tar` (6.3x and 4.2x) and R7000
+`unzip` (11x), which have no allocator. It also inflates the cause-1 binaries.
 
-- **Shape.** One to four very long functions hold the rows: 91% in DSN-3200 `tar`'s
-  `FUN_10018798` (51 K IR lines). Their sources are 600-1,000 real global cells, each reaching
-  64-78% of the hub's `(v, p)`, and they arrive through `$globals <- $globals` callee summaries.
-  Collapsing formal offsets gains only 1.0-1.2x.
-- **Measured.** Skipping the hub: DSN-3200 `tar` from 41.3 M rows to 3.6 M (0.40 GB, under);
-  DSN-5000 `tar` to 9.6 M (2.6x); `gzip` with both hubs skipped about 1.0x. `unzip`'s hubs were not
-  skipped (30 minutes a run).
-- **Unconfirmed leads.**
-  - Global-to-global pure copies, `store $globals.[Y] := phi(loads of $globals.[X])`: about 2,000
-    per binary. Some cannot be a MULTIEQUAL, which suggests a frontend artifact.
-  - "Globals" at tiny addresses (`$globals.[44]`): field offsets whose base was lost, so every
-    struct's field 44 becomes one shared cell.
-- **Ruled out:** rooting `idx.[&table]` at `$globals.[&table]` changes nothing.
+**The bug.** Ghidra puts some `unique` and `register` varnodes (temps holding a global's value)
+into a global's high variable. `convert_vnode` (`frontends/ctadl-pcode/src/lib.rs:1353`) keys
+every varnode in `global_vnodes` on `vnode_data.address` or `constant_offset`. For those varnodes,
+that is a unique-space offset or a register number, not the global's ram address.
+
+- **Fake cells.** In `gzip`, 736 of the 909 distinct `$globals.[A]` are fake (711 unique, 25
+  register).
+- **Shared by unrelated globals.** `$globals.[76]` stands for 21 different globals, `[4]` for 16;
+  `tar`'s `[28]` for 40-42, and `unzip`'s `[32]` for 43. `chat`, `GpioForCrond` and `nginx` show
+  the same pattern.
+- **The blowup.** `$globals` is one variable inside a function, so callee summaries close
+  transitively over the shared cells. These join about 500 global paths into one SCC; with the
+  fix the largest has 3. In base `gzip`, 83% of `locals` rows have a fake unique cell as their
+  source, 5% a register cell, and 12% a real global.
+- **Both of the old leads are this bug.** The "global-to-global phi copies" are MULTIEQUAL and
+  COPY outputs that are temps of the same global: 2,050 of `gzip`'s 2,080 touch a fake cell, and
+  46 remain with the fix. The "tiny addresses" (`$globals.[44]`) are MIPS register numbers, not
+  field offsets whose base was lost.
+
+**Experiment.** An env-gated patch (`CTADL_EXP_GLOBAL_HVAR=addr`, not committed:
+`/Volumes/Shampoo/nb-work/r-glob/out/r-glob.patch`, worktree `/Volumes/Shampoo/nb-work/r-glob/src`)
+keys each such varnode on the ram address of its high variable's ram member.
+
+| Binary | Before (`locals`, peak, x budget) | With the fix |
+|---|---|---|
+| `gzip` | 6.66 M, 1.73 GB, 8.8x | 0.13 M, 0.10 GB, **0.55x** |
+| DSN-3200 `tar` | 41.3 M, 2.17 GB, 4.3x | 0.21 M, 0.17 GB, **0.34x** |
+| DSN-5000 `tar` | 54.7 M, 3.43 GB, 6.6x | 0.24 M, 0.18 GB, **0.34x** |
+| `unzip` | 107.5 M, 7.53 GB, 12x | 0.67 M, 0.31 GB, **0.51x** |
+
+- **Sharing is the multiplier, not the extra cells.** Keeping a private fake cell per global
+  gives `gzip` 0.30 M rows and 0.15 GB. Fixing only the register cells (2.0x) or only the unique
+  ones (1.3x) is not enough.
+- **Effect on cause-1 binaries** (allocator present): `chat` 1.00 GB to 0.42 GB,
+  `captival_usockc` 4.27 to 2.43 GB, `wifitool` 2.86 to 2.34 GB. The other causes' residual
+  numbers would move if this is fixed first. The larger binaries were not measured.
+- **Precision.** The fix should gain precision, not lose it:
+  - All 2,403 non-identity flows of the private-cell variant are in the fixed build.
+  - The 10,691 rows the fix drops go through cells shared by different globals, so they were
+    spurious.
+  - Findings not compared: no sinks match in `gzip`, and the regression suite was not run.
 
 ### 8. Ghidra `INDIRECT` on globals is lowered as a reload and store at every call (a constant factor)
 
@@ -253,8 +281,9 @@ lowers it as `COPY` (`ctadl-pcode/src/lib.rs:951`), which gives
 `%t = load $globals.[A].deref; store $globals.[A].deref := %t`. That is an identity, since
 `$globals` is already threaded through every call.
 
-- **Size.** `gzip`'s hub has 7,691 of them: half its IR. The temps hold 35-39% of the cause-7 hubs'
-  `locals`.
+- **Size.** `gzip`'s hub has 7,691 of them: half its IR. Before cause 7's fix, the temps held
+  35-39% of the cause-7 hubs' `locals`. Whether cause 8 still matters after cause 7's fix is not
+  measured: the four binaries are under budget without it.
 - **Experiment** (an env-gated frontend patch dropping them, in
   `/Volumes/Shampoo/nb-work/p3locals/src`, not committed):
 
@@ -368,7 +397,10 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 1, 3 and 4): `size`
   would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
-- **Bound a function's `$globals` summary** (causes 1, 6 and 7), for example field-insensitive
+- **Key a global's `unique`/`register` temps on the global's ram address** (cause 7): measured
+  8.8x to 0.55x on `gzip`, and every cause-7 binary under budget. Fix it first; it shifts the
+  other causes' numbers.
+- **Bound a function's `$globals` summary** (causes 1 and 6), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
 - **Model Lua's `reallymarkobject`** (cause 5), or see the `o->tt` switch.
