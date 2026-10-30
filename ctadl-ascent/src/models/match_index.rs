@@ -35,12 +35,8 @@ pub struct ProgramMatchIndex<'p> {
     pub(crate) program_functions: HashMap<&'p str, &'p FunctionData>,
     /// What `callsig` ranges over: the distinct static signatures the program's Java and CIL
     /// call sites name. `None` unless some loaded rule asked for them, because collecting them
-    /// costs a pass over every statement.
-    ///
-    /// Unlike the method table, this contains types the app never declares. The table is built
-    /// from implementations, and about half of an app's interface sites name a type that is not
-    /// among them -- `java.util.Iterator` has no row there, so `fun` cannot name it. The keys of
-    /// the call sites do, by construction.
+    /// costs a pass over every statement. Unlike the method table, it holds types the app never
+    /// declares; see [`CallSigRow`](super::portcullis::relations::CallSigRow).
     pub(crate) dispatch: Option<DispatchUniverse<'p>>,
 }
 

@@ -1581,9 +1581,7 @@ impl ClassHierarchyAnalysis {
         Self::build(vmt, instantiated_classes, true)
     }
 
-    /// Every class-based table goes through the same `run_cha`. Lua's rows carry an empty
-    /// descriptor and its `__index` parents are the hierarchy, so it computes the `__index`-chain
-    /// resolvents unchanged. CIL's rows include the override bridges its frontend synthesizes.
+    /// Every class-based table goes through the same `run_cha`.
     fn build(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>, rta: bool) -> Self {
         let dispatch = &vmt.dispatch;
         let language = match dispatch {

@@ -447,9 +447,9 @@ impl PortcullisModelSet {
 
     /// Whether any rule in the set reads `callsig`.
     ///
-    /// The `--models` half of the gate [`super::default_models_find_dispatch`] opens for the
-    /// defaults: the signature keys `callsig` ranges over cost a pass over every statement to
-    /// collect, so an import pays for them only when some rule asks.
+    /// The signature keys `callsig` ranges over cost a pass over every statement to collect, so
+    /// `cli::index` collects them for an import only when this holds of the `--models` files or
+    /// of the loaded defaults.
     pub fn uses_callsig(&self) -> bool {
         self.files.iter().any(|f| f.program.uses_callsig())
     }

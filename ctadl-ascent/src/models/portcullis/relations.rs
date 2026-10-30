@@ -239,9 +239,8 @@ pub struct Needs {
     pub local: bool,
     /// `subclass`, `subclass*`, `subclass+`.
     pub subclass: bool,
-    /// `callsig`. The universe itself is collected only when someone asks for it (see
-    /// `Program::uses_callsig`), but a JSON `find: "dispatch"` generator can be the one that
-    /// did.
+    /// `callsig`. The universe itself is collected only when some loaded rule reads it (see
+    /// `Program::uses_callsig`).
     pub callsig: bool,
 }
 

@@ -801,15 +801,20 @@ fn the_native_portcullis_defaults_skip_the_unwinders() {
 /// universe unconditionally, so it would not notice.
 #[test]
 fn the_java_defaults_ask_for_the_dispatch_universe() {
-    use ctadl_ascent::models::default_models_find_dispatch;
+    use ctadl_ascent::models::default_portcullis_models;
 
+    let uses_callsig = |info: ProgramInfo| {
+        default_portcullis_models(&info.vmt)
+            .expect("the shipped defaults parse")
+            .is_some_and(|set| set.uses_callsig())
+    };
     assert!(
-        default_models_find_dispatch(&java_program().vmt),
+        uses_callsig(java_program()),
         "the Java defaults declare dispatch models, so they must open the gate"
     );
     // The other shipped defaults declare none, and must not make every import pay for a pass
     // over every statement.
-    assert!(!default_models_find_dispatch(&native_program().vmt));
-    assert!(!default_models_find_dispatch(&lua_program().vmt));
-    assert!(!default_models_find_dispatch(&unknown_program().vmt));
+    assert!(!uses_callsig(native_program()));
+    assert!(!uses_callsig(lua_program()));
+    assert!(!uses_callsig(unknown_program()));
 }

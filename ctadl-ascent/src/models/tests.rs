@@ -228,6 +228,40 @@ mod modes {
         assert!(matches.propagations.is_empty());
     }
 
+    /// A generator's mode directives count once as an index-time construct, however many modes
+    /// it names, and a propagation-only generator counts none.
+    #[test]
+    fn modes_count_as_index_time_models() {
+        let program_info = native_program(&["f", "g"]);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut out = ProgramModelMatches::default();
+        let report = load(
+            &match_index,
+            vec![
+                serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": "f"}],
+                    "model": {"modes": ["skip-analysis", "mem2reg-full"]},
+                }),
+                serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": "g"}],
+                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+                }),
+            ],
+            &mut out,
+        )
+        .expect("encoding models");
+        assert_eq!(report.index_time_models.modes, 1);
+        assert_eq!(report.index_time_models.propagations, 1);
+        assert!(
+            report
+                .index_time_models
+                .describe()
+                .contains("analysis-mode")
+        );
+    }
+
     /// The mem2reg modes go to their own map, and without `skip-analysis` the body stays.
     #[test]
     fn mem2reg_modes_record_the_matched_functions() {

@@ -3,6 +3,11 @@
 What the diagnostics read: `CTADL0004`'s per-generator endpoint counts and why a port matched
 nothing, `CTADL0011`'s match samples, and the index-time constructs `ctadl query` says it is
 ignoring. A DSL load fills them in through [`super::ModelLoadReport::from_portcullis`].
+
+The same model file is re-matched once per import, so each `merge` combines two kinds of count
+differently. A count of what the file declares is a property of the file alone, and merges by
+max: summing would multiply it by the import count. A count of what matched is summed: a
+generator dead against one import but live against another is live.
 */
 
 use std::collections::BTreeSet;
@@ -35,12 +40,9 @@ impl MatchedFunctions {
 /// generator declares propagation *ports*, and each matched function turns one into a row.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PropagationStats {
-    /// `propagation` entries whose input and output ports both parsed. A property of the model
-    /// file alone, so [`Self::merge`] takes the max -- the same file is re-matched once per
-    /// import.
+    /// `propagation` entries whose input and output ports both parsed. Merged by max.
     pub ports_declared: usize,
-    /// [`PropagationMatch`](super::PropagationMatch) rows emitted for those entries. Summed by
-    /// [`Self::merge`]: a generator dead against one import but live against another is live.
+    /// [`PropagationMatch`](super::PropagationMatch) rows emitted for those entries. Summed.
     pub rows: usize,
 }
 
@@ -51,18 +53,14 @@ impl PropagationStats {
     }
 }
 
-/// How many generators declared each index-time-only model construct.
-///
-/// A property of the model *file*, not of the program it was matched against, so
-/// [`Self::merge`] takes the max rather than summing: the same file is re-matched once per
-/// import, and summing would multiply the count by the import count.
+/// How many generators declared each index-time-only model construct. Merged by max.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct IndexTimeModelCounts {
     /// Generators carrying a `propagation`.
     pub propagations: usize,
     /// Generators carrying a `bridge`.
     pub bridges: usize,
-    /// Generators carrying a `modes` directive.
+    /// Generators carrying a `modes` directive whose mode heads marked some function.
     pub modes: usize,
 }
 
@@ -101,16 +99,14 @@ impl IndexTimeModelCounts {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EndpointStats {
     /// Ports the generator declared in this direction: one per `sources`/`sinks` entry whose
-    /// `port` parsed. A property of the model file alone, so [`Self::merge`] does *not* sum
-    /// it — the same file is re-matched once per import.
+    /// `port` parsed. Merged by max.
     pub ports_declared: usize,
     /// Endpoint rows emitted for those ports, after fanning out over the matched functions.
-    /// Summed by [`Self::merge`]: a generator dead against one import but live against
-    /// another is live.
+    /// Summed.
     pub endpoints_matched: usize,
     /// How many functions the generator's `where` constraints selected. Reported by
     /// `CTADL0004` to separate "nothing matched" from "functions matched but the port did
-    /// not resolve in any of them".
+    /// not resolve in any of them". Merged by max.
     pub functions_matched: usize,
     /// Why nothing matched. Meaningful only when `endpoints_matched` is zero; a generator
     /// declaring several ports of one direction can fail for several reasons at once.

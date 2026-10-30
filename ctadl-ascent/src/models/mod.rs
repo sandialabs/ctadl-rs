@@ -188,23 +188,6 @@ pub fn default_portcullis_models(
     }
 }
 
-/// Whether the built-in defaults for a program with this [`VirtualMethodTable`] ask for the
-/// call-site signature keys.
-///
-/// The other half of the gate [`PortcullisModelSet::uses_callsig`] opens for the `--models` files:
-/// together they decide whether an import pays for collecting its call sites' signature keys.
-///
-/// Read off the DSL defaults, because those are what [`try_load_default_models`] runs.
-pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
-    // A shipped default that does not parse is a build-time bug, and every other caller of this
-    // file reports it with a span; here there is no diagnostic channel and nothing to gain from
-    // guessing, so an unparsable file simply asks for nothing.
-    default_portcullis_models(vmt)
-        .ok()
-        .flatten()
-        .is_some_and(|set| set.uses_callsig())
-}
-
 /// The DSL default a program with this [`VirtualMethodTable`] selects: the one
 /// [`try_load_default_models`] runs.
 pub fn default_portcullis_model_file(
@@ -230,9 +213,8 @@ fn default_portcullis_index(vmt: &VirtualMethodTable) -> Option<usize> {
 /// written; any other is a JSON / JSON5 / JSONL file and is migrated first (see
 /// [`portcullis::PortcullisFile::read`]).
 ///
-/// Both phases' heads are kept: a caller with one program in hand and no phase to declare
-/// wants everything the file says, and `cli::index` / `cli::query` drive [`PortcullisMatcher`]
-/// themselves precisely so they can say which half they are keeping.
+/// Both phases' heads are kept. A caller that keeps only one phase drives [`PortcullisMatcher`]
+/// itself.
 ///
 /// Everything the file matched is *appended* to `out`, which is what lets a caller accumulate
 /// across every (import x model file) pair without a merge step.
@@ -255,9 +237,7 @@ pub struct ModelLoadReport {
     /// means the generator declared a port of that direction; a zero `endpoints_matched` means
     /// it matched nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
     ///
-    /// Deliberately *not* keyed by model file: file identity belongs to the caller.
-    /// `cli::query` re-keys each file's stats by file before merging them, which is also what
-    /// keeps two files that number their generators the same from conflating.
+    /// Not keyed by model file; see [`portcullis_endpoint_stats`].
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
     /// How many generators declared an index-time-only construct. Lets `ctadl query` say once
     /// that it is ignoring them instead of dropping them in silence.
@@ -330,8 +310,12 @@ impl ModelLoadReport {
                     .filter(|(_, rules)| rules.iter().any(|r| r.propagation_heads > 0))
                     .count(),
                 bridges: totals.bridges,
-                // No DSL rule can declare `modes`; see the migrator's unsupported-key list.
-                modes: 0,
+                modes: report
+                    .files
+                    .iter()
+                    .flat_map(|f| f.by_label())
+                    .filter(|(_, rules)| rules.iter().any(|r| r.modes > 0))
+                    .count(),
             },
             matched,
             propagation_stats,
@@ -342,10 +326,12 @@ impl ModelLoadReport {
 }
 
 /// The source/sink counters one DSL file's rules project onto, keyed `(label, direction)`: one
-/// entry per direction a rule declares a head in. `ctadl query` and
-/// [`ModelLoadReport::from_portcullis`] both read a DSL load's endpoint stats through this. Two
-/// rules with one label — the disjuncts of one JSON generator — yield two entries under one key,
-/// for the caller to [`EndpointStats::merge`].
+/// entry per direction a rule declares a head in. Two rules with one label — the disjuncts of
+/// one JSON generator — yield two entries under one key, for the caller to
+/// [`EndpointStats::merge`].
+///
+/// The key names a rule within this file only: two model files that number their rules the
+/// same yield the same keys, so stats gathered across files have to be re-keyed by file.
 pub fn portcullis_endpoint_stats(
     file: &portcullis::PortcullisFileReport,
 ) -> impl Iterator<Item = ((usize, TaintDirection), EndpointStats)> + '_ {

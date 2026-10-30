@@ -400,11 +400,7 @@ pub enum Dispatch {
         /// - Method id the row resolves to
         ///
         /// Besides each class's own methods, this holds the *override bridges* the frontend
-        /// synthesizes, as `javac` does for Java: `D : B<string>` overriding `B<T>.M(T)`
-        /// gets a function `D::M(!0)` calling `D::M(string)`, and an explicit interface
-        /// implementation one under the interface method's key. A bridge whose key is a
-        /// different method of the class is named `{key}#{declaring class}`, so that one row
-        /// does not name its own function.
+        /// synthesizes (see `ctadl-cil`'s `hierarchy.rs`).
         methods: Vec<(CilClass, CilSimpleName, CilSignature, CilMethod)>,
         /// Class -> its base type and the interfaces it implements, erased to open definitions.
         hierarchy: HashMap<CilClass, SmallVec<[CilClass; 2]>>,
