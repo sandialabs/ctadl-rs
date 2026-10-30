@@ -74,6 +74,20 @@ link uClibc's `malloc` (dlmalloc).
   instructions, about 1,550 stores to `$globals`, and the most call sites among such functions
   (`/Volumes/Shampoo/nb-work/p4/rankalloc.py`). `realloc` carries its own copy of the code
   (8,040 instructions, 2,618 global stores).
+- **`realloc` matters as much as `malloc`.**
+  - **The linuxthreads rows in `GpioForCrond` and `testI2C` (about 60% of `locals` left after the
+    `malloc` skip) are this cause again, through `realloc`.** Skipping `malloc` and `realloc` alone
+    puts both under budget, with no `none` needed: 0.70x and 0.69x. Skipping linuxthreads instead
+    leaves 1.4x.
+  - **How the block gets into linuxthreads.** `on_exit` calls
+    `realloc(__exit_function_table, size)` with both arguments from globals, and gets a 36 K-row
+    `$globals <- $globals` summary. That climbs `pthread_initialize`, `pthread_create` and
+    `sem_post` into `__pthread_manager` (48 K rows). It enters the manager through its one
+    indirect call, which resolves to `sem_post`, so inheritance also runs along resolved
+    function-pointer edges.
+  - **Inside the manager, cause 8 multiplies it.** 18 globals are reloaded and re-stored at about
+    112 sites, and the identity temps hold 26% of its 1.06 M rows.
+  - **`testI2C` is the same build,** with per-function counts identical to the row.
 - **Not measured:** findings on the skipped indexes. Taint through the allocator's free lists is
   spurious anyway: `malloc`'s return should carry nothing from its size.
 
@@ -282,8 +296,8 @@ What is left after the causes above are removed:
 
 | Binary | What is left |
 |---|---|
+| `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
 | `upnpd` | `FUN_0042b28c` (16.5 K instructions) holds 62.5% of `locals` (2.2x with `malloc` skipped) |
-| `GpioForCrond`, `testI2C` | linuxthreads (`__pthread_manager`) and `realloc` hold about 60% (1.4x with `malloc` skipped plus `none`) |
 | `wifitool` | 5.8x with the allocator skipped, led by `edge_split` and spread out (`print_rrmstats`, `_vfprintf_internal`); not examined |
 | `iptables` | 2.6x with `malloc` skipped, `locals` not localized |
 | `alphapd` | `FUN_00450b80` (1.7x with both skipped) |
