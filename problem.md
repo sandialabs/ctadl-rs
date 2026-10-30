@@ -357,33 +357,47 @@ keys each such varnode on the ram address of its high variable's ram member.
 - **Effect on cause-1 binaries** (allocator present): `chat` 1.00 GB to 0.42 GB,
   `captival_usockc` 4.27 to 2.43 GB, `wifitool` 2.86 to 2.34 GB. The other causes' residual
   numbers would move if this is fixed first. The larger binaries were not measured.
-- **Precision.** The fix should gain precision, not lose it:
-  - All 2,403 non-identity flows of the private-cell variant are in the fixed build.
-  - The 10,691 rows the fix drops go through cells shared by different globals, so they were
-    spurious.
-  - Findings not compared: no sinks match in `gzip`, and the regression suite was not run.
+- **Precision: the fix loses no real finding.**
+  - **Regression suite:** 250 passed and the 3 expected failures, with and without
+    `CTADL_EXP_GLOBAL_HVAR=addr`. The per-case results are identical. 11 cases change IR
+    (`globalflow`, `globalstruct` and 9 JNI cases lose `$globals.[0]`), and all pass.
+  - **Findings on 11 sweep binaries:** the base re-import reproduces the sweep's SARIF exactly.
+    Eight are identical under the fix, and no finding is gained.
+  - **Both `tar`s lose 10 findings each:** `getenv`/`read` to `system`/`execl`, flowing only
+    through `$globals.[375296]`, a temp that 22 unrelated globals share in `main`. The one real
+    flow (`getenv` to `execlp`) is kept.
+  - **DM111P `pppd` loses 4:** `fgets`/`atoi` in `get_debuglevel` to `system`, linked only because
+    `debuglevel` and another global share register cell `$globals.[8]`. The real `argv` flows into
+    the same `system` calls remain.
+  - **DIR-412 `pppd`:** one path step is renamed from register cell 12 to the real address; it is
+    the same finding.
+- **The allocator binaries move too:** `signalc` 9.7x to 2.3x and `file` 19.6x to 7.8x, with the
+  allocator present.
 
-### 8. Ghidra `INDIRECT` on globals is lowered as a reload and store at every call (a constant factor)
+### 8. (Folded into cause 7) Ghidra `INDIRECT` on globals becomes a reload and store at every call
 
-Ghidra puts an `INDIRECT` on every global a function touches at every call site. The frontend
-lowers it as `COPY` (`ctadl-pcode/src/lib.rs:951`), which gives
-`%t = load $globals.[A].deref; store $globals.[A].deref := %t`. That is an identity, since
-`$globals` is already threaded through every call.
+Ghidra puts an `INDIRECT` on every global a function touches at every call site, and the frontend
+lowers it as `COPY` (`ctadl-pcode/src/lib.rs:951`): `%t = load $globals.[A].deref; store
+$globals.[A].deref := %t`. That is an identity.
 
-- **Size.** `gzip`'s hub has 7,691 of them: half its IR. Before cause 7's fix, the temps held
-  35-39% of the cause-7 hubs' `locals`. Whether cause 8 still matters after cause 7's fix is not
-  measured: the four binaries are under budget without it.
-- **Experiment** (an env-gated frontend patch dropping them, in
-  `/Volumes/Shampoo/nb-work/p3locals/src`, not committed):
+- **Its 1.2-2x came from multiplying cause 7's dense global blocks.** With cause 7 fixed, dropping
+  the reloads (`CTADL_EXP_NO_GLOBAL_INDIRECT=1`) removes 0-30% of `locals`, about the share of IR it
+  drops (9-21%), and no finding changes (5 binaries).
+- **It does not overlap cause 7's fake cells.** All `INDIRECT` outputs on globals are `ram`
+  varnodes; only 0.8-4.3% read a fake cell.
 
-| Binary | IR | `locals` | Against budget |
-|---|---|---|---|
-| DSN-3200 `tar` | -19% | 41.3 M to 18.5 M | 4.3x to 2.2x |
-| `gzip` | -19% | 6.7 M to 4.0 M | 8.9x to 6.0x |
-| `unzip` | -21% | 107.5 M to 60.7 M | 11x to 9.5x |
-| `chat` | -9% | 13.3 M to 10.7 M | 8.5x to 6.0x |
+Measured with the allocator skipped (x budget):
 
-- **Findings not compared.**
+| Binary | Neither fix | 7 | 8 | 7 + 8 |
+|---|---|---|---|---|
+| `gzip` | 8.4x | 0.57x | 5.9x | 0.56x |
+| DSN-3200 `tar` | 4.1x | 0.37x | 2.2x | 0.34x |
+| `unzip` | 12.0x | 0.51x | 9.6x | 0.27x |
+| `chat` | 0.65x | 0.64x | 0.65x | 0.53x |
+| `captival_usockc` | 1.32x | 1.25x | 1.30x | 1.14x (cause 11: `memcpy` skipped, 0.57x) |
+| `GpioForCrond` | 0.48x | 0.40x | 0.41x | 0.39x |
+
+A constant IR overhead worth removing, but not a blowup.
 
 ### 9. Escaped stack slots: sound, but not affordable
 
@@ -550,11 +564,13 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 - **Do not lower integer arithmetic as a merge of its operands** (causes 1, 3 and 4): `size`
   would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
 - **Key a global's `unique`/`register` temps on the global's ram address** (cause 7): measured
-  8.8x to 0.55x on `gzip`, and every cause-7 binary under budget. Fix it first; it shifts the
+  8.8x to 0.55x on `gzip`, with every cause-7 binary under budget. It passes the regression suite,
+  and the only findings it drops are the spurious ones through shared fake cells. Fix it first; it shifts the
   other causes' numbers.
 - **Bound a function's `$globals` summary** (causes 1 and 6), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
-- **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
+- **Drop identity `INDIRECT` reloads of globals** (cause 8): 0-30% of `locals` once cause 7 is
+  fixed, with no finding changed.
 - **Write back only the memory below an address argument** (cause 12): measured 1.72x to 1.29x on
   `a2050`, with every wild-relation row gone.
 - **Let a forwarding thunk take its callee's summary** (cause 12): measured 1.38x, 1.18x with the
