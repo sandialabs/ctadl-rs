@@ -11,5 +11,5 @@ repository = "https://github.com/sandialabs/ctadl-rs"
 # `file://` clone and `rev` at a commit in it.
 [grammars.portcullis]
 repository = "https://github.com/sandialabs/ctadl-rs"
-rev = "c9db0b7ce9e673d47b335b590f8e781cf952c31a"
+rev = "57081d10d48c784a5614f26ac1afd46fb36df589"
 path = "ctadl-ascent/tree-sitter-portcullis"
