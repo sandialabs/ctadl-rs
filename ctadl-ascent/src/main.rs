@@ -53,9 +53,9 @@ pub enum Command {
     /// external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
 
-    /// Rewrite a JSON/JSON5/JSONL model-generator file in the model DSL.
+    /// Rewrite a JSON/JSON5/JSONL model-generator file in Portcullis.
     ///
-    /// The DSL is the format the engine executes; a JSON file is translated through this and
+    /// Portcullis is the format the engine executes; a JSON file is translated through this and
     /// then run, so migrating one changes nothing about what it matches. What it buys is a file
     /// you can read: the migrator also reports every construct that does not carry across,
     /// which a silent translation would hide.
@@ -83,7 +83,7 @@ pub struct MigrateModelsArgs {
     /// The JSON / JSON5 / JSONL model file to translate.
     pub input: PathBuf,
 
-    /// Where to write the DSL. Defaults to the input with a `.ctadl` extension; `-` writes to
+    /// Where to write the Portcullis file. Defaults to the input with a `.ctadl` extension; `-` writes to
     /// standard output.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -382,9 +382,9 @@ pub struct IndexArgs {
     /// multiple model files. This option is used primarily to provide propagation models, which
     /// provide function summaries for indexing external or hard-to-analyze code.
     ///
-    /// A `.ctadl` (or `.dl`) file is written in the model DSL, which is what the engine runs;
+    /// A `.ctadl` (or `.dl`) file is written in Portcullis, which is what the engine runs;
     /// `.json`, `.json5` and `.jsonl` are the older model-generator format, deprecated: such a
-    /// file is migrated to the DSL as it is loaded. `ctadl migrate-models` converts one for good.
+    /// file is migrated to Portcullis as it is loaded. `ctadl migrate-models` converts one for good.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -588,9 +588,9 @@ pub struct QueryArgs {
     pub name: String,
 
     /// The query to run, or load additional models from one or more files. Can be specified
-    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in the
-    /// model DSL; `.json`, `.json5` and `.jsonl` are the older model-generator format,
-    /// deprecated, and migrated to the DSL as they are loaded.
+    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in
+    /// Portcullis; `.json`, `.json5` and `.jsonl` are the older model-generator format,
+    /// deprecated, and migrated to Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -614,9 +614,9 @@ pub struct GoArgs {
     pub name: Option<String>,
 
     /// Load additional models from one or more files. Can be specified multiple times to load
-    /// multiple model files. A `.ctadl` (or `.dl`) file is written in the model DSL; `.json`,
+    /// multiple model files. A `.ctadl` (or `.dl`) file is written in Portcullis; `.json`,
     /// `.json5` and `.jsonl` are the older model-generator format, deprecated, and migrated to
-    /// the DSL as they are loaded.
+    /// Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 

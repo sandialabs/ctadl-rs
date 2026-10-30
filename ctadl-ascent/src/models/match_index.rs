@@ -1,4 +1,4 @@
-/*! The per-import program view the model DSL's relations are built from.
+/*! The per-import program view Portcullis's relations are built from.
 
 One import's method table, its functions' IR, which import it is (for the `language` and
 `import` attributes), and, when some rule reads `callsig`, the signature keys its call sites

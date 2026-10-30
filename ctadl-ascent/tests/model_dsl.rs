@@ -1,4 +1,4 @@
-//! The model DSL engine, against real programs.
+//! The Portcullis engine, against real programs.
 //!
 //! `models/dsl/tests.rs` covers syntax, checking and migration, none of which needs an artifact.
 //! Everything here needs one: the built-in relations are a view of a program, so what `fun`,

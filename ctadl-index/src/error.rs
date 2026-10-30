@@ -46,7 +46,7 @@ pub enum JsonModelError {
         message: String,
     },
     /// A generator the JSON loader accepts but `ctadl migrate-models` cannot carry into the
-    /// model DSL without changing what it means. `what` names the construct.
+    /// Portcullis without changing what it means. `what` names the construct.
     Untranslatable {
         index: usize,
         what: String,
@@ -231,10 +231,10 @@ pub enum Error {
     FactsConvert(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
-    /// A model DSL file that does not parse, or whose rules do not mean anything. Already
+    /// A Portcullis file that does not parse, or whose rules do not mean anything. Already
     /// rendered with `path:line:col` prefixes, because only the loader still has the file text
     /// to resolve a byte span against.
-    #[error("model DSL error\n{0}")]
+    #[error("Portcullis error\n{0}")]
     DslModel(String),
     #[error("{context}")]
     Context {

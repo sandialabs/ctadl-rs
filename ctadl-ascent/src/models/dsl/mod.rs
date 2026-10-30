@@ -259,7 +259,7 @@ impl DslFile {
             return Self::read_json(path);
         }
         let text = std::fs::read_to_string(path)
-            .err_context(|| format!("reading model DSL file: {}", path.display()))?;
+            .err_context(|| format!("reading Portcullis file: {}", path.display()))?;
         Self::from_text(path.to_path_buf(), text)
     }
 
@@ -429,7 +429,7 @@ impl DslModelSet {
         }
         if !files.is_empty() {
             log::debug!(
-                "loaded {} model DSL file(s), {} rule(s)",
+                "loaded {} Portcullis file(s), {} rule(s)",
                 files.len(),
                 files.iter().map(|f| f.program.rules.len()).sum::<usize>()
             );

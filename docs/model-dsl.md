@@ -1,4 +1,4 @@
-# The CTADL model DSL
+# Portcullis, the CTADL model language
 
 A model file tells the taint analyzer what it cannot discover on its own: which functions produce
 untrusted data, which consume it dangerously, and how data moves through code it cannot see. This
@@ -389,7 +389,7 @@ rather than a surprise on the next index.
 
 A JSON file passed to `--models` goes through the same translation, in memory, every time it is
 loaded: `ctadl index`, `ctadl query`, the model check and `ctadl report` run the migration on the
-DSL engine, exactly as they run a `.ctadl` file. Each JSON file draws one warning per run that the
+Portcullis engine, exactly as they run a `.ctadl` file. Each JSON file draws one warning per run that the
 format is deprecated, and the migration's own warnings are logged with it. A generator that does
 not translate fails the command with the errors below, each naming its generator; the model check
 reports it and checks the rest of the file. Diagnostics about a migrated file name the JSON file
@@ -400,7 +400,7 @@ came from; a test requires each `.ctadl` to be exactly what this tool writes for
 
 How the JSON constructs map:
 
-| JSON | DSL |
+| JSON | Portcullis |
 | --- | --- |
 | `find: methods` | the subject variable `F`, bound by `fun(F, …)` |
 | `find: callsites` | `callsite(C, S, callee_string = F)`, ports anchored at `S` |
@@ -427,7 +427,7 @@ How the JSON constructs map:
 A migration says what the JSON means or fails: it never writes a rule that matches more or less.
 A generator the JSON format does not allow fails with the error the JSON loader raised for it.
 Keys the format allows and that have no effect (`taint`, `forward_self`, an empty `modes` list, an `on-unmatched` or `on-ambiguous` other than `"error"`) are warnings. These the
-format allows and the DSL cannot say fail the migration, naming the generator:
+format allows and Portcullis cannot say fail the migration, naming the generator:
 
 - `Variable(...)` ports, which select a local by source name.
 - A `bridge` with no `arguments` map, or an empty one. The JSON format means an identity map over

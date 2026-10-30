@@ -1,4 +1,4 @@
-# Zed extension for the ctadl model DSL (.ctadl)
+# Zed extension for Portcullis, the ctadl model language (.ctadl)
 
 Tree-sitter syntax highlighting, bracket matching, outline, and indentation for model files.
 There is no language server.

@@ -12,7 +12,7 @@
   "metadata": {
     "version": "0.1.0",
     "license": "Apache-2.0",
-    "description": "ctadl model DSL (.ctadl) grammar for tree-sitter",
+    "description": "Portcullis (.ctadl) grammar for tree-sitter",
     "links": {
       "repository": "https://github.com/sandialabs/ctadl-rs"
     }

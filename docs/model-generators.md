@@ -1,10 +1,10 @@
 # CTADL Model Generators
 
-> **This format is deprecated.** The engine executes the **model DSL** —
+> **This format is deprecated.** The engine executes **Portcullis**, the model language —
 > [`model-dsl.md`](model-dsl.md) — and a JSON file passed to `--models` is migrated to it in
-> memory and then run on the DSL engine; nothing else reads it. Each JSON file draws a
+> memory and then run on the Portcullis engine; nothing else reads it. Each JSON file draws a
 > deprecation warning, and the format will be removed in a future release. Write new models in
-> the DSL; `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything
+> Portcullis; `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything
 > that does not carry across. A generator that cannot carry across exactly fails `ctadl index`
 > and `ctadl query` the same way, naming the generator. Until then this document is still the
 > reference for the JSON format. The *semantics* below — ports, access paths, the
@@ -105,7 +105,7 @@ ctadl init-model model.json5
 ### Checking a model file before you index
 
 Matching is decided **per import**, and only half of it needs an index. Stage 1 runs every
-generator (as its DSL migration) against one program's functions, method table and call sites —
+generator (as its Portcullis migration) against one program's functions, method table and call sites —
 it reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
 endpoints out over call sites, and expands wildcard sinks; that half needs the index. Since
 functions are never optimized out, the common case — a source or sink that names a function

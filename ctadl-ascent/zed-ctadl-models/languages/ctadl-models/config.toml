@@ -1,4 +1,4 @@
-name = "CTADL Models"
+name = "Portcullis"
 grammar = "ctadl_models"
 path_suffixes = ["ctadl"]
 line_comments = ["// "]

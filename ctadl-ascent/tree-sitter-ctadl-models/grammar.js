@@ -1,5 +1,5 @@
 /**
- * @file Tree-sitter grammar for the ctadl model DSL (.ctadl).
+ * @file Tree-sitter grammar for Portcullis, the ctadl model language (.ctadl).
  *
  * This is a port of the peg grammar in `../src/models/dsl/parse.rs` and should accept the same
  * language, except that it cannot reject an integer too large for 64 bits (peg parses it and

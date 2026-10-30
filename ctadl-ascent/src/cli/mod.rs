@@ -228,7 +228,7 @@ fn report_dsl(report: &crate::models::DslReport) {
     }
     let totals = report.totals();
     log::info!(
-        "model DSL: {} source, {} sink, {} propagation, {} bridge, {} access-path, {} \
+        "Portcullis: {} source, {} sink, {} propagation, {} bridge, {} access-path, {} \
          dispatch, {} mode head(s) kept for this phase",
         totals.sources,
         totals.sinks,

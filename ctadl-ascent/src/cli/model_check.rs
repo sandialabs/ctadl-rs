@@ -392,7 +392,7 @@ impl FileState {
         }
     }
 
-    /// [`Self::take_inventory`] for a model DSL file: one entry per rule.
+    /// [`Self::take_inventory`] for a Portcullis file: one entry per rule.
     ///
     /// A rule has no `in` clause — a DSL rule scopes itself with `fun(F, language = …)`, which
     /// is an ordinary attribute and cannot be read off without a program. So every rule is
