@@ -29,8 +29,6 @@ cil virtual method table
 [flow]Flow::Twice has signature (System.Int32)->System.Int32: [flow]Flow::Twice(System.Int32)->System.Int32
 [flow]Flow::VarArgs has signature (System.Int32,...)->System.Void: [flow]Flow::VarArgs(System.Int32,...)->System.Void
 [flow]Fn::.ctor has signature (System.Object,System.IntPtr)->System.Void: [flow]Fn::.ctor(System.Object,System.IntPtr)->System.Void
-[flow]Fn::Clone has signature ()->System.Object: [System.Private.CoreLib]System.Delegate::Clone()->System.Object
-[flow]Fn::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.MulticastDelegate::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [flow]Fn::Invoke has signature (System.Int32)->System.Int32: [flow]Fn::Invoke(System.Int32)->System.Int32
 [flow]Holder::.ctor has signature ()->System.Void: [flow]Holder::.ctor()->System.Void
 [flow]Holder::.ctor has signature (System.Object,System.Int32)->System.Void: [flow]Holder::.ctor(System.Object,System.Int32)->System.Void
@@ -41,6 +39,44 @@ cil virtual method table
 [flow]Holder extends [System.Private.CoreLib]System.Object
 [flow]Point extends [System.Private.CoreLib]System.ValueType
 end cil virtual method table
+function names
+[System.Private.CoreLib]System.Exception::get_Message()->System.String is named get_Message in [System.Private.CoreLib]System.Exception with signature ()->System.String
+[System.Private.CoreLib]System.Int32::TryParse(System.String,System.Int32&)->System.Boolean is named TryParse in [System.Private.CoreLib]System.Int32 with signature (System.String,System.Int32&)->System.Boolean
+[System.Private.CoreLib]System.Object::.ctor()->System.Void is named .ctor in [System.Private.CoreLib]System.Object with signature ()->System.Void
+[System.Private.CoreLib]System.Object::ToString()->System.String is named ToString in [System.Private.CoreLib]System.Object with signature ()->System.String
+[flow]Flow::AddressJoin(System.Boolean)->System.Int32 is named AddressJoin in [flow]Flow with signature (System.Boolean)->System.Int32
+[flow]Flow::Blocks(System.IntPtr)->System.Void is named Blocks in [flow]Flow with signature (System.IntPtr)->System.Void
+[flow]Flow::CallInc()->System.Int32 is named CallInc in [flow]Flow with signature ()->System.Int32
+[flow]Flow::CallVarArgs()->System.Void is named CallVarArgs in [flow]Flow with signature ()->System.Void
+[flow]Flow::Calli(System.Int32)->System.Int32 is named Calli in [flow]Flow with signature (System.Int32)->System.Int32
+[flow]Flow::CatchFinally(System.Object)->System.Void is named CatchFinally in [flow]Flow with signature (System.Object)->System.Void
+[flow]Flow::ClearCopy(Point&)->System.Void is named ClearCopy in [flow]Flow with signature (Point&)->System.Void
+[flow]Flow::Constrained``1(!!0)->System.String is named Constrained``1 in [flow]Flow with signature (!!0)->System.String
+[flow]Flow::Delegates(Holder)->System.Int32 is named Delegates in [flow]Flow with signature (Holder)->System.Int32
+[flow]Flow::DupStfld(System.Object)->Holder is named DupStfld in [flow]Flow with signature (System.Object)->Holder
+[flow]Flow::Filter(System.Object)->System.Void is named Filter in [flow]Flow with signature (System.Object)->System.Void
+[flow]Flow::HeightMismatch(System.Boolean)->System.Void is named HeightMismatch in [flow]Flow with signature (System.Boolean)->System.Void
+[flow]Flow::Inc(System.Int32&)->System.Void is named Inc in [flow]Flow with signature (System.Int32&)->System.Void
+[flow]Flow::Jump(System.Object)->System.Void is named Jump in [flow]Flow with signature (System.Object)->System.Void
+[flow]Flow::Lambdas(Holder)->Fn is named Lambdas in [flow]Flow with signature (Holder)->Fn
+[flow]Flow::Misc(System.Object,System.Int32,System.Double)->System.Object is named Misc in [flow]Flow with signature (System.Object,System.Int32,System.Double)->System.Object
+[flow]Flow::MultiArray()->System.Int32 is named MultiArray in [flow]Flow with signature ()->System.Int32
+[flow]Flow::NestedField(Holder)->System.Int32 is named NestedField in [flow]Flow with signature (Holder)->System.Int32
+[flow]Flow::NewobjArgs(System.Object)->System.Object is named NewobjArgs in [flow]Flow with signature (System.Object)->System.Object
+[flow]Flow::OutParam(System.String)->System.Int32 is named OutParam in [flow]Flow with signature (System.String)->System.Int32
+[flow]Flow::Prefixes(Holder,System.Int32[])->System.Int32 is named Prefixes in [flow]Flow with signature (Holder,System.Int32[])->System.Int32
+[flow]Flow::Sink(System.Object)->System.Void is named Sink in [flow]Flow with signature (System.Object)->System.Void
+[flow]Flow::StructField()->System.Int32 is named StructField in [flow]Flow with signature ()->System.Int32
+[flow]Flow::Twice(System.Int32)->System.Int32 is named Twice in [flow]Flow with signature (System.Int32)->System.Int32
+[flow]Flow::VarArgs(System.Int32,...)->System.Void is named VarArgs in [flow]Flow with signature (System.Int32,...)->System.Void
+[flow]Fn::.ctor(System.Object,System.IntPtr)->System.Void is named .ctor in [flow]Fn with signature (System.Object,System.IntPtr)->System.Void
+[flow]Fn::Invoke(System.Int32)->System.Int32 is named Invoke in [flow]Fn with signature (System.Int32)->System.Int32
+[flow]Holder::.ctor()->System.Void is named .ctor in [flow]Holder with signature ()->System.Void
+[flow]Holder::.ctor(System.Object,System.Int32)->System.Void is named .ctor in [flow]Holder with signature (System.Object,System.Int32)->System.Void
+[flow]Holder::Twice(System.Int32)->System.Int32 is named Twice in [flow]Holder with signature (System.Int32)->System.Int32
+[flow]Point::.ctor(System.Int32)->System.Void is named .ctor in [flow]Point with signature (System.Int32)->System.Void
+ctadl$delegate$[flow]Flow::Twice(System.Int32)->System.Int32 is named ctadl$delegate$[flow]Flow::Twice(System.Int32)->System.Int32
+end function names
 
 define [flow]Point::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0

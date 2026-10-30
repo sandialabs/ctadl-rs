@@ -2,11 +2,11 @@
 //! Skipped: AddParameterIndex/RemoveAtParameterIndex/RemoveParameterIndex/
 //! InsertParameterIndex (mutation), plus write-side variants.
 
-use super::{read_fixture, read_resource, Test};
-use cil_reader::model::marshal::{native_type, variant_type, MarshalInfo};
+use super::{Test, read_fixture, read_resource};
+use cil_reader::Module;
+use cil_reader::model::marshal::{MarshalInfo, native_type, variant_type};
 use cil_reader::model::{ConstantValue, MethodDef, TypeDef};
 use cil_reader::raw::Guid;
-use cil_reader::Module;
 
 fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
     ty.methods()

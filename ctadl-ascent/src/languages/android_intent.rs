@@ -9,7 +9,7 @@ use crate::facts::{
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use crate::languages::android_manifest::AndroidManifest;
 use crate::project::AnalysisProject;
-use ctadl_ir::{ProgramInfo, call::VirtualMethodTable};
+use ctadl_ir::{ProgramInfo, call::Dispatch};
 
 const INTENT: &str = "Landroid/content/Intent;";
 const BUNDLE: &str = "Landroid/os/Bundle;";
@@ -31,7 +31,7 @@ pub struct AndroidIntentObserver {
 
 impl AndroidIntentObserver {
     pub fn observe_import(&mut self, program_info: &ProgramInfo) {
-        if let VirtualMethodTable::Java { hierarchy, .. } = &program_info.vmt {
+        if let Dispatch::Java { hierarchy, .. } = &program_info.vmt.dispatch {
             for (subclass, parents) in hierarchy {
                 self.parents
                     .entry(subclass.0.to_string())

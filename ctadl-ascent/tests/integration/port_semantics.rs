@@ -24,7 +24,7 @@
 //! than a silent `Symbol("[_elem_]")` -- needs no program at all and is pinned in
 //! `json_error_handling.rs`.
 //!
-//! Not covered: pcode. It needs Ghidra, which is not available here. `native-index.jsonl` is
+//! Not covered: pcode. It needs Ghidra, which is not available here. `native-index.ctadl` is
 //! built entirely on `.deref`, which `tests/tnt/port_in_deref.tnt` pins as the ordinary symbol
 //! segment it is, and on `.[<numeric>]`, pinned by `tests/tnt/port_in_offset.tnt`.
 
@@ -114,7 +114,7 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
         &project,
         &[],
         &[index_models],
-        // Defaults suppressed. `lua-index.jsonl` models none of the names this program calls,
+        // Defaults suppressed. `lua-index.ctadl` models none of the names this program calls,
         // but a case about what is *not* modeled should not also depend on that staying true.
         true,
         // No Java or native import here, so the JNI bridge has nothing to do either way.

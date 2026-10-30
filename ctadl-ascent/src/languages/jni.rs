@@ -229,7 +229,7 @@ legitimately has one per `native` declaration. So do unattributed table entries.
 # See also
 
 - [`registry`] -- the ELF table scan and the run attribution, with unit tests over both.
-- `docs/model-generators.md` -- the declarative `bridge` construct, for the boundaries this pass
+- `docs/portcullis.md` -- the declarative `bridge` construct, for the boundaries this pass
   cannot reach: a Lua-to-C `luaL_Reg` entry, a call through a `dlsym`'d pointer, a
   `RegisterNatives` entry whose class stayed unattributed. It takes an explicit port map, since
   nothing derives one for a boundary with no naming convention.
@@ -242,7 +242,7 @@ use hashbrown::hash_set::HashSet;
 use std::collections::BTreeMap;
 
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 /// The `RegisterNatives` table scan and its run attribution. [`ctadl_pcode`]'s crate docs say
 /// why the scan lives there.
@@ -674,7 +674,7 @@ impl JniObserver {
     /// Records the Java half of one import: the methods it declares `native`. Only imports of
     /// the project being indexed contribute these, since only their stubs are in the fact base.
     pub fn observe_java(&mut self, vmt: &VirtualMethodTable, slots: SlotModel) {
-        let VirtualMethodTable::Java { natives, .. } = vmt else {
+        let Dispatch::Java { natives, .. } = &vmt.dispatch else {
             return;
         };
         for (cls, name, sig, method, is_static) in natives {
@@ -696,20 +696,19 @@ impl JniObserver {
     /// Call it at most once per import. A second call puts two targets under every symbol, and
     /// the bridge then reports each as ambiguous.
     pub fn observe_native_vmt(&mut self, vmt: &VirtualMethodTable, abi: NativeAbi, origin: Origin) {
-        let VirtualMethodTable::Native { methods } = vmt else {
+        if vmt.dispatch != Dispatch::Native {
             return;
-        };
+        }
         // Match against the *simple* name, not the IR function name: the pcode frontend
         // decorates the latter (uniquing suffixes, `<EXTERNAL>::sym@addr`) and already strips
         // the leading underscore Mach-O prefixes every C symbol with.
-        for (simple, sig, func, _qualified) in methods {
-            let (simple, sig, func): (&str, &str, &str) = (simple, sig, func);
+        for n in &vmt.names {
             self.symbols
-                .entry(simple.to_string())
+                .entry(n.simple.to_string())
                 .or_default()
                 .push(NativeTarget {
-                    function: func.to_string(),
-                    proto: NativeProto::parse(sig),
+                    function: n.fq.to_string(),
+                    proto: NativeProto::parse(n.signature.as_deref().unwrap_or_default()),
                     abi,
                     origin: origin.clone(),
                 });

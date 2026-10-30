@@ -1,0 +1,81 @@
+# What each shipped default matches on each fixture program in default_models.rs.
+# Regenerate with CTADL_BLESS=1 cargo test -p ctadl-ascent --test integration \
+#   the_defaults_match_their_golden, and review the diff.
+
+== cil-index.ctadl on cil
+    propagation: [System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator::get_Current()->!0: Return <- Index(0).deref.\[]
+    propagation: [System.Private.CoreLib]System.String::Concat(System.String,System.String)->System.String: Return <- AnyArgument
+    propagation: [System.Private.CoreLib]System.ValueTuple`2::.ctor(!0,!1)->System.Void: Index(0).deref.<[System\.Private\.CoreLib]System\.ValueTuple`2::Item1> <- Index(1)
+    propagation: [System.Private.CoreLib]System.ValueTuple`2::.ctor(!0,!1)->System.Void: Index(0).deref.<[System\.Private\.CoreLib]System\.ValueTuple`2::Item2> <- Index(2)
+
+== cil-index.ctadl on java
+    (nothing)
+
+== cil-index.ctadl on lua
+    (nothing)
+
+== cil-index.ctadl on native
+    (nothing)
+
+== cil-index.ctadl on unknown
+    (nothing)
+
+== java-index.ctadl on cil
+    (nothing)
+
+== java-index.ctadl on java
+    closure_shaped: Ljava/lang/Runnable;->run()V
+    dispatch: Ljava/io/Closeable;->close()V: inline[]
+    dispatch: Ljava/lang/Object;->toString()Ljava/lang/String;: model[Return <- AnyArgument]
+    dispatch: Ljava/util/Collection;->size()I: skip
+    dispatch: Ljava/util/Iterator;->next()Ljava/lang/Object;: model[Return <- Index(0).\[]]
+    dispatch: Ljava/util/Map;->put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;: model[Index(0).\[] <- Index(1), Index(0).\[] <- Index(2)]
+    propagation: Ljava/lang/String;->toString()Ljava/lang/String;: Return <- AnyArgument
+    propagation: Ljava/lang/String;->toString()Ljava/lang/String;: Return <- Index(0)
+    propagation: Ljava/util/ArrayList;->add(Ljava/lang/Object;)Z: Index(0).\[] <- Index(1)
+    propagation: Ljava/util/ArrayList;->add(Ljava/lang/Object;)Z: Index(0).\[] <- Index(2)
+
+== java-index.ctadl on lua
+    (nothing)
+
+== java-index.ctadl on native
+    (nothing)
+
+== java-index.ctadl on unknown
+    (nothing)
+
+== lua-index.ctadl on cil
+    propagation: [App]C::format()->System.Void: Return <- AnyArgument
+
+== lua-index.ctadl on java
+    propagation: Lcom/example/C;->format(I)V: Return <- AnyArgument
+
+== lua-index.ctadl on lua
+    propagation: format: Return <- AnyArgument
+
+== lua-index.ctadl on native
+    propagation: format: Return <- AnyArgument
+
+== lua-index.ctadl on unknown
+    propagation: format: Return <- AnyArgument
+
+== native-index.ctadl on cil
+    propagation: [App]C::strcpy()->System.Void: Index(0).deref <- Index(1).deref
+    propagation: [App]C::strcpy()->System.Void: Return.deref <- Index(1).deref
+
+== native-index.ctadl on java
+    propagation: Lcom/example/C;->strcpy(I)V: Index(0).deref <- Index(1).deref
+    propagation: Lcom/example/C;->strcpy(I)V: Return.deref <- Index(1).deref
+
+== native-index.ctadl on lua
+    propagation: strcpy: Index(0).deref <- Index(1).deref
+    propagation: strcpy: Return.deref <- Index(1).deref
+
+== native-index.ctadl on native
+    propagation: strcpy: Index(0).deref <- Index(1).deref
+    propagation: strcpy: Return.deref <- Index(1).deref
+    skip_analysis: Unwind_Resume
+
+== native-index.ctadl on unknown
+    propagation: strcpy: Index(0).deref <- Index(1).deref
+    propagation: strcpy: Return.deref <- Index(1).deref

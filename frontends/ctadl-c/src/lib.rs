@@ -41,6 +41,7 @@ use ctadl_import::error::Error;
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::mir::*;
 
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
@@ -995,11 +996,11 @@ pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
         );
     }
     Ok(ProgramInfo {
+        vmt: VirtualMethodTable::named_by_ir(&lowered.program),
         program: lowered.program,
         source_info: lowered
             .source_info
             .expect("spans are recorded on the import path"),
-        ..Default::default()
     })
 }
 

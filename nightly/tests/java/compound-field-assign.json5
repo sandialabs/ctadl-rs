@@ -2,17 +2,5 @@
   // Flow: c.n += source() (15) -> sink(c.n) (16). javac keeps c on the stack with
   // `dup` across the getfield, the call and the iadd, so the putfield's object is
   // a copy made by a stack shuffle.
-  "expected_lines": [15, 16],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LCompoundFieldAssign;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LCompoundFieldAssign;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": [15, 16]
 }

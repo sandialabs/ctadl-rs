@@ -258,7 +258,7 @@ pub struct ModelCheck {
     pub matched: Vec<GeneratorMatch>,
     /// Generators declaring an index-time construct that matched nothing.
     pub index_time_dead: Vec<IndexTimeDead>,
-    /// A bridge whose sides cannot be paired, as `models::matches::diagnose` describes it.
+    /// A bridge that paired nothing in the checked imports.
     pub bridges: Vec<BridgeDiagnosis>,
 }
 
@@ -276,7 +276,7 @@ pub struct ModelFileError {
 pub struct ScopeExcluded {
     pub file: path::PathBuf,
     pub index: usize,
-    /// The `in` clause as the file spells it, when there is one.
+    /// The scope, as the attribute tests a rule would write: `language = "dex"`.
     pub scope: Option<String>,
 }
 
@@ -288,9 +288,7 @@ pub struct GeneratorMatch {
     /// The generator's `find`, which says what unit `total` counts: functions, or the callees
     /// of call sites.
     pub find: Option<String>,
-    /// `None` for a generator no `where` narrowed: it matches every function in the import,
-    /// a count that exists only relative to that import and must never be reported as zero.
-    pub total: Option<usize>,
+    pub total: usize,
     /// A few of the matched names, for a reader checking that the `where` selected what was
     /// meant.
     pub sample: Vec<String>,
@@ -305,14 +303,11 @@ pub struct IndexTimeDead {
     pub kind: String,
 }
 
-/// One bridge's verdict, carried verbatim from `models::matches::diagnose`.
+/// One bridge's verdict.
 #[derive(Debug, Clone)]
 pub struct BridgeDiagnosis {
     pub file: path::PathBuf,
     pub index: usize,
-    /// The spec's own `on-unmatched`/`on-ambiguous` setting, which is what decides whether this
-    /// is an error or a warning -- exactly as it does at index time.
-    pub error: bool,
     pub message: String,
 }
 
@@ -387,7 +382,7 @@ fn build_invocation(
                 "The project has no index, so no taint analysis ran. The model files were \
                  matched against the imported program(s) instead -- {described} -- and the \
                  notifications below report what they select. These are model-matching results \
-                 only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion \
+                 only: call-site fan-out, 'arg(_)' expansion and sink wildcard expansion \
                  need the index, a matched name can still be absent from it, and bridge pairs \
                  are not counted. Run `ctadl index` for a real query."
             ),
@@ -553,9 +548,8 @@ fn build_invocation(
                     "warning",
                     vec![index.to_string(), file.clone(), scope.clone()],
                     format!(
-                        "Model generator {index} in '{file}' has an 'in' scope ({scope}) that \
-                         admits none of the programs checked, so it was never evaluated against \
-                         any of them."
+                        "Model rule {index} in '{file}' is scoped to {scope}, which admits none \
+                         of the programs checked, so it was never evaluated against any of them."
                     ),
                     BTreeMap::from([
                         ("generatorIndex".to_string(), serde_json::json!(index)),
@@ -579,9 +573,9 @@ fn build_invocation(
                     "warning",
                     vec![index.to_string(), file.clone(), kind.clone()],
                     format!(
-                        "Model generator {index} in '{file}' declares a {kind}, but no function \
-                         in the program matched its 'where' constraints, so it will contribute \
-                         nothing when the project is indexed."
+                        "Model rule {index} in '{file}' declares a {kind}, but its body matched \
+                         no function in the program, so it will contribute nothing when the \
+                         project is indexed."
                     ),
                     BTreeMap::from([
                         ("generatorIndex".to_string(), serde_json::json!(index)),
@@ -593,22 +587,21 @@ fn build_invocation(
             ));
         }
 
-        // CTADL0010: `diagnose`'s verdict, verbatim, at the severity the spec itself set --
-        // the same text and the same severity `ctadl index` would raise. No pair count: pairing
-        // needs the fact base.
+        // CTADL0010: a bridge that paired nothing, as a warning. No pair count: pairing needs
+        // the fact base.
         for bridge in &check.bridges {
             let file = bridge.file.display().to_string();
             config_notifications.push(at_file(
                 notification(
                     NOTIF_BRIDGE_DIAGNOSIS,
-                    if bridge.error { "error" } else { "warning" },
+                    "warning",
                     vec![
                         bridge.index.to_string(),
                         file.clone(),
                         bridge.message.clone(),
                     ],
                     format!(
-                        "Model generator {} in '{file}': {}",
+                        "Model rule {} in '{file}': {}",
                         bridge.index, bridge.message
                     ),
                     BTreeMap::from([(
@@ -635,20 +628,13 @@ fn build_invocation(
             } else {
                 format!(" (e.g. {})", matched.sample.join(", "))
             };
-            // "all functions" rather than a number: an unnarrowed generator's count exists only
-            // relative to one import, and printing it as a number invites subtracting it.
-            let count = match matched.total {
-                Some(total) => format!("{total} {unit}(s)"),
-                None => format!("every {unit} in the program(s) checked"),
-            };
-            let mut properties = BTreeMap::from([
+            let count = format!("{} {unit}(s)", matched.total);
+            let properties = BTreeMap::from([
                 ("generatorIndex".to_string(), serde_json::json!(index)),
                 ("unit".to_string(), serde_json::json!(unit)),
                 ("sample".to_string(), serde_json::json!(matched.sample)),
+                ("matched".to_string(), serde_json::json!(matched.total)),
             ]);
-            if let Some(total) = matched.total {
-                properties.insert("matched".to_string(), serde_json::json!(total));
-            }
             config_notifications.push(at_file(
                 notification(
                     NOTIF_GENERATOR_MATCHED,
@@ -659,7 +645,7 @@ fn build_invocation(
                         count.clone(),
                         sample.clone(),
                     ],
-                    format!("Model generator {index} in '{file}' matched {count}{sample}."),
+                    format!("Model rule {index} in '{file}' matched {count}{sample}."),
                     properties,
                 ),
                 &matched.file,
@@ -1079,8 +1065,6 @@ fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
 const DEAD_UNKNOWN: &str = "default";
 const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
 const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
-const DEAD_NO_CALLER: &str = "noCallerMatched";
-const DEAD_PORT_REJECTED: &str = "portRejected";
 const DEAD_MIXED: &str = "mixedReasons";
 /// The one condition that is not about a source/sink port at all: a `propagation` that matched
 /// no function. Its own id because what it contributes nothing to is the *index*, not the query.
@@ -1096,7 +1080,7 @@ struct UnmatchedMessage {
     message_id: &'static str,
     arguments: Vec<String>,
     text: String,
-    /// The `Variable(name)` the port named, when that is what failed to resolve.
+    /// The local a `local(L)` port asked for, when that is what failed to resolve.
     variable: Option<String>,
 }
 
@@ -1124,9 +1108,8 @@ fn unmatched_message(
             message_id: DEAD_NO_FUNCTION,
             arguments: head,
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction}, but no function in \
-                 the program matched its 'where' constraints, so it contributes nothing to the \
-                 query."
+                "Model rule {index} in '{file}' declares a {direction}, but its body matched no \
+                 function in the program, so it contributes nothing to the query."
             ),
             variable: None,
         },
@@ -1139,35 +1122,11 @@ fn unmatched_message(
                 a
             },
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction} on port \
-                 'Variable({name})': its 'where' constraints matched {functions} function(s), but \
-                 none of them has a local variable named '{name}', so it contributes nothing to \
-                 the query."
+                "Model rule {index} in '{file}' declares a {direction} on a local: its body \
+                 matched {functions} function(s), but none of them has a local '{name}', so it \
+                 contributes nothing to the query."
             ),
             variable: Some(name.clone()),
-        },
-        (Some(UnmatchedReason::NoCallerMatched), None) => UnmatchedMessage {
-            message_id: DEAD_NO_CALLER,
-            arguments: {
-                let mut a = head;
-                a.push(functions.to_string());
-                a
-            },
-            text: format!(
-                "Model generator {index} in '{file}' declares a {direction} at call sites: its \
-                 'where' constraints matched {functions} function(s), but no caller of them \
-                 satisfied its 'in_function' constraint, so it contributes nothing to the query."
-            ),
-            variable: None,
-        },
-        (Some(UnmatchedReason::PortRejected), None) => UnmatchedMessage {
-            message_id: DEAD_PORT_REJECTED,
-            arguments: head,
-            text: format!(
-                "Model generator {index} in '{file}' declares a {direction} on a port that is not \
-                 valid for its 'find' method, so it contributes nothing to the query."
-            ),
-            variable: None,
         },
         (Some(_), Some(_)) => {
             let joined = stats
@@ -1185,7 +1144,7 @@ fn unmatched_message(
                     a
                 },
                 text: format!(
-                    "Model generator {index} in '{file}' declares {} {direction} port(s), none of \
+                    "Model rule {index} in '{file}' declares {} {direction} port(s), none of \
                      which matched anything in the program ({joined}), so it contributes nothing \
                      to the query.",
                     stats.ports_declared
@@ -1199,8 +1158,8 @@ fn unmatched_message(
             message_id: DEAD_UNKNOWN,
             arguments: head,
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction} that matched nothing \
-                 in the program, so it contributes nothing to the query."
+                "Model rule {index} in '{file}' declares a {direction} that matched nothing in \
+                 the program, so it contributes nothing to the query."
             ),
             variable: None,
         },
@@ -1210,16 +1169,10 @@ fn unmatched_message(
 /// One clause of the `mixedReasons` list.
 fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
     match reason {
-        UnmatchedReason::NoFunctionMatched => {
-            "no function matched its 'where' constraints".to_string()
-        }
+        UnmatchedReason::NoFunctionMatched => "its body matched no function".to_string(),
         UnmatchedReason::LocalNotFound(name) => {
-            format!("no matched function has a local named '{name}'")
+            format!("no matched function has a local '{name}'")
         }
-        UnmatchedReason::NoCallerMatched => {
-            "no caller satisfied its 'in_function' constraint".to_string()
-        }
-        UnmatchedReason::PortRejected => "a port is not valid for its 'find' method".to_string(),
     }
 }
 
@@ -1250,48 +1203,36 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
         ),
         notification_descriptor_multi(
             NOTIF_GENERATOR_DEAD,
-            "Model generator matched nothing",
-            "A model generator declared a port that produced no endpoint",
-            // One message per cause; see `unmatched_message`. `{0}` = generator index,
+            "Model rule matched nothing",
+            "A model rule declared a port that produced no endpoint",
+            // One message per cause; see `unmatched_message`. `{0}` = rule index,
             // `{1}` = model file, `{2}` = direction throughout.
             &[
                 (
                     DEAD_UNKNOWN,
-                    "Model generator {0} in '{1}' declares a {2} that matched nothing in the \
-                     program, so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2} that matched nothing in the program, \
+                     so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_NO_FUNCTION,
-                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
-                     matched its 'where' constraints, so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2}, but its body matched no function in \
+                     the program, so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_LOCAL_NOT_FOUND,
-                    "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its \
-                     'where' constraints matched {4} function(s), but none of them has a local \
-                     variable named '{3}', so it contributes nothing to the query.",
-                ),
-                (
-                    DEAD_NO_CALLER,
-                    "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' \
-                     constraints matched {3} function(s), but no caller of them satisfied its \
-                     'in_function' constraint, so it contributes nothing to the query.",
-                ),
-                (
-                    DEAD_PORT_REJECTED,
-                    "Model generator {0} in '{1}' declares a {2} on a port that is not valid for \
-                     its 'find' method, so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2} on a local: its body matched {4} \
+                     function(s), but none of them has a local '{3}', so it contributes nothing \
+                     to the query.",
                 ),
                 (
                     DEAD_MIXED,
-                    "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched \
+                    "Model rule {0} in '{1}' declares {3} {2} port(s), none of which matched \
                      anything in the program ({4}), so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_INDEX_TIME,
-                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
-                     matched its 'where' constraints, so it will contribute nothing when the \
-                     project is indexed.",
+                    "Model rule {0} in '{1}' declares a {2}, but its body matched no function in \
+                     the program, so it will contribute nothing when the project is indexed.",
                 ),
             ],
         ),
@@ -1323,33 +1264,33 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             "The project has no index, so no taint analysis ran. The model files were matched \
              against the imported program(s) instead -- {0} -- and the notifications below \
              report what they select. These are model-matching results only: call-site fan-out, \
-             'Argument(*)' expansion and sink wildcard expansion need the index, a matched name \
+             'arg(_)' expansion and sink wildcard expansion need the index, a matched name \
              can still be absent from it, and bridge pairs are not counted. Run `ctadl index` \
              for a real query.",
         ),
         notification_descriptor(
             NOTIF_SCOPE_EXCLUDED,
-            "Model generator out of scope",
-            "A generator's 'in' clause admits none of the programs checked",
-            "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the \
-             programs checked, so it was never evaluated against any of them.",
+            "Model rule out of scope",
+            "A rule's language or import scope admits none of the programs checked",
+            "Model rule {0} in '{1}' is scoped to {2}, which admits none of the programs checked, \
+             so it was never evaluated against any of them.",
         ),
         notification_descriptor(
             NOTIF_BRIDGE_DIAGNOSIS,
             "Bridge model cannot be paired",
-            "A bridge's sides matched nothing, or matched ambiguously",
-            "Model generator {0} in '{1}': {2}",
+            "A bridge paired no functions in the programs checked",
+            "Model rule {0} in '{1}': {2}",
         ),
         notification_descriptor(
             NOTIF_GENERATOR_MATCHED,
-            "Model generator matched",
-            "What a generator's 'where' constraints selected",
-            "Model generator {0} in '{1}' matched {2}{3}.",
+            "Model rule matched",
+            "What a rule's body selected",
+            "Model rule {0} in '{1}' matched {2}{3}.",
         ),
         notification_descriptor(
             NOTIF_MODEL_FILE_ERROR,
             "Model file error",
-            "A model file could not be read, or a generator in it is malformed",
+            "A model file could not be read, or a rule in it is malformed",
             "Model file '{0}': {1}",
         ),
         notification_descriptor_multi(
@@ -3502,6 +3443,65 @@ async fn build_selector_table(
 mod tests {
     use super::*;
     use crate::facts::FormalIndex;
+
+    /// `CTADL0004` speaks Portcullis: a rule, its body, a local. A JSON file reaches the engine
+    /// as its migration, so these are the words for it too.
+    #[test]
+    fn unmatched_messages_name_rules_and_locals() {
+        let stats = |reasons: &[UnmatchedReason], functions| EndpointStats {
+            ports_declared: 1,
+            endpoints_matched: 0,
+            functions_matched: functions,
+            unmatched: reasons.iter().cloned().collect(),
+        };
+        let m = unmatched_message(
+            3,
+            "m.ctadl",
+            "sink",
+            &stats(&[UnmatchedReason::NoFunctionMatched], 0),
+        );
+        assert_eq!(m.message_id, DEAD_NO_FUNCTION);
+        assert_eq!(
+            m.text,
+            "Model rule 3 in 'm.ctadl' declares a sink, but its body matched no function in the \
+             program, so it contributes nothing to the query."
+        );
+        let m = unmatched_message(
+            3,
+            "m.ctadl",
+            "source",
+            &stats(&[UnmatchedReason::LocalNotFound("buf".to_string())], 2),
+        );
+        assert_eq!(m.message_id, DEAD_LOCAL_NOT_FOUND);
+        assert_eq!(m.arguments, ["3", "m.ctadl", "source", "buf", "2"]);
+        assert_eq!(
+            m.text,
+            "Model rule 3 in 'm.ctadl' declares a source on a local: its body matched 2 \
+             function(s), but none of them has a local 'buf', so it contributes nothing to the \
+             query."
+        );
+        assert_eq!(m.variable.as_deref(), Some("buf"));
+        for m in [
+            &m.text,
+            &unmatched_message(
+                0,
+                "m.ctadl",
+                "sink",
+                &stats(
+                    &[
+                        UnmatchedReason::NoFunctionMatched,
+                        UnmatchedReason::LocalNotFound("buf".to_string()),
+                    ],
+                    0,
+                ),
+            )
+            .text,
+        ] {
+            for json in ["generator", "'where'", "Variable("] {
+                assert!(!m.contains(json), "{m}");
+            }
+        }
+    }
 
     #[test]
     fn object_store_path_absolutizes_relative_input() {

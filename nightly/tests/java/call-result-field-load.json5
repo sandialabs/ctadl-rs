@@ -1,43 +1,5 @@
 {
   // No flow: a.data is tainted (19), but sink(fresh().data) (21) reads the field
   // of the new object fresh() returns, not of a.
-  "expected_lines": [],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "source",
-          "parent": "LCallResultFieldLoad;"
-        }
-      ],
-      "model": {
-        "sources": [
-          {
-            "kind": "UserInput",
-            "port": "Return"
-          }
-        ]
-      }
-    },
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "sink",
-          "parent": "LCallResultFieldLoad;"
-        }
-      ],
-      "model": {
-        "sinks": [
-          {
-            "kind": "TaintedData",
-            "port": "Argument(0)"
-          }
-        ]
-      }
-    }
-  ]
+  "expected_lines": []
 }

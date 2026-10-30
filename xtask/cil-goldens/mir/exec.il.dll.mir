@@ -2,7 +2,6 @@ cil virtual method table
 [System.Private.CoreLib]System.Exception::.ctor has signature ()->System.Void: [System.Private.CoreLib]System.Exception::.ctor()->System.Void
 [exec]Cell2::.ctor has signature (System.Int32,System.Int32)->System.Void: [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void
 [exec]Err::.ctor has signature (System.Int32)->System.Void: [exec]Err::.ctor(System.Int32)->System.Void
-[exec]Err::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
 [exec]IL::Blocks has signature (System.Int32,System.Int64)->System.Int64: [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64
 [exec]IL::DupBranch has signature (System.Object)->System.Object: [exec]IL::DupBranch(System.Object)->System.Object
 [exec]IL::Fault has signature (System.Int32)->System.Int32: [exec]IL::Fault(System.Int32)->System.Int32
@@ -27,6 +26,29 @@ cil virtual method table
 [exec]Holder extends [System.Private.CoreLib]System.Object
 [exec]IL extends [System.Private.CoreLib]System.Object
 end cil virtual method table
+function names
+[System.Private.CoreLib]System.Exception::.ctor()->System.Void is named .ctor in [System.Private.CoreLib]System.Exception with signature ()->System.Void
+[exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void is named .ctor in [exec]Cell2 with signature (System.Int32,System.Int32)->System.Void
+[exec]Err::.ctor(System.Int32)->System.Void is named .ctor in [exec]Err with signature (System.Int32)->System.Void
+[exec]IL::Blocks(System.Int32,System.Int64)->System.Int64 is named Blocks in [exec]IL with signature (System.Int32,System.Int64)->System.Int64
+[exec]IL::DupBranch(System.Object)->System.Object is named DupBranch in [exec]IL with signature (System.Object)->System.Object
+[exec]IL::Fault(System.Int32)->System.Int32 is named Fault in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::FieldAddress(Holder,System.Int64)->System.Int64 is named FieldAddress in [exec]IL with signature (Holder,System.Int64)->System.Int64
+[exec]IL::FilterStack(System.Int32)->System.Int32 is named FilterStack in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::Finite(System.Double)->System.Double is named Finite in [exec]IL with signature (System.Double)->System.Double
+[exec]IL::Ldarga(System.Int32,System.Byte,System.Int16)->System.Int32 is named Ldarga in [exec]IL with signature (System.Int32,System.Byte,System.Int16)->System.Int32
+[exec]IL::LeaveThroughTwo(System.Int32)->System.Int32 is named LeaveThroughTwo in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::NativeOvf(System.IntPtr,System.UIntPtr,System.Int64)->System.Int64 is named NativeOvf in [exec]IL with signature (System.IntPtr,System.UIntPtr,System.Int64)->System.Int64
+[exec]IL::NewobjDeep(System.Int32,System.Int64)->System.Int64 is named NewobjDeep in [exec]IL with signature (System.Int32,System.Int64)->System.Int64
+[exec]IL::RefCompare(System.Object,System.Object)->System.Int32 is named RefCompare in [exec]IL with signature (System.Object,System.Object)->System.Int32
+[exec]IL::RethrowInFinally(System.Int32)->System.Int32 is named RethrowInFinally in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::StackJoin(System.Int32,System.Int32)->System.Int32 is named StackJoin in [exec]IL with signature (System.Int32,System.Int32)->System.Int32
+[exec]IL::StackLoop(System.Int32)->System.Int32 is named StackLoop in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::StackSwitch(System.Int32)->System.Int32 is named StackSwitch in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::TryInCatch(System.Int32)->System.Int32 is named TryInCatch in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::UnboxMutate(System.Int32)->System.Int32 is named UnboxMutate in [exec]IL with signature (System.Int32)->System.Int32
+[exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double is named Unsigned in [exec]IL with signature (System.UInt32,System.UInt64)->System.Double
+end function names
 
 define [exec]Err::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1

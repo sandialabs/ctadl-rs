@@ -2,17 +2,5 @@
   // Flow: second("clean", source()) (16) returns the tainted second argument.
   // The positive twin of CallArgumentOrder. Line 12 (`return b`) is dropped: a
   // copy-through callee (see "Pure copies" in nightly/README.md).
-  "expected_lines": [16],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LCallArgumentOrderFlow;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LCallArgumentOrderFlow;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": [16]
 }

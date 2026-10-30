@@ -30,7 +30,6 @@ mod discovery;
 mod exec;
 mod jvm;
 mod jvm_opcodes;
-mod models;
 mod regression;
 mod report_eval;
 mod sarif;
@@ -39,7 +38,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::discovery::Frontend;
 
@@ -105,7 +104,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil");
+                    bail!(
+                        "--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil"
+                    );
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -140,10 +141,6 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             "--dex-apk" => {
                 let path = args.next().context("--dex-apk requires a value")?;
                 opts.dex_apk = Some(PathBuf::from(path));
-            }
-            "--models-dir" => {
-                let dir = args.next().context("--models-dir requires a value")?;
-                opts.models_dir = Some(PathBuf::from(dir));
             }
             "--cil-goldens" => {
                 let dir = args.next().context("--cil-goldens requires a value")?;
@@ -408,11 +405,6 @@ Tasks:
                              checks drive `ctadl` itself and need no toolchain,
                              so they run whenever `dex` is selected and this
                              resolves; both self-skip when it does not.
-    --models-dir <dir>       Directory holding the model generator schema and
-                             the built-in model files checked against it
-                             (default: auto-detect `ctadl-ascent/src/models`).
-                             The `models:*` checks self-skip when neither the
-                             flag nor the default directory is present.
     --cil-goldens <dir>      The committed Cecil goldens that `cil:goldens`
                              compares against (default: auto-detect
                              `xtask/cil-goldens`).
@@ -502,7 +494,7 @@ Tasks:
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_regression_args, Frontend};
+    use super::{Frontend, parse_regression_args};
     use std::collections::BTreeSet;
 
     fn frontends(args: &[&str]) -> BTreeSet<Frontend> {

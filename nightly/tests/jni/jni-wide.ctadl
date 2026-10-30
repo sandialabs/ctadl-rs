@@ -1,0 +1,18 @@
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "source", parent = "LJniWide;");
+source(F::return, kind = "UserInput") :-
+  fun(F, language in {"pcode", "lua", "c", "flowy"}, parent = "LJniWide;"),
+  F = "source";
+
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, name = "sink", parent = "LJniWide;");
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, language in {"pcode", "lua", "c", "flowy"}, parent = "LJniWide;"),
+  F = "sink";
+
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, name = "keep");
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, language in {"pcode", "lua", "c", "flowy"}),
+  F = "keep";
+

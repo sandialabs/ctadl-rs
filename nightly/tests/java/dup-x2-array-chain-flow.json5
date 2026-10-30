@@ -1,17 +1,5 @@
 {
   // Flow: x = arr[0] = source() (13) -> sink(x) (14). The positive twin of
   // DupX2ArrayChain: the `dup_x2` copy of the stored value is what reaches x.
-  "expected_lines": [13, 14],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LDupX2ArrayChainFlow;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LDupX2ArrayChainFlow;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": [13, 14]
 }

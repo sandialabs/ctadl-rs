@@ -6,7 +6,7 @@
 // no ICC delivery should be resolved.
 {
   apk: "ComponentNotInManifest1.apk",
-  model: "models/droidbench-activity-communication-2.json",
+  model: "models/droidbench-activity-communication-2.ctadl",
   expect_flow: false,
   expected_intent_pairs: 0,
   status: "pass",

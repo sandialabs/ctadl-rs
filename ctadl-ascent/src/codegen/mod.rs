@@ -40,7 +40,7 @@ use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::{
-    call::{JavaDispatch, VirtualMethodTable},
+    call::{Dispatch, JavaDispatch, VirtualMethodTable},
     visit::Visitor,
     *,
 };
@@ -375,7 +375,7 @@ pub fn codegen_function(
     };
     finder.visit_function_data(FunctionIdx::new(0), function_data);
 
-    let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
+    let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::default(), instantiated_classes);
     log::trace!("codegen for {}", function_data.name);
     let no_matches = crate::models::ProgramModelMatches::default();
     let mut v = CodegenVisitor::new(
@@ -1581,140 +1581,50 @@ impl ClassHierarchyAnalysis {
         Self::build(vmt, instantiated_classes, true)
     }
 
+    /// Every class-based table goes through the same `run_cha`.
     fn build(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>, rta: bool) -> Self {
-        match vmt {
-            VirtualMethodTable::Java {
-                methods,
-                hierarchy,
-                interfaces,
-                ..
-            } => {
-                let method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
-                    .iter()
-                    .cloned()
-                    .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
-                    .collect();
-                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
-                    .iter()
-                    .flat_map(|(sub, sups)| {
-                        sups.into_iter()
-                            .map(|sup| (sup.clone().into(), sub.clone().into()))
-                    })
-                    .collect();
-                // Sort for determinism
-                direct_superclass.sort_unstable();
-                // Which types are interfaces.
-                let interface_type = interfaces.iter().map(|c| (c.clone().into(),)).collect();
-                let super_interface = Default::default();
-                let instantiated_classes_vec =
-                    instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let declared = declared_implementations(&method_implemented);
-                let parents = direct_parents(hierarchy);
-                let (resolvents, rta_resolvents) = run_cha(
-                    method_implemented,
-                    direct_superclass,
-                    interface_type,
-                    super_interface,
-                    instantiated_classes_vec,
-                    rta,
-                );
-                Self {
-                    language: ChaLanguage::Java,
-                    resolvents,
-                    rta_resolvents,
-                    declared,
-                    parents,
-                    super_memo: Default::default(),
-                    interfaces: Default::default(),
-                }
-            }
-            // CIL is the Java arm over its own table. Override aliases (rows under a class with a
-            // base or interface method's key) are ordinary `method_implemented` rows here: a
-            // class "implementing" the base key is exactly what makes CHA find its override.
-            VirtualMethodTable::Cil {
-                methods,
-                hierarchy,
-                interfaces,
-                ..
-            } => {
-                let mut method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
-                    .iter()
-                    .cloned()
-                    .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
-                    .collect();
-                // An exact override and its alias are the same row.
-                method_implemented.sort_unstable();
-                method_implemented.dedup();
-                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
-                    .iter()
-                    .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.0.clone(), sub.0.clone())))
-                    .collect();
-                direct_superclass.sort_unstable();
-                let interface_type = interfaces.iter().map(|c| (c.0.clone(),)).collect();
-                let instantiated_classes_vec =
-                    instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let declared = declared_implementations(&method_implemented);
-                let parents = hierarchy
-                    .iter()
-                    .map(|(sub, sups)| (sub.0.clone(), sups.iter().map(|s| s.0.clone()).collect()))
-                    .collect();
-                let (resolvents, rta_resolvents) = run_cha(
-                    method_implemented,
-                    direct_superclass,
-                    interface_type,
-                    Default::default(),
-                    instantiated_classes_vec,
-                    rta,
-                );
-                Self {
-                    language: ChaLanguage::Cil,
-                    resolvents,
-                    rta_resolvents,
-                    declared,
-                    parents,
-                    super_memo: Default::default(),
-                    interfaces: interfaces.iter().map(|c| c.0.clone()).collect(),
-                }
-            }
-            // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
-            // empty descriptor sentinel, and each `__index` parent is a `direct_superclass`.
-            // The shared `run_cha` then computes the `__index`-chain resolvents unchanged.
-            VirtualMethodTable::Lua {
-                methods, hierarchy, ..
-            } => {
-                let empty_desc = Symbol::from("");
-                let method_implemented = methods
-                    .iter()
-                    .cloned()
-                    .map(|(cls, name, id)| (cls, name, empty_desc.clone(), id))
-                    .collect();
-                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
-                    .iter()
-                    .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.clone(), sub.clone())))
-                    .collect();
-                // Sort for determinism
-                direct_superclass.sort_unstable();
-                let instantiated_classes_vec =
-                    instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let (resolvents, rta_resolvents) = run_cha(
-                    method_implemented,
-                    direct_superclass,
-                    Default::default(),
-                    Default::default(),
-                    instantiated_classes_vec,
-                    rta,
-                );
-                Self {
-                    language: ChaLanguage::Lua,
-                    resolvents,
-                    rta_resolvents,
-                    ..Default::default()
-                }
-            }
-            _ => {
+        let dispatch = &vmt.dispatch;
+        let language = match dispatch {
+            Dispatch::Java { .. } => ChaLanguage::Java,
+            Dispatch::Cil { .. } => ChaLanguage::Cil,
+            Dispatch::Lua { .. } => ChaLanguage::Lua,
+            Dispatch::Unknown | Dispatch::Native => {
                 log::warn!("CHA: unsupported virtual method table");
-                Self::default()
+                return Self::default();
             }
+        };
+        let method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> =
+            dispatch.implemented().collect();
+        let mut direct_superclass: Vec<(Symbol, Symbol)> = Vec::new();
+        let mut parents: hashbrown::HashMap<Symbol, SmallVec<[Symbol; 2]>> = Default::default();
+        for (sub, sup) in dispatch.hierarchy_edges() {
+            direct_superclass.push((sup.clone(), sub.clone()));
+            parents.entry(sub.clone()).or_default().push(sup.clone());
+        }
+        // Sort for determinism
+        direct_superclass.sort_unstable();
+        let interface_type = dispatch.interface_types().map(|c| (c.clone(),)).collect();
+        let instantiated_classes_vec = instantiated_classes.into_iter().map(|s| (s,)).collect();
+        let declared = declared_implementations(&method_implemented);
+        let (resolvents, rta_resolvents) = run_cha(
+            method_implemented,
+            direct_superclass,
+            interface_type,
+            Default::default(),
+            instantiated_classes_vec,
+            rta,
+        );
+        Self {
+            language,
+            resolvents,
+            rta_resolvents,
+            declared,
+            parents,
+            super_memo: Default::default(),
+            interfaces: match language {
+                ChaLanguage::Cil => dispatch.interface_types().cloned().collect(),
+                ChaLanguage::Java | ChaLanguage::Lua => Default::default(),
+            },
         }
     }
 
@@ -1873,20 +1783,6 @@ fn declared_implementations(
             .or_insert_with(|| id.clone());
     }
     declared
-}
-
-/// The VMT hierarchy read in the direction super resolution walks: subclass to its direct
-/// parents, superclass and super-interfaces together.
-fn direct_parents(
-    hierarchy: &hashbrown::HashMap<
-        ctadl_ir::mir::call::JavaClass,
-        SmallVec<[ctadl_ir::mir::call::JavaClass; 2]>,
-    >,
-) -> hashbrown::HashMap<Symbol, SmallVec<[Symbol; 2]>> {
-    hierarchy
-        .iter()
-        .map(|(sub, sups)| (sub.0.clone(), sups.iter().map(|s| s.0.clone()).collect()))
-        .collect()
 }
 
 /// The function a modelled signature's summary hangs off.

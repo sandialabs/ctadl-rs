@@ -224,10 +224,10 @@ measured before the fix, so its "Default" column includes cause 1.
   nothing from its size.
 
 **The fix, for named allocators** (`8e5c4179`). The native default models
-(`ctadl-ascent/src/models/defaults/native-index.jsonl`) give `skip-analysis` to `malloc`,
-`calloc`, `free`, the aligned allocators and the uClibc/glibc internals (`malloc_consolidate`,
-`int_malloc`, `heap_alloc`, ...). `realloc` is skipped too and keeps its model,
-`Argument(0).deref -> Return.deref`, since it moves the old contents. Matching is by name, so it
+(`ctadl-ascent/src/models/defaults/native-index.ctadl` since the Portcullis merge) give
+`skip_analysis` to `malloc`, `calloc`, `free`, the aligned allocators and the uClibc/glibc
+internals (`malloc_consolidate`, `int_malloc`, `heap_alloc`, ...). `realloc` is skipped too and
+keeps its model, `return.deref <- arg(0).deref`, since it moves the old contents. Matching is by name, so it
 does nothing for a stripped allocator. The regression suite passes: 250 passed and the 3 expected
 failures.
 

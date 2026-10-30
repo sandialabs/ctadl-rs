@@ -12,6 +12,7 @@
 //! explicitly; see [`Worker`] and [`scratch_dir`].
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,9 +20,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_import::notifications::{
-    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
+    self, NOTIFICATIONS_FILE, Notifications, STACK_SLOTS_PROMOTED_FULLY,
 };
 
 use crate::android_icc;
@@ -32,7 +33,6 @@ use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
 use crate::jvm;
-use crate::models;
 use crate::sarif;
 
 /// Fallback base address for SARIF that predates the analyzer emitting
@@ -67,9 +67,9 @@ const JVM_KNOWN_FAILURES: &[&str] = &[
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
-    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.jsonl`,
-    // which `models::default_model_file` hands only to a
-    // `VirtualMethodTable::Native` program -- i.e. the pcode import. A `-l c`
+    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.ctadl`,
+    // which `models::default_portcullis_models` hands only to a
+    // `Dispatch::Native` program -- i.e. the pcode import. A `-l c`
     // import has no method table (`Unknown`) and so gets no default file at all,
     // leaving every step between source and sink an unmodeled external. The
     // Pcode twin (`defaultmodels`, unprefixed) is what enforces those defaults.
@@ -85,9 +85,6 @@ pub struct Options {
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
     pub dex_apk: Option<PathBuf>,
-    /// Directory holding the model generator schema and the model files checked
-    /// against it. `None` auto-detects; see [`resolve_models_dir`].
-    pub models_dir: Option<PathBuf>,
     /// The committed Cecil goldens. `None` auto-detects; see
     /// [`cil::resolve_goldens`].
     pub cil_goldens: Option<PathBuf>,
@@ -103,7 +100,7 @@ pub struct Options {
     /// Either way the binary is rebuilt from current source before any case
     /// runs; see [`build_ctadl`].
     pub release: bool,
-    /// The `--mem2reg` policy every `ctadl index` runs with, through [`MEM2REG_ENV`]. `None`
+    /// The `--mem2reg` policy every `ctadl index` runs with; see [`ctadl_command`]. `None`
     /// runs the default. A policy that can lose flows (`full:0` promotes every function fully)
     /// turns a lost flow into a report; see [`explain_lost_flow`].
     pub mem2reg: Option<String>,
@@ -117,7 +114,6 @@ impl Default for Options {
             tests_dir: None,
             jvm_samples: None,
             dex_apk: None,
-            models_dir: None,
             cil_goldens: None,
             cecil_src: None,
             cil_fixtures: None,
@@ -164,13 +160,9 @@ pub(crate) enum Outcome {
 /// Run the suite. Returns `Ok(true)` if every selected case passed or was
 /// skipped, `Ok(false)` if any failed.
 pub fn run(opts: &Options) -> Result<bool> {
-    // Every `ctadl` the cases spawn inherits this, so it is set before any worker starts. Without
-    // `--mem2reg` it is cleared, so a value left in the caller's shell cannot change the default
-    // run.
-    match &opts.mem2reg {
-        Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
-        None => std::env::remove_var(MEM2REG_ENV),
-    }
+    MEM2REG
+        .set(opts.mem2reg.clone())
+        .map_err(|_| anyhow::anyhow!("internal error: regression suite run more than once"))?;
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
 
     let mut cases = discovery::discover(&tests_dir)?;
@@ -224,7 +216,6 @@ pub fn run(opts: &Options) -> Result<bool> {
     } else {
         None
     };
-    let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
     let wants_cil = opts.frontends.contains(&Frontend::Cil);
     let (cil_goldens, cecil_src, cil_fixtures) = if wants_cil {
         let goldens = cil::resolve_goldens(opts.cil_goldens.as_deref())?;
@@ -278,12 +269,6 @@ pub fn run(opts: &Options) -> Result<bool> {
             fixtures: cil_fixtures.as_deref(),
         });
     }
-    // Schema drift check on the model files ctadl ships. It reads three small
-    // files and runs no external tool, so it is never gated on a frontend: the
-    // schema is what users write generators against whatever they analyze.
-    tasks.push(Task::ModelSchema {
-        models: models_dir.as_deref(),
-    });
 
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
@@ -384,12 +369,6 @@ enum Task<'a> {
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
     },
-    /// Hold the shipped model files to the published model generator schema.
-    /// `None` means neither `--models-dir` nor the in-tree default was found,
-    /// which reports as a Skip rather than vanishing from the report.
-    ModelSchema {
-        models: Option<&'a Path>,
-    },
     GhidraProject,
 }
 
@@ -397,7 +376,7 @@ impl Task<'_> {
     /// Whether workers take this task before the single cases. These each run many checks or one
     /// long one, so started last they would run on after everything else had finished.
     fn is_long(&self) -> bool {
-        !matches!(self, Task::Case(_) | Task::ModelSchema { .. })
+        !matches!(self, Task::Case(_))
     }
 
     /// The task's name in the timing summary.
@@ -410,7 +389,6 @@ impl Task<'_> {
             Task::ApkIndexCheck { .. } => "apk index check".to_string(),
             Task::CilChecks { .. } => "cil checks".to_string(),
             Task::CilFrontend { .. } => "cil:frontend".to_string(),
-            Task::ModelSchema { .. } => "model schema".to_string(),
             Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
         }
     }
@@ -491,21 +469,6 @@ impl Task<'_> {
                     });
                 retain_filtered(results, opts)
             }
-            Task::ModelSchema { models } => {
-                let results = match models {
-                    Some(dir) => models::run_checks(dir).unwrap_or_else(|err| {
-                        vec![(
-                            "models:defaults".to_string(),
-                            Outcome::Fail(format!("{err:#}")),
-                        )]
-                    }),
-                    None => vec![(
-                        "models:defaults".to_string(),
-                        Outcome::Skip("model directory not found; pass --models-dir".to_string()),
-                    )],
-                };
-                retain_filtered(results, opts)
-            }
             Task::GhidraProject => {
                 let (name, outcome) = run_ghidra_project_check(worker).unwrap_or_else(|err| {
                     (
@@ -552,17 +515,19 @@ fn run_tasks(
 
     std::thread::scope(|scope| {
         for worker in &workers {
-            scope.spawn(move || loop {
-                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                    break;
-                };
-                let task = &tasks[index];
-                let start = Instant::now();
-                let outcomes = task.run(worker, opts);
-                let elapsed = start.elapsed();
-                // Held only to push a finished result; no test work happens
-                // under the lock.
-                results.lock().unwrap().push((index, outcomes, elapsed));
+            scope.spawn(move || {
+                loop {
+                    let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let task = &tasks[index];
+                    let start = Instant::now();
+                    let outcomes = task.run(worker, opts);
+                    let elapsed = start.elapsed();
+                    // Held only to push a finished result; no test work happens
+                    // under the lock.
+                    results.lock().unwrap().push((index, outcomes, elapsed));
+                }
             });
         }
     });
@@ -633,28 +598,6 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     .map(|p| std::fs::canonicalize(&p))
     .transpose()
     .with_context(|| "failed to canonicalize dex apk path")
-}
-
-/// Locate the models directory: the model generator schema and the built-in
-/// model files that must validate against it. With no override, look where the
-/// crate lives relative to the repo root (`cargo xtask`) or the nightly cwd.
-///
-/// Unlike the other resolvers, nothing produces this directory -- it is checked
-/// into the crate -- so a run that cannot find it is a run against a tree that
-/// does not have it (a Nix check with no source, say), and the check Skips.
-fn resolve_models_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
-    if let Some(dir) = override_dir {
-        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
-            format!("failed to canonicalize {}", dir.display())
-        })?));
-    }
-    ["ctadl-ascent/src/models", "../ctadl-ascent/src/models"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|p| p.is_dir())
-        .map(|p| std::fs::canonicalize(&p))
-        .transpose()
-        .with_context(|| "failed to canonicalize models directory")
 }
 
 /// Ensure the executables needed for the selected cases are available.
@@ -775,9 +718,6 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
     }
 }
 
-/// The environment variable `ctadl index` reads its `--mem2reg` default from.
-const MEM2REG_ENV: &str = "CTADL_MEM2REG";
-
 /// Judges a failed case run under `--mem2reg <policy>` by the notifications its indexes wrote.
 ///
 /// A policy like `full:0` is expected to lose flows, and `ctadl index` names each function it
@@ -829,15 +769,36 @@ fn index_notifications(dir: &Path, lines: &mut BTreeSet<String>) -> Result<()> {
 
 fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
     match &case.kind {
-        Kind::Dex { java, config } => run_dex(&case.name, java, config),
-        Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
-        Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
-        Kind::C { source, query } => run_c(&case.name, source, query),
-        Kind::Lua { source, query } => run_lua(&case.name, source, query),
+        Kind::Dex {
+            java,
+            config,
+            models,
+        } => run_dex(&case.name, java, config, models),
+        Kind::Jvm {
+            java,
+            config,
+            models,
+        } => run_jvm(&case.name, java, config, models),
+        Kind::Pcode {
+            source,
+            query,
+            models,
+        } => run_pcode(&case.name, source, query, models, worker),
+        Kind::C {
+            source,
+            query,
+            models,
+        } => run_c(&case.name, source, query, models),
+        Kind::Lua {
+            source,
+            query,
+            models,
+        } => run_lua(&case.name, source, query, models),
         Kind::Jni {
             java,
             native,
             config,
+            models,
             bridge,
             packaging,
             abi,
@@ -847,6 +808,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             java,
             native,
             config,
+            models,
             bridge.as_deref(),
             JniBuild {
                 packaging: *packaging,
@@ -856,16 +818,21 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
-        Kind::Cil { source, config } => run_cil(&case.name, source, config),
+        Kind::Cil {
+            source,
+            config,
+            models,
+        } => run_cil(&case.name, source, config, models.as_deref()),
     }
 }
 
 // --- CIL --------------------------------------------------------------------
 
 /// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
-/// frontend, index, query with the model its config implies, and judge the code flows by the
-/// sink functions they end in and the source lines they reach.
-fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
+/// frontend, index, query with the model its config implies (plus `models`, the case's own
+/// rules, if it has any), and judge the code flows by the sink functions they end in and the
+/// source lines they reach.
+fn run_cil(name: &str, source: &Path, config: &Path, models: Option<&Path>) -> Result<Outcome> {
     use crate::cil::cases;
     let Some(dotnet) = cases::dotnet() else {
         return Ok(Outcome::Skip(
@@ -877,11 +844,14 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
     std::fs::create_dir_all(&state)?;
     let cfg = cases::read_config(config)?;
     let artifact = cases::compile(&dotnet, source, &work, &work.join("out"))?;
-    let model = work.join("query.json");
-    std::fs::write(
-        &model,
-        serde_json::to_string_pretty(&cases::query_model(&cfg))?,
-    )?;
+    let model = work.join("query.ctadl");
+    std::fs::write(&model, cases::query_model(&cfg))?;
+    let model = model.to_string_lossy().into_owned();
+    let mut model_args = vec!["-m", &model];
+    let extra = models.map(|m| m.to_string_lossy().into_owned());
+    if let Some(extra) = &extra {
+        model_args.extend(["-m", extra.as_str()]);
+    }
     let project = name.replace(':', "_");
     let sarif = work.join("output.sarif");
     run_ctadl(
@@ -901,13 +871,11 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
         &work,
         &state,
         &[
-            "query",
-            &project,
-            "-m",
-            &model.to_string_lossy(),
-            "-o",
-            &sarif.to_string_lossy(),
-        ],
+            &["query", &project][..],
+            &model_args,
+            &["-o", &sarif.to_string_lossy()],
+        ]
+        .concat(),
     )?;
     let outcome = cases::check(&cfg, &sarif)?;
     with_valid_sarif(&work, &[&sarif], outcome)
@@ -991,7 +959,7 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
 
 // --- DEX / Java -----------------------------------------------------------
 
-fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_dex(name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -1017,7 +985,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1029,7 +997,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1087,7 +1055,7 @@ fn compile_dex(work: &Path, java: &Path, stem: &str) -> Result<PathBuf> {
 
 // --- JVM / Java -----------------------------------------------------------
 
-fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_jvm(case_name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     for tool in ["javac", "jar"] {
         if exec::which(tool).is_none() {
             return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
@@ -1148,7 +1116,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1160,7 +1128,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1358,6 +1326,27 @@ pub(crate) fn ctadl_bin() -> Result<PathBuf> {
     )
 }
 
+/// The `--mem2reg` policy from [`Options::mem2reg`]. Set once by [`run`] before any worker starts.
+static MEM2REG: OnceLock<Option<String>> = OnceLock::new();
+
+/// `ctadl <args>` with [`ctadl_bin`]; see [`ctadl_command_with`].
+pub(crate) fn ctadl_command<S: AsRef<OsStr>>(args: &[S]) -> Result<Command> {
+    Ok(ctadl_command_with(&ctadl_bin()?, args))
+}
+
+/// `<ctadl> <args>`. A `ctadl index` is also passed the suite's `--mem2reg` policy, if one was
+/// given. Every case spawns `ctadl` through here, so none misses the policy.
+pub(crate) fn ctadl_command_with<S: AsRef<OsStr>>(ctadl: &Path, args: &[S]) -> Command {
+    let mut cmd = Command::new(ctadl);
+    cmd.args(args);
+    if let Some(Some(policy)) = MEM2REG.get()
+        && args.first().is_some_and(|a| a.as_ref() == "index")
+    {
+        cmd.arg("--mem2reg").arg(policy);
+    }
+    cmd
+}
+
 /// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
 ///
 /// The default flow rebuilds `ctadl` from the tree under test so a stale binary
@@ -1405,9 +1394,9 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     // lives at `<root>/xtask`, so its manifest dir's parent is the root.
     //
     // `--workspace` rather than `-p ctadl-ascent`: cargo resolves features across the packages it
-    // selects, and `-p ctadl-ascent` leaves out xtask's `boon`, which turns on `idna`'s `default`.
-    // That one feature changes the hash of `idna` and of every crate above it, so a `-p` build
-    // compiles its own copy of about forty crates instead of reusing the workspace build's.
+    // selects, so a `-p` build can enable different features on a shared dependency, which
+    // changes its hash and that of every crate above it, and compile its own copies instead of
+    // reusing the workspace build's.
     cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
         "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
     )?)
@@ -1446,10 +1435,11 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
         };
         // The `ctadl` binary's compiler-artifact carries the path we want in its
         // (non-null) `executable` field.
-        if msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "ctadl" {
-            if let Some(path) = msg["executable"].as_str() {
-                exe = Some(PathBuf::from(path));
-            }
+        if msg["reason"] == "compiler-artifact"
+            && msg["target"]["name"] == "ctadl"
+            && let Some(path) = msg["executable"].as_str()
+        {
+            exe = Some(PathBuf::from(path));
         }
     }
 
@@ -1472,10 +1462,8 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
 }
 
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     exec::run_checked(
         cmd,
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
@@ -1500,7 +1488,7 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
 ///   2. *Reached lines*: every `expected_lines` entry appears among the
 ///      code-flow `startLine`s.
 ///   3. *Unexpected lines*: no `unexpected_lines` entry is among them.
-fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_lua(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -1522,7 +1510,7 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1570,7 +1558,13 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
 
 // --- Pcode / C ------------------------------------------------------------
 
-fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result<Outcome> {
+fn run_pcode(
+    name: &str,
+    source: &Path,
+    query: &Path,
+    models: &Path,
+    worker: &Worker,
+) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -1610,7 +1604,7 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1781,10 +1775,8 @@ fn guess_java_home() -> Option<PathBuf> {
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -1805,10 +1797,8 @@ fn run_ctadl_logged(
     args: &[&str],
     log: &str,
 ) -> Result<String> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -1850,6 +1840,7 @@ fn run_jni(
     java: &Path,
     native: &Path,
     config: &Path,
+    models: &Path,
     bridge: Option<&Path>,
     build: JniBuild<'_>,
     worker: &Worker,
@@ -2048,17 +2039,17 @@ fn run_jni(
         "warn,ctadl=info,ctadl_ascent::languages::jni=debug".to_string(),
     ));
     let index_log = run_ctadl_logged(&work, &state, &index_env, &index_args, "index.log")?;
-    if let Some(expected) = assertions::read_untyped_native_layout(config)? {
-        if let Some(why) = check_native_layout(&index_log, untyped, &expected) {
-            return Ok(Outcome::Fail(why));
-        }
+    if let Some(expected) = assertions::read_untyped_native_layout(config)?
+        && let Some(why) = check_native_layout(&index_log, untyped, &expected)
+    {
+        return Ok(Outcome::Fail(why));
     }
     ctadl(
         &[
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -2069,7 +2060,7 @@ fn run_jni(
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -2088,6 +2079,7 @@ fn run_jni(
             &format!("{dex_project}__{abi}__{}", file_stem_of(&lib)?),
             &format!("{dex_project}__{abi}__libdummy"),
             config,
+            models,
             &index_log,
         )?;
         if let Some(why) = failed {
@@ -2173,6 +2165,7 @@ fn check_summary_workflow(
     x_import: &str,
     y_import: &str,
     config: &Path,
+    models: &Path,
     index_log: &str,
 ) -> Result<Option<String>> {
     let ctadl = |args: &[&str], log: &str| run_ctadl_logged(work, state, env, args, log);
@@ -2244,7 +2237,7 @@ fn check_summary_workflow(
             "query",
             project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &work.join("graph.sarif").to_string_lossy(),
             "--dump-taint-graph",
@@ -2378,7 +2371,7 @@ fn native_lines(
 
 /// Run one C case through the tree-sitter frontend.
 ///
-/// This is the Pcode case's twin over the very same `.c` source and query JSON,
+/// This is the Pcode case's twin over the very same `.c` source, config and model,
 /// but a much shorter pipeline: the tree-sitter frontend parses the source
 /// directly, so there is no compiler, no Ghidra, and no `addr2line`. The source
 /// lines a flow reaches are read straight off the SARIF regions the frontend
@@ -2387,7 +2380,7 @@ fn native_lines(
 /// It shares no state with `run_pcode` -- its own scratch dir, project name, and
 /// SARIF -- so its outcome is entirely independent: a C failure never touches the
 /// Pcode case for the same source, and vice versa.
-fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_c(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -2414,7 +2407,7 @@ fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -2665,10 +2658,10 @@ impl Worker {
             ),
         ];
         // Guess JAVA_HOME from `java` if the environment did not set it.
-        if std::env::var_os("JAVA_HOME").is_none() {
-            if let Some(java_home) = guess_java_home() {
-                ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
-            }
+        if std::env::var_os("JAVA_HOME").is_none()
+            && let Some(java_home) = guess_java_home()
+        {
+            ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
         }
         Ok(Self { ghidra_env })
     }
@@ -2719,9 +2712,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
+    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
     use ctadl_import::notifications::{
-        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+        DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 

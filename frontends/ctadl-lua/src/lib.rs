@@ -83,7 +83,7 @@ use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
 use ctadl_ir::mir::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
@@ -966,7 +966,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lowers the recovered class maps -- and the name of every collected function -- into
-    /// [`VirtualMethodTable::Lua`] on `self.vmt`.
+    /// [`Dispatch::Lua`] on `self.vmt`.
     fn build_vmt(&mut self) {
         let mut methods: Vec<(Symbol, Symbol, Symbol)> = Vec::new();
         for (cls, ms) in &self.class_methods {
@@ -1032,11 +1032,27 @@ impl<'a> Lowerer<'a> {
             .collect();
         externals.sort_unstable();
 
-        self.vmt = VirtualMethodTable::Lua {
-            methods,
-            functions,
-            externals,
-            hierarchy,
+        // A function's class is the table that holds it as a method. A Lua function has exactly
+        // one name, its fq; `simple` is what its definition wrote, or an external's last
+        // component.
+        let parent: HashMap<&Symbol, &Symbol> =
+            methods.iter().map(|(cls, _, fq)| (fq, cls)).collect();
+        let mut names: Vec<FunctionNames> = functions
+            .iter()
+            .chain(externals.iter())
+            .map(|(simple, fq)| {
+                let names = FunctionNames::new(fq.clone(), simple.clone());
+                match parent.get(fq) {
+                    Some(&cls) => names.with_parent(cls.clone()),
+                    None => names,
+                }
+            })
+            .collect();
+        names.sort_by(|a, b| a.fq.cmp(&b.fq));
+
+        self.vmt = VirtualMethodTable {
+            names,
+            dispatch: Dispatch::Lua { methods, hierarchy },
         };
     }
 
@@ -1127,7 +1143,7 @@ impl<'a> Lowerer<'a> {
 
     /// A name for a function that has none of its own, as `(fully-qualified, simple)`. The
     /// counter runs across the whole import, not per file (see the `%anonN` warning in
-    /// `docs/model-generators.md`).
+    /// `docs/portcullis.md`).
     fn fresh_anon_name(&mut self) -> (String, String) {
         let n = self.anon_counter;
         self.anon_counter += 1;
@@ -2618,8 +2634,8 @@ mod tests {
 
     /// The recovered `(class, method)` pairs, sorted, ignoring the function-id column.
     fn method_pairs(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { methods, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { methods, .. } => {
                 let mut v: Vec<(String, String)> = methods
                     .iter()
                     .map(|(cls, m, _fid)| (cls.to_string(), m.to_string()))
@@ -2627,41 +2643,48 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
-    /// The VMT's `(simple name, fully-qualified name)` pair for every function, sorted by
+    /// The `(simple name, fully-qualified name)` pair of every lowered function, sorted by
     /// qualified name.
-    fn vmt_functions(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { functions, .. } => {
-                let mut v: Vec<(String, String)> = functions
-                    .iter()
-                    .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
-                    .collect();
-                v.sort_by(|a, b| a.1.cmp(&b.1));
-                v
-            }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
-        }
+    fn vmt_functions(info: &ProgramInfo) -> Vec<(String, String)> {
+        let lowered: HashSet<&str> = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        vmt_names(&info.vmt, |fq| lowered.contains(fq))
     }
 
-    /// The VMT's `(simple name, fully-qualified name)` pair for every external.
-    fn vmt_externals(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { externals, .. } => externals
-                .iter()
-                .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
-                .collect(),
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
-        }
+    /// The `(simple name, fully-qualified name)` pair of every external: a name the table
+    /// describes and the program does not lower.
+    fn vmt_externals(info: &ProgramInfo) -> Vec<(String, String)> {
+        let lowered: HashSet<&str> = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        vmt_names(&info.vmt, |fq| !lowered.contains(fq))
+    }
+
+    fn vmt_names(vmt: &VirtualMethodTable, keep: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+        vmt.names
+            .iter()
+            .filter(|n| keep(n.fq.as_ref()))
+            .map(|n| (n.simple.to_string(), n.fq.to_string()))
+            .collect()
     }
 
     /// The recovered `subclass -> parent` edges, sorted.
     fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { hierarchy, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { hierarchy, .. } => {
                 let mut v: Vec<(String, String)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
@@ -2672,7 +2695,7 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
@@ -2751,7 +2774,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_functions(&info.vmt),
+            vmt_functions(&info),
             vec![
                 ("%anon0".to_string(), "m.%anon0".to_string()),
                 ("%chunk".to_string(), "m.%chunk".to_string()),
@@ -2762,7 +2785,7 @@ mod tests {
         );
         // The column covers the whole program, not just the class methods.
         assert_eq!(
-            vmt_functions(&info.vmt)
+            vmt_functions(&info)
                 .iter()
                 .map(|(_, fq)| fq.clone())
                 .collect::<Vec<_>>(),
@@ -2786,7 +2809,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_externals(&info.vmt),
+            vmt_externals(&info),
             vec![
                 ("execute".to_string(), "os.execute".to_string()),
                 ("format".to_string(), "string.format".to_string()),
@@ -2797,7 +2820,7 @@ mod tests {
         // The simple name of a dotted external is its last component -- there is no definition
         // site to read one off, unlike `functions`.
         assert!(
-            !vmt_functions(&info.vmt)
+            !vmt_functions(&info)
                 .iter()
                 .any(|(_, fq)| fq == "os.execute"),
             "an external must not also appear as a defined function"
@@ -2815,7 +2838,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_functions(&info.vmt),
+            vmt_functions(&info),
             vec![
                 ("%chunk".to_string(), "m.%chunk".to_string()),
                 ("f".to_string(), "m.f".to_string()),

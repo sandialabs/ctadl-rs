@@ -14,8 +14,8 @@ use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
-    CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
-    VirtualMethodTable,
+    CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
+    JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::*;
 
@@ -199,11 +199,11 @@ impl Context {
                 log::trace!("Interface: {}", iface);
             }
 
-            if let VirtualMethodTable::Java {
+            if let Dispatch::Java {
                 hierarchy,
                 interfaces,
                 ..
-            } = &mut builders.vmt
+            } = &mut builders.vmt.dispatch
             {
                 hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
                 if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
@@ -236,7 +236,12 @@ impl Context {
                 // All JVM functions model (normal_return, exception_return) like DEX.
                 fdat.return_type = ReturnType { arity: 2 };
 
-                if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
+                builders.vmt.names.push(
+                    FunctionNames::new(full_name.as_str(), method_name.as_str())
+                        .with_parent(class_name.as_str())
+                        .with_signature(java_sig.as_str()),
+                );
+                if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                     methods.push((
                         JavaClass(class_name.to_string().into()),
                         JavaSimpleName(method_name.clone().into()),
@@ -245,9 +250,9 @@ impl Context {
                     ));
                 }
                 if enc.access_flags & JVM_ACC_ABSTRACT != 0
-                    && let VirtualMethodTable::Java {
+                    && let Dispatch::Java {
                         abstract_methods, ..
-                    } = &mut builders.vmt
+                    } = &mut builders.vmt.dispatch
                 {
                     abstract_methods.push((
                         JavaClass(class_name.to_string().into()),
@@ -258,7 +263,7 @@ impl Context {
                 // Native methods are also listed in `natives`. They are already in `methods`
                 // above: this frontend walks every declared method, code or not.
                 if enc.access_flags & JVM_ACC_NATIVE != 0
-                    && let VirtualMethodTable::Java { natives, .. } = &mut builders.vmt
+                    && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
                 {
                     natives.push((
                         JavaClass(class_name.to_string().into()),
@@ -465,7 +470,7 @@ impl Context {
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
         for (_sig, entry) in self.ext.drain() {
-            if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
+            if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 if !methods
                     .iter()
                     .any(|(_class_name, _simple_name, _signature, defined_method)| {
@@ -480,6 +485,11 @@ impl Context {
                         entry.3.clone(),
                     ));
 
+                    builders.vmt.names.push(
+                        FunctionNames::new(entry.3.0.clone(), entry.1.0.clone())
+                            .with_parent(entry.0.0.clone())
+                            .with_signature(entry.2.0.clone()),
+                    );
                     // Add empty definition
                     let fidx = program.new_function();
                     let fdat = &mut program.functions[fidx];
@@ -499,6 +509,7 @@ impl Context {
         // Verify the generated program.
         program.verify()?;
 
+        builders.vmt.finish_names();
         let source_info = builders.source_info_builder.finish();
         log::trace!("source_info: {source_info}");
         let vmt = builders.vmt;
