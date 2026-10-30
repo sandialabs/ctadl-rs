@@ -9,13 +9,10 @@ use smallvec::SmallVec;
 /// by its simple name, class and descriptor. A function with two rows keeps the first.
 pub fn with_method_names(mut vmt: VirtualMethodTable) -> VirtualMethodTable {
     let names: Vec<FunctionNames> = match &vmt.dispatch {
-        Dispatch::Java { methods, .. } => methods
-            .iter()
-            .map(|(cls, name, desc, fid)| method(&fid.0, &name.0, &cls.0, &desc.0))
-            .collect(),
-        Dispatch::Cil { methods, .. } => methods
-            .iter()
-            .map(|(cls, name, desc, fid)| method(&fid.0, &name.0, &cls.0, &desc.0))
+        Dispatch::Java { .. } | Dispatch::Cil { .. } => vmt
+            .dispatch
+            .implemented()
+            .map(|(cls, name, desc, fid)| method(&fid, &name, &cls, &desc))
             .collect(),
         _ => Vec::new(),
     };

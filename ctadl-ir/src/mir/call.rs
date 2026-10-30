@@ -429,6 +429,69 @@ pub enum Dispatch {
     },
 }
 
+/// The columns the class-based tables share, read with each language's newtypes erased.
+/// Empty for a table without classes.
+impl Dispatch {
+    /// The `methods` rows as `(class, simple name, descriptor, method id)`. A Lua row has an
+    /// empty descriptor, since Lua has no overloading.
+    pub fn implemented(&self) -> Box<dyn Iterator<Item = (Symbol, Symbol, Symbol, Symbol)> + '_> {
+        match self {
+            Dispatch::Java { methods, .. } => Box::new(
+                methods
+                    .iter()
+                    .map(|(c, n, d, m)| (c.0.clone(), n.0.clone(), d.0.clone(), m.0.clone())),
+            ),
+            Dispatch::Cil { methods, .. } => Box::new(
+                methods
+                    .iter()
+                    .map(|(c, n, d, m)| (c.0.clone(), n.0.clone(), d.0.clone(), m.0.clone())),
+            ),
+            Dispatch::Lua { methods, .. } => {
+                let empty = Symbol::from("");
+                Box::new(
+                    methods
+                        .iter()
+                        .map(move |(c, n, m)| (c.clone(), n.clone(), empty.clone(), m.clone())),
+                )
+            }
+            Dispatch::Unknown | Dispatch::Native => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// The `hierarchy` as `(subclass, direct parent)` edges, a class's parents in table order.
+    pub fn hierarchy_edges(&self) -> Box<dyn Iterator<Item = (&Symbol, &Symbol)> + '_> {
+        match self {
+            Dispatch::Java { hierarchy, .. } => Box::new(
+                hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(move |sup| (&sub.0, &sup.0))),
+            ),
+            Dispatch::Cil { hierarchy, .. } => Box::new(
+                hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(move |sup| (&sub.0, &sup.0))),
+            ),
+            Dispatch::Lua { hierarchy, .. } => Box::new(
+                hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(move |sup| (sub, sup))),
+            ),
+            Dispatch::Unknown | Dispatch::Native => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// The `interfaces` column. Lua has none.
+    pub fn interface_types(&self) -> Box<dyn Iterator<Item = &Symbol> + '_> {
+        match self {
+            Dispatch::Java { interfaces, .. } => Box::new(interfaces.iter().map(|c| &c.0)),
+            Dispatch::Cil { interfaces, .. } => Box::new(interfaces.iter().map(|c| &c.0)),
+            Dispatch::Lua { .. } | Dispatch::Unknown | Dispatch::Native => {
+                Box::new(std::iter::empty())
+            }
+        }
+    }
+}
+
 /// The methods every class inherits from `java.lang.Object`, which an interface may redeclare
 /// for documentation. Java's own functional-interface rule excludes them, so the
 /// single-abstract-method test does too.

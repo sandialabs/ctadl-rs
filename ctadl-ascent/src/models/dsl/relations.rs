@@ -24,7 +24,7 @@ position ([`SiteId`]) rather than by an interned `caller#block:statement`, and t
 loaded rule reads ([`Needs`]) are not built at all.
 */
 
-use std::ops::{Deref, Range};
+use std::ops::Range;
 
 use hashbrown::hash_map::HashMap;
 
@@ -34,7 +34,6 @@ use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 use crate::facts::Str;
 use crate::models::dsl::ast::{BodyItem, Program};
 use crate::models::match_index::ProgramMatchIndex;
-use ctadl_ir::mir::call::Dispatch;
 
 /// One function, as the DSL sees it.
 #[derive(Clone, Debug)]
@@ -346,12 +345,13 @@ impl ProgramFacts {
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
         let mut subs_of: HashMap<Str, Vec<Str>> = HashMap::new();
         if needs.subclass {
-            match &index.vmt().dispatch {
-                Dispatch::Java { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
-                Dispatch::Cil { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
-                Dispatch::Lua { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
-                _ => {}
-            }
+            subclass.extend(
+                index
+                    .vmt()
+                    .dispatch
+                    .hierarchy_edges()
+                    .map(|(sub, sup)| (Str::from(sub.as_ref()), Str::from(sup.as_ref()))),
+            );
             subclass.sort_unstable();
             subclass.dedup();
             for &(sub, sup) in &subclass {
@@ -538,20 +538,6 @@ fn row_for(rows: &mut Vec<FunRow>, by_fq: &mut HashMap<Str, RowIdx>, fq: Str) ->
 
 fn row_idx(i: usize) -> RowIdx {
     RowIdx::try_from(i).expect("a table has more than u32::MAX rows")
-}
-
-/// A frontend's class hierarchy as `(subclass, superclass)` edges.
-fn push_edges<'a, C, S>(
-    hierarchy: impl IntoIterator<Item = (&'a C, &'a S)>,
-    out: &mut Vec<(Str, Str)>,
-) where
-    C: Deref<Target: AsRef<str>> + 'a,
-    S: Deref<Target = [C]> + 'a,
-{
-    for (cls, supers) in hierarchy {
-        let sub = Str::from((**cls).as_ref());
-        out.extend(supers.iter().map(|sup| (sub, Str::from((**sup).as_ref()))));
-    }
 }
 
 /// `cls`'s neighbors in `edges` at the requested closure, sorted.
