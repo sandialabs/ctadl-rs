@@ -667,7 +667,8 @@ impl Builder {
             if disposition.is_some() {
                 this.error(
                     at,
-                    "a 'dispatch' head says exactly one thing; write a separate head atom for                      each, or a separate rule",
+                    "a 'dispatch' head says exactly one thing; write a separate head atom for \
+                     each, or a separate rule",
                 );
             } else {
                 disposition = Some(d);
