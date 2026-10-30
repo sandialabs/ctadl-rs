@@ -126,6 +126,31 @@ fn arrow_in_attribute_position_is_named() {
     check_ok(r#"sink(F::arg(0)) :- fun(F, arity < -1);"#);
 }
 
+/// An integer literal that does not fit 64 bits is an error at the literal, in file order with
+/// the other rules' errors, rather than silently a different number.
+#[test]
+fn an_out_of_range_integer_literal_is_an_error() {
+    let text = "sink(F::arg(0)) :- fun(F, arity = 99999999999999999999);\n\
+                sink(F::arg(0)) :- fun(F, arity in {1, -99999999999999999999});\n\
+                sink(F::arg(0)) :- fun(F, arity = 9223372036854775807);\n\
+                source(F::return <- F::arg(0)) :- fun(F);\n";
+    let errors = match parse::parse_program(text) {
+        Ok(_) => panic!("expected errors"),
+        Err(e) => e,
+    };
+    let errors: Vec<(usize, &str)> = errors
+        .iter()
+        .map(|e| (e.span().start, e.message()))
+        .collect();
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert_eq!(errors[0].0, text.find("99999").unwrap(), "{errors:?}");
+    assert_eq!(errors[1].0, text.find("-99999").unwrap(), "{errors:?}");
+    for (_, message) in &errors[..2] {
+        assert!(message.starts_with("integer out of range:"), "{errors:?}");
+    }
+    assert!(errors[2].0 >= text.find("source").unwrap(), "{errors:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Checking
 // ---------------------------------------------------------------------------
@@ -649,8 +674,8 @@ fn empty_class_combinators_fold() {
     assert!(text.contains("can never match"), "{text}");
 }
 
-/// What the JSON loader rejects inside a class predicate fails the migration with the loader's
-/// own error, as the loader reported it.
+/// What [`json_schema::generator_errors`](crate::models::json_schema::generator_errors) rejects
+/// inside a class predicate fails the migration with that check's own error.
 #[test]
 fn a_malformed_class_predicate_is_reported() {
     let cases: [(&str, &[&str]); 5] = [
@@ -741,7 +766,7 @@ fn migrates_a_bridge_with_its_port_map() {
     );
 }
 
-/// Keys the JSON loader accepts and does nothing with are warnings, and the rest of the generator
+/// Keys the JSON format accepts and does nothing with are warnings, and the rest of the generator
 /// is translated as if they were not there: nothing is dropped from the body.
 #[test]
 fn inert_keys_warn_and_change_nothing() {
@@ -772,8 +797,9 @@ fn inert_keys_warn_and_change_nothing() {
     check_ok(&text);
 }
 
-/// A generator the JSON loader rejects fails to migrate with the loader's own errors (as the
-/// loader reported them), rather than a warning and a rule missing the part that was wrong.
+/// A generator [`json_schema::generator_errors`](crate::models::json_schema::generator_errors)
+/// rejects fails to migrate with that check's own errors, rather than a warning and a rule
+/// missing the part that was wrong.
 #[test]
 fn what_the_json_loader_rejects_does_not_migrate() {
     let cases: [(&str, &[&str]); 29] = [
@@ -989,7 +1015,7 @@ fn a_bridge_the_json_scan_rejects_does_not_migrate() {
     assert!(errors[0].contains("'bogus'"), "{errors:?}");
 }
 
-/// What the JSON loader accepts and the DSL cannot say fails to migrate, naming the generator and
+/// What the JSON format accepts and the DSL cannot say fails to migrate, naming the generator and
 /// the construct, rather than migrating to something that means less or more.
 #[test]
 fn what_the_portcullis_cannot_say_does_not_migrate() {
@@ -1046,7 +1072,7 @@ fn migration_errors_name_every_bad_generator() {
     );
 }
 
-/// A field that is present and names nothing narrows to nothing in the JSON loader, so the
+/// A field that is present and names nothing narrows to nothing in the JSON format, so the
 /// migration writes no rule. Skipping the field instead would keep the rest of the rule and so
 /// match what it alone allowed.
 #[test]
@@ -1106,7 +1132,7 @@ fn a_bridge_is_one_rule_whatever_its_disjunctions() {
         ),
         "{text}"
     );
-    // An absent direction is both ways, as it is in the JSON loader.
+    // An absent direction is both ways, as it is in the JSON format.
     assert!(text.contains("bridge(F::arg(0) <-> G::arg(1))"), "{text}");
     assert!(text.contains("bridge(F::return <- G::return)"), "{text}");
 }
@@ -1160,15 +1186,15 @@ fn run_migrated(
 }
 
 /// The engine-level half of [`a_where_that_can_never_match_writes_no_rule`]: on a real program
-/// the JSON loader and the migrated rules select the same functions, for the shapes that used to
-/// migrate wider than the original.
+/// the migrated rules select the functions the JSON format means, for shapes a looser migration
+/// would widen.
 #[test]
-fn constructs_that_used_to_widen_match_what_the_json_matched() {
+fn constructs_that_could_widen_match_what_the_json_meant() {
     use crate::models::{ImportScope, ProgramMatchIndex};
 
     let program = native_program(&["a", "b", "c"]);
     let index = ProgramMatchIndex::new(&program, ImportScope::unknown());
-    // What the JSON matcher summarized for each, recorded while it existed.
+    // What the JSON format means for each, as recorded from the retired JSON matcher.
     let cases: [(&str, &[&str]); 6] = [
         (
             r#"[{"constraint":"signature_match","name":"a","parents":[]}]"#,
@@ -1221,7 +1247,7 @@ fn summarized_functions(
         .collect()
 }
 
-/// [`a_bridge_is_one_rule_whatever_its_disjunctions`] on a program: the JSON loader bridges the
+/// [`a_bridge_is_one_rule_whatever_its_disjunctions`] on a program: the JSON format bridges the
 /// cross product of the two sides' match *sets*, once per pair, with the whole port map. A
 /// function satisfying both alternatives of a side is in the set once.
 #[test]
@@ -1284,7 +1310,7 @@ const KNOWN_UNTRANSLATABLE_DEFAULTS: &[(&str, usize, &str)] = &[];
 
 /// Every shipped default file must migrate and load, but for the generators
 /// [`KNOWN_UNTRANSLATABLE_DEFAULTS`] lists, which must fail exactly as listed. This is the drift
-/// guard: a keyword added to the JSON loader and used in a default has to be understood here
+/// guard: a keyword added to the JSON format and used in a default has to be understood here
 /// too, and a gap that closes has to come off the list.
 #[test]
 fn every_shipped_default_migrates_and_loads() {
@@ -1329,7 +1355,7 @@ fn every_shipped_default_migrates_and_loads() {
         let (portcullis, report) =
             migrate::migrate_generators(rest.iter().copied(), Some(name), None)
                 .unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        // The only warnings a shipped default may raise are about keys the JSON loader does
+        // The only warnings a shipped default may raise are about keys the JSON format does
         // not act on either, so nothing is lost by not translating them. Anything else means a
         // construct the defaults use and the migrator does not understand.
         for warning in &report.warnings {
@@ -1361,9 +1387,7 @@ fn a_dispatch_head_takes_a_flow_or_one_attribute() {
     );
 }
 
-/// The three forms are alternatives, not a bag: a signature that is modelled is not also
-/// skipped. This is the DSL's counterpart of the JSON loader's "exactly one of 'propagation',
-/// 'resolve' and 'closure_shaped'".
+/// A `dispatch` head's forms do not combine, but for the one [`DispatchHead::InlineFlow`] names.
 #[test]
 fn a_dispatch_head_says_exactly_one_thing() {
     let err =
@@ -1744,7 +1768,7 @@ fn every_mode_is_a_head_of_its_own() {
 }
 
 /// Each JSON mode becomes its head; within one generator the last of each pair wins, as in the
-/// JSON loader.
+/// JSON format.
 #[test]
 fn migrates_each_mode_to_its_head() {
     let generator = |modes: &str| {

@@ -10,6 +10,8 @@ can be "arrow not allowed here" instead of a parse error pointing one token past
 The language itself, and its semantics, are described in [`super`].
 */
 
+use std::cell::RefCell;
+
 use ctadl_ir::mir::{Offset, PathSegment, Symbol};
 
 use super::ast::*;
@@ -21,7 +23,8 @@ use super::{PortcullisError, PortcullisErrors};
 /// than stopping at the first. A *syntax* error is the exception — the parser cannot resynch,
 /// so it is reported alone.
 pub fn parse_program(text: &str) -> Result<Program, PortcullisErrors> {
-    let raw_rules = match portcullis::program(text) {
+    let overflows = RefCell::new(Vec::new());
+    let raw_rules = match portcullis::program(text, &overflows) {
         Ok(rules) => rules,
         Err(e) => {
             let mut errors = PortcullisErrors::default();
@@ -33,8 +36,13 @@ pub fn parse_program(text: &str) -> Result<Program, PortcullisErrors> {
             return Err(errors);
         }
     };
+    // Backtracking can read one literal more than once.
+    let mut overflows = overflows.into_inner();
+    overflows.sort_by_key(|(span, _): &(Span, String)| span.start);
+    overflows.dedup_by_key(|(span, _)| span.start);
     let mut builder = Builder {
         errors: PortcullisErrors::default(),
+        overflows,
     };
     let mut rules = Vec::new();
     for raw in raw_rules {
@@ -150,7 +158,9 @@ fn span(start: usize, end: usize) -> Span {
 }
 
 peg::parser! {
-    grammar portcullis() for str {
+    // `overflows` collects each integer literal that does not fit an `i64`, with its span and
+    // why, for the builder to report against the rule it is in.
+    grammar portcullis(overflows: &RefCell<Vec<(Span, String)>>) for str {
         pub rule program() -> Vec<RawRule<'input>> = _ rules:(rule_stmt() ** _) _ { rules }
 
         rule rule_stmt() -> RawRule<'input>
@@ -294,7 +304,12 @@ peg::parser! {
 
         rule literal() -> Literal
             = s:string() { Literal::Str(s) }
-            / i:int() { Literal::Int(i.parse::<i64>().unwrap_or_default()) }
+            / s:position!() i:int() e:position!() {
+                Literal::Int(i.parse::<i64>().unwrap_or_else(|err| {
+                    overflows.borrow_mut().push((span(s, e), err.to_string()));
+                    0
+                }))
+            }
             / b:$("true" / "false") !name_char() { Literal::Bool(b == "true") }
 
         rule wildcard() = "_" !name_char()
@@ -330,6 +345,8 @@ peg::parser! {
 
 struct Builder {
     errors: PortcullisErrors,
+    /// The integer literals that do not fit an `i64`, in file order; see `literal`.
+    overflows: Vec<(Span, String)>,
 }
 
 impl Builder {
@@ -342,6 +359,14 @@ impl Builder {
 
     fn rule_stmt(&mut self, index: usize, raw: RawRule<'_>) -> Option<Rule> {
         let before = self.errors.len();
+        let in_rule = self
+            .overflows
+            .iter()
+            .take_while(|(span, _)| span.start < raw.span.end)
+            .count();
+        for (span, err) in self.overflows.drain(..in_rule).collect::<Vec<_>>() {
+            self.error(span, format!("integer out of range: {err}"));
+        }
         let heads: Vec<Head> = raw
             .heads
             .into_iter()
@@ -636,9 +661,8 @@ impl Builder {
     /// A `dispatch` head: `K::dispatch(return <- arg(0))`, or one of the attribute forms
     /// `resolve = "inline"` / `resolve = "skip"` / `closure_shaped = true`.
     ///
-    /// Exactly one of the three, mirroring the JSON format, so that a generator that forgot its
-    /// model and one that meant to discard the call's targets stay different documents. The one
-    /// combination is `resolve = "inline"` with a flow, the JSON's `resolve` beside a
+    /// Exactly one of the three (a flow, `resolve`, `closure_shaped`), as on [`DispatchHead`]. The
+    /// one combination is `resolve = "inline"` with a flow, the JSON's `resolve` beside a
     /// `propagation`: inlined, and summarized too.
     fn dispatch_head(
         &mut self,

@@ -181,8 +181,8 @@ impl FunctionMode {
     }
 }
 
-/// What a `dispatch` head says. Exactly one per head, which is what keeps
-/// "forgot the model" and "meant to discard" different documents.
+/// What a `dispatch` head says. Exactly one per head, which is what keeps "forgot the model" and
+/// "meant to discard" different documents.
 #[derive(Clone, Debug)]
 pub enum DispatchHead {
     /// `K::dispatch(return <- arg(0))` -- one flow of the summary this signature gets. Several
