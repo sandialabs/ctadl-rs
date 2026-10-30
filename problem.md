@@ -161,8 +161,9 @@ is also inside the hubs of causes 1 and 4.
 
 ### 4. A callee's summary relates every offset or field to every other, and every call site copies it
 
-**Binaries:** `libgdx` (`glxy` 1.52x, `retrodrawing` 1.91x, `halma` 1.26x), and libntfs
-(`ntfslabel` 1.7x, `ntfsdebug` 1.8x). A small callee mixes all the offsets of its arguments, and
+**Binaries:** `libgdx` (`glxy` 1.52x, `retrodrawing` 1.91x, `halma` 1.26x), libntfs
+(`ntfslabel` 1.7x, `ntfsdebug` 1.8x), and uClibc stdio (what `wifitool`, `iptables` and `kcairplay`
+have left after cause 1). A small callee mixes all the offsets of its arguments, and
 its O(offsets²)-per-argument-pair summary makes every caller mix them too.
 
 - **`libgdx`:** stb_image's load function (`glxy` `FUN_0010b408`, 87.5% of `locals`) calls a
@@ -186,6 +187,24 @@ its O(offsets²)-per-argument-pair summary makes every caller mix them too.
     9,560 rows.
   - Not a loop SCC (6% without summary edges), not a +1 offset run: the offsets are field
     offsets, stride 4.
+- **uClibc stdio, `__stdio_fwrite`** (`wifitool`, `iptables`, `kcairplay`):
+  - **The block.** Its summary links the return value and the data pointer to every `FILE` field,
+    crossed with every offset of the string: 45 x 30, complete. It grows up the chain to
+    57 x 309 at `puts` (33 K rows), and `printf`/`fprintf` carry 57 x 144 on the format string.
+  - **Mechanism** (read from the IR, not tested). Merges: `n = strlen(s)` carries `s`,
+    `bufpos += n` stores it into `stream->__bufpos`, the `memcpy` and byte loop write every string
+    offset into the `FILE`, and the returned `int` is `n` merged with `__bufstart`.
+  - **Call sites copy it, but callers do not inherit it.** The rows are on the return value and
+    the first argument, not `$globals`. Each call site copies the block even when the return is
+    ignored: stdio call sites are about 95% of `wifitool`'s `assign_like`, and `fputs`/`puts`
+    68% of `iptables`'.
+  - **Measured.** `wifitool`: allocator skipped 6.2x, plus `__stdio_fwrite` 0.77x. `iptables`:
+    `malloc` skipped 2.6x, plus `__stdio_fwrite` 1.23x, plus `__encode_dotted` 1.10x.
+    `--hybrid-context none` changes nothing in either.
+  - **Not every uClibc build has it.** `signalc`'s `__stdio_fwrite` summary is 210 rows.
+  - **What `iptables` has left** is cause 3: `do_command` scans `argv`, plus `__encode_dotted`
+    and `_getopt_internal`, at about 70 offset variants per source.
+  - **The "spread" in `wifitool`** (`print_rrmstats`, `tr069_*`) is these copies.
 - **Fix ideas.** Not lowering integer arithmetic as a merge would remove the libntfs case. The
   offset collapse of cause 3 would shrink `libgdx`'s callee summary. A fix aimed only at the
   caller's loop would not.
@@ -298,8 +317,6 @@ What is left after the causes above are removed:
 |---|---|
 | `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
 | `upnpd` | `FUN_0042b28c` (16.5 K instructions) holds 62.5% of `locals` (2.2x with `malloc` skipped) |
-| `wifitool` | 5.8x with the allocator skipped, led by `edge_split` and spread out (`print_rrmstats`, `_vfprintf_internal`); not examined |
-| `iptables` | 2.6x with `malloc` skipped, `locals` not localized |
 | `alphapd` | `FUN_00450b80` (1.7x with both skipped) |
 | `kcairplay` | `vfprintf` and `__encode_dotted` `locals` and 1.1 M `context_locals` (5.3x with `malloc` and `fputs_unlocked` skipped) |
 | `a2050` | nlohmann::json's `__emplace_back_slow_path` holds 7.2 M `ext_fml`, and the wild `locals <-- ext_fml` rule is 22.6% of rule time: the one place P6's mechanism shows |
