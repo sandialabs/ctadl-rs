@@ -26,8 +26,8 @@ bipartite block, and every caller inherits it through summary composition. So:
 ## Independent causes
 
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
-the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed where the
-allocator keeps its name (`8e5c4179`); stripped allocators remain.
+the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
+(`8e5c4179`), and for stripped allocators by shape (the `allocator` relation).
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 is still needed in 4. Cause 4 only multiplies cause 2,
@@ -141,7 +141,7 @@ keys each such varnode on the ram address of its high variable's ram member.
   - **Patch:** `/Volumes/Shampoo/nb-work/r-dsp/out/r-dsp.patch` (r-glob's patch plus an env-gated
     list of varnodes to treat as locals).
 
-### 2. PARTLY FIXED (named allocators): A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
+### 2. FIXED: A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
 
 **Binaries:** 25 of the 34 sweep binaries over 1.5x, including both that ran out of memory. All
 link uClibc's `malloc` (dlmalloc). With cause 1 fixed it is still the largest cause in 21 of them,
@@ -231,10 +231,8 @@ keeps its model, `return.deref <- arg(0).deref`, since it moves the old contents
 does nothing for a stripped allocator. The regression suite passes: 250 passed and the 3 expected
 failures.
 
-- **Coverage.** The 15 sweep binaries below name their allocator. 15 others strip it and are
-  unchanged: `adb`, `mxcam`, DCS `iperf`, `iperf.mips`, `upnpd`, `alphapd`, `bdupdater`,
-  `KC_PRINT`, `KC_BONJOUR`, `fsck_hfs`, `sdkmips`, both `aptestmips` and both
-  `SwiRelayAgentmips`. They need recognition by shape.
+- **Coverage.** The 15 sweep binaries below name their allocator. The 15 that strip it are
+  covered by the shape detector (below).
 - **Measured** on the commit against its parent: the sweep stores re-imported with
   `CTADL_REUSE_FACTS=1`, then indexed and queried with the firmware model under a 28 GiB cap.
   Run in `/Volumes/Shampoo/nb-work/alloc/` (`scripts/one.sh`, `scripts/sum.sh`, `scripts/cmp.py`).
@@ -260,6 +258,59 @@ failures.
   `GpioForCrond` (4 each) and in both `tar`s (1 each). In `gzip`, `chat` and `wifitool` no sink
   matched, so only sources and sinks were compared. In the rest, the path search found no flow,
   before and after.
+
+**The fix, for stripped allocators.** Portcullis gained an `allocator(F, kind = …, by = …)` input
+relation (`ctadl-ascent/src/models/portcullis/allocator.rs`, docs §3). It is filled by name, and,
+for a function with no allocator name, by dlmalloc's shape:
+
+- **The anchors.** `free` and `realloc` read the header word before their pointer argument
+  (`-4`/`-8` off a parameter, sometimes spelled `.[17179869176]`). Hardly anything else does.
+- **The heap state.** It is the globals the anchors write *themselves*. Stores that share a call's
+  statement are the frontend's re-stores of what the callee may change, and they are in every
+  caller of `free`. Globals that more than 10 functions write, such as linuxthreads' descriptor
+  slots, are excluded too. Without these two exclusions, `__exit_handler`, the pthread cleanups
+  and `chat_send` all looked like allocators.
+- **The picks.** A pick must write at least 3 heap globals with at least 100 stores, be called
+  directly, and have a signature:
+  - free: an anchor, 1 parameter;
+  - realloc: an anchor, 2 parameters, returns a value;
+  - malloc: 1 parameter, returns a value, at least 3 call sites.
+- **Scored with names hidden** on all 30 sweep binaries
+  (`/Volumes/Shampoo/nb-work/det/scripts/{feat2,detect}.py` over `inspect --dump-ir`):
+  - **Named binaries:** `malloc`, `free` and `realloc` are found in all 11 that link them
+    statically, and nothing else is picked. In the other 4, `malloc` is a 3-instruction stub.
+  - **Stripped binaries:** the same three are found in all 15, matching the hand picks in
+    `r-rebase/alloc.tsv`.
+  - **Misses:** the small wrappers (`calloc`, `malloc_consolidate`, 70-240 instructions) and
+    entry-point aliases with no direct callers. Neither carries the block.
+- **Defaults and reporting.** The native defaults skip every allocator, found either way, at
+  priority -100. Every by-shape pick is reported as `CTADL0109` in `notifications.sarif`, a
+  warning when its body was skipped, with its measurements; `analyze(F)` keeps one.
+- **Measured** with the shape picks skipped, against the sweep (which predates the cause 1 fix).
+  Run in `/Volumes/Shampoo/nb-work/det/` (`scripts/idx.sh`, `scripts/sum.py`):
+
+  | Binary | Sweep | Shape skip |
+  |---|---|---|
+  | MR200 `adb` | killed at 32 GiB | 0.47 GiB, 0.83x |
+  | DCS-8200LH `mxcam` | 22.14 GiB, 58x | 0.30 GiB, 0.79x |
+  | DCS-8200LH `iperf` | 16.99 GiB, 41x | 0.21 GiB, 0.51x |
+  | LG6100D `upnpd` | 21.81 GiB, 39x | 0.31 GiB, 0.55x |
+  | WNDR3700v5 `KC_PRINT` | 13.87 GiB, 38x | 0.18 GiB, 0.48x |
+  | WNDR3700v5 `KC_BONJOUR` | 12.58 GiB, 36x | 0.13 GiB, 0.36x |
+  | R7000 `bdupdater` | 13.08 GiB, 30x | 0.42 GiB, 0.97x |
+  | DIR-140L `iperf.mips` | 8.28 GiB, 22x | 0.15 GiB, 0.40x |
+  | RT-AC85U `fsck_hfs` | 7.95 GiB, 19x | 0.25 GiB, 0.61x |
+  | MVBR1210C `sdkmips` | 4.28 GiB, 16x | 0.15 GiB, 0.57x |
+  | DCS-6045L `alphapd` | 6.68 GiB, 15x | 0.29 GiB, 0.65x |
+  | MBR1200 `aptestmips` | 5.12 GiB, 13x | 0.42 GiB, 1.09x |
+  | MVBR1210C `aptestmips` | 4.65 GiB, 11x | 0.43 GiB, 1.01x |
+  | MVBR1210C `SwiRelayAgentmips` | 2.33 GiB, 10x | 0.13 GiB, 0.57x |
+  | MBR1200 `SwiRelayAgentmips` | 2.49 GiB, 9.8x | 0.14 GiB, 0.57x |
+
+- **Findings.** The named binaries' numbers are unchanged. Their only by-shape pick is
+  `iptables`' `.pic.realloc`, a second `realloc` symbol, and `iptables`' findings are identical.
+  On the stripped binaries the firmware model, being name-based, matches no endpoint, so their
+  findings could not be compared.
 
 ### 3. MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
 
@@ -653,9 +704,9 @@ Before any of these fixes ships:
 
 - **Findings for every skip.** The allocator, `memcpy`/`memset`, `reallymarkobject`, PCRE
   `match()`, `ntfs_attr_pwrite`, libgdx's vectorized callee, the `__sort` copies and the demangler
-  were measured for rows and peak only. The exception is the allocator skip on the named
-  allocators, whose findings are unchanged on 14 binaries (cause 2). A stripped allocator's skip,
-  once recognized by shape, still needs the check.
+  were measured for rows and peak only. The exception is the allocator skip, whose findings are unchanged
+  on 14 named binaries (cause 2). On the stripped ones the firmware model matches no endpoint, so
+  a by-shape skip's findings are still unchecked.
 - **The regression suite, and findings, for the other experimental patches:**
   - Lua no-ops (`CTADL_EXP_NOP`): neither has been checked.
   - memcpy shift-drop (`CTADL_EXP_NO_SHIFT_AMT`): neither has been checked.
@@ -685,9 +736,6 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 
 ## Ideas, not tried
 
-- **Recognize a stripped allocator by shape** (cause 2): the named ones are skipped since
-  `8e5c4179`. Stripped binaries need `malloc` and `realloc` found by shape (`rankalloc.py`), then
-  the same skip and `realloc` model. Measured upper bound: the "whole allocator skipped" column.
 - **Make no hybrid decision on `$globals`** (cause 4): measured within 3% of `--hybrid-context none`,
   with identical findings. A plain subsumption filter is not enough (see cause 4).
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
@@ -851,8 +899,9 @@ each, by content). The function holding the most `locals` is often downstream of
   `profile.json` and the dump. On `main`, the running scc's relations (`locals`, `edge_split`,
   `assign_like`, `locals_key`, `ext_dst`) then read 0 and dump empty. The patched `ascent_macro`
   (`b47ed139`) keeps them: a build with it is `/Volumes/Shampoo/cargo-target/nb-p4/release/ctadl`.
-- **Find a stripped `malloc`:**
-  `python3 -I /Volumes/Shampoo/nb-work/p4/rankalloc.py <(ctadl --store $S inspect bin --dump-ir)`.
+- **Find a stripped `malloc`:** `ctadl index` reports each by-shape pick as `CTADL0109`. To
+  score the detector offline, run `python3 -I /Volumes/Shampoo/nb-work/det/scripts/feat2.py` on
+  an `inspect --dump-ir` dump, then `detect.py <dump> <features>`.
 
 ### `uclited`
 
