@@ -1,8 +1,8 @@
 /*! What a model file matches, when there is no index to query.
 
-Model matching is split in two, and only the second half needs an index. **Stage 1** evaluates
-every generator's `where` against one program's name / parent / signature / qualified-id tables
--- it reads an artifact import and nothing else. **Stage 2** resolves the matched names to
+Model matching is split in two, and only the second half needs an index. **Stage 1** runs every
+rule (a JSON generator as its migration) against one program's functions, method table and call
+sites -- it reads an artifact import and nothing else. **Stage 2** resolves the matched names to
 [`crate::facts::FunctionId`]s, fans endpoints out over call sites, and expands wildcard sinks.
 
 `ctadl query` runs Stage 1 either way. When the project has no index it cannot run Stage 2, and
@@ -175,9 +175,8 @@ pub fn check_programs(
     let mut outcome = ModelCheckOutcome::default();
     let mut files: Vec<FileState> = Vec::new();
     // Every file that loaded, matched by one matcher across every import exactly as
-    // `cli::index` matches them: finishing per import would report a bridging rule whose
-    // components match in two different imports as matching nothing. `portcullis_owners[i]` is the
-    // position in `files` of `portcullis.files[i]`.
+    // `cli::index` matches them. `portcullis_owners[i]` is the position in `files` of
+    // `portcullis.files[i]`.
     let mut portcullis = models::PortcullisModelSet::default();
     let mut portcullis_owners: Vec<usize> = Vec::new();
 
@@ -191,9 +190,7 @@ pub fn check_programs(
             })
         } else {
             // A JSON file is matched as its migration, but inventoried as the JSON: its `in`
-            // clauses are what `CTADL0009` reports, and only the JSON still has them. A
-            // generator that does not migrate is reported and left out, as the JSON loader
-            // left out a malformed one, so it does not cost the rest of the file.
+            // clauses are what `CTADL0009` reports, and only the JSON still has them.
             let readable = state.take_inventory();
             match models::portcullis::PortcullisFile::read_json_lenient(path) {
                 // Skipped when the inventory could not read the file: the migration fails on
@@ -238,9 +235,8 @@ pub fn check_programs(
                 continue;
             }
         };
-        // Collecting the signature keys is a pass over every statement, so it is paid for only
-        // when some checked generator attaches a model to one. Without it a dispatch generator
-        // would report as matching nothing, which is the opposite of what this command is for.
+        // Without the signature keys a dispatch generator would report as matching nothing,
+        // which is the opposite of what this command is for.
         let dispatch_keys = wants_dispatch
             .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
         let match_index = ProgramMatchIndex::new_with_dispatch(
@@ -322,8 +318,7 @@ struct GeneratorState {
     declares_access_paths: bool,
     /// A `modes` directive.
     declares_modes: bool,
-    /// A dispatch model: `find: "dispatch"` in JSON, a `dispatch` head in the DSL. Gates the
-    /// signature-key collection below, which costs a pass over every statement.
+    /// A dispatch model: `find: "dispatch"` in JSON, a `dispatch` head in the DSL.
     declares_dispatch: bool,
     has_bridge: bool,
     matched: Option<MatchedFunctions>,
@@ -616,6 +611,7 @@ fn render_chain(error: &dyn std::error::Error) -> String {
 }
 
 /// How to spell an `in` clause on one line.
+///
 /// A JSON `in` clause as the attribute tests its migration makes of it: `language = "dex"`,
 /// `language in {"dex", "jvm"}`, `import = "app"`. A shape that is not one of those is shown
 /// as written; its migration fails and says so.

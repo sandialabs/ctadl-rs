@@ -1,11 +1,12 @@
 // `skip_analysis`, IN THE DSL -- the same fixture as `skip_analysis.tnt`, modelled in the model
 // DSL rather than in JSON. Drop the `skip_analysis(F)` head from
-// `skip_analysis_portcullis.models.ctadl` and the `return </- src` check fails: the body's flow is back.
+// `skip_analysis_portcullis.models.ctadl` and the `return </- src` check fails: the body's flow
+// is back.
 //
 // Same function as `model_adds_to_summary.tnt`, same propagation, one extra directive. The
 // body's `return <- src` is gone and only the model's `return <- dst` survives, so the two
 // fixtures together pin both halves of the semantics: a model alone adds, a model with
-// `skip-analysis` replaces.
+// `skip_analysis` replaces.
 //
 // The mechanism is in codegen (`codegen::codegen_program`): a matched function's signature is
 // lowered and its blocks are not, so the body never becomes facts and there is nothing for the
@@ -25,7 +26,7 @@ def main() {
 start:
   a = source(Secret);
   clean = "nothing";
-  // The model's port: Argument(0) reaches the return.
+  // The model's port: arg(0) reaches the return.
   viaModel = transfer(a, clean);
   sink(viaModel, Secret);
 

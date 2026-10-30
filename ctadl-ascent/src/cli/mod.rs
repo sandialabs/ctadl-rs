@@ -217,9 +217,9 @@ fn merged_method_guardrail(
 
 /// What a DSL load did, said once, for whichever phase just ran.
 ///
-/// Three things, and they answer three different questions. The *counts* are the design's
-/// "count of matched model heads kept for that phase" — the number to look at when a model
-/// should be matching and is not. The *phase warning* separates a rule that belongs to the
+/// Three things, and they answer three different questions. The *counts* are the matched
+/// model heads kept for that phase — the number to look at when a model should be matching
+/// and is not. The *phase warning* separates a rule that belongs to the
 /// other command from one that is broken. The *dead rules* are the ones that ran and selected
 /// nothing, which is the failure mode that otherwise looks exactly like a clean program.
 fn report_portcullis(report: &crate::models::PortcullisReport) {
@@ -327,10 +327,6 @@ pub fn index(
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
-    // Model files are parsed and checked once, before any artifact is read — a JSON one is
-    // migrated to the DSL first — and matched by a single matcher across the whole loop. A rule
-    // whose body names two programs — a bridge — is satisfied by no single import, so its
-    // components have to be collected as the imports stream by and joined after.
     let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
     let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
         &portcullis_models,
@@ -338,8 +334,8 @@ pub fn index(
     );
     // The source/sink heads too, though index time does not analyse them: a matched endpoint
     // in a signature's target set is what refuses a dispatch model (see
-    // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is lowered. Not
-    // reported, since `ctadl query` reports on them.
+    // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is
+    // lowered. Not reported, since `ctadl query` reports on them.
     let mut endpoint_matcher = crate::models::PortcullisMatcher::new(
         &portcullis_models,
         crate::models::PortcullisPhase::Query,
@@ -507,8 +503,8 @@ pub fn index(
         );
     }
     // Every import has been seen, so a rule whose two components matched in two different
-    // programs can finally be joined. Index time keeps the propagation / bridge / access-path
-    // heads and says how many rules declared only the other phase's.
+    // programs can be joined. Index time keeps every head but `source` and `sink`, and says how
+    // many rules declared only those.
     let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
     report_portcullis(&portcullis_report);
     endpoint_matcher.finish(&mut model_matches)?;
@@ -891,9 +887,6 @@ pub fn query(
         // One accumulator across every (import x model file) pair. Endpoints carry their own
         // `facts::Path`, so accumulation is an append and there is nothing to renumber.
         let mut model_matches = crate::models::ProgramModelMatches::default();
-        // Parsed and checked once, before any import is read — a JSON file is migrated to the
-        // DSL first — and matched by one matcher across the whole loop; see `cli::index` for
-        // why the DSL needs one accumulator rather than one load per (file, import).
         let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
         let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
             &portcullis_models,

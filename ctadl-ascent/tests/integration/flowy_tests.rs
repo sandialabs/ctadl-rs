@@ -33,9 +33,7 @@ fn configs() -> Vec<IndexConfig> {
 /// asserts on the index summary relation directly — so a fixture can say where taint lands, not
 /// merely whether one fixed probe fires.
 ///
-/// Both extensions are picked up so a fixture can be written in either format, which is what
-/// makes `port_bare_portcullis.tnt` (the DSL twin of `port_bare.tnt`) an end-to-end check that the
-/// two front ends reach the same summaries through the real index pipeline.
+/// Both extensions are picked up, so a fixture can be written in either format.
 fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     let filename = filename.as_ref();
     let models: Vec<std::path::PathBuf> = vec![
@@ -114,8 +112,8 @@ fn all_flowy_tests() -> anyhow::Result<()> {
 
 /// Every fixture with a JSON model file passes with what `ctadl migrate-models` makes of it in
 /// its place, so the JSON file and its migration reach the same summaries through the real
-/// index pipeline. `port_bare_portcullis.tnt` is the hand-written twin of one of these; this covers
-/// the rest without a second copy of each.
+/// index pipeline. `port_bare_portcullis.tnt` is the hand-written twin of one of these; this
+/// covers the rest without a second copy of each.
 #[test]
 fn every_json_fixture_passes_as_its_migration() -> anyhow::Result<()> {
     let dir: std::path::PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "tnt"]

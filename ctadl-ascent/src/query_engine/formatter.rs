@@ -1278,7 +1278,7 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
         notification_descriptor(
             NOTIF_BRIDGE_DIAGNOSIS,
             "Bridge model cannot be paired",
-            "A bridge's sides matched nothing, or matched ambiguously",
+            "A bridge paired no functions in the programs checked",
             "Model rule {0} in '{1}': {2}",
         ),
         notification_descriptor(

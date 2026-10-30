@@ -354,7 +354,7 @@ fn a_json_model_file_draws_one_deprecation_warning() {
 
 /// A generator the migration cannot carry across exactly fails `ctadl index`, and the error
 /// names the file and the generator. Here a bridge with no `arguments` map, which the JSON
-/// loader filled in from the fact base and a rule cannot.
+/// format fills in from the fact base and a rule cannot.
 #[test]
 fn a_migration_error_fails_index_naming_the_generator() {
     let case = "bridge_e2e_unmigratable";

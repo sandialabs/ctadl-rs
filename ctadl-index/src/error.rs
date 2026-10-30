@@ -45,7 +45,7 @@ pub enum JsonModelError {
         field_name: String,
         message: String,
     },
-    /// A generator the JSON loader accepts but `ctadl migrate-models` cannot carry into the
+    /// A generator the JSON format allows but `ctadl migrate-models` cannot carry into
     /// Portcullis without changing what it means. `what` names the construct.
     Untranslatable {
         index: usize,

@@ -13,7 +13,8 @@ struct Args {
     pub dump_index_graph: Option<PathBuf>,
 
     /// Load models from one or more model files (`.ctadl`, or the deprecated JSON formats), as
-    /// `ctadl index --models` would. Their propagations become summaries before the requirements are checked.
+    /// `ctadl index --models` would. Their propagations become summaries before the requirements
+    /// are checked.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 }

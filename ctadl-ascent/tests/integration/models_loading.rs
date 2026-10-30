@@ -120,8 +120,8 @@ fn test_load_models_keeps_every_generator_index() {
 /// `sources`/`sinks` entry, not one per (generator, direction) — counting the latter made the
 /// summary compare a count of generators against a count of endpoints.
 ///
-/// A port that produced no endpoint is reported with why: on the DSL path, a rule whose body
-/// selected no function, or whose `local` atom matched none of the functions it did select.
+/// A port that produced no endpoint is reported with why: a rule whose body selected no
+/// function, or whose `local` atom matched none of the functions it did select.
 #[test]
 fn test_endpoint_stats_ports_and_unmatched_reasons() {
     const PROGRAM: &str = r#"

@@ -186,9 +186,8 @@ fn an_error_in_one_file_does_not_suppress_the_others() {
 /// A bridge whose `to` side matches nothing is reported against its generator, and gets no
 /// pair count: pairing needs the fact base.
 ///
-/// The verdict no longer says which side failed. The bridge is a migrated rule whose body
-/// joins both sides, so all the engine knows is that the rule paired nothing; the JSON
-/// matcher's per-side verdict went with it.
+/// The verdict does not say which side failed: the bridge is a migrated rule whose body joins
+/// both sides, so all the engine knows is that the rule paired nothing.
 #[test]
 fn an_unmatched_bridge_side_is_diagnosed() {
     let file = model_file(
@@ -243,9 +242,9 @@ fn the_name_sample_is_capped_but_the_count_is_not() {
 /// a count of functions.
 ///
 /// The program has a call to `sink`: a migrated `find: callsites` generator joins on the
-/// `callsite` relation, so it selects a callee only through a site that names it. The JSON
-/// matcher counted the callee with no call site at all, which is the difference
-/// `docs/portcullis.md` §9 lists as "`find: callsites` anchors at the callee a site names".
+/// `callsite` relation, so it selects a callee only through a site that names it. That is the
+/// difference `docs/portcullis.md` §9 lists as "`find: callsites` anchors at the callee a site
+/// names".
 #[test]
 fn a_callsites_generator_reports_its_find() {
     let file = model_file(

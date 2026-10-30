@@ -3,12 +3,13 @@
 //!
 //! **Which methods.** Every class a generator names in `parents` is listed by `model-run`
 //! (`frontends/ctadl-cil/tools/ModelRun`), which spells each public method and constructor by
-//! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::new(Dispatch::Cil)`, and
-//! the shipped file is migrated and run against it on the DSL engine, as the `.ctadl` default
-//! `ctadl index` loads was migrated from it, so the methods checked are exactly the overloads the
-//! generators select, and the ports are the ones the engine emits. A class that does not load,
-//! or lives in another assembly than the one named (the frontend canonicalizes through
-//! forwarders), fails, as does a generator that selects nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
+//! reflection as the CIL frontend spells it. Those rows become a
+//! `VirtualMethodTable::new(Dispatch::Cil)`, and the shipped file is migrated and run against it
+//! on the DSL engine, as the `.ctadl` default `ctadl index` loads was migrated from it, so the
+//! methods checked are exactly the overloads the generators select, and the ports are the ones
+//! the engine emits. A class that does not load, or lives in another assembly than the one named
+//! (the frontend canonicalizes through forwarders), fails, as does a generator that selects
+//! nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
 //! method, so it is held to the same spellings, but nothing calls it: it names a contract,
 //! not a method, and the `find: methods` entries it repeats are the ones checked by calling.
 //!

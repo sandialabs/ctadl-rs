@@ -253,8 +253,9 @@ pub struct ReportArgs {
     pub no_recursion: bool,
 
     /// Load additional models from one or more model files (`.ctadl`, or the deprecated JSON
-    /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section against them, so this is
-    /// how to see what a `find: "dispatch"` model would cover before re-indexing.
+    /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section
+    /// against them, so this is how to see what a `find: "dispatch"` model would cover before
+    /// re-indexing.
     #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
     pub models: Vec<PathBuf>,
 
@@ -808,9 +809,6 @@ fn main() -> anyhow::Result<()> {
 fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     use ctadl_ascent::models::portcullis;
 
-    // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
-    // writing the rest would silently drop it. Every such generator is listed, not just the
-    // first, so one run is enough to see what needs fixing.
     for language in &args.languages {
         if ctadl_ascent::project::ArtifactLanguage::from_name(language).is_none() {
             anyhow::bail!("--language {language:?} is not a language ctadl imports");
@@ -818,6 +816,9 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     }
     let languages: Vec<&str> = args.languages.iter().map(String::as_str).collect();
     let languages = (!languages.is_empty()).then_some(languages.as_slice());
+    // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
+    // writing the rest would silently drop it. Every such generator is listed, not just the
+    // first, so one run is enough to see what needs fixing.
     let (text, report) = match portcullis::migrate::migrate_file(&args.input, languages) {
         Ok(migrated) => migrated,
         Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(

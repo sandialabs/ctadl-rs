@@ -9,7 +9,7 @@
 // pair is therefore a PREFIX SUBSTITUTION -- a level shift, not a filter. Each fixture in this
 // series probes at the level its port *predicts*, and asserts the level next door is clean.
 //
-// `Argument(0) -> Return` maps `t.X` to `u.X` for every `X`, so `t.f` reaches `u.f` and nothing
+// `arg(0) -> return` maps `t.X` to `u.X` for every `X`, so `t.f` reaches `u.f` and nothing
 // lands on bare `u`. `id`'s body propagates nothing, so the model is the only cause: drop
 // `port_bare_portcullis.models.ctadl` and every check here fails.
 def id(v): 1

@@ -707,7 +707,7 @@ Every diagnostic names a file, line and column, and says what to do:
 Rule errors accumulate: a file with three bad rules reports three. A *syntax* error is the
 exception — there is no resynchronization point, so it is reported alone.
 
-`ctadl index` and `ctadl query` also log, at `info`, every rule that was live for the running
+`ctadl index` and `ctadl query` also log, at `warn`, every rule that was live for the running
 phase and matched nothing. That is the condition worth hunting for: a rule that is doing nothing
 looks exactly like a clean program.
 
