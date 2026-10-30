@@ -742,7 +742,7 @@ fn the_native_portcullis_defaults_skip_the_unwinders() {
 }
 
 /// `memcpy` and `memset` are skipped, under their MIPS `.pic.` stub names too, and each keeps a
-/// model. The rest of the copy family is analyzed: `bcopy`'s model has its arguments backwards.
+/// model. The rest of the copy family is analyzed.
 #[test]
 fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
     use ctadl_ascent::models::portcullis;
@@ -793,6 +793,15 @@ fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
             "{f} is skipped with no model"
         );
     }
+
+    // `bcopy(src, dst, n)`: the copy runs from `arg(0)` to `arg(1)`, and nothing comes back.
+    let bcopy = out
+        .propagations
+        .iter()
+        .filter(|p| p.function.to_string() == "bcopy")
+        .map(|p| (p.src.index, p.dst.index))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(bcopy, BTreeSet::from([(Some(0), Some(1))]));
 }
 
 /// The gate that decides whether an import pays to collect its call sites' signature keys.

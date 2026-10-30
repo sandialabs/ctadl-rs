@@ -389,9 +389,8 @@ gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
 and the `.pic.` stub names (a MIPS non-PIC-to-PIC stub that falls through into its target, so
 Ghidra gives it the whole body), at priority -100. `memcpy` keeps its existing model,
 `.pic.memcpy` gets the same one, and `memset` gets `return.deref <- arg(0).deref`. The rest of the
-copy family is still analyzed: it was not measured, and `bcopy`'s model has its arguments
-backwards (`bcopy(src, dst, n)` is modeled as `dst, src`), so skipping its body would leave only a
-wrong model. Matching is by name. The 13 stripped binaries were already at or under 1.11x.
+copy family is still analyzed: it was not measured. Matching is by name. The 13 stripped
+binaries were already at or under 1.11x.
 
 - **Measured** on the commit against its parent (`0043b7e1`), on the 15 named-allocator sweep
   binaries, as for cause 2 (re-imported with `CTADL_REUSE_FACTS=1`, firmware model, 24 GiB cap).
