@@ -3,10 +3,10 @@
 //! `clr` directory is the module of `gap-enc.dll` written in another layout,
 //! and must dump as that one does, but for its name and MVID.
 
-use super::{fixtures_root, Test};
+use super::{Test, fixtures_root};
 use crate::cil::parity::rust_dump;
-use cil_reader::raw::tables::Table;
 use cil_reader::Module;
+use cil_reader::raw::tables::Table;
 
 /// The dump of `path`, with the module's name and MVID taken out.
 fn dump(path: &str) -> String {

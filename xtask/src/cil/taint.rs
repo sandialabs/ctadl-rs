@@ -45,18 +45,18 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cil_reader::flow::FlowOptions;
 use cil_reader::{MetadataToken, Module};
-use ctadl_ascent::facts::schema;
 use ctadl_ascent::facts::IdMap;
+use ctadl_ascent::facts::schema;
 use ctadl_cil::names::{ModNames, Namer};
 use ctadl_ir::mir::PathSegment;
 use serde::Deserialize;
 
 use super::exec::interp::{Interp, Obj, SObj, Stop};
 use super::exec::value::{Base, Labels, Sh, Value};
-use super::exec::{self, Trial, EXEC_FIXTURES};
+use super::exec::{self, EXEC_FIXTURES, Trial};
 use super::parallel_map;
 use crate::regression::Outcome;
 
@@ -409,11 +409,11 @@ fn covered(rows: &[Row], (src, dst): &Flow) -> bool {
 /// extended on both sides by one suffix.
 fn implies(general: &Flow, specific: &Flow) -> bool {
     general != specific
-        && general.0 .0 == specific.0 .0
-        && general.1 .0 == specific.1 .0
-        && specific.0 .1.starts_with(&general.0 .1)
-        && specific.1 .1.starts_with(&general.1 .1)
-        && specific.0 .1[general.0 .1.len()..] == specific.1 .1[general.1 .1.len()..]
+        && general.0.0 == specific.0.0
+        && general.1.0 == specific.1.0
+        && specific.0.1.starts_with(&general.0.1)
+        && specific.1.1.starts_with(&general.1.1)
+        && specific.0.1[general.0.1.len()..] == specific.1.1[general.1.1.len()..]
 }
 
 // ---- known misses ----------------------------------------------------------------------
@@ -851,11 +851,11 @@ fn check_fixture(
             .collect();
         let mut sorted = Sorted::default();
         for f in general {
-            let fields_known = f.0 .1.iter().chain(&f.1 .1).all(|s| st.fields.contains(s));
+            let fields_known = f.0.1.iter().chain(&f.1.1).all(|s| st.fields.contains(s));
             let admitted = |p: &Vec<String>| p.is_empty() || st.admitted.contains(p);
             if !fields_known {
                 sorted.unknown_field.push(f.clone());
-            } else if !admitted(&f.0 .1) || !admitted(&f.1 .1) {
+            } else if !admitted(&f.0.1) || !admitted(&f.1.1) {
                 sorted.not_admitted.push(f.clone());
             } else if let Some(i) = known.iter().position(|(k, p)| known_matches(k, p, fid, f)) {
                 known_hits.lock().unwrap()[i] += 1;

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// Locate an executable on `PATH`, mirroring `command -v`.
 pub fn which(program: &str) -> Option<PathBuf> {

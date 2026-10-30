@@ -6,9 +6,9 @@
 //! InstanceAndStaticMethodComparison / FunctionPointerArgumentOverload /
 //! PrivateScope* (not ported).
 
-use super::{read_fixture, read_resource, Test};
-use cil_reader::model::{method_attributes, sig::calling_convention, MethodDef, TypeDef};
+use super::{Test, read_fixture, read_resource};
 use cil_reader::Module;
+use cil_reader::model::{MethodDef, TypeDef, method_attributes, sig::calling_convention};
 
 fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
     ty.methods()

@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_import::notifications::{
-    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
+    self, NOTIFICATIONS_FILE, Notifications, STACK_SLOTS_PROMOTED_FULLY,
 };
 
 use crate::android_icc;
@@ -167,9 +167,13 @@ pub fn run(opts: &Options) -> Result<bool> {
     // Every `ctadl` the cases spawn inherits this, so it is set before any worker starts. Without
     // `--mem2reg` it is cleared, so a value left in the caller's shell cannot change the default
     // run.
-    match &opts.mem2reg {
-        Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
-        None => std::env::remove_var(MEM2REG_ENV),
+    // SAFETY: called from `main` before this process starts any thread, so nothing can read the
+    // environment concurrently.
+    unsafe {
+        match &opts.mem2reg {
+            Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
+            None => std::env::remove_var(MEM2REG_ENV),
+        }
     }
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
 
@@ -552,17 +556,19 @@ fn run_tasks(
 
     std::thread::scope(|scope| {
         for worker in &workers {
-            scope.spawn(move || loop {
-                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                    break;
-                };
-                let task = &tasks[index];
-                let start = Instant::now();
-                let outcomes = task.run(worker, opts);
-                let elapsed = start.elapsed();
-                // Held only to push a finished result; no test work happens
-                // under the lock.
-                results.lock().unwrap().push((index, outcomes, elapsed));
+            scope.spawn(move || {
+                loop {
+                    let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let task = &tasks[index];
+                    let start = Instant::now();
+                    let outcomes = task.run(worker, opts);
+                    let elapsed = start.elapsed();
+                    // Held only to push a finished result; no test work happens
+                    // under the lock.
+                    results.lock().unwrap().push((index, outcomes, elapsed));
+                }
             });
         }
     });
@@ -1446,10 +1452,11 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
         };
         // The `ctadl` binary's compiler-artifact carries the path we want in its
         // (non-null) `executable` field.
-        if msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "ctadl" {
-            if let Some(path) = msg["executable"].as_str() {
-                exe = Some(PathBuf::from(path));
-            }
+        if msg["reason"] == "compiler-artifact"
+            && msg["target"]["name"] == "ctadl"
+            && let Some(path) = msg["executable"].as_str()
+        {
+            exe = Some(PathBuf::from(path));
         }
     }
 
@@ -2048,10 +2055,10 @@ fn run_jni(
         "warn,ctadl=info,ctadl_ascent::languages::jni=debug".to_string(),
     ));
     let index_log = run_ctadl_logged(&work, &state, &index_env, &index_args, "index.log")?;
-    if let Some(expected) = assertions::read_untyped_native_layout(config)? {
-        if let Some(why) = check_native_layout(&index_log, untyped, &expected) {
-            return Ok(Outcome::Fail(why));
-        }
+    if let Some(expected) = assertions::read_untyped_native_layout(config)?
+        && let Some(why) = check_native_layout(&index_log, untyped, &expected)
+    {
+        return Ok(Outcome::Fail(why));
     }
     ctadl(
         &[
@@ -2665,10 +2672,10 @@ impl Worker {
             ),
         ];
         // Guess JAVA_HOME from `java` if the environment did not set it.
-        if std::env::var_os("JAVA_HOME").is_none() {
-            if let Some(java_home) = guess_java_home() {
-                ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
-            }
+        if std::env::var_os("JAVA_HOME").is_none()
+            && let Some(java_home) = guess_java_home()
+        {
+            ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
         }
         Ok(Self { ghidra_env })
     }
@@ -2719,9 +2726,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
+    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
     use ctadl_import::notifications::{
-        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+        DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 
