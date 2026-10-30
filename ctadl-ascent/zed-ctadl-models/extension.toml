@@ -10,8 +10,7 @@ repository = "https://github.com/sandialabs/ctadl-rs"
 # `rev` and builds the parser in `path`. For local grammar work, point `repository` at a
 # `file://` clone and `rev` at a commit in it.
 #
-# TODO: set `rev` to a pushed commit that contains `ctadl-ascent/tree-sitter-ctadl-models`.
 [grammars.ctadl_models]
 repository = "https://github.com/sandialabs/ctadl-rs"
-rev = "0000000000000000000000000000000000000000"
+rev = "76c38dfffd067c2954e406811edf061c33964a57"
 path = "ctadl-ascent/tree-sitter-ctadl-models"
