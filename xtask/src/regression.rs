@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use ctadl_import::notifications::{
-    self, NOTIFICATIONS_FILE, Notifications, STACK_SLOTS_PROMOTED_FULLY,
+    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
 };
 
 use crate::android_icc;
@@ -2721,9 +2721,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
+    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
     use ctadl_import::notifications::{
-        DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
+        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 
