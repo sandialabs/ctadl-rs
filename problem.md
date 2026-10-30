@@ -707,6 +707,9 @@ Before any of these fixes ships:
   were measured for rows and peak only. The exception is the allocator skip, whose findings are unchanged
   on 14 named binaries (cause 2). On the stripped ones the firmware model matches no endpoint, so
   a by-shape skip's findings are still unchecked.
+- **A wrong `realloc` pick keeps its model.** `analyze(F)` brings the body back, but no head can
+  withdraw a `propagation` by priority, so `return.deref <- arg(0).deref` stays on top of it. That
+  adds taint; it never removes any.
 - **The regression suite, and findings, for the other experimental patches:**
   - Lua no-ops (`CTADL_EXP_NOP`): neither has been checked.
   - memcpy shift-drop (`CTADL_EXP_NO_SHIFT_AMT`): neither has been checked.
@@ -736,6 +739,15 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 
 ## Ideas, not tried
 
+- **Write `$globals` with `update` instead of `store`** (causes 2 and 7; next to try). Every
+  global write is a weak `Store` to `$globals.[A].deref`, so no write ever kills an older value.
+  The stack already uses a functional `update` (`push_assign_or_store`,
+  `frontends/ctadl-pcode/src/lib.rs`). Open questions:
+  - A call must produce a new version of `$globals`.
+  - A store through a pointer to a global must stay visible to later reads.
+  - The cost of the phis.
+
+  Measure it both without and with the allocator skip.
 - **Make no hybrid decision on `$globals`** (cause 4): measured within 3% of `--hybrid-context none`,
   with identical findings. A plain subsumption filter is not enough (see cause 4).
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
