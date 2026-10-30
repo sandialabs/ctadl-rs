@@ -11,7 +11,9 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 bench=$(cd "$here/.." && pwd)
-logs=/Volumes/Shampoo/ctadl-bench/logs
+# Not on the results disk: when that volume is gone the launcher could not open its log, and
+# neither agent would start -- the page could not even say the disk is down.
+logs="$HOME/Library/Logs/ctadl-bench"
 agents="$HOME/Library/LaunchAgents"
 # The launcher is what holds Full Disk Access (see launch.c). Rebuilding it changes its code
 # hash and voids the grant, so it is built only when missing.

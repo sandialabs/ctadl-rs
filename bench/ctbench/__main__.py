@@ -15,6 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -37,6 +38,17 @@ def load_inputs(cfg: dict) -> dict:
     return json.loads(out.read_text())
 
 
+def wait_for_root(cfg: dict) -> None:
+    """Block until the results volume is mounted; launchd starts the daemon whether it is or not."""
+    root = cfg["paths"]["root"]
+    if root.is_dir():
+        return
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} waiting for {root} (volume not mounted?)", flush=True)
+    while not root.is_dir():
+        time.sleep(30)
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {root} is back", flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="ctbench")
     ap.add_argument("--config", type=Path, default=HERE / "bench.toml")
@@ -56,6 +68,7 @@ def main() -> None:
 
     if args.cmd == "daemon":
         from .runner import Daemon
+        wait_for_root(cfg)
         Daemon(cfg, load_inputs(cfg)).run()
     elif args.cmd == "enqueue":
         from .runner import Daemon

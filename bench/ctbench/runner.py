@@ -41,6 +41,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import traceback
 from collections import deque
@@ -724,6 +725,16 @@ class Daemon:
                 break
             self.start_unit(u, tier, self.estimate_gib(u))
 
+    def lost_root(self) -> None:
+        """The results volume went away: nothing running can finish and nothing can be recorded.
+        Kill our runs and exit; launchd restarts the daemon, which waits for the volume and then
+        requeues the interrupted work (`recover`)."""
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {self.root} is gone; killing "
+              f"{len(self.active)} run(s) and exiting", flush=True)
+        for a in self.active:
+            proc.kill(a.run, "results volume gone")
+        sys.exit(75)  # EX_TEMPFAIL
+
     def run(self) -> None:
         self.recover()
         self.log("daemon-start", f"pid {os.getpid()}")
@@ -735,6 +746,8 @@ class Daemon:
         signal.signal(signal.SIGHUP, lambda *_: stopping.append(1))
         while not stopping:
             try:
+                if not self.root.is_dir():
+                    self.lost_root()
                 snap, user_here, p_ok, must_yield = self.observe()
                 if time.time() >= self.next_poll:
                     self.poll()
@@ -752,6 +765,8 @@ class Daemon:
             except SystemExit:
                 raise
             except Exception:
+                if not self.root.is_dir():
+                    self.lost_root()
                 self.log("error", traceback.format_exc()[-2000:])
             time.sleep(self.gate["tick_s"])
         for a in list(self.active):

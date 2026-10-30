@@ -16,6 +16,12 @@ Everything it writes goes under `/Volumes/Shampoo/ctadl-bench` (`paths.root` in
 `bench.toml`): `bench.db` (SQLite), `builds/<sha>/`, `work/<sha>/<suite>/<bench>/` (per-run
 logs, `time -l` output, SARIF, scores), the cargo target dirs, and `tmp/` and `home/` for
 scratch. Logs are kept; a benchmark's ctadl store is deleted as soon as its last phase is over.
+The agents' own logs (`daemon.log`, `web.log`) are in `~/Library/Logs/ctadl-bench`, so both
+start even when that volume is not mounted.
+
+If the volume goes away, the daemon kills its runs and exits; launchd restarts it, it waits for
+the volume, and then requeues the interrupted work. The page shows a banner over its last good
+rendering until the database can be read again.
 
 ## What runs
 

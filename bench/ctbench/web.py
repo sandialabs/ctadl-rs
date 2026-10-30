@@ -12,6 +12,7 @@ import json
 import sqlite3
 import time
 from collections import defaultdict
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -60,6 +61,8 @@ a { color: var(--series-1); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .sub { color: var(--ink-2); }
 .muted { color: var(--muted); }
+.banner { border: 1px solid var(--warning); border-left-width: 4px; border-radius: 8px;
+  background: var(--surface); padding: 10px 14px; margin-bottom: 16px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
 .row { display: flex; flex-wrap: wrap; gap: 12px; }
 .row > .card { flex: 1 1 220px; }
@@ -261,8 +264,7 @@ def page(title: str, body: str) -> bytes:
             f'<style>{CSS}</style></head><body><main>{body}</main><script>{JS}</script></body></html>').encode()
 
 
-def index(cfg) -> bytes:
-    conn = ro(cfg)
+def index(cfg, conn) -> bytes:
     commits = report.measured_commits(conn)
     now = time.time()
     gate = conn.execute("SELECT * FROM events WHERE kind='gate' ORDER BY at DESC LIMIT 1").fetchone()
@@ -382,8 +384,7 @@ def budget_cell(v: dict) -> str:
     return f'<span class="tag reg">{esc(text)}</span>' if r > 1 else esc(text)
 
 
-def commit_page(cfg, sha: str) -> bytes:
-    conn = ro(cfg)
+def commit_page(cfg, conn, sha: str) -> bytes:
     c = conn.execute("SELECT * FROM commits WHERE sha LIKE ?", (sha + "%",)).fetchone()
     if c is None:
         return page("not found", "<p>No such commit.</p>")
@@ -410,33 +411,67 @@ def commit_page(cfg, sha: str) -> bytes:
     return page(f"{c['sha'][:10]} · ctadl benchmarks", "".join(b))
 
 
+def outage_banner(cfg, since: float, err: Exception, cached_at: float | None) -> str:
+    root = cfg["paths"]["root"]
+    at = time.strftime("%a %H:%M", time.localtime(since))
+    if root.is_dir():
+        what = f"The results database cannot be read ({esc(err)})"
+    else:
+        what = (f"The results volume (<code>{esc(root)}</code>) is not mounted. Benchmarking is "
+                f"stopped and starts again by itself once the volume is back")
+    shown = (f"Shown below: the page as of {time.strftime('%a %H:%M', time.localtime(cached_at))}."
+             if cached_at else "No earlier copy of this page to show.")
+    return (f'<div class="banner"><strong>Results unavailable since {at}.</strong> {what}. '
+            f'{shown}</div>')
+
+
 def serve(cfg, host: str, port: int) -> None:
+    # The last good rendering of each page, kept to show (under a banner) while the database
+    # is unreachable -- the results volume is sometimes unmounted.
+    cache: dict[str, tuple[bytes, float]] = {}
+    down_since: list[float] = []
+
+    def render(path: str) -> tuple[bytes, int, str]:
+        root = cfg["paths"]["root"]
+        if not root.is_dir():
+            raise FileNotFoundError(f"{root} is not there")
+        # Closed every time: a connection held across an unmount keeps SQLite's mapping of the
+        # dead volume's -shm file, and touching it later kills the process with SIGBUS.
+        with closing(ro(cfg)) as conn:
+            if path == "/":
+                return index(cfg, conn), 200, "text/html; charset=utf-8"
+            if path.startswith("/c/"):
+                return commit_page(cfg, conn, path[3:]), 200, "text/html; charset=utf-8"
+            if path == "/api/latest":
+                commits = [c for c in report.measured_commits(conn) if c["done"]]
+                data = {"commit": commits[0] if commits else None,
+                        "findings": report.compare(conn, commits[0]["sha"]) if commits else [],
+                        "sweep": report.sweep_summary(conn)}
+                return json.dumps(data, default=str).encode(), 200, "application/json"
+        return page("not found", "<p>Not found.</p>"), 404, "text/html; charset=utf-8"
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            url = urlparse(self.path)
+            path = urlparse(self.path).path
             try:
-                if url.path == "/":
-                    body, status = index(cfg), 200
-                elif url.path.startswith("/c/"):
-                    body, status = commit_page(cfg, url.path[3:]), 200
-                elif url.path == "/api/latest":
-                    conn = ro(cfg)
-                    commits = [c for c in report.measured_commits(conn) if c["done"]]
-                    data = {"commit": commits[0] if commits else None,
-                            "findings": report.compare(conn, commits[0]["sha"]) if commits else [],
-                            "sweep": report.sweep_summary(conn)}
-                    body, status = json.dumps(data, default=str).encode(), 200
-                    self.send_response(status)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
+                body, status, ctype = render(path)
+                down_since.clear()
+                if status == 200:
+                    cache[path] = (body, time.time())
+            except (sqlite3.Error, OSError) as e:
+                if not down_since:
+                    down_since.append(time.time())
+                    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} results unavailable: {e}", flush=True)
+                body, cached_at = cache.get(path, (None, None))
+                if path.startswith("/api/"):
+                    body, ctype = json.dumps({"error": str(e), "since": down_since[0]}).encode(), "application/json"
                 else:
-                    body, status = page("not found", "<p>Not found.</p>"), 404
-            except sqlite3.OperationalError as e:
-                body, status = page("no data", f"<p>No results database yet ({esc(e)}).</p>"), 503
+                    banner = outage_banner(cfg, down_since[0], e, cached_at).encode()
+                    body = (body or page("results unavailable", "")).replace(b"<main>", b"<main>" + banner, 1)
+                    ctype = "text/html; charset=utf-8"
+                status = 503
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", ctype)
             self.end_headers()
             self.wfile.write(body)
 
