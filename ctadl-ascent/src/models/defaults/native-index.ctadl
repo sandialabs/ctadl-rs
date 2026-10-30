@@ -51,11 +51,18 @@ propagation(F::arg(0).deref <- F::arg(1).deref),
 
 propagation(F::arg(0).deref <- F::arg(1).deref),
   propagation(F::return.deref <- F::arg(1).deref) :-
-  fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"});
+  fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"});
 propagation(F::arg(0).deref <- F::arg(1).deref),
   propagation(F::return.deref <- F::arg(1).deref) :-
   fun(F),
-  F in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"};
+  F in {"memcpy", "memmove", "mempcpy", "memccpy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"};
+
+// `bcopy(src, dst, n)` takes its arguments in the other order and returns nothing.
+propagation(F::arg(1).deref <- F::arg(0).deref) :-
+  fun(F, name = "bcopy");
+propagation(F::arg(1).deref <- F::arg(0).deref) :-
+  fun(F),
+  F = "bcopy";
 
 // `memset(s, c, n)` returns `s`.
 propagation(F::return.deref <- F::arg(0).deref) :-
