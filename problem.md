@@ -737,17 +737,57 @@ independent. It is the 44x row growth from turning promotion off, which is the s
 fixed. There, 2.16 billion concatenation probes, 82% of them misses, at about 70 ns each through
 linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut it.
 
+## Ideas tried and dropped
+
+### Write `$globals` with `update` instead of `store` (causes 2 and 7)
+
+**Worse on every binary measured, and no summary row goes away.** The code is not on the branch.
+The patch, env-gated as `CTADL_EXP_GLOBALS=update`, is `/Volumes/Shampoo/nb-work/gup/gup.patch`.
+
+**The patch.** It is an IR pass at index time, so no re-import is needed
+(`version_global_writes_function`). It runs just before SSA:
+- **Stores become updates.** `store $globals.[A].deref := v` becomes
+  `$globals = update ($globals.[A].deref := v)`, the stack's form, so SSA versions the heap.
+- **Each call gets a heap version of its own.** A copy `$globals = $globals` goes before each
+  call. Codegen passes that version as the call's `$globals` actual instead of the caller's
+  formal, so the callee's writes land in it and later reads see them. Copy propagation keeps
+  heap copies.
+- **Stores through a pointer to a global stay stores** on the pointer, as before.
+- **Tests:** a kill works end to end (`g = a; g = b; return g` returns only `b`), and a callee's
+  write reaches the caller (C frontend tests `a_versioned_global_*`).
+
+**Measured** on the alloc experiment's stores, re-imported with `CTADL_REUSE_FACTS=1`, with the
+firmware model and a 24 GiB cap. "Analyzed" adds `analyze(F) :- allocator(F, ...)` to bring the
+allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh`, `sum.sh`).
+
+| Binary | Skipped, `store` | Skipped, `update` | Analyzed, `store` | Analyzed, `update` |
+|---|---|---|---|---|
+| MBM621 `chat` | 0.56x | 0.82x | 3.63x | 9.23x |
+| DIR-868L `signalc` | 0.36x | 0.58x | 2.31x | 6.44x |
+| DAP-2690 `captival_usockc` | 1.23x | 1.38x | 11.5x | 25.0x |
+| DSP-W115 `file` | 0.70x | 1.27x | 7.46x | 12.0x |
+| DSP-W115 `GpioForCrond` | 0.40x | 0.62x | 31.3x | killed at 24 GiB, 355 s |
+
+- **`summary` does not shrink.** It has the same row count under both in every run. On `chat`
+  with the allocator analyzed, it is the same 152,740 rows, `malloc`'s 1,455 included. So the
+  kills remove nothing that callers inherit. `malloc`'s heap writes sit under branches, and the
+  phis merge them back. Its dense block comes from the size flowing into every bin address
+  (merged arithmetic), and a kill cannot remove that.
+- **Each version copies the whole heap.** In `file` (allocator skipped), 7.0 M of the
+  14.4 M `locals` rows sit on `$globals_k` versions, against 10.6 K on `$globals_0` under
+  `store`. `main` has 1,127 versions, each holding the same 2,825 rows. The engine shares nothing
+  between versions, so the cost is versions times heap paths.
+- **Not fixed: the formal is both in and out.** The exit write-back `GLOBALS <- $globals_n` and
+  the entry anchor `$globals_0 <- GLOBALS` close a loop, so a read before a write still sees the
+  function's later writes (`a_versioned_global_read_before_the_write_sees_the_old_value`,
+  ignored). Fixing it means guarding the `locals` rules against non-seed rows on the `GLOBALS`
+  formal. That could only shrink `summary` further. It cannot pay for the version copies, which
+  are 2-6x `locals` on their own.
+- **Cause 7 (`avifview`) was not run.** Its summary is a cross product of parameters into
+  globals, and kills do not remove that either.
+
 ## Ideas, not tried
 
-- **Write `$globals` with `update` instead of `store`** (causes 2 and 7; next to try). Every
-  global write is a weak `Store` to `$globals.[A].deref`, so no write ever kills an older value.
-  The stack already uses a functional `update` (`push_assign_or_store`,
-  `frontends/ctadl-pcode/src/lib.rs`). Open questions:
-  - A call must produce a new version of `$globals`.
-  - A store through a pointer to a global must stay visible to later reads.
-  - The cost of the phis.
-
-  Measure it both without and with the allocator skip.
 - **Make no hybrid decision on `$globals`** (cause 4): measured within 3% of `--hybrid-context none`,
   with identical findings. A plain subsumption filter is not enough (see cause 4).
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
