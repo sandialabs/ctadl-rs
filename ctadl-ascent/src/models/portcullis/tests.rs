@@ -1474,7 +1474,13 @@ fn a_skip_analysis_head_names_one_function() {
         let program = parse(text);
         let head = &program.rules[0].heads[0];
         assert!(
-            matches!(head.kind, HeadKind::Mode(FunctionMode::SkipAnalysis)),
+            matches!(
+                head.kind,
+                HeadKind::Mode(ModeHead {
+                    mode: FunctionMode::SkipAnalysis,
+                    priority: 0
+                })
+            ),
             "{text}"
         );
         assert!(head.anchor.is_some(), "{text}");
@@ -1674,7 +1680,34 @@ fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
     assert_eq!(portcullis.origin.unwrap().rule_generators, vec![1]);
 }
 
-/// The SSA modes are heads of the same shape as `skip_analysis`, one per JSON `modes` value.
+/// A mode head's `priority` is an integer constant, 0 when not written, and only mode heads
+/// take one.
+#[test]
+fn a_mode_head_takes_an_integer_priority() {
+    for (text, priority) in [
+        (r#"skip_analysis(F) :- fun(F);"#, 0),
+        (r#"skip_analysis(F, priority = 10) :- fun(F);"#, 10),
+        (r#"analyze(F, priority = -100) :- fun(F);"#, -100),
+        (r#"F::mem2reg_full(priority = 3) :- fun(F);"#, 3),
+    ] {
+        let program = parse(text);
+        let HeadKind::Mode(head) = program.rules[0].heads[0].kind else {
+            panic!("{text}: not a mode head");
+        };
+        assert_eq!(head.priority, priority, "{text}");
+        check_ok(text);
+    }
+    let err = check_err(r#"skip_analysis(F, priority = "high") :- fun(F);"#);
+    assert!(err.contains("'priority' is an integer constant"), "{err}");
+    let err = check_err(r#"skip_analysis(F, priority = 1, priority = 2) :- fun(F);"#);
+    assert!(err.contains("takes one 'priority'"), "{err}");
+    let err = check_err(r#"skip_analysis(F, priority = P) :- fun(F), P = 1;"#);
+    assert!(!err.is_empty(), "a variable is not a constant");
+    let err = check_err(r#"propagation(F::return <- F::arg(0), priority = 1) :- fun(F);"#);
+    assert!(err.contains("'priority'"), "{err}");
+}
+
+/// The modes are heads of the same shape as `skip_analysis`.
 #[test]
 fn every_mode_is_a_head_of_its_own() {
     for mode in FunctionMode::ALL {
@@ -1682,7 +1715,7 @@ fn every_mode_is_a_head_of_its_own() {
         let text = format!(r#"{name}(F) :- fun(F, name = "f");"#);
         let program = parse(&text);
         assert!(
-            matches!(program.rules[0].heads[0].kind, HeadKind::Mode(m) if m == mode),
+            matches!(program.rules[0].heads[0].kind, HeadKind::Mode(m) if m.mode == mode),
             "{text}"
         );
         assert_eq!(program.rules[0].phases(), (true, false), "{text}");
@@ -1708,7 +1741,10 @@ fn migrates_each_mode_to_its_head() {
         )
     };
     for mode in FunctionMode::ALL {
-        let text = migrate_and_load(&generator(&format!(r#"["{}"]"#, mode.json_name())));
+        let Some(json_name) = mode.json_name() else {
+            continue;
+        };
+        let text = migrate_and_load(&generator(&format!(r#"["{json_name}"]"#)));
         assert!(
             text.contains(&format!("{}(F) :-", mode.relation_name())),
             "{text}"

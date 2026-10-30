@@ -440,6 +440,10 @@ pub fn index(
                 portcullis_matcher.observe_facts(facts, &mut model_matches);
                 endpoint_matcher.observe_facts(facts, &mut model_matches);
             }
+            // Every rule that can claim a mode on this import's functions has run: a mode rule
+            // is satisfied within one import. So the winners are final, and a tie is an error
+            // before SSA reads them.
+            model_matches.check_mode_conflicts()?;
         }
 
         // Delete assigned-but-never-read temporaries, then fuse single-use

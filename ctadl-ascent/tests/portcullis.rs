@@ -1558,8 +1558,8 @@ fn groundings_are_projected_onto_head_variables() {
     assert_eq!(out.endpoints.len(), 1);
 }
 
-/// The mode heads fill the maps the SSA pipeline and codegen read, and a later rule that
-/// disagrees on a function wins.
+/// The mode heads fill the maps the SSA pipeline and codegen read, and of two rules that
+/// disagree on a function the one with the higher priority wins.
 #[test]
 fn mode_heads_mark_their_functions() {
     use ctadl_ir::ssa::{FrameWrites, FullMode};
@@ -1570,10 +1570,11 @@ fn mode_heads_mark_their_functions() {
         mem2reg_full(F), frame_store(F) :- fun(F, name = "big");
         mem2reg_window(F) :- fun(F, name = "small");
         frame_update(F) :- fun(F, name = "small");
-        mem2reg_full(F) :- fun(F, name = "small");
+        mem2reg_full(F, priority = 1) :- fun(F, name = "small");
         skip_analysis(F) :- fun(F, name = "unwind");
         "#,
     );
+    m.check_mode_conflicts().unwrap();
     // A mode keys on a function's full name, which for a native symbol is the decorated one.
     let full = |n: &str| format!("<EXTERNAL>::{n}@00101008");
     fn named<T: Copy>(
@@ -1597,4 +1598,110 @@ fn mode_heads_mark_their_functions() {
     );
     let skipped: Vec<String> = m.skip_analysis.iter().map(|f| f.to_string()).collect();
     assert_eq!(skipped, [full("unwind")]);
+}
+
+/// The functions `skip_analysis` holds, by simple name.
+fn skipped(m: &ProgramModelMatches) -> Vec<String> {
+    m.skip_analysis
+        .iter()
+        .map(|f| {
+            let f = f.to_string();
+            f.trim_start_matches("<EXTERNAL>::")
+                .trim_end_matches("@00101008")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The highest priority wins whichever rule comes first, and `analyze` undoes a `skip_analysis`
+/// it outranks.
+#[test]
+fn the_highest_priority_mode_wins_in_either_order() {
+    let program_info = native_program(&["f", "g"]);
+    for source in [
+        r#"skip_analysis(F) :- fun(F); analyze(F, priority = 5) :- fun(F, name = "f");"#,
+        r#"analyze(F, priority = 5) :- fun(F, name = "f"); skip_analysis(F) :- fun(F);"#,
+    ] {
+        let m = run(&program_info, source);
+        m.check_mode_conflicts()
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert_eq!(skipped(&m), ["g"], "{source}");
+    }
+    // A negative priority is outranked by one left unwritten.
+    let m = run(
+        &program_info,
+        r#"skip_analysis(F, priority = -100) :- fun(F); analyze(F) :- fun(F, name = "g");"#,
+    );
+    m.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&m), ["f"]);
+}
+
+/// Two different modes at one priority are an error naming the function and both rules; two
+/// rules claiming the same mode are not.
+#[test]
+fn different_modes_at_one_priority_conflict() {
+    let program_info = native_program(&["f", "g"]);
+    let m = run(
+        &program_info,
+        r#"
+        skip_analysis(F) :- fun(F);
+        skip_analysis(F) :- fun(F, name = "g");
+        analyze(F) :- fun(F, name = "f");
+        "#,
+    );
+    let err = m.check_mode_conflicts().unwrap_err().to_string();
+    assert!(err.contains("<EXTERNAL>::f@00101008"), "{err}");
+    assert!(err.contains("'skip_analysis' from test.ctadl:0"), "{err}");
+    assert!(err.contains("'analyze' from test.ctadl:2"), "{err}");
+    assert!(err.contains("both at priority 0"), "{err}");
+    assert!(!err.contains("::g@"), "{err}");
+}
+
+/// A tie is settled by a higher claim, whether it comes before or after the tie.
+#[test]
+fn a_higher_priority_settles_a_tie() {
+    let program_info = native_program(&["f"]);
+    for source in [
+        r#"skip_analysis(F) :- fun(F); analyze(F) :- fun(F); analyze(F, priority = 1) :- fun(F);"#,
+        r#"analyze(F, priority = 1) :- fun(F); skip_analysis(F) :- fun(F); analyze(F) :- fun(F);"#,
+    ] {
+        let m = run(&program_info, source);
+        m.check_mode_conflicts()
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert!(skipped(&m).is_empty(), "{source}");
+    }
+}
+
+/// Modes on different axes never conflict.
+#[test]
+fn modes_on_different_axes_are_independent() {
+    let program_info = native_program(&["f"]);
+    let m = run(
+        &program_info,
+        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F); frame_store(F) :- fun(F);"#,
+    );
+    m.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&m), ["f"]);
+    assert_eq!(m.mem2reg_modes.len(), 1);
+    assert_eq!(m.frame_modes.len(), 1);
+}
+
+/// A user's `analyze` outranks the native defaults' allocator skip without naming a priority.
+#[test]
+fn a_user_analyze_overrides_a_default_skip() {
+    let program_info = native_program(&["malloc", "free", "realloc"]);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut out = ProgramModelMatches::default();
+    ctadl_ascent::models::try_load_default_models(&index, &mut out).unwrap();
+    let file = portcullis::PortcullisFile::from_text(
+        "user.ctadl",
+        r#"analyze(F) :- fun(F, name = "malloc");"#,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    matcher.observe_import(&index, &mut out);
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    out.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&out), ["free", "realloc"]);
 }

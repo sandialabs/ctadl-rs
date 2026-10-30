@@ -22,7 +22,7 @@ a target-count threshold, then hybrid inlining. Each site lands in exactly one o
 buckets, and [`codegen_program`] asserts that the counts add up. The other strategies have a
 fixed answer for every site and consult none of the policy.
 
-`skip_analysis` holds the names a `modes: ["skip-analysis"]` generator matched (see
+`skip_analysis` holds the functions whose winning body mode is `skip_analysis` (see
 [`crate::models::matches::ProgramModelMatches::skip_analysis`]). Those functions get their
 signature lowered and their body dropped, which is the whole implementation of the directive:
 with no `assign`, `call`, `callee_info` or `call_target_assign` rows inside them, the indexer
