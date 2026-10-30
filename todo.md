@@ -15,14 +15,15 @@ Moving the columns into shared fields was not done: it touches about 70 sites an
 `JavaClass` / `CilClass` / … newtypes, for no reader that the accessors do not already serve.
 `Display` and `type_facts` still match per language, on purpose.
 
-## jvm and dex disagree on abstract methods in CHA
+## jvm and dex disagree on abstract methods in CHA - DONE
 
-Both frontends create an IR function, and a name table entry, for every declared method,
-abstract ones included. But jvm also puts abstract methods in `Dispatch::Java::methods`, the
-column CHA resolves calls against, and dex does not. The `abstract_methods` doc in
-`ctadl-ir/src/mir/call.rs` says abstract declarations are absent from `methods`, so jvm
-contradicts it. CHA behaviour is unchanged for now; decide which is right and bring the other
-frontend in line.
+dex now does what jvm does: every declared method, abstract ones included, has a row in
+`Dispatch::Java::methods`. So a call through an interface or abstract class also reaches the
+body-less declaration. The `Dispatch::Java` docs say so, and `type_facts` no longer counts the
+`abstract_methods` rows of `methods` as implementations: before, they cancelled out and jvm
+found no single-abstract-method interfaces at all.
+
+CIL still leaves abstract methods out of `Dispatch::Cil::methods`.
 
 ## Pre-existing rustfmt drift
 
