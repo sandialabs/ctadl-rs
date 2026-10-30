@@ -17,8 +17,8 @@ use source_info::{ArtifactKey, SpanLen};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::notifications::Notifications;
 use ctadl_ir::mir::call::{
-    CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
-    VirtualMethodTable,
+    CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
+    JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
@@ -221,11 +221,11 @@ impl Context {
                     iface_vec.push(JavaClass(desc.into()));
                 }
             }
-            if let VirtualMethodTable::Java {
+            if let Dispatch::Java {
                 hierarchy,
                 interfaces,
                 ..
-            } = &mut builders.vmt
+            } = &mut builders.vmt.dispatch
             {
                 let parents = hierarchy
                     .entry(JavaClass(class_name.clone().into()))
@@ -264,64 +264,50 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
+                let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
+                builders.vmt.names.push(
+                    FunctionNames::new(sig.as_str(), method_name.as_str())
+                        .with_parent(class_name.as_str())
+                        .with_signature(method_descr.as_str()),
+                );
 
-                if ACC_ABSTRACT.is_set_in(enc.access_flags) {
-                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
-                    if let VirtualMethodTable::Java {
+                if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
+                    methods.push((
+                        JavaClass(class_name.as_str().into()),
+                        JavaSimpleName(method_name.as_str().into()),
+                        JavaSignature(method_descr.as_str().into()),
+                        JavaMethod(sig.as_str().into()),
+                    ));
+                }
+                if ACC_ABSTRACT.is_set_in(enc.access_flags)
+                    && let Dispatch::Java {
                         abstract_methods, ..
-                    } = &mut builders.vmt
-                    {
-                        abstract_methods.push((
-                            JavaClass(class_name.into()),
-                            JavaSimpleName(method_name.into()),
-                            JavaSignature(method_descr.into()),
-                        ));
-                    }
+                    } = &mut builders.vmt.dispatch
+                {
+                    abstract_methods.push((
+                        JavaClass(class_name.as_str().into()),
+                        JavaSimpleName(method_name.as_str().into()),
+                        JavaSignature(method_descr.as_str().into()),
+                    ));
                 }
 
-                // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
-                // `code` branch below never runs for it, and the extern-stub loop at the end
-                // of `process` skips it too because it is in `self.defined`. Without a row
-                // here it reaches the fact base with no table entry at all.
-                if ACC_NATIVE.is_set_in(enc.access_flags) {
-                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
-                    let cls = JavaClass(class_name.into());
-                    let simple = JavaSimpleName(method_name.into());
-                    let descr = JavaSignature(method_descr.into());
-                    let method = JavaMethod(sig.as_str().into());
-                    if let VirtualMethodTable::Java {
-                        methods, natives, ..
-                    } = &mut builders.vmt
-                    {
-                        // A row in both columns (see `natives` on `VirtualMethodTable::Java`).
-                        // A `static` native is reached by `invoke-static`, which resolves by
-                        // name and never consults the table.
-                        methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
-                        natives.push((
-                            cls,
-                            simple,
-                            descr,
-                            method,
-                            ACC_STATIC.is_set_in(enc.access_flags),
-                        ));
-                    }
+                // Native methods are also listed in `natives`, besides their `methods` row
+                // above. A `static` native is reached by `invoke-static`, which resolves by
+                // name and never consults the table.
+                if ACC_NATIVE.is_set_in(enc.access_flags)
+                    && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
+                {
+                    natives.push((
+                        JavaClass(class_name.as_str().into()),
+                        JavaSimpleName(method_name.as_str().into()),
+                        JavaSignature(method_descr.as_str().into()),
+                        JavaMethod(sig.as_str().into()),
+                        ACC_STATIC.is_set_in(enc.access_flags),
+                    ));
                 }
 
                 // Parse the instruction stream for the method.
                 if let Some(code) = parser.method_code(enc)? {
-                    // ---------------------------------------------------------------------
-                    // Collect Java virtual method information for the VMT.
-                    // The method triple has the class name, method simple name, and descriptor
-                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
-
-                    if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
-                        methods.push((
-                            JavaClass(class_name.as_str().into()),
-                            JavaSimpleName(method_name.as_str().into()),
-                            JavaSignature(method_descr.as_str().into()),
-                            JavaMethod(sig.as_str().into()),
-                        ));
-                    }
                     // ---------------------------------------------------------------------
                     // Handle parameter types
                     let param_types = parser.method_parameters(mi)?.types;
@@ -414,6 +400,11 @@ impl Context {
                 let (class_name, method_name, descr) = parser
                     .method_triple(&extern_id)
                     .err_context(|| format!("method_triple: {extern_id:?}"))?;
+                builders.vmt.names.push(
+                    FunctionNames::new(java_sig.as_str(), method_name.as_str())
+                        .with_parent(class_name.as_str())
+                        .with_signature(descr.as_str()),
+                );
                 self.ext.insert(
                     java_sig.clone(),
                     (
@@ -610,6 +601,11 @@ impl Context {
             self.retag = self.merged.retags(sig, Some(id));
             let fidx = builders.program.new_function();
             self.defined.insert(split_sig.clone(), fidx);
+            builders.vmt.names.push(
+                FunctionNames::new(split_sig.as_str(), simple)
+                    .with_parent(split.as_str())
+                    .with_signature(descr),
+            );
             let fdat = &mut builders.program[fidx];
             fdat.name = split_sig.clone();
             fdat.params = params.clone();
@@ -627,9 +623,9 @@ impl Context {
             // before SSA anyway; doing it here keeps them out of the stored program.
             ctadl_ir::ssa::prune_unreachable_nodes(fdat);
             self.clone_statements += statement_count(fdat);
-            if let VirtualMethodTable::Java {
+            if let Dispatch::Java {
                 methods, hierarchy, ..
-            } = &mut builders.vmt
+            } = &mut builders.vmt.dispatch
             {
                 methods.push((
                     JavaClass(split.as_str().into()),
@@ -667,10 +663,11 @@ impl Context {
         // Sort for determinism
         ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         for (_sig, entry) in ext {
-            if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
+            if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 methods.push(entry);
             }
         }
+        builders.vmt.finish_names();
         let source_info = builders.source_info_builder.finish();
         log::trace!("source_info: {source_info}");
         let vmt = builders.vmt;

@@ -6,65 +6,53 @@ a [`ModelLoadReport`] alongside it for the Stage-1 counters the diagnostics need
 */
 
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
 
-use crate::error::{Error, ErrorContext, JsonModelError};
+use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 pub mod codegen;
-pub mod json;
+pub mod json_schema;
 pub mod match_index;
 pub mod matches;
+pub mod portcullis;
 pub mod spec;
-pub mod universe_set;
+pub mod stats;
+#[doc(hidden)]
+pub mod test_vmt;
 
-pub use json::{
-    EndpointStats, IndexTimeModelCounts, MatchedFunctions, PropagationStats, UnmatchedReason,
-};
 pub use match_index::{DispatchKeys, ProgramMatchIndex};
 pub use matches::{
-    BridgeMatches, DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort,
-    ProgramModelMatches, PropagationMatch,
+    DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort, ProgramModelMatches,
+    PropagationMatch,
+};
+pub use portcullis::{
+    Phase as PortcullisPhase, PortcullisFile, PortcullisMatcher, PortcullisModelSet,
+    PortcullisReport, is_portcullis_path,
 };
 pub use spec::{
-    BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, Severity, SideSpec,
-    scan_model_files,
+    BridgeSpec, Direction, ImportScope, PortPair, ProgramScope, ResolvedBridge, Severity, SideSpec,
+};
+pub use stats::{
+    EndpointStats, IndexTimeModelCounts, MatchedFunctions, PropagationStats, UnmatchedReason,
 };
 
 #[cfg(test)]
 mod tests;
 
 /// The built-in default model file for each [`VirtualMethodTable`] variant, as
-/// `(name, contents)`. `name` appears in error context and is what [`DEFAULT_MODEL_FILES`]
-/// enumerates for the drift test.
-pub const JAVA_DEFAULT_MODELS: (&str, &[u8]) = (
-    "java-index.jsonl",
-    include_bytes!("defaults/java-index.jsonl"),
-);
-pub const NATIVE_DEFAULT_MODELS: (&str, &[u8]) = (
-    "native-index.jsonl",
-    include_bytes!("defaults/native-index.jsonl"),
-);
-pub const LUA_DEFAULT_MODELS: (&str, &[u8]) = (
-    "lua-index.jsonl",
-    include_bytes!("defaults/lua-index.jsonl"),
-);
-pub const CIL_DEFAULT_MODELS: (&str, &[u8]) = (
-    "cil-index.jsonl",
-    include_bytes!("defaults/cil-index.jsonl"),
-);
-
-/// Every shipped default file, whether or not a given import loads it. Exists so a test can
-/// parse all of them against one program: the loader hard-errors on unknown keys and on
-/// malformed access paths, and a stale default file would otherwise break *every* index of the
-/// language that selects it.
-pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
-    JAVA_DEFAULT_MODELS,
-    NATIVE_DEFAULT_MODELS,
-    LUA_DEFAULT_MODELS,
-    CIL_DEFAULT_MODELS,
+/// `(name, source)`: what an index loads. `name` appears in error context and in provenance.
+pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
+    (
+        "java-index.ctadl",
+        include_str!("defaults/java-index.ctadl"),
+    ),
+    (
+        "native-index.ctadl",
+        include_str!("defaults/native-index.ctadl"),
+    ),
+    ("lua-index.ctadl", include_str!("defaults/lua-index.ctadl")),
+    ("cil-index.ctadl", include_str!("defaults/cil-index.ctadl")),
 ];
 
 /// Returns the built-in default models for the program `index` was built from, selected by its
@@ -85,419 +73,110 @@ pub fn try_load_default_models(
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     log::trace!("load_models");
-    let Some((name, contents)) = default_model_file(index.vmt()) else {
+    let Some(set) = default_portcullis_models(index.vmt())? else {
         return Ok(ModelLoadReport::default());
     };
+    let facts = portcullis::program_facts(index, &set.needs());
+    load_default_models_from_facts(set, &facts, out)
+}
+
+/// [`try_load_default_models`] over relations already built, for a caller that shares one
+/// [`portcullis::relations::ProgramFacts`] between the defaults and the user's DSL files. `set` is
+/// what [`default_portcullis_models`] returned for the program `facts` were built from, and the
+/// facts must cover its [`portcullis::PortcullisModelSet::needs`].
+pub fn load_default_models_from_facts(
+    set: &portcullis::PortcullisModelSet,
+    facts: &portcullis::relations::ProgramFacts,
+    out: &mut ProgramModelMatches,
+) -> Result<ModelLoadReport, Error> {
+    let name = set
+        .files
+        .first()
+        .map(|f| f.path.display().to_string())
+        .unwrap_or_default();
     log::debug!("loading default models from {name}");
-    try_load_jsonl_models_named(index, BufReader::new(contents), out, name)
+    // Both phases: the defaults are propagation-only, so `All` and `Index` name the same rules,
+    // and a caller that hands them to a query gets what the file says rather than a phase
+    // decision made here.
+    let mut matcher = portcullis::PortcullisMatcher::new(set, portcullis::Phase::All);
+    matcher.observe_facts(facts, out);
+    matcher
+        .finish(out)
+        .map(ModelLoadReport::from_portcullis)
         .err_context(|| format!("loading default index models: {name}"))
 }
 
-/// The built-in default model file a program with this [`VirtualMethodTable`] selects, as
-/// `(name, contents)`: the file [`try_load_default_models`] loads.
-pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static [u8])> {
-    match vmt {
-        VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
-        VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
-        VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
-        VirtualMethodTable::Cil { .. } => Some(CIL_DEFAULT_MODELS),
-        // flowy, and anything else with no method table: a default model file has nothing to
-        // match against, and shipping one would be a language guess.
-        VirtualMethodTable::Unknown => None,
+/// The shipped DSL defaults, parsed and checked once per process rather than once per import.
+/// Parallel to [`DEFAULT_DSL_MODELS`]. A file that does not parse keeps its rendered error.
+static DEFAULT_DSL_SETS: std::sync::LazyLock<Vec<Result<portcullis::PortcullisModelSet, String>>> =
+    std::sync::LazyLock::new(|| {
+        DEFAULT_DSL_MODELS
+            .iter()
+            .map(|&(name, source)| {
+                portcullis::PortcullisFile::from_text(name, source)
+                    .map(|file| portcullis::PortcullisModelSet { files: vec![file] })
+                    .map_err(|e| e.to_string())
+            })
+            .collect()
+    });
+
+/// The parsed DSL default a program with this [`VirtualMethodTable`] selects; see
+/// [`default_portcullis_model_file`]. An error only if a shipped file does not parse, which is a
+/// build-time bug.
+pub fn default_portcullis_models(
+    vmt: &VirtualMethodTable,
+) -> Result<Option<&'static portcullis::PortcullisModelSet>, Error> {
+    let Some(index) = default_portcullis_index(vmt) else {
+        return Ok(None);
+    };
+    match &DEFAULT_DSL_SETS[index] {
+        Ok(set) => Ok(Some(set)),
+        Err(message) => Err(Error::PortcullisModel(message.clone())).err_context(|| {
+            format!(
+                "loading default index models: {}",
+                DEFAULT_DSL_MODELS[index].0
+            )
+        }),
     }
 }
 
-/// Whether the built-in defaults for a program with this [`VirtualMethodTable`] contain a
-/// `find: "dispatch"` generator.
+/// The DSL default a program with this [`VirtualMethodTable`] selects: the one
+/// [`try_load_default_models`] runs.
+pub fn default_portcullis_model_file(
+    vmt: &VirtualMethodTable,
+) -> Option<(&'static str, &'static str)> {
+    DEFAULT_DSL_MODELS
+        .get(default_portcullis_index(vmt)?)
+        .copied()
+}
+
+/// Which entry of [`DEFAULT_DSL_MODELS`] a program with this [`VirtualMethodTable`] selects.
+fn default_portcullis_index(vmt: &VirtualMethodTable) -> Option<usize> {
+    match &vmt.dispatch {
+        Dispatch::Java { .. } => Some(0),
+        Dispatch::Native => Some(1),
+        Dispatch::Lua { .. } => Some(2),
+        Dispatch::Cil { .. } => Some(3),
+        Dispatch::Unknown => None,
+    }
+}
+
+/// Load models from a file, through the DSL engine. A `.ctadl` / `.dl` file is loaded as
+/// written; any other is a JSON / JSON5 / JSONL file and is migrated first (see
+/// [`portcullis::PortcullisFile::read`]).
 ///
-/// The other half of the gate [`ModelFileSpecs::finds_dispatch`](spec::ModelFileSpecs) opens:
-/// together they decide whether an import pays for collecting its call sites' signature keys.
-pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
-    let Some((_, contents)) = default_model_file(vmt) else {
-        return false;
-    };
-    jsonl_items(BufReader::new(contents)).any(|item| {
-        item.is_ok_and(|value| value.get("find").and_then(|v| v.as_str()) == Some("dispatch"))
-    })
-}
-
-/// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
-/// The stream follows the same schema as elements of a `model_generators` array.
-///
-/// Blank lines and lines whose first non-space characters are `//` are skipped, so a model file
-/// can carry the commentary that explains why an entry is (or is not) there. JSON itself has no
-/// comment syntax and `jsonl` has no envelope object to hang one off, so the alternative is a
-/// separate document that drifts. Skipped lines do not consume a generator index: the index
-/// names the *generator*, and it is what `CTADL0004` and the JSON error messages report.
-pub fn try_load_jsonl_models<B: BufRead>(
-    index: &ProgramMatchIndex<'_>,
-    rdr: B,
-    out: &mut ProgramModelMatches,
-) -> Result<ModelLoadReport, Error> {
-    try_load_jsonl_models_named(index, rdr, out, "<models>")
-}
-
-/// [`try_load_jsonl_models`] for a caller that knows what to call the stream.
-pub fn try_load_jsonl_models_named<B: BufRead>(
-    index: &ProgramMatchIndex<'_>,
-    rdr: B,
-    out: &mut ProgramModelMatches,
-    source: &str,
-) -> Result<ModelLoadReport, Error> {
-    try_load_models_from_values_named(index, jsonl_items(rdr), out, source)
-}
-
-/// Load models from a JSON file containing `{ "model_generators": [...] }`.
-pub fn try_load_json_models<P: AsRef<std::path::Path>>(
-    index: &ProgramMatchIndex<'_>,
-    path: P,
-    out: &mut ProgramModelMatches,
-) -> Result<ModelLoadReport, Error> {
-    let path = path.as_ref();
-    let root = read_json_root(path)?;
-    let items = model_generators(&root)?.iter().cloned().map(Ok);
-    try_load_models_from_values_named(index, items, out, &path.display().to_string())
-}
-
-/// Load models from a JSON5 file containing `{ "model_generators": [...] }`.
-pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
-    index: &ProgramMatchIndex<'_>,
-    path: P,
-    out: &mut ProgramModelMatches,
-) -> Result<ModelLoadReport, Error> {
-    let path = path.as_ref();
-    let root = read_json5_root(path)?;
-    let items = model_generators(&root)?.iter().cloned().map(Ok);
-    try_load_models_from_values_named(index, items, out, &path.display().to_string())
-}
-
-/// Load models from a file. The file extension is used to decide whether to load as `json`,
-/// `jsonl`, or `json5`.
+/// Both phases' heads are kept. A caller that keeps only one phase drives [`PortcullisMatcher`]
+/// itself.
 ///
 /// Everything the file matched is *appended* to `out`, which is what lets a caller accumulate
-/// across every (import x model file) pair without a merge step. See
-/// [`try_load_models_from_values`] for the error contract that appending implies.
+/// across every (import x model file) pair without a merge step.
 pub fn try_load_models<P: AsRef<std::path::Path>>(
     index: &ProgramMatchIndex<'_>,
     path: P,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let path = path.as_ref();
-    let extension = path.extension().and_then(|s| s.to_str());
-    match extension {
-        Some("jsonl") => {
-            let file = File::open(path)
-                .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
-            let rdr = BufReader::new(file);
-            try_load_jsonl_models_named(index, rdr, out, &path.display().to_string())
-                .err_context(|| format!("reading model JSONL file: {}", path.display()))
-        }
-        Some("json5") => try_load_json5_models(index, path, out),
-        _ => try_load_json_models(index, path, out),
-    }
-}
-
-/// Load models from a stream of json Values. This processing is batched for efficiency, so the
-/// iterator can be large and lazy.
-///
-/// # Errors leave `out` partially written
-///
-/// On `Err`, `out` holds every row appended before the error: JSON model errors are *collected*
-/// across a batch and returned only at the end (see
-/// [`json::ModelGeneratorIngest::encode_models_from`]), long after rows have been emitted.
-/// Every production caller propagates with `?` and aborts, so nothing observable depends on it;
-/// `json_error_handling.rs` pins that rows emitted before a collected error stay readable.
-pub fn try_load_models_from_values(
-    index: &ProgramMatchIndex<'_>,
-    items: impl Iterator<Item = Result<serde_json::Value, Error>>,
-    out: &mut ProgramModelMatches,
-) -> Result<ModelLoadReport, Error> {
-    try_load_models_from_values_named(index, items, out, "<models>")
-}
-
-/// [`try_load_models_from_values`] for a caller that knows what to call the file. The name is
-/// half of the `file:generator-index` provenance a matched dispatch model records.
-pub fn try_load_models_from_values_named(
-    index: &ProgramMatchIndex<'_>,
-    items: impl Iterator<Item = Result<serde_json::Value, Error>>,
-    out: &mut ProgramModelMatches,
-    source: &str,
-) -> Result<ModelLoadReport, Error> {
-    let outcome = run_batches(index, items, out, None, true, source);
-    // A stream error ends the input; it is returned as it came, without the "encoding models"
-    // context, which names the wrong stage for a file that could not be read.
-    if let Some(error) = outcome.stream_error {
-        return Err(error);
-    }
-    if !outcome.errors.is_empty() {
-        let mut json_errors = crate::error::JsonModelErrors::default();
-        json_errors.extend(outcome.errors);
-        return Err(Error::JsonModel(json_errors)).err_context(|| "encoding models".to_string());
-    }
-    log::trace!("matched {} summary models", out.propagations.len());
-    log::trace!("matched {} source/sink models", out.endpoints.len());
-    Ok(outcome.report)
-}
-
-/// What one lenient load could not do, without that ending the load.
-///
-/// Two categories, because they mean different things to a reader: a [`Self::Generator`] error
-/// names one generator that will not work and leaves the rest of the file's report intact,
-/// while a [`Self::Stream`] error means the file (or the rest of it) was never read, so the
-/// report *is* incomplete and the missing generators are missing rather than dead.
-#[derive(Debug)]
-pub enum ModelCheckError {
-    /// A shape error in one generator: an unknown key, a malformed port, a malformed scope.
-    Generator(JsonModelError),
-    /// The file, or the rest of it, could not be read or parsed.
-    Stream(Error),
-}
-
-impl std::fmt::Display for ModelCheckError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModelCheckError::Generator(e) => write!(f, "{e}"),
-            ModelCheckError::Stream(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for ModelCheckError {
-    /// Delegates rather than terminating the chain: an [`Error::Context`] displays as its
-    /// context alone, so a caller rendering only the top of the chain would print "opening
-    /// model JSON file: x.json" and drop the half that says *why* it could not be opened.
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ModelCheckError::Generator(e) => Some(e),
-            ModelCheckError::Stream(e) => Some(e),
-        }
-    }
-}
-
-/// [`try_load_models`] for a linter: matches the whole file whatever it finds, and hands back
-/// the errors instead of failing on them.
-///
-/// `capture` is how many of each generator's matched function names to retain (`usize::MAX`
-/// for all); the counts are recorded either way. See
-/// [`json::ModelGeneratorIngest::capture_matches`].
-///
-/// # Why not `try_load_models`
-///
-/// [`try_load_models_from_values`] builds its [`ModelLoadReport`] only after every batch has
-/// succeeded, so the first batch that collects an error discards the stats of every batch
-/// after it -- one misspelled key would cost the whole file's diagnostics, exactly when a
-/// reader needs them most. Note what that does *not* cost: `encode_models_from` visits every
-/// generator in its batch before returning the collected errors, so the generators after a bad
-/// one in the same batch did match. It is the following batches that the `?` never reaches.
-pub fn try_check_models<P: AsRef<std::path::Path>>(
-    index: &ProgramMatchIndex<'_>,
-    path: P,
-    capture: usize,
-    out: &mut ProgramModelMatches,
-) -> (ModelLoadReport, Vec<ModelCheckError>) {
-    let path = path.as_ref();
-    let extension = path.extension().and_then(|s| s.to_str());
-    match extension {
-        Some("jsonl") => match File::open(path) {
-            Ok(file) => try_check_jsonl_models(index, BufReader::new(file), capture, out),
-            Err(e) => (
-                ModelLoadReport::default(),
-                vec![ModelCheckError::Stream(
-                    Err::<(), _>(Error::from(e))
-                        .err_context(|| format!("opening model JSONL file: {}", path.display()))
-                        .unwrap_err(),
-                )],
-            ),
-        },
-        other => {
-            let root = if other == Some("json5") {
-                read_json5_root(path)
-            } else {
-                read_json_root(path)
-            };
-            let generators = match root.and_then(|root| model_generators(&root).cloned()) {
-                Ok(generators) => generators,
-                Err(e) => {
-                    return (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]);
-                }
-            };
-            let outcome = run_batches(
-                index,
-                generators.into_iter().map(Ok),
-                out,
-                Some(capture),
-                false,
-                &path.display().to_string(),
-            );
-            outcome.into_check()
-        }
-    }
-}
-
-/// [`try_check_models`] for a `jsonl` stream. An unparsable line ends the file -- there is
-/// nothing left to read -- but the generators before it keep their stats.
-pub fn try_check_jsonl_models<B: BufRead>(
-    index: &ProgramMatchIndex<'_>,
-    rdr: B,
-    capture: usize,
-    out: &mut ProgramModelMatches,
-) -> (ModelLoadReport, Vec<ModelCheckError>) {
-    let outcome = run_batches(
-        index,
-        jsonl_items(rdr),
-        out,
-        Some(capture),
-        false,
-        "<models>",
-    );
-    outcome.into_check()
-}
-
-/// The `model_generators` array of a JSON or JSON5 model file's root object.
-fn model_generators(root: &serde_json::Value) -> Result<&Vec<serde_json::Value>, Error> {
-    root.get("model_generators")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            Error::from(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing or invalid 'model_generators' array",
-            ))
-        })
-}
-
-fn read_json_root(path: &std::path::Path) -> Result<serde_json::Value, Error> {
-    let file =
-        File::open(path).err_context(|| format!("opening model JSON file: {}", path.display()))?;
-    serde_json::from_reader(file)
-        .err_context(|| format!("reading model JSON file: {}", path.display()))
-}
-
-fn read_json5_root(path: &std::path::Path) -> Result<serde_json::Value, Error> {
-    let mut file =
-        File::open(path).err_context(|| format!("opening model JSON5 file: {}", path.display()))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .err_context(|| format!("reading model JSON5 file: {}", path.display()))?;
-    json5::from_str(&content)
-        .err_context(|| format!("parsing model JSON5 file: {}", path.display()))
-}
-
-/// The generator values of a `jsonl` stream, skipping blanks and `//` comments. See
-/// [`try_load_jsonl_models`] for why a skipped line does not consume a generator index.
-fn jsonl_items<B: BufRead>(rdr: B) -> impl Iterator<Item = Result<serde_json::Value, Error>> {
-    rdr.lines()
-        .map(|line| -> Result<Option<serde_json::Value>, Error> {
-            let line = line?;
-            let trimmed = line.trim_start();
-            if trimmed.is_empty() || trimmed.starts_with("//") {
-                return Ok(None);
-            }
-            let value = serde_json::from_str(trimmed).err_context(|| "reading model line")?;
-            Ok(Some(value))
-        })
-        .filter_map(Result::transpose)
-}
-
-/// What [`run_batches`] found, before either entry point decides what an error means.
-struct BatchOutcome {
-    report: ModelLoadReport,
-    /// Shape errors collected while visiting, in visit order.
-    errors: Vec<JsonModelError>,
-    /// The error that ended the input early, if any.
-    stream_error: Option<Error>,
-}
-
-impl BatchOutcome {
-    /// The lenient entry points' return shape: the report, plus both error categories in one
-    /// list, shape errors first -- they name generators the stream error's truncation has
-    /// nothing to do with.
-    fn into_check(self) -> (ModelLoadReport, Vec<ModelCheckError>) {
-        let errors = self
-            .errors
-            .into_iter()
-            .map(ModelCheckError::Generator)
-            .chain(self.stream_error.map(ModelCheckError::Stream))
-            .collect();
-        (self.report, errors)
-    }
-}
-
-/// The one batch loop under both entry points.
-///
-/// `capture` turns on the per-generator recording (see
-/// [`json::ModelGeneratorIngest::capture_matches`]); `abort_on_error` stops after the first
-/// batch that collected one, which is what preserves `try_load_models`'s contract that a
-/// collected error ends the load.
-fn run_batches(
-    index: &ProgramMatchIndex<'_>,
-    mut items: impl Iterator<Item = Result<serde_json::Value, Error>>,
-    out: &mut ProgramModelMatches,
-    capture: Option<usize>,
-    abort_on_error: bool,
-    source: &str,
-) -> BatchOutcome {
-    let mut model_gen = json::ModelGeneratorIngest::new(index, out);
-    model_gen.set_source(source);
-    if let Some(cap) = capture {
-        model_gen.capture_matches(cap);
-    }
-    let batch_size = 1024;
-    let mut batch: Vec<serde_json::Value> = Vec::with_capacity(batch_size);
-    let mut errors: Vec<JsonModelError> = Vec::new();
-    let mut stream_error: Option<Error> = None;
-
-    // Index of the first generator of the current batch within the model file. Generator
-    // indices must count across batches: they name the generator in JSON error messages and
-    // in the `CTADL0004` SARIF notification, and they key `endpoint_stats`.
-    let mut base = 0usize;
-
-    'outer: loop {
-        // Fill the batch. `take` is what bounds it: pulling from `items` directly and
-        // breaking on a full batch would consume an item and then drop it on the floor,
-        // silently losing every 1025th generator in the file.
-        for item in items.by_ref().take(batch_size) {
-            match item {
-                Ok(value) => batch.push(value),
-                Err(e) => {
-                    stream_error = Some(e);
-                    // Aborting drops the partial batch. A lenient load visits it first: those
-                    // generators were read successfully, and the linter's job is to report on
-                    // every one it could read.
-                    if abort_on_error {
-                        break 'outer;
-                    }
-                    break;
-                }
-            }
-        }
-        if batch.is_empty() {
-            break;
-        }
-        let count = batch.len();
-        model_gen.visit_models_from(base, batch.drain(..));
-        errors.extend(model_gen.drain_errors());
-        batch.clear();
-        base += count;
-        if stream_error.is_some() || (abort_on_error && !errors.is_empty()) {
-            break;
-        }
-    }
-    let report = ModelLoadReport {
-        endpoint_stats: std::mem::take(&mut model_gen.endpoint_stats),
-        index_time_models: model_gen.index_time_models,
-        matched: std::mem::take(&mut model_gen.matched),
-        in_function_matched: std::mem::take(&mut model_gen.in_function_matched),
-        propagation_stats: std::mem::take(&mut model_gen.propagation_stats),
-        access_path_stats: std::mem::take(&mut model_gen.access_path_stats),
-    };
-    // `model_gen` holds the `&mut out` borrow, so dropping it is what lets the counters be read
-    // back alongside the rows it appended.
-    drop(model_gen);
-    BatchOutcome {
-        report,
-        errors,
-        stream_error,
-    }
+    let report = portcullis::try_load_portcullis_models(index, path, portcullis::Phase::All, out)?;
+    Ok(ModelLoadReport::from_portcullis(report))
 }
 
 /// What one model-file load recorded *besides* the matches themselves.
@@ -506,34 +185,140 @@ fn run_batches(
 /// the diagnostics need, which belong to the load rather than to the accumulated match set.
 #[derive(Debug, Default, Clone)]
 pub struct ModelLoadReport {
-    /// What Stage 1 did per (generator index, direction) -- see
-    /// [`json::ModelGeneratorIngest::endpoint_stats`]. Key presence means the generator
-    /// declared a port of that direction; a zero `endpoints_matched` means it matched
-    /// nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
+    /// What each (generator index, direction) matched -- see [`EndpointStats`]. Key presence
+    /// means the generator declared a port of that direction; a zero `endpoints_matched` means
+    /// it matched nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
     ///
-    /// Deliberately *not* keyed by model file: some loader entry points take a reader or a
-    /// value stream, which have no path, so file identity belongs to the caller.
-    /// `cli::query` re-keys each file's stats by file before merging them, which is also what
-    /// keeps two files that number their generators the same from conflating.
+    /// Not keyed by model file; see [`portcullis_endpoint_stats`].
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
     /// How many generators declared an index-time-only construct. Lets `ctadl query` say once
     /// that it is ignoring them instead of dropping them in silence.
     pub index_time_models: IndexTimeModelCounts,
-    /// Per generator, what its `where` selected. Empty unless the load asked for the capture
-    /// (see [`try_check_models`]); `index` and `query` do not, and pay nothing for it.
+    /// Per generator, what its `where` selected: the functions its rules' heads anchored at,
+    /// with a capped sample of their names.
     pub matched: BTreeMap<usize, MatchedFunctions>,
-    /// Per `find: callsites` generator, what its `in_function` selected. Same gating as
-    /// [`Self::matched`].
-    pub in_function_matched: BTreeMap<usize, MatchedFunctions>,
-    /// Per generator, what its `propagation` list declared and emitted. Same gating as
-    /// [`Self::matched`].
+    /// Per generator, what its `propagation` list declared and emitted.
     pub propagation_stats: BTreeMap<usize, PropagationStats>,
-    /// Per generator, how many `model.access_paths` entries were registered. Same gating as
-    /// [`Self::matched`].
+    /// Per generator, how many `model.access_paths` entries were registered.
     pub access_path_stats: BTreeMap<usize, usize>,
+    /// The DSL engine's own report, which every load is (a JSON file through its migration).
+    /// The counters above are projected from it so every diagnostic surface reads one shape — a
+    /// rule's label plays the part of a generator index, and is one for a migrated file — and
+    /// this carries what has no JSON counterpart.
+    pub portcullis: Option<portcullis::PortcullisReport>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl ModelLoadReport {
+    /// Projects a DSL load onto the counters the diagnostics read.
+    ///
+    /// A rule index stands in for a generator index: both name "the *n*th thing in this file",
+    /// which is what `CTADL0004` and the JSON error messages report.
+    pub fn from_portcullis(report: portcullis::PortcullisReport) -> Self {
+        let mut endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats> = BTreeMap::new();
+        let mut matched: BTreeMap<usize, MatchedFunctions> = BTreeMap::new();
+        let mut propagation_stats: BTreeMap<usize, PropagationStats> = BTreeMap::new();
+        let mut access_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
+        for file in &report.files {
+            for (key, stats) in portcullis_endpoint_stats(file) {
+                endpoint_stats.entry(key).or_default().merge(&stats);
+            }
+            // Keyed by label, so a JSON generator migrated to several rules — one per disjunct
+            // of its `where` — reports once, as the union of its rules.
+            for (&i, stats) in file.labels.iter().zip(&file.rules) {
+                if stats.propagation_heads > 0 {
+                    propagation_stats
+                        .entry(i)
+                        .or_default()
+                        .merge(&PropagationStats {
+                            ports_declared: stats.propagation_heads,
+                            rows: stats.propagations,
+                        });
+                }
+                if stats.access_paths > 0 {
+                    *access_path_stats.entry(i).or_default() += stats.access_paths;
+                }
+                // A rule's match set is the functions its heads anchored at: a rule with an
+                // unconstrained `fun(F)` enumerates, so the count is exact and only the *names*
+                // are capped. Over two rules of one generator the counts sum, so a function both
+                // select counts twice.
+                let rule_matched = MatchedFunctions {
+                    total: stats.functions,
+                    names: stats.matched_functions.clone(),
+                };
+                matched
+                    .entry(i)
+                    .or_default()
+                    .merge(&rule_matched, portcullis::emit::MATCHED_SAMPLE_CAP);
+            }
+        }
+        let totals = report.totals();
+        Self {
+            endpoint_stats,
+            index_time_models: IndexTimeModelCounts {
+                propagations: report
+                    .files
+                    .iter()
+                    .flat_map(|f| f.by_label())
+                    .filter(|(_, rules)| rules.iter().any(|r| r.propagation_heads > 0))
+                    .count(),
+                bridges: totals.bridges,
+                modes: report
+                    .files
+                    .iter()
+                    .flat_map(|f| f.by_label())
+                    .filter(|(_, rules)| rules.iter().any(|r| r.modes > 0))
+                    .count(),
+            },
+            matched,
+            propagation_stats,
+            access_path_stats,
+            portcullis: Some(report),
+        }
+    }
+}
+
+/// The source/sink counters one DSL file's rules project onto, keyed `(label, direction)`: one
+/// entry per direction a rule declares a head in. Two rules with one label — the disjuncts of
+/// one JSON generator — yield two entries under one key, for the caller to
+/// [`EndpointStats::merge`].
+///
+/// The key names a rule within this file only: two model files that number their rules the
+/// same yield the same keys, so stats gathered across files have to be re-keyed by file.
+pub fn portcullis_endpoint_stats(
+    file: &portcullis::PortcullisFileReport,
+) -> impl Iterator<Item = ((usize, TaintDirection), EndpointStats)> + '_ {
+    file.labels.iter().zip(&file.rules).flat_map(|(&i, stats)| {
+        [
+            (stats.source_heads, stats.sources, TaintDirection::Forward),
+            (stats.sink_heads, stats.sinks, TaintDirection::Backward),
+        ]
+        .into_iter()
+        .filter(|&(declared, _, _)| declared > 0)
+        .map(move |(declared, rows, direction)| {
+            let mut entry = EndpointStats {
+                ports_declared: declared,
+                endpoints_matched: rows,
+                functions_matched: stats.functions,
+                ..Default::default()
+            };
+            if rows == 0 && stats.missed_locals.is_empty() {
+                entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
+            } else if rows == 0 {
+                // The functions the `local` atom was asked about are the ones the rest of the
+                // body selected; none of the heads anchored at one.
+                for (name, functions) in &stats.missed_locals {
+                    entry.functions_matched = entry.functions_matched.max(*functions);
+                    entry
+                        .unmatched
+                        .insert(UnmatchedReason::LocalNotFound(name.clone()));
+                }
+            }
+            ((i, direction), entry)
+        })
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FormalIndexTypeTag {
     /// Index of a formal for the builder
     Index,

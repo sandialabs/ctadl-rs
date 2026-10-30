@@ -53,6 +53,7 @@ object = { version = "0.37", default-features = false, features = ["read_core", 
 packed_struct = "0.10"
 parquet = "59"
 paste = "1.0"
+peg = "0.8"
 pcode-reader = { path = "../readers/pcode-reader" }
 rayon = "1.10"
 regex = "1.12"

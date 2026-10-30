@@ -320,9 +320,9 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut fail_count = 0;
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
-    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
-    // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
-    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // import has `Dispatch::Unknown` and names each function by its IR name, so a generator
+    // matches by the IR function name directly and gets no default models of its own. That
+    // makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
     let match_index = crate::models::ProgramMatchIndex::new(
         &program.program_info,
@@ -351,14 +351,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         crate::codegen::CallPolicy::default(),
         &model_matches,
     );
-    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
-    // them is about pairing two bridge sides.
     crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &[],
         &mut index_facts,
         &mut source_info,
-    )?;
+    );
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);

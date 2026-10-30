@@ -1,7 +1,7 @@
 //! Checks that a model file can name a Lua external.
 //!
 //! This is the only Lua test that needs the engine, because it uses the model layer's match
-//! index and its JSON reader. That is why it lives here instead of in [`ctadl_lua`], which
+//! index and its JSON loading. That is why it lives here instead of in [`ctadl_lua`], which
 //! would have to take `ctadl-ascent` as a dev-dependency to hold it. The rest of the Lua tests
 //! only check the shape of the IR, and they live in the front end next to the code they test.
 //!
@@ -9,13 +9,13 @@
 //! That helper is private, and there is no reason to make it public for one test: a file named
 //! `m.lua` gives the same module `m` that the in-memory version would build by hand.
 
-use ctadl_ascent::models::{
-    ImportScope, ProgramMatchIndex, ProgramModelMatches, json::ModelGeneratorIngest,
-};
+use crate::common::load_json;
+use ctadl_ascent::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
+use ctadl_ascent::project::ArtifactLanguage;
 
-/// The externals column is what lets a Lua propagation model file have any effect. A match
-/// index built only from the functions defined in the file would give a model that names a
-/// standard-library function nothing to match.
+/// Naming the externals is what lets a Lua propagation model file have any effect. A name table
+/// of only the functions defined in the file would give a model that names a standard-library
+/// function nothing to match.
 #[test]
 fn a_model_can_name_a_lua_external() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -29,16 +29,15 @@ fn a_model_can_name_a_lua_external() {
 
     for port in ["getenv", "os.getenv"] {
         let mut matches = ProgramModelMatches::default();
-        let match_index = ProgramMatchIndex::new(&info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
-        ingest
-            .encode_models(vec![serde_json::json!({
-                "find": "methods",
-                "where": [{"constraint": "signature_match", "name": port}],
-                "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}
-            })])
+        let match_index =
+            ProgramMatchIndex::new(&info, ImportScope::new(ArtifactLanguage::Lua, "m"));
+        let generator = serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "signature_match", "name": port}],
+            "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}
+        });
+        load_json(&match_index, [generator], &mut matches)
             .unwrap_or_else(|e| panic!("loading a model naming {port}: {e}"));
-        drop(ingest);
         assert_eq!(
             matches
                 .propagations

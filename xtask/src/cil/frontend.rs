@@ -182,7 +182,8 @@ struct Totals {
     functions: usize,
     bodies: usize,
     stubs: usize,
-    aliases: usize,
+    bridges: usize,
+    shared_key_bridges: usize,
     opaque: usize,
     unresolved_writes: usize,
     missing_metadata: usize,
@@ -197,17 +198,19 @@ impl Totals {
         self.functions += s.functions;
         self.bodies += stats.bodies;
         self.stubs += stats.stubs;
-        self.aliases += stats.override_aliases;
+        self.bridges += stats.bridges;
+        self.shared_key_bridges += stats.shared_key_bridges;
         self.opaque += stats.opaque_effects;
         self.unresolved_writes += stats.unresolved_address_writes;
         self.missing_metadata += stats.missing_metadata.len();
         format!(
-            "functions={} bodies={} stubs={} aliases={} opaque={} unresolved-address-writes={} \
-             missing-metadata={}",
+            "functions={} bodies={} stubs={} bridges={} shared-key-bridges={} opaque={} \
+             unresolved-address-writes={} missing-metadata={}",
             s.functions,
             stats.bodies,
             stats.stubs,
-            stats.override_aliases,
+            stats.bridges,
+            stats.shared_key_bridges,
             stats.opaque_effects,
             stats.unresolved_address_writes,
             stats.missing_metadata.len()
@@ -216,13 +219,14 @@ impl Totals {
 
     fn describe(&self) -> String {
         format!(
-            "assemblies={} functions={} bodies={} stubs={} aliases={} opaque={} \
-             unresolved-address-writes={} missing-metadata={}",
+            "assemblies={} functions={} bodies={} stubs={} bridges={} shared-key-bridges={} \
+             opaque={} unresolved-address-writes={} missing-metadata={}",
             self.assemblies,
             self.functions,
             self.bodies,
             self.stubs,
-            self.aliases,
+            self.bridges,
+            self.shared_key_bridges,
             self.opaque,
             self.unresolved_writes,
             self.missing_metadata

@@ -1,18 +1,12 @@
-/*! Program-independent model specs: `in` scopes, bridging models, and declared access paths.
+/*! Program-independent parts of a JSON model generator: `in` scopes, bridges, and declared
+access paths.
 
-A bridge pins two sets of matches in two *different* programs, so it is the one model that
-cannot be resolved against a single program. What it needs before matching starts -- the two
-sides' scopes, their raw `where` constraints, and the port map -- needs no program at all, so it
-is scanned out of the `--models` files **once, before the import loop**. Parsing needs no
-program, hoisting it avoids re-parsing per import, and indexing learns up front whether any
-bridge exists.
+These are read by the JSON validator ([`super::json_schema`]), which rejects what the JSON
+format does not allow before the migrator translates it, and by the model check's inventory
+(`cli::model_check`), which reports what a generator's `in` clause admits. Their
+[`ResolvedBridge`] and [`PortPair`] are what a bridging DSL rule emits.
 
-The `where` constraints stay as raw [`serde_json::Value`]: they are evaluated later by the
-shared evaluator ([`super::json::ModelGeneratorIngest`]) against the shared
-[`super::match_index::ProgramMatchIndex`], so nothing here has to understand them.
-[`super::match_index`] says why there is only one evaluator.
-
-# Loader hardening
+# Hardening
 
 The JSON schema is editor-time only -- it is never evaluated at load. So every key this module
 reads is checked explicitly, at the generator level, the `model` level, and inside `bridge`, and
@@ -22,7 +16,7 @@ a misspelling is a hard error. For the same reason a non-array `where` is an err
 use std::path::{Path as FsPath, PathBuf};
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
-use crate::error::{Error, ErrorContext, JsonModelError, JsonModelErrors};
+use crate::error::{Error, ErrorContext, JsonModelError};
 use crate::facts::{self, FormalIndex};
 use crate::models::FormalIndexTypeTag;
 use crate::project::ArtifactLanguage;
@@ -308,7 +302,7 @@ impl BridgePort {
                 index,
                 field_name: key.to_string(),
             })?;
-        let port = super::json::parse_port(text, index)?;
+        let port = super::json_schema::parse_port(text, index)?;
         let formal = match port.tag {
             FormalIndexTypeTag::Index => FormalIndex::new(port.index.expect("Index carries one")),
             FormalIndexTypeTag::Return => RETURN_INDEX.into(),
@@ -393,12 +387,13 @@ impl PortPair {
 #[derive(Clone, Debug)]
 pub struct SideSpec {
     pub scope: ProgramScope,
-    /// Raw `where` constraints, handed back to the shared evaluator unchanged.
+    /// Raw `where` constraints, which the validator checks as a `find: methods` generator's.
     pub where_: Vec<serde_json::Value>,
     pub on_unmatched: Severity,
 }
 
-/// A parsed `model.bridge`, together with the generator it came from.
+/// A parsed `model.bridge`, together with the generator it came from: what the validator checks
+/// a bridge against before the migrator translates it.
 #[derive(Clone, Debug)]
 pub struct BridgeSpec {
     /// Provenance, carried into every diagnostic exactly as the other loader messages do.
@@ -410,9 +405,9 @@ pub struct BridgeSpec {
     pub to: SideSpec,
     /// The port map. Empty means "not given"; see [`Self::ports_given`].
     pub ports: Vec<PortPair>,
-    /// Whether `arguments` was written out. When it was not, emission falls back to an identity
-    /// map over the arity the two sides share (plus `Return`), which needs the fact base and so
-    /// cannot be resolved here.
+    /// Whether `arguments` was written out. When it was not, the JSON format means an identity
+    /// map over the arity the two sides share (plus `Return`), which needs the fact base, so the
+    /// migrator refuses it.
     pub ports_given: bool,
     pub on_ambiguous: Severity,
 }
@@ -424,27 +419,28 @@ impl BridgeSpec {
     }
 }
 
-/// Everything a set of `--models` files contributes that does not depend on any one program.
-#[derive(Clone, Debug, Default)]
-pub struct ModelFileSpecs {
-    pub bridges: Vec<BridgeSpec>,
-    /// Whether any generator in the scanned files uses `find: "dispatch"`. Read before the
-    /// import loop, because collecting the signature keys such a generator matches costs a
-    /// pass over every statement and only those generators read them.
-    pub finds_dispatch: bool,
-}
-
-impl ModelFileSpecs {
-    pub fn is_empty(&self) -> bool {
-        self.bridges.is_empty()
-    }
+/// A bridge whose two sides are known: what a bridging DSL rule produces once it is grounded,
+/// with both function names in hand. Phase 2 of codegen emits it — see
+/// [`crate::codegen::model_matches`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedBridge {
+    /// `file:rule`, for the per-bridge `info` line.
+    pub provenance: String,
+    /// The rule this came from, which is also what groups several ports into one bridge.
+    pub rule: usize,
+    /// Side A: the call side.
+    pub from: facts::Str,
+    /// Side B: the implementation side.
+    pub to: facts::Str,
+    /// The port map, in written order. The globals pair is added at emission.
+    pub ports: Vec<PortPair>,
 }
 
 /// Reads every model generator in `path`, in file order, handing each to `f` with its generator
 /// index.
 ///
-/// The index counts *generators*, not lines, so it names the same generator the matching pass
-/// and the `CTADL0004` notification name.
+/// The index counts *generators*, not lines, so it names the same generator the migration and
+/// the `CTADL0004` notification name.
 pub fn visit_model_file<F>(path: &FsPath, mut f: F) -> Result<(), Error>
 where
     F: FnMut(usize, &serde_json::Value) -> Result<(), Error>,
@@ -474,12 +470,27 @@ where
             Ok(())
         }
         other => {
-            let root = if other == Some("json5") {
-                super::read_json5_root(path)?
+            let root: serde_json::Value = if other == Some("json5") {
+                let text = std::fs::read_to_string(path)
+                    .err_context(|| format!("reading model JSON5 file: {}", path.display()))?;
+                json5::from_str(&text)
+                    .err_context(|| format!("parsing model JSON5 file: {}", path.display()))?
             } else {
-                super::read_json_root(path)?
+                let file = std::fs::File::open(path)
+                    .err_context(|| format!("opening model JSON file: {}", path.display()))?;
+                serde_json::from_reader(file)
+                    .err_context(|| format!("reading model JSON file: {}", path.display()))?
             };
-            for (n, value) in super::model_generators(&root)?.iter().enumerate() {
+            let generators = root
+                .get("model_generators")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    Error::from(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "missing or invalid 'model_generators' array",
+                    ))
+                })?;
+            for (n, value) in generators.iter().enumerate() {
                 f(n, value)?;
             }
             Ok(())
@@ -487,43 +498,9 @@ where
     }
 }
 
-/// Scans every `--models` file for the specs that need no program: bridges, and whether any
-/// generator uses `find: "dispatch"`.
-///
-/// Run once, before the import loop. Errors carry the file they came from.
-pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
-    let mut specs = ModelFileSpecs::default();
-    for path in paths {
-        let mut errors: Vec<JsonModelError> = Vec::new();
-        visit_model_file(path, |n, value| {
-            if value.get("find").and_then(|v| v.as_str()) == Some("dispatch") {
-                specs.finds_dispatch = true;
-            }
-            if let Some(bridge) = value.pointer("/model/bridge") {
-                match parse_bridge(path, n, value, bridge, &mut errors) {
-                    Some(spec) => specs.bridges.push(spec),
-                    None => debug_assert!(!errors.is_empty(), "a rejected bridge must say why"),
-                }
-            }
-            Ok(())
-        })
-        .err_context(|| format!("scanning model file: {}", path.display()))?;
-        if !errors.is_empty() {
-            let mut json_errors = JsonModelErrors::default();
-            json_errors.extend(errors);
-            return Err(Error::JsonModel(json_errors))
-                .err_context(|| format!("scanning model file: {}", path.display()));
-        }
-    }
-    if !specs.bridges.is_empty() {
-        log::debug!("loaded {} bridging model(s)", specs.bridges.len());
-    }
-    Ok(specs)
-}
-
 /// Parses one generator's `model.bridge`. Returns `None` when anything was rejected; the reason
 /// is in `errors`.
-fn parse_bridge(
+pub(crate) fn parse_bridge(
     source: &FsPath,
     index: usize,
     generator: &serde_json::Value,

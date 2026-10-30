@@ -7,17 +7,17 @@
 //! under a model the caller propagates without either implementation being in the graph, under
 //! a skip it propagates nothing, and under CHA both implementations are edges.
 
+use crate::common::load_json;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, codegen_program};
 use ctadl_ascent::facts as fx;
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{IndexFacts, taint_index};
-use ctadl_ascent::models::{
-    DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, try_load_models_from_values,
-};
+use ctadl_ascent::models::test_vmt;
+use ctadl_ascent::models::{DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+    CallStyle, Dispatch, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     VirtualMethodTable,
 };
 use ctadl_ir::mir::{Exp, FunctionData, ParameterType, Program, ProgramInfo};
@@ -104,7 +104,7 @@ fn program_info() -> ProgramInfo {
     }
     ProgramInfo {
         program,
-        vmt: VirtualMethodTable::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods: vec![method("LA;"), method("LB;")],
             hierarchy: [
                 (
@@ -125,7 +125,7 @@ fn program_info() -> ProgramInfo {
                 JavaSignature(DESC.into()),
             )],
             natives: Vec::new(),
-        },
+        })),
         ..Default::default()
     }
 }
@@ -192,8 +192,7 @@ fn index_with(generators: Vec<serde_json::Value>, endpoint_functions: &[&str]) -
         let keys = DispatchKeys::from_program(&info.program);
         let match_index =
             ProgramMatchIndex::new_with_dispatch(&info, ImportScope::unknown(), Some(&keys));
-        try_load_models_from_values(&match_index, generators.into_iter().map(Ok), &mut matches)
-            .expect("loading models");
+        load_json(&match_index, generators, &mut matches).expect("loading models");
     }
     for function in endpoint_functions {
         matches.endpoints.push(endpoint(function));
@@ -218,11 +217,9 @@ fn index_with(generators: Vec<serde_json::Value>, endpoint_functions: &[&str]) -
     );
     ctadl_ascent::codegen::model_matches::codegen_model_matches(
         &matches,
-        &[],
         &mut facts,
         &mut source_info,
-    )
-    .expect("phase 2");
+    );
     let summary = taint_index(facts.clone()).summary;
     Indexed {
         facts,

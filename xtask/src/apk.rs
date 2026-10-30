@@ -79,16 +79,14 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "10";
+const IMPORT_FORMAT_VERSION: &str = "11";
 
-/// A model file that selects something in any Java app: every `toString` override. The point is
-/// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
-/// right one.
-const MODELS: &str = r#"{"model_generators": [
-  {"find": "methods",
-   "where": [{"constraint": "signature_match", "name": "toString"}],
-   "model": {"sources": [{"kind": "k", "port": "Return"}]}}
-]}"#;
+/// A Portcullis model file that selects something in any Java app: every `toString` override.
+/// The point is the *checking*, not the model, so the cheapest rule that cannot match nothing is
+/// the right one.
+const MODELS: &str = r#"source(F::return, kind = "k") :-
+  fun(F, name = "toString");
+"#;
 
 /// Import the app once, then run every check but [`INDEX_CHECK`] against that store. Returns named
 /// (check, outcome) pairs to fold into the regression report.
@@ -299,7 +297,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// and writes nothing into the store.
 ///
 /// Two halves, and both matter. The report has to name the imports it checked and say the
-/// generator matched something -- a check that silently matches nothing is worse than no check,
+/// rule matched something -- a check that silently matches nothing is worse than no check,
 /// because it reads as a clean bill of health. And the command must leave the store alone: it
 /// could not run a query, so a project written here would be an empty index that the next real
 /// `ctadl query` would happily use.
@@ -308,7 +306,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// store -- stays in `ctadl-ascent/tests/integration/model_check.rs`, which needs no artifact and runs in
 /// milliseconds. What is here is the half that needs a real import.
 fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
-    let models = work.join("models.json");
+    let models = work.join("models.ctadl");
     std::fs::write(&models, MODELS).with_context(|| format!("writing {}", models.display()))?;
     let sarif = work.join("model-check.sarif");
 
@@ -376,13 +374,13 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
         checked["properties"]
     );
 
-    // And that the generator selected something. This one matches `toString`, which any real
+    // And that the rule selected something. This one matches `toString`, which any real
     // Java app has hundreds of.
     let matched = by_id("CTADL0011.generator-matched")
-        .with_context(|| format!("the generator matched nothing:\n{text}"))?;
+        .with_context(|| format!("the rule matched nothing:\n{text}"))?;
     ensure!(
         matched["level"] == "note",
-        "a matched generator is a note, not {}",
+        "a matched rule is a note, not {}",
         matched["level"]
     );
 
@@ -407,8 +405,8 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 /// commit message which frontend change moved them.
 const REPORT_TOTAL_SITES: u64 = 178_939;
 const REPORT_VIRTUAL_SITES: u64 = 99_828;
-const REPORT_CHA_EDGES: u64 = 2_119_933;
-const REPORT_RTA_EDGES: u64 = 2_055_105;
+const REPORT_CHA_EDGES: u64 = 2_145_517;
+const REPORT_RTA_EDGES: u64 = 2_065_205;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.
@@ -1123,12 +1121,13 @@ mod tests {
     /// The model file the model check is run with has to be a model file. It is written from a
     /// string constant, so nothing else would catch a typo in it until the nightly ran.
     #[test]
-    fn the_model_file_is_valid_json() {
-        let value: Value = serde_json::from_str(MODELS).expect("MODELS parses");
+    fn the_model_file_is_portcullis() {
+        let program =
+            ctadl_ascent::models::portcullis::parse::parse_program(MODELS).expect("MODELS parses");
         assert_eq!(
-            value["model_generators"].as_array().map(Vec::len),
-            Some(1),
-            "one generator, which the check expects to match"
+            program.rules.len(),
+            1,
+            "one rule, which the check expects to match"
         );
     }
 }

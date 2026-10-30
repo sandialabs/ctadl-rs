@@ -1,16 +1,16 @@
-//! `cil:models`: the default .NET models (`ctadl-ascent/src/models/defaults/cil-index.jsonl`)
+//! `cil:models`: the default .NET models (`ctadl-ascent/src/models/defaults/cil-index.ctadl`)
 //! checked against what .NET does.
 //!
-//! **Which methods.** Every class a generator names in `parents` is listed by `model-run`
+//! **Which methods.** Every class a rule names as a `parent` is listed by `model-run`
 //! (`frontends/ctadl-cil/tools/ModelRun`), which spells each public method and constructor by
-//! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::Cil`, and
-//! the shipped file is matched against it by the loader `ctadl index` uses, so the methods
-//! checked are exactly the overloads the generators select, and the ports are the ones the
-//! loader decodes. A class that does not load, or lives in another assembly than the one named
-//! (the frontend canonicalizes through forwarders), fails, as does a generator that selects
-//! nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
-//! method, so it is held to the same spellings, but nothing calls it: it names a contract,
-//! not a method, and the `find: methods` entries it repeats are the ones checked by calling.
+//! reflection as the CIL frontend spells it. Those rows become a
+//! `VirtualMethodTable::new(Dispatch::Cil)`, and the shipped file is run against it as
+//! `ctadl index` runs it, so the methods checked are exactly the overloads the rules select, and
+//! the ports are the ones the engine emits. A class that does not load, or lives in another
+//! assembly than the one named (the frontend canonicalizes through forwarders), fails, as does a
+//! rule that selects nothing. A `dispatch` rule is matched against a `callvirt` of every listed
+//! method, so it is held to the same spellings, but nothing calls it: it names a contract, not a
+//! method, and the `propagation` rules it repeats are the ones checked by calling.
 //!
 //! **What they do.** `model-run` calls each selected method with marked arguments, many times,
 //! and reports two things: a *flow*, a marker from input `(i, p)` found at output `(j, q)` that
@@ -32,31 +32,35 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use ctadl_ascent::models::portcullis::ast::{BodyItem, Literal, Rhs, Rule, Term};
 use ctadl_ascent::models::{
-    CIL_DEFAULT_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions, ModelPort,
-    ProgramMatchIndex, ProgramModelMatches, try_check_jsonl_models,
+    DEFAULT_DSL_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort,
+    PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex,
+    ProgramModelMatches,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable,
+    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames,
+    VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
     Statement, StatementKind,
 };
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::regression::Outcome;
 
 /// A `model-run` launcher to use instead of looking on PATH.
 pub const MODEL_RUN_ENV: &str = "CTADL_MODEL_RUN";
 pub const KNOWN_FILE: &str = "cil-models-known.json5";
+
+/// The default model file this check holds to .NET.
+const DEFAULT_FILE: &str = "cil-index.ctadl";
 const TRIALS: u32 = 32;
 const SEED: u32 = 1;
 /// Failures listed in the outcome before the rest are counted.
@@ -232,9 +236,14 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     let mut failures: Vec<String> = Vec::new();
 
     // ---- which methods
-    let (name, contents) = CIL_DEFAULT_MODELS;
-    let generators = generator_lines(contents)?;
-    let classes: BTreeSet<String> = generators.iter().flat_map(|g| parents(g)).collect();
+    let (name, source) = DEFAULT_DSL_MODELS
+        .iter()
+        .find(|(name, _)| *name == DEFAULT_FILE)
+        .with_context(|| format!("no {DEFAULT_FILE} among the default models"))?;
+    let file =
+        PortcullisFile::from_text(*name, *source).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+    let rules = file.program.rules.clone();
+    let classes: BTreeSet<String> = rules.iter().flat_map(parents).collect();
     let classes_file = dir.join("classes.txt");
     std::fs::write(
         &classes_file,
@@ -284,20 +293,22 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         Some(&dispatch_keys),
     );
     let mut matches = ProgramModelMatches::default();
-    let (report, errors) =
-        try_check_jsonl_models(&index, BufReader::new(contents), usize::MAX, &mut matches);
-    if let Some(e) = errors.first() {
-        bail!("{name} does not load: {e:?}");
-    }
-    for (n, g) in generators.iter().enumerate() {
-        let live = match report.matched.get(&n) {
-            Some(MatchedFunctions::All) => true,
-            Some(MatchedFunctions::Some { total, .. }) => *total > 0,
-            None => false,
-        };
-        let only_unavailable = parents(g).iter().all(|c| unavailable.contains(c.as_str()));
+    let set = PortcullisModelSet { files: vec![file] };
+    let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
+    matcher.observe_import(&index, &mut matches);
+    let report = matcher
+        .finish(&mut matches)
+        .map(ModelLoadReport::from_portcullis)
+        .map_err(|e| anyhow::anyhow!("{name} does not load: {e:?}"))?;
+    for rule in &rules {
+        let live = report.matched.get(&rule.index).is_some_and(|m| m.total > 0);
+        let only_unavailable = parents(rule)
+            .iter()
+            .all(|c| unavailable.contains(c.as_str()));
         if !live && !only_unavailable {
-            failures.push(format!("{name}: generator {n} selects no method: {g}"));
+            let (line, _) = rule.span.line_col(source);
+            let text = &source[rule.span.start..rule.span.end];
+            failures.push(format!("{name}:{line}: rule selects no method: {text}"));
         }
     }
     let mut modeled: BTreeMap<String, BTreeSet<(Loc, Loc)>> = BTreeMap::new();
@@ -472,28 +483,31 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     Ok(Outcome::Fail(why))
 }
 
-/// The generator lines of a JSONL model file, in generator-index order.
-fn generator_lines(contents: &[u8]) -> Result<Vec<String>> {
-    Ok(std::str::from_utf8(contents)?
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("//"))
-        .map(str::to_string)
-        .collect())
-}
-
-/// The classes a generator's `signature_match` constraints name.
-fn parents(generator: &str) -> Vec<String> {
-    let value: Value = serde_json::from_str(generator).unwrap_or_default();
-    let mut out = Vec::new();
-    for w in value["where"].as_array().into_iter().flatten() {
-        if let Some(p) = w["parent"].as_str() {
-            out.push(p.to_string());
-        }
-        for p in w["parents"].as_array().into_iter().flatten() {
-            out.extend(p.as_str().map(str::to_string));
+/// The classes a rule's `parent = ...` and `parent in {...}` constraints name, under any
+/// negation or disjunction.
+fn parents(rule: &Rule) -> Vec<String> {
+    fn walk(item: &BodyItem, out: &mut Vec<String>) {
+        match item {
+            BodyItem::Atom(atom) => {
+                for attr in atom.attrs.iter().filter(|a| a.name == "parent") {
+                    match &attr.rhs {
+                        Rhs::Term(Term::Lit(Literal::Str(s))) => out.push(s.clone()),
+                        Rhs::Set(items) => out.extend(items.iter().filter_map(|l| match l {
+                            Literal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })),
+                        Rhs::Term(_) => {}
+                    }
+                }
+            }
+            BodyItem::Not(inner) => walk(inner, out),
+            BodyItem::And(items) | BodyItem::Or(items) => {
+                items.iter().for_each(|i| walk(i, out));
+            }
         }
     }
+    let mut out = Vec::new();
+    rule.body.iter().for_each(|item| walk(item, &mut out));
     out
 }
 
@@ -524,7 +538,7 @@ fn program(rows: &[Row]) -> ProgramInfo {
             f
         })
         .collect();
-    // One `callvirt` of every listed method, so a `find: "dispatch"` generator is matched
+    // One `callvirt` of every listed method, so a `dispatch` rule is matched
     // against the call-site keys the frontend would write for the same methods.
     let mut caller = FunctionData::default();
     caller.set_name("ctadl$cil-models$caller".to_string());
@@ -548,14 +562,32 @@ fn program(rows: &[Row]) -> ProgramInfo {
         b.create_ret(Vec::<Exp>::new());
     }
     functions.push(caller);
+    // Each method named as the CIL frontend names one: by its key.
+    let mut vmt = VirtualMethodTable::new(Dispatch::Cil {
+        methods,
+        hierarchy: Default::default(),
+        interfaces: Default::default(),
+        abstract_methods: Default::default(),
+        pinvokes: Default::default(),
+    });
+    vmt.names = rows
+        .iter()
+        .map(|r| {
+            FunctionNames::new(
+                r.fid.as_deref().unwrap_or_default(),
+                r.simple.as_deref().unwrap_or_default(),
+            )
+            .with_parent(r.cls.as_str())
+            .with_signature(r.desc.as_deref().unwrap_or_default())
+        })
+        .chain(std::iter::once(FunctionNames::new(
+            "ctadl$cil-models$caller",
+            "ctadl$cil-models$caller",
+        )))
+        .collect();
+    vmt.finish_names();
     ProgramInfo {
-        vmt: VirtualMethodTable::Cil {
-            methods,
-            hierarchy: Default::default(),
-            interfaces: Default::default(),
-            abstract_methods: Default::default(),
-            pinvokes: Default::default(),
-        },
+        vmt,
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

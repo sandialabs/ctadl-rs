@@ -2,17 +2,5 @@
   // No flow: the index i is tainted (13), but x = a[i] = y (15) copies only the
   // clean long y into x. javac keeps y's two slots on the stack with `dup2_x2`,
   // under the array and the index.
-  "expected_lines": [],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LDup2X2LongArrayChain;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LDup2X2LongArrayChain;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": []
 }

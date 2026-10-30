@@ -1,0 +1,20 @@
+{
+  "grammars": [
+    {
+      "name": "portcullis",
+      "camelcase": "CtadlModels",
+      "scope": "source.portcullis",
+      "path": ".",
+      "file-types": ["ctadl"],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "description": "Portcullis (.ctadl) grammar for tree-sitter",
+    "links": {
+      "repository": "https://github.com/sandialabs/ctadl-rs"
+    }
+  }
+}

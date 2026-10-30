@@ -16,26 +16,40 @@ current set of flags.
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
 | `query` | Run a taint-analysis query over an indexed project and write results as SARIF. With `--models` and no index yet, reports what those model files match in the imported programs instead. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
-| `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
+| `init-model` | Emit a template [Portcullis](docs/portcullis.md) model file for defining sources, sinks, and external function propagation models. |
+| `migrate-models` | Rewrite a deprecated JSON model file in Portcullis. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
 | `report` | Measure an imported program's call graph. Needs only an import; reads no index. |
+
+Models — what is a source, what is a sink, and how data moves through code CTADL cannot see —
+are written in [Portcullis](docs/portcullis.md), CTADL's model language:
+
+```
+// The value Request.getParameter returns is attacker-controlled...
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "getParameter", parent = "Ljavax/servlet/ServletRequest;");
+
+// ...and must not reach the command Runtime.exec runs.
+sink(F::arg(1), kind = "UserInput") :-
+  fun(F, name = "exec", parent = "Ljava/lang/Runtime;");
+```
 
 One-shot APK analysis:
 
 ```bash
-ctadl go my-app /path/to/my/app.apk query.json
+ctadl go /path/to/my/app.apk --name my-app --models sources-and-sinks.ctadl
 ```
 
 Or run the stages separately:
 
 ```bash
 ctadl import /path/to/app.apk --name my-app
-# Optional, and needs only the import: with no index yet, `query` reports which generators
-# select a function and which select nothing. Run it while you write the model file rather
-# than after indexing.
-ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
+# Optional, and needs only the import: with no index yet, `query` reports which rules select a
+# function and which select nothing. Run it while you write the model file rather than after
+# indexing.
+ctadl query my-app --models sources-and-sinks.ctadl --output check.sarif
 ctadl index my-app
-ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
+ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
 ```
 
 ### Report
@@ -110,7 +124,7 @@ pairings, run with `RUST_LOG=warn,ctadl_ascent::languages::jni=debug`.
 Two flags switch it off, for an A/B of what it contributes: `--no-jni-registry` links by symbol
 name alone, and `--no-jni-bridge` disables the pass entirely (and implies the first). Use
 `--no-jni-bridge` also when joining a pair by hand with a
-[`bridge` model](docs/model-generators.md#bridge), so the pair is not bridged twice. Note that the
+[`bridge` model](docs/portcullis.md#bridges), so the pair is not bridged twice. Note that the
 `RegisterNatives` tables are recovered at *import* time, so a library imported before this feature
 existed has none, and a re-import reuses the unchanged library without creating one — re-import
 with `ctadl import --force`.
@@ -125,7 +139,7 @@ into a project of its own, then index the app without its libraries and pass tha
 ctadl import app.apk                          # app, app__arm64-v8a__libX, app__arm64-v8a__libY
 ctadl index  xproj app__arm64-v8a__libX       # the library, on its own
 ctadl index  appproj app --no-native-libs --summary xproj
-ctadl query  appproj -m models.json           # Java -> libX -> Java flows are found
+ctadl query  appproj -m models.ctadl          # Java -> libX -> Java flows are found
 ```
 
 `index --no-native-libs` drops the native libraries naming an APK or XAPK would otherwise pull in
@@ -147,9 +161,11 @@ cross this way, so a flow in the library that depends on resolving an indirect c
 
 ## Documentation
 
-- [Model generators](docs/model-generators.md) — the declarative language for
-  sources, sinks, and propagation through code CTADL cannot see.
+- [Portcullis](docs/portcullis.md) — the model language: sources, sinks, and propagation
+  through code CTADL cannot see. Start here to write models.
 - [Debugging](docs/debugging.md).
+- [JSON model generators](docs/deprecated-json-model-generators.md) — **deprecated**. Kept only
+  for reading existing JSON files; `ctadl migrate-models` converts them to Portcullis.
 
 # Testing
 

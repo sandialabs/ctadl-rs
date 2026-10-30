@@ -10,16 +10,20 @@ use std::io::Write as _;
 use ctadl_ascent::cli;
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::ImportScope;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::project::{AnalysisProject, SubImports};
 use ctadl_ascent::query_engine::formatter::{SarifProfile, format_model_check_sarif};
 use ctadl_ir::mir::ProgramInfo;
 use tempfile::NamedTempFile;
 
-/// A native program with one no-parameter function per name.
+/// A native program with one two-parameter function per name.
 fn program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
-    };
+    program_with_calls(names, &[])
+}
+
+/// [`program`], where each `(caller, callee)` pair is a direct call in the caller's body.
+fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
+    use ctadl_ir::mir::call::{CallEdges, CallStyle};
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
@@ -34,24 +38,23 @@ fn program(names: &[&str]) -> ProgramInfo {
             let blocks = f.blocks.blocks_mut();
             let body = blocks.push(BasicBlockData::new(None));
             blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+            for (_, callee) in calls.iter().filter(|(caller, _)| caller == name) {
+                blocks[body].extend(vec![Statement::new_kind(StatementKind::CallAssign {
+                    style: CallStyle::DirectCall {
+                        call_edges: CallEdges::Explicit(
+                            std::iter::once(callee.to_string()).collect(),
+                        ),
+                    },
+                    rets: Default::default(),
+                    args: Default::default(),
+                })]);
+            }
             f
         })
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
-            methods: names
-                .iter()
-                .map(|name| {
-                    (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature((*name).into()),
-                        NativeFunction((*name).into()),
-                        NativeQualifiedName((*name).into()),
-                    )
-                })
-                .collect(),
-        },
+        vmt: test_vmt::native(names.iter().map(|name| (*name, *name, *name, *name))),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
@@ -103,7 +106,7 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
     let matched = &outcome.check.matched;
     assert_eq!(matched.len(), 1, "{matched:?}");
     assert_eq!(matched[0].index, 0);
-    assert_eq!(matched[0].total, Some(1));
+    assert_eq!(matched[0].total, 1);
     assert_eq!(matched[0].sample, vec!["sink".to_string()]);
 
     // [1] matched nothing: the same zero-row counters an indexed query turns into `CTADL0004`.
@@ -115,7 +118,8 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
     let excluded = &outcome.check.scope_excluded;
     assert_eq!(excluded.len(), 1, "{excluded:?}");
     assert_eq!(excluded[0].index, 2);
-    assert!(excluded[0].scope.is_some());
+    // Shown as the attribute test its migration makes of it, not as JSON.
+    assert_eq!(excluded[0].scope.as_deref(), Some(r#"language = "lua""#));
     assert!(
         !outcome
             .endpoint_stats
@@ -125,13 +129,13 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
 }
 
 /// A shape error in one file must not suppress the other file's report -- nor the rest of its
-/// own file's, including generators in *later* batches. The loader processes 1024 generators at
-/// a time, and the abort-on-error entry point never reaches the batch after a bad one.
+/// own file's, however far past the bad generator the rest goes: the model check leaves a
+/// generator that does not migrate out and checks every other one.
 #[test]
 fn an_error_in_one_file_does_not_suppress_the_others() {
-    // > 1024 generators, so the last one is in the third batch, well past the error in the
-    // first. The typo (`wehre`) is a hard error the matcher collects rather than a parse
-    // failure, so everything after it was still visited.
+    // Over two thousand generators, the last well past the error in the first. The typo
+    // (`wehre`) fails that generator's migration rather than the file's parse, so everything
+    // after it is still checked.
     let mut generators = vec![
         r#"{"find": "methods", "wehre": [], "model": {"sinks": [{"kind": "k", "port": "Return"}]}}"#
             .to_string(),
@@ -171,16 +175,19 @@ fn an_error_in_one_file_does_not_suppress_the_others() {
             .find(|m| m.file == path && m.index == index)
             .unwrap_or_else(|| panic!("no match reported for generator {index}"))
     };
-    // The generator after the bad one, in the same batch...
-    assert_eq!(matched_in(bad.path(), 1).total, Some(1));
-    // ... and the last one, three batches later: the stats the abort-on-error loader discards.
-    assert_eq!(matched_in(bad.path(), 2100).total, Some(1));
+    // The generator after the bad one...
+    assert_eq!(matched_in(bad.path(), 1).total, 1);
+    // ... and the last one.
+    assert_eq!(matched_in(bad.path(), 2100).total, 1);
     // The second file is untouched.
-    assert_eq!(matched_in(good.path(), 0).total, Some(1));
+    assert_eq!(matched_in(good.path(), 0).total, 1);
 }
 
-/// A bridge whose `to` side matches nothing gets `diagnose`'s verdict, and no pair count:
-/// pairing needs the fact base.
+/// A bridge whose `to` side matches nothing is reported against its generator, and gets no
+/// pair count: pairing needs the fact base.
+///
+/// The verdict does not say which side failed: the bridge is a migrated rule whose body joins
+/// both sides, so all the engine knows is that the rule paired nothing.
 #[test]
 fn an_unmatched_bridge_side_is_diagnosed() {
     let file = model_file(
@@ -188,8 +195,9 @@ fn an_unmatched_bridge_side_is_diagnosed() {
         r#"{"model_generators": [
             {"find": "methods",
              "where": [{"constraint": "signature_match", "name": "caller"}],
-             "model": {"bridge": {"to": {
-                 "where": [{"constraint": "signature_match", "name": "nosuchimpl"}]}}}}
+             "model": {"bridge": {
+                 "to": {"where": [{"constraint": "signature_match", "name": "nosuchimpl"}]},
+                 "arguments": [{"from": "Argument(0)", "to": "Argument(0)", "direction": "in"}]}}}
         ]}"#,
     );
     let outcome = check(&["caller"], &[&file]);
@@ -197,7 +205,7 @@ fn an_unmatched_bridge_side_is_diagnosed() {
     assert_eq!(bridges.len(), 1, "{bridges:?}");
     assert_eq!(bridges[0].index, 0);
     assert!(
-        bridges[0].message.contains("'to' side matched none"),
+        bridges[0].message.contains("matched no pair"),
         "got: {}",
         bridges[0].message
     );
@@ -222,7 +230,7 @@ fn the_name_sample_is_capped_but_the_count_is_not() {
     let names = ["f1", "f2", "f3", "f4", "f5", "f6", "f7"];
     let outcome = check(&names, &[&file]);
     let matched = &outcome.check.matched[0];
-    assert_eq!(matched.total, Some(names.len()));
+    assert_eq!(matched.total, names.len());
     assert!(
         matched.sample.len() < names.len(),
         "the sample is capped: {:?}",
@@ -230,8 +238,13 @@ fn the_name_sample_is_capped_but_the_count_is_not() {
     );
 }
 
-/// A `find: callsites` generator is reported as matching *callees*: the call-site fan-out is
-/// Stage 2, so a count of matched callees is not a count of call sites.
+/// A `find: callsites` generator is reported with its `find`, so the count is not mistaken for
+/// a count of functions.
+///
+/// The program has a call to `sink`: a migrated `find: callsites` generator joins on the
+/// `callsite` relation, so it selects a callee only through a site that names it. That is the
+/// difference `docs/portcullis.md` §9 lists as "`find: callsites` anchors at the callee a site
+/// names".
 #[test]
 fn a_callsites_generator_reports_its_find() {
     let file = model_file(
@@ -242,7 +255,12 @@ fn a_callsites_generator_reports_its_find() {
              "model": {"sinks": [{"kind": "k", "port": "Argument(*)"}]}}
         ]}"#,
     );
-    let outcome = check(&["sink"], &[&file]);
+    let program = program_with_calls(&["main", "sink"], &[("main", "sink")]);
+    let outcome = cli::check_programs(
+        std::iter::once(Ok((scope(), program))),
+        &[file.path().to_path_buf()],
+    )
+    .expect("checking models");
     assert_eq!(outcome.check.matched[0].find.as_deref(), Some("callsites"));
 }
 
@@ -280,9 +298,7 @@ fn a_failed_import_does_not_end_the_run() {
         ]}"#,
     );
     let programs = vec![
-        Err(ctadl_ascent::error::Error::Model {
-            message: "no such import".to_string(),
-        }),
+        Err(std::io::Error::other("no such import").into()),
         Ok((scope(), program(&["sink"]))),
     ];
     let outcome = cli::check_programs(programs, &[file.path().to_path_buf()]).expect("checking");
@@ -290,7 +306,7 @@ fn a_failed_import_does_not_end_the_run() {
     assert_eq!(outcome.check.imports.len(), 1, "one import did load");
     assert!(outcome.has_file_errors());
     // The import that did load was still matched.
-    assert_eq!(outcome.check.matched[0].total, Some(1));
+    assert_eq!(outcome.check.matched[0].total, 1);
 }
 
 /// The whole point of routing this through the SARIF writer: what the check found comes out in

@@ -1,0 +1,96 @@
+// Default propagation models for the Lua frontend (VirtualMethodTable::Lua).
+//
+// These match *externals* -- functions called but never defined in the import. The frontend
+// registers each under both spellings it can appear as: the fully-qualified callee text
+// (`os.execute`) and its last dotted component (`execute`), because method-call syntax lowers
+// to the bare name (`s:format(x)` becomes `direct-call format(%s, x)`) while dotted syntax
+// keeps the prefix (`string.format(x)` becomes `direct-call string.format(x)`). A name spelled
+// bare therefore covers both call syntaxes; one spelled with a prefix covers only the dotted
+// form, which is deliberate for short names like `concat` and `remove`.
+//
+// DELIBERATELY ABSENT -- do not add:
+//   `table.insert`, `ipairs`, `pairs`, `select`: the frontend recognizes these syntactically
+//     and lowers them straight to dataflow (`frontends/ctadl-lua/src/lib.rs`,
+//     `eval_builtin_call`), so no call statement is emitted at all. A model would double-count.
+//   `setmetatable`: likewise lowered directly (`eval_setmetatable`) -- it never appears as a
+//     call target, so a model on it would be inert rather than wrong.
+//   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument, which a
+//     propagation model cannot express.
+//
+// Every port here is bare -- the strictly more permissive choice. The element field IS
+// modelable: the frontend emits `PathSegment::Symbol("[_elem_]")`, which a port spells as the
+// quoted field `."[_elem_]"`. The level-correct variants, held back until they are measured,
+// are: `table.concat` reading `arg(0)."[_elem_]"`, `rawset` writing `arg(0)."[_elem_]"`, and a
+// `table.remove`/`unpack` that unwraps one level with `return <- arg(0)."[_elem_]"`. They
+// distinguish "the table is tainted" from "an element is"; the bare ports below do not.
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"format", "rep", "sub", "upper", "lower", "reverse", "char"});
+propagation(F::return <- F::arg(_)) :-
+  fun(F),
+  F in {"format", "rep", "sub", "upper", "lower", "reverse", "char"};
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"gsub", "match", "gmatch", "byte", "len"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"gsub", "match", "gmatch", "byte", "len"};
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"table.concat", "table.remove", "table.unpack", "unpack"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"table.concat", "table.remove", "table.unpack", "unpack"};
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"rawget", "next"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"rawget", "next"};
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = "rawset");
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F),
+  F = "rawset";
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"tostring", "tonumber", "assert"});
+propagation(F::return <- F::arg(_)) :-
+  fun(F),
+  F in {"tostring", "tonumber", "assert"};
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"os.date", "os.getenv", "os.tmpname"});
+propagation(F::return <- F::arg(_)) :-
+  fun(F),
+  F in {"os.date", "os.getenv", "os.tmpname"};
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"io.open", "io.read", "io.lines", "read"});
+propagation(F::return <- F::arg(_)) :-
+  fun(F),
+  F in {"io.open", "io.read", "io.lines", "read"};
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "write");
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F),
+  F = "write";
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"cjson.encode", "cjson.decode", "cjson.safe.encode", "cjson.safe.decode"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"cjson.encode", "cjson.decode", "cjson.safe.encode", "cjson.safe.decode"};
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"};
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"});
+propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"};

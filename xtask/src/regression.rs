@@ -33,7 +33,6 @@ use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
 use crate::jvm;
-use crate::models;
 use crate::sarif;
 
 /// Fallback base address for SARIF that predates the analyzer emitting
@@ -68,9 +67,9 @@ const JVM_KNOWN_FAILURES: &[&str] = &[
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
-    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.jsonl`,
-    // which `models::default_model_file` hands only to a
-    // `VirtualMethodTable::Native` program -- i.e. the pcode import. A `-l c`
+    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.ctadl`,
+    // which `models::default_portcullis_models` hands only to a
+    // `Dispatch::Native` program -- i.e. the pcode import. A `-l c`
     // import has no method table (`Unknown`) and so gets no default file at all,
     // leaving every step between source and sink an unmodeled external. The
     // Pcode twin (`defaultmodels`, unprefixed) is what enforces those defaults.
@@ -86,9 +85,6 @@ pub struct Options {
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
     pub dex_apk: Option<PathBuf>,
-    /// Directory holding the model generator schema and the model files checked
-    /// against it. `None` auto-detects; see [`resolve_models_dir`].
-    pub models_dir: Option<PathBuf>,
     /// The committed Cecil goldens. `None` auto-detects; see
     /// [`cil::resolve_goldens`].
     pub cil_goldens: Option<PathBuf>,
@@ -118,7 +114,6 @@ impl Default for Options {
             tests_dir: None,
             jvm_samples: None,
             dex_apk: None,
-            models_dir: None,
             cil_goldens: None,
             cecil_src: None,
             cil_fixtures: None,
@@ -221,7 +216,6 @@ pub fn run(opts: &Options) -> Result<bool> {
     } else {
         None
     };
-    let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
     let wants_cil = opts.frontends.contains(&Frontend::Cil);
     let (cil_goldens, cecil_src, cil_fixtures) = if wants_cil {
         let goldens = cil::resolve_goldens(opts.cil_goldens.as_deref())?;
@@ -275,12 +269,6 @@ pub fn run(opts: &Options) -> Result<bool> {
             fixtures: cil_fixtures.as_deref(),
         });
     }
-    // Schema drift check on the model files ctadl ships. It reads three small
-    // files and runs no external tool, so it is never gated on a frontend: the
-    // schema is what users write generators against whatever they analyze.
-    tasks.push(Task::ModelSchema {
-        models: models_dir.as_deref(),
-    });
 
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
@@ -381,12 +369,6 @@ enum Task<'a> {
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
     },
-    /// Hold the shipped model files to the published model generator schema.
-    /// `None` means neither `--models-dir` nor the in-tree default was found,
-    /// which reports as a Skip rather than vanishing from the report.
-    ModelSchema {
-        models: Option<&'a Path>,
-    },
     GhidraProject,
 }
 
@@ -394,7 +376,7 @@ impl Task<'_> {
     /// Whether workers take this task before the single cases. These each run many checks or one
     /// long one, so started last they would run on after everything else had finished.
     fn is_long(&self) -> bool {
-        !matches!(self, Task::Case(_) | Task::ModelSchema { .. })
+        !matches!(self, Task::Case(_))
     }
 
     /// The task's name in the timing summary.
@@ -407,7 +389,6 @@ impl Task<'_> {
             Task::ApkIndexCheck { .. } => "apk index check".to_string(),
             Task::CilChecks { .. } => "cil checks".to_string(),
             Task::CilFrontend { .. } => "cil:frontend".to_string(),
-            Task::ModelSchema { .. } => "model schema".to_string(),
             Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
         }
     }
@@ -486,21 +467,6 @@ impl Task<'_> {
                             Outcome::Fail(format!("{err:#}")),
                         )]
                     });
-                retain_filtered(results, opts)
-            }
-            Task::ModelSchema { models } => {
-                let results = match models {
-                    Some(dir) => models::run_checks(dir).unwrap_or_else(|err| {
-                        vec![(
-                            "models:defaults".to_string(),
-                            Outcome::Fail(format!("{err:#}")),
-                        )]
-                    }),
-                    None => vec![(
-                        "models:defaults".to_string(),
-                        Outcome::Skip("model directory not found; pass --models-dir".to_string()),
-                    )],
-                };
                 retain_filtered(results, opts)
             }
             Task::GhidraProject => {
@@ -632,28 +598,6 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     .map(|p| std::fs::canonicalize(&p))
     .transpose()
     .with_context(|| "failed to canonicalize dex apk path")
-}
-
-/// Locate the models directory: the model generator schema and the built-in
-/// model files that must validate against it. With no override, look where the
-/// crate lives relative to the repo root (`cargo xtask`) or the nightly cwd.
-///
-/// Unlike the other resolvers, nothing produces this directory -- it is checked
-/// into the crate -- so a run that cannot find it is a run against a tree that
-/// does not have it (a Nix check with no source, say), and the check Skips.
-fn resolve_models_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
-    if let Some(dir) = override_dir {
-        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
-            format!("failed to canonicalize {}", dir.display())
-        })?));
-    }
-    ["ctadl-ascent/src/models", "../ctadl-ascent/src/models"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|p| p.is_dir())
-        .map(|p| std::fs::canonicalize(&p))
-        .transpose()
-        .with_context(|| "failed to canonicalize models directory")
 }
 
 /// Ensure the executables needed for the selected cases are available.
@@ -825,15 +769,36 @@ fn index_notifications(dir: &Path, lines: &mut BTreeSet<String>) -> Result<()> {
 
 fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
     match &case.kind {
-        Kind::Dex { java, config } => run_dex(&case.name, java, config),
-        Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
-        Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
-        Kind::C { source, query } => run_c(&case.name, source, query),
-        Kind::Lua { source, query } => run_lua(&case.name, source, query),
+        Kind::Dex {
+            java,
+            config,
+            models,
+        } => run_dex(&case.name, java, config, models),
+        Kind::Jvm {
+            java,
+            config,
+            models,
+        } => run_jvm(&case.name, java, config, models),
+        Kind::Pcode {
+            source,
+            query,
+            models,
+        } => run_pcode(&case.name, source, query, models, worker),
+        Kind::C {
+            source,
+            query,
+            models,
+        } => run_c(&case.name, source, query, models),
+        Kind::Lua {
+            source,
+            query,
+            models,
+        } => run_lua(&case.name, source, query, models),
         Kind::Jni {
             java,
             native,
             config,
+            models,
             bridge,
             packaging,
             abi,
@@ -843,6 +808,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             java,
             native,
             config,
+            models,
             bridge.as_deref(),
             JniBuild {
                 packaging: *packaging,
@@ -852,16 +818,21 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
-        Kind::Cil { source, config } => run_cil(&case.name, source, config),
+        Kind::Cil {
+            source,
+            config,
+            models,
+        } => run_cil(&case.name, source, config, models.as_deref()),
     }
 }
 
 // --- CIL --------------------------------------------------------------------
 
 /// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
-/// frontend, index, query with the model its config implies, and judge the code flows by the
-/// sink functions they end in and the source lines they reach.
-fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
+/// frontend, index, query with the model its config implies (plus `models`, the case's own
+/// rules, if it has any), and judge the code flows by the sink functions they end in and the
+/// source lines they reach.
+fn run_cil(name: &str, source: &Path, config: &Path, models: Option<&Path>) -> Result<Outcome> {
     use crate::cil::cases;
     let Some(dotnet) = cases::dotnet() else {
         return Ok(Outcome::Skip(
@@ -873,11 +844,14 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
     std::fs::create_dir_all(&state)?;
     let cfg = cases::read_config(config)?;
     let artifact = cases::compile(&dotnet, source, &work, &work.join("out"))?;
-    let model = work.join("query.json");
-    std::fs::write(
-        &model,
-        serde_json::to_string_pretty(&cases::query_model(&cfg))?,
-    )?;
+    let model = work.join("query.ctadl");
+    std::fs::write(&model, cases::query_model(&cfg))?;
+    let model = model.to_string_lossy().into_owned();
+    let mut model_args = vec!["-m", &model];
+    let extra = models.map(|m| m.to_string_lossy().into_owned());
+    if let Some(extra) = &extra {
+        model_args.extend(["-m", extra.as_str()]);
+    }
     let project = name.replace(':', "_");
     let sarif = work.join("output.sarif");
     run_ctadl(
@@ -897,13 +871,11 @@ fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
         &work,
         &state,
         &[
-            "query",
-            &project,
-            "-m",
-            &model.to_string_lossy(),
-            "-o",
-            &sarif.to_string_lossy(),
-        ],
+            &["query", &project][..],
+            &model_args,
+            &["-o", &sarif.to_string_lossy()],
+        ]
+        .concat(),
     )?;
     let outcome = cases::check(&cfg, &sarif)?;
     with_valid_sarif(&work, &[&sarif], outcome)
@@ -987,7 +959,7 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
 
 // --- DEX / Java -----------------------------------------------------------
 
-fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_dex(name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -1013,7 +985,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1025,7 +997,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1083,7 +1055,7 @@ fn compile_dex(work: &Path, java: &Path, stem: &str) -> Result<PathBuf> {
 
 // --- JVM / Java -----------------------------------------------------------
 
-fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+fn run_jvm(case_name: &str, java: &Path, config: &Path, models: &Path) -> Result<Outcome> {
     for tool in ["javac", "jar"] {
         if exec::which(tool).is_none() {
             return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
@@ -1144,7 +1116,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1156,7 +1128,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -1422,9 +1394,9 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     // lives at `<root>/xtask`, so its manifest dir's parent is the root.
     //
     // `--workspace` rather than `-p ctadl-ascent`: cargo resolves features across the packages it
-    // selects, and `-p ctadl-ascent` leaves out xtask's `boon`, which turns on `idna`'s `default`.
-    // That one feature changes the hash of `idna` and of every crate above it, so a `-p` build
-    // compiles its own copy of about forty crates instead of reusing the workspace build's.
+    // selects, so a `-p` build can enable different features on a shared dependency, which
+    // changes its hash and that of every crate above it, and compile its own copies instead of
+    // reusing the workspace build's.
     cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
         "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
     )?)
@@ -1516,7 +1488,7 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
 ///   2. *Reached lines*: every `expected_lines` entry appears among the
 ///      code-flow `startLine`s.
 ///   3. *Unexpected lines*: no `unexpected_lines` entry is among them.
-fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_lua(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
@@ -1538,7 +1510,7 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1586,7 +1558,13 @@ fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
 
 // --- Pcode / C ------------------------------------------------------------
 
-fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result<Outcome> {
+fn run_pcode(
+    name: &str,
+    source: &Path,
+    query: &Path,
+    models: &Path,
+    worker: &Worker,
+) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -1626,7 +1604,7 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -1862,6 +1840,7 @@ fn run_jni(
     java: &Path,
     native: &Path,
     config: &Path,
+    models: &Path,
     bridge: Option<&Path>,
     build: JniBuild<'_>,
     worker: &Worker,
@@ -2070,7 +2049,7 @@ fn run_jni(
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],
@@ -2081,7 +2060,7 @@ fn run_jni(
             "query",
             &project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "--sarif-profile",
             "machine",
             "-o",
@@ -2100,6 +2079,7 @@ fn run_jni(
             &format!("{dex_project}__{abi}__{}", file_stem_of(&lib)?),
             &format!("{dex_project}__{abi}__libdummy"),
             config,
+            models,
             &index_log,
         )?;
         if let Some(why) = failed {
@@ -2185,6 +2165,7 @@ fn check_summary_workflow(
     x_import: &str,
     y_import: &str,
     config: &Path,
+    models: &Path,
     index_log: &str,
 ) -> Result<Option<String>> {
     let ctadl = |args: &[&str], log: &str| run_ctadl_logged(work, state, env, args, log);
@@ -2256,7 +2237,7 @@ fn check_summary_workflow(
             "query",
             project,
             "-m",
-            &config.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &work.join("graph.sarif").to_string_lossy(),
             "--dump-taint-graph",
@@ -2390,7 +2371,7 @@ fn native_lines(
 
 /// Run one C case through the tree-sitter frontend.
 ///
-/// This is the Pcode case's twin over the very same `.c` source and query JSON,
+/// This is the Pcode case's twin over the very same `.c` source, config and model,
 /// but a much shorter pipeline: the tree-sitter frontend parses the source
 /// directly, so there is no compiler, no Ghidra, and no `addr2line`. The source
 /// lines a flow reaches are read straight off the SARIF regions the frontend
@@ -2399,7 +2380,7 @@ fn native_lines(
 /// It shares no state with `run_pcode` -- its own scratch dir, project name, and
 /// SARIF -- so its outcome is entirely independent: a C failure never touches the
 /// Pcode case for the same source, and vice versa.
-fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_c(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -2426,7 +2407,7 @@ fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
             "query",
             &project,
             "-m",
-            &query.to_string_lossy(),
+            &models.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
         ],

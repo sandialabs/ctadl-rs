@@ -48,10 +48,18 @@ pub enum Command {
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
 
-    /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
-    /// are used to specify sources and sinks (see the 'query' command) as well as specifying
-    /// external function behavior (see the 'index' command)
+    /// Generate a template Portcullis model file to help write custom analysis models. Analysis
+    /// models are used to specify sources and sinks (see the 'query' command) as well as
+    /// specifying external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
+
+    /// Rewrite a JSON/JSON5/JSONL model-generator file in Portcullis.
+    ///
+    /// Portcullis is the format the engine executes; a JSON file is translated through this and
+    /// then run, so migrating one changes nothing about what it matches. What it buys is a file
+    /// you can read: the migrator also reports every construct that does not carry across,
+    /// which a silent translation would hide.
+    MigrateModels(MigrateModelsArgs),
 
     /// Inspect the CTADL store
     Inspect(InspectArgs),
@@ -65,9 +73,29 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct InitModelArgs {
-    /// Path where the template model file will be written (defaults to model.json5)
-    #[arg(default_value = "model.json5")]
+    /// Path where the template model file will be written (defaults to model.ctadl)
+    #[arg(default_value = "model.ctadl")]
     pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct MigrateModelsArgs {
+    /// The JSON / JSON5 / JSONL model file to translate.
+    pub input: PathBuf,
+
+    /// Where to write the Portcullis file. Defaults to the input with a `.ctadl` extension; `-`
+    /// writes to standard output.
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Check the translated file loads, and report what it says, without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// A language the file is for (repeatable), as a generator's `in` names one. A rule that only
+    /// another language could match is left out.
+    #[arg(long = "language", value_name = "LANGUAGE")]
+    pub languages: Vec<String>,
 }
 
 impl Command {
@@ -224,9 +252,9 @@ pub struct ReportArgs {
     #[arg(long)]
     pub no_recursion: bool,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files, as `ctadl index`
-    /// would. The report reads nothing but writes the `policy` section against them, so this is
-    /// how to see what a `find: "dispatch"` model would cover before re-indexing.
+    /// Load additional models from one or more model files (`.ctadl`, or the deprecated JSON
+    /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section
+    /// against them, so this is how to see what a `dispatch` model would cover before re-indexing.
     #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
     pub models: Vec<PathBuf>,
 
@@ -350,10 +378,14 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_native_libs: bool,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files. This option is use primarily to provide
-    /// propagation models, which provide function summaries for indexing external or
-    /// hard-to-analyze code.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. This option is used primarily to provide propagation models, which
+    /// provide function summaries for indexing external or hard-to-analyze code.
+    ///
+    /// A `.ctadl` (or `.dl`) file is written in Portcullis, which is what the engine runs;
+    /// `.json`, `.json5` and `.jsonl` are the older model-generator format, deprecated: such a
+    /// file is migrated to Portcullis as it is loaded. `ctadl migrate-models` converts one for
+    /// good.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -550,8 +582,10 @@ pub struct QueryArgs {
     /// Analysis project (index) name
     pub name: String,
 
-    /// The query to run, or load additional models from one or more JSON, JSON5, or JSONL files.
-    /// Can be specified multiple times to load multiple model files.
+    /// The query to run, or load additional models from one or more files. Can be specified
+    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in
+    /// Portcullis; `.json`, `.json5` and `.jsonl` are the older model-generator format,
+    /// deprecated, and migrated to Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -574,8 +608,10 @@ pub struct GoArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. A `.ctadl` (or `.dl`) file is written in Portcullis; `.json`,
+    /// `.json5` and `.jsonl` are the older model-generator format, deprecated, and migrated to
+    /// Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -761,89 +797,97 @@ fn main() -> anyhow::Result<()> {
         Command::InitModel(args) => {
             handle_init_model(args).context("running 'init-model'")?;
         }
+        Command::MigrateModels(args) => {
+            handle_migrate_models(args).context("running 'migrate-models'")?;
+        }
     };
 
     Ok(())
 }
 
-fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
-    let template = r#"{
-    // Link to the schema to enable IDE features like autocomplete and hover documentation.
-    // Adjust the path to match your installation if necessary.
-    "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
+fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
+    use ctadl_ascent::models::portcullis;
 
-    "model_generators": [
-        {
-            // Example 1: Define a data source using a signature pattern.
-            // This will match any method containing 'readData' in its signature
-            // and mark its return value as a source of taint.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_pattern",
-                    "pattern": ".*readData.*"
-                }
-            ],
-            "model": {
-                "sources": [
-                    {
-                        "port": "Return",
-                        "kind": "input_data"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 2: Define a sink using an exact signature match.
-            // This will match the exact method signature 'executeQuery' and mark its first argument
-            // as a sink for taint analysis.
-            //
-            // "name" matches the bare method name, so it selects every 'executeQuery' in the
-            // program. To pin down one specific method, use "qualified-id" instead: an exact
-            // (non-regex) match on the fully-qualified id, e.g.
-            //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
-            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
-            // "kong.db.executeQuery" on lua.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "executeQuery"
-                }
-            ],
-            "model": {
-                "sinks": [
-                    {
-                        "port": "Argument(0)",
-                        "kind": "sql_injection"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 3: Define a propagation model.
-            // This models a method 'canonicalize_url' that transforms data.
-            // We model it as propagating taint from its first argument to its return value.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "canonicalize_url"
-                }
-            ],
-            "model": {
-                "propagation": [
-                    {
-                        "input": "Argument(0)",
-                        "output": "Return"
-                    }
-                ]
-            }
+    for language in &args.languages {
+        if ctadl_ascent::project::ArtifactLanguage::from_name(language).is_none() {
+            anyhow::bail!("--language {language:?} is not a language ctadl imports");
         }
-        ]
-        }"#;
+    }
+    let languages: Vec<&str> = args.languages.iter().map(String::as_str).collect();
+    let languages = (!languages.is_empty()).then_some(languages.as_slice());
+    // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
+    // writing the rest would silently drop it. Every such generator is listed, not just the
+    // first, so one run is enough to see what needs fixing.
+    let (text, report) = match portcullis::migrate::migrate_file(&args.input, languages) {
+        Ok(migrated) => migrated,
+        Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(
+            "{} cannot be migrated exactly; nothing was written:\n{errors}",
+            args.input.display()
+        ),
+        Err(e) => {
+            return Err(e).with_context(|| format!("migrating {}", args.input.display()));
+        }
+    };
 
-    std::fs::write(&args.output, template)
+    // Loading it is part of migrating it. A file that translates but does not check is worse
+    // than a failure: it would be discovered on the next index, against an artifact, with the
+    // original no longer in play.
+    portcullis::PortcullisFile::from_text(args.input.clone(), text.clone())
+        .with_context(|| format!("the migration of {} does not load", args.input.display()))?;
+
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    eprintln!(
+        "{}: {} generator(s) -> {} rule(s)",
+        args.input.display(),
+        report.generators,
+        report.rules
+    );
+
+    if args.dry_run {
+        return Ok(());
+    }
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.input.with_extension("ctadl"));
+    if output == std::path::Path::new("-") {
+        print!("{text}");
+    } else {
+        std::fs::write(&output, &text).with_context(|| format!("writing {}", output.display()))?;
+        eprintln!("wrote {}", output.display());
+    }
+    Ok(())
+}
+
+/// What `ctadl init-model` writes: one source, one sink and one propagation to edit.
+const MODEL_TEMPLATE: &str = r#"// A Portcullis model file. The language reference is docs/portcullis.md.
+//
+// Each rule derives its heads (left of ':-') for every way its body (right of ':-') matches.
+// Pass this file to `ctadl query --models` for its sources and sinks, and to
+// `ctadl index --models` for its propagations.
+
+// A source: the return value of every method named `readData` is untrusted. `kind` is a label
+// you choose; a flow is reported when a source's kind reaches a sink of the same kind.
+source(F::return, kind = "input_data") :-
+  fun(F, name = N), regex_match(N, "readData");
+
+// A sink: the first argument of `executeQuery`. `name` is the simple name, so this selects every
+// `executeQuery` in the program. To pin down one method, test its full name instead:
+//   fun(F), F = "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"
+// On an instance method arg(0) is the receiver, so the first argument is arg(1).
+sink(F::arg(1), kind = "input_data") :-
+  fun(F, name = "executeQuery");
+
+// A propagation: `canonicalize_url` returns what its first argument carries. This is a summary
+// for code CTADL cannot see, and takes effect at `ctadl index`.
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "canonicalize_url");
+"#;
+
+fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
+    std::fs::write(&args.output, MODEL_TEMPLATE)
         .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
@@ -1239,6 +1283,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    /// `init-model` writes a file the loader accepts, so the first edit starts from one that works.
+    #[test]
+    fn the_model_template_loads() {
+        let file = ctadl_ascent::models::portcullis::PortcullisFile::from_text(
+            "model.ctadl",
+            MODEL_TEMPLATE,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(file.program.rules.len(), 3);
+    }
 
     #[test]
     fn sizes_parse() {

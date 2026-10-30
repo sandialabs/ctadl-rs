@@ -1,8 +1,8 @@
 /*! What a model file matches, when there is no index to query.
 
-Model matching is split in two, and only the second half needs an index. **Stage 1** evaluates
-every generator's `where` against one program's name / parent / signature / qualified-id tables
--- it reads an artifact import and nothing else. **Stage 2** resolves the matched names to
+Model matching is split in two, and only the second half needs an index. **Stage 1** runs every
+rule (a JSON generator as its migration) against one program's functions, method table and call
+sites -- it reads an artifact import and nothing else. **Stage 2** resolves the matched names to
 [`crate::facts::FunctionId`]s, fans endpoints out over call sites, and expands wildcard sinks.
 
 `ctadl query` runs Stage 1 either way. When the project has no index it cannot run Stage 2, and
@@ -14,24 +14,24 @@ Two passes are joined into one [`ModelCheck`]:
 
 - **Inventory**, per model file and needing no program at all: what each generator declares
   (`find`, its `model` keys) and what its `in` clause says. This is what makes the report honest
-  about scope -- [`crate::models::json::ModelGeneratorIngest::visit_model_generator`] returns
-  early for a generator whose scope excludes the import, leaving *no* stats entry, which is
-  indistinguishable from "matched nothing" if you only look at the matching pass.
-- **Matching**, per import: the ordinary Stage-1 pass with the per-generator capture turned on.
+  about scope. A JSON file is matched as its DSL migration, where `in` is an ordinary attribute
+  test, so a generator whose scope excludes every import runs and matches nothing --
+  indistinguishable from a dead one if you only look at the matching pass.
+- **Matching**, per import: the DSL engine, over every file, a JSON one migrated first.
 
 # What it deliberately cannot tell you
 
 Each of these is stated once, in the `CTADL0008` notification, rather than left implicit: a
 count that looks like a match but is not is worse than no count.
 
-- **`find: callsites`** -- Stage 1 matches the callee, and the caller for `in_function`. The
-  call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
+- **`find: callsites`** -- Stage 1 counts the callees some call site names, not the sites, so
+  "3 callees" says nothing about how many sites the endpoints land on.
 - **`Argument(*)`** -- expands over an arity computed from actual parameters and call sites
   across every import, which only the fact base has.
 - **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
   contain.
-- **Bridge pair counts.** [`diagnose`] settles unmatched and ambiguous sides without an index;
-  the pair count needs the fact base, so none is reported.
+- **Bridge pair counts.** A bridge that paired no functions is reported; the count of call
+  pairs needs the fact base, so none is.
 - **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
   only meaningful over every import the real project will index.
 */
@@ -41,11 +41,10 @@ use std::path::PathBuf;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
-use crate::models::matches::diagnose;
-use crate::models::spec::{self, BridgeSpec, ProgramScope, Severity};
+use crate::models::spec::{self, ProgramScope};
 use crate::models::{
-    self, EndpointStats, ImportScope, MatchedFunctions, ModelCheckError, ProgramMatchIndex,
-    ProgramModelMatches, PropagationStats,
+    self, EndpointStats, ImportScope, MatchedFunctions, ProgramMatchIndex, ProgramModelMatches,
+    PropagationStats,
 };
 use crate::project::{AnalysisProject, ArtifactImport};
 use crate::query_engine::formatter::{
@@ -57,8 +56,7 @@ use ctadl_ir::ProgramInfo;
 /// How many matched function names to keep per generator, for the `CTADL0011` sample.
 ///
 /// A cap and not a flag: the names answer "did this `where` select what I meant", which a
-/// handful answers, and the exact count is reported beside them. Nothing here ever enumerates
-/// an unnarrowed generator's match set -- see [`MatchedFunctions`].
+/// handful answers, and the exact count is reported beside them.
 const SAMPLE_CAP: usize = 5;
 
 /// Everything the check found, in the two pieces `cli::query` hands the SARIF writer.
@@ -176,25 +174,52 @@ pub fn check_programs(
 ) -> Result<ModelCheckOutcome, Error> {
     let mut outcome = ModelCheckOutcome::default();
     let mut files: Vec<FileState> = Vec::new();
-    let mut bridges: Vec<BridgeSpec> = Vec::new();
+    // Every file that loaded, matched by one matcher across every import exactly as
+    // `cli::index` matches them. `portcullis_owners[i]` is the position in `files` of
+    // `portcullis.files[i]`.
+    let mut portcullis = models::PortcullisModelSet::default();
+    let mut portcullis_owners: Vec<usize> = Vec::new();
 
     // Inventory: program-independent, so it runs once, before any IR is loaded.
     for path in models {
         let mut state = FileState::new(path.clone());
-        let readable = state.take_inventory();
-        // Scanned per file so a malformed bridge names the file it is in. One rejected bridge
-        // costs that file's bridges, not the run's. Skipped when the inventory could not read
-        // the file: the scan would fail on the same thing and say it twice.
-        if readable {
-            match spec::scan_model_files(std::slice::from_ref(path)) {
-                Ok(specs) => bridges.extend(specs.bridges),
-                Err(e) => state.record_error(render_chain(&e)),
+        let loaded = if models::is_portcullis_path(path) {
+            models::portcullis::PortcullisFile::read(path).map(|file| {
+                state.take_portcullis_inventory(&file);
+                (file, None)
+            })
+        } else {
+            // A JSON file is matched as its migration, but inventoried as the JSON: its `in`
+            // clauses are what `CTADL0009` reports, and only the JSON still has them.
+            let readable = state.take_inventory();
+            match models::portcullis::PortcullisFile::read_json_lenient(path) {
+                // Skipped when the inventory could not read the file: the migration fails on
+                // the same thing, and saying it twice is noise.
+                Err(_) if !readable => {
+                    files.push(state);
+                    continue;
+                }
+                loaded => loaded,
             }
+        };
+        match loaded {
+            Ok((file, rejected)) => {
+                if let Some(e) = rejected {
+                    state.record_error(render_chain(&e));
+                }
+                portcullis_owners.push(files.len());
+                portcullis.files.push(file);
+            }
+            Err(e) => state.record_error(render_chain(&e)),
         }
         files.push(state);
     }
 
-    // Matching, per import.
+    // Matching, per import. The gate is `cli::index`'s: some rule reading `callsig`, which a
+    // migrated `find: "dispatch"` generator does.
+    let wants_dispatch = portcullis.uses_callsig();
+    let mut portcullis_matcher =
+        models::PortcullisMatcher::new(&portcullis, models::PortcullisPhase::All);
     let mut matches = ProgramModelMatches::default();
     let mut imports_checked = 0usize;
     for item in programs {
@@ -210,7 +235,15 @@ pub fn check_programs(
                 continue;
             }
         };
-        let match_index = ProgramMatchIndex::new(&program_info, scope.clone());
+        // Without the signature keys a dispatch generator would report as matching nothing,
+        // which is the opposite of what this command is for.
+        let dispatch_keys = wants_dispatch
+            .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
+        let match_index = ProgramMatchIndex::new_with_dispatch(
+            &program_info,
+            scope.clone(),
+            dispatch_keys.as_ref(),
+        );
 
         // Which generators this import's scope admits, accumulated per import. Computed here
         // and not from the matching pass because a scoped-out generator leaves no stats at all.
@@ -219,28 +252,7 @@ pub fn check_programs(
         }
         // The built-in default models are deliberately not loaded: `ctadl query` does not load
         // them either, and this is `ctadl query` reporting on the files it was given.
-        for file in &mut files {
-            let (load, errors) =
-                models::try_check_models(&match_index, &file.path, SAMPLE_CAP, &mut matches);
-            file.absorb(load, errors);
-        }
-
-        // Bridge sides, matched exactly as indexing matches them. An evaluator error here is
-        // about the run rather than about one file: the spec it came from is not identified.
-        if let Err(e) = models::matches::observe_import(&match_index, &bridges, &mut matches) {
-            let message = render_chain(&e);
-            if !outcome
-                .check
-                .file_errors
-                .iter()
-                .any(|error| error.message == message)
-            {
-                outcome.check.file_errors.push(ModelFileError {
-                    file: None,
-                    message,
-                });
-            }
-        }
+        portcullis_matcher.observe_import(&match_index, &mut matches);
 
         outcome.check.imports.push((
             scope.import.clone().unwrap_or_else(|| scope.describe()),
@@ -251,25 +263,21 @@ pub fn check_programs(
         // `cli::index` keeps, which the owned iterator items exist to preserve.
     }
 
-    // Bridge verdicts, once, over every import: "unmatched" means not matched anywhere. With no
-    // import at all there is nothing to diagnose, and saying "matched nothing" would be a lie
-    // about a pass that never ran.
+    // The DSL files, once, over every import. With no import there is nothing to absorb, the
+    // same as for a JSON file: a rule that never ran did not match nothing.
+    let portcullis_results = portcullis_matcher.finish_each(&mut matches);
     if imports_checked > 0 {
-        for (i, spec) in bridges.iter().enumerate() {
-            let Some((severity, message)) = diagnose(spec, matches.bridges.get(i)) else {
-                continue;
+        for (owner, result) in portcullis_owners.into_iter().zip(portcullis_results) {
+            let (load, errors) = match result {
+                Ok(file) => (
+                    models::ModelLoadReport::from_portcullis(models::PortcullisReport {
+                        files: vec![file],
+                    }),
+                    Vec::new(),
+                ),
+                Err(e) => (models::ModelLoadReport::default(), vec![e]),
             };
-            // `Severity::Ignore` is silence, exactly as it is at index time; see
-            // `codegen::model_matches::classify`.
-            if severity == Severity::Ignore {
-                continue;
-            }
-            outcome.check.bridges.push(BridgeDiagnosis {
-                file: spec.source.clone(),
-                index: spec.index,
-                error: severity == Severity::Error,
-                message,
-            });
+            files[owner].absorb(load, errors);
         }
     }
 
@@ -310,10 +318,14 @@ struct GeneratorState {
     declares_access_paths: bool,
     /// A `modes` directive.
     declares_modes: bool,
+    /// A dispatch model: `find: "dispatch"` in JSON, a `dispatch` head in the DSL.
+    declares_dispatch: bool,
     has_bridge: bool,
     matched: Option<MatchedFunctions>,
     endpoint_stats: BTreeMap<TaintDirection, EndpointStats>,
     propagation_stats: PropagationStats,
+    /// Bridges the generator's rules made, over every import.
+    bridge_rows: usize,
 }
 
 impl FileState {
@@ -358,10 +370,12 @@ impl FileState {
                 declares_propagation: has_entries(value, "propagation"),
                 declares_access_paths: has_entries(value, "access_paths"),
                 declares_modes: has_entries(value, "modes"),
+                declares_dispatch: value.get("find").and_then(|v| v.as_str()) == Some("dispatch"),
                 has_bridge: value.pointer("/model/bridge").is_some(),
                 matched: None,
                 endpoint_stats: BTreeMap::new(),
                 propagation_stats: PropagationStats::default(),
+                bridge_rows: 0,
             };
             self.positions.insert(n, self.generators.len());
             self.generators.push(state);
@@ -376,6 +390,57 @@ impl FileState {
         }
     }
 
+    /// [`Self::take_inventory`] for a Portcullis file: one entry per rule.
+    ///
+    /// A rule has no `in` clause — a DSL rule scopes itself with `fun(F, language = …)`, which
+    /// is an ordinary attribute and cannot be read off without a program. So every rule is
+    /// reported as applicable and `CTADL0009` ("this generator's scope admits no import") never
+    /// fires for one. The rule that matched nothing is still reported, through `CTADL0004`,
+    /// which is the diagnostic that actually distinguishes the two cases.
+    fn take_portcullis_inventory(&mut self, file: &models::portcullis::PortcullisFile) {
+        for rule in &file.program.rules {
+            use models::portcullis::ast::HeadKind;
+            let state = GeneratorState {
+                index: rule.index,
+                find: Some("rule".to_string()),
+                scope_text: None,
+                scope: ProgramScope::default(),
+                scope_malformed: false,
+                applicable: true,
+                declares_endpoints: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Source { .. } | HeadKind::Sink { .. })),
+                declares_propagation: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Propagation { .. })),
+                declares_access_paths: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::AccessPath { .. })),
+                declares_modes: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Mode(_))),
+                declares_dispatch: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Dispatch { .. })),
+                has_bridge: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Bridge { .. })),
+                matched: None,
+                endpoint_stats: BTreeMap::new(),
+                propagation_stats: PropagationStats::default(),
+                bridge_rows: 0,
+            };
+            self.positions.insert(rule.index, self.generators.len());
+            self.generators.push(state);
+        }
+    }
+
     /// Records whether this import's scope admits each generator.
     fn note_applicable(&mut self, scope: &ImportScope) {
         for generator in &mut self.generators {
@@ -383,8 +448,15 @@ impl FileState {
         }
     }
 
-    /// Folds in one import's load of this file.
-    fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<ModelCheckError>) {
+    /// Folds in the load of this file, over every import.
+    fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<Error>) {
+        for file in load.portcullis.iter().flat_map(|report| &report.files) {
+            for (label, stats) in file.labels.iter().zip(&file.rules) {
+                if let Some(generator) = self.generator_mut(*label) {
+                    generator.bridge_rows += stats.bridges;
+                }
+            }
+        }
         for error in errors {
             self.record_error(render_chain(&error));
         }
@@ -399,10 +471,10 @@ impl FileState {
         }
         for (index, matched) in &load.matched {
             if let Some(generator) = self.generator_mut(*index) {
-                match &mut generator.matched {
-                    Some(existing) => existing.merge(matched, SAMPLE_CAP),
-                    slot @ None => *slot = Some(matched.clone()),
-                }
+                generator
+                    .matched
+                    .get_or_insert_with(MatchedFunctions::default)
+                    .merge(matched, SAMPLE_CAP);
             }
         }
         for (index, stats) in &load.propagation_stats {
@@ -426,10 +498,12 @@ impl FileState {
             });
         }
         for generator in self.generators {
-            // Re-keyed by file here, and only here: `ModelLoadReport` is keyed by (generator
-            // index, direction) alone, which would conflate two model files that number their
-            // generators the same.
-            for (direction, stats) in &generator.endpoint_stats {
+            // Re-keyed by file (see [`models::ModelLoadReport::endpoint_stats`], built by
+            // [`models::portcullis_endpoint_stats`]). A generator no import's scope admits has
+            // none: the rules migrated from it ran and matched nothing, which is not the same
+            // thing as never being attempted, and `CTADL0009` says which it was.
+            let attempted = generator.applicable || !matched_against_a_program;
+            for (direction, stats) in generator.endpoint_stats.iter().filter(|_| attempted) {
                 outcome
                     .endpoint_stats
                     .entry((self.path.clone(), generator.index, *direction))
@@ -443,6 +517,7 @@ impl FileState {
                 || generator.declares_propagation
                 || generator.declares_access_paths
                 || generator.declares_modes
+                || generator.declares_dispatch
                 || generator.has_bridge;
             // Reported only for a generator that declares a model: a scoped-out generator
             // declaring nothing is nothing to act on.
@@ -465,16 +540,25 @@ impl FileState {
                     kind: "propagation".to_string(),
                 });
             }
+            // A bridge that paired nothing, over every import: its two sides may live in two
+            // of them, so this is only a verdict about the imports checked. Which side failed
+            // is not known here; the rule's dead-rule warning at index time says the same.
+            if generator.has_bridge && generator.bridge_rows == 0 {
+                outcome.check.bridges.push(BridgeDiagnosis {
+                    file: self.path.clone(),
+                    index: generator.index,
+                    message: "the bridge matched no pair of functions in the checked import(s)"
+                        .to_string(),
+                });
+            }
             // A `modes` directive that matched no function. Reported off the match set rather
             // than an emitted-row count, because the directive emits no rows at all: what it
-            // does is take rows *away*. `MatchedFunctions::All` has no count and is never dead.
-            if generator.declares_modes
-                && generator.matched.as_ref().and_then(MatchedFunctions::total) == Some(0)
-            {
+            // does is take rows *away*.
+            if generator.declares_modes && generator.matched.as_ref().map(|m| m.total) == Some(0) {
                 outcome.check.index_time_dead.push(IndexTimeDead {
                     file: self.path.clone(),
                     index: generator.index,
-                    kind: "modes directive".to_string(),
+                    kind: "mode head".to_string(),
                 });
             }
             // What the `where` selected, for the generators that selected something. A zero is
@@ -483,15 +567,15 @@ impl FileState {
             let Some(matched) = &generator.matched else {
                 continue;
             };
-            if !declares_a_model || matched.total() == Some(0) {
+            if !declares_a_model || matched.total == 0 {
                 continue;
             }
             outcome.check.matched.push(GeneratorMatch {
                 file: self.path.clone(),
                 index: generator.index,
                 find: generator.find.clone(),
-                total: matched.total(),
-                sample: matched.names().iter().cloned().collect(),
+                total: matched.total,
+                sample: matched.names.iter().cloned().collect(),
             });
         }
     }
@@ -515,7 +599,7 @@ fn render_chain(error: &dyn std::error::Error) -> String {
     let mut source = error.source();
     while let Some(cause) = source {
         let next = cause.to_string();
-        // A delegating `Display` (as `ModelCheckError` has) would otherwise repeat itself.
+        // A delegating `Display` would otherwise repeat itself.
         if !text.ends_with(&next) {
             text.push_str(": ");
             text.push_str(&next);
@@ -526,6 +610,27 @@ fn render_chain(error: &dyn std::error::Error) -> String {
 }
 
 /// How to spell an `in` clause on one line.
+///
+/// A JSON `in` clause as the attribute tests its migration makes of it: `language = "dex"`,
+/// `language in {"dex", "jvm"}`, `import = "app"`. A shape that is not one of those is shown
+/// as written; its migration fails and says so.
 fn render_scope(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+    let quote = |v: &serde_json::Value| match v.as_str() {
+        Some(s) => format!("{s:?}"),
+        None => v.to_string(),
+    };
+    let Some(clause) = value.as_object() else {
+        return value.to_string();
+    };
+    let tests: Vec<String> = clause
+        .iter()
+        .map(|(key, v)| match (key.as_str(), v.as_array()) {
+            ("languages", Some(items)) => format!(
+                "language in {{{}}}",
+                items.iter().map(quote).collect::<Vec<_>>().join(", ")
+            ),
+            (key, _) => format!("{key} = {}", quote(v)),
+        })
+        .collect();
+    tests.join(", ")
 }

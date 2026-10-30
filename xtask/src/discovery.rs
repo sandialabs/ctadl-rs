@@ -1,9 +1,11 @@
 //! Test-case discovery.
 //!
-//! A regression case is a source file paired with a JSON file that holds its
-//! known answer (`expected_lines`) and the ctadl query model. We discover cases
-//! by pairing each source with its config rather than hard-coding a list, so
-//! adding a `.java` + matching `.json` is enough to register a new test.
+//! A regression case is a source file paired with a JSON config that holds its
+//! known answer (`expected_lines` and the like) and, beside the config, a
+//! Portcullis model file (the config's name with a `.ctadl` extension) that is
+//! the ctadl query. We discover cases by pairing each source with its config
+//! rather than hard-coding a list, so adding a `.java` + matching `.json` +
+//! `.ctadl` is enough to register a new test.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -19,17 +21,37 @@ pub struct TestCase {
 
 pub enum Kind {
     /// Java compiled to DEX, mapped back to source lines via a dex linemap.
-    Dex { java: PathBuf, config: PathBuf },
+    Dex {
+        java: PathBuf,
+        config: PathBuf,
+        models: PathBuf,
+    },
     /// Java compiled to a JAR, mapped back to source lines via a jvm linemap.
-    Jvm { java: PathBuf, config: PathBuf },
+    Jvm {
+        java: PathBuf,
+        config: PathBuf,
+        models: PathBuf,
+    },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
-    Pcode { source: PathBuf, query: PathBuf },
+    Pcode {
+        source: PathBuf,
+        query: PathBuf,
+        models: PathBuf,
+    },
     /// C parsed directly by the tree-sitter frontend, with source lines read
     /// straight off the SARIF regions (no compiler, no Ghidra).
-    C { source: PathBuf, query: PathBuf },
+    C {
+        source: PathBuf,
+        query: PathBuf,
+        models: PathBuf,
+    },
     /// Lua source imported directly; SARIF regions carry source lines, so no
     /// linemap or compilation step is needed.
-    Lua { source: PathBuf, query: PathBuf },
+    Lua {
+        source: PathBuf,
+        query: PathBuf,
+        models: PathBuf,
+    },
     /// Java `native` methods plus the shared library implementing them,
     /// co-indexed as two imports of one project so the JNI bridge has both
     /// halves to join. The only two-import case kind.
@@ -37,6 +59,7 @@ pub enum Kind {
         java: PathBuf,
         native: PathBuf,
         config: PathBuf,
+        models: PathBuf,
         /// A declarative bridging model to use *instead of* the built-in JNI pass. When set,
         /// the case indexes with `--no-jni-bridge -m <this>`, so it asserts exactly what the
         /// built-in case asserts and the two are a direct A/B.
@@ -55,8 +78,13 @@ pub enum Kind {
     AndroidIcc { spec: PathBuf },
     /// C# compiled with `dotnet build` and imported through the CIL frontend; see
     /// `crate::cil::cases`. `source` is a `.cs` file, or a directory of them that are
-    /// separate assemblies.
-    Cil { source: PathBuf, config: PathBuf },
+    /// separate assemblies. The query model is generated from the config; `models` is an
+    /// optional `<name>-query.ctadl` beside it, loaded in addition.
+    Cil {
+        source: PathBuf,
+        config: PathBuf,
+        models: Option<PathBuf>,
+    },
 }
 
 /// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
@@ -204,7 +232,7 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
 }
 
 /// Pair each `foo.cs`, or each `foo/` directory of C# sources (one assembly per file), with
-/// its `foo-query.json5`. Cases report as `Cil:foo`.
+/// its `foo-query.json5` and, if there is one, `foo-query.ctadl`. Cases report as `Cil:foo`.
 fn discover_cil(dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !dir.is_dir() {
@@ -219,11 +247,13 @@ fn discover_cil(dir: &Path) -> Result<Vec<TestCase>> {
         if !config.is_file() {
             continue;
         }
+        let models = config.with_extension("ctadl");
         cases.push(TestCase {
             name: format!("Cil:{stem}"),
             kind: Kind::Cil {
                 source: absolute(&entry)?,
                 config: absolute(&config)?,
+                models: models.is_file().then(|| absolute(&models)).transpose()?,
             },
         });
     }
@@ -250,8 +280,9 @@ fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
-/// Pair each `Foo.java` with its kebab-cased `foo.json`. A `.java` without a
-/// matching config (e.g. `MultiImplFlow.java`) is skipped.
+/// Pair each `Foo.java` with its kebab-cased `foo.json` (or `foo.json5`) and that
+/// config's [`case_models`]. A `.java` without a matching config (e.g.
+/// `MultiImplFlow.java`) is skipped.
 fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !java_dir.is_dir() {
@@ -269,25 +300,32 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
         let config = if json5.is_file() { json5 } else { json };
         if config.is_file() {
             let java = absolute(&entry)?;
+            let models = case_models(&config)?;
             let config = absolute(&config)?;
             cases.push(TestCase {
                 name: stem.clone(),
                 kind: Kind::Dex {
                     java: java.clone(),
                     config: config.clone(),
+                    models: models.clone(),
                 },
             });
             cases.push(TestCase {
                 name: format!("Jvm:{stem}"),
-                kind: Kind::Jvm { java, config },
+                kind: Kind::Jvm {
+                    java,
+                    config,
+                    models,
+                },
             });
         }
     }
     Ok(cases)
 }
 
-/// Pair each `foo.c` with a query JSON, then register it against *both* C
-/// frontends. We prefer `foo-query.json`, falling back to a shared `query.json`.
+/// Pair each `foo.c` with a query JSON and its [`case_models`], then register it
+/// against *both* C frontends. We prefer `foo-query.json`, falling back to a
+/// shared `query.json` (whose model is the shared `query.ctadl`).
 ///
 /// The same source drives the `Pcode` frontend (compiled through Ghidra) and the
 /// tree-sitter `C` frontend, mirroring how a single `.java` yields both a `Dex`
@@ -315,27 +353,33 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
             continue;
         };
         let source = absolute(&entry)?;
+        let models = case_models(&query)?;
         let query = absolute(&query)?;
         cases.push(TestCase {
             name: stem.clone(),
             kind: Kind::Pcode {
                 source: source.clone(),
                 query: query.clone(),
+                models: models.clone(),
             },
         });
         cases.push(TestCase {
             name: format!("C:{stem}"),
-            kind: Kind::C { source, query },
+            kind: Kind::C {
+                source,
+                query,
+                models,
+            },
         });
     }
     Ok(cases)
 }
 
 /// Pair each `foo.lua` -- or each `foo/` directory of Lua sources, imported whole
-/// as one `require` root -- with its `foo-query.json` config. A source without a
-/// matching query is skipped, mirroring the pcode discovery. The name is prefixed
-/// with `Lua:` so the reports (and `--filter`) distinguish it from other
-/// frontends' cases.
+/// as one `require` root -- with its `foo-query.json` config and that config's
+/// [`case_models`]. A source without a matching query is skipped, mirroring the
+/// pcode discovery. The name is prefixed with `Lua:` so the reports (and
+/// `--filter`) distinguish it from other frontends' cases.
 fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !lua_dir.is_dir() {
@@ -354,6 +398,7 @@ fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
             name: format!("Lua:{stem}"),
             kind: Kind::Lua {
                 source: absolute(&entry)?,
+                models: case_models(&query)?,
                 query: absolute(&query)?,
             },
         });
@@ -362,7 +407,8 @@ fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
 }
 
 /// Pair each `Foo.java` with its sibling `Foo.c` -- the shared library implementing
-/// its `native` methods -- and its kebab-cased `foo.json`. All three must be present:
+/// its `native` methods -- and its kebab-cased `foo.json` (with its [`case_models`]).
+/// All three must be present:
 /// a case here is by construction about the boundary between the two artifacts, so a
 /// `.java` with no `.c` (or no config) is not a degenerate JNI case, it is not one at
 /// all. Cases report as `Jni:Foo`.
@@ -389,6 +435,7 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
             continue;
         }
         let abi = crate::assertions::read_native_abi(&config)?;
+        let models = case_models(&config)?;
         let (java, native, config) = (absolute(&entry)?, absolute(&native)?, absolute(&config)?);
         let mut push = |suffix: &str, packaging, bridge, untyped| {
             cases.push(TestCase {
@@ -397,6 +444,7 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                     java: java.clone(),
                     native: native.clone(),
                     config: config.clone(),
+                    models: models.clone(),
                     bridge,
                     packaging,
                     abi: abi.clone(),
@@ -408,7 +456,7 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
         push("+apk", Packaging::SingleApk, None, false);
         push("+split-apks", Packaging::SplitApks, None, false);
         push("+summary", Packaging::SummaryApk, None, false);
-        let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
+        let bridge = jni_dir.join(format!("{kebab}.bridge.ctadl"));
         if bridge.is_file() {
             push(
                 "+bridge",
@@ -426,6 +474,22 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
         }
     }
     Ok(cases)
+}
+
+/// The Portcullis model file a case config is queried with: the config's sibling with its
+/// extension replaced by `.ctadl` (`foo.json5` -> `foo.ctadl`, `foo-query.json` ->
+/// `foo-query.ctadl`). A config without one is an error rather than a skipped case, since
+/// the case could only be run without its query.
+fn case_models(config: &Path) -> Result<PathBuf> {
+    let models = config.with_extension("ctadl");
+    if !models.is_file() {
+        bail!(
+            "{} has no model file: expected {}",
+            config.display(),
+            models.display()
+        );
+    }
+    absolute(&models)
 }
 
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -470,14 +534,59 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Frontend, Kind, Packaging, discover_android_icc, discover_jni, to_kebab_case};
+    use super::{
+        Frontend, Kind, Packaging, case_models, discover, discover_android_icc, discover_jni,
+        to_kebab_case,
+    };
 
-    /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
+    /// Every shipped case config has its `.ctadl` model beside it, so discovering the shipped
+    /// tree finds every case; and a config without one stops discovery rather than being
+    /// skipped, because a case run without its query would assert nothing about it.
+    #[test]
+    fn a_case_config_needs_a_sibling_model_file() {
+        let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests");
+        if tests.is_dir() {
+            let cases = discover(&tests).expect("discovering the shipped cases");
+            for case in &cases {
+                let models = match &case.kind {
+                    Kind::Dex { models, .. }
+                    | Kind::Jvm { models, .. }
+                    | Kind::Pcode { models, .. }
+                    | Kind::C { models, .. }
+                    | Kind::Lua { models, .. }
+                    | Kind::Jni { models, .. } => models,
+                    Kind::AndroidIcc { .. } | Kind::Cil { .. } => continue,
+                };
+                assert_eq!(
+                    models.extension().and_then(|e| e.to_str()),
+                    Some("ctadl"),
+                    "{}",
+                    case.name
+                );
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("xtask-case-models-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("foo-query.json5");
+        std::fs::write(&config, "{}").unwrap();
+        let err = case_models(&config).expect_err("no foo-query.ctadl yet");
+        assert!(err.to_string().contains("foo-query.ctadl"), "{err}");
+        std::fs::write(dir.join("foo-query.ctadl"), "").unwrap();
+        let models = case_models(&config).expect("foo-query.ctadl is there now");
+        assert_eq!(models.file_name().unwrap(), "foo-query.ctadl");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.ctadl`
     /// yields a second, declaratively-bridged case beside it.
     ///
     /// This is the cheap half of the A/B: the runner itself needs `javac`, `dx`, a C compiler
     /// and Ghidra, so it only runs in the nightly environment. That the pair is *discovered* --
-    /// and that the two halves make the same claims, since they share a config file -- is
+    /// and that the two halves make the same claims, since they share a config and a model -- is
     /// checkable everywhere.
     #[test]
     fn a_bridge_model_beside_a_jni_case_yields_an_ab_pair() {
@@ -526,11 +635,12 @@ mod tests {
                             java,
                             native,
                             config,
+                            models,
                             bridge,
                             packaging,
                             ..
                         } => (
-                            (java.clone(), native.clone(), config.clone()),
+                            (java.clone(), native.clone(), config.clone(), models.clone()),
                             bridge.clone(),
                             *packaging,
                         ),
@@ -565,7 +675,7 @@ mod tests {
         }
     }
 
-    /// A case with no `.bridge.jsonl` gets the four built-in variants and no A/B one. That is
+    /// A case with no `.bridge.ctadl` gets the four built-in variants and no A/B one. That is
     /// how `JniRegister` ships: its boundary is joined by a `RegisterNatives` table recovered
     /// from the library, and a hand-written bridge model would be testing something else.
     #[test]

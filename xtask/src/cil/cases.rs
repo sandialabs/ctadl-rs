@@ -1,12 +1,12 @@
 //! The CIL taint cases: `nightly/tests/cil/<name>.cs`, or a directory `<name>/` of `.cs` files
-//! that are separate assemblies, each paired with `<name>-query.json5`.
+//! that are separate assemblies, each paired with `<name>-query.json5`, its config.
 //!
 //! A case is compiled with `dotnet build` (Release, like the exec fixtures, with a portable PDB
 //! beside each assembly), imported with `ctadl import -l cil` (the output directory, for a
 //! multi-assembly case), indexed and queried. The query model is generated from the config:
 //! `Source()` and `SourceInt()` return a source, and each function the config names among
-//! `expected_sinks` and `unexpected_sinks` sinks its argument 0. A config may give its own
-//! `model_generators` too, which are added.
+//! `expected_sinks` and `unexpected_sinks` sinks its argument 0. A case may add rules of its own
+//! in a Portcullis file beside the config, `<name>-query.ctadl`, which the query loads too.
 //!
 //! A case is judged twice. By the sinks its code flows end in: every simple name in
 //! `expected_sinks` must be the sink of a code flow that starts at a source, and no name in
@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
+use ctadl_ascent::models::portcullis::migrate::quote;
+use serde_json::Value;
 
 use crate::exec;
 use crate::regression::Outcome;
@@ -34,7 +35,6 @@ pub struct Config {
     pub unexpected_sinks: Vec<String>,
     pub expected_lines: Vec<i64>,
     pub unexpected_lines: Vec<i64>,
-    pub extra_models: Vec<Value>,
 }
 
 pub fn read_config(path: &Path) -> Result<Config> {
@@ -57,35 +57,29 @@ pub fn read_config(path: &Path) -> Result<Config> {
         unexpected_sinks: names("unexpected_sinks"),
         expected_lines: crate::assertions::read_expected_lines(path)?,
         unexpected_lines: crate::assertions::read_unexpected_lines(path)?,
-        extra_models: value
-            .get("model_generators")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default(),
     })
 }
 
-/// The query model for a case.
-pub fn query_model(config: &Config) -> Value {
-    let sinks: Vec<&String> = config
+/// The query model for a case, in Portcullis.
+pub fn query_model(config: &Config) -> String {
+    let mut model = String::from(
+        "source(F::return, kind = \"UserInput\") :-\n  fun(F, name in {\"Source\", \"SourceInt\"});\n",
+    );
+    let sinks: Vec<String> = config
         .expected_sinks
         .iter()
         .chain(&config.unexpected_sinks)
+        .map(|name| quote(name))
         .collect();
-    let mut generators = vec![
-        json!({
-            "find": "methods",
-            "where": [{"constraint": "signature_match", "names": ["Source", "SourceInt"]}],
-            "model": {"sources": [{"kind": "UserInput", "port": "Return"}]}
-        }),
-        json!({
-            "find": "methods",
-            "where": [{"constraint": "signature_match", "names": sinks}],
-            "model": {"sinks": [{"kind": "Output", "port": "Argument(0)"}]}
-        }),
-    ];
-    generators.extend(config.extra_models.iter().cloned());
-    json!({ "model_generators": generators })
+    // With no sinks to name there is no sink rule: `name in {}` would be a rule that can never
+    // match, which the model check warns about.
+    if !sinks.is_empty() {
+        model.push_str(&format!(
+            "\nsink(F::arg(0), kind = \"Output\") :-\n  fun(F, name in {{{}}});\n",
+            sinks.join(", ")
+        ));
+    }
+    model
 }
 
 /// The `dotnet` to build with, if there is one.
@@ -228,4 +222,41 @@ pub fn check(config: &Config, sarif: &Path) -> Result<Outcome> {
 fn simple_name(fid: &str) -> String {
     let after = fid.rsplit_once("::").map(|(_, m)| m).unwrap_or(fid);
     after.split('(').next().unwrap_or(after).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use ctadl_ascent::models::portcullis::parse::parse_program;
+
+    use super::{Config, query_model};
+
+    fn config(expected: &[&str], unexpected: &[&str]) -> Config {
+        Config {
+            expected_sinks: expected.iter().map(|s| s.to_string()).collect(),
+            unexpected_sinks: unexpected.iter().map(|s| s.to_string()).collect(),
+            expected_lines: Vec::new(),
+            unexpected_lines: Vec::new(),
+        }
+    }
+
+    /// The generated model is what `ctadl migrate-models --language cil` writes for the JSON
+    /// generators it replaced, and it parses.
+    #[test]
+    fn the_query_model_is_portcullis() {
+        let model = query_model(&config(&["Sink1", "Sink2"], &["Clean1"]));
+        assert_eq!(
+            model,
+            "source(F::return, kind = \"UserInput\") :-\n  \
+             fun(F, name in {\"Source\", \"SourceInt\"});\n\
+             \n\
+             sink(F::arg(0), kind = \"Output\") :-\n  \
+             fun(F, name in {\"Sink1\", \"Sink2\", \"Clean1\"});\n"
+        );
+        let program = parse_program(&model).expect("the query model parses");
+        assert_eq!(program.rules.len(), 2);
+
+        let sinkless = query_model(&config(&[], &[]));
+        let program = parse_program(&sinkless).expect("the query model parses");
+        assert_eq!(program.rules.len(), 1, "no sinks named, so no sink rule");
+    }
 }
