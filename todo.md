@@ -3,17 +3,17 @@
 Open items left after the function-name work on this branch (see "Function names and the VMT" in
 `DESIGN.md`).
 
-## Shared dispatch relations
+## Shared dispatch relations - DONE
 
 `Dispatch::Java`, `Dispatch::Cil` and `Dispatch::Lua` each carry their own `methods`,
-`hierarchy`, `interfaces` and `abstract_methods`, and `ClassHierarchyAnalysis::build`
-(`ctadl-ascent/src/codegen/mod.rs`) feeds all three to `run_cha` in the same four-column shape.
-The plan was to move these into shared fields and keep only what one language has (Java
-`natives`, CIL `pinvokes`, the CHA flavour) per language.
+`hierarchy` and (Java, CIL) `interfaces` and `abstract_methods`. Readers now go through
+`Dispatch::implemented`, `hierarchy_edges` and `interface_types`, which erase the newtypes, so
+`ClassHierarchyAnalysis::build` is one body for all three. The variants and the frontends that
+write them are unchanged.
 
-Not done: it touches about 70 sites and would give up the `JavaClass` / `CilClass` / … newtype
-distinction. It also does nothing for naming, since the core already has no alias concept now
-that CIL writes bridges. Decide whether it is worth a branch of its own.
+Moving the columns into shared fields was not done: it touches about 70 sites and gives up the
+`JavaClass` / `CilClass` / … newtypes, for no reader that the accessors do not already serve.
+`Display` and `type_facts` still match per language, on purpose.
 
 ## jvm and dex disagree on abstract methods in CHA
 
