@@ -388,8 +388,9 @@ gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
 **The fix.** The native defaults skip the bodies of `memcpy`, `memset`, their `_chk` variants
 and the `.pic.` stub names (a MIPS non-PIC-to-PIC stub that falls through into its target, so
 Ghidra gives it the whole body), at priority -100. `memcpy` keeps its existing model,
-`.pic.memcpy` gets the same one, and `memset` gets `return.deref <- arg(0).deref`. The rest of the
-copy family is still analyzed: it was not measured. Matching is by name. The 13 stripped
+`.pic.memcpy` gets the same one, and `memset` gets `return.deref <- arg(0).deref`. `bcopy` is
+skipped too, with its model fixed (`9d384065`). The rest of the copy family is still analyzed: it
+was not measured. Matching is by name. The 13 stripped
 binaries were already at or under 1.11x.
 
 - **Measured** on the commit against its parent (`0043b7e1`), on the 15 named-allocator sweep

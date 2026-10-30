@@ -741,8 +741,8 @@ fn the_native_portcullis_defaults_skip_the_unwinders() {
     );
 }
 
-/// `memcpy` and `memset` are skipped, under their MIPS `.pic.` stub names too, and each keeps a
-/// model. The rest of the copy family is analyzed.
+/// `memcpy` and `memset` are skipped, under their MIPS `.pic.` stub names too, and so is `bcopy`;
+/// each keeps a model. The rest of the copy family is analyzed.
 #[test]
 fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
     use ctadl_ascent::models::portcullis;
@@ -782,7 +782,7 @@ fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
         .iter()
         .map(|s| s.to_string())
         .collect::<BTreeSet<_>>();
-    let expected = [".pic.memcpy", ".pic.memset", "memcpy", "memset"]
+    let expected = [".pic.memcpy", ".pic.memset", "bcopy", "memcpy", "memset"]
         .map(String::from)
         .into_iter()
         .collect::<BTreeSet<_>>();

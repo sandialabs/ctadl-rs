@@ -77,16 +77,17 @@ propagation(F::return.deref <- F::arg(0).deref) :-
 // operand of that arithmetic, so the stored word carries the address and the summary gets
 // `arg(0).deref <- arg(0)`. Through stdio's buffer arithmetic that becomes a complete bipartite
 // self-link of every string, copied at every call site (about 10x the index on uClibc
-// firmware). The models above are what the bodies should contribute.
+// firmware). The models above are what the bodies should contribute. `bcopy` is skipped with
+// them: its model is the whole copy, as theirs are.
 //
 // A MIPS non-PIC-to-PIC call goes through a `.pic.<name>` stub that the linker places right
 // before its target and that falls through into it, so Ghidra gives the stub the whole body
 // under that name.
 skip_analysis(F, priority = -100) :-
-  fun(F, name in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset"});
+  fun(F, name in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset", "bcopy"});
 skip_analysis(F, priority = -100) :-
   fun(F),
-  F in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset"};
+  F in {"memcpy", "memcpy_chk", ".pic.memcpy", "memset", "memset_chk", ".pic.memset", "bcopy"};
 
 // `strlcpy(dst, src, siz)` / `strlcat(dst, src, siz)`: only `src` is a pointer. The BSD
 // signature has no `return` buffer either -- it returns the length it tried to create.
