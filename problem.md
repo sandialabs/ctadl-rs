@@ -213,24 +213,49 @@ its O(offsets²)-per-argument-pair summary makes every caller mix them too.
 **Binaries:** D-Link DCS-6818 `evLua` (22x) and `ipsWeb` (22x). They call the external `realloc`,
 so cause 1 is not involved.
 
-- **Measured.** Skipping `reallymarkobject` (or `atomic`, `singlestep` or `luaC_step`, its only
-  route in) takes `evLua` from 3.36 GiB to 0.16 GiB (1.09x) and `ipsWeb` from 4.74 GiB to
-  0.19 GiB (0.93x). It removes 97.5% of the rows, and nothing is left.
-- **The summary.** `reallymarkobject(g, o)` has an 11-row summary: `g->gray = o`,
-  `o->gclist = g->gray`.
-  1. **The self-link.** The heap is flow-insensitive, so this gives `o.gclist <- o`.
-  2. **All four offsets.** The switch on `o->tt` is not seen, so `gclist` is at all four types'
-     offsets (8, 24, 68, 100).
-  3. **The running thread points at itself.** `atomic` marks the running thread
-     (`reallymarkobject(g, L)`). Offset 8 of a `lua_State` is `L->top`, so the Lua stack pointer
-     appears to point at the `lua_State`.
-  4. **Every field reaches every stack slot.** Through Lua's 73-function call-graph SCC, 343
-     functions (every API function that takes `L`) carry the same block of about 5,800 rows,
-     `L.<24 paths> <- L.<365 paths>`, 67% dense, instantiated at each call site.
-- **Evidence.** Steps 1-4 are read from the summaries. Which of the first two matters more is not
-  settled: a propagation model of the 11 rows does not behave like the derived summary.
-- **Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here
-  (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
+**Mechanism.** `reallymarkobject(g, o)` has an 11-row summary: `g->gray = o`,
+`o->gclist = g->gray`.
+
+- **It needs the self-link and the type pun together.** The heap is flow-insensitive, so the two
+  stores give `o.gclist <- o`. The switch on `o->tt` is not seen, so `gclist` lands at all four
+  types' offsets (8, 24, 68, 100).
+- **`atomic` marks the running thread** (`reallymarkobject(g, L)`), so `L`'s own fields at those
+  offsets point back at `L`.
+- **That matters only at a field Lua reads a lot:** offset 8 (`L->top`, 376 uses) or 24
+  (`L->savedpc`, 80 uses). Through Lua's 73-function call-graph SCC, 343 functions then carry the
+  same block of about 5,800 rows, `L.<24 paths> <- L.<365 paths>`, instantiated at each call site.
+
+**Measured** with an env-gated IR patch that turns chosen stores or calls into no-ops at load
+(`CTADL_EXP_NOP`, `/Volumes/Shampoo/nb-work/r-lua/out/r-lua.patch`, not committed):
+
+| Dropped | `evLua` | `ipsWeb` |
+|---|---|---|
+| nothing | 3.12 GiB, 21x | 4.57 GiB, 22x |
+| the four `g->gray = o` stores, or the four `o->gclist = g->gray` | 0.16-0.17 GiB, 1.1-1.2x | 0.19 GiB, 0.93x |
+| `atomic`'s call `reallymarkobject(g, L)` | 0.17 GiB | 0.19 GiB |
+| the `gclist` store at offset 8 only | no change | |
+| all but offset 8, or all but 24 | full blowup | full blowup |
+| all but offset 68, or all but 100 (a thread's real `gclist`) | 0.17 GiB | 0.19 GiB |
+| other calls to it (`luaC_barrierf`, `marktmu`, the recursive ones) | no change | |
+
+**What fixes it.** Skipping `reallymarkobject` with no propagation, or dropping `atomic`'s call,
+is sound for taint: `gclist` and `gray` only link GC objects, and only the GC reads them. It is
+not sound as a heap model. A type-correct model (offset 100 only) costs 0.42 GiB (2.9x), because
+of the model-path widening described under "Two model-loader issues". A generic rule against
+self-links would be unsound for real self-referencing lists.
+
+**Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
+
+**Two model-loader issues it exposed** (they affect any model, not just Lua's):
+1. **The loader drops every same-formal row.** `codegen_propagations`
+   (`ctadl-ascent/src/codegen/model_matches.rs:183`) skips every row whose input and output are
+   the same formal (`if dst_index == src_index { continue; }`), whatever the paths. That silently
+   dropped 5 of the 11 rows. It should drop a row only when the paths are equal too.
+2. **A model's paths enlarge the path set of the whole program.** `compute_paths` joins every
+   model path with every program path. With `reallymarkobject` skipped, putting its 6 kept rows on
+   `hashnum`, a function that is never called, still takes `evLua` from 0.17 to 2.95 GiB
+   (admissible paths 1,569 to 7,857). A single `.[8].deref` row gives 0.88 GiB. Other benchmarks
+   were not checked.
 
 ### 6. A self-recursive function feeds its summary back into its own body
 
@@ -481,7 +506,10 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): measured 1.2-2x. Findings not checked.
 - **Instantiate a pure forwarding thunk's callee summary as its own summary** (cause 12), instead
   of closing it over the thunk's formals. Or make the wild join skip self-loop edges.
-- **Model Lua's `reallymarkobject`** (cause 5), or see the `o->tt` switch.
+- **Skip Lua's `reallymarkobject`** with no propagation (cause 5): measured 21-22x to about 1x,
+  and sound for taint.
+- **Fix the model loader:** keep same-formal rows whose paths differ, and stop model paths from
+  widening the program's path set (cause 5's two loader issues).
 - **Use the models of `memcpy`, `memset`, `memmove` and `str*` instead of their bodies** (cause 11).
   The firmware model already declares `memcpy`'s propagation.
 
