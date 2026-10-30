@@ -2,7 +2,7 @@
 ; an ordinary name (a body atom `source(...)`, an attribute `return = 1`), and those should not
 ; light up.
 (out_rel) @keyword
-(port_base ["return" "arg" "param"] @keyword)
+(port_base ["return" "arg" "param" "local"] @keyword)
 (attr_op "in" @keyword)
 
 (rel_atom name: (name) @function)

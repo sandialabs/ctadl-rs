@@ -35,7 +35,7 @@ const OUT_RELS = [
 ];
 
 // Every keyword that is also an `lname` in peg.
-const NAME_KEYWORDS = [...OUT_RELS, 'return', 'arg', 'param', 'true', 'false', 'in', '_'];
+const NAME_KEYWORDS = [...OUT_RELS, 'return', 'arg', 'param', 'local', 'true', 'false', 'in', '_'];
 
 /** `rule ++ ","` */
 const commaSep1 = (rule) => seq(rule, repeat(seq(',', rule)));
@@ -100,6 +100,7 @@ module.exports = grammar({
     port_base: $ => choice(
       'return',
       seq(choice('arg', 'param'), '(', $._arg_sel, ')'),
+      seq('local', '(', $.var, ')'),
     ),
 
     _arg_sel: $ => choice($.int, $.wildcard, $.var),
