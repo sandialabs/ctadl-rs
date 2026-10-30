@@ -40,6 +40,8 @@ link uClibc's `malloc` (dlmalloc).
 | R7000 `bdupdater` | 13.08 GiB, 30x | 0.49 GiB, 1.14x | |
 | DSP-W115 `file` | 7.27 GiB, 20x | | 0.41 GB, 1.04x |
 | MBM621 `chat` | 0.93 GiB, 8.5x | | 0.07 GB, under |
+| LG6100D `upnpd` | 21.81 GiB, 39x | 1.31 GB, 2.17x | 0.47 GB, 0.79x (`malloc` + `realloc`) |
+| DCS-6045L `alphapd` | 6.68 GiB, 15x | 1.33 GB, 2.76x | 0.33 GB, 0.68x (`malloc` + `realloc`) |
 | MVBR1210C `sdkmips` | 4.28 GiB, 16x | 0.21 GiB, 0.8x | |
 
 - **The other members:** `malloc` skipped alone cuts each of them 5-30x:
@@ -87,6 +89,21 @@ link uClibc's `malloc` (dlmalloc).
   - **Inside the manager, cause 8 multiplies it.** 18 globals are reloaded and re-stored at about
     112 sites, and the identity temps hold 26% of its 1.06 M rows.
   - **`testI2C` is the same build,** with per-function counts identical to the row.
+- **The `upnpd` and `alphapd` residuals were `realloc` too.**
+  - **The named hubs are real cause-3 functions,** but they don't set the peak:
+    - `upnpd`'s `FUN_0042b28c` is uClibc's `regex_compile`.
+    - `alphapd`'s `FUN_00450b80` is MatrixSSL's `matrixSslDecode`.
+  - **What sets the peak is `realloc`'s block copied into every caller.** It lands in
+    `edge_split`, `assign_like` and the context relations, not in `locals`.
+    - Skipping `upnpd`'s hub removes 5.4 M `locals` rows but only 0.10 GB of 1.31 GB.
+    - With `realloc` skipped, `alphapd`'s hub still holds 86% of `locals` at 0.68x.
+  - **`alphapd`'s `realloc` (`FUN_00443390`) is a full second dlmalloc copy:** 7,990 instructions
+    and 2,583 `$globals` stores. 90% of its 1.22 M `summary` rows go to `$globals`.
+  - **`upnpd`'s `realloc` is a wrapper** around `malloc`, `free` and `memcpy`. It still carries a
+    `$globals` block, plus `memcpy`'s 98 offsets (a source pointer stepped by 32).
+  - **In `regex_compile`, those rows are 71% of the hub.** Each of its 30 buffer regrowths moves
+    every write pointer onto the new buffer through merged arithmetic.
+  - **Skipping `alphapd`'s hub seemed to help** only because its summary carried `realloc`'s block.
 - **Not measured:** findings on the skipped indexes. Taint through the allocator's free lists is
   spurious anyway: `malloc`'s return should carry nothing from its size.
 
@@ -377,8 +394,6 @@ What is left after the causes above are removed:
 | Binary | What is left |
 |---|---|
 | `hnapserver-combo` | 1.17x with the whole allocator skipped, 0.78x with `none` too. What is left is real context sensitivity, not cause 2: 73% of `context_locals` is under gSOAP callback decisions on `struct soap` function pointers (`http_post_header`, `http_parse`), and only 11% duplicates `locals`. Mild; not pursued. |
-| `upnpd` | `FUN_0042b28c` (16.5 K instructions) holds 62.5% of `locals` (2.2x with `malloc` skipped) |
-| `alphapd` | `FUN_00450b80` (1.7x with both skipped) |
 | `a2050` | nlohmann::json's `__emplace_back_slow_path` holds 7.2 M `ext_fml`, and the wild `locals <-- ext_fml` rule is 22.6% of rule time: the one place P6's mechanism shows |
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
