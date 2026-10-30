@@ -26,7 +26,8 @@ bipartite block, and every caller inherits it through summary composition. So:
 ## Independent causes
 
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
-the rest are one library each. Cause 1 is fixed (`3801214b`).
+the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed where the
+allocator keeps its name (`8e5c4179`); stripped allocators remain.
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 is still needed in 4. Cause 4 only multiplies cause 2,
@@ -140,7 +141,7 @@ keys each such varnode on the ram address of its high variable's ram member.
   - **Patch:** `/Volumes/Shampoo/nb-work/r-dsp/out/r-dsp.patch` (r-glob's patch plus an env-gated
     list of varnodes to treat as locals).
 
-### 2. A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
+### 2. PARTLY FIXED (named allocators): A statically linked uClibc allocator writes `$globals` from `malloc`'s size, and every caller inherits it
 
 **Binaries:** 25 of the 34 sweep binaries over 1.5x, including both that ran out of memory. All
 link uClibc's `malloc` (dlmalloc). With cause 1 fixed it is still the largest cause in 21 of them,
@@ -219,8 +220,46 @@ measured before the fix, so its "Default" column includes cause 1.
   - **In `regex_compile`, those rows are 71% of the hub.** Each of its 30 buffer regrowths moves
     every write pointer onto the new buffer through merged arithmetic.
   - **Skipping `alphapd`'s hub seemed to help** only because its summary carried `realloc`'s block.
-- **Not measured:** findings on the skipped indexes. Taint through the allocator's free lists is
-  spurious anyway: `malloc`'s return should carry nothing from its size.
+- **Taint through the allocator's free lists is spurious:** `malloc`'s return should carry
+  nothing from its size.
+
+**The fix, for named allocators** (`8e5c4179`). The native default models
+(`ctadl-ascent/src/models/defaults/native-index.jsonl`) give `skip-analysis` to `malloc`,
+`calloc`, `free`, the aligned allocators and the uClibc/glibc internals (`malloc_consolidate`,
+`int_malloc`, `heap_alloc`, ...). `realloc` is skipped too and keeps its model,
+`Argument(0).deref -> Return.deref`, since it moves the old contents. Matching is by name, so it
+does nothing for a stripped allocator. The regression suite passes: 250 passed and the 3 expected
+failures.
+
+- **Coverage.** The 15 sweep binaries below name their allocator. 15 others strip it and are
+  unchanged: `adb`, `mxcam`, DCS `iperf`, `iperf.mips`, `upnpd`, `alphapd`, `bdupdater`,
+  `KC_PRINT`, `KC_BONJOUR`, `fsck_hfs`, `sdkmips`, both `aptestmips` and both
+  `SwiRelayAgentmips`. They need recognition by shape.
+- **Measured** on the commit against its parent: the sweep stores re-imported with
+  `CTADL_REUSE_FACTS=1`, then indexed and queried with the firmware model under a 28 GiB cap.
+  Run in `/Volumes/Shampoo/nb-work/alloc/` (`scripts/one.sh`, `scripts/sum.sh`, `scripts/cmp.py`).
+
+  | Binary | Parent | With the skip |
+  |---|---|---|
+  | DSP-W115 `hnapserver-combo` | killed at 28 GiB, 1,322 s | 0.50 GiB, 1.03x |
+  | DSP-W115 `testI2C-r-20ms` | 5.96 GiB, 23.7x | 0.09 GiB, 0.37x |
+  | DSP-W115 `GpioForCrond` | 8.21 GiB, 31.4x | 0.09 GiB, 0.36x |
+  | DCS-6818 `ipsWeb` | 4.60 GiB, 22.4x | 4.55 GiB, 22.2x (cause 5) |
+  | DCS-6818 `evLua` | 3.26 GiB, 22.1x | 3.13 GiB, 21.3x (cause 5) |
+  | DAP-2310B `wifitool` | 2.18 GiB, 12.7x | 1.00 GiB, 5.82x (cause 3) |
+  | WN3500RP `kcairplay` | 4.99 GiB, 12.1x | 3.65 GiB, 8.84x (cause 3) |
+  | DAP-2690 `captival_usockc` | 2.19 GiB, 11.1x | 0.24 GiB, 1.23x |
+  | TD-W8970 `iptables` | 3.89 GiB, 10.4x | 0.77 GiB, 2.07x (cause 3) |
+  | DSP-W115 `file` | 2.72 GiB, 7.45x | 0.24 GiB, 0.66x |
+  | MBM621 `chat` | 0.41 GiB, 3.71x | 0.06 GiB, 0.55x |
+  | DIR-868L `signalc` | 0.71 GiB, 2.33x | 0.10 GiB, 0.33x |
+  | DSN-5000 `gzip`, DSN-5000 and DSN-3200 `tar` | 0.10-0.17 GiB, 0.35-0.55x | unchanged |
+
+- **Findings are identical** on all 14 binaries whose parent finished, by rule, message (site
+  numbers masked) and logical location. Real source-to-sink paths exist in `signalc`, `file` and
+  `GpioForCrond` (4 each) and in both `tar`s (1 each). In `gzip`, `chat` and `wifitool` no sink
+  matched, so only sources and sinks were compared. In the rest, the path search found no flow,
+  before and after.
 
 ### 3. MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
 
@@ -614,8 +653,9 @@ Before any of these fixes ships:
 
 - **Findings for every skip.** The allocator, `memcpy`/`memset`, `reallymarkobject`, PCRE
   `match()`, `ntfs_attr_pwrite`, libgdx's vectorized callee, the `__sort` copies and the demangler
-  were measured for rows and peak only. The exception is `GpioForCrond`'s allocator skip, whose 44
-  findings are unchanged.
+  were measured for rows and peak only. The exception is the allocator skip on the named
+  allocators, whose findings are unchanged on 14 binaries (cause 2). A stripped allocator's skip,
+  once recognized by shape, still needs the check.
 - **The regression suite, and findings, for the other experimental patches:**
   - Lua no-ops (`CTADL_EXP_NOP`): neither has been checked.
   - memcpy shift-drop (`CTADL_EXP_NO_SHIFT_AMT`): neither has been checked.
@@ -645,9 +685,9 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
 
 ## Ideas, not tried
 
-- **Model the allocator** (cause 2): recognize `malloc`, `realloc`, `calloc` and `free` by name,
-  or by shape when stripped, and give them models (a fresh object, no flow from the size)
-  instead of their bodies. Measured upper bound: the "whole allocator skipped" column.
+- **Recognize a stripped allocator by shape** (cause 2): the named ones are skipped since
+  `8e5c4179`. Stripped binaries need `malloc` and `realloc` found by shape (`rankalloc.py`), then
+  the same skip and `realloc` model. Measured upper bound: the "whole allocator skipped" column.
 - **Make no hybrid decision on `$globals`** (cause 4): measured within 3% of `--hybrid-context none`,
   with identical findings. A plain subsumption filter is not enough (see cause 4).
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
