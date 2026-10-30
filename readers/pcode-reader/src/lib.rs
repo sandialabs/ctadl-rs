@@ -1392,17 +1392,24 @@ impl PcodeFacts {
             .find_map(|hvar| self.hvar_representative_facts.get(hvar))
     }
 
-    /// Whether `vnode` is storage for a global variable, i.e. whether it belongs to a
-    /// high variable the decompiler typed as a `HighGlobal`.
+    /// Whether `vnode` is storage for a global variable, i.e. whether it is a `ram`
+    /// varnode of a high variable the decompiler typed as a `HighGlobal`.
     ///
-    /// The varnode's address space is not a substitute for this test: call-target
-    /// varnodes also live in the `ram` space, and are distinguished by having no high
-    /// variable at all. Each function gets its own high variable for a given global, so
-    /// callers must key the global's identity on its address rather than on the hvar.
+    /// Neither test alone is enough. Call-target varnodes also live in the `ram` space,
+    /// and are distinguished by having no high variable at all. And Ghidra puts some
+    /// `unique` and `register` temps holding the global's value into its high variable;
+    /// their address is a unique-space offset or a register number, which unrelated
+    /// globals share, so they are not the global's storage. Each function gets its own
+    /// high variable for a given global, so callers must key the global's identity on
+    /// its address rather than on the hvar.
     pub fn is_global_vnode(&self, vnode: &PcodeVarnode) -> bool {
-        self.vnode_hvar_facts
+        self.vnode_facts
             .get(vnode)
-            .and_then(|hvar| self.hvar_class_facts.get(hvar))
-            .is_some_and(|class| class == "global")
+            .is_some_and(|data| data.space.as_deref() == Some("ram"))
+            && self
+                .vnode_hvar_facts
+                .get(vnode)
+                .and_then(|hvar| self.hvar_class_facts.get(hvar))
+                .is_some_and(|class| class == "global")
     }
 }
