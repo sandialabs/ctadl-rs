@@ -588,9 +588,39 @@ form; a bare name silently matched nothing.
 ## Not yet explained
 
 Nothing. With cause 7 fixed (as `local`) and the named skips, every binary is at or under 1.09x.
-The DSP-W115 anomaly the re-baseline found is cause 7's `addr` variant (see cause 7). The open
-questions are listed per cause: the regression suite on cause 7's `local` variant, findings for
-the skips and the other experiments, and the estimated collapse factors.
+The DSP-W115 anomaly the re-baseline found is cause 7's `addr` variant (see cause 7).
+
+## Still to verify
+
+Before any of these fixes ships:
+
+- **The regression suite on cause 7's `local` variant.** Only `addr` has been run (250 passed and
+  the 3 expected failures). `local` has been compared with `addr` only on findings, on 8 sweep
+  binaries and `GpioForCrond`.
+- **Findings for every skip.** The allocator, `memcpy`/`memset`, `reallymarkobject`, PCRE
+  `match()`, `ntfs_attr_pwrite`, libgdx's vectorized callee, the `__sort` copies and the demangler
+  were measured for rows and peak only. The exception is `GpioForCrond`'s allocator skip, whose 44
+  findings are unchanged.
+- **The regression suite, and findings, for the other experimental patches:**
+  - Lua no-ops (`CTADL_EXP_NOP`): neither has been checked.
+  - memcpy shift-drop (`CTADL_EXP_NO_SHIFT_AMT`): neither has been checked.
+  - a2050's write-back and thunk changes (`CTADL_EXP_NO_OFFSET_WRITEBACK`, `CTADL_EXP_THUNK`):
+    neither has been checked.
+  - Cause 2's `noglobals`: findings are identical on 15 runs, but the regression suite has not
+    been run.
+  - Cause 8's INDIRECT drop: findings are unchanged on 5 binaries, but the regression suite has not
+    been run.
+- **The offset-collapse factors** (causes 3 and 4: about 50x on `nginx`, 54x on `glxy`, 84x on
+  `a2050`'s sorts, 24x on `FUN_002a2af4`, 3x on `inflate`). They are distinct-row counts from
+  relation dumps, not engine runs.
+- **Readings not tested by experiment:**
+  - cause 4's stdio and field mechanisms;
+  - cause 6's self-recursion loop;
+  - the extra-rows explanation in cause 2's `hnapserver` note;
+  - how `realloc` reaches DSP-W115 functions that never call it, through `_cs_*` function pointers
+    (cause 7).
+- **The model-loader issues** (cause 5): whether the dropped same-formal rows and the model-path
+  widening affect other benchmarks.
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
@@ -610,9 +640,9 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
   would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
 - **Treat a global's `unique`/`register` temps as ordinary locals** (cause 7, `local`): measured
   8.8x to 0.55x on `gzip`, with every cause-7 binary under budget. Keying them on the global's ram
-  address (`addr`) does the same except on DSP-W115, where it is 6x worse than `local`. It passes the regression suite,
-  and the only findings it drops are the spurious ones through shared fake cells. Fix it first; it shifts the
-  other causes' numbers.
+  address (`addr`) does the same except on DSP-W115, where it is 6x worse than `local`. `addr`
+  passes the regression suite, and on the sweep `local` drops the same spurious findings as
+  `addr` and nothing else. Fix it first; it shifts the other causes' numbers.
 - **Bound a function's `$globals` summary** (causes 1 and 6), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 8): 0-30% of `locals` once cause 7 is
