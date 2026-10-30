@@ -3,16 +3,7 @@
 // `skip_analysis_portcullis.models.ctadl` and the `return </- src` check fails: the body's flow
 // is back.
 //
-// Same function as `model_adds_to_summary.tnt`, same propagation, one extra directive. The
-// body's `return <- src` is gone and only the model's `return <- dst` survives, so the two
-// fixtures together pin both halves of the semantics: a model alone adds, a model with
-// `skip_analysis` replaces.
-//
-// The mechanism is in codegen (`codegen::codegen_program`): a matched function's signature is
-// lowered and its blocks are not, so the body never becomes facts and there is nothing for the
-// two summary rules, `critical_summary`, or `context_locals` to fire on. Call sites are
-// unaffected: they live in the caller and instantiate `summary(tgt, ..)`, which the model
-// supplied.
+// What the directive replaces, and how, is in `skip_analysis.tnt`.
 def transfer(dst, src): 1
 where summaries [return </- src, return <- dst]
 {

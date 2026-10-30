@@ -254,8 +254,7 @@ pub struct ReportArgs {
 
     /// Load additional models from one or more model files (`.ctadl`, or the deprecated JSON
     /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section
-    /// against them, so this is how to see what a `find: "dispatch"` model would cover before
-    /// re-indexing.
+    /// against them, so this is how to see what a `dispatch` model would cover before re-indexing.
     #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
     pub models: Vec<PathBuf>,
 

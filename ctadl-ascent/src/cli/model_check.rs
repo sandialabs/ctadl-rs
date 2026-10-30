@@ -498,11 +498,10 @@ impl FileState {
             });
         }
         for generator in self.generators {
-            // Re-keyed by file here, and only here: `ModelLoadReport` is keyed by (generator
-            // index, direction) alone, which would conflate two model files that number their
-            // generators the same. A generator no import's scope admits has none: the rules
-            // migrated from it ran and matched nothing, which is not the same thing as never
-            // being attempted, and `CTADL0009` says which it was.
+            // Re-keyed by file (see [`models::ModelLoadReport::endpoint_stats`], built by
+            // [`models::portcullis_endpoint_stats`]). A generator no import's scope admits has
+            // none: the rules migrated from it ran and matched nothing, which is not the same
+            // thing as never being attempted, and `CTADL0009` says which it was.
             let attempted = generator.applicable || !matched_against_a_program;
             for (direction, stats) in generator.endpoint_stats.iter().filter(|_| attempted) {
                 outcome

@@ -912,8 +912,7 @@ pub fn query(
         // looking exactly like one whose models did nothing.
         let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
         report_portcullis(&portcullis_report);
-        // Re-keyed by file: the report is keyed by (rule label, direction) within a file, which
-        // would conflate two model files that happen to number their rules the same.
+        // Re-keyed by file (see [`crate::models::portcullis_endpoint_stats`]).
         for file in &portcullis_report.files {
             for ((rule, direction), stats) in crate::models::portcullis_endpoint_stats(file) {
                 diagnostics
