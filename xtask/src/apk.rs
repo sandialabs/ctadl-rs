@@ -405,8 +405,8 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 /// commit message which frontend change moved them.
 const REPORT_TOTAL_SITES: u64 = 178_939;
 const REPORT_VIRTUAL_SITES: u64 = 99_828;
-const REPORT_CHA_EDGES: u64 = 2_119_933;
-const REPORT_RTA_EDGES: u64 = 2_055_105;
+const REPORT_CHA_EDGES: u64 = 2_145_517;
+const REPORT_RTA_EDGES: u64 = 2_065_205;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.
