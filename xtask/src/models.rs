@@ -210,7 +210,7 @@ fn file_name(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_file, compile, model_files, run_checks, SCHEMA_FILE};
+    use super::{SCHEMA_FILE, check_file, compile, model_files, run_checks};
     use crate::regression::Outcome;
     use std::path::{Path, PathBuf};
 

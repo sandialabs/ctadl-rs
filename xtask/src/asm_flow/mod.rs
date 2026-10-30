@@ -30,11 +30,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use jvm_reader::flow::compute_basic_blocks_for_method;
 use jvm_reader::{
-    instruction_stack_effect, ClassFileParser, ConstantValue, InstructionFlowInfo, Location,
-    MethodInfo, ParameterSlotMap,
+    ClassFileParser, ConstantValue, InstructionFlowInfo, Location, MethodInfo, ParameterSlotMap,
+    instruction_stack_effect,
 };
 
 use crate::exec;
@@ -302,10 +302,10 @@ impl LocalNames {
         let map = ParameterSlotMap::for_method(desc, is_instance);
         let mut first_slot = Vec::new();
         for slot in 0..map.slot_count() as u16 {
-            if let Some(ordinal) = map.ordinal_for_slot(slot) {
-                if ordinal as usize == first_slot.len() {
-                    first_slot.push(slot);
-                }
+            if let Some(ordinal) = map.ordinal_for_slot(slot)
+                && ordinal as usize == first_slot.len()
+            {
+                first_slot.push(slot);
             }
         }
         LocalNames { first_slot }

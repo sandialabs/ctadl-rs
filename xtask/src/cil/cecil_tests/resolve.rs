@@ -8,10 +8,10 @@
 //! (probe the machine's framework installs), ResolveGenericParameter /
 //! CorlibPrimitive-style tests (construct references).
 
-use super::{cecil_root, read_fixture, read_resource, Test};
+use super::{Test, cecil_root, read_fixture, read_resource};
 use cil_reader::cil::RawOperand;
-use cil_reader::model::resolver::{AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember};
 use cil_reader::model::AssemblyName;
+use cil_reader::model::resolver::{AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember};
 use cil_reader::{MetadataToken, Module, TokenType};
 
 fn loader() -> DirectoryLoader {
@@ -158,9 +158,11 @@ fn type_forwarder_circularity() {
 
     // Loop1 exports MyNamespace.MyType to Loop2, which forwards it back;
     // resolution must error rather than loop (Cecil throws).
-    assert!(module
-        .resolve_type_name("MyNamespace", "MyType", &cache)
-        .is_err());
+    assert!(
+        module
+            .resolve_type_name("MyNamespace", "MyType", &cache)
+            .is_err()
+    );
 }
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:191 (RectangularArrayResolveGetMethod)
@@ -240,10 +242,12 @@ fn primitive_resolves_to_corlib() {
             "mscorlib"
         );
     }
-    assert!(module
-        .resolve_type_sig(&TypeSig::MVar(0), &cache)
-        .unwrap()
-        .is_none());
+    assert!(
+        module
+            .resolve_type_sig(&TypeSig::MVar(0), &cache)
+            .unwrap()
+            .is_none()
+    );
 }
 
 /// A fresh directory for a test's files, under the system temp directory.

@@ -35,11 +35,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_ascent::models::{
-    DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort, PortcullisFile,
-    PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex, ProgramModelMatches,
-    CIL_DEFAULT_MODELS,
+    CIL_DEFAULT_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort,
+    PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex,
+    ProgramModelMatches,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
