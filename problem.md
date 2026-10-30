@@ -284,6 +284,12 @@ keys each such varnode on the ram address of its high variable's ram member.
 - **Sharing is the multiplier, not the extra cells.** Keeping a private fake cell per global
   gives `gzip` 0.30 M rows and 0.15 GB. Fixing only the register cells (2.0x) or only the unique
   ones (1.3x) is not enough.
+- **`iptables`' leftover was this, not cause 3.**
+  - **With `malloc`, `memcpy` and `memset` skipped:** `do_command` holds 57.5% and
+    `_getopt_internal` 23.9%, at about 70 offset variants per source. That is cause 3's shape,
+    but the reach comes through the fake cells `$globals.[8]`, `[12]` and `[16]`.
+  - **With the fix:** `do_command` falls 171x, and the binary goes to 0.40x. What is left in
+    `_getopt_internal` (107 K) is real cause 3.
 - **Effect on cause-1 binaries** (allocator present): `chat` 1.00 GB to 0.42 GB,
   `captival_usockc` 4.27 to 2.43 GB, `wifitool` 2.86 to 2.34 GB. The other causes' residual
   numbers would move if this is fixed first. The larger binaries were not measured.
@@ -337,16 +343,30 @@ rules replaced with `edge_split`.
 - **`fir.tube`:** 14.3% of rule time.
 - **Elsewhere:** 0-2.6% of rule time on the apps, and absent from the firmware sweep.
 
-### 11. MIPS uClibc's `memcpy` and `memset` store the destination's address into it
+### 11. MIPS uClibc's assembly `memcpy` and `memset` store the destination's address into it
 
-**Binaries:** what `kcairplay`, `wifitool` and `iptables` have left after cause 1. It looked like a
-uClibc stdio hub (`fputs_unlocked`, `__stdio_fwrite`). Stdio only spreads it: the source is
-`memcpy` and `memset`.
+**Binaries:** 17 of the 34 over-budget sweep binaries: every MIPS uClibc build with the assembly
+string functions. Skipping `memcpy` and `memset` saves about 10x in `kcairplay` and `wifitool`,
+2.2-2.8x in `iptables`, `captival_usockc` and `upnpd`, and 1.2-1.6x in the other 12. It looked like
+a uClibc stdio hub (`fputs_unlocked`, `__stdio_fwrite`), but stdio only spreads it.
 
-**The self-link.** Ghidra lowers the unaligned head store (`swl`/`swr`) as a masked
-read-modify-write with the shift `(addr & 3) * 8`. That arithmetic is lowered as a merge, so the
-stored word carries the address, and the summary gets `dst.deref <- dst`. This is cause 5's
-self-link, made by a libc primitive, from the same merge lowering as cause 1.
+**The construct.** MIPS `swl`/`swr` (an unaligned word store). Ghidra expands it into a masked
+read-modify-write:
+
+```
+a = s - (s & 3);  w = LOAD a
+mask = -1 >> ((4 - (s & 3)) * 8);  new = c << ((s & 3) * 8)
+STORE a, (w & mask) | new
+```
+
+`pcode_to_statement` (`frontends/ctadl-pcode/src/lib.rs:967-975`) sends `INT_AND`, `INT_SUB`,
+`INT_MULT`, `INT_LEFT`, `INT_RIGHT` and `INT_OR` to `handle_binop` (`:986`). That emits
+`assign t = <all inputs>`, so the stored word carries `s`, and so does the address. The summary
+gets `s.deref <- s`. `memcpy`'s `lwl` adds `dst.deref <- src`.
+
+**Builds without it** have no unaligned instruction. DSP-W115 (`GpioForCrond`, `testI2C`,
+`hnapserver-combo`) uses C byte loops. ARM `signalc` copies words and shifts only by the constants
+8, 16 and 24. `uclited`'s `memcpy` is external.
 
 **How stdio spreads it into strings.**
 1. In `fputs_unlocked`, `strlen` (`p - s`, merged) makes the count point into `s`.
@@ -355,39 +375,41 @@ self-link, made by a libc primitive, from the same merge lowering as cause 1.
 
 **The blocks.**
 - **They are complete bipartite:** deref chains x string offsets. In `kcairplay`, `puts` has
-  `p0 <- p0` at 102 x 610 and `ret <- p0` at 118 x 610.
-- **The size follows the program's `path_set`, not the libc.** `kcairplay`'s `__stdio_fwrite`
-  block is 83 x 67 against 44 x 30 in `wifitool`.
-- **The rows are not on `$globals`** (0.35%), so callers do not inherit them. Each call site
-  copies them, even when the return is ignored: stdio sites are about 95% of `wifitool`'s
-  `assign_like`.
+  `p0 <- p0` at 102 x 610 and `ret <- p0` at 118 x 610. The size follows the program's
+  `path_set`.
+- **The rows are not on `$globals`,** so callers do not inherit them. Each call site copies them,
+  even when the return is ignored: stdio sites are about 95% of `wifitool`'s `assign_like`.
 - **`memset` does the same.** `_ppfs_init`'s `memset(ppfs, 0, 152)` self-links `vfprintf`'s
   state.
+- **Some functions are wholly this cause.** `__encode_dotted` is
+  `memcpy(dest + used, dotted, strlen(dotted))`, and its rows fall about 400x with `memcpy`
+  skipped.
 
-**Measured** (the other causes removed first):
+**Measured** (`malloc` skipped and `--hybrid-context none` in both columns):
 
-| Binary | Skipped | Against budget |
+| Binary | Without the skip | `memcpy` + `memset` skipped |
 |---|---|---|
-| `kcairplay` | `malloc` | 9.7x |
-| | `malloc` + `fputs_unlocked` | 5.4x |
-| | `malloc` + `__stdio_fwrite` | 2.7x |
-| | `malloc` + `memcpy` | 1.93x |
-| | `malloc` + `memcpy` + `memset`, with `--hybrid-context none` (cause 2) | **0.97x** |
-| `wifitool` | allocator | 5.83x |
-| | allocator + `__stdio_fwrite` | 0.77x |
-| | allocator + `memcpy` | **0.39x** |
-| `iptables` | `malloc` | 2.66x |
-| | `malloc` + `memcpy` | **0.95x** |
+| WN3500RP `kcairplay` | 8.91x | **0.98x** |
+| DAP-2310B `wifitool` | 6.08x | **0.60x** |
+| TD-W8970 `iptables` (and the `.pic.memcpy` twins) | 2.63x | **0.93x** |
+| DAP-2690 `captival_usockc` | 1.39x | **0.57x** |
+| LG6100D `upnpd` (its `realloc` wraps `memcpy`) | 1.51x | **0.67x** |
+| MR200 `adb` | 1.61x | 1.14x |
+| DCS-8200LH `mxcam` | 1.38x | **0.89x** |
+| WNDR3700v5 `KC_PRINT` | 1.01x | **0.64x** |
+| DCS-8200LH `iperf` | 1.12x | **0.87x** |
+| MBR1200 and MVBR1210C `aptestmips` | 1.39x, 1.28x | 1.05x, 1.06x |
+| The other 6 (`KC_BONJOUR`, `fsck_hfs`, `iperf.mips`, both `SwiRelayAgentmips`, `sdkmips`) | 0.65-0.92x | 0.55-0.70x |
 
-- **The residuals that looked like cause 3 were this.** `__encode_dotted` is
-  `memcpy(dest + used, dotted, strlen(dotted))`; in `kcairplay` its `locals` fall from 2.58 M to
-  6 K with `memcpy` skipped. `iptables`' "cause 3" functions (`do_command`, `__encode_dotted`,
-  `getopt`) are therefore in doubt. `vfprintf`'s 3.3 M fall to 0.36 M with `memcpy` and `memset`
-  skipped, and the 0.36 M left is offsets on the format string (cause 3).
-- **It depends on the `memcpy` build.** `signalc` (ARM) has a 149-row `memcpy` with no
-  self-link. `GpioForCrond` and `testI2C` (MIPS-II) have self-link-free `memcpy` and `memset`;
-  why was not examined.
-- **The firmware model declares `memcpy`'s propagation, but its body is analyzed as well.**
+- **Dropping only the shift amount is not enough.** An env-gated patch
+  (`CTADL_EXP_NO_SHIFT_AMT=1`, `/Volumes/Shampoo/nb-work/r-memcpy/noshift.patch`) removes the
+  `p.deref <- p` row, but `wifitool` only goes from 6.6x to 4.4x, against 0.60x with the bodies
+  skipped. `memcpy` still has `dst.deref <- src` and `src.deref <- dst.deref`, and stdio's
+  `bufpos + n` aliasing turns them back into the string's self-link. Where those two rows come
+  from was not traced.
+- **The fix** is a model for `memcpy` and `memset`, or not merging pointer arithmetic. The
+  firmware model already declares `memcpy`'s propagation, but the body is analyzed as well.
+- **PIC builds have a second copy.** A skip by name `memcpy` does not match `.pic.memcpy`.
 
 ### 12. A forwarding thunk turns its body's summary into self-loops, which the wild join multiplies
 
@@ -491,32 +513,32 @@ Every binary at 1.5x or more under the default (`--frame update`, `window:8`), w
 | Binary | Id | IR | `locals` | Peak | Against budget | Kept | Cause |
 |---|---|---|---|---|---|---|---|
 | D-Link DSP-W115 `bin/hnapserver-combo` | `d738ae5e79e14d2e` | 5.2 MB | | killed | ≥ 32 GiB cap | 1,242 | 1 |
-| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 1 |
+| TP-Link Archer MR200 `usr/bin/adb` | `d5f74925e458fe40` | 6.1 MB | | killed | ≥ 32 GiB cap | 484 | 1, 11 |
 | D-Link DSP-W115 `bin/GpioForCrond` | `8a43cb2628af359e` | 2.8 MB | 74.9 M | 27.30 GiB | 104x | 367 | 1, 2 |
 | D-Link DSP-W115 `bin/testI2C-r-20ms` | `166cf67fa15e58b6` | 2.7 MB | 69.5 M | 23.65 GiB | 94x | 357 | 1, 2 |
-| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 44.9 M | 22.14 GiB | 58x | 380 | 1, 2 |
-| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 22.7 M | 16.99 GiB | 41x | 551 | 1, 2 |
-| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 65.4 M | 21.81 GiB | 39x | 1,038 | 1, 2 |
-| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 37.9 M | 13.87 GiB | 38x | 209 | 1, 2 |
-| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1, 2 |
+| D-Link DCS-8200LH `usr/sbin/mxcam` | `456ff91aceac80d5` | 4.1 MB | 44.9 M | 22.14 GiB | 58x | 380 | 1, 2, 11 |
+| D-Link DCS-8200LH `usr/sbin/iperf` | `223ec66c3895aeb3` | 4.4 MB | 22.7 M | 16.99 GiB | 41x | 551 | 1, 2, 11 |
+| Netgear LG6100D `sbin/upnpd` | `6e72b8bb6fc3b70b` | 6.0 MB | 65.4 M | 21.81 GiB | 39x | 1,038 | 1, 2, 11 |
+| Netgear WNDR3700v5 `usr/sbin/KC_PRINT` | `49771b7a04154cc1` | 3.9 MB | 37.9 M | 13.87 GiB | 38x | 209 | 1, 2, 11 |
+| Netgear WNDR3700v5 `usr/sbin/KC_BONJOUR` | `54176f7a0ae96cb0` | 3.8 MB | 34.1 M | 12.58 GiB | 36x | 150 | 1, 2, 11 |
 | Netgear R7000 bitdefender `bin/bdupdater` | `b86f194233058e50` | 4.6 MB | 37.5 M | 13.08 GiB | 30x | 415 | 1 |
 | D-Link DCS-6818 `usr/local/ipsWeb/bin/ipsWeb` | `9324d6e0552657c5` | 2.2 MB | 26.6 M | 4.56 GiB | 22x | 3 | 5 |
 | Netgear WN3500RP `usr/sbin/kcairplay` | `acd465c4f94c9c49` | 4.4 MB | 37.6 M | 9.04 GiB | 22x | 263 | 1, 2, 11 |
-| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | 1, 2 |
+| D-Link DIR-140L `usr/bin/iperf.mips` | `7979c6fefe0f7ce6` | 4.1 MB | 15.9 M | 8.28 GiB | 22x | 304 | 1, 2, 11 |
 | D-Link DCS-6818 `usr/local/ipsWeb/bin/evLua` | `630864a12f63b09a` | 1.6 MB | 19.2 M | 3.18 GiB | 22x | 0 | 5 |
 | D-Link DSP-W115 `bin/file` | `3bd3ad33d39671ac` | 3.9 MB | 130.8 M | 7.27 GiB | 20x | 1,489 | 1 |
-| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 1 |
-| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | 1 |
+| D-Link DAP-2690 `usr/sbin/captival_usockc` | `fw-captival` | 2.1 MB | 22.9 M | 3.84 GiB | 20x | 258 | 1, 11 |
+| ASUS RT-AC85U `usr/sbin/fsck_hfs` | `588678379986258b` | 4.5 MB | 47.8 M | 7.95 GiB | 19x | 487 | 1, 11 |
 | TP-Link TD-W8970 `usr/bin/iptables` | `f5e27ca6c7116225` | 4.0 MB | 62.0 M | 6.15 GiB | 17x | 1,413 | 1, 11 |
-| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1, 2 |
+| Netgear MVBR1210C `usr/sbin/sdkmips` | `fw-sdkmips` | 2.8 MB | 7.6 M | 4.28 GiB | 16x | 300 | 1, 2, 11 |
 | D-Link DAP-2310B `sbin/wifitool` | `351dcf58c862ed67` | 1.8 MB | 32.7 M | 2.66 GiB | 15x | 92 | 1, 11 |
 | D-Link DCS-6045L `bin/alphapd` | `74db1b9a9ec5e33d` | 4.8 MB | 33.4 M | 6.68 GiB | 15x | 392 | 1 |
-| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | 1, 2 |
+| Netgear MBR1200 `usr/sbin/aptestmips` | `fcc150f6d9c057cc` | 4.1 MB | 16.1 M | 5.12 GiB | 13x | 1,571 | 1, 2, 11 |
 | Netgear R7000 `usr/sbin/unzip` | `ed6f3e813d05fcad` | 6.1 MB | 107.5 M | 6.43 GiB | 11x | 2,014 | 7, 8 |
-| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 15.9 M | 4.65 GiB | 11x | 1,735 | 1, 2 |
-| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 6.0 M | 2.33 GiB | 10x | 222 | 1, 2 |
+| Netgear MVBR1210C `usr/sbin/aptestmips` | `c17a666eb5b696fc` | 4.6 MB | 15.9 M | 4.65 GiB | 11x | 1,735 | 1, 2, 11 |
+| Netgear MVBR1210C `usr/sbin/SwiRelayAgentmips` | `eaa93781df62d04e` | 2.4 MB | 6.0 M | 2.33 GiB | 10x | 222 | 1, 2, 11 |
 | D-Link DIR-868L `mydlink/signalc` | `817d77ed2df42ecc` | 3.3 MB | 13.3 M | 3.07 GiB | 10x | 45 | 1 |
-| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 6.9 M | 2.49 GiB | 9.8x | 669 | 1, 2 |
+| Netgear MBR1200 `usr/sbin/SwiRelayAgentmips` | `e0e71fc1a02c2b12` | 2.7 MB | 6.9 M | 2.49 GiB | 9.8x | 669 | 1, 2, 11 |
 | D-Link DSN-5000 `bin/gzip` | `32a8fd8ec075ee3e` | 2.0 MB | 6.7 M | 1.64 GiB | 9.0x | 2 | 7, 8 |
 | Netgear MBM621 `bin/chat` | `fw-chat` | 1.2 MB | 13.3 M | 0.93 GiB | 8.5x | 80 | 1 |
 | D-Link DSN-5000 `bin/tar` | `c6c8ca0b29fadb65` | 5.2 MB | 54.7 M | 3.03 GiB | 6.3x | 14 | 7, 8 |
