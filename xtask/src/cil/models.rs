@@ -43,7 +43,8 @@ use ctadl_ascent::models::{
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, VirtualMethodTable,
+    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames,
+    VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
@@ -553,14 +554,32 @@ fn program(rows: &[Row]) -> ProgramInfo {
         b.create_ret(Vec::<Exp>::new());
     }
     functions.push(caller);
+    // Each method named as the CIL frontend names one: by its key.
+    let mut vmt = VirtualMethodTable::new(Dispatch::Cil {
+        methods,
+        hierarchy: Default::default(),
+        interfaces: Default::default(),
+        abstract_methods: Default::default(),
+        pinvokes: Default::default(),
+    });
+    vmt.names = rows
+        .iter()
+        .map(|r| {
+            FunctionNames::new(
+                r.fid.as_deref().unwrap_or_default(),
+                r.simple.as_deref().unwrap_or_default(),
+            )
+            .with_parent(r.cls.as_str())
+            .with_signature(r.desc.as_deref().unwrap_or_default())
+        })
+        .chain(std::iter::once(FunctionNames::new(
+            "ctadl$cil-models$caller",
+            "ctadl$cil-models$caller",
+        )))
+        .collect();
+    vmt.finish_names();
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Cil {
-            methods,
-            hierarchy: Default::default(),
-            interfaces: Default::default(),
-            abstract_methods: Default::default(),
-            pinvokes: Default::default(),
-        }),
+        vmt,
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

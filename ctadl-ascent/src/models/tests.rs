@@ -10,10 +10,6 @@ use ctadl_ir::mir::{PathSegment, ProgramInfo};
 /// A native (binary-frontend) program with one 2-parameter function per name, each carrying a
 /// local called `buf`.
 fn native_program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{
-        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-        VirtualMethodTable,
-    };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
@@ -34,19 +30,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: names
-                .iter()
-                .map(|name| {
-                    (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature((*name).into()),
-                        NativeFunction((*name).into()),
-                        NativeQualifiedName((*name).into()),
-                    )
-                })
-                .collect(),
-        }),
+        vmt: crate::models::test_vmt::native(names.iter().map(|n| (*n, *n, *n, *n))),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
@@ -355,9 +339,10 @@ mod capture {
                 f
             })
             .collect();
+        let program = Program::new(Functions::new(functions));
         ProgramInfo {
-            vmt: VirtualMethodTable::default(),
-            program: Program::new(Functions::new(functions)),
+            vmt: VirtualMethodTable::named_by_ir(&program),
+            program,
             ..Default::default()
         }
     }
@@ -509,18 +494,20 @@ mod dispatch {
         blocks[entry].extend(vec![Statement::new_kind(StatementKind::Nop)]);
 
         ProgramInfo {
-            vmt: VirtualMethodTable::new(Dispatch::Java {
-                methods: vec![(
-                    JavaClass("Lcom/example/Impl;".into()),
-                    JavaSimpleName("next".into()),
-                    JavaSignature("()Ljava/lang/Object;".into()),
-                    JavaMethod("Lcom/example/Impl;->next()Ljava/lang/Object;".into()),
-                )],
-                hierarchy: Default::default(),
-                interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
-                abstract_methods: Vec::new(),
-                natives: Vec::new(),
-            }),
+            vmt: crate::models::test_vmt::with_method_names(VirtualMethodTable::new(
+                Dispatch::Java {
+                    methods: vec![(
+                        JavaClass("Lcom/example/Impl;".into()),
+                        JavaSimpleName("next".into()),
+                        JavaSignature("()Ljava/lang/Object;".into()),
+                        JavaMethod("Lcom/example/Impl;->next()Ljava/lang/Object;".into()),
+                    )],
+                    hierarchy: Default::default(),
+                    interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
+                    abstract_methods: Vec::new(),
+                    natives: Vec::new(),
+                },
+            )),
             program: Program::new(Functions::new(vec![caller, impl_fn])),
             ..Default::default()
         }

@@ -4,26 +4,15 @@ This is the DSL's view of a [`ProgramMatchIndex`] plus the IR it was built from.
 once per import and dropped with it, exactly as the match index is: the engine keeps only the
 *bindings* a rule produced, never the tables it produced them from.
 
-# Two spellings of one name
+# Names
 
-`fun`'s `name`, `signature` and `qualified-id` attributes are **matched** against every spelling
-a frontend publishes for a function, and **bound** to the canonical one. The asymmetry is not an
-accident: Ghidra names an imported `system` as `<EXTERNAL>::system@00101008` while the frontend
-also publishes the simple `system`, and Lua publishes both `os.execute` and the bare `execute`
-for one callee. A model that says `name = "system"` must match; a model that says
-`fun(F, name = N)` must bind `N` to one name, because the design makes every attribute
-functionally dependent on the columns. Matching generously and binding canonically is what
-satisfies both.
-
-# The full name is implicit
-
-Every lowered function accepts its own fully qualified name as a `name`, a `signature` and a
-`qualified-id`, and several frontends publish it as such too. Stored, that is three spellings and
-three map entries per function that no other function shares — most of what these tables cost on
-a large program. So a row records only *where* its full name sits among each attribute's
-spellings ([`FunRow::spellings`] puts it back in that place), and a lookup by value consults
-`by_fq` as well as the attribute's own map. Nothing a rule can observe changes: the same
-spellings, in the same order, so the same canonical one.
+`fun`'s column is the IR name, the one identity a function has. Its `name`, `parent` and
+`signature` are what the import's name table
+([`VirtualMethodTable::names`](ctadl_ir::mir::call::VirtualMethodTable::names)) says, one value
+each, so an attribute is a field of the row and never multiplies the solutions. The other names
+a frontend knows a function by (pcode's namespace-qualified name, say) are rows of `name_of`,
+together with the simple name: "some name of `F` is `x`" is a join a rule writes, not a
+property of `fun`.
 
 # What this interns
 
@@ -35,7 +24,6 @@ position ([`SiteId`]) rather than by an interned `caller#block:statement`, and t
 loaded rule reads ([`Needs`]) are not built at all.
 */
 
-use std::borrow::Cow;
 use std::ops::{Deref, Range};
 
 use hashbrown::hash_map::HashMap;
@@ -45,7 +33,7 @@ use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
 use crate::models::dsl::ast::{BodyItem, Program};
-use crate::models::match_index::{ProgramMatchIndex, for_each_spelling};
+use crate::models::match_index::ProgramMatchIndex;
 use ctadl_ir::mir::call::Dispatch;
 
 /// One function, as the DSL sees it.
@@ -54,19 +42,16 @@ pub struct FunRow {
     /// The fully qualified name — the `fun` relation's one column, and what every match
     /// structure keys on.
     pub fq: Str,
-    /// Accepted spellings of the simple name, except `fq` itself (see `fq_at`). Read them
-    /// through [`Self::spellings`], whose first is the canonical one.
-    names: Vec<Str>,
-    /// Owning class. Populated only where the frontend has a class hierarchy (Java, Lua).
-    pub parents: Vec<Str>,
-    signatures: Vec<Str>,
-    qualified_ids: Vec<Str>,
-    /// Where `fq` sits among the spellings of `name`, `signature` and `qualified-id`, in that
-    /// order: how many of the stored ones precede it, or [`NOT_A_SPELLING`]. See the module docs
-    /// for why it is not stored with them.
-    fq_at: [u32; 3],
-    /// Parameter count, where the IR recovered one. `None` for a bodyless callee — an external,
-    /// a dex/jvm `ext` stub — which is why `arity` and `param` do not match one.
+    /// The simple name the frontend gave it. `None` only for a function the name table does not
+    /// describe, which an import cannot produce.
+    pub name: Option<Str>,
+    /// Owning class, where the frontend has a class hierarchy (Java, CIL, Lua).
+    pub parent: Option<Str>,
+    pub signature: Option<Str>,
+    /// The other names the function is known by, none of them `fq` or `name`.
+    pub other_names: Vec<Str>,
+    /// Parameter count, where the IR recovered one. `None` for a bodyless callee — a Lua
+    /// external — which is why `arity` and `param` do not match one.
     pub arity: Option<i64>,
     /// Whether the function has a body. `None`, again, for a function with no IR data at all.
     pub has_code: Option<bool>,
@@ -76,100 +61,29 @@ impl FunRow {
     fn new(fq: Str) -> Self {
         Self {
             fq,
-            names: Vec::new(),
-            parents: Vec::new(),
-            signatures: Vec::new(),
-            qualified_ids: Vec::new(),
-            fq_at: [NOT_A_SPELLING; 3],
+            name: None,
+            parent: None,
+            signature: None,
+            other_names: Vec::new(),
             arity: None,
             has_code: None,
         }
     }
 
-    /// Every accepted spelling of attribute `key`, the canonical one first.
-    pub fn spellings(&self, key: FunKey) -> Spellings<'_> {
-        let (stored, slot) = match key {
-            FunKey::Name => (&self.names, Some(0)),
-            FunKey::Parent => (&self.parents, None),
-            FunKey::Signature => (&self.signatures, Some(1)),
-            FunKey::QualifiedId => (&self.qualified_ids, Some(2)),
-        };
-        Spellings {
-            stored,
-            fq: slot
-                .map(|i| self.fq_at[i])
-                .filter(|&at| at != NOT_A_SPELLING)
-                .map(|at| (at as usize, self.fq)),
+    /// The `name_of` rows of this function: its simple name, then its other names.
+    pub fn names(&self) -> impl Iterator<Item = Str> + '_ {
+        self.name.iter().chain(&self.other_names).copied()
+    }
+
+    /// The value of `fun` attribute `key`.
+    pub fn attr(&self, key: FunKey) -> Option<Str> {
+        match key {
+            FunKey::Name => self.name,
+            FunKey::Parent => self.parent,
+            FunKey::Signature => self.signature,
+            // A `callsig` attribute only.
+            FunKey::QualifiedId => None,
         }
-    }
-
-    /// Whether `fq` is one of attribute `key`'s spellings.
-    fn has_fq_spelling(&self, key: FunKey) -> bool {
-        self.spellings(key).fq.is_some()
-    }
-
-    /// Adds `spelling` to attribute `key`'s spellings, after the ones it already has, unless it
-    /// is one already. `fq` itself is only recorded, in place.
-    fn add_spelling(&mut self, key: FunKey, spelling: Str) {
-        let (stored, slot) = match key {
-            FunKey::Name => (&mut self.names, 0),
-            FunKey::Parent => {
-                push_unique(&mut self.parents, spelling);
-                return;
-            }
-            FunKey::Signature => (&mut self.signatures, 1),
-            FunKey::QualifiedId => (&mut self.qualified_ids, 2),
-        };
-        if spelling != self.fq {
-            push_unique(stored, spelling);
-        } else if self.fq_at[slot] == NOT_A_SPELLING {
-            self.fq_at[slot] = stored.len() as u32;
-        }
-    }
-}
-
-/// `fq_at`'s mark for an attribute `fq` is not a spelling of: a function the method table names
-/// but the program does not lower, under an attribute the frontend does not spell it as.
-const NOT_A_SPELLING: u32 = u32::MAX;
-
-/// One attribute's spellings of one function: the stored ones, with the function's full name put
-/// back where it belongs when it is one of them.
-#[derive(Copy, Clone, Debug)]
-pub struct Spellings<'a> {
-    stored: &'a [Str],
-    /// The full name and how many stored spellings precede it.
-    fq: Option<(usize, Str)>,
-}
-
-impl<'a> Spellings<'a> {
-    /// A plain list, for a value with no implicit spelling.
-    pub fn of(stored: &'a [Str]) -> Self {
-        Self { stored, fq: None }
-    }
-
-    pub fn one(value: &'a Str) -> Self {
-        Self::of(std::slice::from_ref(value))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.stored.is_empty() && self.fq.is_none()
-    }
-
-    /// Whether `f` holds of every spelling, asked in order, the canonical one first, and
-    /// stopping at the first it does not hold of. Not an iterator: a broad rule calls this for
-    /// every row, and three plain loops are measurably cheaper than a chained one.
-    pub fn all(&self, mut f: impl FnMut(Str) -> bool) -> bool {
-        let (at, fq) = match self.fq {
-            Some((at, fq)) => (at, Some(fq)),
-            None => (self.stored.len(), None),
-        };
-        let (before, after) = self.stored.split_at(at);
-        before.iter().all(|&s| f(s)) && fq.is_none_or(&mut f) && after.iter().all(|&s| f(s))
-    }
-
-    /// Whether `f` holds of some spelling.
-    pub fn any(&self, mut f: impl FnMut(Str) -> bool) -> bool {
-        !self.all(|s| !f(s))
     }
 }
 
@@ -235,8 +149,8 @@ impl CallSiteRow {
 /// there -- `java.util.Iterator` is never an implementation -- so `fun` cannot name them. These
 /// keys come from the call sites themselves, so by construction they can.
 ///
-/// Every attribute is a single value rather than a list of accepted spellings: a key is
-/// composed from the site's three components, so there is only ever one way to spell it.
+/// Every attribute is a single value, as on `fun`: a key is composed from the site's three
+/// components, so there is only ever one way to spell it.
 #[derive(Clone, Debug)]
 pub struct CallSigRow {
     /// `Lcls;->name(desc)` -- the canonical id, and the `callsig` relation's one column.
@@ -285,7 +199,8 @@ pub struct ProgramFacts {
     by_name: HashMap<Str, Vec<RowIdx>>,
     by_parent: HashMap<Str, Vec<RowIdx>>,
     by_signature: HashMap<Str, Vec<RowIdx>>,
-    by_qualified_id: HashMap<Str, Vec<RowIdx>>,
+    /// The functions some `name_of` row of which is the key.
+    by_name_of: HashMap<Str, Vec<RowIdx>>,
     /// Each caller's rows. One entry per caller, not per row or per site: a site is found by
     /// binary search within its caller's range (see [`Self::callsites_with_id`]).
     callsites_by_caller: HashMap<Str, Range<RowIdx>>,
@@ -365,57 +280,42 @@ impl ProgramFacts {
         let mut rows: Vec<FunRow> = Vec::new();
         let mut by_fq: HashMap<Str, RowIdx> = HashMap::new();
 
-        // One row per function even when a frontend publishes several table entries for it (a
-        // Java method under two classes, a native symbol under its simple and decorated names).
-        // A function's spellings arrive together, so its handle is interned once rather than
-        // once per spelling.
-        let mut current: (&str, usize) = ("", usize::MAX);
-        for_each_spelling(index.vmt(), |fq, key, spelling| {
-            if !std::ptr::eq(fq, current.0) {
-                current = (fq, row_for(&mut rows, &mut by_fq, Str::from(fq)));
-            }
-            let row = &mut rows[current.1];
-            let value = if spelling == fq {
-                row.fq
-            } else {
-                Str::from(spelling)
-            };
-            row.add_spelling(key, value);
-        });
+        for n in &index.vmt().names {
+            let i = row_for(&mut rows, &mut by_fq, Str::from(n.fq.as_ref()));
+            let row = &mut rows[i];
+            row.name = Some(Str::from(n.simple.as_ref()));
+            row.parent = n.parent.as_deref().map(Str::from);
+            row.signature = n.signature.as_deref().map(Str::from);
+            row.other_names = n.other.iter().map(|o| Str::from(o.as_ref())).collect();
+        }
 
-        // Every lowered function, whether or not the method table names it. This is what gives
-        // flowy and pcode a `fun` relation at all, and it is where arity / has_code come from.
+        // Every lowered function. This is where arity / has_code come from.
         let mut lowered: Vec<(Str, &FunctionData)> = Vec::new();
         for (fq, data) in index.functions_with_data() {
             let i = row_for(&mut rows, &mut by_fq, Str::from(fq));
             let row = &mut rows[i];
-            let fq = row.fq;
-            for key in [FunKey::Name, FunKey::Signature, FunKey::QualifiedId] {
-                row.add_spelling(key, fq);
-            }
             row.arity = Some(data.num_parameters() as i64);
             row.has_code = Some(!data.blocks.is_empty());
-            lowered.push((fq, data));
+            lowered.push((row.fq, data));
         }
 
         let mut by_name: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         let mut by_parent: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         let mut by_signature: HashMap<Str, Vec<RowIdx>> = HashMap::new();
-        let mut by_qualified_id: HashMap<Str, Vec<RowIdx>> = HashMap::new();
-        // The stored spellings only: a row's full name is found through `by_fq`.
+        let mut by_name_of: HashMap<Str, Vec<RowIdx>> = HashMap::new();
         for (i, row) in rows.iter().enumerate() {
             let i = row_idx(i);
-            for n in &row.names {
-                by_name.entry(*n).or_default().push(i);
+            if let Some(n) = row.name {
+                by_name.entry(n).or_default().push(i);
             }
-            for p in &row.parents {
-                by_parent.entry(*p).or_default().push(i);
+            if let Some(p) = row.parent {
+                by_parent.entry(p).or_default().push(i);
             }
-            for s in &row.signatures {
-                by_signature.entry(*s).or_default().push(i);
+            if let Some(s) = row.signature {
+                by_signature.entry(s).or_default().push(i);
             }
-            for q in &row.qualified_ids {
-                by_qualified_id.entry(*q).or_default().push(i);
+            for n in row.names() {
+                by_name_of.entry(n).or_default().push(i);
             }
         }
 
@@ -461,7 +361,7 @@ impl ProgramFacts {
             classes = subclass
                 .iter()
                 .flat_map(|(a, b)| [*a, *b])
-                .chain(rows.iter().flat_map(|r| r.parents.iter().copied()))
+                .chain(rows.iter().filter_map(|r| r.parent))
                 .collect();
             classes.sort_unstable();
             classes.dedup();
@@ -514,7 +414,7 @@ impl ProgramFacts {
             by_name,
             by_parent,
             by_signature,
-            by_qualified_id,
+            by_name_of,
             callsites_by_caller,
             callsites_by_callee,
             uses_field_by_fun,
@@ -537,34 +437,20 @@ impl ProgramFacts {
         self.by_fq.get(&fq).map(|&i| i as usize)
     }
 
-    /// Row indices whose attribute `key` has `value` among its spellings, ascending.
-    ///
-    /// A full name is a spelling of at most the one row it names, and that row is never in the
-    /// attribute's own map under it, so the two sources are disjoint. Both answer only where a
-    /// frontend's simple name collides with another function's full name — a Lua file imported as
-    /// the root, say — and only then is the answer a fresh list.
-    pub fn funs_by(&self, key: FunKey, value: Str) -> Cow<'_, [RowIdx]> {
+    /// Row indices whose attribute `key` is `value`, ascending.
+    pub fn funs_by(&self, key: FunKey, value: Str) -> &[RowIdx] {
         let map = match key {
             FunKey::Name => &self.by_name,
             FunKey::Parent => &self.by_parent,
             FunKey::Signature => &self.by_signature,
-            FunKey::QualifiedId => &self.by_qualified_id,
+            FunKey::QualifiedId => return &[],
         };
-        let stored = map.get(&value).map_or(&[][..], |v| v.as_slice());
-        let Some(own) = self
-            .by_fq
-            .get(&value)
-            .filter(|&&i| self.funs[i as usize].has_fq_spelling(key))
-        else {
-            return Cow::Borrowed(stored);
-        };
-        if stored.is_empty() {
-            return Cow::Borrowed(std::slice::from_ref(own));
-        }
-        let mut all = stored.to_vec();
-        let at = all.partition_point(|&i| i < *own);
-        all.insert(at, *own);
-        Cow::Owned(all)
+        map.get(&value).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Row indices of the functions one of whose `name_of` rows is `name`, ascending.
+    pub fn funs_named(&self, name: Str) -> &[RowIdx] {
+        self.by_name_of.get(&name).map_or(&[], |v| v.as_slice())
     }
 
     #[inline]
@@ -652,12 +538,6 @@ fn row_for(rows: &mut Vec<FunRow>, by_fq: &mut HashMap<Str, RowIdx>, fq: Str) ->
 
 fn row_idx(i: usize) -> RowIdx {
     RowIdx::try_from(i).expect("a table has more than u32::MAX rows")
-}
-
-fn push_unique(v: &mut Vec<Str>, s: Str) {
-    if !v.contains(&s) {
-        v.push(s);
-    }
 }
 
 /// A frontend's class hierarchy as `(subclass, superclass)` edges.

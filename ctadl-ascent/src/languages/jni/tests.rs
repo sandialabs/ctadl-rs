@@ -1,9 +1,6 @@
 use super::*;
 
-use ctadl_ir::mir::call::{
-    JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
-    NativeSignature, NativeSimpleName,
-};
+use ctadl_ir::mir::call::{FunctionNames, JavaClass, JavaMethod, JavaSignature, JavaSimpleName};
 
 use crate::facts::{Function, InsnSiteId};
 
@@ -280,19 +277,13 @@ fn native_program(symbols: &[(&str, &str)]) -> ProgramInfo {
 /// `()` for no recovered prototype.
 fn native_program_with(symbols: &[(&str, &str, &str)]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: symbols
+        vmt: VirtualMethodTable {
+            names: symbols
                 .iter()
-                .map(|(simple, func, sig)| {
-                    (
-                        NativeSimpleName((*simple).into()),
-                        NativeSignature((*sig).into()),
-                        NativeFunction((*func).into()),
-                        NativeQualifiedName((*simple).into()),
-                    )
-                })
+                .map(|(simple, func, sig)| FunctionNames::new(*func, *simple).with_signature(*sig))
                 .collect(),
-        }),
+            dispatch: Dispatch::Native,
+        },
         ..Default::default()
     }
 }

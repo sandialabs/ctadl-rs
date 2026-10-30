@@ -57,7 +57,7 @@ use crate::models::FormalIndexTypeTag;
 /// resolved against nothing yet. `AnyArgument` is deliberately still a *tag* here -- expanding
 /// it needs the arity over actual parameters and call sites across every import, which is not
 /// known until phase 2.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ModelPort {
     pub tag: FormalIndexTypeTag,
     /// Set only for a positional `Argument(n)` port.
@@ -144,7 +144,7 @@ impl DispatchModel {
 /// The function is named, not resolved to a [`crate::facts::FunctionId`]: a summary attaches to
 /// any function that was so much as *called*, including ones with no IR body at all, and the id
 /// map that would resolve it does not hold every import's functions until the loop is over.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PropagationMatch {
     pub function: facts::Str,
     pub dst: ModelPort,
@@ -159,7 +159,7 @@ pub struct PropagationMatch {
 /// index-dependent expansions (call-site fan-out and sink wildcard expansion). The split
 /// exists because Stage 1 runs while each import's IR is in hand and Stage 2 needs the index,
 /// which does not exist until every import has been codegen'd.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct EndpointMatch {
     /// Name of the endpoint function. For a callsite-scoped endpoint this is the callee.
     pub function: facts::Str,

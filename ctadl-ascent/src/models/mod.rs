@@ -18,6 +18,8 @@ pub mod match_index;
 pub mod matches;
 pub mod spec;
 pub mod stats;
+#[doc(hidden)]
+pub mod test_vmt;
 
 pub use dsl::{DslFile, DslMatcher, DslModelSet, DslReport, Phase as DslPhase, is_dsl_path};
 pub use match_index::{DispatchKeys, ProgramMatchIndex};
@@ -68,6 +70,17 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
     NATIVE_DEFAULT_MODELS,
     LUA_DEFAULT_MODELS,
     CIL_DEFAULT_MODELS,
+];
+
+/// The languages each of [`DEFAULT_MODEL_FILES`] is loaded for, by
+/// [`ArtifactLanguage`](crate::project::ArtifactLanguage) name: the imports whose
+/// [`VirtualMethodTable`] selects it. Its `.ctadl` is migrated for these
+/// (`ctadl migrate-models --language`), so it leaves out what only another language could match.
+pub const DEFAULT_MODEL_LANGUAGES: &[&[&str]] = &[
+    &["dex", "jvm", "jar", "apk", "xapk"],
+    &["pcode"],
+    &["lua"],
+    &["cil"],
 ];
 
 /// The DSL form of each shipped default: what an index actually loads.
@@ -201,7 +214,7 @@ pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str,
 fn default_dsl_index(vmt: &VirtualMethodTable) -> Option<usize> {
     match &vmt.dispatch {
         Dispatch::Java { .. } => Some(0),
-        Dispatch::Native { .. } => Some(1),
+        Dispatch::Native => Some(1),
         Dispatch::Lua { .. } => Some(2),
         Dispatch::Cil { .. } => Some(3),
         Dispatch::Unknown => None,
@@ -353,7 +366,7 @@ pub fn dsl_endpoint_stats(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FormalIndexTypeTag {
     /// Index of a formal for the builder
     Index,

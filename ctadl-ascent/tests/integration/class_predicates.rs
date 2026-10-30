@@ -13,6 +13,7 @@
 //! recorded from it while it existed.
 
 use ctadl_ascent::models::dsl::migrate::migrate_generators;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
     DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
     ProgramModelMatches,
@@ -20,8 +21,7 @@ use ctadl_ascent::models::{
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::call::{
     CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
-    JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature,
-    NativeSimpleName, VirtualMethodTable,
+    JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
@@ -128,13 +128,13 @@ fn java_program_and(extra: Vec<FunctionData>) -> ProgramInfo {
         .collect();
     let names: Vec<String> = JAVA_CLASSES.iter().map(|(c, _)| java_method(c)).collect();
     program(
-        VirtualMethodTable::new(Dispatch::Java {
+        test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("Lp/I;".into())],
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        }),
+        })),
         &names,
         extra,
     )
@@ -193,13 +193,13 @@ fn cil_program() -> ProgramInfo {
         .collect();
     let names: Vec<String> = classes.iter().map(|(c, _)| cil_method(c)).collect();
     program(
-        VirtualMethodTable::new(Dispatch::Cil {
+        test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Cil {
             methods,
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             pinvokes: Vec::new(),
-        }),
+        })),
         &names,
         Vec::new(),
     )
@@ -213,20 +213,20 @@ fn lua_program() -> ProgramInfo {
     let deposit = "m.Account.deposit";
     let helper = "m.helper";
     program(
-        VirtualMethodTable::new(Dispatch::Lua {
-            methods: vec![(account.into(), "deposit".into(), deposit.into())],
-            functions: vec![
+        test_vmt::lua(
+            vec![(account.into(), "deposit".into(), deposit.into())],
+            &[
                 (Symbol::from("deposit"), Symbol::from(deposit)),
                 (Symbol::from("helper"), Symbol::from(helper)),
             ],
-            externals: Vec::new(),
-            hierarchy: [(
+            &[],
+            [(
                 Symbol::from(account),
                 smallvec::smallvec![Symbol::from(base)],
             )]
             .into_iter()
             .collect(),
-        }),
+        ),
         &[deposit.to_string(), helper.to_string()],
         Vec::new(),
     )
@@ -234,19 +234,14 @@ fn lua_program() -> ProgramInfo {
 
 fn native_program() -> ProgramInfo {
     let names = ["system", "Lp/C;"];
-    let methods = names
-        .iter()
-        .map(|n| {
-            (
-                NativeSimpleName((*n).into()),
-                NativeSignature(format!("{n}()").into()),
-                NativeFunction((*n).into()),
-                NativeQualifiedName((*n).into()),
-            )
-        })
-        .collect();
+    let signatures = names.map(|n| format!("{n}()"));
     program(
-        VirtualMethodTable::new(Dispatch::Native { methods }),
+        test_vmt::native(
+            names
+                .iter()
+                .zip(&signatures)
+                .map(|(n, sig)| (*n, sig.as_str(), *n, *n)),
+        ),
         &names.map(String::from),
         Vec::new(),
     )
@@ -305,7 +300,7 @@ fn with_model(find: &str, where_: Value) -> Value {
 fn run_dsl(generator: &Value, info: &ProgramInfo, scope: &ImportScope) -> (Selected, String) {
     let keys = DispatchKeys::from_program(&info.program);
     let index = ProgramMatchIndex::new_with_dispatch(info, scope.clone(), Some(&keys));
-    let (text, report) = migrate_generators(std::iter::once(generator), None)
+    let (text, report) = migrate_generators(std::iter::once(generator), None, None)
         .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
     assert!(
         report.warnings.is_empty(),

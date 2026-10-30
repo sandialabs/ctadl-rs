@@ -434,6 +434,7 @@ impl Program {
 /// one, and a name that is not here is a typo rather than a user relation.
 pub const BUILTIN_RELATIONS: &[&str] = &[
     "fun",
+    "name_of",
     "callsig",
     "param",
     "callsite",
@@ -471,7 +472,6 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
             "parent",
             "signature",
             "has_code",
-            "qualified-id",
             "import",
         ],
         // A signature key has no body, so `arity` and `has_code` are absent rather than
@@ -494,6 +494,7 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
 pub fn relation_arity(name: &str) -> Option<usize> {
     match name {
         "fun" => Some(1),
+        "name_of" => Some(2),
         "callsig" => Some(1),
         "param" => Some(2),
         "callsite" => Some(2),

@@ -600,12 +600,10 @@ expressible; migrating a generator that uses one fails, naming it. Stage 2 still
 seed a local (`EndpointMatch::local_index`), and `CTADL0004` keeps its `localNotFound` message id
 for when a DSL spelling for a local exists; nothing produces it now.
 
-**One deliberate departure from strict functional dependence.** `fun(F, name = N)` binds *once per
-published spelling* where a frontend has several — a native symbol known both as `system` and as
-`<EXTERNAL>::system@00101008`, a Lua callee reachable as `execute` and as `os.execute`. Binding
-only a canonical name would silently narrow what a migrated `name` regex matches, which is exactly
-what the equivalence requirement forbids. It is documented in `relations.rs` and in
-`docs/model-dsl.md`.
+**Functional dependence holds.** An earlier version bound `fun(F, name = N)` once per published
+spelling, which made `fun(F, name != "x")` and `fun(F, name = N), N != "x"` disagree. Each import
+now carries a name table (see "Function names and the VMT" above): `fun`'s attributes have one
+value each, the full name is `F`, and the other names are `name_of` rows.
 
 ## Function names and the VMT (planned)
 

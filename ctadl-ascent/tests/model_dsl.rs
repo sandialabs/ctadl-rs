@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use ctadl_ascent::facts::TaintDirection;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
     FormalIndexTypeTag, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl,
 };
@@ -15,7 +16,7 @@ use ctadl_ir::Idx;
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::call::{
     CallEdges, CallStyle, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
-    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     AccessPath, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program,
@@ -93,13 +94,13 @@ fn java_program() -> ProgramInfo {
         std::iter::once(JavaClass("Lc/Base;".into())).collect(),
     );
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        }),
+        })),
         program: Program::new(Functions::new(vec![
             function(
                 "Lc/App;->handle()V",
@@ -116,19 +117,23 @@ fn java_program() -> ProgramInfo {
 /// A native program with one 2-parameter function per name.
 fn native_program(names: &[&str]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: names
+        vmt: test_vmt::native(
+            names
                 .iter()
                 .map(|name| {
                     (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature(format!("(int, char *) {name}").into()),
-                        NativeFunction(format!("<EXTERNAL>::{name}@00101008").into()),
-                        NativeQualifiedName(format!("<EXTERNAL>::{name}").into()),
+                        format!("(int, char *) {name}"),
+                        format!("<EXTERNAL>::{name}@00101008"),
+                        format!("<EXTERNAL>::{name}"),
                     )
                 })
-                .collect(),
-        }),
+                .collect::<Vec<_>>()
+                .iter()
+                .zip(names)
+                .map(|((sig, fq, qualified), name)| {
+                    (*name, sig.as_str(), fq.as_str(), qualified.as_str())
+                }),
+        ),
         program: Program::new(Functions::new(
             names
                 .iter()
@@ -311,24 +316,37 @@ fn the_two_closures_differ_on_the_reflexive_pair() {
     assert!(strict.endpoints.is_empty());
 }
 
-/// A native symbol is published under a simple name and a decorated one. A model naming either
-/// must match, which is what keeps a migrated `name` regex meaning what it meant.
+/// A native symbol has one simple name, its IR name, and other names: the namespace-qualified
+/// one, here. `name` is the simple name alone, the IR name is `fun`'s column, and `name_of`
+/// ranges over the simple name and the others.
 #[test]
-fn a_native_symbol_matches_both_of_its_spellings() {
+fn a_native_symbol_has_one_simple_name_and_others() {
     let program_info = native_program(&["system"]);
-    for pattern in [
-        r#"fun(F, name = "system")"#,
-        r#"fun(F, name = "<EXTERNAL>::system@00101008")"#,
-        r#"fun(F, qualified-id = "<EXTERNAL>::system")"#,
+    for (body, matched) in [
+        (r#"fun(F, name = "system")"#, 1),
+        (r#"fun(F, name = "<EXTERNAL>::system@00101008")"#, 0),
+        (r#"fun(F), F = "<EXTERNAL>::system@00101008""#, 1),
+        (r#"name_of(F, "system")"#, 1),
+        (r#"name_of(F, "<EXTERNAL>::system")"#, 1),
+        (r#"name_of(F, "<EXTERNAL>::system@00101008")"#, 0),
     ] {
-        let matches = run(&program_info, &format!("sink(F::arg(0)) :- {pattern};"));
-        assert_eq!(matches.endpoints.len(), 1, "{pattern} matched nothing");
+        let matches = run(&program_info, &format!("sink(F::arg(0)) :- {body};"));
+        assert_eq!(matches.endpoints.len(), matched, "{body}");
     }
-    let regex = run(
-        &program_info,
-        r#"sink(F::arg(0)) :- fun(F, name = N), regex_match(N, "^system$");"#,
-    );
-    assert_eq!(regex.endpoints.len(), 1);
+}
+
+/// An attribute has one value, so testing it in the atom and testing the variable it binds are
+/// the same test.
+#[test]
+fn an_attribute_test_and_a_test_of_its_variable_agree() {
+    let program_info = native_program(&["system"]);
+    for body in [
+        r#"fun(F, name != "system")"#,
+        r#"fun(F, name = N), N != "system""#,
+    ] {
+        let matches = run(&program_info, &format!("sink(F::arg(0)) :- {body};"));
+        assert!(matches.endpoints.is_empty(), "{body}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -781,13 +799,13 @@ fn java_call(cls: &str, name: &str, desc: &str) -> Statement {
 /// has no row in any app's method table, so `fun` cannot name it and `callsig` must.
 fn dispatch_program() -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods: Vec::new(),
             hierarchy: Default::default(),
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        }),
+        })),
         program: Program::new(Functions::new(vec![function(
             "Lc/App;->handle()V",
             1,
@@ -1041,13 +1059,13 @@ fn subs_is_the_converse_of_supers_through_a_cycle() {
             .push(JavaClass((*sup).into()));
     }
     let program_info = ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods: Vec::new(),
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        }),
+        })),
         ..Default::default()
     };
     let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());

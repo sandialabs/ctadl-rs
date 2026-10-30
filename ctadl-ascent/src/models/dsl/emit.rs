@@ -18,7 +18,12 @@ source(F::return) :- fun(F, name = "read"), param(F, I);
 
 would emit one source per parameter of `read`. A rule emitted per import can meet the same key
 in two imports (a library function both declare); [`RuleEmitter`] remembers the keys it emitted
-for that case. [`ProgramModelMatches`] does not deduplicate, deliberately: see its `endpoints`.
+for that case.
+
+The rules of one migrated JSON generator are one generator, so a source, sink or propagation two
+of them derive is derived once: [`Emitted`] holds what each has emitted. A generator becomes
+several rules for each disjunct of its `where`, and those may overlap. Two generators, like two
+files, each contribute their rows, deliberately: see [`ProgramModelMatches`]'s `endpoints`.
 */
 
 use std::collections::BTreeSet;
@@ -55,7 +60,7 @@ pub struct RuleStats {
     /// one two imports share counts twice; a count of work, not of rows.
     pub groundings: usize,
     /// Distinct functions the rule's heads anchored at, exactly: what `functions_matched`
-    /// reports. Not `groundings`, which counts `fun(F, name = N)` once per spelling of `F`.
+    /// reports. Not `groundings`, which counts `name_of(F, N)` once per name of `F`.
     pub functions: usize,
     /// `source` heads the rule declares, whether or not the body matched.
     pub source_heads: usize,
@@ -176,6 +181,15 @@ struct LiveHead {
     seen: HashSet<Vec<Value>>,
 }
 
+/// The sources, sinks and propagations one file has emitted, keyed by the label
+/// ([`DslFile::label`](super::DslFile::label)) of the rule that emitted them, so each label emits
+/// each row once.
+#[derive(Default)]
+pub struct Emitted {
+    endpoints: HashSet<(usize, EndpointMatch)>,
+    propagations: HashSet<(usize, PropagationMatch)>,
+}
+
 /// What emission accumulates besides the rows themselves.
 #[derive(Default)]
 struct Tally {
@@ -247,7 +261,9 @@ impl RuleEmitter {
         rule: &Rule,
         solutions: &RuleSolutions,
         provenance: &str,
+        label: usize,
         out: &mut ProgramModelMatches,
+        emitted: &mut Emitted,
         errors: &mut DslErrors,
     ) {
         let Self {
@@ -272,7 +288,12 @@ impl RuleEmitter {
                     vars: &live.vars,
                     values: &key,
                 };
-                emit_head(rule, head, &binding, provenance, out, tally, errors);
+                let rows = Rows {
+                    out: &mut *out,
+                    emitted: &mut *emitted,
+                    label,
+                };
+                emit_head(rule, head, &binding, provenance, rows, tally, errors);
             }
         }
     }
@@ -285,15 +306,27 @@ impl RuleEmitter {
     }
 }
 
+/// Where a head's rows go, and what its label has emitted.
+struct Rows<'r> {
+    out: &'r mut ProgramModelMatches,
+    emitted: &'r mut Emitted,
+    label: usize,
+}
+
 fn emit_head(
     rule: &Rule,
     head: &Head,
     binding: &Binding<'_>,
     provenance: &str,
-    out: &mut ProgramModelMatches,
+    rows: Rows<'_>,
     tally: &mut Tally,
     errors: &mut DslErrors,
 ) {
+    let Rows {
+        out,
+        emitted,
+        label: rule_label,
+    } = rows;
     match &head.kind {
         HeadKind::Source {
             port,
@@ -306,7 +339,7 @@ fn emit_head(
             let Some((tag, index)) = resolve_base(&port.port, binding, port.span, errors) else {
                 return;
             };
-            out.endpoints.push(EndpointMatch {
+            let endpoint = EndpointMatch {
                 function: site.function,
                 selector_ty: tag,
                 index,
@@ -318,7 +351,11 @@ fn emit_head(
                 in_function: site.in_function,
                 callsite_scoped: site.callsite_scoped,
                 local_index: None,
-            });
+            };
+            if !emitted.endpoints.insert((rule_label, endpoint)) {
+                return;
+            }
+            out.endpoints.push(endpoint);
             tally.stats.sources += 1;
             note_match(tally, site.function);
         }
@@ -333,7 +370,7 @@ fn emit_head(
             let Some((tag, index)) = resolve_base(&port.port, binding, port.span, errors) else {
                 return;
             };
-            out.endpoints.push(EndpointMatch {
+            let endpoint = EndpointMatch {
                 function: site.function,
                 selector_ty: tag,
                 index,
@@ -345,7 +382,11 @@ fn emit_head(
                 in_function: site.in_function,
                 callsite_scoped: site.callsite_scoped,
                 local_index: None,
-            });
+            };
+            if !emitted.endpoints.insert((rule_label, endpoint)) {
+                return;
+            }
+            out.endpoints.push(endpoint);
             tally.stats.sinks += 1;
             note_match(tally, site.function);
         }
@@ -369,11 +410,14 @@ fn emit_head(
                 return;
             };
             let mut push = |dst: ModelPort, src: ModelPort| {
-                out.propagations.push(PropagationMatch {
+                let propagation = PropagationMatch {
                     function: anchor.function,
                     dst,
                     src,
-                });
+                };
+                if emitted.propagations.insert((rule_label, propagation)) {
+                    out.propagations.push(propagation);
+                }
             };
             match flow.op {
                 FlowOp::ToRight => push(right, left),

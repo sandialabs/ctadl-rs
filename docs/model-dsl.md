@@ -87,7 +87,8 @@ optional **attributes**; an attribute you do not mention is not constrained.
 
 | relation | columns | attributes |
 | --- | --- | --- |
-| `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import` |
+| `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `import` |
+| `name_of(F, N)` | function, one of its names | — |
 | `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id`, `language`, `import` |
 | `param(F, Index)` | function, parameter index | — |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
@@ -98,15 +99,27 @@ optional **attributes**; an attribute you do not mention is not constrained.
 
 Notes worth having:
 
-- `name` is a **simple** name. Where a frontend publishes more than one spelling for a function —
-  a native symbol known both as `system` and as `<EXTERNAL>::system@00101008`, a Lua callee
-  reachable as `execute` and as `os.execute` — all of them match, and `fun(F, name = N)` binds `N`
-  once per spelling.
-- `arity`, `has_code` and `param` read the IR, so they match nothing for a function with no body:
-  an external, a dex/jvm `ext` stub. `name` / `signature` / `qualified-id` are the supported shape
+- **An attribute has at most one value.** `fun(F, name = N)` binds `N` once, and
+  `fun(F, name != "x")` and `fun(F, name = N), N != "x"` are the same test.
+- `F` is the function's **full name**, the IR's own: `Lcom/example/Foo;->bar(I)V`,
+  `<EXTERNAL>::system@00101008`, `os.execute`. To name one function exactly, test it:
+  `fun(F), F = "os.execute"`.
+- `name` is the **simple** name the frontend gives the function: `bar`, `system`, `execute`.
+- `name_of` relates a function to its simple name and to the **other names** a frontend knows it
+  by — on pcode, the namespace-qualified `<EXTERNAL>::system` and Ghidra's own spelling before a
+  leading `_` is stripped. "Some name of `F` matches" is a join:
+
+  ```
+  sink(F::arg(0)) :- name_of(F, N), regex_match(N, "system$");
+  source(F::return) :- fun(F), !(name_of(F, N) && N = "getenv");
+  ```
+
+  The full name is not a `name_of` row; it is `F`.
+- `arity`, `has_code` and `param` read the IR, so they match nothing for a function with no body,
+  such as a Lua external. `name` / `signature` / `name_of` and `F` itself are the supported shape
   for a bodyless callee.
-- `parent` exists where the frontend has a class hierarchy (Java, Lua). Elsewhere it matches
-  nothing, which is fail-closed.
+- `parent` is the declaring class, where the frontend has a class hierarchy (Java, CIL, Lua).
+  Elsewhere it matches nothing, which is fail-closed.
 - `callee_string` is the fully qualified callee (joinable with `fun`) or, for an indirect call,
   the variable the program text calls through.
 - `callsig` is a **different universe from `fun`**, not a view of it. `fun` is built from the
@@ -173,7 +186,7 @@ A negated **group** is one existence check over a whole subquery, and the variab
 are existentially quantified:
 
 ```
-source(F::return) :- fun(F), !(fun(F, name = N) && regex_match(N, "^get"));
+source(F::return) :- fun(F), !(name_of(F, N) && regex_match(N, "^get"));
 ```
 
 That reads "no name of `F` matches `^get`". Written as two separate negations it would mean
@@ -362,7 +375,14 @@ both kinds of rule belongs on both commands.
 ctadl migrate-models my-models.jsonl            # writes my-models.ctadl
 ctadl migrate-models my-models.jsonl -o -       # to stdout
 ctadl migrate-models my-models.jsonl --dry-run  # check only
+ctadl migrate-models my-models.jsonl --language dex --language jvm  # a file for these languages
 ```
+
+Some JSON spellings meant more on some frontends than others: a `name` or `signature` also matched
+the function's full name on pcode, Lua, C and flowy, and a `qualified-id` matched pcode's
+namespace-qualified name. The migration writes a second rule for each, testing the language. A
+generator's `in`, or `--language` for a file that is only ever loaded for some languages (the
+shipped defaults are), leaves out the rules no language it can match in needs.
 
 The migration is checked by loading it, so a file that translates but does not check is a failure
 rather than a surprise on the next index.
@@ -386,8 +406,9 @@ How the JSON constructs map:
 | `find: callsites` | `callsite(C, S, callee_string = F)`, ports anchored at `S` |
 | `find: dispatch` | the key variable `K`, bound by `callsig(K, …)` |
 | `in: {language, languages, import}` | `fun(F, language = …, import = …)`, or the same on `callsig` |
-| `signature_match` name/parent/qualified-id | `fun(F, name = …, parent = …, qualified-id = …)` |
-| `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)` |
+| `signature_match` name/parent | `fun(F, name = …, parent = …)`, and on pcode, Lua, C and flowy a second rule matching the full name, `F = …` |
+| `signature_match` qualified-id | `F = …`, and on pcode a second rule matching the namespace-qualified name through `name_of` |
+| `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)`, and on pcode, Lua, C and flowy a second rule with `regex_match(F, …)` |
 | `has_code` | `fun(F, has_code = …)` |
 | `number_parameters` | `fun(F, arity <op> …)` |
 | `uses_field` | `uses_field(F, …)` |

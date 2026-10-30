@@ -12,6 +12,7 @@
 //! migrated from: textually, and by what they match, against what the retired JSON matcher
 //! matched for the `.jsonl`, frozen in `default_models.golden`.
 
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
     DEFAULT_MODEL_FILES, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
     try_load_default_models, try_load_models,
@@ -20,8 +21,7 @@ use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::Symbol;
 use ctadl_ir::mir::call::{
     CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
-    JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature,
-    NativeSimpleName, VirtualMethodTable,
+    JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -159,13 +159,13 @@ fn java_program() -> ProgramInfo {
         ),
     ];
     program_with(
-        VirtualMethodTable::new(Dispatch::Java {
+        test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy: Default::default(),
             interfaces: Default::default(),
             abstract_methods: Default::default(),
             natives: Default::default(),
-        }),
+        })),
         &[
             JAVA_PROBE,
             "Lcom/example/C;->strcpy(I)V",
@@ -177,19 +177,15 @@ fn java_program() -> ProgramInfo {
 }
 
 fn native_program() -> ProgramInfo {
-    let methods = [NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER]
-        .into_iter()
-        .map(|n| {
-            (
-                NativeSimpleName(n.into()),
-                NativeSignature(format!("{n}()").into()),
-                NativeFunction(n.into()),
-                NativeQualifiedName(n.into()),
-            )
-        })
-        .collect();
+    let names = [NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER];
+    let signatures = names.map(|n| format!("{n}()"));
     program(
-        VirtualMethodTable::new(Dispatch::Native { methods }),
+        test_vmt::native(
+            names
+                .iter()
+                .zip(&signatures)
+                .map(|(n, sig)| (*n, sig.as_str(), *n, *n)),
+        ),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER],
     )
 }
@@ -200,12 +196,7 @@ fn lua_program() -> ProgramInfo {
         .map(|n| (Symbol::from(n), Symbol::from(n)))
         .collect();
     program(
-        VirtualMethodTable::new(Dispatch::Lua {
-            methods: Vec::new(),
-            functions,
-            externals: Vec::new(),
-            hierarchy: Default::default(),
-        }),
+        test_vmt::lua(Vec::new(), &functions, &[], Default::default()),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE],
     )
 }
@@ -262,22 +253,24 @@ fn cil_program() -> ProgramInfo {
     ];
     let names: Vec<String> = methods.iter().map(|m| m.3.to_string()).collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    let vmt = VirtualMethodTable::new(Dispatch::Cil {
+    let vmt = test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Cil {
         methods: methods.clone(),
         hierarchy: Default::default(),
         interfaces: Default::default(),
         abstract_methods: Default::default(),
         pinvokes: Default::default(),
-    });
+    }));
     program(vmt, &names)
 }
 
 /// Flowy: no method table at all.
 fn unknown_program() -> ProgramInfo {
-    program(
+    let mut info = program(
         VirtualMethodTable::default(),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE],
-    )
+    );
+    info.vmt = VirtualMethodTable::named_by_ir(&info.program);
+    info
 }
 
 /// The set of function ids that got at least one summary row out of the defaults.
@@ -569,19 +562,26 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
 /// keeps the pair from drifting: edit one and not the other and this fails, naming the file.
 #[test]
 fn the_dsl_defaults_are_the_migration_of_the_json_defaults() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, DEFAULT_MODEL_LANGUAGES, dsl};
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/defaults");
     assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_DSL_MODELS.len());
-    for ((json_name, _), (dsl_name, dsl_source)) in
-        DEFAULT_MODEL_FILES.iter().zip(DEFAULT_DSL_MODELS)
+    assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_MODEL_LANGUAGES.len());
+    for (((json_name, _), (dsl_name, dsl_source)), languages) in DEFAULT_MODEL_FILES
+        .iter()
+        .zip(DEFAULT_DSL_MODELS)
+        .zip(DEFAULT_MODEL_LANGUAGES)
     {
-        let (migrated, _) = dsl::migrate::migrate_file(&dir.join(json_name))
+        let (migrated, _) = dsl::migrate::migrate_file(&dir.join(json_name), Some(languages))
             .unwrap_or_else(|e| panic!("migrating {json_name}: {e}"));
+        let flags: String = languages
+            .iter()
+            .map(|l| format!(" --language {l}"))
+            .collect();
         assert!(
             migrated == *dsl_source,
-            "{dsl_name} is not what `ctadl migrate-models {json_name}` writes; re-run it, or \
-             make the same change to both files"
+            "{dsl_name} is not what `ctadl migrate-models {json_name}{flags}` writes; re-run it, \
+             or make the same change to both files"
         );
     }
 }

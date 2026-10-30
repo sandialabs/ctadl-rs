@@ -145,6 +145,9 @@ impl AtomPlan {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Relation {
     Fun,
+    /// A function and one of its names: the simple name, then the other names the frontend
+    /// knows it by.
+    NameOf,
     CallSig,
     Param,
     CallSite,
@@ -160,6 +163,7 @@ impl Relation {
     fn of(name: &str) -> Option<Self> {
         Some(match name {
             "fun" => Relation::Fun,
+            "name_of" => Relation::NameOf,
             "callsig" => Relation::CallSig,
             "param" => Relation::Param,
             "callsite" => Relation::CallSite,
@@ -187,6 +191,8 @@ impl Relation {
     fn indexed_columns(self) -> &'static [usize] {
         match self {
             Relation::Fun | Relation::CallSig | Relation::Param | Relation::UsesField => &[0],
+            // A function's names, the functions with a name.
+            Relation::NameOf => &[0, 1],
             // By id, then by caller.
             Relation::CallSite => &[1, 0],
             // `supers` of a known sub, `subs` of a known super.
@@ -197,9 +203,8 @@ impl Relation {
     /// The attributes `ProgramFacts` can look rows up by.
     fn indexed_attrs(self) -> &'static [Attr] {
         match self {
-            Relation::Fun | Relation::CallSig => {
-                &[Attr::Name, Attr::Parent, Attr::Signature, Attr::QualifiedId]
-            }
+            Relation::Fun => &[Attr::Name, Attr::Parent, Attr::Signature],
+            Relation::CallSig => &[Attr::Name, Attr::Parent, Attr::Signature, Attr::QualifiedId],
             Relation::CallSite => &[Attr::CalleeString],
             _ => &[],
         }
@@ -215,6 +220,8 @@ impl Relation {
             // typically an order of magnitude smaller.
             Relation::CallSig => 28,
             Relation::Fun => 30,
+            // Every function, once per name.
+            Relation::NameOf => 32,
             Relation::CallSite => 40,
         }
     }
@@ -441,7 +448,7 @@ fn check_item(
 /// be written at all:
 ///
 /// ```text
-/// source(F::return) :- fun(F), !(fun(F, name = N) && regex_match(N, "^get"));
+/// source(F::return) :- fun(F), !(name_of(F, N) && regex_match(N, "^get"));
 /// ```
 ///
 /// A negated *atom* is deliberately stricter, and matches the design: every variable in it must
@@ -1390,6 +1397,7 @@ fn value_set(items: &[Literal]) -> HashSet<Value> {
 fn column_types(name: &str) -> &'static [VarType] {
     match name {
         "fun" => &[VarType::Function],
+        "name_of" => &[VarType::Function, VarType::Str],
         "callsig" => &[VarType::CallSig],
         "param" => &[VarType::Function, VarType::Int],
         "callsite" => &[VarType::Function, VarType::Site],

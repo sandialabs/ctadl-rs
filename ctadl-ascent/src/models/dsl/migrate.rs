@@ -65,12 +65,18 @@ impl MigrationReport {
 
 /// Translates a whole `model_generators` list into DSL source.
 ///
+/// `languages`, when given, are the languages the list is for (by [`ArtifactLanguage`] name),
+/// as one generator's `in` would say. A rule only some other language could match is left out.
+///
 /// Fails with every generator's errors if any generator cannot be translated exactly: either
 /// the JSON format does not allow it, and the error is the one the JSON loader raised, or it
 /// means something the DSL cannot say, which is a [`JsonModelError::Untranslatable`].
+///
+/// [`ArtifactLanguage`]: crate::project::ArtifactLanguage
 pub fn migrate_generators<'a>(
     generators: impl IntoIterator<Item = &'a Value>,
     header: Option<&str>,
+    languages: Option<&[&str]>,
 ) -> Result<(String, MigrationReport), Error> {
     let mut out = String::new();
     let mut report = MigrationReport::default();
@@ -89,7 +95,7 @@ pub fn migrate_generators<'a>(
             continue;
         }
         let before = out.len();
-        if let Err(e) = migrate_generator(i, value, &mut out, &mut report) {
+        if let Err(e) = migrate_generator(i, value, languages, &mut out, &mut report) {
             errors.push(e);
             continue;
         }
@@ -115,8 +121,12 @@ fn untranslatable(index: usize, what: &str, message: impl Into<String>) -> JsonM
     }
 }
 
-/// Reads a `.json` / `.json5` / `.jsonl` model file and returns the DSL source for it.
-pub fn migrate_file(path: &std::path::Path) -> Result<(String, MigrationReport), Error> {
+/// Reads a `.json` / `.json5` / `.jsonl` model file and returns the DSL source for it, for
+/// `languages` as [`migrate_generators`] reads them.
+pub fn migrate_file(
+    path: &std::path::Path,
+    languages: Option<&[&str]>,
+) -> Result<(String, MigrationReport), Error> {
     use crate::error::ErrorContext;
     let generators: Vec<Value> = match path.extension().and_then(|e| e.to_str()) {
         Some("jsonl") => {
@@ -160,7 +170,7 @@ pub fn migrate_file(path: &std::path::Path) -> Result<(String, MigrationReport),
         "Migrated from {} by `ctadl migrate-models`. Edit this file, not the original.",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
     );
-    migrate_generators(generators.iter(), Some(&header))
+    migrate_generators(generators.iter(), Some(&header), languages)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +192,7 @@ const DISPATCH_KEY: &str = "K";
 fn migrate_generator(
     index: usize,
     generator: &Value,
+    languages: Option<&[&str]>,
     out: &mut String,
     report: &mut MigrationReport,
 ) -> Result<(), JsonModelError> {
@@ -221,11 +232,14 @@ fn migrate_generator(
     }
 
     let expr = where_expr(index, generator.get("where"), "where")?;
+    let languages = generator_languages(generator.get("in"), languages);
     let ctx = Ctx {
         index,
         subject,
         callsites,
         relation,
+        full_names: Twin::of(languages.as_deref(), FULL_NAME_LANGUAGES),
+        pcode_ids: Twin::of(languages.as_deref(), &["pcode"]),
     };
     let disjuncts = compile(&expr, false, &ctx, &mut fresh)?;
 
@@ -397,6 +411,75 @@ struct Ctx<'a> {
     /// `callsig` for `find: dispatch`. The attribute names are the same in both, which is what
     /// lets one constraint compiler serve them.
     relation: &'a str,
+    /// Whether a JSON `name` or `signature` also matched the function's full name.
+    full_names: Twin,
+    /// Whether a JSON `qualified-id` also matched pcode's namespace-qualified name.
+    pcode_ids: Twin,
+}
+
+/// The languages whose JSON `name` and `signature` matched a function's full name too: those
+/// whose method tables published it as one, and those with no table, where it was all there was.
+const FULL_NAME_LANGUAGES: &[&str] = &["pcode", "lua", "c", "flowy"];
+
+/// Whether to write the rule for a JSON spelling only some languages had, and with what test of
+/// the language.
+#[derive(Clone, Copy)]
+enum Twin {
+    /// No language the generator can match in had it.
+    Never,
+    /// Every language it can match in had it.
+    Always,
+    /// Some did, and the rule tests for them.
+    Some(&'static [&'static str]),
+}
+
+impl Twin {
+    fn of(languages: Option<&[String]>, had: &'static [&'static str]) -> Self {
+        match languages {
+            None => Twin::Some(had),
+            Some(ls) if ls.iter().all(|l| had.contains(&l.as_str())) => Twin::Always,
+            Some(ls) if ls.iter().any(|l| had.contains(&l.as_str())) => Twin::Some(had),
+            Some(_) => Twin::Never,
+        }
+    }
+
+    /// The attribute the rule tests the language with, if it needs one.
+    fn attrs(self) -> Vec<String> {
+        match self {
+            Twin::Some([one]) => vec![format!("language = {}", quote(one))],
+            Twin::Some(many) => vec![format!(
+                "language in {{{}}}",
+                many.iter().map(|l| quote(l)).collect::<Vec<_>>().join(", ")
+            )],
+            Twin::Never | Twin::Always => Vec::new(),
+        }
+    }
+}
+
+/// The languages a generator can match in: those its `in` names, and those the whole file is
+/// for. `None` when neither says.
+fn generator_languages(scope: Option<&Value>, file: Option<&[&str]>) -> Option<Vec<String>> {
+    let named: Option<Vec<String>> = scope.and_then(|scope| {
+        let one = scope.get("language").and_then(|v| v.as_str());
+        let many = scope.get("languages").and_then(|v| v.as_array());
+        (one.is_some() || many.is_some()).then(|| {
+            one.into_iter()
+                .chain(many.into_iter().flatten().filter_map(|v| v.as_str()))
+                .map(String::from)
+                .collect()
+        })
+    });
+    match (named, file) {
+        (Some(named), Some(file)) => Some(
+            named
+                .into_iter()
+                .filter(|l| file.contains(&l.as_str()))
+                .collect(),
+        ),
+        (Some(named), None) => Some(named),
+        (None, Some(file)) => Some(file.iter().map(|l| l.to_string()).collect()),
+        (None, None) => None,
+    }
 }
 
 /// A disjunction of conjunctions of body atoms, as text. The empty disjunction is false, and a
@@ -514,51 +597,105 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
         .unwrap_or("");
     match kind {
         "signature_match" => {
-            let pairs = [
+            let fields = [
                 ("name", "names"),
                 ("parent", "parents"),
                 ("qualified-id", "qualified-ids"),
             ];
-            let mut attrs = Vec::new();
-            for (single, plural) in pairs {
-                // A field that is present and names nothing narrows to nothing, as it does in
-                // the JSON format: leaving it out would match every function.
-                if value.get(single).is_none() && value.get(plural).is_none() {
-                    continue;
-                }
-                match string_attr(value, single, plural, single) {
-                    Some(a) => attrs.push(a),
-                    None => return Ok(Vec::new()),
-                }
-            }
-            if attrs.is_empty() {
+            if fields
+                .iter()
+                .all(|(single, plural)| value.get(single).is_none() && value.get(plural).is_none())
+            {
                 return Err(missing(
                     "name' / 'names' / 'parent' / 'parents' / 'qualified-id' / 'qualified-ids",
                 ));
             }
-            Ok(vec![vec![atom(ctx.relation, subject, &attrs)]])
+            // Each alternative is an atom's attributes and the filters after it.
+            let mut alternatives: Vec<(Vec<String>, Vec<String>)> = vec![(Vec::new(), Vec::new())];
+            for (single, plural) in fields {
+                if value.get(single).is_none() && value.get(plural).is_none() {
+                    continue;
+                }
+                // A field that is present and names nothing narrows to nothing, as it does in
+                // the JSON format: leaving it out would match every function.
+                let Some(attr) = string_attr(value, single, plural, single) else {
+                    return Ok(Vec::new());
+                };
+                let ways = match (single, ctx.relation) {
+                    // A call-signature key has one name and one id, so its attributes say it all.
+                    (_, "callsig") | ("parent", _) => vec![(vec![attr], Vec::new())],
+                    // A name in the JSON format is the simple name, or on some frontends the
+                    // function's full name.
+                    ("name", _) => {
+                        let mut ways = vec![(vec![attr], Vec::new())];
+                        if !matches!(ctx.full_names, Twin::Never) {
+                            ways.push((
+                                ctx.full_names.attrs(),
+                                vec![member_text(value, single, plural, subject)],
+                            ));
+                        }
+                        ways
+                    }
+                    // An id is the full name, or on pcode the namespace-qualified name.
+                    _ => {
+                        let mut ways = vec![(
+                            Vec::new(),
+                            vec![member_text(value, single, plural, subject)],
+                        )];
+                        if !matches!(ctx.pcode_ids, Twin::Never) {
+                            ways.extend(pcode_id_ways(
+                                &collect_strings(value, single, plural),
+                                ctx.pcode_ids.attrs(),
+                                subject,
+                                fresh,
+                            ));
+                        }
+                        ways
+                    }
+                };
+                alternatives = alternatives
+                    .iter()
+                    .flat_map(|(attrs, filters)| {
+                        ways.iter().map(move |(a, f)| {
+                            let attrs = attrs.iter().chain(a).cloned().collect();
+                            let filters = filters.iter().chain(f).cloned().collect();
+                            (attrs, filters)
+                        })
+                    })
+                    .collect();
+            }
+            Ok(alternatives
+                .into_iter()
+                .map(|(attrs, filters)| {
+                    let mut atoms = vec![atom(ctx.relation, subject, &attrs)];
+                    atoms.extend(filters);
+                    atoms
+                })
+                .collect())
         }
-        "name" => {
+        "name" | "signature" | "signature_pattern" => {
             let pattern = value
                 .get("pattern")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| missing("pattern"))?;
-            let v = fresh.next("N");
-            Ok(vec![vec![
-                atom(ctx.relation, subject, &[format!("name = {v}")]),
+            let (attr, v) = if kind == "name" {
+                ("name", fresh.next("N"))
+            } else {
+                ("signature", fresh.next("Sig"))
+            };
+            let mut alternatives = vec![vec![
+                atom(ctx.relation, subject, &[format!("{attr} = {v}")]),
                 format!("regex_match({v}, {})", quote(pattern)),
-            ]])
-        }
-        "signature" | "signature_pattern" => {
-            let pattern = value
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| missing("pattern"))?;
-            let v = fresh.next("Sig");
-            Ok(vec![vec![
-                atom(ctx.relation, subject, &[format!("signature = {v}")]),
-                format!("regex_match({v}, {})", quote(pattern)),
-            ]])
+            ]];
+            // On some frontends the JSON format also matched both patterns against the
+            // function's full name.
+            if ctx.relation == "fun" && !matches!(ctx.full_names, Twin::Never) {
+                alternatives.push(vec![
+                    atom(ctx.relation, subject, &ctx.full_names.attrs()),
+                    format!("regex_match({subject}, {})", quote(pattern)),
+                ]);
+            }
+            Ok(alternatives)
         }
         "has_code" => {
             let b = value
@@ -624,10 +761,10 @@ fn leaf_atoms(value: &Value, ctx: &Ctx<'_>, fresh: &mut Fresh) -> Result<Dnf, Js
             // combinator's scratch copy of the *callee* set there, which was a bug in it, not a
             // meaning to carry across.
             let caller_ctx = Ctx {
-                index,
                 subject: CALLER,
                 callsites: false,
                 relation: "fun",
+                ..*ctx
             };
             compile(&Expr::Prim(inner), false, &caller_ctx, fresh)
         }
@@ -1205,13 +1342,17 @@ fn migrate_bridge(
     bridge_severity(index, bridge, "on-ambiguous", report)?;
 
     // Side B's own match block, compiled with `G` as its subject. A disjunction in it stays in
-    // one rule, as side A's does; see `migrate_generator`.
+    // one rule, as side A's does; see `migrate_generator`. It is usually in another language
+    // than side A, so only its own `in` says which.
     let scope = scope_attrs(to.get("in"));
+    let languages = generator_languages(to.get("in"), None);
     let ctx = Ctx {
         index,
         subject: OTHER,
         callsites: false,
         relation: "fun",
+        full_names: Twin::of(languages.as_deref(), FULL_NAME_LANGUAGES),
+        pcode_ids: Twin::of(languages.as_deref(), &["pcode"]),
     };
     let expr = where_expr(index, to.get("where"), "to.where")?;
     let disjuncts = compile(&expr, false, &ctx, fresh)?;
@@ -1390,6 +1531,56 @@ fn dsl_op(kind: &str) -> Option<&'static str> {
 }
 
 /// `name`/`names` (or any singular/plural pair) as one attribute constraint.
+/// The ways a JSON `qualified-id` in `ids` matched a pcode function by its namespace-qualified
+/// name, as `(attributes, filters)`, each attribute list starting with `language`.
+///
+/// The pcode frontend qualifies a name by its namespace, `Foo::bar`, and a function in no
+/// namespace by nothing, so its id is its simple name. A namespace-qualified id is one of the
+/// function's other names, the only kind with a `::`; an unqualified one is its simple name, but
+/// only when the function has no namespace.
+fn pcode_id_ways(
+    ids: &[String],
+    language: Vec<String>,
+    subject: &str,
+    fresh: &mut Fresh,
+) -> Vec<(Vec<String>, Vec<String>)> {
+    let set = |ids: &[&String], var: &str| match ids {
+        [one] => format!("{var} = {}", quote(one)),
+        many => format!(
+            "{var} in {{{}}}",
+            many.iter().map(|s| quote(s)).collect::<Vec<_>>().join(", ")
+        ),
+    };
+    let (qualified, bare): (Vec<&String>, Vec<&String>) =
+        ids.iter().partition(|id| id.contains("::"));
+    let mut ways = Vec::new();
+    if !qualified.is_empty() {
+        let q = fresh.next("Q");
+        ways.push((
+            language.clone(),
+            vec![format!("name_of({subject}, {q})"), set(&qualified, &q)],
+        ));
+    }
+    if !bare.is_empty() {
+        let o = fresh.next("O");
+        let mut attrs = vec![set(&bare, "name")];
+        attrs.extend(language);
+        ways.push((
+            attrs,
+            vec![format!(
+                "!(name_of({subject}, {o}) && regex_match({o}, \"::\"))"
+            )],
+        ));
+    }
+    ways
+}
+
+/// A field's strings as a test on the variable `var`, for a field [`string_attr`] found
+/// non-empty.
+fn member_text(value: &Value, single: &str, plural: &str, var: &str) -> String {
+    string_attr(value, single, plural, var).expect("the field names something")
+}
+
 fn string_attr(value: &Value, single: &str, plural: &str, attr: &str) -> Option<String> {
     let items = collect_strings(value, single, plural);
     match items.len() {

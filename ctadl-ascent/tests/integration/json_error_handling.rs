@@ -5,6 +5,7 @@
 //! load generators the way a file is loaded, through [`encode`].
 
 use ctadl_ascent::error::{Error, JsonModelError};
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{ImportScope, ModelLoadReport, ProgramMatchIndex, ProgramModelMatches};
 use ctadl_ir::mir::ProgramInfo;
 use serde_json::json;
@@ -147,19 +148,8 @@ fn test_valid_json_still_works() {
 /// matched callee and needed no call site at all (DESIGN.md §4).
 #[test]
 fn test_callsites_matches_callee_and_caller() {
-    use ctadl_ir::mir::call::{
-        CallEdges, CallStyle, Dispatch, NativeFunction, NativeQualifiedName, NativeSignature,
-        NativeSimpleName, VirtualMethodTable,
-    };
+    use ctadl_ir::mir::call::{CallEdges, CallStyle};
 
-    let method = |n: &str| {
-        (
-            NativeSimpleName(n.into()),
-            NativeSignature(n.into()),
-            NativeFunction(n.into()),
-            NativeQualifiedName(n.into()),
-        )
-    };
     let mut caller = make_function("read_http_data", 0, false, &[]);
     let body = caller.blocks.blocks_mut().push(BasicBlockData::new(None));
     caller.blocks.blocks_mut()[body].extend(vec![Statement::new_kind(StatementKind::CallAssign {
@@ -170,9 +160,7 @@ fn test_callsites_matches_callee_and_caller() {
         args: Default::default(),
     })]);
     let program_info = ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: vec![method("get"), method("read_http_data"), method("unrelated")],
-        }),
+        vmt: test_vmt::native(["get", "read_http_data", "unrelated"].map(|n| (n, n, n, n))),
         program: Program::new(Functions::new([
             make_function("get", 1, false, &[]),
             caller,
@@ -243,8 +231,7 @@ fn test_callsites_propagation_rejected() {
 // ---------------------------------------------------------------------------
 
 use ctadl_ir::mir::call::{
-    Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction,
-    NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     AccessPath, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx,
@@ -286,18 +273,8 @@ fn make_function(name: &str, num_params: usize, force_body: bool, fields: &[&str
 /// - `a`: 1 parameter, a body that writes the field `secret`
 /// - `b`, `c`: 0 parameters, no body
 fn native_program() -> ProgramInfo {
-    let methods = |n: &str| {
-        (
-            NativeSimpleName(n.into()),
-            NativeSignature(n.into()),
-            NativeFunction(n.into()),
-            NativeQualifiedName(n.into()),
-        )
-    };
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: vec![methods("a"), methods("b"), methods("c")],
-        }),
+        vmt: test_vmt::native(["a", "b", "c"].map(|n| (n, n, n, n))),
         program: Program::new(Functions::new([
             make_function("a", 1, true, &["secret"]),
             make_function("b", 0, false, &[]),
@@ -311,7 +288,7 @@ fn native_program() -> ProgramInfo {
 /// `Other`, no recorded hierarchy).
 fn java_program() -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods: vec![
                 (
                     JavaClass("Child".into()),
@@ -335,7 +312,7 @@ fn java_program() -> ProgramInfo {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        }),
+        })),
         ..Default::default()
     }
 }
@@ -345,7 +322,13 @@ fn java_program() -> ProgramInfo {
 fn matched_functions(program_info: &ProgramInfo, where_c: serde_json::Value) -> BTreeSet<String> {
     let mut model_matches = ProgramModelMatches::default();
     {
-        let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
+        // A native program is a pcode import, as only one could be.
+        let scope = if program_info.vmt.dispatch == Dispatch::Native {
+            ImportScope::new(ctadl_ascent::project::ArtifactLanguage::Pcode, "lib")
+        } else {
+            ImportScope::unknown()
+        };
+        let match_index = ProgramMatchIndex::new(program_info, scope);
         let model = json!({
             "find": "methods",
             "where": where_c,
@@ -665,22 +648,12 @@ fn fail_open_constraint_does_not_match_everything() {
 /// This is the disambiguation `qualified-id` exists for — `name` cannot express it, and
 /// `parent` is populated only for the Java VMT.
 fn native_cpp_program() -> ProgramInfo {
-    let method = |simple: &str, qualified: &str, fq: &str| {
-        (
-            NativeSimpleName(simple.into()),
-            NativeSignature("()".into()),
-            NativeFunction(fq.into()),
-            NativeQualifiedName(qualified.into()),
-        )
-    };
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: vec![
-                method("bar", "Foo::bar", "Foo::bar@00101000"),
-                method("bar", "Baz::bar", "Baz::bar@00102000"),
-                method("main", "main", "main"),
-            ],
-        }),
+        vmt: test_vmt::native([
+            ("bar", "()", "Foo::bar@00101000", "Foo::bar"),
+            ("bar", "()", "Baz::bar@00102000", "Baz::bar"),
+            ("main", "()", "main", "main"),
+        ]),
         program: Program::new(Functions::new([
             make_function("Foo::bar@00101000", 0, false, &[]),
             make_function("Baz::bar@00102000", 0, false, &[]),
@@ -777,22 +750,15 @@ fn qualified_id_matches_every_function_sharing_a_qualified_name() {
     // the entry point differs. `qualified-id` therefore selects the whole group, not one
     // function. That is the intended granularity — they are the same logical callee — but it
     // means `qualified-id` does not guarantee a single match on native frontends.
-    let method = |qualified: &str, fq: &str| {
-        (
-            NativeSimpleName("system".into()),
-            NativeSignature("()".into()),
-            NativeFunction(fq.into()),
-            NativeQualifiedName(qualified.into()),
-        )
-    };
     let program = ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: vec![
-                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008d90"),
-                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008da4"),
-                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008db8"),
-            ],
-        }),
+        vmt: test_vmt::native(
+            [
+                "<EXTERNAL>::system@00008d90",
+                "<EXTERNAL>::system@00008da4",
+                "<EXTERNAL>::system@00008db8",
+            ]
+            .map(|fq| ("system", "()", fq, "<EXTERNAL>::system")),
+        ),
         program: Program::new(Functions::new([
             make_function("<EXTERNAL>::system@00008d90", 0, false, &[]),
             make_function("<EXTERNAL>::system@00008da4", 0, false, &[]),

@@ -270,7 +270,7 @@ impl DslFile {
     /// the migrator's errors, each naming its generator.
     pub fn read_json(path: &FsPath) -> Result<Self, Error> {
         warn_json_deprecated(path);
-        let (text, report) = migrate::migrate_file(path)
+        let (text, report) = migrate::migrate_file(path, None)
             .err_context(|| format!("migrating model file: {}", path.display()))?;
         Self::from_migration(path, text, report)
     }
@@ -283,7 +283,7 @@ impl DslFile {
         generators: &[serde_json::Value],
     ) -> Result<Self, Error> {
         let path = path.into();
-        let (text, report) = migrate::migrate_generators(generators, None)
+        let (text, report) = migrate::migrate_generators(generators, None, None)
             .err_context(|| format!("migrating model file: {}", path.display()))?;
         Self::from_migration(&path, text, report)
     }
@@ -301,7 +301,7 @@ impl DslFile {
         })
         .err_context(context)?;
         let mut rejected = None;
-        let (text, report) = match migrate::migrate_generators(generators.iter(), None) {
+        let (text, report) = match migrate::migrate_generators(generators.iter(), None, None) {
             Err(Error::JsonModel(errors)) => {
                 // A generator with no `model` derives nothing, so standing one in for each that
                 // failed keeps every other generator at its own index.
@@ -313,7 +313,7 @@ impl DslFile {
                         .err_context(context)
                         .unwrap_err(),
                 );
-                migrate::migrate_generators(generators.iter(), None).err_context(context)?
+                migrate::migrate_generators(generators.iter(), None, None).err_context(context)?
             }
             migrated => migrated.err_context(context)?,
         };
@@ -510,6 +510,8 @@ pub struct DslMatcher<'a> {
     /// always reported them, and deduplicated, since a per-import rule says the same thing about
     /// every import.
     errors: Vec<DslErrors>,
+    /// Per file, the rows each label emitted so far.
+    emitted: Vec<emit::Emitted>,
 }
 
 /// One rule the phase keeps.
@@ -548,6 +550,7 @@ impl<'a> DslMatcher<'a> {
             phase,
             rules,
             errors: vec![DslErrors::default(); set.files.len()],
+            emitted: set.files.iter().map(|_| emit::Emitted::default()).collect(),
         }
     }
 
@@ -595,7 +598,9 @@ impl<'a> DslMatcher<'a> {
                         rule,
                         &state.solutions,
                         &file.provenance(ri),
+                        file.label(ri),
                         out,
+                        &mut self.emitted[fi],
                         &mut errors,
                     );
                     state.solutions.clear();
@@ -623,12 +628,14 @@ impl<'a> DslMatcher<'a> {
             phase,
             rules,
             errors,
+            emitted: rows,
         } = self;
         files
             .iter()
             .zip(rules)
             .zip(errors)
-            .map(|((file, rules), mut errors)| {
+            .zip(rows)
+            .map(|(((file, rules), mut errors), mut rows)| {
                 let mut file_report = DslFileReport {
                     path: file.path.clone(),
                     phase,
@@ -647,7 +654,9 @@ impl<'a> DslMatcher<'a> {
                             &file.program.rules[ri],
                             &state.solutions,
                             &file.provenance(ri),
+                            file.label(ri),
                             out,
+                            &mut rows,
                             &mut emitted,
                         );
                     }

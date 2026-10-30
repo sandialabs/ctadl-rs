@@ -11,16 +11,13 @@ use std::io::Write;
 use ctadl_ascent::codegen::model_matches::codegen_model_matches;
 use ctadl_ascent::index_engine::IndexFacts;
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
     DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
     ProgramModelMatches, try_load_models,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::ProgramInfo;
-use ctadl_ir::mir::call::{
-    Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-    VirtualMethodTable,
-};
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -30,19 +27,7 @@ use ctadl_ir::mir::call::{
 /// Nothing here has a body, which is the point: a bridge's most important sides are bodyless.
 fn native_program(functions: &[&str]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: functions
-                .iter()
-                .map(|n| {
-                    (
-                        NativeSimpleName((*n).into()),
-                        NativeSignature((*n).into()),
-                        NativeFunction((*n).into()),
-                        NativeQualifiedName((*n).into()),
-                    )
-                })
-                .collect(),
-        }),
+        vmt: test_vmt::native(functions.iter().map(|n| (*n, *n, *n, *n))),
         ..Default::default()
     }
 }

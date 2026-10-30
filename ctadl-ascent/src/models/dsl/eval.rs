@@ -42,7 +42,7 @@ binds one has run, the rest of the body needs one witness rather than every solu
 # Negation
 
 A negated atom is an existence check under the current bindings, which is why the mode check
-requires its variables to be bound. A negated *group* — `!(fun(F, name = N) && regex_match(N,
+requires its variables to be bound. A negated *group* — `!(name_of(F, N) && regex_match(N,
 "^get"))` — is an existence check over a whole subquery, and the variables local to it (`N`
 here) are existentially quantified. That distinction is what lets "no name of F matches this
 pattern" be expressed at all; without it the group would decompose into two independent tests
@@ -62,7 +62,7 @@ use super::check::{
     Access, AtomPlan, Attr, AttrPat, ColumnPat, Filter, Key, Operand, Pattern, Plan, Relation,
     Slot, Step,
 };
-use super::relations::{FunKey, ProgramFacts, RowIdx, SiteId, Spellings};
+use super::relations::{FunKey, ProgramFacts, RowIdx, SiteId};
 
 /// A value a variable can take.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -309,6 +309,8 @@ type Cont<'c, 'a> = dyn FnMut(&mut Machine<'a>) -> bool + 'c;
 #[derive(Copy, Clone)]
 enum Row {
     Fun(usize),
+    /// A function and one of its names.
+    NameOf(usize, Str),
     CallSig(usize),
     /// A function and one of its parameter indices.
     Param(usize, i64),
@@ -318,10 +320,8 @@ enum Row {
     UsesField(usize),
 }
 
-/// The values one row has for one attribute.
-enum AttrValues<'a> {
-    /// Every accepted spelling.
-    Strs(Spellings<'a>),
+/// The value one row has for one attribute.
+enum AttrValues {
     One(Value),
     /// The row has no value: `arity` on a bodyless callee. Every constraint fails.
     Missing,
@@ -408,6 +408,34 @@ impl<'a> Machine<'a> {
                     self.each(atom, rows.iter().map(|&r| Row::Fun(r as usize)), k)
                 }
                 Access::Scan => self.each(atom, (0..facts.funs.len()).map(Row::Fun), k),
+            },
+            Relation::NameOf => match &atom.access {
+                Access::Column(0) => {
+                    match self.column_key(atom, 0).and_then(|fq| facts.fun_index(fq)) {
+                        Some(r) => {
+                            let names = facts.funs[r].names().map(|n| Row::NameOf(r, n));
+                            self.each(atom, names, k)
+                        }
+                        None => true,
+                    }
+                }
+                Access::Column(_) => match self.column_key(atom, 1) {
+                    Some(name) => self.each(
+                        atom,
+                        facts
+                            .funs_named(name)
+                            .iter()
+                            .map(|&r| Row::NameOf(r as usize, name)),
+                        k,
+                    ),
+                    None => true,
+                },
+                _ => self.each(
+                    atom,
+                    (0..facts.funs.len())
+                        .flat_map(|r| facts.funs[r].names().map(move |n| Row::NameOf(r, n))),
+                    k,
+                ),
             },
             // A program collected without a dispatch universe has no rows, so such a rule
             // matches nothing rather than erroring — the gate that decides whether to collect
@@ -624,12 +652,8 @@ impl<'a> Machine<'a> {
         keep_going
     }
 
-    /// Matches attributes `at..` of `atom` against `row`.
-    ///
-    /// More than one way arises only when an attribute is an *output* on a function the frontend
-    /// publishes under several spellings — `fun(F, name = N)` on a native symbol known both as
-    /// `system` and as `<EXTERNAL>::system@00101008`. Binding one of them and dropping the other
-    /// would silently narrow what a migrated `name` regex matches; see `relations.rs`.
+    /// Matches attributes `at..` of `atom` against `row`. An attribute has at most one value, so
+    /// there is at most one way.
     fn match_attrs(&mut self, atom: &AtomPlan, row: Row, at: usize, k: &mut Cont<'_, 'a>) -> bool {
         let Some((attr, pat)) = atom.attrs.get(at) else {
             return k(self);
@@ -638,24 +662,22 @@ impl<'a> Machine<'a> {
         let AttrPat::Bind(slot) = pat else {
             return !self.attr_holds(pat, &values) || self.match_attrs(atom, row, at + 1, k);
         };
-        let mut alternative = |m: &mut Self, v: Value| {
-            let mark = m.trail.len();
-            m.bind(*slot, v);
-            let keep_going = m.match_attrs(atom, row, at + 1, k);
-            m.undo(mark);
-            keep_going
+        let AttrValues::One(v) = values else {
+            return true;
         };
-        match values {
-            AttrValues::Strs(list) => list.all(|s| alternative(self, Value::Str(s))),
-            AttrValues::One(v) => alternative(self, v),
-            AttrValues::Missing => true,
-        }
+        let mark = self.trail.len();
+        self.bind(*slot, v);
+        let keep_going = self.match_attrs(atom, row, at + 1, k);
+        self.undo(mark);
+        keep_going
     }
 
     fn column_value(&self, row: Row, column: usize) -> Value {
         let facts = self.facts;
         match (row, column) {
             (Row::Fun(r), _) => Value::Str(facts.funs[r].fq),
+            (Row::NameOf(r, _), 0) => Value::Str(facts.funs[r].fq),
+            (Row::NameOf(_, name), _) => Value::Str(name),
             (Row::CallSig(r), _) => {
                 let row = &facts.callsigs[r];
                 Value::CallSig {
@@ -684,79 +706,59 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// A call-signature key has exactly one spelling of each attribute — it is composed from the
-    /// site's three components — so each is a single spelling and the multi-spelling case
-    /// [`Self::match_attrs`] describes cannot arise.
-    fn attr_values(&self, row: Row, attr: Attr) -> AttrValues<'a> {
+    fn attr_values(&self, row: Row, attr: Attr) -> AttrValues {
         let facts = self.facts;
         match row {
             Row::Fun(r) => {
                 let row = &facts.funs[r];
                 match attr {
-                    Attr::Name => AttrValues::Strs(row.spellings(FunKey::Name)),
-                    Attr::Parent => AttrValues::Strs(row.spellings(FunKey::Parent)),
-                    Attr::Signature => AttrValues::Strs(row.spellings(FunKey::Signature)),
-                    Attr::QualifiedId => AttrValues::Strs(row.spellings(FunKey::QualifiedId)),
-                    // The per-import scope attributes go through the same path as the
-                    // per-function ones, as zero spellings or one.
-                    Attr::Language => AttrValues::Strs(Spellings::of(facts.language.as_slice())),
-                    Attr::Import => AttrValues::Strs(Spellings::of(facts.import.as_slice())),
+                    Attr::Name => str_value(row.name),
+                    Attr::Parent => str_value(row.parent),
+                    Attr::Signature => str_value(row.signature),
+                    Attr::Language => str_value(facts.language),
+                    Attr::Import => str_value(facts.import),
                     Attr::Arity => row
                         .arity
                         .map_or(AttrValues::Missing, |a| AttrValues::One(Value::Int(a))),
                     Attr::HasCode => row
                         .has_code
                         .map_or(AttrValues::Missing, |b| AttrValues::One(Value::Bool(b))),
-                    Attr::CalleeString => AttrValues::Missing,
+                    Attr::QualifiedId | Attr::CalleeString => AttrValues::Missing,
                 }
             }
             Row::CallSig(r) => {
                 let row = &facts.callsigs[r];
                 match attr {
-                    Attr::Name => AttrValues::Strs(Spellings::one(&row.name)),
-                    Attr::Parent => AttrValues::Strs(Spellings::one(&row.parent)),
-                    Attr::Signature => AttrValues::Strs(Spellings::one(&row.signature)),
-                    Attr::QualifiedId => AttrValues::Strs(Spellings::one(&row.id)),
-                    Attr::Language => AttrValues::Strs(Spellings::of(facts.language.as_slice())),
-                    Attr::Import => AttrValues::Strs(Spellings::of(facts.import.as_slice())),
+                    Attr::Name => str_value(Some(row.name)),
+                    Attr::Parent => str_value(Some(row.parent)),
+                    Attr::Signature => str_value(Some(row.signature)),
+                    Attr::QualifiedId => str_value(Some(row.id)),
+                    Attr::Language => str_value(facts.language),
+                    Attr::Import => str_value(facts.import),
                     _ => AttrValues::Missing,
                 }
             }
             Row::CallSite(r) => match attr {
-                Attr::CalleeString => AttrValues::Strs(Spellings::one(&facts.callsites[r].callee)),
+                Attr::CalleeString => str_value(Some(facts.callsites[r].callee)),
                 _ => AttrValues::Missing,
             },
-            Row::Param(..) | Row::Class(..) | Row::UsesField(_) => AttrValues::Missing,
+            Row::NameOf(..) | Row::Param(..) | Row::Class(..) | Row::UsesField(_) => {
+                AttrValues::Missing
+            }
         }
     }
 
     /// Whether a non-binding attribute constraint holds.
-    fn attr_holds(&self, pat: &AttrPat, values: &AttrValues<'_>) -> bool {
-        match (pat, values) {
-            (_, AttrValues::Missing) | (AttrPat::Never, _) => false,
-            (AttrPat::Bind(_), _) => unreachable!("a binding attribute enumerates"),
-            (AttrPat::Present, AttrValues::Strs(list)) => !list.is_empty(),
-            (AttrPat::Present, AttrValues::One(_)) => true,
-            (AttrPat::In(set), AttrValues::Strs(list)) => {
-                list.any(|s| set.contains(&Value::Str(s)))
-            }
-            (AttrPat::In(set), AttrValues::One(v)) => in_set(v, set),
-            (AttrPat::Cmp(op, rhs), values) => {
-                let Some(rhs) = self.value(rhs) else {
-                    return false;
-                };
-                match values {
-                    // `!=` over a multi-valued attribute is "no spelling equals it". Any other
-                    // reading would make `name != "x"` true for a function that has `x` as one
-                    // of its names.
-                    AttrValues::Strs(list) if *op == CmpOp::Ne => {
-                        list.all(|s| !compare(&Value::Str(s), CmpOp::Eq, &rhs))
-                    }
-                    AttrValues::Strs(list) => list.any(|s| compare(&Value::Str(s), *op, &rhs)),
-                    AttrValues::One(v) => compare(v, *op, &rhs),
-                    AttrValues::Missing => false,
-                }
-            }
+    fn attr_holds(&self, pat: &AttrPat, values: &AttrValues) -> bool {
+        let AttrValues::One(v) = values else {
+            return false;
+        };
+        match pat {
+            AttrPat::Never => false,
+            AttrPat::Bind(_) => unreachable!("a binding attribute enumerates"),
+            AttrPat::Present => true,
+            AttrPat::In(set) => in_set(v, set),
+            AttrPat::Cmp(op, rhs) => self.value(rhs).is_some_and(|rhs| compare(v, *op, &rhs)),
         }
     }
 
@@ -815,6 +817,11 @@ impl<'a> Machine<'a> {
             }
         }
     }
+}
+
+/// A string attribute's value, or none.
+fn str_value(s: Option<Str>) -> AttrValues {
+    s.map_or(AttrValues::Missing, |s| AttrValues::One(Value::Str(s)))
 }
 
 /// The [`FunKey`] an indexed string attribute looks up by.

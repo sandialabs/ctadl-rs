@@ -10,6 +10,7 @@ use std::io::Write as _;
 use ctadl_ascent::cli;
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::ImportScope;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::project::{AnalysisProject, SubImports};
 use ctadl_ascent::query_engine::formatter::{SarifProfile, format_model_check_sarif};
 use ctadl_ir::mir::ProgramInfo;
@@ -22,10 +23,7 @@ fn program(names: &[&str]) -> ProgramInfo {
 
 /// [`program`], where each `(caller, callee)` pair is a direct call in the caller's body.
 fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{
-        CallEdges, CallStyle, Dispatch, NativeFunction, NativeQualifiedName, NativeSignature,
-        NativeSimpleName, VirtualMethodTable,
-    };
+    use ctadl_ir::mir::call::{CallEdges, CallStyle};
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
@@ -56,19 +54,7 @@ fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: names
-                .iter()
-                .map(|name| {
-                    (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature((*name).into()),
-                        NativeFunction((*name).into()),
-                        NativeQualifiedName((*name).into()),
-                    )
-                })
-                .collect(),
-        }),
+        vmt: test_vmt::native(names.iter().map(|name| (*name, *name, *name, *name))),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

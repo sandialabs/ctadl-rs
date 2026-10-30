@@ -696,20 +696,19 @@ impl JniObserver {
     /// Call it at most once per import. A second call puts two targets under every symbol, and
     /// the bridge then reports each as ambiguous.
     pub fn observe_native_vmt(&mut self, vmt: &VirtualMethodTable, abi: NativeAbi, origin: Origin) {
-        let Dispatch::Native { methods } = &vmt.dispatch else {
+        if vmt.dispatch != Dispatch::Native {
             return;
-        };
+        }
         // Match against the *simple* name, not the IR function name: the pcode frontend
         // decorates the latter (uniquing suffixes, `<EXTERNAL>::sym@addr`) and already strips
         // the leading underscore Mach-O prefixes every C symbol with.
-        for (simple, sig, func, _qualified) in methods {
-            let (simple, sig, func): (&str, &str, &str) = (simple, sig, func);
+        for n in &vmt.names {
             self.symbols
-                .entry(simple.to_string())
+                .entry(n.simple.to_string())
                 .or_default()
                 .push(NativeTarget {
-                    function: func.to_string(),
-                    proto: NativeProto::parse(sig),
+                    function: n.fq.to_string(),
+                    proto: NativeProto::parse(n.signature.as_deref().unwrap_or_default()),
                     abi,
                     origin: origin.clone(),
                 });

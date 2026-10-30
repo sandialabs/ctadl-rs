@@ -140,7 +140,7 @@ fn tainted_paths(results: &[Value]) -> usize {
 
 /// Writes what `ctadl migrate-models` makes of `json` next to it, and returns its path.
 fn migrated(json: &Path) -> PathBuf {
-    let (text, _) = ctadl_ascent::models::dsl::migrate::migrate_file(json).expect("migrates");
+    let (text, _) = ctadl_ascent::models::dsl::migrate::migrate_file(json, None).expect("migrates");
     let path = json.with_extension("ctadl");
     std::fs::write(&path, text).expect("writing the migration");
     path

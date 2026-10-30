@@ -201,6 +201,23 @@ fn unknown_attributes_are_rejected() {
     assert!(err.contains("is not an attribute of 'fun'"), "{err}");
 }
 
+/// A function's full name is its `fun` column, and its other names are `name_of` rows: `fun` has
+/// no `qualified-id`. A call-signature key keeps its own.
+#[test]
+fn qualified_id_is_an_attribute_of_callsig_only() {
+    let err = check_err(r#"sink(F::arg(0)) :- fun(F, qualified-id = "x");"#);
+    assert!(err.contains("is not an attribute of 'fun'"), "{err}");
+    check_ok(r#"K::dispatch(resolve = "skip") :- callsig(K, qualified-id = "x");"#);
+}
+
+#[test]
+fn name_of_relates_a_function_to_its_names() {
+    check_ok(r#"sink(F::arg(0)) :- fun(F), name_of(F, N), regex_match(N, "^get");"#);
+    check_ok(r#"sink(F::arg(0)) :- name_of(F, "system");"#);
+    let err = check_err(r#"sink(F::arg(0)) :- name_of(F, N, M);"#);
+    assert!(err.contains("name_of"), "{err}");
+}
+
 #[test]
 fn attribute_types_are_checked() {
     let err = check_err(r#"sink(F::arg(0)) :- fun(F, arity = "three");"#);
@@ -336,14 +353,14 @@ fn phases_are_read_off_the_heads() {
 
 fn migrate_one(json: &str) -> (String, migrate::MigrationReport) {
     let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
-    migrate::migrate_generators(std::iter::once(&value), None)
+    migrate::migrate_generators(std::iter::once(&value), None, None)
         .unwrap_or_else(|e| panic!("migrating {json}: {e:?}"))
 }
 
 /// The errors a migration fails with, rendered. Panics if it succeeds.
 fn migration_errors(json: &str) -> Vec<String> {
     let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON fixture");
-    match migrate::migrate_generators(std::iter::once(&value), None) {
+    match migrate::migrate_generators(std::iter::once(&value), None, None) {
         Ok((text, _)) => panic!("expected {json} not to migrate, got:\n{text}"),
         Err(crate::error::Error::JsonModel(errors)) => {
             errors.iter().map(ToString::to_string).collect()
@@ -409,8 +426,9 @@ fn migrates_a_name_regex_through_a_bound_variable() {
 /// mean in Datalog. The translation is exact, not an approximation.
 #[test]
 fn any_of_becomes_several_rules() {
+    // Scoped to dex, so that a name is the simple name alone and each alternative one rule.
     let (text, report) = migrate_one(
-        r#"{"find":"methods",
+        r#"{"find":"methods","in":{"language":"dex"},
             "where":[{"constraint":"any_of","inners":[
                 {"constraint":"signature_match","name":"a"},
                 {"constraint":"signature_match","name":"b"}]}],
@@ -653,9 +671,12 @@ fn migrates_a_bridge_with_its_port_map() {
         text.contains("bridge(F::return <- G::arg(0).stack.[-1])"),
         "{text}"
     );
-    // Side B's scope folds into the `fun` atom its own `where` produced.
+    // Side B's scope is pcode, whose JSON `name` also matched the full name: two alternatives,
+    // kept in the one rule.
     assert!(
-        text.contains(r#"fun(G, language = "pcode", name = "l_add")"#),
+        text.contains(
+            "fun(G, language = \"pcode\"),\n  !(!fun(G, name = \"l_add\") && !(fun(G) && G = \"l_add\"))"
+        ),
         "{text}"
     );
 }
@@ -665,7 +686,8 @@ fn migrates_a_bridge_with_its_port_map() {
 #[test]
 fn inert_keys_warn_and_change_nothing() {
     let (text, report) = migrate_one(
-        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"x"}],
+        r#"{"find":"methods","in":{"language":"dex"},
+            "where":[{"constraint":"signature_match","name":"x"}],
             "on-unmatched":"ignore",
             "model":{"sinks":[{"kind":"k","port":"Argument(0)"}],
                      "taint":[{"anything":"goes"}],
@@ -682,7 +704,9 @@ fn inert_keys_warn_and_change_nothing() {
     }
     assert_eq!(report.rules, 1, "{text}");
     assert!(
-        text.contains("sink(F::arg(0), kind = \"k\") :-\n  fun(F, name = \"x\");"),
+        text.contains(
+            "sink(F::arg(0), kind = \"k\") :-\n  fun(F, language = \"dex\", name = \"x\");"
+        ),
         "{text}"
     );
     check_ok(&text);
@@ -953,7 +977,7 @@ fn migration_errors_name_every_bad_generator() {
     .map(|l| serde_json::from_str(l).expect("valid json"))
     .collect();
     let Err(crate::error::Error::JsonModel(errors)) =
-        migrate::migrate_generators(values.iter(), None)
+        migrate::migrate_generators(values.iter(), None, None)
     else {
         panic!("expected the migration to fail");
     };
@@ -1003,12 +1027,12 @@ fn a_where_that_can_never_match_writes_no_rule() {
 #[test]
 fn a_bridge_is_one_rule_whatever_its_disjunctions() {
     let (text, report) = migrate_one(
-        r#"{"find":"methods",
+        r#"{"find":"methods","in":{"language":"dex"},
             "where":[{"constraint":"any_of","inners":[
               {"constraint":"signature_match","name":"a1"},
               {"constraint":"name","pattern":"^a2"}]}],
             "model":{"bridge":{
-              "to":{"where":[{"constraint":"any_of","inners":[
+              "to":{"in":{"language":"jvm"},"where":[{"constraint":"any_of","inners":[
                 {"constraint":"signature_match","name":"b1"},
                 {"constraint":"name","pattern":"^b2"}]}]},
               "arguments":[{"from":"Argument(0)","to":"Argument(1)"},
@@ -1018,13 +1042,13 @@ fn a_bridge_is_one_rule_whatever_its_disjunctions() {
     assert_eq!(report.rules, 1, "{text}");
     assert!(
         text.contains(
-            "fun(F),\n  !(!fun(F, name = \"a1\") && !(fun(F, name = N0) && regex_match(N0, \"^a2\")))"
+            "fun(F, language = \"dex\"),\n  !(!fun(F, name = \"a1\") && !(fun(F, name = N0) && regex_match(N0, \"^a2\")))"
         ),
         "{text}"
     );
     assert!(
         text.contains(
-            "fun(G),\n  !(!fun(G, name = \"b1\") && !(fun(G, name = N1) && regex_match(N1, \"^b2\")))"
+            "fun(G, language = \"jvm\"),\n  !(!fun(G, name = \"b1\") && !(fun(G, name = N1) && regex_match(N1, \"^b2\")))"
         ),
         "{text}"
     );
@@ -1035,10 +1059,6 @@ fn a_bridge_is_one_rule_whatever_its_disjunctions() {
 
 /// A native program of one-parameter functions with bodies, one per name.
 fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
-    use ctadl_ir::mir::call::{
-        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-        VirtualMethodTable,
-    };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
         StatementKind,
@@ -1053,19 +1073,14 @@ fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
         blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
         f
     });
-    let methods = names
-        .iter()
-        .map(|n| {
-            (
-                NativeSimpleName((*n).into()),
-                NativeSignature(format!("{n}()").into()),
-                NativeFunction((*n).into()),
-                NativeQualifiedName((*n).into()),
-            )
-        })
-        .collect();
+    let signatures: Vec<String> = names.iter().map(|n| format!("{n}()")).collect();
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native { methods }),
+        vmt: crate::models::test_vmt::native(
+            names
+                .iter()
+                .zip(&signatures)
+                .map(|(n, sig)| (*n, sig.as_str(), *n, *n)),
+        ),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
@@ -1076,7 +1091,7 @@ fn run_migrated(
     json: &serde_json::Value,
     index: &crate::models::ProgramMatchIndex<'_>,
 ) -> (String, crate::models::ProgramModelMatches) {
-    let (text, _) = migrate::migrate_generators(std::iter::once(json), None)
+    let (text, _) = migrate::migrate_generators(std::iter::once(json), None, None)
         .unwrap_or_else(|e| panic!("{json}: {e:?}"));
     let set = DslModelSet {
         files: vec![check_ok(&text)],
@@ -1232,7 +1247,8 @@ fn every_shipped_default_migrates_and_loads() {
             .filter(|(file, _, _)| file == name)
             .map(|&(_, index, what)| (index, what))
             .collect();
-        let errors: Vec<String> = match migrate::migrate_generators(values.iter(), Some(name)) {
+        let errors: Vec<String> = match migrate::migrate_generators(values.iter(), Some(name), None)
+        {
             Ok(_) => Vec::new(),
             Err(crate::error::Error::JsonModel(errors)) => {
                 errors.iter().map(ToString::to_string).collect()
@@ -1256,7 +1272,7 @@ fn every_shipped_default_migrates_and_loads() {
             .filter(|(i, _)| !known.iter().any(|(k, _)| k == i))
             .map(|(_, v)| v)
             .collect();
-        let (dsl, report) = migrate::migrate_generators(rest.iter().copied(), Some(name))
+        let (dsl, report) = migrate::migrate_generators(rest.iter().copied(), Some(name), None)
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         // The only warnings a shipped default may raise are about keys the JSON loader does
         // not act on either, so nothing is lost by not translating them. Anything else means a
@@ -1362,8 +1378,8 @@ fn dispatch_generators_migrate() {
     .iter()
     .map(|l| serde_json::from_str(l).expect("valid json"))
     .collect();
-    let (dsl, report) =
-        migrate::migrate_generators(values.iter(), None).expect("dispatch generators migrate");
+    let (dsl, report) = migrate::migrate_generators(values.iter(), None, None)
+        .expect("dispatch generators migrate");
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert!(dsl.contains(r#"K::dispatch(return <- arg(_))"#), "{dsl}");
     assert!(dsl.contains(r#"K::dispatch(resolve = "skip")"#), "{dsl}");
@@ -1570,13 +1586,13 @@ fn the_deprecation_warning_is_given_once_per_file() {
 #[test]
 fn a_migrated_file_names_generators_not_rules() {
     let file = jsonl_file(&[
-        r#"{"find":"methods","where":[{"constraint":"any_of","inners":[
+        r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"any_of","inners":[
               {"constraint":"signature_match","name":"a"},
               {"constraint":"signature_match","name":"b"}]}],
             "model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}"#
             .replace('\n', " ")
             .as_str(),
-        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
+        r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
     ]);
     let path = file.path();
     let dsl = DslFile::read(path).expect("loads");
@@ -1618,7 +1634,7 @@ fn a_migrated_file_names_generators_not_rules() {
 fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
     let file = jsonl_file(&[
         r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"sources":[{"port":"Variable(x)","kind":"k"}]}}"#,
-        r#"{"find":"methods","where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
+        r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
     ]);
     let err = match DslFile::read(file.path()) {
         Ok(_) => panic!("a Variable port does not migrate"),

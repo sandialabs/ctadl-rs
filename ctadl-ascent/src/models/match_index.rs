@@ -20,9 +20,8 @@ use hashbrown::hash_map::HashMap;
 
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::FunctionData;
-use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
+use ctadl_ir::mir::call::VirtualMethodTable;
 
-use super::dsl::relations::FunKey;
 use super::spec::ImportScope;
 
 /// One program's matchable metadata, keyed the way each frontend spells its functions.
@@ -178,115 +177,11 @@ impl<'p> ProgramMatchIndex<'p> {
 
     /// Every function with IR data, as `(fq-name, data)`.
     ///
-    /// The VMT names more functions than this — externals and `ext` stubs have no body — so
+    /// The VMT names more functions than this — Lua externals have no body — so
     /// this is the *arity / has_code / body* half of the program, not its function universe.
     /// The DSL relation layer joins the two; see [`super::dsl::relations::ProgramFacts`].
     #[inline]
     pub fn functions_with_data(&self) -> impl Iterator<Item = (&'p str, &'p FunctionData)> + '_ {
         self.program_functions.iter().map(|(fq, data)| (*fq, *data))
-    }
-}
-
-/// Every spelling `vmt` publishes for its functions, as `(fq, attribute, spelling)`.
-///
-/// The one statement of what each frontend makes matchable, read by the DSL's `fun` relation
-/// ([`ProgramFacts`](super::dsl::relations::ProgramFacts)). Spellings come in the frontend's
-/// order, and within one function the canonical spelling of an attribute first: the DSL binds an
-/// output attribute to the first.
-///
-/// Lua's metatable classes are reported as [`FunKey::Parent`]; a [`Dispatch::Unknown`]
-/// table publishes nothing.
-pub(crate) fn for_each_spelling<'p>(
-    vmt: &'p VirtualMethodTable,
-    mut f: impl FnMut(&'p str, FunKey, &'p str),
-) {
-    match &vmt.dispatch {
-        Dispatch::Java { methods, .. } => {
-            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`, is the qualified id:
-            // descriptor-bearing and stable, so keying on it is what makes exact
-            // fully-qualified matching possible on jvm/dex.
-            for (cls, name, sig, fid) in methods {
-                let fid = fid.as_ref();
-                f(fid, FunKey::Name, name.as_ref());
-                f(fid, FunKey::Parent, cls.as_ref());
-                f(fid, FunKey::Signature, sig.as_ref());
-                f(fid, FunKey::QualifiedId, fid);
-            }
-        }
-        Dispatch::Cil { methods, .. } => {
-            // The Java arm, over .NET spellings: `[Asm]Ns.Type`, `Parse`,
-            // `(System.String)->System.Int32`, and the method id
-            // `[Asm]Ns.Type::Parse(System.String)->System.Int32`. An override alias row makes a
-            // method matchable under the base method's name and descriptor too, which is what a
-            // model of an interface method wants.
-            for (cls, name, sig, fid) in methods {
-                let fid = fid.as_ref();
-                f(fid, FunKey::Name, name.as_ref());
-                f(fid, FunKey::Parent, cls.as_ref());
-                f(fid, FunKey::Signature, sig.as_ref());
-                f(fid, FunKey::QualifiedId, fid);
-            }
-        }
-        Dispatch::Native { methods } => {
-            // Native frontends (pcode, clang) carry, per function, a simple (un-decorated) name
-            // and a best-effort type signature alongside the fully-qualified IR name. The simple
-            // name comes first, so a pattern like `^system$` resolves even when the IR name is
-            // decorated (Ghidra's `<EXTERNAL>::system@00101008`); the fq name is also kept
-            // matchable for models that spell it out verbatim. The qualified id is the
-            // namespace-qualified name (`Foo::bar`, `<EXTERNAL>::system`), double-keyed on the
-            // fq id for the same reason.
-            for (simple, sig, fq, qualified) in methods {
-                let fq = fq.as_ref();
-                f(fq, FunKey::Name, simple.as_ref());
-                f(fq, FunKey::Name, fq);
-                f(fq, FunKey::Signature, sig.as_ref());
-                f(fq, FunKey::Signature, fq);
-                f(fq, FunKey::QualifiedId, qualified.as_ref());
-                f(fq, FunKey::QualifiedId, fq);
-            }
-        }
-        Dispatch::Lua {
-            methods,
-            functions,
-            externals,
-            ..
-        } => {
-            // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
-            // `direct-flow.source`). The simple name is matchable as well, so a model can say
-            // `^source$` without spelling the module it happens to live in -- the same treatment
-            // the Native arm gives decorated names.
-            //
-            // The simple name is read from the VMT, where the frontend put the name the
-            // definition site actually wrote; it is not re-derived from the fq name. The two
-            // differ when a module has two functions of one name: the second's IR name is
-            // `<module>.f%1`, while the function is still simply named `f`.
-            //
-            // A Lua function has exactly ONE name, so the fq name *is* the qualified id. Only it:
-            // keying the bare name there too would hand `qualified-id` exactly the collisions it
-            // exists to remove. One consequence of deriving the id from the module: a single
-            // file imported as the root itself has an empty module name, so there a function's
-            // id and its bare name coincide.
-            //
-            // Externals -- called but never defined (the stdlib, and modules outside the import)
-            // -- are spelled exactly as functions are. `os.execute` is reachable both as
-            // `execute` (which also covers the method-call spelling `x:execute()`) and as the fq
-            // `os.execute`. They have no `FunctionData`, so the body-dependent constraints will
-            // not match them; `signature_match` is the supported shape for such a callee.
-            for (simple, fq) in functions.iter().chain(externals.iter()) {
-                let (simple, fq) = (simple.as_ref(), fq.as_ref());
-                for key in [FunKey::Name, FunKey::Signature] {
-                    if simple != fq {
-                        f(fq, key, simple);
-                    }
-                    f(fq, key, fq);
-                }
-                f(fq, FunKey::QualifiedId, fq);
-            }
-            // The metatable-recovered class methods.
-            for (cls, _name, fq) in methods {
-                f(fq.as_ref(), FunKey::Parent, cls.as_ref());
-            }
-        }
-        Dispatch::Unknown => {}
     }
 }

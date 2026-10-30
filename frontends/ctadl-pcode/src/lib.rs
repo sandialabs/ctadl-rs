@@ -23,10 +23,7 @@ use source_info::ArtifactKey;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{
-    Dispatch, FunctionNames, NativeFunction, NativeQualifiedName, NativeSignature,
-    NativeSimpleName, VirtualMethodTable,
-};
+use ctadl_ir::mir::call::{FunctionNames, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -449,30 +446,21 @@ impl Context {
                 func.set_return_type(ReturnType { arity: 0 });
             }
 
-            // Register in the native VMT (after the `func` borrow ends) so the
-            // model matcher can resolve simple names to this function's id.
-            // `func_data.name` is Ghidra's own spelling, before the leading underscores are
-            // stripped from `simple_name`.
+            // Name it in the VMT (after the `func` borrow ends), so a model can find it by its
+            // simple name. `func_data.name` is Ghidra's own spelling, before the leading
+            // underscores are stripped from `simple_name`.
             builders.vmt.names.push(
                 FunctionNames::new(fq_name.as_str(), simple_name)
                     .with_signature(signature.as_str())
                     .with_other(qualified_name.as_str())
                     .with_other(func_data.name.as_str()),
             );
-            if let Dispatch::Native { methods } = &mut builders.vmt.dispatch {
-                methods.push((
-                    NativeSimpleName(simple_name.into()),
-                    NativeSignature(signature.as_str().into()),
-                    NativeFunction(fq_name.as_str().into()),
-                    NativeQualifiedName(qualified_name.as_str().into()),
-                ));
-            }
 
             // Store function mapping
             self.functions.insert(func_id.clone(), func_idx);
             // And, by entry address, the name `link` resolves to a `FunctionId`: `fq_name` is
-            // exactly the string that went into the `NativeFunction` VMT column above, so a
-            // registry row naming it names the same function the bridge would.
+            // exactly the IR name the name table entry above keys on, so a registry row naming
+            // it names the same function the bridge would.
             if let Some(entry_point) = &func_data.entry_point {
                 self.entry_points.insert(entry_point.0, fq_name);
             }

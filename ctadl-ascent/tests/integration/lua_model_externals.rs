@@ -11,10 +11,11 @@
 
 use crate::common::load_json;
 use ctadl_ascent::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
+use ctadl_ascent::project::ArtifactLanguage;
 
-/// The externals column is what lets a Lua propagation model file have any effect. A match
-/// index built only from the functions defined in the file would give a model that names a
-/// standard-library function nothing to match.
+/// Naming the externals is what lets a Lua propagation model file have any effect. A name table
+/// of only the functions defined in the file would give a model that names a standard-library
+/// function nothing to match.
 #[test]
 fn a_model_can_name_a_lua_external() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -28,7 +29,8 @@ fn a_model_can_name_a_lua_external() {
 
     for port in ["getenv", "os.getenv"] {
         let mut matches = ProgramModelMatches::default();
-        let match_index = ProgramMatchIndex::new(&info, ImportScope::unknown());
+        let match_index =
+            ProgramMatchIndex::new(&info, ImportScope::new(ArtifactLanguage::Lua, "m"));
         let generator = serde_json::json!({
             "find": "methods",
             "where": [{"constraint": "signature_match", "name": port}],

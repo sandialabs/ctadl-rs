@@ -132,7 +132,7 @@ fn every_json_fixture_passes_as_its_migration() -> anyhow::Result<()> {
         {
             continue;
         }
-        let (text, _) = ctadl_ascent::models::dsl::migrate::migrate_file(&json)?;
+        let (text, _) = ctadl_ascent::models::dsl::migrate::migrate_file(&json, None)?;
         let migrated = out
             .path()
             .join(json.with_extension("ctadl").file_name().unwrap());

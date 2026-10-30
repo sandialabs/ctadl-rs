@@ -372,24 +372,10 @@ pub enum Dispatch {
         /// - Whether the method is `static` (it has no `this` parameter)
         natives: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod, bool)>,
     },
-    /// Table for native / binary frontends (pcode today, clang later). There is
-    /// no class hierarchy; each function contributes its simple (un-decorated)
-    /// name and a best-effort type signature so JSON models can match by name or
-    /// `signature_pattern` even when the IR's fully-qualified name is decorated
-    /// (e.g. Ghidra names an imported `system` as `<EXTERNAL>::system@00101008`).
-    Native {
-        /// The columns are as follows:
-        /// - Simple name of the function, e.g. `system`
-        /// - Type signature of the function, e.g. `(int, char**)`
-        /// - Fully-qualified function name (the id used everywhere else)
-        /// - Namespace-qualified name, e.g. `Foo::bar` (see [`NativeQualifiedName`])
-        methods: Vec<(
-            NativeSimpleName,
-            NativeSignature,
-            NativeFunction,
-            NativeQualifiedName,
-        )>,
-    },
+    /// Table for native / binary frontends (pcode today, clang later). There is no class
+    /// hierarchy, so nothing to resolve; the functions' names are in
+    /// [`VirtualMethodTable::names`].
+    Native,
     /// Table for the Lua frontend. Structurally mirrors [`Dispatch::Java`]
     /// but has no descriptors/overloading: a Lua method is uniquely named within its
     /// class table, and the `__index` chain plays the role of `direct_superclass`.
@@ -399,37 +385,6 @@ pub enum Dispatch {
         /// - Simple method name (e.g. `deposit`)
         /// - Fully-qualified function id the method lowers to (the IR function name)
         methods: Vec<(Symbol, Symbol, Symbol)>,
-        /// Every function the frontend lowered, not just the class methods above. The columns
-        /// are as follows:
-        /// - Simple name, as the definition site spells it (`get_headers` in
-        ///   `function kong.request.get_headers()`, `deposit` in `function Account:deposit()`,
-        ///   `%chunk` / `%anonN` for a synthetic one)
-        /// - Fully-qualified function name (the id used everywhere else), e.g.
-        ///   `kong.pdk.request.get_headers`
-        ///
-        /// The frontend parses the simple name out of the definition's name node, so consumers
-        /// read it here instead of re-deriving it from the qualified name: the two are not the
-        /// same string operation, since a name collision within a module makes the IR name
-        /// `<module>.f%1` while the function is still simply named `f`.
-        functions: Vec<(Symbol, Symbol)>,
-        /// Functions *called* by the import but defined nowhere in it — the Lua stdlib
-        /// (`os.execute`, `string.format`), and anything from a module outside the import.
-        /// Without this column they would be unmodelable: the IR names them correctly at their
-        /// call sites, but every model match index is built from the table, so a model naming
-        /// `execute` (or `qualified-id: "os.execute"`) would match nothing. dex/jvm answer the same question with their `Context::ext`
-        /// entries and pcode with real `<EXTERNAL>::…` thunks.
-        ///
-        /// The columns are as follows:
-        /// - Simple name
-        /// - Fully-qualified name, exactly as the call site spells the callee
-        ///
-        /// Each external is registered under *both* spellings because Lua's two call syntaxes
-        /// produce two different callee names for one library function: `string.format(x)`
-        /// lowers to a call of `string.format`, while `s:format(x)` lowers to a call of the
-        /// bare `format`. Unlike `functions` above, the simple name here is the last dotted
-        /// component of the fq name rather than something read off a definition site — an
-        /// external has no definition site, so splitting the name is the only source available.
-        externals: Vec<(Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
@@ -641,9 +596,7 @@ impl VirtualMethodTable {
     }
 
     pub fn new_native() -> Self {
-        Self::new(Dispatch::Native {
-            methods: Vec::new(),
-        })
+        Self::new(Dispatch::Native)
     }
 
     pub fn new_cil() -> Self {
@@ -659,8 +612,6 @@ impl VirtualMethodTable {
     pub fn new_lua() -> Self {
         Self::new(Dispatch::Lua {
             methods: Vec::new(),
-            functions: Vec::new(),
-            externals: Vec::new(),
             hierarchy: HashMap::new(),
         })
     }
@@ -752,29 +703,11 @@ impl Display for Dispatch {
                 writeln!(f, "end java virtual method table")?;
                 Ok(())
             }
-            Dispatch::Native { methods } => {
-                writeln!(f, "native virtual method table")?;
-                for (name, sig, func, qualified) in methods {
-                    writeln!(f, "{name}{sig}: {func} (qualified {qualified})")?;
-                }
-                writeln!(f, "end native virtual method table")?;
-                Ok(())
-            }
-            Dispatch::Lua {
-                methods,
-                functions,
-                externals,
-                hierarchy,
-            } => {
+            Dispatch::Native => writeln!(f, "native virtual method table"),
+            Dispatch::Lua { methods, hierarchy } => {
                 writeln!(f, "lua virtual method table")?;
                 for (cls, name, func) in methods {
                     writeln!(f, "{cls}.{name}: {func}")?;
-                }
-                for (name, func) in functions {
-                    writeln!(f, "{name}: {func}")?;
-                }
-                for (name, func) in externals {
-                    writeln!(f, "{name}: {func} (external)")?;
                 }
                 for (subclass, superclasses) in hierarchy {
                     for superclass in superclasses {
@@ -961,109 +894,6 @@ symbol_newtype!(
     /// A .NET method id: `{cls}::{simple}{descriptor}`.
     CilMethod
 );
-
-/// Simple (un-decorated) name of a native function, e.g. `system`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeSimpleName(pub Symbol);
-
-impl Deref for NativeSimpleName {
-    type Target = Symbol;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<NativeSimpleName> for Symbol {
-    fn from(c: NativeSimpleName) -> Self {
-        c.0.clone()
-    }
-}
-
-impl Display for NativeSimpleName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Type signature of a native function, e.g. `(int, char**)`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeSignature(pub Symbol);
-
-impl Deref for NativeSignature {
-    type Target = Symbol;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<NativeSignature> for Symbol {
-    fn from(c: NativeSignature) -> Self {
-        c.0.clone()
-    }
-}
-
-impl Display for NativeSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Fully-qualified name of a native function (the id used everywhere else),
-/// e.g. `<EXTERNAL>::system@00101008` or `main`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeFunction(pub Symbol);
-
-impl Deref for NativeFunction {
-    type Target = Symbol;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<NativeFunction> for Symbol {
-    fn from(c: NativeFunction) -> Self {
-        c.0.clone()
-    }
-}
-
-impl Display for NativeFunction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Namespace-qualified name of a native function, e.g. `Foo::bar` or
-/// `<EXTERNAL>::system`.
-///
-/// Unlike [`NativeFunction`] this carries no address, so it is stable across
-/// binaries; unlike [`NativeSimpleName`] it keeps the enclosing namespace, so two
-/// same-named methods in different namespaces stay distinguishable. Frontends that
-/// cannot recover a namespace populate it with the simple name.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeQualifiedName(pub Symbol);
-
-impl Deref for NativeQualifiedName {
-    type Target = Symbol;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<NativeQualifiedName> for Symbol {
-    fn from(c: NativeQualifiedName) -> Self {
-        c.0.clone()
-    }
-}
-
-impl Display for NativeQualifiedName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 #[cfg(test)]
 mod type_facts_tests {

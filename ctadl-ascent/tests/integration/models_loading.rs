@@ -1,5 +1,6 @@
 use crate::common::load_json;
 use ctadl_ascent::facts::TaintDirection;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
 use ctadl_ascent::models::{ProgramModelMatches, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
@@ -231,10 +232,6 @@ fn test_endpoint_stats_merge_across_imports() {
 
 /// A native (binary-frontend) program with one 2-parameter function per name.
 fn native_program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{
-        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-        VirtualMethodTable,
-    };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
@@ -254,19 +251,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::new(Dispatch::Native {
-            methods: names
-                .iter()
-                .map(|name| {
-                    (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature((*name).into()),
-                        NativeFunction((*name).into()),
-                        NativeQualifiedName((*name).into()),
-                    )
-                })
-                .collect(),
-        }),
+        vmt: test_vmt::native(names.iter().map(|name| (*name, *name, *name, *name))),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

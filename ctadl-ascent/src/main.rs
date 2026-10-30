@@ -91,6 +91,11 @@ pub struct MigrateModelsArgs {
     /// Check the translated file loads, and report what it says, without writing anything.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// A language the file is for (repeatable), as a generator's `in` names one. A rule that only
+    /// another language could match is left out.
+    #[arg(long = "language", value_name = "LANGUAGE")]
+    pub languages: Vec<String>,
 }
 
 impl Command {
@@ -811,7 +816,14 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
     // writing the rest would silently drop it. Every such generator is listed, not just the
     // first, so one run is enough to see what needs fixing.
-    let (text, report) = match dsl::migrate::migrate_file(&args.input) {
+    for language in &args.languages {
+        if ctadl_ascent::project::ArtifactLanguage::from_name(language).is_none() {
+            anyhow::bail!("--language {language:?} is not a language ctadl imports");
+        }
+    }
+    let languages: Vec<&str> = args.languages.iter().map(String::as_str).collect();
+    let languages = (!languages.is_empty()).then_some(languages.as_slice());
+    let (text, report) = match dsl::migrate::migrate_file(&args.input, languages) {
         Ok(migrated) => migrated,
         Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(
             "{} cannot be migrated exactly; nothing was written:\n{errors}",

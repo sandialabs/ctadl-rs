@@ -124,7 +124,11 @@ impl EndpointStats {
         self.ports_declared = self.ports_declared.max(other.ports_declared);
         self.endpoints_matched += other.endpoints_matched;
         self.functions_matched = self.functions_matched.max(other.functions_matched);
-        self.unmatched.extend(other.unmatched.iter().cloned());
+        if self.endpoints_matched > 0 {
+            self.unmatched.clear();
+        } else {
+            self.unmatched.extend(other.unmatched.iter().cloned());
+        }
     }
 }
 

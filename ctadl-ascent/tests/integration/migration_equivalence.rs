@@ -33,6 +33,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 use ctadl_ascent::error::JsonModelError;
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
     DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl,
 };
@@ -41,8 +42,7 @@ use ctadl_ir::Idx;
 use ctadl_ir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
     CallEdges, CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass,
-    JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
-    NativeSignature, NativeSimpleName, VirtualMethodTable,
+    JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     Exp, FunctionData, Functions, ParameterIdx, ParameterType, Program, ProgramInfo, StatementKind,
@@ -298,13 +298,13 @@ fn java_with(extra: Vec<FunctionData>) -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::new(Dispatch::Java {
+        test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("Lapp/Iface;".into())],
             abstract_methods: Default::default(),
             natives: Default::default(),
-        }),
+        })),
         functions.into_iter().chain(extra).collect(),
     )
 }
@@ -333,29 +333,21 @@ fn native_unnamed() -> ProgramInfo {
 }
 
 fn native_with(extra: Vec<FunctionData>) -> ProgramInfo {
-    let row = |simple: &str, sig: &str, fq: &str, qualified: &str| {
+    let methods = [
         (
-            NativeSimpleName(simple.into()),
-            NativeSignature(sig.into()),
-            NativeFunction(fq.into()),
-            NativeQualifiedName(qualified.into()),
-        )
-    };
-    let methods = vec![
-        row(
             "system",
             "int system(char *)",
             N_SYSTEM,
             "<EXTERNAL>::system",
         ),
-        row(
+        (
             "strcpy",
             "char * strcpy(char *, char *)",
             N_STRCPY,
             "strcpy",
         ),
-        row("bar", "void bar(int)", N_FOO_BAR, "Foo::bar"),
-        row("bar", "void bar(int, int)", N_BAZ_BAR, "Baz::bar"),
+        ("bar", "void bar(int)", N_FOO_BAR, "Foo::bar"),
+        ("bar", "void bar(int, int)", N_BAZ_BAR, "Baz::bar"),
     ];
     let functions = vec![
         function(N_STRCPY, 2, Body::default()),
@@ -379,7 +371,7 @@ fn native_with(extra: Vec<FunctionData>) -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::new(Dispatch::Native { methods }),
+        test_vmt::native(methods),
         functions.into_iter().chain(extra).collect(),
     )
 }
@@ -450,12 +442,7 @@ fn lua() -> ProgramInfo {
         function(L_F1, 3, Body::default()),
     ];
     program_info(
-        VirtualMethodTable::new(Dispatch::Lua {
-            methods,
-            functions,
-            externals,
-            hierarchy,
-        }),
+        test_vmt::lua(methods, &functions, &externals, hierarchy),
         bodies,
     )
 }
@@ -514,20 +501,20 @@ fn cil() -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::new(Dispatch::Cil {
+        test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Cil {
             methods,
             hierarchy,
             interfaces: Default::default(),
             abstract_methods: Default::default(),
             pinvokes: Default::default(),
-        }),
+        })),
         functions,
     )
 }
 
 /// Flowy / C: no method table at all, so the IR's function names are all there is.
 fn unknown() -> ProgramInfo {
-    program_info(
+    let mut info = program_info(
         VirtualMethodTable::default(),
         vec![
             function("f1", 1, Body::default()),
@@ -541,7 +528,9 @@ fn unknown() -> ProgramInfo {
                 },
             ),
         ],
-    )
+    );
+    info.vmt = VirtualMethodTable::named_by_ir(&info.program);
+    info
 }
 
 /// The fixture a test names, and the import identity it is matched under.
@@ -965,7 +954,11 @@ fn json_answer(key: &str, generator: &Value, fixtures: &[&str]) -> JsonOutcome {
 fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
     let json = json_answer(key, generator, fixtures);
     let imports = imports(fixtures);
-    let (text, report) = match dsl::migrate::migrate_generators(std::iter::once(generator), None) {
+    let (text, report) = match dsl::migrate::migrate_generators(
+        std::iter::once(generator),
+        None,
+        None,
+    ) {
         Ok(migrated) => migrated,
         Err(ctadl_ascent::error::Error::JsonModel(errors)) => {
             let untranslatable = errors
@@ -1048,7 +1041,8 @@ struct Known {
 
 const JSON_UNIVERSE: &str = "the JSON matcher's universe is the method table; the DSL's is \
     every function, including one the table does not name";
-const FULL_NAME: &str = "the DSL also accepts a function's full name as a name or signature";
+const ONE_PARENT: &str = "the JSON matcher read a parent off every table row of a function, \
+    a CIL alias row included; the DSL's parent is the class declaring it";
 const LUA_CLASSES: &str = "the JSON matcher sees no class on Lua; the DSL sees metatable classes";
 const IN_FUNCTION_BUG: &str =
     "JSON matcher bug: `in_function` under `not`/`any_of` narrows the callee set";
@@ -1058,7 +1052,7 @@ const IN_FUNCTION_BUG: &str =
 fn assert_known_on(key: &str, frontend_name: &str, generator: &Value, known: &Known) {
     let json = json_answer(key, generator, &[frontend_name])
         .unwrap_or_else(|e| panic!("the JSON matcher refused the generator: {e:?}"));
-    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None)
+    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None, None)
         .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
     let dsl = run_dsl(&text, &imports(&[frontend_name]))
         .unwrap_or_else(|e| panic!("the migrated DSL fails: {e}\nmigrated DSL:\n{text}"));
@@ -1237,32 +1231,17 @@ faithful! {
 }
 
 faithful! {
-    /// A full Java method id is not a *name*: the JSON index keys `name` on the simple name
-    /// only, so this matches nothing there. The DSL accepts every lowered function's full name
-    /// as one of its names.
+    /// A full Java method id is not a *name*: `name` is the simple name only, so this matches
+    /// nothing.
     signature_match_name_is_not_the_full_id = methods(json!([sig_name(J_BASE_GET)]));
-    java => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: Lapp/Base;->get(I)I: Return <- Index(0)",
-            "DSL only endpoints: Lapp/Base;->get(I)I Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: Lapp/Base;->get(I)I Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
+    java,
     native, lua, cil,
 }
 
 faithful! {
     /// The CIL counterpart of [`signature_match_name_is_not_the_full_id`].
     signature_match_name_is_not_the_full_cil_id = methods(json!([sig_name(C_B_M)]));
-    cil => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: [App]B::M()->System.Void: Return <- Index(0)",
-            "DSL only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
+    cil,
 }
 
 faithful! {
@@ -1279,11 +1258,19 @@ faithful! {
 }
 
 faithful! {
-    /// `parent` on the frontends that record a declaring class, including CIL's alias row.
+    /// `parent` on the frontends that record a declaring class. CIL's alias row is not one.
     signature_match_parent = methods(json!([
         {"constraint": "signature_match", "parents": ["Lapp/Leaf;", "[App]I"], "parent": "Lapp/Base;"}
     ]));
-    java, native, cil, unknown,
+    java, native, unknown,
+    cil => Known {
+        reason: ONE_PARENT,
+        diff: &[
+            "JSON only propagations: [App]B::M()->System.Void: Return <- Index(0)",
+            "JSON only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -1400,28 +1387,8 @@ faithful! {
 faithful! {
     /// On Java and CIL a pattern over the class part of the id matches no *name*.
     name_regex_over_the_full_id = methods(json!([{"constraint": "name", "pattern": "Leaf|\\[App\\]B"}]));
-    java => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: Lapp/Leaf;->put(II)V: Return <- Index(0)",
-            "DSL only propagations: Lapp/Leaf;->upd()V: Return <- Index(0)",
-            "DSL only endpoints: Lapp/Leaf;->put(II)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: Lapp/Leaf;->put(II)V Forward Return kind=Src wildcard=false saturating=false local=None",
-            "DSL only endpoints: Lapp/Leaf;->upd()V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: Lapp/Leaf;->upd()V Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
-    cil => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: [App]B::M()->System.Void: Return <- Index(0)",
-            "DSL only propagations: [App]B::N(System.Int32)->System.Int32: Return <- Index(0)",
-            "DSL only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
-            "DSL only endpoints: [App]B::N(System.Int32)->System.Int32 Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: [App]B::N(System.Int32)->System.Int32 Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
+    java,
+    cil,
 }
 
 faithful! {
@@ -1443,25 +1410,8 @@ faithful! {
 faithful! {
     /// A Java signature is the descriptor: the method name is not in it.
     signature_regex_over_the_full_id = methods(json!([{"constraint": "signature", "pattern": "put|Main"}]));
-    java => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: Lapp/Leaf;->put(II)V: Return <- Index(0)",
-            "DSL only propagations: Lapp/Main;->main([Ljava/lang/String;)V: Return <- Index(0)",
-            "DSL only endpoints: Lapp/Leaf;->put(II)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: Lapp/Leaf;->put(II)V Forward Return kind=Src wildcard=false saturating=false local=None",
-            "DSL only endpoints: Lapp/Main;->main([Ljava/lang/String;)V Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: Lapp/Main;->main([Ljava/lang/String;)V Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
-    cil => Known {
-        reason: FULL_NAME,
-        diff: &[
-            "DSL only propagations: [App]Program::Main()->System.Void: Return <- Index(0)",
-            "DSL only endpoints: [App]Program::Main()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
-            "DSL only endpoints: [App]Program::Main()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
-        ],
-    },
+    java,
+    cil,
 }
 
 faithful! {
@@ -1600,7 +1550,15 @@ faithful! {
         "constraint": "parent",
         "inner": {"constraint": "signature_match", "names": ["Lapp/Base;", "[App]I"], "name": "Lapp/Leaf;"},
     }]));
-    java, native, cil, unknown,
+    java, native, unknown,
+    cil => Known {
+        reason: ONE_PARENT,
+        diff: &[
+            "JSON only propagations: [App]B::M()->System.Void: Return <- Index(0)",
+            "JSON only endpoints: [App]B::M()->System.Void Backward Index(0) kind=Snk wildcard=true saturating=false local=None",
+            "JSON only endpoints: [App]B::M()->System.Void Forward Return kind=Src wildcard=false saturating=false local=None",
+        ],
+    },
 }
 
 faithful! {
@@ -2042,8 +2000,8 @@ fn callsites_anchor_at_every_matched_callee() {
     let generator = anchoring_generator();
     let (scope, program) = frontend("java");
     let index = ProgramMatchIndex::new(&program, scope);
-    let (text, _) =
-        dsl::migrate::migrate_generators(std::iter::once(&generator), None).expect("migrates");
+    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(&generator), None, None)
+        .expect("migrates");
     let file = dsl::DslFile::from_text("migrated.ctadl", text).expect("dsl");
     let set = dsl::DslModelSet { files: vec![file] };
     let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);

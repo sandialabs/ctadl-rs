@@ -12,6 +12,7 @@ use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, codegen_program}
 use ctadl_ascent::facts as fx;
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{IndexFacts, taint_index};
+use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::builder::FunctionBuilder;
@@ -103,7 +104,7 @@ fn program_info() -> ProgramInfo {
     }
     ProgramInfo {
         program,
-        vmt: VirtualMethodTable::new(Dispatch::Java {
+        vmt: test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
             methods: vec![method("LA;"), method("LB;")],
             hierarchy: [
                 (
@@ -124,7 +125,7 @@ fn program_info() -> ProgramInfo {
                 JavaSignature(DESC.into()),
             )],
             natives: Vec::new(),
-        }),
+        })),
         ..Default::default()
     }
 }
