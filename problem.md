@@ -26,7 +26,7 @@ bipartite block, and every caller inherits it through summary composition. So:
 ## Independent causes
 
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
-the rest are one library each. Fix cause 1 first.
+the rest are one library each. Cause 1 is fixed (`3801214b`).
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 is still needed in 4. Cause 4 only multiplies cause 2,
@@ -60,6 +60,12 @@ that is a unique-space offset or a register number, not the global's ram address
   COPY outputs that are temps of the same global: 2,050 of `gzip`'s 2,080 touch a fake cell, and
   46 remain with the fix. The "tiny addresses" (`$globals.[44]`) are MIPS register numbers, not
   field offsets whose base was lost.
+
+**The fix** (`3801214b`). `is_global_vnode` (`readers/pcode-reader/src/lib.rs`) now also requires
+a `ram` varnode, so the temps lower as ordinary locals. That is the experiment's `local` variant
+below, with no env var. The regression suite passes with it: 250 passed and the 3 expected
+failures. The numbers in this section and in the Benchmarks table were measured with the
+env-gated patches, not re-measured on the commit.
 
 **Experiment.** An env-gated patch (`CTADL_EXP_GLOBAL_HVAR=addr`, and `local` below; not committed:
 `/Volumes/Shampoo/nb-work/r-glob/out/r-glob.patch`, worktree `/Volumes/Shampoo/nb-work/r-glob/src`)
@@ -124,7 +130,7 @@ keys each such varnode on the ram address of its high variable's ram member.
     global's value. So `addr` loses precision but adds no false flow.
   - **Findings.** `GpioForCrond`'s 44 findings are the same under base, `addr` and `local`.
     `local` matches `addr` on all 8 compared sweep binaries, dropping the same 24 spurious ones.
-    The regression suite has not been run on `local`.
+    The regression suite passes on `local` as committed: 250 passed and the 3 expected failures.
   - **DSP-W115 defaults with `local`:** `GpioForCrond` 8.73 GB, 129 s (31x; killed at 16 GiB
     under `addr`, 27.3 GiB in the sweep); `testI2C` 6.36 GB, 89 s (24x). `hnapserver-combo` is
     still killed at 23 GiB, under `none` too; the allocator skip takes it to 1.07x.
@@ -603,9 +609,6 @@ The DSP-W115 anomaly the re-baseline found is cause 1's `addr` variant (see caus
 
 Before any of these fixes ships:
 
-- **The regression suite on cause 1's `local` variant.** Only `addr` has been run (250 passed and
-  the 3 expected failures). `local` has been compared with `addr` only on findings, on 8 sweep
-  binaries and `GpioForCrond`.
 - **Findings for every skip.** The allocator, `memcpy`/`memset`, `reallymarkobject`, PCRE
   `match()`, `ntfs_attr_pwrite`, libgdx's vectorized callee, the `__sort` copies and the demangler
   were measured for rows and peak only. The exception is `GpioForCrond`'s allocator skip, whose 44
@@ -648,11 +651,6 @@ linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 2, 6 and 8): `size`
   would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
-- **Treat a global's `unique`/`register` temps as ordinary locals** (cause 1, `local`): measured
-  8.8x to 0.55x on `gzip`, with every cause-1 binary under budget. Keying them on the global's ram
-  address (`addr`) does the same except on DSP-W115, where it is 6x worse than `local`. `addr`
-  passes the regression suite, and on the sweep `local` drops the same spurious findings as
-  `addr` and nothing else. Fix it first; it shifts the other causes' numbers.
 - **Bound a function's `$globals` summary** (causes 2 and 7), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 10): 0-30% of `locals` once cause 1 is
@@ -697,7 +695,7 @@ order.
 - **"Cause 1 fixed"** is the same binary re-imported with the cause-1 fix
   (`CTADL_EXP_GLOBAL_HVAR=addr`), under the defaults. `local` gives the same everywhere it was
   compared, except the DSP-W115 rows: under `local`, `GpioForCrond` is 8.73 GB (31x) and
-  `testI2C` 6.36 GB (24x) instead of killed.
+  `testI2C` 6.36 GB (24x) instead of killed. The committed fix is `local`.
 - **"Plus the named skips"** removes, in order:
   - the allocator (`malloc`, `realloc`, `free`, `calloc`; picked by shape when stripped);
   - `--hybrid-context none` (cause 4);
