@@ -181,8 +181,8 @@ peg::parser! {
         rule out_rel() -> &'input str
             = quiet!{
                 $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch"
-                   / "skip_analysis" / "mem2reg_full" / "mem2reg_window" / "frame_store"
-                   / "frame_update")
+                   / "skip_analysis" / "analyze" / "mem2reg_full" / "mem2reg_window"
+                   / "frame_store" / "frame_update")
                   !name_char())
             }
             / expected!("output relation")
@@ -399,10 +399,10 @@ impl Builder {
             .filter_map(|a| self.head_arg(a))
             .collect();
         if let Some(mode) = FunctionMode::from_relation_name(raw.relation) {
-            let anchor = self.mode_subject(raw.relation, raw.anchor, raw.span, args)?;
+            let (anchor, priority) = self.mode_subject(raw.relation, raw.anchor, raw.span, args)?;
             return Some(Head {
                 anchor: Some(anchor),
-                kind: HeadKind::Mode(mode),
+                kind: HeadKind::Mode(ModeHead { mode, priority }),
                 span: raw.span,
             });
         }
@@ -416,15 +416,16 @@ impl Builder {
 
     /// The function a mode head such as `skip_analysis` marks: `skip_analysis(F)`, a function
     /// name `skip_analysis("f")`, or the anchor form `F::skip_analysis()`. Exactly one, and
-    /// nothing else -- there is no attribute for a mode that is either on or absent.
+    /// with it the head's `priority`: an integer constant, 0 when not written.
     fn mode_subject(
         &mut self,
         relation: &str,
         anchor: Option<Term>,
         span: Span,
         args: Vec<HeadArg>,
-    ) -> Option<Term> {
+    ) -> Option<(Term, i64)> {
         let mut subjects: Vec<Term> = anchor.into_iter().collect();
+        let mut priority = None;
         for arg in args {
             match arg {
                 HeadArg::Var(v, _) => subjects.push(Term::Var(v)),
@@ -453,6 +454,19 @@ impl Builder {
                     );
                     return None;
                 }
+                HeadArg::Attr(name, Literal::Int(n), s) if name == "priority" => {
+                    if priority.replace(n).is_some() {
+                        self.error(s, format!("'{relation}' takes one 'priority'"));
+                        return None;
+                    }
+                }
+                HeadArg::Attr(name, other, s) if name == "priority" => {
+                    self.error(
+                        s,
+                        format!("'priority' is an integer constant such as 10, not {other}"),
+                    );
+                    return None;
+                }
                 HeadArg::Attr(name, _, s) => {
                     self.error(s, format!("'{name}' is not an attribute of '{relation}'"));
                     return None;
@@ -470,7 +484,9 @@ impl Builder {
             );
             return None;
         }
-        subjects.pop()
+        subjects
+            .pop()
+            .map(|subject| (subject, priority.unwrap_or(0)))
     }
 
     fn head_kind(&mut self, relation: &str, span: Span, args: Vec<HeadArg>) -> Option<HeadKind> {

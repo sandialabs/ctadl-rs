@@ -563,7 +563,8 @@ fn emit_head(
             tally.stats.dispatch += 1;
             note_match(tally, id);
         }
-        HeadKind::Mode(mode) => {
+        HeadKind::Mode(mode_head) => {
+            let mode = mode_head.mode;
             let function = match head.anchor.as_ref() {
                 Some(Term::Lit(Literal::Str(s))) => facts::Str::from(s.as_str()),
                 Some(Term::Var(v)) => match binding.get(v) {
@@ -582,24 +583,7 @@ fn emit_head(
                 },
                 _ => return,
             };
-            use ctadl_ir::ssa::{FrameWrites, FullMode};
-            // Two rules that disagree on a function: the later one wins, as the JSON's last
-            // generator read did.
-            match mode {
-                FunctionMode::SkipAnalysis => out.extend_skip_analysis([function]),
-                FunctionMode::Mem2RegFull => {
-                    out.mem2reg_modes.insert(function, FullMode::Force);
-                }
-                FunctionMode::Mem2RegWindow => {
-                    out.mem2reg_modes.insert(function, FullMode::Forbid);
-                }
-                FunctionMode::FrameStore => {
-                    out.frame_modes.insert(function, FrameWrites::Store);
-                }
-                FunctionMode::FrameUpdate => {
-                    out.frame_modes.insert(function, FrameWrites::Update);
-                }
-            }
+            out.claim_mode(function, *mode_head, provenance);
             tally.stats.modes += 1;
             note_match(tally, function);
         }

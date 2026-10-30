@@ -201,6 +201,10 @@
         },
         {
           "type": "STRING",
+          "value": "analyze"
+        },
+        {
+          "type": "STRING",
           "value": "mem2reg_full"
         },
         {
@@ -994,6 +998,10 @@
             {
               "type": "STRING",
               "value": "skip_analysis"
+            },
+            {
+              "type": "STRING",
+              "value": "analyze"
             },
             {
               "type": "STRING",

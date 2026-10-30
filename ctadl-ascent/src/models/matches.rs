@@ -49,9 +49,11 @@ ends (see [`super::portcullis`]), so what lands here is already a pair of functi
 
 use std::collections::BTreeSet;
 
+use crate::error::Error;
 use crate::facts;
 use crate::facts::TaintDirection;
 use crate::models::FormalIndexTypeTag;
+use crate::models::portcullis::ast::{FunctionMode, ModeAxis, ModeHead};
 
 /// One end of a matched propagation model: the selector the port named, plus its access path,
 /// resolved against nothing yet. `AnyArgument` is deliberately still a *tag* here -- expanding
@@ -226,17 +228,20 @@ pub struct ProgramModelMatches {
     /// here. Flows needing residues nobody declared are dropped, silently -- that is the
     /// documented default, not an oversight.
     pub access_paths: BTreeSet<facts::Path>,
-    /// Functions a `modes: ["skip-analysis"]` generator matched. Codegen reads this set as it
+    /// Functions whose winning body mode is `skip_analysis`. Codegen reads this set as it
     /// lowers each function and simply does not lower the body of one that is in it, so nothing
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
     /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
-    /// Functions a `mem2reg_full` or `mem2reg_window` head marked. The SSA pipeline reads this
-    /// before codegen, to force or forbid full stack-slot promotion.
+    /// Functions whose winning promotion mode is `mem2reg_full` or `mem2reg_window`. The SSA
+    /// pipeline reads this before codegen, to force or forbid full stack-slot promotion.
     pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
-    /// Functions a `frame_store` or `frame_update` head marked. The SSA pipeline reads this
-    /// before codegen, to coarsen or keep the function's frame updates.
+    /// Functions whose winning frame mode is `frame_store` or `frame_update`. The SSA pipeline
+    /// reads this before codegen, to coarsen or keep the function's frame updates.
     pub frame_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FrameWrites>,
+    /// The highest-priority mode claimed on each function and axis, which the three maps above
+    /// follow. Kept so a later claim can be compared against it; see [`Self::claim_mode`].
+    pub mode_claims: std::collections::BTreeMap<(facts::Str, ModeAxis), ModeClaim>,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
     /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
@@ -272,9 +277,90 @@ impl ProgramModelMatches {
         self.access_paths.extend(paths);
     }
 
-    /// Folds in the functions one load marked `skip-analysis`.
-    pub fn extend_skip_analysis(&mut self, functions: impl IntoIterator<Item = facts::Str>) {
-        self.skip_analysis.extend(functions);
+    /// Records that the rule at `provenance` claims `head.mode` for `function`. Of the claims on
+    /// one function and axis the highest priority wins, whatever order the rules ran in. A
+    /// claim of a different mode at the winning priority is kept as a conflict, which
+    /// [`Self::check_mode_conflicts`] reports unless a higher claim arrives first.
+    pub fn claim_mode(&mut self, function: facts::Str, head: ModeHead, provenance: &str) {
+        use std::collections::btree_map::Entry;
+        let claim = ModeClaim {
+            mode: head.mode,
+            priority: head.priority,
+            provenance: provenance.to_string(),
+            conflict: None,
+        };
+        match self.mode_claims.entry((function, head.mode.axis())) {
+            Entry::Vacant(e) => {
+                e.insert(claim);
+            }
+            Entry::Occupied(mut e) => {
+                let held = e.get_mut();
+                if head.priority < held.priority {
+                    return;
+                }
+                if head.priority == held.priority {
+                    if head.mode != held.mode && held.conflict.is_none() {
+                        held.conflict = Some((head.mode, provenance.to_string()));
+                    }
+                    return;
+                }
+                *held = claim;
+            }
+        }
+        self.apply_mode(function, head.mode);
+    }
+
+    /// Makes `mode` the function's setting on its axis.
+    fn apply_mode(&mut self, function: facts::Str, mode: FunctionMode) {
+        use ctadl_ir::ssa::{FrameWrites, FullMode};
+        match mode {
+            FunctionMode::SkipAnalysis => {
+                self.skip_analysis.insert(function);
+            }
+            FunctionMode::Analyze => {
+                self.skip_analysis.remove(&function);
+            }
+            FunctionMode::Mem2RegFull => {
+                self.mem2reg_modes.insert(function, FullMode::Force);
+            }
+            FunctionMode::Mem2RegWindow => {
+                self.mem2reg_modes.insert(function, FullMode::Forbid);
+            }
+            FunctionMode::FrameStore => {
+                self.frame_modes.insert(function, FrameWrites::Store);
+            }
+            FunctionMode::FrameUpdate => {
+                self.frame_modes.insert(function, FrameWrites::Update);
+            }
+        }
+    }
+
+    /// Fails if two rules claimed different modes on one function and axis at the same
+    /// priority, with no higher claim to settle it, naming every such function.
+    pub fn check_mode_conflicts(&self) -> Result<(), Error> {
+        let conflicts: Vec<String> = self
+            .mode_claims
+            .iter()
+            .filter_map(|((function, _), claim)| {
+                let (mode, provenance) = claim.conflict.as_ref()?;
+                Some(format!(
+                    "'{function}': '{}' from {} and '{}' from {}, both at priority {}",
+                    claim.mode.relation_name(),
+                    claim.provenance,
+                    mode.relation_name(),
+                    provenance,
+                    claim.priority,
+                ))
+            })
+            .collect();
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+        Err(Error::PortcullisModel(format!(
+            "conflicting modes at the same priority; give the one that should win a higher \
+             'priority', such as 'analyze(F, priority = 1)':\n  {}",
+            conflicts.join("\n  ")
+        )))
     }
 
     /// Folds one matched dispatch model in, merging with anything already matched for the key.
@@ -295,8 +381,20 @@ impl ProgramModelMatches {
             && self.skip_analysis.is_empty()
             && self.mem2reg_modes.is_empty()
             && self.frame_modes.is_empty()
+            && self.mode_claims.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()
             && self.resolved_bridges.is_empty()
     }
+}
+
+/// The mode a function holds on one [`ModeAxis`], and who claimed it.
+#[derive(Clone, Debug)]
+pub struct ModeClaim {
+    pub mode: FunctionMode,
+    pub priority: i64,
+    /// The claiming rule, as `file:rule`.
+    pub provenance: String,
+    /// A different mode another rule claimed at the same priority, with its provenance.
+    pub conflict: Option<(FunctionMode, String)>,
 }

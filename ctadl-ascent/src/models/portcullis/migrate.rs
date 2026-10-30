@@ -1148,6 +1148,8 @@ fn migrate_model(
         {
             match mode {
                 FunctionMode::SkipAnalysis => skip = true,
+                // No JSON `modes` value names it, so `from_json_name` never returns it.
+                FunctionMode::Analyze => {}
                 FunctionMode::Mem2RegFull | FunctionMode::Mem2RegWindow => mem2reg = Some(mode),
                 FunctionMode::FrameStore | FunctionMode::FrameUpdate => frame = Some(mode),
             }

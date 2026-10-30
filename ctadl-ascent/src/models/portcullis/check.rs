@@ -394,7 +394,7 @@ pub fn plan_rule(rule: &Rule, errors: &mut PortcullisErrors) -> Option<Plan> {
     // that import is in hand. A rule of two components is joined only after the import loop.
     if components.len() > 1
         && let Some((head, mode)) = rule.heads.iter().find_map(|h| match h.kind {
-            HeadKind::Mode(mode) => Some((h, mode)),
+            HeadKind::Mode(m) => Some((h, m.mode)),
             _ => None,
         })
     {
@@ -1114,11 +1114,11 @@ fn check_head(
                 });
             }
         }
-        HeadKind::Mode(mode) => {
+        HeadKind::Mode(m) => {
             let Some(term) = head.anchor.as_ref() else {
                 return;
             };
-            let name = mode.relation_name();
+            let name = m.mode.relation_name();
             require(
                 term,
                 head.span,

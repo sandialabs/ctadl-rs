@@ -385,3 +385,30 @@ fn the_check_is_reported_as_sarif() {
         results[0]["message"]["text"]
     );
 }
+
+/// Two files claiming different modes on one function at one priority are reported, since the
+/// index would fail on them.
+#[test]
+fn a_mode_tie_between_two_files_is_reported() {
+    let skip = model_file(".ctadl", r#"skip_analysis(F) :- fun(F, name = "f");"#);
+    let keep = model_file(".ctadl", r#"analyze(F) :- fun(F, name = "f");"#);
+    let outcome = check(&["f"], &[&skip, &keep]);
+    assert!(outcome.has_file_errors());
+    let messages: Vec<&str> = outcome
+        .check
+        .file_errors
+        .iter()
+        .map(|e| e.message.as_str())
+        .collect();
+    assert!(
+        messages.iter().any(|m| m.contains("conflicting modes")),
+        "{messages:?}"
+    );
+
+    let keep = model_file(
+        ".ctadl",
+        r#"analyze(F, priority = 1) :- fun(F, name = "f");"#,
+    );
+    let outcome = check(&["f"], &[&skip, &keep]);
+    assert!(!outcome.has_file_errors());
+}

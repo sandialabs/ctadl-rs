@@ -122,15 +122,27 @@ pub enum HeadKind {
     /// `skip_analysis(F)`, `mem2reg_full(F)`, … -- a directive about how `F` is lowered, which
     /// the index reads before it lowers `F`'s import. The function is the head's anchor. The
     /// JSON's `modes`.
-    Mode(FunctionMode),
+    Mode(ModeHead),
 }
 
-/// What a mode head says about how its function is lowered. One per JSON `modes` value.
+/// A mode head: the mode, and the priority it is claimed at.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ModeHead {
+    pub mode: FunctionMode,
+    /// `priority = N`, 0 when the head does not say. Of the modes claimed on one function and
+    /// [`ModeAxis`], the highest priority wins; two different modes at that priority are an
+    /// error.
+    pub priority: i64,
+}
+
+/// What a mode head says about how its function is lowered.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FunctionMode {
     /// `skip_analysis(F)` -- codegen does not lower `F`'s body, so the models written for `F`
     /// are its entire behavior.
     SkipAnalysis,
+    /// `analyze(F)` -- lower `F`'s body. The opposite of `skip_analysis`, for overriding one.
+    Analyze,
     /// `mem2reg_full(F)` -- promote all of `F`'s stack slots, whatever its size.
     Mem2RegFull,
     /// `mem2reg_window(F)` -- never promote all of `F`'s stack slots, whatever its size.
@@ -142,8 +154,9 @@ pub enum FunctionMode {
 }
 
 impl FunctionMode {
-    pub const ALL: [FunctionMode; 5] = [
+    pub const ALL: [FunctionMode; 6] = [
         FunctionMode::SkipAnalysis,
+        FunctionMode::Analyze,
         FunctionMode::Mem2RegFull,
         FunctionMode::Mem2RegWindow,
         FunctionMode::FrameStore,
@@ -154,6 +167,7 @@ impl FunctionMode {
     pub fn relation_name(self) -> &'static str {
         match self {
             FunctionMode::SkipAnalysis => "skip_analysis",
+            FunctionMode::Analyze => "analyze",
             FunctionMode::Mem2RegFull => "mem2reg_full",
             FunctionMode::Mem2RegWindow => "mem2reg_window",
             FunctionMode::FrameStore => "frame_store",
@@ -161,14 +175,24 @@ impl FunctionMode {
         }
     }
 
-    /// The JSON `modes` value it translates.
-    pub fn json_name(self) -> &'static str {
+    /// The JSON `modes` value it translates. `analyze` has none.
+    pub fn json_name(self) -> Option<&'static str> {
         match self {
-            FunctionMode::SkipAnalysis => "skip-analysis",
-            FunctionMode::Mem2RegFull => "mem2reg-full",
-            FunctionMode::Mem2RegWindow => "mem2reg-window",
-            FunctionMode::FrameStore => "frame-store",
-            FunctionMode::FrameUpdate => "frame-update",
+            FunctionMode::SkipAnalysis => Some("skip-analysis"),
+            FunctionMode::Analyze => None,
+            FunctionMode::Mem2RegFull => Some("mem2reg-full"),
+            FunctionMode::Mem2RegWindow => Some("mem2reg-window"),
+            FunctionMode::FrameStore => Some("frame-store"),
+            FunctionMode::FrameUpdate => Some("frame-update"),
+        }
+    }
+
+    /// The setting this mode is one value of. Modes on different axes never conflict.
+    pub fn axis(self) -> ModeAxis {
+        match self {
+            FunctionMode::SkipAnalysis | FunctionMode::Analyze => ModeAxis::Body,
+            FunctionMode::Mem2RegFull | FunctionMode::Mem2RegWindow => ModeAxis::Mem2Reg,
+            FunctionMode::FrameStore | FunctionMode::FrameUpdate => ModeAxis::Frame,
         }
     }
 
@@ -177,8 +201,19 @@ impl FunctionMode {
     }
 
     pub fn from_json_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.json_name() == name)
+        Self::ALL.into_iter().find(|m| m.json_name() == Some(name))
     }
+}
+
+/// One per-function setting the mode heads choose a value of.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ModeAxis {
+    /// Whether the body is lowered: `skip_analysis` or `analyze`.
+    Body,
+    /// Full stack-slot promotion: `mem2reg_full` or `mem2reg_window`.
+    Mem2Reg,
+    /// Frame writes: `frame_store` or `frame_update`.
+    Frame,
 }
 
 /// What a `dispatch` head says. Exactly one per head, which is what keeps "forgot the model" and
@@ -230,7 +265,7 @@ impl HeadKind {
             HeadKind::Bridge { .. } => "bridge",
             HeadKind::AccessPath { .. } => "access_paths",
             HeadKind::Dispatch { .. } => "dispatch",
-            HeadKind::Mode(mode) => mode.relation_name(),
+            HeadKind::Mode(head) => head.mode.relation_name(),
         }
     }
 }
@@ -467,6 +502,7 @@ pub const OUTPUT_RELATIONS: &[&str] = &[
     "access_paths",
     "dispatch",
     "skip_analysis",
+    "analyze",
     "mem2reg_full",
     "mem2reg_window",
     "frame_store",
