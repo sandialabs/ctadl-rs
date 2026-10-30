@@ -801,7 +801,7 @@ fn inert_keys_warn_and_change_nothing() {
 /// rejects fails to migrate with that check's own errors, rather than a warning and a rule
 /// missing the part that was wrong.
 #[test]
-fn what_the_json_loader_rejects_does_not_migrate() {
+fn what_the_json_format_rejects_does_not_migrate() {
     let cases: [(&str, &[&str]); 29] = [
         // An unknown constraint, even under `not`.
         (

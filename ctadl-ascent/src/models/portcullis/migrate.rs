@@ -1322,10 +1322,7 @@ fn bridge_severity(
         Some(_) => {
             report.warn(
                 index,
-                format!(
-                    "'{key}' only changed what the JSON loader logged about the pairing, and is \
-                     not translated"
-                ),
+                format!("'{key}' only sets how a bad pairing is logged, and is not translated"),
             );
             Ok(())
         }

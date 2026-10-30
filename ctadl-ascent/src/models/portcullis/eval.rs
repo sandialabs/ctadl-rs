@@ -937,7 +937,7 @@ fn text(value: &Value) -> Option<Cow<'static, str>> {
 }
 
 /// Comparison across the value domains. Strings compare lexicographically, numbers
-/// numerically, booleans by equality only; a cross-domain comparison is unequal rather than an
+/// numerically, booleans with `false < true`; a cross-domain comparison is unequal rather than an
 /// error: `=` and the orderings fail, `!=` holds.
 fn compare(lhs: &Value, op: CmpOp, rhs: &Value) -> bool {
     let ord = match (lhs, rhs) {
