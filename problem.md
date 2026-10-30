@@ -614,7 +614,8 @@ Before any of these fixes ships:
   `a2050`'s sorts, 24x on `FUN_002a2af4`, 3x on `inflate`). They are distinct-row counts from
   relation dumps, not engine runs.
 - **Readings not tested by experiment:**
-  - cause 4's stdio and field mechanisms;
+  - cause 4's libntfs field mechanism;
+  - where `memcpy`'s `dst.deref <- src` and `src.deref <- dst.deref` rows come from (cause 11);
   - cause 6's self-recursion loop;
   - the extra-rows explanation in cause 2's `hnapserver` note;
   - how `realloc` reaches DSP-W115 functions that never call it, through `_cs_*` function pointers
