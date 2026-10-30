@@ -37,7 +37,7 @@ the rest are one library each. Cause 1 is fixed (`3801214b`).
 - **10-12: not blowups.** Cause 10 is folded into 1, cause 11 is not a blowup at the default, and
   cause 12 costs time, not memory.
 
-### 1. The frontend gives a global's `unique` and `register` temps fake addresses that unrelated globals share
+### 1. FIXED: The frontend gives a global's `unique` and `register` temps fake addresses that unrelated globals share
 
 **Binaries:** DSN-5000 `gzip` (9.0x), DSN-5000 and DSN-3200 `tar` (6.3x and 4.2x) and R7000
 `unzip` (11x), which have no allocator. It also inflates the cause-2 binaries.
@@ -65,7 +65,10 @@ that is a unique-space offset or a register number, not the global's ram address
 a `ram` varnode, so the temps lower as ordinary locals. That is the experiment's `local` variant
 below, with no env var. The regression suite passes with it: 250 passed and the 3 expected
 failures. The numbers in this section and in the Benchmarks table were measured with the
-env-gated patches, not re-measured on the commit.
+env-gated patches. Only `gzip` has been re-measured on the commit (`fff7781f`, store re-imported
+with `CTADL_REUSE_FACTS=1`): 126 K `locals`, 104.5 MB peak, 0.36 s, 0.54x of its 1.93 MB IR's
+budget, which matches the `local` patch. Its query has no analyzable endpoints, before and after,
+so it has no findings to compare. Run in `/Volumes/Shampoo/nb-work/fix1/`.
 
 **Experiment.** An env-gated patch (`CTADL_EXP_GLOBAL_HVAR=addr`, and `local` below; not committed:
 `/Volumes/Shampoo/nb-work/r-glob/out/r-glob.patch`, worktree `/Volumes/Shampoo/nb-work/r-glob/src`)
