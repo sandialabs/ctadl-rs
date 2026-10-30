@@ -229,7 +229,7 @@ legitimately has one per `native` declaration. So do unattributed table entries.
 # See also
 
 - [`registry`] -- the ELF table scan and the run attribution, with unit tests over both.
-- `docs/model-generators.md` -- the declarative `bridge` construct, for the boundaries this pass
+- `docs/portcullis.md` -- the declarative `bridge` construct, for the boundaries this pass
   cannot reach: a Lua-to-C `luaL_Reg` entry, a call through a `dlsym`'d pointer, a
   `RegisterNatives` entry whose class stayed unattributed. It takes an explicit port map, since
   nothing derives one for a boundary with no naming convention.

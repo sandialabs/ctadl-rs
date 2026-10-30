@@ -15,7 +15,7 @@
 // `Argument(0).[]` is a hard load error (`InvalidOffset("")`) rather than a silent mismatch.
 //
 // A port pair is a PREFIX SUBSTITUTION, not a filter: `Argument(0).\[] -> Return` unwraps a
-// level, `Argument(1) -> Argument(0).\[]` adds one. See docs/model-generators.md §7 and the
+// level, `Argument(1) -> Argument(0).\[]` adds one. See docs/portcullis.md §6 and the
 // fixtures in `tests/tnt/port_*.tnt`.
 {"find":"methods","where":[{"constraint":"signature_match","name":"toString"},{"constraint":"signature","pattern":".*\\(\\)Ljava/lang/String;"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"toString","parents":["Ljava/lang/String;","Ljava/lang/StringBuffer;","Ljava/lang/StringBuilder;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}

@@ -1,7 +1,7 @@
 # Model matching DSL - DO-NOT-MERGE
 
 The current model matching is basically a domain specific language (DSL) implemented inside JSON
-(see the model-generators docs). This proposal lifts it to a real DSL with semantics and a decent
+(see `docs/deprecated-json-model-generators.md`). This proposal lifts it to a real DSL with semantics and a decent
 syntax, along with an execution engine.
 
 The engine is phased: `index` time and `query` time. Each one accepts a set of models: the indexer
@@ -346,7 +346,7 @@ Every relation name is reserved, so an unrecognized one is reported as the typo 
 
 Modified: `cli/mod.rs`, `cli/model_check.rs`, `codegen/model_matches.rs`, `error.rs`, `main.rs`,
 `models/{mod,matches,spec,match_index}.rs`, `tests/{default_models,flowy_tests}.rs`,
-`docs/model-generators.md`. About 590 added lines across those, and 32 removed. JSON files
+`docs/model-generators.md` (now `docs/deprecated-json-model-generators.md`). About 590 added lines across those, and 32 removed. JSON files
 reach the engine through the migrator.
 
 Removed: the JSON matcher (`models/json.rs`, `models/universe_set.rs`, about 2,800 lines), the

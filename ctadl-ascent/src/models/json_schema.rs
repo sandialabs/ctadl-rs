@@ -30,7 +30,7 @@ pub enum FindMethod {
     Methods,
     Callsites,
     /// Selects call sites by their own static signature rather than by the callee they resolve
-    /// to. See `docs/model-generators.md`.
+    /// to. See `docs/deprecated-json-model-generators.md`.
     Dispatch,
 }
 

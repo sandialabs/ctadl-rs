@@ -1143,7 +1143,7 @@ impl<'a> Lowerer<'a> {
 
     /// A name for a function that has none of its own, as `(fully-qualified, simple)`. The
     /// counter runs across the whole import, not per file (see the `%anonN` warning in
-    /// `docs/model-generators.md`).
+    /// `docs/portcullis.md`).
     fn fresh_anon_name(&mut self) -> (String, String) {
         let n = self.anon_counter;
         self.anon_counter += 1;

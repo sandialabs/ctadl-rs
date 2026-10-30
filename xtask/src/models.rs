@@ -1,8 +1,8 @@
 //! Check the model files ctadl ships against the model generator schema.
 //!
 //! `ctadl-model-generator.schema.json` is the contract users write generators against: it is
-//! what `ctadl` names in the `$schema` of the model files it emits, and what
-//! `docs/model-generators.md` sends readers to. Nothing in the analyzer reads it. The loader
+//! what `docs/deprecated-json-model-generators.md` sends readers to, and what a JSON model file
+//! names in its `$schema`. Nothing in the analyzer reads it. The loader
 //! (`ctadl-ascent/src/models/json.rs`) has its own serde types, so a keyword added there and
 //! used in a shipped default file can sit outside the schema indefinitely -- and every editor
 //! validating a user's file against that schema then reports *our own* models as errors.

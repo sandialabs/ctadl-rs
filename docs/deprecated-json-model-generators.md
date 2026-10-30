@@ -1,15 +1,15 @@
-# CTADL Model Generators
+# Deprecated: JSON model generators
 
-> **This format is deprecated.** The engine executes **Portcullis**, the model language —
-> [`portcullis.md`](portcullis.md) — and a JSON file passed to `--models` is migrated to it in
-> memory and then run on the Portcullis engine; nothing else reads it. Each JSON file draws a
-> deprecation warning, and the format will be removed in a future release. Write new models in
-> Portcullis; `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything
-> that does not carry across. A generator that cannot carry across exactly fails `ctadl index`
-> and `ctadl query` the same way, naming the generator. Until then this document is still the
-> reference for the JSON format. The *semantics* below — ports, access paths, the
-> prefix-substitution reading of a port pair, what a bridge does — are shared by both formats
-> and are documented here.
+> **This format is deprecated and will be removed. Write models in Portcullis:
+> [`portcullis.md`](portcullis.md).** A JSON file passed to `--models` is migrated to Portcullis
+> in memory and run on the Portcullis engine; nothing else reads it, and each one draws a
+> deprecation warning. `ctadl migrate-models my-models.jsonl` converts a file and reports
+> anything that does not carry across; a generator that cannot carry across exactly fails `ctadl
+> index` and `ctadl query` the same way, naming the generator.
+>
+> This document is kept only as the reference for reading and migrating existing JSON files. The
+> semantics it describes (ports, access paths, port pairs, bridges, modes) are documented, in
+> Portcullis syntax, in [`portcullis.md`](portcullis.md), which is the one to keep current.
 
 The **model generator** is CTADL's declarative language for telling the taint
 analyzer things it can't discover on its own: which functions produce tainted
@@ -96,11 +96,8 @@ exactly what `ctadl migrate-models` writes for it, so the two cannot drift.
 Your `--models` files are unioned on top of the selected default. Pass
 `--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving
 `--models` as the complete set. Note the defaults are **propagation only** —
-CTADL ships no default sources or sinks. You can scaffold a starter file with:
-
-```bash
-ctadl init-model model.json5
-```
+CTADL ships no default sources or sinks. `ctadl init-model` scaffolds a starter file, in
+Portcullis.
 
 ### Checking a model file before you index
 

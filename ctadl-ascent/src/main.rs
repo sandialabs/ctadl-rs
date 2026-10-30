@@ -48,9 +48,9 @@ pub enum Command {
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
 
-    /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
-    /// are used to specify sources and sinks (see the 'query' command) as well as specifying
-    /// external function behavior (see the 'index' command)
+    /// Generate a template Portcullis model file to help write custom analysis models. Analysis
+    /// models are used to specify sources and sinks (see the 'query' command) as well as
+    /// specifying external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
 
     /// Rewrite a JSON/JSON5/JSONL model-generator file in Portcullis.
@@ -73,8 +73,8 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct InitModelArgs {
-    /// Path where the template model file will be written (defaults to model.json5)
-    #[arg(default_value = "model.json5")]
+    /// Path where the template model file will be written (defaults to model.ctadl)
+    #[arg(default_value = "model.ctadl")]
     pub output: PathBuf,
 }
 
@@ -861,84 +861,33 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `ctadl init-model` writes: one source, one sink and one propagation to edit.
+const MODEL_TEMPLATE: &str = r#"// A Portcullis model file. The language reference is docs/portcullis.md.
+//
+// Each rule derives its heads (left of ':-') for every way its body (right of ':-') matches.
+// Pass this file to `ctadl query --models` for its sources and sinks, and to
+// `ctadl index --models` for its propagations.
+
+// A source: the return value of every method named `readData` is untrusted. `kind` is a label
+// you choose; a flow is reported when a source's kind reaches a sink of the same kind.
+source(F::return, kind = "input_data") :-
+  fun(F, name = N), regex_match(N, "readData");
+
+// A sink: the first argument of `executeQuery`. `name` is the simple name, so this selects every
+// `executeQuery` in the program. To pin down one method, test its full name instead:
+//   fun(F), F = "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"
+// On an instance method arg(0) is the receiver, so the first argument is arg(1).
+sink(F::arg(1), kind = "input_data") :-
+  fun(F, name = "executeQuery");
+
+// A propagation: `canonicalize_url` returns what its first argument carries. This is a summary
+// for code CTADL cannot see, and takes effect at `ctadl index`.
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "canonicalize_url");
+"#;
+
 fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
-    let template = r#"{
-    // Link to the schema to enable IDE features like autocomplete and hover documentation.
-    // Adjust the path to match your installation if necessary.
-    "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
-
-    "model_generators": [
-        {
-            // Example 1: Define a data source using a signature pattern.
-            // This will match any method containing 'readData' in its signature
-            // and mark its return value as a source of taint.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_pattern",
-                    "pattern": ".*readData.*"
-                }
-            ],
-            "model": {
-                "sources": [
-                    {
-                        "port": "Return",
-                        "kind": "input_data"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 2: Define a sink using an exact signature match.
-            // This will match the exact method signature 'executeQuery' and mark its first argument
-            // as a sink for taint analysis.
-            //
-            // "name" matches the bare method name, so it selects every 'executeQuery' in the
-            // program. To pin down one specific method, use "qualified-id" instead: an exact
-            // (non-regex) match on the fully-qualified id, e.g.
-            //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
-            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
-            // "kong.db.executeQuery" on lua.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "executeQuery"
-                }
-            ],
-            "model": {
-                "sinks": [
-                    {
-                        "port": "Argument(0)",
-                        "kind": "sql_injection"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 3: Define a propagation model.
-            // This models a method 'canonicalize_url' that transforms data.
-            // We model it as propagating taint from its first argument to its return value.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "canonicalize_url"
-                }
-            ],
-            "model": {
-                "propagation": [
-                    {
-                        "input": "Argument(0)",
-                        "output": "Return"
-                    }
-                ]
-            }
-        }
-        ]
-        }"#;
-
-    std::fs::write(&args.output, template)
+    std::fs::write(&args.output, MODEL_TEMPLATE)
         .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
@@ -1334,6 +1283,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    /// `init-model` writes a file the loader accepts, so the first edit starts from one that works.
+    #[test]
+    fn the_model_template_loads() {
+        let file = ctadl_ascent::models::portcullis::PortcullisFile::from_text(
+            "model.ctadl",
+            MODEL_TEMPLATE,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(file.program.rules.len(), 3);
+    }
 
     #[test]
     fn sizes_parse() {

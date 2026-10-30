@@ -7,7 +7,7 @@
 // it behaves as written. `.[<n>]` is a real `PathSegment::Offset` and matches what pcode emits;
 // a field whose *name* begins with `[` would have to be escaped (`.\[...]`), which pcode never
 // needs. A port pair is a PREFIX SUBSTITUTION, not a filter: `Argument(0).deref -> Return`
-// unwraps a level, `Argument(0) -> Return.deref` adds one. See docs/model-generators.md §7 and
+// unwraps a level, `Argument(0) -> Return.deref` adds one. See docs/portcullis.md §6 and
 // the fixtures in `tests/tnt/port_*.tnt`.
 //
 // SYMBOL ALIASES. Firmware rarely imports the plain libc name: glibc/uClibc emit `_FORTIFY`

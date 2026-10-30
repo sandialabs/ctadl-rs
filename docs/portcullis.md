@@ -16,15 +16,111 @@ source(F::return), propagation(F::return <- F::arg(0)) :-
 There is no recursion, so no stratification and no fixpoint to reason about: every body reads
 built-in relations only, and one pass answers the file.
 
-Files end in `.ctadl` (or `.dl`). They are passed the same way JSON model files are:
+Files end in `.ctadl` (or `.dl`). The older JSON format is deprecated, and still works by being
+migrated to this one as it is loaded; see [§9](#9-migrating-from-the-json-format).
 
-```bash
-ctadl index my-app --models propagations.ctadl
-ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
+---
+
+## Using model files
+
+### A first model
+
+```
+// The value Request.getParameter returns is attacker-controlled.
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "getParameter", parent = "Ljavax/servlet/ServletRequest;");
+
+// Whatever reaches the first argument of Runtime.exec is a command injection.
+sink(F::arg(1), kind = "UserInput") :-
+  fun(F, name = "exec", parent = "Ljava/lang/Runtime;");
 ```
 
-The older JSON format is deprecated, and still works by being migrated to this one as it is
-loaded; see [§9](#9-migrating-from-the-json-format).
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl index my-app
+ctadl query my-app --models first.ctadl --output results.sarif
+```
+
+CTADL reports every flow from a value `getParameter` returns to the command `exec` runs. A flow is
+reported when a source's `kind` reaches a sink of the same `kind`. `ctadl init-model` writes a
+starter file with a source, a sink and a propagation to edit.
+
+### Which command reads what
+
+The pipeline is **import → index → query**, and `--models` (repeatable) is accepted by `ctadl
+index`, `ctadl query` and `ctadl go`. The two halves of a model file are consumed by different
+commands, so a model given only to the wrong one does nothing:
+
+| heads | consumed by | why |
+| --- | --- | --- |
+| `source`, `sink` | `ctadl query` | they define the search, which runs over a finished index |
+| `propagation`, `bridge`, `access_paths`, `dispatch`, the mode heads | `ctadl index` | they become facts the index fixpoint consumes, and it is fixed by the time a query runs |
+
+Passing one file to both commands is normal, and each says what it is ignoring rather than
+dropping it silently (see [Phases](#phases)). Adding a `bridge` or a `propagation` after indexing
+means re-running `ctadl index`.
+
+```bash
+ctadl index my-app --models libc-propagations.ctadl
+ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
+ctadl go /path/to/app.apk --name my-app --models my-models.ctadl   # all three steps
+```
+
+### The built-in defaults
+
+CTADL ships **propagation-only** defaults in `ctadl-ascent/src/models/defaults/`, one file per
+import, chosen by the frontend:
+
+| frontend | file |
+| --- | --- |
+| dex, apk, jvm, jar | `java-index.ctadl` |
+| pcode | `native-index.ctadl` |
+| lua | `lua-index.ctadl` |
+| cil | `cil-index.ctadl` |
+| flowy | *(none)* |
+
+Your `--models` files are added on top. `--no-default-models` on `ctadl index` or `ctadl go`
+leaves `--models` as the complete set. There are no default sources or sinks: what to search for
+is yours to say.
+
+### Checking a model file before you index
+
+Only half of matching needs an index. The rules are evaluated against each imported program's
+functions, method table and call sites, which needs the import and nothing else; resolving what
+they matched to the index's function ids, fanning endpoints out over call sites and expanding
+wildcard sinks is the half that needs the index. Functions are never optimized out, so a source
+or sink on a function is fully decided by the first half.
+
+So `ctadl query` without an index, because the project was never indexed or is being indexed
+right now, checks the model files instead of failing:
+
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl query my-app --models sources-and-sinks.ctadl --output check.sarif
+```
+
+The output is ordinary SARIF, and its notifications say what the rules selected:
+
+| notification | what it says |
+| --- | --- |
+| `CTADL0008` | There was no index, so this is a model check, and what a model check cannot decide (below). |
+| `CTADL0004` | A rule declared a source, sink or propagation and matched nothing, and why: its body matched no function, or its `local` atom matched no local of the functions it did. |
+| `CTADL0010` | A bridge rule paired no functions in the programs checked. |
+| `CTADL0011` | What each live rule matched: the count, and a few of the names. |
+| `CTADL0012` | A model file that could not be read, or a malformed rule. The rest of the file is still checked. |
+| `CTADL0100` | The totals. |
+
+Rules are numbered from 0 in file order. The run exits non-zero, because the query asked for
+could not be answered, and the built-in defaults are not loaded, as they never are for `ctadl
+query`. What a model check cannot tell you:
+
+- **Call-site anchors** count the callees the matched call sites name, not the sites.
+- **`arg(_)`** expands over an arity only the index knows; it is counted as one port.
+- **A matched function can still be missing from the index.** The query then raises `CTADL0005`.
+- **Bridge pair counts.** Whether a bridge paired anything is known; how many calls it covers is
+  not.
+- **Cross-import bridges.** A bridge's sides can live in two imports, so its verdict means
+  something only when the project holds every import the real one will index.
 
 ---
 
@@ -79,9 +175,42 @@ relation name.
   in `F`". The anchor may be a variable or a literal name.
 - **Flows** connect two anchored ports: `A -> B`, `A <- B`, `A <-> B`.
 
-Access paths in ports are always literal — never bound to a variable. A segment that is not a
-plain identifier is quoted, which takes it out of the path grammar: the Java array element,
-written `\[]` in JSON, is `."[]"` here.
+### Access paths
+
+A port can be extended into an **access path** that reaches *through* the value:
+
+```
+path    := segment*
+segment := '.' name           -- a field: .deref, .foo
+         | '.' "quoted"       -- a field whose name is not a plain identifier: ."[]", ."a.b"
+         | '[' int ']'        -- a numeric offset: [8], [-1]; '.[8]' is the same
+```
+
+Paths are always literal, never bound to a variable.
+
+- **`.deref`** is the pointee. C data often arrives through out-parameters: `read(fd, buf, n)`
+  taints `arg(1).deref`, not `arg(1)`.
+- **Offsets** are pointer arithmetic, a different kind of segment from a field whose name looks
+  numeric: `arg(1)[8].deref` is what pcode emits for `*(p + 8)`.
+- **Quoted names** take a segment out of the grammar, so a field literally named `a.b` is
+  `."a.b"`.
+
+There is no wildcard segment. `.*` is a field literally named `*`. Use a sink's `wildcard` or a
+source's `saturating` instead.
+
+Frontends spell an array element differently, and the port must match:
+
+| frontend | port |
+| --- | --- |
+| dex, jvm | `arg(0)."[]"` |
+| cil | `arg(0)."[]"`, and `arg(2).deref` for what a struct receiver or a `ref`/`out` parameter points at |
+| lua | `arg(0)."[_elem_]"`, and `arg(0)."[3]"` for the literal key `t[3]` |
+| C (tree-sitter) | `arg(0)[3]."[]"` for `a[3]`; `a[0]` and `a[n]` are both `arg(0)."[]"` |
+| pcode | `arg(0)[8]` |
+
+On lua a source-level `t[3]` is the *field* `[3]`, not offset 3. The tree-sitter C frontend lowers
+a subscript as the pointer arithmetic it is, so one path can hold both: the index is an offset,
+and the element read at that address is the field `[]`.
 
 ---
 
@@ -225,7 +354,18 @@ The point of a model file is to derive these.
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
   works without inventing a vocabulary first.
 - **`saturating`** (source only): any access path *extending* the source port is tainted too,
-  recursively. Reach for it when callers index into the value — C's `argv` is the motivating case.
+  recursively. Reach for it when callers index into the value. C's `argv` is the motivating
+  case: `argv[1]` is read at an offset path (`[8].deref`) that is a sibling of the `.deref` the
+  source names, so a precise source never reaches it.
+
+  ```
+  source(F::arg(1).deref, kind = "argv_input", saturating = true),
+    source(F::arg(1).deref.deref, kind = "argv_input", saturating = true) :-
+    fun(F, name = "main");
+  ```
+
+  A precise source on a pointer does reach an address computed from it (`q = &p[2]`); what it
+  does not reach is the memory at that address. Leave it off for precise sources like `getenv`.
 - **`wildcard`** (sink only): the sink matches any access-path extension of the port. On by
   default; set `false` to require the exact path.
 - **`dispatch`** attaches a model to a call *signature* rather than a function, and **replaces**
@@ -253,6 +393,20 @@ The point of a model file is to derive these.
   ```
   skip_analysis(F), propagation(F::return <- F::arg(0)) :- fun(F, name = "transfer");
   ```
+
+  | | without `skip_analysis` | with it |
+  | --- | --- | --- |
+  | summaries from the model | yes | yes |
+  | summaries derived from the body | yes | **no** |
+  | the body's indirect calls feed hybrid inlining | yes | **no** |
+  | flow *through* the body, and through the calls it makes | tracked | **not tracked** |
+  | the body's calls appear in the call graph | yes | **no** |
+  | call sites *of* the function use the model | yes | yes |
+
+  Reach for it when the model is more accurate than the body (a wrapper or stub whose real
+  behavior lives elsewhere), or when the body is degenerate: an unwinder, a dispatcher or an
+  assembly thunk whose summary costs the index far more than it contributes. To keep a
+  function's call edges and suppress only its dataflow, it is not the tool.
 
   `F::skip_analysis()` is the same head written with an anchor, and `skip_analysis("…")` names a
   function by its full name — for a native symbol that is the decorated one, such as
@@ -293,10 +447,26 @@ A **propagation** is one function's summary, so both ports must be anchored at t
 and neither may be anchored at a call site. A **bridge** is the opposite: its two ports name two
 different functions, usually in two different imports.
 
-A port pair is a *prefix substitution*, not a filter — taint at the input path, plus any suffix,
-lands at the output path plus that suffix. See §7 of
-[model-generators.md](model-generators.md#a-port-pair-is-a-prefix-substitution-not-a-filter) for
-the worked matrix; the semantics are unchanged by the syntax.
+#### A port pair is a prefix substitution, not a filter
+
+A flow does **not** mean "taint sitting exactly at the input appears exactly at the output". Taint
+at the input path *plus any suffix* lands at the output path plus that suffix. The two paths are a
+level shift. Take `u = id(t)`, with taint stored at `t.f`:
+
+| model on `id` | means | taint at `t.f` lands at |
+| --- | --- | --- |
+| `F::return <- F::arg(0)` | `u.X ← t.X` | `u.f`: the suffix rides along |
+| `F::return <- F::arg(0).f` | `u.X ← t.f.X` | **`u`**: the port *consumed* the `.f` |
+| `F::return.f <- F::arg(0)` | `u.f.X ← t.X` | `u.f.f`: the port *added* a level |
+| `F::return.f <- F::arg(0).f` | `u.f.X ← t.f.X` | `u.f`: consumed and re-added |
+
+A longer input path **unwraps** and a longer output path **wraps**; neither narrows what the
+model matches. When testing a model, probe at the level the port predicts. The worked matrix is
+`ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and `ctadl-ascent/tests/integration/port_semantics.rs`
+(Lua).
+
+One asymmetry: a **sink** port covers the paths reachable at its vertex, so a sink on `return`
+also sees `return.f`. A sink cannot say "the object itself, but not its fields".
 
 ### Bridges
 
@@ -320,6 +490,64 @@ boundary at all.
 This rule mentions two programs, and no single import satisfies its body. That works because the
 body is split into connected components, each accumulated as the imports stream past and joined
 once at the end — see [§8](#8-how-a-rule-is-evaluated).
+
+A bridge is the declarative counterpart of [the JNI bridge](../README.md#the-jni-bridge), for the
+boundaries no built-in pass sees: a Lua script calling a C function registered in a `luaL_Reg`
+table, a call through a table field or a `dlsym`'d pointer, or a `RegisterNatives` entry whose
+class the JNI pass could not recover.
+
+- **Ports name slots, not declaration order.** A map is right only for the frontend the method
+  was observed through: Dex numbers parameters by register (a `long` or `double` takes two), JVM
+  by argument position. `arg(_)` is rejected: a wildcard has no correspondent on the other side.
+- **`return` is the normal return.** A Java method's exception return is never mapped.
+- **Every match pairs with every match.** A rule whose `F` matches three callees and whose `G`
+  matches two implementations bridges six pairs. Narrow the atoms when that is not what you want.
+- **It attaches inside the callee.** The bridge gives `F` a summary that every call site of it
+  uses, which is why a bridge cannot be anchored at a call site: it would name only the
+  statically emitted calls, precisely not the indirect and virtual ones a bridge exists for.
+- **It is index-time only.** It creates call facts the index consumes; `ctadl query` ignores it
+  and says so.
+
+A bridge that goes wrong (a side matching nothing, a wrong slot, a wrong path) produces *fewer
+flows*, not an error. `ctadl index` logs one line per bridge rule at `info`, and it is the one
+place a *mis*-paired bridge shows:
+
+```
+bridge my-models.ctadl:3: 1 from, 1 to, 1 pair(s) bridged
+```
+
+**Composition past the seam is exact-match only.** Every path a bridge writes is literal, and a
+pathful port composes with the callee's summary only where that summary's endpoint lands on
+exactly that path or a prefix of it. A summary that lands deeper leaves a residue the analysis
+does not track, and the flow is dropped silently. So the Lua example above has a precondition the
+syntax does not show: `l_add` itself needs `propagation` rules at the map's paths, because a
+native frontend derives offset-only paths and can never mention `.stack[1]`. When you know the
+residues a callee produces, declare them with `access_paths`.
+
+A bridge over a pair the built-in JNI pass also links bridges it twice. For a `Java_…` method,
+which should rarely need one, pass `--no-jni-bridge` to `ctadl index`.
+
+### Call-site anchors
+
+A port anchored at a call site denotes the actual at that call, so a source or sink can apply to
+some calls of a function and not others:
+
+```
+// `emit`'s argument is a sink only when called from inside `handleRequest`.
+sink(S::arg(0), kind = "TaintedData") :-
+  callsite(C, S, callee_string = G), fun(G, name = "emit"), fun(C, name = "handleRequest");
+```
+
+A call site matches by the callee it **names**: a call written against `Base.run` matches a rule
+selecting `Base.run`, not an override `Mid.run` it may dispatch to. Only sources and sinks take
+a call-site anchor; a propagation and a bridge are whole-function summaries.
+
+### `access_paths`
+
+`access_paths(".next.next.next");` registers a path with the indexer. The index extends a path
+only to paths the program and the models mention, so a path nobody writes is a flow that silently
+does not happen. Use it for the residues a bridged callee produces, or for a structure deeper than
+the code ever spells, and sparingly: the path set is what bounds the analysis.
 
 ---
 
@@ -462,3 +690,40 @@ exception — there is no resynchronization point, so it is reported alone.
 `ctadl index` and `ctadl query` also log, at `info`, every rule that was live for the running
 phase and matched nothing. That is the condition worth hunting for: a rule that is doing nothing
 looks exactly like a clean program.
+
+---
+
+## 11. Recipes
+
+| goal | heads |
+| --- | --- |
+| Mark a function's output as untrusted | `source(F::return)` |
+| Mark a whole value, every offset and field, as untrusted (`argv`) | `source(…, saturating = true)` |
+| Flag a dangerous API | `sink(F::arg(N))` |
+| Summarize a library function CTADL cannot see | `propagation(…)`, often with a `sink` |
+| A source or sink only in some calling contexts | a port anchored at a `callsite` site |
+| A source or sink on a named local | `F::local(L)` with `local(F, L, name = "…")` |
+| Join a callee in one artifact to its implementation in another | `bridge(…)` |
+| Apply a model to only some of a project's imports | `fun(F, language = …)` or `fun(F, import = …)` |
+| Register an access path the code never writes | `access_paths("…")` |
+| Trust the model and skip the body | `skip_analysis(F)` |
+| Take a contract method's implementations out of the call graph | `K::dispatch(<flow>)` |
+| Discard a call that moves nothing | `K::dispatch(resolve = "skip")` |
+| Keep a signature's bodies reachable but off CHA | `K::dispatch(resolve = "inline")` |
+
+## 12. Tips
+
+- **Check before you index.** `ctadl query` against an un-indexed project tells you which rules
+  select something and which select nothing; it needs only the import. See
+  [Checking a model file before you index](#checking-a-model-file-before-you-index).
+- **Group families with sets.** `fun(F, name in {…}, parent in {…})` models a library's methods
+  in one rule.
+- **Get the ports right for the language.** Java taints through `return` and `arg(N)`; C through
+  `.deref` out-parameters.
+- **Kinds are your vocabulary.** A flow is reported when a source's `kind` reaches a sink of the
+  same `kind`; keep them consistent across files.
+- **Do not name lua functions by `%anonN`.** A function with no name of its own is numbered by a
+  counter that runs across the whole import, so adding a file renumbers the rest. Pin it by its
+  module and a `uses_field` or `arity` test, or give it a name in the source.
+- **Propagations at index time, sources and sinks at query time.** Pass the same file to both;
+  each command takes its half.
