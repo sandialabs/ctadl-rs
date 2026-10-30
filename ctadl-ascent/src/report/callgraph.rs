@@ -1791,8 +1791,9 @@ mod tests {
             )
         };
         let vmt = VirtualMethodTable::new(Dispatch::Java {
-            // `LI;` itself declares no implementation. An interface method has no body, so
-            // it goes in `abstract_methods` below instead.
+            // `LI;->m` is abstract, so it is in `abstract_methods` below. The frontends also
+            // give it a row here, a CHA target with no body; it is left out so that the
+            // counts below are of implementations only.
             methods: vec![
                 method("LA;", "m"),
                 method("LB;", "m"),

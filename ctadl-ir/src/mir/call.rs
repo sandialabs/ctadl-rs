@@ -338,6 +338,8 @@ pub enum Dispatch {
         /// - Simple name of the method, e.g., getString
         /// - Signature of the method, e.g., (IILcom/example/Foo;)V
         /// - Fully qualified method name
+        ///
+        /// Every declared method has a row, abstract and native ones included.
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
         /// The interfaces *this import declares*.
@@ -349,14 +351,14 @@ pub enum Dispatch {
         /// Method declarations carrying `abstract`, including every method of an interface
         /// that is not `default` or `static`.
         ///
-        /// These are exactly the declarations that are **absent** from `methods`, which holds
-        /// implementations: a body-less method has no code for the frontend to lower and no
-        /// function to name. Recording them is what makes a single-abstract-method interface
-        /// recognisable -- a functional interface is one interface with one row here -- which
-        /// is otherwise underivable, since the CHA resolvent map keyed on an interface holds
-        /// every method of every implementer rather than the interface's own.
+        /// Each one also has a row in `methods`, which lists every declared method, body or
+        /// not; this column is what tells the abstract ones apart. Recording them is what
+        /// makes a single-abstract-method interface recognisable -- a functional interface is
+        /// one interface with one row here -- which is otherwise underivable, since the CHA
+        /// resolvent map keyed on an interface holds every method of every implementer rather
+        /// than the interface's own.
         ///
-        /// There is no fourth column: an abstract method has no implementation to name.
+        /// There is no fourth column: the method's `methods` row names its function.
         abstract_methods: Vec<(JavaClass, JavaSimpleName, JavaSignature)>,
         /// Methods declared `native`. They also appear in `methods` above, so
         /// that CHA resolves a virtual call to one; this column is what the JNI
@@ -565,8 +567,13 @@ impl VirtualMethodTable {
                 .or_default()
                 .insert((name.0.clone(), desc.0.clone()));
         }
+        // `methods` lists the abstract declarations too; only the rest implement anything.
         let mut implemented: HashMap<Symbol, HashSet<(Symbol, Symbol)>> = HashMap::new();
         for (cls, name, desc, _id) in methods {
+            let key = (name.0.clone(), desc.0.clone());
+            if declared.get(&cls.0).is_some_and(|ms| ms.contains(&key)) {
+                continue;
+            }
             implemented
                 .entry(cls.0.clone())
                 .or_default()
@@ -969,8 +976,10 @@ mod type_facts_tests {
         methods: &[(&str, &str, &str)],
     ) -> VirtualMethodTable {
         VirtualMethodTable::new(Dispatch::Java {
+            // Each abstract declaration has a `methods` row too, as the frontends write it.
             methods: methods
                 .iter()
+                .chain(abstract_methods)
                 .map(|(c, n, d)| {
                     (
                         JavaClass((*c).into()),
@@ -1027,17 +1036,19 @@ mod type_facts_tests {
         assert!(is_sam(&vmt, "Ljavax/inject/Provider;"));
     }
 
-    /// A default method has a body, so it is in `methods` rather than `abstract_methods`.
-    /// Without subtracting implementations the interface reads as having two.
+    /// A default method has a body, so it is in `methods` but not `abstract_methods`. One
+    /// that implements a super-interface's abstract method must be subtracted, or `LI;`
+    /// reads as having two.
     #[test]
     fn default_method_is_not_abstract() {
         let vmt = java(
-            &["LI;"],
-            &[],
-            &[("LI;", "run", "()V"), ("LI;", "helper", "()V")],
+            &["LBase;", "LI;"],
+            &[("LI;", &["LBase;"][..])],
+            &[("LBase;", "run", "()V"), ("LBase;", "helper", "()V")],
             &[("LI;", "helper", "()V")],
         );
         assert!(is_sam(&vmt, "LI;"));
+        assert!(!is_sam(&vmt, "LBase;"));
     }
 
     /// Interfaces redeclare `equals` for documentation. Java's functional-interface rule

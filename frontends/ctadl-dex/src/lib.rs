@@ -272,6 +272,16 @@ impl Context {
                         .with_signature(method_descr.as_str()),
                 );
 
+                // Every declared method gets a row, abstract and native ones included, as in
+                // the jvm frontend: CHA resolves calls against this column.
+                if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
+                    methods.push((
+                        JavaClass(class_name.as_str().into()),
+                        JavaSimpleName(method_name.as_str().into()),
+                        JavaSignature(method_descr.as_str().into()),
+                        JavaMethod(sig.as_str().into()),
+                    ));
+                }
                 if ACC_ABSTRACT.is_set_in(enc.access_flags)
                     && let Dispatch::Java {
                         abstract_methods, ..
@@ -284,45 +294,23 @@ impl Context {
                     ));
                 }
 
-                // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
-                // `code` branch below never runs for it, and the extern-stub loop at the end
-                // of `process` skips it too because it is in `self.defined`. Without a row
-                // here it reaches the fact base with no table entry at all.
-                if ACC_NATIVE.is_set_in(enc.access_flags) {
-                    let cls = JavaClass(class_name.as_str().into());
-                    let simple = JavaSimpleName(method_name.as_str().into());
-                    let descr = JavaSignature(method_descr.as_str().into());
-                    let method = JavaMethod(sig.as_str().into());
-                    if let Dispatch::Java {
-                        methods, natives, ..
-                    } = &mut builders.vmt.dispatch
-                    {
-                        // A row in both columns (see `natives` on `Dispatch::Java`).
-                        // A `static` native is reached by `invoke-static`, which resolves by
-                        // name and never consults the table.
-                        methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
-                        natives.push((
-                            cls,
-                            simple,
-                            descr,
-                            method,
-                            ACC_STATIC.is_set_in(enc.access_flags),
-                        ));
-                    }
+                // Native methods are also listed in `natives`, besides their `methods` row
+                // above. A `static` native is reached by `invoke-static`, which resolves by
+                // name and never consults the table.
+                if ACC_NATIVE.is_set_in(enc.access_flags)
+                    && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
+                {
+                    natives.push((
+                        JavaClass(class_name.as_str().into()),
+                        JavaSimpleName(method_name.as_str().into()),
+                        JavaSignature(method_descr.as_str().into()),
+                        JavaMethod(sig.as_str().into()),
+                        ACC_STATIC.is_set_in(enc.access_flags),
+                    ));
                 }
 
                 // Parse the instruction stream for the method.
                 if let Some(code) = parser.method_code(enc)? {
-                    // ---------------------------------------------------------------------
-                    // Collect Java virtual method information for the VMT.
-                    if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
-                        methods.push((
-                            JavaClass(class_name.as_str().into()),
-                            JavaSimpleName(method_name.as_str().into()),
-                            JavaSignature(method_descr.as_str().into()),
-                            JavaMethod(sig.as_str().into()),
-                        ));
-                    }
                     // ---------------------------------------------------------------------
                     // Handle parameter types
                     let param_types = parser.method_parameters(mi)?.types;
