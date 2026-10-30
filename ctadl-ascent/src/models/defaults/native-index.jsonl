@@ -36,8 +36,7 @@
 // COST. `compute_arg_arity` takes the max over *actual call sites*, so `Argument(*)` on a
 // variadic fans out to the widest call in the program: one 12-argument `snprintf` anywhere makes
 // every `snprintf` summary 12x12 program-wide. The printf and scanf families are the only
-// variadic `Argument(*)` users here; keep it that way. The allocator generator also uses
-// `Argument(*)`, but on a fixed 1-2 argument signature, so its fan-out is bounded.
+// variadic `Argument(*)` users here; keep it that way.
 //
 // ---- copying ----
 {"find":"methods","where":[{"constraint":"signature_match","names":["strcpy","wcscpy","strncpy","wcsncpy","stpcpy","wcpcpy","stpncpy","wcpncpy","strcat","wcscat","strncat","wcsncat","strcpy_chk","strncpy_chk","stpcpy_chk","stpncpy_chk","strcat_chk","strncat_chk","wcscpy_chk","wcsncpy_chk","wcscat_chk","wcsncat_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(0).deref"},{"input":"Argument(1).deref","output":"Return.deref"}]}}
@@ -88,9 +87,20 @@
 // `mbsrtowcs(dest, &src, len, ps)` -- `src` is a `char **`, one level deeper than `mbstowcs`.
 {"find":"methods","where":[{"constraint":"signature_match","names":["mbsrtowcs","wcsrtombs"]}],"model":{"propagation":[{"input":"Argument(1).deref.deref","output":"Argument(0).deref"}]}}
 // ---- allocation ----
+// The allocator's bodies are skipped. A statically linked dlmalloc keeps its heap state (top
+// chunk, bins, fastbins) in globals and computes bin addresses from the request size, so its
+// summary relates nearly every `$globals` path to the size and to each other. `$globals` is an
+// implicit in/out of every function, so that block reaches the summary of every transitive
+// caller and is re-instantiated at every call site: tens of GiB on uClibc firmware. None of it
+// is application data flow, since a fresh block carries nothing from its size or from the free
+// lists. The internals are listed too, for the callers outside `malloc` and `free` (`mallopt`,
+// `malloc_trim`). This matches by name only; a stripped allocator is still analyzed.
+{"find":"methods","where":[{"constraint":"signature_match","names":["malloc","calloc","free","cfree","memalign","posix_memalign","aligned_alloc","valloc","pvalloc","malloc_usable_size","malloc_trim","mallopt","mallinfo","malloc_stats","malloc_consolidate","libc_malloc","libc_calloc","libc_free","libc_memalign","libc_valloc","libc_pvalloc","int_malloc","int_free","int_memalign","sysmalloc","heap_alloc","heap_alloc_at","heap_free","malloc_from_heap"]}],"model":{"modes":["skip-analysis"]}}
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
-// a flow through every grow-the-buffer loop in a parser.
-{"find":"methods","where":[{"constraint":"signature_match","names":["realloc","reallocarray","reallocf"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// a flow through every grow-the-buffer loop in a parser. The body is skipped as for `malloc`:
+// uClibc's `realloc` is a second copy of dlmalloc, and the propagation is what it should
+// contribute.
+{"find":"methods","where":[{"constraint":"signature_match","names":["realloc","reallocarray","reallocf","libc_realloc","int_realloc"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}],"modes":["skip-analysis"]}}
 // ---- the C++ exception unwinder ----
 // These carry NO propagation and exist purely for `modes: ["skip-analysis"]`, which tells the
 // indexer to derive nothing from their bodies. That is the whole model: an unwinder moves
