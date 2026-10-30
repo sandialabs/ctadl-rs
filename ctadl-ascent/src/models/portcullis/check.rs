@@ -170,6 +170,7 @@ pub enum Relation {
         deep: bool,
     },
     UsesField,
+    Allocator,
 }
 
 impl Relation {
@@ -194,6 +195,7 @@ impl Relation {
                 deep: true,
             },
             "uses_field" => Relation::UsesField,
+            "allocator" => Relation::Allocator,
             _ => return None,
         })
     }
@@ -208,7 +210,8 @@ impl Relation {
             | Relation::CallSig
             | Relation::Param
             | Relation::Local
-            | Relation::UsesField => &[0],
+            | Relation::UsesField
+            | Relation::Allocator => &[0],
             // A function's names, the functions with a name.
             Relation::NameOf => &[0, 1],
             // By id, then by caller.
@@ -231,6 +234,8 @@ impl Relation {
     /// The relative cost of a full scan; see [`Access::cost`].
     fn scan_cost(self) -> u32 {
         match self {
+            // A handful of rows.
+            Relation::Allocator => 5,
             Relation::Subclass { .. } => 10,
             Relation::UsesField => 20,
             Relation::Param => 25,
@@ -261,6 +266,8 @@ pub enum Attr {
     Arity,
     HasCode,
     CalleeString,
+    Kind,
+    By,
 }
 
 impl Attr {
@@ -275,6 +282,8 @@ impl Attr {
             "arity" => Attr::Arity,
             "has_code" => Attr::HasCode,
             "callee_string" => Attr::CalleeString,
+            "kind" => Attr::Kind,
+            "by" => Attr::By,
             _ => return None,
         })
     }
@@ -1502,6 +1511,7 @@ fn column_types(name: &str) -> &'static [VarType] {
         "callsite" => &[VarType::Function, VarType::Site],
         "subclass" | "subclass*" | "subclass+" => &[VarType::Class, VarType::Class],
         "uses_field" => &[VarType::Function, VarType::Str],
+        "allocator" => &[VarType::Function],
         _ => &[VarType::Unknown, VarType::Unknown],
     }
 }

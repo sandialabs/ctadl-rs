@@ -248,13 +248,13 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
 // implicit in/out of every function, so that block reaches the summary of every transitive
 // caller and is re-instantiated at every call site: tens of GiB on uClibc firmware. None of it
 // is application data flow, since a fresh block carries nothing from its size or from the free
-// lists. The internals are listed too, for the callers outside `malloc` and `free` (`mallopt`,
-// `malloc_trim`). This matches by name only; a stripped allocator is still analyzed.
+// lists. The internals are skipped too, for the callers outside `malloc` and `free` (`mallopt`,
+// `malloc_trim`).
+//
+// `allocator` lists the entry points by name (docs/portcullis.md §3). Only those found by name
+// are skipped here; a stripped allocator is still analyzed.
 skip_analysis(F, priority = -100) :-
-  fun(F, name in {"malloc", "calloc", "free", "cfree", "memalign", "posix_memalign", "aligned_alloc", "valloc", "pvalloc", "malloc_usable_size", "malloc_trim", "mallopt", "mallinfo", "malloc_stats", "malloc_consolidate", "libc_malloc", "libc_calloc", "libc_free", "libc_memalign", "libc_valloc", "libc_pvalloc", "int_malloc", "int_free", "int_memalign", "sysmalloc", "heap_alloc", "heap_alloc_at", "heap_free", "malloc_from_heap"});
-skip_analysis(F, priority = -100) :-
-  fun(F),
-  F in {"malloc", "calloc", "free", "cfree", "memalign", "posix_memalign", "aligned_alloc", "valloc", "pvalloc", "malloc_usable_size", "malloc_trim", "mallopt", "mallinfo", "malloc_stats", "malloc_consolidate", "libc_malloc", "libc_calloc", "libc_free", "libc_memalign", "libc_valloc", "libc_pvalloc", "int_malloc", "int_free", "int_memalign", "sysmalloc", "heap_alloc", "heap_alloc_at", "heap_free", "malloc_from_heap"};
+  allocator(F, by = "name", kind in {"malloc", "free", "internal"});
 
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
 // a flow through every grow-the-buffer loop in a parser. The body is skipped as for `malloc`:
@@ -262,11 +262,7 @@ skip_analysis(F, priority = -100) :-
 // contribute.
 skip_analysis(F, priority = -100),
   propagation(F::return.deref <- F::arg(0).deref) :-
-  fun(F, name in {"realloc", "reallocarray", "reallocf", "libc_realloc", "int_realloc"});
-skip_analysis(F, priority = -100),
-  propagation(F::return.deref <- F::arg(0).deref) :-
-  fun(F),
-  F in {"realloc", "reallocarray", "reallocf", "libc_realloc", "int_realloc"};
+  allocator(F, by = "name", kind = "realloc");
 
 // ---- the C++ exception unwinder ----
 // These carry NO propagation and exist purely for `skip_analysis(F)`, which tells the
