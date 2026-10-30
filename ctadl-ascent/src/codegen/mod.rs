@@ -1623,7 +1623,6 @@ impl ClassHierarchyAnalysis {
             declared,
             parents,
             super_memo: Default::default(),
-            // A Java site says itself whether it dispatches through an interface.
             interfaces: match language {
                 ChaLanguage::Cil => dispatch.interface_types().cloned().collect(),
                 ChaLanguage::Java | ChaLanguage::Lua => Default::default(),

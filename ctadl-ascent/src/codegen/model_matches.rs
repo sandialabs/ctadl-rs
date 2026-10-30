@@ -209,8 +209,8 @@ fn expand_port(
             .get(&func_id)
             .map(|n| (0..*n).map(|i| i.into()).collect())
             .unwrap_or_default(),
-        // `Variable(name)` ports are rejected on propagations by the JSON validator and have
-        // no DSL spelling, so they never reach summary codegen.
+        // A local port (`Variable(name)`, `local(L)`) is valid only on a source or sink: the
+        // JSON validator and the DSL checker both reject it on a propagation.
         Local => unreachable!("Variable(name) is not valid on a propagation port"),
     }
 }
@@ -239,8 +239,8 @@ fn codegen_declared_paths(matches: &ProgramModelMatches, facts: &mut IndexFacts)
 
 /// Emits the bridges the DSL engine grounded, and reports each.
 ///
-/// No pairing and no diagnosis: a DSL rule is grounded before its heads are instantiated, so
-/// both sides are function names by the time they arrive here.
+/// Both sides are function names already: a DSL rule is grounded before its heads are
+/// instantiated.
 fn codegen_bridges(
     matches: &ProgramModelMatches,
     num_params: &HashMap<FunctionId, i16>,

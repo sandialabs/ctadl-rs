@@ -39,8 +39,8 @@ pub struct PropagationStats {
     /// file alone, so [`Self::merge`] takes the max -- the same file is re-matched once per
     /// import.
     pub ports_declared: usize,
-    /// [`PropagationMatch`](super::PropagationMatch) rows emitted for those entries. Summed by [`Self::merge`]: a
-    /// generator dead against one import but live against another is live.
+    /// [`PropagationMatch`](super::PropagationMatch) rows emitted for those entries. Summed by
+    /// [`Self::merge`]: a generator dead against one import but live against another is live.
     pub rows: usize,
 }
 
@@ -138,7 +138,6 @@ impl EndpointStats {
 }
 
 /// Why a declared port produced no endpoint row.
-///
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnmatchedReason {
     /// The generator's `where` constraints selected no function in the program.

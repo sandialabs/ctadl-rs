@@ -44,10 +44,8 @@ mod tests;
 /// `(name, contents)`. `name` appears in error context and is what [`DEFAULT_MODEL_FILES`]
 /// enumerates for the drift test.
 ///
-/// These are the **JSON** originals. They are not what an index loads — see
-/// [`DEFAULT_DSL_MODELS`] — but they are the migrator's input: each `.ctadl` default is exactly
-/// what `ctadl migrate-models` writes for its `.jsonl`, which `tests/default_models.rs` checks
-/// byte for byte.
+/// These are the **JSON** originals, the migrator's input. An index loads their migrations,
+/// [`DEFAULT_DSL_MODELS`].
 pub const JAVA_DEFAULT_MODELS: (&str, &[u8]) = (
     "java-index.jsonl",
     include_bytes!("defaults/java-index.jsonl"),
@@ -90,7 +88,7 @@ pub const DEFAULT_MODEL_LANGUAGES: &[&[&str]] = &[
 ///
 /// Written by `ctadl migrate-models` from the `.jsonl` beside each one and checked in, so a
 /// reader can see what the defaults say without running anything. The pair is pinned by
-/// `tests/default_models.rs`, which requires each `.ctadl` to be the migration of its `.jsonl`
+/// `tests/integration/default_models.rs`, which requires each `.ctadl` to be the migration of its `.jsonl`
 /// byte for byte — edit one without the other and that fails.
 pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
     (

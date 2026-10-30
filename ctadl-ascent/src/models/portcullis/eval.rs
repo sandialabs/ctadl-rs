@@ -593,8 +593,7 @@ impl<'a> Machine<'a> {
             ColumnPat::Bind(_) => None,
         };
         for f in funs {
-            // "populated wherever arity is known": a bodyless callee has none, so it
-            // contributes no parameter rows at all.
+            // A bodyless callee has no arity, so it contributes no parameter rows at all.
             let Some(arity) = facts.funs[f].arity else {
                 continue;
             };

@@ -264,7 +264,6 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
-                // The method triple has the class name, method simple name, and descriptor
                 let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
                 builders.vmt.names.push(
                     FunctionNames::new(sig.as_str(), method_name.as_str())
@@ -272,8 +271,6 @@ impl Context {
                         .with_signature(method_descr.as_str()),
                 );
 
-                // Every declared method gets a row, abstract and native ones included, as in
-                // the jvm frontend: CHA resolves calls against this column.
                 if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                     methods.push((
                         JavaClass(class_name.as_str().into()),

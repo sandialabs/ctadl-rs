@@ -385,9 +385,8 @@ mod capture {
     /// including on a frontend with no method table. Reporting that as "matched 0 functions" is
     /// the count-that-lies the model check exists to prevent.
     ///
-    /// The JSON matcher kept this case symbolic, as "all", and could not count it; its rule's
-    /// `fun(F)` enumerates every function, so the count is exact (`docs/portcullis.md` §9,
-    /// "Universe").
+    /// The migrated rule's `fun(F)` enumerates every function, so the count is exact
+    /// (`docs/portcullis.md` §9, "Universe").
     #[test]
     fn a_where_less_generator_counts_every_function() {
         for program_info in [

@@ -155,7 +155,6 @@ impl<'p> ProgramMatchIndex<'p> {
         dispatch_keys: Option<&'p DispatchKeys>,
     ) -> Self {
         let vmt = &program_info.vmt;
-        // Index every IR function by its fq-name for the arity / body / field attributes.
         let mut program_functions: HashMap<&'p str, &'p FunctionData> = HashMap::new();
         for func in &program_info.program.functions.functions {
             program_functions.entry(func.name.as_str()).or_insert(func);

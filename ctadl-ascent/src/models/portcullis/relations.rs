@@ -678,7 +678,7 @@ fn callee_strings(style: &CallStyle, data: &FunctionData) -> Vec<Str> {
         } => vec![Str::from(format!("{cls}::{simple_name}{descriptor}"))],
         CallStyle::LuaCall { method, .. } => vec![Str::from(method.as_ref())],
         CallStyle::FuncPtrCall { callee, .. } => {
-            // "the variable name from the program text": a local resolves through the
+            // The variable the program text calls through: a local resolves through the
             // function's own declaration table, which is the only place the source name lives.
             let name = match &callee.base.variable {
                 Variable::Local(idx) => match data.locals.get(*idx) {

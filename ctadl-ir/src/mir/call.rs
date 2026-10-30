@@ -351,12 +351,11 @@ pub enum Dispatch {
         /// Method declarations carrying `abstract`, including every method of an interface
         /// that is not `default` or `static`.
         ///
-        /// Each one also has a row in `methods`, which lists every declared method, body or
-        /// not; this column is what tells the abstract ones apart. Recording them is what
-        /// makes a single-abstract-method interface recognisable -- a functional interface is
-        /// one interface with one row here -- which is otherwise underivable, since the CHA
-        /// resolvent map keyed on an interface holds every method of every implementer rather
-        /// than the interface's own.
+        /// Each one also has its row in `methods`; this column is what tells the abstract ones
+        /// apart. Recording them is what makes a single-abstract-method interface
+        /// recognisable -- a functional interface is one interface with one row here -- which
+        /// is otherwise underivable, since the CHA resolvent map keyed on an interface holds
+        /// every method of every implementer rather than the interface's own.
         ///
         /// There is no fourth column: the method's `methods` row names its function.
         abstract_methods: Vec<(JavaClass, JavaSimpleName, JavaSignature)>,

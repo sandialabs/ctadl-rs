@@ -2978,9 +2978,8 @@ fn variable_port_selects_lowest_ssa_version() {
             MySink(buf);
         }";
 
-    // The base LocalIdx is read off the pre-SSA program, as Stage 1 would resolve the name.
-    // No model file can say `Variable(name)` any more (Portcullis has no spelling for it), so
-    // the row is built directly.
+    // The base LocalIdx is read off the pre-SSA program, as Stage 1 would resolve the name,
+    // and the row is built directly, so the test exercises Stage 2 alone.
     let render = local_render(&program_from_string(src).0, "f", "buf");
     let idx: u32 = render.strip_prefix("%L").unwrap().parse().unwrap();
     let endpoints = [EndpointMatch {
