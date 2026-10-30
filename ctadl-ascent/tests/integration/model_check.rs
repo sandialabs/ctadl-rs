@@ -118,7 +118,8 @@ fn matched_unmatched_and_scoped_out_are_distinct() {
     let excluded = &outcome.check.scope_excluded;
     assert_eq!(excluded.len(), 1, "{excluded:?}");
     assert_eq!(excluded[0].index, 2);
-    assert!(excluded[0].scope.is_some());
+    // Shown as the attribute test its migration makes of it, not as JSON.
+    assert_eq!(excluded[0].scope.as_deref(), Some(r#"language = "lua""#));
     assert!(
         !outcome
             .endpoint_stats

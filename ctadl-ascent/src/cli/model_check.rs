@@ -564,7 +564,7 @@ impl FileState {
                 outcome.check.index_time_dead.push(IndexTimeDead {
                     file: self.path.clone(),
                     index: generator.index,
-                    kind: "modes directive".to_string(),
+                    kind: "mode head".to_string(),
                 });
             }
             // What the `where` selected, for the generators that selected something. A zero is
@@ -616,6 +616,26 @@ fn render_chain(error: &dyn std::error::Error) -> String {
 }
 
 /// How to spell an `in` clause on one line.
+/// A JSON `in` clause as the attribute tests its migration makes of it: `language = "dex"`,
+/// `language in {"dex", "jvm"}`, `import = "app"`. A shape that is not one of those is shown
+/// as written; its migration fails and says so.
 fn render_scope(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+    let quote = |v: &serde_json::Value| match v.as_str() {
+        Some(s) => format!("{s:?}"),
+        None => v.to_string(),
+    };
+    let Some(clause) = value.as_object() else {
+        return value.to_string();
+    };
+    let tests: Vec<String> = clause
+        .iter()
+        .map(|(key, v)| match (key.as_str(), v.as_array()) {
+            ("languages", Some(items)) => format!(
+                "language in {{{}}}",
+                items.iter().map(quote).collect::<Vec<_>>().join(", ")
+            ),
+            (key, _) => format!("{key} = {}", quote(v)),
+        })
+        .collect();
+    tests.join(", ")
 }
