@@ -415,7 +415,7 @@ impl fmt::Display for Literal {
 
 impl Program {
     /// Whether any rule's body reads `callsig`. See
-    /// [`DslModelSet::uses_callsig`](super::DslModelSet::uses_callsig).
+    /// [`PortcullisModelSet::uses_callsig`](super::PortcullisModelSet::uses_callsig).
     pub fn uses_callsig(&self) -> bool {
         fn in_item(item: &BodyItem) -> bool {
             match item {

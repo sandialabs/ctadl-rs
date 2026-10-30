@@ -44,7 +44,7 @@ alone, or `ctadl index --models a.json` would poison the next `ctadl index --mod
 
 A bridge's two sides may live in two imports, and side B's may arrive first. The DSL engine
 accumulates each side of a bridging rule as the imports go past and pairs them once the loop
-ends (see [`super::dsl`]), so what lands here is already a pair of function names.
+ends (see [`super::portcullis`]), so what lands here is already a pair of function names.
 */
 
 use std::collections::BTreeSet;

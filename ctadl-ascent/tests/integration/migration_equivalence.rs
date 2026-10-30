@@ -1,7 +1,7 @@
 //! Differential tests for the JSON → DSL model migrator.
 //!
-//! JSON model files are run by translating them with [`dsl::migrate::migrate_generators`] and
-//! loading the result on the DSL engine (see `DESIGN.md` §4). That is only sound if the
+//! JSON model files are run by translating them with [`portcullis::migrate::migrate_generators`]
+//! and loading the result on the DSL engine (see `DESIGN.md` §4). That is only sound if the
 //! translation is *faithful*: for every generator, the migrated rules must match exactly what the
 //! JSON matcher that used to run these files matched. Each test here takes one generator, runs its
 //! migration, and compares the whole [`ProgramModelMatches`] -- propagations, function- and
@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 use ctadl_ascent::error::JsonModelError;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
-    DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl,
+    DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches, portcullis,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::Idx;
@@ -631,9 +631,9 @@ impl Matched {
         out
     }
 
-    fn diff(&self, dsl: &Matched) -> String {
+    fn diff(&self, portcullis: &Matched) -> String {
         let mut out = String::new();
-        for ((name, j), (_, d)) in self.fields().into_iter().zip(dsl.fields()) {
+        for ((name, j), (_, d)) in self.fields().into_iter().zip(portcullis.fields()) {
             for row in j.difference(d) {
                 out.push_str(&format!("    JSON only  {name}: {row}\n"));
             }
@@ -798,10 +798,11 @@ fn imports(fixtures: &[&str]) -> Vec<Import> {
 }
 
 /// What the migrated DSL matched across `imports`, or why it refused.
-fn run_dsl(text: &str, imports: &[Import]) -> Result<Matched, String> {
-    let file = dsl::DslFile::from_text("migrated.ctadl", text).map_err(|e| format!("{e:#}"))?;
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+fn run_portcullis(text: &str, imports: &[Import]) -> Result<Matched, String> {
+    let file = portcullis::PortcullisFile::from_text("migrated.ctadl", text)
+        .map_err(|e| format!("{e:#}"))?;
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
     let mut out = ProgramModelMatches::default();
     let mut sites = BTreeSet::new();
     let keys: Vec<DispatchKeys> = imports
@@ -930,7 +931,7 @@ fn json_answer(key: &str, generator: &Value, fixtures: &[&str]) -> JsonOutcome {
         panic!(
             "`{key}` has no entry in {GOLDEN_PATH}. The golden is a frozen record of what the \
              retired JSON matcher matched, so a new test cannot get one: write it against the \
-             DSL directly, as `tests/model_dsl.rs` does"
+             DSL directly, as `tests/portcullis.rs` does"
         );
     };
     assert!(
@@ -954,7 +955,7 @@ fn json_answer(key: &str, generator: &Value, fixtures: &[&str]) -> JsonOutcome {
 fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
     let json = json_answer(key, generator, fixtures);
     let imports = imports(fixtures);
-    let (text, report) = match dsl::migrate::migrate_generators(
+    let (text, report) = match portcullis::migrate::migrate_generators(
         std::iter::once(generator),
         None,
         None,
@@ -978,7 +979,7 @@ fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
         }
         Err(e) => panic!("migrating {generator}: {e}"),
     };
-    let dsl = run_dsl(&text, &imports);
+    let portcullis = run_portcullis(&text, &imports);
     let context = || {
         format!(
             "generator:\n{}\nmigrated DSL:\n{text}\nmigration warnings:\n{}\n",
@@ -995,7 +996,7 @@ fn assert_faithful(key: &str, generator: &Value, fixtures: &[&str]) {
             }
         )
     };
-    match (json, dsl) {
+    match (json, portcullis) {
         (Ok(j), Ok(d)) => {
             if j != d {
                 panic!(
@@ -1052,12 +1053,12 @@ const IN_FUNCTION_BUG: &str =
 fn assert_known_on(key: &str, frontend_name: &str, generator: &Value, known: &Known) {
     let json = json_answer(key, generator, &[frontend_name])
         .unwrap_or_else(|e| panic!("the JSON matcher refused the generator: {e:?}"));
-    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(generator), None, None)
+    let (text, _) = portcullis::migrate::migrate_generators(std::iter::once(generator), None, None)
         .unwrap_or_else(|e| panic!("migrating {generator}: {e:?}"));
-    let dsl = run_dsl(&text, &imports(&[frontend_name]))
+    let portcullis = run_portcullis(&text, &imports(&[frontend_name]))
         .unwrap_or_else(|e| panic!("the migrated DSL fails: {e}\nmigrated DSL:\n{text}"));
     let actual: Vec<String> = json
-        .diff(&dsl)
+        .diff(&portcullis)
         .lines()
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .collect();
@@ -2000,19 +2001,20 @@ fn callsites_anchor_at_every_matched_callee() {
     let generator = anchoring_generator();
     let (scope, program) = frontend("java");
     let index = ProgramMatchIndex::new(&program, scope);
-    let (text, _) = dsl::migrate::migrate_generators(std::iter::once(&generator), None, None)
-        .expect("migrates");
-    let file = dsl::DslFile::from_text("migrated.ctadl", text).expect("dsl");
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
-    let mut from_dsl = ProgramModelMatches::default();
-    matcher.observe_import(&index, &mut from_dsl);
-    matcher.finish(&mut from_dsl).expect("finish");
-    let from_dsl = callsite_callees(&from_dsl);
-    assert_eq!(from_dsl, BTreeSet::from([J_BASE_RUN.to_string()]));
+    let (text, _) =
+        portcullis::migrate::migrate_generators(std::iter::once(&generator), None, None)
+            .expect("migrates");
+    let file = portcullis::PortcullisFile::from_text("migrated.ctadl", text).expect("portcullis");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    let mut from_portcullis = ProgramModelMatches::default();
+    matcher.observe_import(&index, &mut from_portcullis);
+    matcher.finish(&mut from_portcullis).expect("finish");
+    let from_portcullis = callsite_callees(&from_portcullis);
+    assert_eq!(from_portcullis, BTreeSet::from([J_BASE_RUN.to_string()]));
     let json_only: Vec<&str> = JSON_CALLSITE_CALLEES
         .into_iter()
-        .filter(|c| !from_dsl.contains(*c))
+        .filter(|c| !from_portcullis.contains(*c))
         .collect();
     assert_eq!(
         json_only,

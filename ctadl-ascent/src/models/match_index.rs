@@ -2,7 +2,7 @@
 
 One import's method table, its functions' IR, which import it is (for the `language` and
 `import` attributes), and, when some rule reads `callsig`, the signature keys its call sites
-name. [`super::dsl::relations::ProgramFacts`] is built from it.
+name. [`super::portcullis::relations::ProgramFacts`] is built from it.
 
 # Why it borrows the program
 
@@ -179,7 +179,7 @@ impl<'p> ProgramMatchIndex<'p> {
     ///
     /// The VMT names more functions than this — Lua externals have no body — so
     /// this is the *arity / has_code / body* half of the program, not its function universe.
-    /// The DSL relation layer joins the two; see [`super::dsl::relations::ProgramFacts`].
+    /// The DSL relation layer joins the two; see [`super::portcullis::relations::ProgramFacts`].
     #[inline]
     pub fn functions_with_data(&self) -> impl Iterator<Item = (&'p str, &'p FunctionData)> + '_ {
         self.program_functions.iter().map(|(fq, data)| (*fq, *data))

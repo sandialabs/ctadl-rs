@@ -1,10 +1,10 @@
 /*! Head instantiation: groundings → [`ProgramModelMatches`].
 
 A rule whose body is one component runs per import, over that import's solutions; a bridging
-rule runs once, after the import loop, over the union (see [`super::DslMatcher`]). Everything it
-writes is named rather than resolved — a function name, not a `FunctionId` — for the same reason
-the JSON path does it: a model names functions that may live in any import, and the id map that
-would resolve them does not hold every import's functions until the loop is over.
+rule runs once, after the import loop, over the union (see [`super::PortcullisMatcher`]).
+Everything it writes is named rather than resolved — a function name, not a `FunctionId` — for the
+same reason the JSON path does it: a model names functions that may live in any import, and the id
+map that would resolve them does not hold every import's functions until the loop is over.
 
 # Deduplication
 
@@ -43,7 +43,7 @@ use crate::models::spec::{BridgePort, Direction, PortPair, ResolvedBridge};
 use super::ast::*;
 use super::check::Plan;
 use super::eval::{Binding, RuleSolutions, Value};
-use super::{DslError, DslErrors};
+use super::{PortcullisError, PortcullisErrors};
 
 /// What one rule contributed, for the per-file report.
 ///
@@ -182,8 +182,8 @@ struct LiveHead {
 }
 
 /// The sources, sinks and propagations one file has emitted, keyed by the label
-/// ([`DslFile::label`](super::DslFile::label)) of the rule that emitted them, so each label emits
-/// each row once.
+/// ([`PortcullisFile::label`](super::PortcullisFile::label)) of the rule that emitted them, so each
+/// label emits each row once.
 #[derive(Default)]
 pub struct Emitted {
     endpoints: HashSet<(usize, EndpointMatch)>,
@@ -264,7 +264,7 @@ impl RuleEmitter {
         label: usize,
         out: &mut ProgramModelMatches,
         emitted: &mut Emitted,
-        errors: &mut DslErrors,
+        errors: &mut PortcullisErrors,
     ) {
         let Self {
             heads,
@@ -320,7 +320,7 @@ fn emit_head(
     provenance: &str,
     rows: Rows<'_>,
     tally: &mut Tally,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
     let Rows {
         out,
@@ -395,7 +395,7 @@ fn emit_head(
                 return;
             };
             if anchor.callsite_scoped {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "a propagation is a whole-function summary and cannot be anchored at \
                               a call site"
                         .to_string(),
@@ -440,7 +440,7 @@ fn emit_head(
             if from.callsite_scoped || to.callsite_scoped {
                 // `check` already rejects a statically-known site anchor; this covers the case
                 // where the type could not be inferred. See the checker for why.
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "a bridge attaches inside a function rather than at one call, so \
                               both its ports must be anchored at functions. Anchor at the callee \
                               — 'callsite(_, S, callee_string = F)' then 'F::' — which covers \
@@ -544,7 +544,7 @@ fn emit_head(
                         key,
                         DispatchModel {
                             disposition,
-                            // Already `file:rule`; see `DslFile::provenance`.
+                            // Already `file:rule`; see `PortcullisFile::provenance`.
                             provenance: vec![provenance.to_string()],
                         },
                     );
@@ -559,7 +559,7 @@ fn emit_head(
                 Some(Term::Var(v)) => match binding.get(v) {
                     Some(Value::Str(f)) => f,
                     Some(other) => {
-                        errors.push(DslError::Rule {
+                        errors.push(PortcullisError::Rule {
                             message: format!(
                                 "'{other}' is not a function, so '{}' cannot mark it",
                                 mode.relation_name()
@@ -606,7 +606,7 @@ fn resolve_callsig(
     head: &Head,
     disposition: &DispatchHead,
     binding: &Binding<'_>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) -> Option<(DispatchKey, facts::Str)> {
     let span = disposition.flow().map_or(head.span, |f| f.span);
     // A flow's ports may carry the anchor instead of the head atom, exactly as a propagation's
@@ -620,7 +620,7 @@ fn resolve_callsig(
                 .and_then(|flow| flow.left.anchor.as_ref().or(flow.right.anchor.as_ref()))
         })
         .or_else(|| {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: format!(
                     "rule {}: a 'dispatch' head must be anchored at a 'callsig' key",
                     rule.index
@@ -632,7 +632,7 @@ fn resolve_callsig(
     let value = match term {
         Term::Var(v) => binding.get(v)?,
         _ => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: "a 'dispatch' head is anchored at a variable bound by 'callsig'"
                     .to_string(),
                 span,
@@ -648,7 +648,7 @@ fn resolve_callsig(
             desc,
         } => Some(((cls, name, desc), id)),
         other => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: format!(
                     "'{other}' is not a call signature, so no dispatch model attaches to it; \
                      bind the anchor with 'callsig(K)'"
@@ -674,14 +674,14 @@ fn resolve_anchor(
     head: &Head,
     port: &PortExpr,
     binding: &Binding<'_>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) -> Option<Anchor> {
     let term = port.anchor.as_ref().or(head.anchor.as_ref())?;
     let value = match term {
         Term::Lit(Literal::Str(s)) => Value::Str(facts::Str::from(s.as_str())),
         Term::Var(v) => binding.get(v)?,
         _ => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: "a port anchor must be a function name or a variable".to_string(),
                 span: port.span,
             });
@@ -700,7 +700,7 @@ fn resolve_anchor(
             callsite_scoped: true,
         }),
         other => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: format!(
                     "'{other}' is not a function or call site, so no port hangs off it"
                 ),
@@ -716,7 +716,7 @@ fn resolve_base(
     port: &Port,
     binding: &Binding<'_>,
     span: Span,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) -> Option<(FormalIndexTypeTag, Option<i16>)> {
     match &port.base {
         PortBase::Return => Some((FormalIndexTypeTag::Return, None)),
@@ -726,7 +726,7 @@ fn resolve_base(
             Some(Value::Int(i)) => match i16::try_from(i) {
                 Ok(i) if i >= 0 => Some((FormalIndexTypeTag::Index, Some(i))),
                 _ => {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: format!("'{v}' is bound to {i}, which is not an argument index"),
                         span,
                     });
@@ -734,7 +734,7 @@ fn resolve_base(
                 }
             },
             _ => {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!("'{v}' indexes an argument but is not bound to an integer"),
                     span,
                 });
@@ -748,7 +748,7 @@ fn model_port(
     port: &Port,
     binding: &Binding<'_>,
     span: Span,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) -> Option<ModelPort> {
     let (tag, index) = resolve_base(port, binding, span, errors)?;
     Some(ModelPort {
@@ -764,14 +764,14 @@ fn bridge_port(
     port: &Port,
     binding: &Binding<'_>,
     span: Span,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) -> Option<BridgePort> {
     let (tag, index) = resolve_base(port, binding, span, errors)?;
     let formal = match tag {
         FormalIndexTypeTag::Index => FormalIndex::new(index.expect("Index carries one")),
         FormalIndexTypeTag::Return => crate::codegen::RETURN_INDEX.into(),
         FormalIndexTypeTag::AnyArgument => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: "'arg(_)' is not valid in a bridge: a wildcard has no correspondent on \
                           the other side"
                     .to_string(),
@@ -780,7 +780,7 @@ fn bridge_port(
             return None;
         }
         FormalIndexTypeTag::Global | FormalIndexTypeTag::Local => {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: "this port is not valid in a bridge".to_string(),
                 span,
             });

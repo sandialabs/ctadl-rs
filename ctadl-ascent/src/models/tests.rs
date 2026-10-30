@@ -43,11 +43,11 @@ fn load(
     generators: Vec<serde_json::Value>,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let file = dsl::DslFile::from_json_generators("<models>", &generators)?;
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let file = portcullis::PortcullisFile::from_json_generators("<models>", &generators)?;
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
     matcher.observe_import(index, out);
-    matcher.finish(out).map(ModelLoadReport::from_dsl)
+    matcher.finish(out).map(ModelLoadReport::from_portcullis)
 }
 
 /// The JSON model errors the migration of a file failed with, under the context it reports them

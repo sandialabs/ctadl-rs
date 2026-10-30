@@ -13,8 +13,8 @@ use ctadl_ascent::index_engine::IndexFacts;
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
-    DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
-    ProgramModelMatches, try_load_models,
+    ImportScope, PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase,
+    ProgramMatchIndex, ProgramModelMatches, try_load_models,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::ProgramInfo;
@@ -52,9 +52,9 @@ fn stream(
     generators: &[serde_json::Value],
     imports: &[(ArtifactLanguage, &str, ProgramInfo)],
 ) -> Result<Vec<(String, String)>, ctadl_ascent::error::Error> {
-    let file = DslFile::from_json_generators("bridges.jsonl", generators)?;
-    let set = DslModelSet { files: vec![file] };
-    let mut matcher = DslMatcher::new(&set, DslPhase::All);
+    let file = PortcullisFile::from_json_generators("bridges.jsonl", generators)?;
+    let set = PortcullisModelSet { files: vec![file] };
+    let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
     let mut matches = ProgramModelMatches::default();
     for (language, name, program_info) in imports {
         let index = ProgramMatchIndex::new(program_info, ImportScope::new(*language, name));

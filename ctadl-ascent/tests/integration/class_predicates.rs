@@ -12,11 +12,11 @@
 //! The expectations are the answers of the JSON matcher that used to run these generators,
 //! recorded from it while it existed.
 
-use ctadl_ascent::models::dsl::migrate::migrate_generators;
+use ctadl_ascent::models::portcullis::migrate::migrate_generators;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
-    DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase, ImportScope, ProgramMatchIndex,
-    ProgramModelMatches,
+    DispatchKeys, ImportScope, PortcullisFile, PortcullisMatcher, PortcullisModelSet,
+    PortcullisPhase, ProgramMatchIndex, ProgramModelMatches,
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::call::{
@@ -297,7 +297,11 @@ fn with_model(find: &str, where_: Value) -> Value {
 
 /// Loads `generator` through the migrated DSL, and returns what it selected and the migrated
 /// text.
-fn run_dsl(generator: &Value, info: &ProgramInfo, scope: &ImportScope) -> (Selected, String) {
+fn run_portcullis(
+    generator: &Value,
+    info: &ProgramInfo,
+    scope: &ImportScope,
+) -> (Selected, String) {
     let keys = DispatchKeys::from_program(&info.program);
     let index = ProgramMatchIndex::new_with_dispatch(info, scope.clone(), Some(&keys));
     let (text, report) = migrate_generators(std::iter::once(generator), None, None)
@@ -307,16 +311,16 @@ fn run_dsl(generator: &Value, info: &ProgramInfo, scope: &ImportScope) -> (Selec
         "migrating {generator} warned: {:?}\n{text}",
         report.warnings
     );
-    let file = DslFile::from_text("migrated.ctadl", text.clone())
+    let file = PortcullisFile::from_text("migrated.ctadl", text.clone())
         .unwrap_or_else(|e| panic!("migrated {generator} does not load: {e}\n{text}"));
-    let set = DslModelSet { files: vec![file] };
-    let mut matcher = DslMatcher::new(&set, DslPhase::All);
-    let mut from_dsl = ProgramModelMatches::default();
-    matcher.observe_import(&index, &mut from_dsl);
+    let set = PortcullisModelSet { files: vec![file] };
+    let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
+    let mut from_portcullis = ProgramModelMatches::default();
+    matcher.observe_import(&index, &mut from_portcullis);
     matcher
-        .finish(&mut from_dsl)
+        .finish(&mut from_portcullis)
         .unwrap_or_else(|e| panic!("DSL run of {generator}: {e}"));
-    (selected(&from_dsl), text)
+    (selected(&from_portcullis), text)
 }
 
 /// The Java program `generator` is checked against: [`java_program_with_sites`] for a generator
@@ -369,9 +373,9 @@ fn selects(generator: Value, expected: Selects) {
             Some("native") => expected.native.iter().map(|f| f.to_string()).collect(),
             _ => continue,
         };
-        let (dsl, text) = run_dsl(&generator, &info, &scope);
+        let (portcullis, text) = run_portcullis(&generator, &info, &scope);
         assert_eq!(
-            dsl, want,
+            portcullis, want,
             "the migrated DSL on {name} for {generator} does not select what the JSON \
              selected\nmigrated:\n{text}"
         );
@@ -476,10 +480,10 @@ fn parent_and_extends_see_lua_classes() {
             ImportScope::new(ArtifactLanguage::Lua, "app"),
             ImportScope::unknown(),
         ] {
-            let (dsl, text) = run_dsl(&generator, &lua, &scope);
+            let (portcullis, text) = run_portcullis(&generator, &lua, &scope);
             let expected: Selected = expected.iter().map(|f| f.to_string()).collect();
             assert_eq!(
-                dsl, expected,
+                portcullis, expected,
                 "migrated DSL on Lua for {generator}\nmigrated:\n{text}"
             );
             // What the JSON did instead, so the difference stays a deliberate one.
@@ -492,7 +496,7 @@ fn parent_and_extends_see_lua_classes() {
             } else {
                 Selected::new()
             };
-            assert_ne!(dsl, json_expected, "{generator}");
+            assert_ne!(portcullis, json_expected, "{generator}");
         }
     }
 }
@@ -724,8 +728,8 @@ fn class_predicates_on_call_sites() {
             ImportScope::unknown(),
         ] {
             let program = java_program_with_sites();
-            let (dsl, text) = run_dsl(&generator, &program, &scope);
-            assert_eq!(dsl, expected, "{generator}\nmigrated:\n{text}");
+            let (portcullis, text) = run_portcullis(&generator, &program, &scope);
+            assert_eq!(portcullis, expected, "{generator}\nmigrated:\n{text}");
         }
     }
 }

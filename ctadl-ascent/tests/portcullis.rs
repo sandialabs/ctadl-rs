@@ -1,8 +1,8 @@
 //! The Portcullis engine, against real programs.
 //!
-//! `models/dsl/tests.rs` covers syntax, checking and migration, none of which needs an artifact.
-//! Everything here needs one: the built-in relations are a view of a program, so what `fun`,
-//! `param`, `callsite`, `subclass` and `uses_field` actually *contain* can only be pinned by
+//! `models/portcullis/tests.rs` covers syntax, checking and migration, none of which needs an
+//! artifact. Everything here needs one: the built-in relations are a view of a program, so what
+//! `fun`, `param`, `callsite`, `subclass` and `uses_field` actually *contain* can only be pinned by
 //! matching against one.
 
 use std::collections::BTreeSet;
@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{
-    FormalIndexTypeTag, ImportScope, ProgramMatchIndex, ProgramModelMatches, dsl,
+    FormalIndexTypeTag, ImportScope, ProgramMatchIndex, ProgramModelMatches, portcullis,
 };
 use ctadl_ir::Idx;
 use ctadl_ir::mir::ProgramInfo;
@@ -151,13 +151,13 @@ fn run(program_info: &ProgramInfo, source: &str) -> ProgramModelMatches {
 
 /// Runs `source` against several imports in one accumulator, the way `ctadl index` does.
 fn run_scoped(imports: &[(ImportScope, &ProgramInfo)], source: &str) -> ProgramModelMatches {
-    let file = match dsl::DslFile::from_text("test.ctadl", source) {
+    let file = match portcullis::PortcullisFile::from_text("test.ctadl", source) {
         Ok(f) => f,
         Err(e) => panic!("{e}"),
     };
-    let set = dsl::DslModelSet { files: vec![file] };
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
     let mut out = ProgramModelMatches::default();
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
     for (scope, program_info) in imports {
         let index = ProgramMatchIndex::new(program_info, scope.clone());
         matcher.observe_import(&index, &mut out);
@@ -619,16 +619,16 @@ fn each_phase_keeps_its_own_heads_and_counts_the_rest() {
         propagation(F::return <- F::arg(0)) :- fun(F, name = "emit");
         source(F::return), propagation(F::return <- F::arg(0)) :- fun(F, name = "run");
     "#;
-    let file = dsl::DslFile::from_text("test.ctadl", source).expect("loads");
-    let set = dsl::DslModelSet { files: vec![file] };
+    let file = portcullis::PortcullisFile::from_text("test.ctadl", source).expect("loads");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
 
     for (phase, endpoints, summaries, skipped) in [
-        (dsl::Phase::Index, 0usize, 2usize, 1usize),
-        (dsl::Phase::Query, 2usize, 0usize, 1usize),
-        (dsl::Phase::All, 2usize, 2usize, 0usize),
+        (portcullis::Phase::Index, 0usize, 2usize, 1usize),
+        (portcullis::Phase::Query, 2usize, 0usize, 1usize),
+        (portcullis::Phase::All, 2usize, 2usize, 0usize),
     ] {
         let mut out = ProgramModelMatches::default();
-        let mut matcher = dsl::DslMatcher::new(&set, phase);
+        let mut matcher = portcullis::PortcullisMatcher::new(&set, phase);
         let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
         matcher.observe_import(&index, &mut out);
         let report = matcher.finish(&mut out).expect("finishes");
@@ -643,14 +643,14 @@ fn each_phase_keeps_its_own_heads_and_counts_the_rest() {
 #[test]
 fn a_skipped_rule_is_not_reported_as_dead() {
     let program_info = java_program();
-    let file = dsl::DslFile::from_text(
+    let file = portcullis::PortcullisFile::from_text(
         "test.ctadl",
         r#"source(F::return) :- fun(F, name = "emit");"#,
     )
     .expect("loads");
-    let set = dsl::DslModelSet { files: vec![file] };
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
     let mut out = ProgramModelMatches::default();
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Index);
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Index);
     let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     matcher.observe_import(&index, &mut out);
     let report = matcher.finish(&mut out).expect("finishes");
@@ -662,14 +662,14 @@ fn a_skipped_rule_is_not_reported_as_dead() {
 #[test]
 fn a_rule_that_matches_nothing_is_reported() {
     let program_info = java_program();
-    let file = dsl::DslFile::from_text(
+    let file = portcullis::PortcullisFile::from_text(
         "test.ctadl",
         r#"source(F::return) :- fun(F, name = "absent");"#,
     )
     .expect("loads");
-    let set = dsl::DslModelSet { files: vec![file] };
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
     let mut out = ProgramModelMatches::default();
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Query);
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Query);
     let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     matcher.observe_import(&index, &mut out);
     let report = matcher.finish(&mut out).expect("finishes");
@@ -695,7 +695,7 @@ fn a_ctadl_file_loads_through_try_load_models() {
     assert_eq!(out.endpoints.len(), 1);
     // The DSL report is projected onto the counters every diagnostic surface reads, with a rule
     // index standing in for a generator index.
-    assert!(report.dsl.is_some());
+    assert!(report.portcullis.is_some());
     let stats = report
         .endpoint_stats
         .get(&(0, TaintDirection::Backward))
@@ -730,10 +730,16 @@ fn a_malformed_ctadl_file_fails_the_load_naming_the_line() {
 #[test]
 fn the_extension_selects_the_loader() {
     use std::path::Path;
-    assert!(ctadl_ascent::models::is_dsl_path(Path::new("m.ctadl")));
-    assert!(ctadl_ascent::models::is_dsl_path(Path::new("m.dl")));
-    assert!(!ctadl_ascent::models::is_dsl_path(Path::new("m.jsonl")));
-    assert!(!ctadl_ascent::models::is_dsl_path(Path::new("m.json5")));
+    assert!(ctadl_ascent::models::is_portcullis_path(Path::new(
+        "m.ctadl"
+    )));
+    assert!(ctadl_ascent::models::is_portcullis_path(Path::new("m.dl")));
+    assert!(!ctadl_ascent::models::is_portcullis_path(Path::new(
+        "m.jsonl"
+    )));
+    assert!(!ctadl_ascent::models::is_portcullis_path(Path::new(
+        "m.json5"
+    )));
 }
 
 /// Symbol placement is a real hazard: a wrongly-encoded segment parses fine and matches
@@ -758,7 +764,7 @@ fn a_quoted_segment_decodes_to_the_symbol_it_names() {
 /// one.
 #[test]
 fn a_callsite_anchored_bridge_says_how_to_write_it() {
-    let result = dsl::DslFile::from_text(
+    let result = portcullis::PortcullisFile::from_text(
         "test.ctadl",
         r#"S::bridge(arg(1).baz -> G::arg(0).stack[2]) :-
              callsite(_, S, callee_string = F),
@@ -821,13 +827,13 @@ fn dispatch_program() -> ProgramInfo {
 
 /// Runs `source` with the dispatch universe collected, which `callsig` needs.
 fn run_dispatch(program_info: &ProgramInfo, source: &str) -> ProgramModelMatches {
-    let file = match dsl::DslFile::from_text("test.ctadl", source) {
+    let file = match portcullis::PortcullisFile::from_text("test.ctadl", source) {
         Ok(f) => f,
         Err(e) => panic!("{e}"),
     };
-    let set = dsl::DslModelSet { files: vec![file] };
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
     let mut out = ProgramModelMatches::default();
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
     let keys = ctadl_ascent::models::DispatchKeys::from_program(&program_info.program);
     let index =
         ProgramMatchIndex::new_with_dispatch(program_info, ImportScope::unknown(), Some(&keys));
@@ -881,7 +887,7 @@ fn a_dispatch_flow_becomes_a_model_with_its_ports() {
     assert_eq!(ports[0].0.tag, FormalIndexTypeTag::Return);
     assert_eq!(ports[0].1.tag, FormalIndexTypeTag::Index);
     assert_eq!(ports[0].1.index, Some(0));
-    // The canonical spelling escapes the bracket, as `models/dsl/tests.rs` pins elsewhere.
+    // The canonical spelling escapes the bracket, as `models/portcullis/tests.rs` pins elsewhere.
     assert_eq!(ports[0].1.path.to_dot_string(), r".\[]");
 }
 
@@ -904,11 +910,11 @@ fn a_dispatch_head_belongs_to_the_index_phase() {
     let source = r#"K::dispatch(resolve = "inline") :- callsig(K, name = "size");"#;
     let program_info = dispatch_program();
     let keys = ctadl_ascent::models::DispatchKeys::from_program(&program_info.program);
-    for (phase, want) in [(dsl::Phase::Index, 1), (dsl::Phase::Query, 0)] {
-        let file = dsl::DslFile::from_text("test.ctadl", source).expect("parses");
-        let set = dsl::DslModelSet { files: vec![file] };
+    for (phase, want) in [(portcullis::Phase::Index, 1), (portcullis::Phase::Query, 0)] {
+        let file = portcullis::PortcullisFile::from_text("test.ctadl", source).expect("parses");
+        let set = portcullis::PortcullisModelSet { files: vec![file] };
         let mut out = ProgramModelMatches::default();
-        let mut matcher = dsl::DslMatcher::new(&set, phase);
+        let mut matcher = portcullis::PortcullisMatcher::new(&set, phase);
         let index = ProgramMatchIndex::new_with_dispatch(
             &program_info,
             ImportScope::unknown(),
@@ -935,7 +941,7 @@ fn callsig_is_empty_without_a_dispatch_universe() {
 // ---- facts ----
 
 use ctadl_ascent::facts::Str;
-use dsl::relations::{Needs, ProgramFacts, SiteId};
+use portcullis::relations::{Needs, ProgramFacts, SiteId};
 
 /// A direct call CHA resolved to every one of `callees`.
 fn call_any(callees: &[&str]) -> Statement {
@@ -957,7 +963,7 @@ fn plain_program(functions: Vec<FunctionData>) -> ProgramInfo {
 }
 
 fn needs_of(source: &str) -> Needs {
-    let program = dsl::parse::parse_program(source).unwrap_or_else(|e| panic!("{e:?}"));
+    let program = portcullis::parse::parse_program(source).unwrap_or_else(|e| panic!("{e:?}"));
     Needs::of_program(&program)
 }
 
@@ -1153,12 +1159,13 @@ fn lua_and_pcode(lua: &[&str], native: &[&str]) -> [(ImportScope, ProgramInfo); 
 fn run_phase(
     imports: &[(ImportScope, ProgramInfo)],
     source: &str,
-    phase: dsl::Phase,
-) -> (ProgramModelMatches, dsl::DslReport) {
-    let file = dsl::DslFile::from_text("test.ctadl", source).unwrap_or_else(|e| panic!("{e}"));
-    let set = dsl::DslModelSet { files: vec![file] };
+    phase: portcullis::Phase,
+) -> (ProgramModelMatches, portcullis::PortcullisReport) {
+    let file = portcullis::PortcullisFile::from_text("test.ctadl", source)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
     let mut out = ProgramModelMatches::default();
-    let mut matcher = dsl::DslMatcher::new(&set, phase);
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, phase);
     for (scope, program_info) in imports {
         let index = ProgramMatchIndex::new(program_info, scope.clone());
         matcher.observe_import(&index, &mut out);
@@ -1172,13 +1179,13 @@ fn run_phase(
 #[test]
 fn a_matcher_built_for_one_phase_skips_the_others_rules() {
     let source = r#"propagation(F::return <- F::arg(0)) :- fun(F, name = "emit");"#;
-    let file = dsl::DslFile::from_text("test.ctadl", source).expect("loads");
-    let set = dsl::DslModelSet { files: vec![file] };
-    assert!(dsl::DslMatcher::new(&set, dsl::Phase::Query).is_empty());
-    assert!(!dsl::DslMatcher::new(&set, dsl::Phase::Index).is_empty());
+    let file = portcullis::PortcullisFile::from_text("test.ctadl", source).expect("loads");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    assert!(portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Query).is_empty());
+    assert!(!portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Index).is_empty());
 
     let imports = [(ImportScope::unknown(), java_program())];
-    let (out, report) = run_phase(&imports, source, dsl::Phase::Query);
+    let (out, report) = run_phase(&imports, source, portcullis::Phase::Query);
     assert!(out.propagations.is_empty());
     assert_eq!(report.skipped_rules(), 1);
     assert!(report.phase_warning().is_some());
@@ -1193,7 +1200,7 @@ fn a_per_import_rule_emits_a_key_two_imports_share_once() {
     let (out, report) = run_phase(
         &lua_and_pcode(&["shared"], &["shared"]),
         r#"source(F::return) :- fun(F, name = "shared");"#,
-        dsl::Phase::All,
+        portcullis::Phase::All,
     );
     assert_eq!(out.endpoints.len(), 1, "{:?}", out.endpoints);
     let stats = &report.files[0].rules[0];
@@ -1207,7 +1214,7 @@ fn a_per_import_rule_matching_only_in_a_later_import_is_not_dead() {
     let (out, report) = run_phase(
         &lua_and_pcode(&["a"], &["b"]),
         r#"source(F::return) :- fun(F, name = "b");"#,
-        dsl::Phase::All,
+        portcullis::Phase::All,
     );
     assert_eq!(out.endpoints.len(), 1);
     assert!(report.dead_rules().is_empty(), "{:?}", report.dead_rules());
@@ -1224,7 +1231,7 @@ fn a_bridging_rule_fires_across_imports_in_either_order() {
              fun(G, name = "luaNativeAdd", language = "pcode");"#;
     let mut imports = lua_and_pcode(lua, native);
     for _ in 0..2 {
-        let (out, report) = run_phase(&imports, source, dsl::Phase::All);
+        let (out, report) = run_phase(&imports, source, portcullis::Phase::All);
         assert_eq!(
             endpoint_functions(&out),
             ["<EXTERNAL>::luaCallNativeAdd@00101008".to_string()].into(),
@@ -1233,7 +1240,11 @@ fn a_bridging_rule_fires_across_imports_in_either_order() {
         imports.reverse();
     }
     // A gate that never opens kills the rule.
-    let (out, report) = run_phase(&lua_and_pcode(lua, &["other"]), source, dsl::Phase::All);
+    let (out, report) = run_phase(
+        &lua_and_pcode(lua, &["other"]),
+        source,
+        portcullis::Phase::All,
+    );
     assert!(out.endpoints.is_empty());
     assert_eq!(report.dead_rules(), vec!["test.ctadl:0".to_string()]);
 }
@@ -1245,7 +1256,7 @@ fn functions_matched_counts_functions_not_groundings() {
     let (_, report) = run_phase(
         &[(ImportScope::unknown(), native_program(&["system"]))],
         r#"source(F::return) :- fun(F, name = N), regex_match(N, "system");"#,
-        dsl::Phase::All,
+        portcullis::Phase::All,
     );
     let stats = &report.files[0].rules[0];
     assert_eq!(stats.functions, 1, "{stats:?}");
@@ -1255,7 +1266,7 @@ fn functions_matched_counts_functions_not_groundings() {
 /// own columns never forms the product at all.
 #[test]
 fn grounding_counts_saturate_and_groundings_stay_lazy() {
-    use ctadl_ascent::models::dsl::eval::{RuleSolutions, Value};
+    use ctadl_ascent::models::portcullis::eval::{RuleSolutions, Value};
     let component: BTreeSet<Vec<Value>> = (0..10_000).map(|i| vec![Value::Int(i)]).collect();
     // 10^20 groundings: past `u64::MAX`.
     let solutions = RuleSolutions {
@@ -1402,13 +1413,13 @@ fn a_set_test_matches_a_callsig_key() {
 /// multiply the groundings.
 #[test]
 fn groundings_are_projected_onto_head_variables() {
-    let file = dsl::DslFile::from_text(
+    let file = portcullis::PortcullisFile::from_text(
         "test.ctadl",
         r#"source(F::return) :- fun(F, name = "run"), param(F, I);"#,
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
     let program_info = java_program();
     let mut out = ProgramModelMatches::default();
     matcher.observe_import(

@@ -561,27 +561,28 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
 /// The `.jsonl` is the migrator's input and the `.ctadl` is what an index loads, so this is what
 /// keeps the pair from drifting: edit one and not the other and this fails, naming the file.
 #[test]
-fn the_dsl_defaults_are_the_migration_of_the_json_defaults() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, DEFAULT_MODEL_LANGUAGES, dsl};
+fn the_portcullis_defaults_are_the_migration_of_the_json_defaults() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, DEFAULT_MODEL_LANGUAGES, portcullis};
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/defaults");
     assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_DSL_MODELS.len());
     assert_eq!(DEFAULT_MODEL_FILES.len(), DEFAULT_MODEL_LANGUAGES.len());
-    for (((json_name, _), (dsl_name, dsl_source)), languages) in DEFAULT_MODEL_FILES
+    for (((json_name, _), (portcullis_name, portcullis_source)), languages) in DEFAULT_MODEL_FILES
         .iter()
         .zip(DEFAULT_DSL_MODELS)
         .zip(DEFAULT_MODEL_LANGUAGES)
     {
-        let (migrated, _) = dsl::migrate::migrate_file(&dir.join(json_name), Some(languages))
-            .unwrap_or_else(|e| panic!("migrating {json_name}: {e}"));
+        let (migrated, _) =
+            portcullis::migrate::migrate_file(&dir.join(json_name), Some(languages))
+                .unwrap_or_else(|e| panic!("migrating {json_name}: {e}"));
         let flags: String = languages
             .iter()
             .map(|l| format!(" --language {l}"))
             .collect();
         assert!(
-            migrated == *dsl_source,
-            "{dsl_name} is not what `ctadl migrate-models {json_name}{flags}` writes; re-run it, \
-             or make the same change to both files"
+            migrated == *portcullis_source,
+            "{portcullis_name} is not what `ctadl migrate-models {json_name}{flags}` writes; \
+             re-run it, or make the same change to both files"
         );
     }
 }
@@ -711,35 +712,35 @@ fn parse_defaults_golden(text: &str) -> BTreeMap<String, BTreeSet<String>> {
 /// dispatch shape, so a `callsig` rule the `.ctadl` dropped is noticed: an index would
 /// otherwise silently lose the hybrid call graph for the language whose defaults dropped it.
 #[test]
-fn the_dsl_defaults_match_what_the_json_defaults_matched() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+fn the_portcullis_defaults_match_what_the_json_defaults_matched() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, portcullis};
 
     let text = std::fs::read_to_string(DEFAULTS_GOLDEN_PATH)
         .unwrap_or_else(|e| panic!("reading {DEFAULTS_GOLDEN_PATH}: {e}"));
     let golden = parse_defaults_golden(&text);
     let mut seen = BTreeSet::new();
-    for (dsl_name, dsl_source) in DEFAULT_DSL_MODELS {
-        let file = dsl::DslFile::from_text(*dsl_name, *dsl_source)
-            .unwrap_or_else(|e| panic!("{dsl_name}: {e}"));
-        let set = dsl::DslModelSet { files: vec![file] };
+    for (portcullis_name, portcullis_source) in DEFAULT_DSL_MODELS {
+        let file = portcullis::PortcullisFile::from_text(*portcullis_name, *portcullis_source)
+            .unwrap_or_else(|e| panic!("{portcullis_name}: {e}"));
+        let set = portcullis::PortcullisModelSet { files: vec![file] };
         for (program_name, program) in &default_fixtures() {
             let keys = DispatchKeys::from_program(&program.program);
             let index = default_index(program, &keys);
-            let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::All);
-            let mut from_dsl = ProgramModelMatches::default();
-            matcher.observe_import(&index, &mut from_dsl);
+            let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+            let mut from_portcullis = ProgramModelMatches::default();
+            matcher.observe_import(&index, &mut from_portcullis);
             matcher
-                .finish(&mut from_dsl)
-                .unwrap_or_else(|e| panic!("{dsl_name} on {program_name}: {e}"));
+                .finish(&mut from_portcullis)
+                .unwrap_or_else(|e| panic!("{portcullis_name} on {program_name}: {e}"));
 
-            let key = default_key(dsl_name, program_name);
+            let key = default_key(portcullis_name, program_name);
             let Some(expected) = golden.get(&key) else {
                 panic!(
                     "`{key}` has no entry in {DEFAULTS_GOLDEN_PATH}, which is a frozen record \
                      of what the retired JSON matcher matched and cannot be extended"
                 );
             };
-            let actual = default_rows(&from_dsl);
+            let actual = default_rows(&from_portcullis);
             let diff: Vec<String> = expected
                 .difference(&actual)
                 .map(|r| format!("JSON only  {r}"))
@@ -751,8 +752,8 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
                 .collect();
             assert!(
                 diff.is_empty(),
-                "{dsl_name} does not match what the JSON default matched on a {program_name} \
-                 program:\n{}",
+                "{portcullis_name} does not match what the JSON default matched on a \
+                 {program_name} program:\n{}",
                 diff.join("\n")
             );
             seen.insert(key);
@@ -768,8 +769,8 @@ fn the_dsl_defaults_match_what_the_json_defaults_matched() {
 /// The native defaults keep the ARM unwinders' bodies out of the index, and it is the `.ctadl`
 /// an index loads that has to say so.
 #[test]
-fn the_native_dsl_defaults_skip_the_unwinders() {
-    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+fn the_native_portcullis_defaults_skip_the_unwinders() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, portcullis};
 
     let program_info = native_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
@@ -777,9 +778,10 @@ fn the_native_dsl_defaults_skip_the_unwinders() {
         .iter()
         .find(|(name, _)| *name == "native-index.ctadl")
         .expect("a native DSL default");
-    let file = dsl::DslFile::from_text(name, *source).unwrap_or_else(|e| panic!("{name}: {e}"));
-    let set = dsl::DslModelSet { files: vec![file] };
-    let mut matcher = dsl::DslMatcher::new(&set, dsl::Phase::Index);
+    let file = portcullis::PortcullisFile::from_text(name, *source)
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Index);
     let mut out = ProgramModelMatches::default();
     matcher.observe_import(&match_index, &mut out);
     matcher.finish(&mut out).expect("finish");

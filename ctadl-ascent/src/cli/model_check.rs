@@ -176,17 +176,17 @@ pub fn check_programs(
     let mut files: Vec<FileState> = Vec::new();
     // Every file that loaded, matched by one matcher across every import exactly as
     // `cli::index` matches them: finishing per import would report a bridging rule whose
-    // components match in two different imports as matching nothing. `dsl_owners[i]` is the
-    // position in `files` of `dsl.files[i]`.
-    let mut dsl = models::DslModelSet::default();
-    let mut dsl_owners: Vec<usize> = Vec::new();
+    // components match in two different imports as matching nothing. `portcullis_owners[i]` is the
+    // position in `files` of `portcullis.files[i]`.
+    let mut portcullis = models::PortcullisModelSet::default();
+    let mut portcullis_owners: Vec<usize> = Vec::new();
 
     // Inventory: program-independent, so it runs once, before any IR is loaded.
     for path in models {
         let mut state = FileState::new(path.clone());
-        let loaded = if models::is_dsl_path(path) {
-            models::dsl::DslFile::read(path).map(|file| {
-                state.take_dsl_inventory(&file);
+        let loaded = if models::is_portcullis_path(path) {
+            models::portcullis::PortcullisFile::read(path).map(|file| {
+                state.take_portcullis_inventory(&file);
                 (file, None)
             })
         } else {
@@ -195,7 +195,7 @@ pub fn check_programs(
             // generator that does not migrate is reported and left out, as the JSON loader
             // left out a malformed one, so it does not cost the rest of the file.
             let readable = state.take_inventory();
-            match models::dsl::DslFile::read_json_lenient(path) {
+            match models::portcullis::PortcullisFile::read_json_lenient(path) {
                 // Skipped when the inventory could not read the file: the migration fails on
                 // the same thing, and saying it twice is noise.
                 Err(_) if !readable => {
@@ -210,8 +210,8 @@ pub fn check_programs(
                 if let Some(e) = rejected {
                     state.record_error(render_chain(&e));
                 }
-                dsl_owners.push(files.len());
-                dsl.files.push(file);
+                portcullis_owners.push(files.len());
+                portcullis.files.push(file);
             }
             Err(e) => state.record_error(render_chain(&e)),
         }
@@ -220,8 +220,9 @@ pub fn check_programs(
 
     // Matching, per import. The gate is `cli::index`'s: some rule reading `callsig`, which a
     // migrated `find: "dispatch"` generator does.
-    let wants_dispatch = dsl.uses_callsig();
-    let mut dsl_matcher = models::DslMatcher::new(&dsl, models::DslPhase::All);
+    let wants_dispatch = portcullis.uses_callsig();
+    let mut portcullis_matcher =
+        models::PortcullisMatcher::new(&portcullis, models::PortcullisPhase::All);
     let mut matches = ProgramModelMatches::default();
     let mut imports_checked = 0usize;
     for item in programs {
@@ -255,7 +256,7 @@ pub fn check_programs(
         }
         // The built-in default models are deliberately not loaded: `ctadl query` does not load
         // them either, and this is `ctadl query` reporting on the files it was given.
-        dsl_matcher.observe_import(&match_index, &mut matches);
+        portcullis_matcher.observe_import(&match_index, &mut matches);
 
         outcome.check.imports.push((
             scope.import.clone().unwrap_or_else(|| scope.describe()),
@@ -268,12 +269,14 @@ pub fn check_programs(
 
     // The DSL files, once, over every import. With no import there is nothing to absorb, the
     // same as for a JSON file: a rule that never ran did not match nothing.
-    let dsl_results = dsl_matcher.finish_each(&mut matches);
+    let portcullis_results = portcullis_matcher.finish_each(&mut matches);
     if imports_checked > 0 {
-        for (owner, result) in dsl_owners.into_iter().zip(dsl_results) {
+        for (owner, result) in portcullis_owners.into_iter().zip(portcullis_results) {
             let (load, errors) = match result {
                 Ok(file) => (
-                    models::ModelLoadReport::from_dsl(models::DslReport { files: vec![file] }),
+                    models::ModelLoadReport::from_portcullis(models::PortcullisReport {
+                        files: vec![file],
+                    }),
                     Vec::new(),
                 ),
                 Err(e) => (models::ModelLoadReport::default(), vec![e]),
@@ -399,9 +402,9 @@ impl FileState {
     /// reported as applicable and `CTADL0009` ("this generator's scope admits no import") never
     /// fires for one. The rule that matched nothing is still reported, through `CTADL0004`,
     /// which is the diagnostic that actually distinguishes the two cases.
-    fn take_dsl_inventory(&mut self, file: &models::dsl::DslFile) {
+    fn take_portcullis_inventory(&mut self, file: &models::portcullis::PortcullisFile) {
         for rule in &file.program.rules {
-            use models::dsl::ast::HeadKind;
+            use models::portcullis::ast::HeadKind;
             let state = GeneratorState {
                 index: rule.index,
                 find: Some("rule".to_string()),
@@ -452,7 +455,7 @@ impl FileState {
 
     /// Folds in the load of this file, over every import.
     fn absorb(&mut self, load: models::ModelLoadReport, errors: Vec<Error>) {
-        for file in load.dsl.iter().flat_map(|report| &report.files) {
+        for file in load.portcullis.iter().flat_map(|report| &report.files) {
             for (label, stats) in file.labels.iter().zip(&file.rules) {
                 if let Some(generator) = self.generator_mut(*label) {
                     generator.bridge_rows += stats.bridges;

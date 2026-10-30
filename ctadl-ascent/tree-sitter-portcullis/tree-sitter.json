@@ -1,9 +1,9 @@
 {
   "grammars": [
     {
-      "name": "ctadl_models",
+      "name": "portcullis",
       "camelcase": "CtadlModels",
-      "scope": "source.ctadl_models",
+      "scope": "source.portcullis",
       "path": ".",
       "file-types": ["ctadl"],
       "highlights": "queries/highlights.scm"

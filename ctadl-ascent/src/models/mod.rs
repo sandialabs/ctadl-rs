@@ -12,20 +12,23 @@ use crate::facts::TaintDirection;
 use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 pub mod codegen;
-pub mod dsl;
 pub mod json_schema;
 pub mod match_index;
 pub mod matches;
+pub mod portcullis;
 pub mod spec;
 pub mod stats;
 #[doc(hidden)]
 pub mod test_vmt;
 
-pub use dsl::{DslFile, DslMatcher, DslModelSet, DslReport, Phase as DslPhase, is_dsl_path};
 pub use match_index::{DispatchKeys, ProgramMatchIndex};
 pub use matches::{
     DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort, ProgramModelMatches,
     PropagationMatch,
+};
+pub use portcullis::{
+    Phase as PortcullisPhase, PortcullisFile, PortcullisMatcher, PortcullisModelSet,
+    PortcullisReport, is_portcullis_path,
 };
 pub use spec::{
     BridgeSpec, Direction, ImportScope, PortPair, ProgramScope, ResolvedBridge, Severity, SideSpec,
@@ -120,20 +123,20 @@ pub fn try_load_default_models(
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     log::trace!("load_models");
-    let Some(set) = default_dsl_models(index.vmt())? else {
+    let Some(set) = default_portcullis_models(index.vmt())? else {
         return Ok(ModelLoadReport::default());
     };
-    let facts = dsl::program_facts(index, &set.needs());
+    let facts = portcullis::program_facts(index, &set.needs());
     load_default_models_from_facts(set, &facts, out)
 }
 
 /// [`try_load_default_models`] over relations already built, for a caller that shares one
-/// [`dsl::relations::ProgramFacts`] between the defaults and the user's DSL files. `set` is
-/// what [`default_dsl_models`] returned for the program `facts` were built from, and the facts
-/// must cover its [`dsl::DslModelSet::needs`].
+/// [`portcullis::relations::ProgramFacts`] between the defaults and the user's DSL files. `set` is
+/// what [`default_portcullis_models`] returned for the program `facts` were built from, and the
+/// facts must cover its [`portcullis::PortcullisModelSet::needs`].
 pub fn load_default_models_from_facts(
-    set: &dsl::DslModelSet,
-    facts: &dsl::relations::ProgramFacts,
+    set: &portcullis::PortcullisModelSet,
+    facts: &portcullis::relations::ProgramFacts,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     let name = set
@@ -145,40 +148,40 @@ pub fn load_default_models_from_facts(
     // Both phases: the defaults are propagation-only, so `All` and `Index` name the same rules,
     // and a caller that hands them to a query gets what the file says rather than a phase
     // decision made here.
-    let mut matcher = dsl::DslMatcher::new(set, dsl::Phase::All);
+    let mut matcher = portcullis::PortcullisMatcher::new(set, portcullis::Phase::All);
     matcher.observe_facts(facts, out);
     matcher
         .finish(out)
-        .map(ModelLoadReport::from_dsl)
+        .map(ModelLoadReport::from_portcullis)
         .err_context(|| format!("loading default index models: {name}"))
 }
 
 /// The shipped DSL defaults, parsed and checked once per process rather than once per import.
 /// Parallel to [`DEFAULT_DSL_MODELS`]. A file that does not parse keeps its rendered error.
-static DEFAULT_DSL_SETS: std::sync::LazyLock<Vec<Result<dsl::DslModelSet, String>>> =
+static DEFAULT_DSL_SETS: std::sync::LazyLock<Vec<Result<portcullis::PortcullisModelSet, String>>> =
     std::sync::LazyLock::new(|| {
         DEFAULT_DSL_MODELS
             .iter()
             .map(|&(name, source)| {
-                dsl::DslFile::from_text(name, source)
-                    .map(|file| dsl::DslModelSet { files: vec![file] })
+                portcullis::PortcullisFile::from_text(name, source)
+                    .map(|file| portcullis::PortcullisModelSet { files: vec![file] })
                     .map_err(|e| e.to_string())
             })
             .collect()
     });
 
 /// The parsed DSL default a program with this [`VirtualMethodTable`] selects; see
-/// [`default_dsl_model_file`]. An error only if a shipped file does not parse, which is a
+/// [`default_portcullis_model_file`]. An error only if a shipped file does not parse, which is a
 /// build-time bug.
-pub fn default_dsl_models(
+pub fn default_portcullis_models(
     vmt: &VirtualMethodTable,
-) -> Result<Option<&'static dsl::DslModelSet>, Error> {
-    let Some(index) = default_dsl_index(vmt) else {
+) -> Result<Option<&'static portcullis::PortcullisModelSet>, Error> {
+    let Some(index) = default_portcullis_index(vmt) else {
         return Ok(None);
     };
     match &DEFAULT_DSL_SETS[index] {
         Ok(set) => Ok(Some(set)),
-        Err(message) => Err(Error::DslModel(message.clone())).err_context(|| {
+        Err(message) => Err(Error::PortcullisModel(message.clone())).err_context(|| {
             format!(
                 "loading default index models: {}",
                 DEFAULT_DSL_MODELS[index].0
@@ -190,7 +193,7 @@ pub fn default_dsl_models(
 /// Whether the built-in defaults for a program with this [`VirtualMethodTable`] ask for the
 /// call-site signature keys.
 ///
-/// The other half of the gate [`DslModelSet::uses_callsig`] opens for the `--models` files:
+/// The other half of the gate [`PortcullisModelSet::uses_callsig`] opens for the `--models` files:
 /// together they decide whether an import pays for collecting its call sites' signature keys.
 ///
 /// Read off the DSL defaults, because those are what [`try_load_default_models`] runs.
@@ -198,7 +201,7 @@ pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
     // A shipped default that does not parse is a build-time bug, and every other caller of this
     // file reports it with a span; here there is no diagnostic channel and nothing to gain from
     // guessing, so an unparsable file simply asks for nothing.
-    default_dsl_models(vmt)
+    default_portcullis_models(vmt)
         .ok()
         .flatten()
         .is_some_and(|set| set.uses_callsig())
@@ -206,12 +209,16 @@ pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
 
 /// The DSL default a program with this [`VirtualMethodTable`] selects: the one
 /// [`try_load_default_models`] runs.
-pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static str)> {
-    DEFAULT_DSL_MODELS.get(default_dsl_index(vmt)?).copied()
+pub fn default_portcullis_model_file(
+    vmt: &VirtualMethodTable,
+) -> Option<(&'static str, &'static str)> {
+    DEFAULT_DSL_MODELS
+        .get(default_portcullis_index(vmt)?)
+        .copied()
 }
 
 /// Which entry of [`DEFAULT_DSL_MODELS`] a program with this [`VirtualMethodTable`] selects.
-fn default_dsl_index(vmt: &VirtualMethodTable) -> Option<usize> {
+fn default_portcullis_index(vmt: &VirtualMethodTable) -> Option<usize> {
     match &vmt.dispatch {
         Dispatch::Java { .. } => Some(0),
         Dispatch::Native => Some(1),
@@ -223,10 +230,10 @@ fn default_dsl_index(vmt: &VirtualMethodTable) -> Option<usize> {
 
 /// Load models from a file, through the DSL engine. A `.ctadl` / `.dl` file is loaded as
 /// written; any other is a JSON / JSON5 / JSONL file and is migrated first (see
-/// [`dsl::DslFile::read`]).
+/// [`portcullis::PortcullisFile::read`]).
 ///
 /// Both phases' heads are kept: a caller with one program in hand and no phase to declare
-/// wants everything the file says, and `cli::index` / `cli::query` drive [`DslMatcher`]
+/// wants everything the file says, and `cli::index` / `cli::query` drive [`PortcullisMatcher`]
 /// themselves precisely so they can say which half they are keeping.
 ///
 /// Everything the file matched is *appended* to `out`, which is what lets a caller accumulate
@@ -236,8 +243,8 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
     path: P,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let report = dsl::try_load_dsl_models(index, path, dsl::Phase::All, out)?;
-    Ok(ModelLoadReport::from_dsl(report))
+    let report = portcullis::try_load_portcullis_models(index, path, portcullis::Phase::All, out)?;
+    Ok(ModelLoadReport::from_portcullis(report))
 }
 
 /// What one model-file load recorded *besides* the matches themselves.
@@ -268,7 +275,7 @@ pub struct ModelLoadReport {
     /// The counters above are projected from it so every diagnostic surface reads one shape — a
     /// rule's label plays the part of a generator index, and is one for a migrated file — and
     /// this carries what has no JSON counterpart.
-    pub dsl: Option<dsl::DslReport>,
+    pub portcullis: Option<portcullis::PortcullisReport>,
 }
 
 impl ModelLoadReport {
@@ -276,13 +283,13 @@ impl ModelLoadReport {
     ///
     /// A rule index stands in for a generator index: both name "the *n*th thing in this file",
     /// which is what `CTADL0004` and the JSON error messages report.
-    pub fn from_dsl(report: dsl::DslReport) -> Self {
+    pub fn from_portcullis(report: portcullis::PortcullisReport) -> Self {
         let mut endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats> = BTreeMap::new();
         let mut matched: BTreeMap<usize, MatchedFunctions> = BTreeMap::new();
         let mut propagation_stats: BTreeMap<usize, PropagationStats> = BTreeMap::new();
         let mut access_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
         for file in &report.files {
-            for (key, stats) in dsl_endpoint_stats(file) {
+            for (key, stats) in portcullis_endpoint_stats(file) {
                 endpoint_stats.entry(key).or_default().merge(&stats);
             }
             // Keyed by label, so a JSON generator migrated to several rules — one per disjunct
@@ -311,7 +318,7 @@ impl ModelLoadReport {
                 matched
                     .entry(i)
                     .or_default()
-                    .merge(&rule_matched, dsl::emit::MATCHED_SAMPLE_CAP);
+                    .merge(&rule_matched, portcullis::emit::MATCHED_SAMPLE_CAP);
             }
         }
         let totals = report.totals();
@@ -331,18 +338,18 @@ impl ModelLoadReport {
             matched,
             propagation_stats,
             access_path_stats,
-            dsl: Some(report),
+            portcullis: Some(report),
         }
     }
 }
 
 /// The source/sink counters one DSL file's rules project onto, keyed `(label, direction)`: one
-/// entry per direction a rule declares a head in. `ctadl query` and [`ModelLoadReport::from_dsl`]
-/// both read a DSL load's endpoint stats through this. Two rules with one label — the
-/// disjuncts of one JSON generator — yield two entries under one key, for the caller to
-/// [`EndpointStats::merge`].
-pub fn dsl_endpoint_stats(
-    file: &dsl::DslFileReport,
+/// entry per direction a rule declares a head in. `ctadl query` and
+/// [`ModelLoadReport::from_portcullis`] both read a DSL load's endpoint stats through this. Two
+/// rules with one label — the disjuncts of one JSON generator — yield two entries under one key,
+/// for the caller to [`EndpointStats::merge`].
+pub fn portcullis_endpoint_stats(
+    file: &portcullis::PortcullisFileReport,
 ) -> impl Iterator<Item = ((usize, TaintDirection), EndpointStats)> + '_ {
     file.labels.iter().zip(&file.rules).flat_map(|(&i, stats)| {
         [

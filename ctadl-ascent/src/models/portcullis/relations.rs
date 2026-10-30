@@ -32,8 +32,8 @@ use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
-use crate::models::dsl::ast::{BodyItem, Program};
 use crate::models::match_index::ProgramMatchIndex;
+use crate::models::portcullis::ast::{BodyItem, Program};
 
 /// One function, as the DSL sees it.
 #[derive(Clone, Debug)]

@@ -1,6 +1,6 @@
 // `skip_analysis`, IN THE DSL -- the same fixture as `skip_analysis.tnt`, modelled in the model
 // DSL rather than in JSON. Drop the `skip_analysis(F)` head from
-// `skip_analysis_dsl.models.ctadl` and the `return </- src` check fails: the body's flow is back.
+// `skip_analysis_portcullis.models.ctadl` and the `return </- src` check fails: the body's flow is back.
 //
 // Same function as `model_adds_to_summary.tnt`, same propagation, one extra directive. The
 // body's `return <- src` is gone and only the model's `return <- dst` survives, so the two

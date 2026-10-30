@@ -1,7 +1,7 @@
 /**
  * @file Tree-sitter grammar for Portcullis, the ctadl model language (.ctadl).
  *
- * This is a port of the peg grammar in `../src/models/dsl/parse.rs` and should accept the same
+ * This is a port of the peg grammar in `../src/models/portcullis/parse.rs` and should accept the same
  * language, except that it cannot reject an integer too large for 64 bits (peg parses it and
  * the builder rejects it). Node names follow the peg rules (`rule`, `head_atom`, `anchor`,
  * `out_rel`, `flow`, `port`, `port_base`, `rel_atom`, `attr_op`, ...). Rules that carry no
@@ -41,7 +41,7 @@ const NAME_KEYWORDS = [...OUT_RELS, 'return', 'arg', 'param', 'true', 'false', '
 const commaSep1 = (rule) => seq(rule, repeat(seq(',', rule)));
 
 module.exports = grammar({
-  name: 'ctadl_models',
+  name: 'portcullis',
 
   extras: $ => [/[ \t\r\n]/, $.comment],
 

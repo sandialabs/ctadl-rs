@@ -37,8 +37,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use ctadl_ascent::models::{
-    CIL_DEFAULT_MODELS, DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase,
-    FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort, ProgramMatchIndex,
+    CIL_DEFAULT_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort,
+    PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex,
     ProgramModelMatches,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
@@ -290,14 +290,14 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         .map(|g| serde_json::from_str(g))
         .collect::<Result<Vec<Value>, _>>()
         .with_context(|| format!("{name}: a generator line"))?;
-    let report = DslFile::from_json_generators(name, &values)
+    let report = PortcullisFile::from_json_generators(name, &values)
         .and_then(|file| {
-            let set = DslModelSet { files: vec![file] };
-            let mut matcher = DslMatcher::new(&set, DslPhase::All);
+            let set = PortcullisModelSet { files: vec![file] };
+            let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
             matcher.observe_import(&index, &mut matches);
             matcher.finish(&mut matches)
         })
-        .map(ModelLoadReport::from_dsl)
+        .map(ModelLoadReport::from_portcullis)
         .map_err(|e| anyhow::anyhow!("{name} does not load: {e:?}"))?;
     for (n, g) in generators.iter().enumerate() {
         let live = report.matched.get(&n).is_some_and(|m| m.total > 0);

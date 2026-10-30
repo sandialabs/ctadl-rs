@@ -291,7 +291,7 @@ some rule reads `callsig`, or when the language's defaults do.
 Model matching is now a real language with an execution engine, the shipped defaults are written
 in it, and the JSON format keeps working through a migrator.
 
-Start here if you want to *use* it: [`docs/model-dsl.md`](docs/model-dsl.md).
+Start here if you want to *use* it: [`docs/portcullis.md`](docs/portcullis.md).
 
 ### 1. The language
 
@@ -332,16 +332,16 @@ Every relation name is reserved, so an unrecognized one is reported as the typo 
 
 | file | lines | job |
 | --- | --- | --- |
-| `ctadl-ascent/src/models/dsl/ast.rs` | 353 | abstract syntax; program-independent |
-| `ctadl-ascent/src/models/dsl/parse.rs` | 901 | the PEG grammar and its tree → AST, plus the checks the grammar cannot make |
-| `ctadl-ascent/src/models/dsl/check.rs` | 904 | relation shapes, **modes**, and the execution plan |
-| `ctadl-ascent/src/models/dsl/relations.rs` | 428 | the input relations, materialized over one program |
-| `ctadl-ascent/src/models/dsl/eval.rs` | 912 | the engine |
-| `ctadl-ascent/src/models/dsl/emit.rs` | 501 | groundings → `ProgramModelMatches` |
-| `ctadl-ascent/src/models/dsl/migrate.rs` | 1029 | the JSON format, re-expressed in this one |
-| `ctadl-ascent/src/models/dsl/tests.rs` | 539 | 39 unit tests: syntax, checking, migration |
-| `ctadl-ascent/tests/model_dsl.rs` | 760 | 29 engine tests against real programs |
-| `docs/model-dsl.md` | 353 | the language reference |
+| `ctadl-ascent/src/models/portcullis/ast.rs` | 353 | abstract syntax; program-independent |
+| `ctadl-ascent/src/models/portcullis/parse.rs` | 901 | the PEG grammar and its tree → AST, plus the checks the grammar cannot make |
+| `ctadl-ascent/src/models/portcullis/check.rs` | 904 | relation shapes, **modes**, and the execution plan |
+| `ctadl-ascent/src/models/portcullis/relations.rs` | 428 | the input relations, materialized over one program |
+| `ctadl-ascent/src/models/portcullis/eval.rs` | 912 | the engine |
+| `ctadl-ascent/src/models/portcullis/emit.rs` | 501 | groundings → `ProgramModelMatches` |
+| `ctadl-ascent/src/models/portcullis/migrate.rs` | 1029 | the JSON format, re-expressed in this one |
+| `ctadl-ascent/src/models/portcullis/tests.rs` | 539 | 39 unit tests: syntax, checking, migration |
+| `ctadl-ascent/tests/portcullis.rs` | 760 | 29 engine tests against real programs |
+| `docs/portcullis.md` | 353 | the language reference |
 | `ctadl-ascent/src/models/defaults/*.ctadl` | 405 | the migrated shipped defaults |
 
 Modified: `cli/mod.rs`, `cli/model_check.rs`, `codegen/model_matches.rs`, `error.rs`, `main.rs`,
@@ -355,7 +355,7 @@ value-based JSON loading API in `models/mod.rs`, the JSON bridge scan and pairin
 `codegen/model_matches.rs`), and the `ProgramMatchIndex` tables only it read. What remains of
 the JSON format is input to the migrator: the validator (`models/json_schema.rs`), the
 program-independent parsing it shares with the model check (`models/spec.rs`), and
-`dsl/migrate.rs`.
+`portcullis/migrate.rs`.
 
 
 ### 3. Three decisions worth knowing about
@@ -435,9 +435,9 @@ loader reported, in the same order.
 A `.json` / `.json5` / `.jsonl` file passed to `--models` is migrated in memory and run through
 the DSL engine, the same as a `.ctadl` file; there is no other matcher. Each such file draws a
 deprecation warning, once per run: JSON model files will be removed in a future release, and
-`ctadl migrate-models` converts one to the DSL. `DslFile::read` does the migration, so every
+`ctadl migrate-models` converts one to the DSL. `PortcullisFile::read` does the migration, so every
 path-based entry point — `ctadl index`, `ctadl query`, the model check, `ctadl report`, the flowy
-check — takes a JSON file the same way. `DslFile::from_json_generators` does the same for
+check — takes a JSON file the same way. `PortcullisFile::from_json_generators` does the same for
 generators already in hand, which is how the tests load them.
 
 The JSON matcher that used to run these files has been deleted. Two things it did came across
@@ -506,9 +506,9 @@ propagation(F::return <- F::arg(0)),
 ```
 
 Two tests in `tests/integration/default_models.rs` hold the pair together.
-`the_dsl_defaults_are_the_migration_of_the_json_defaults` requires each `.ctadl` to be, byte for
+`the_portcullis_defaults_are_the_migration_of_the_json_defaults` requires each `.ctadl` to be, byte for
 byte, what `ctadl migrate-models` writes for its `.jsonl`: edit one and not the other and it
-fails, naming the file. `the_dsl_defaults_match_what_the_json_defaults_matched` runs each `.ctadl`
+fails, naming the file. `the_portcullis_defaults_match_what_the_json_defaults_matched` runs each `.ctadl`
 on a fixture of every frontend and requires what the JSON matcher matched for the `.jsonl`,
 frozen in `default_models.golden` — the validation [Validation](#validation) asks for by name.
 
@@ -558,18 +558,18 @@ the rest of the file, as it did for a malformed generator before.
 
 `cargo test --workspace` passes. Clippy and `rustfmt` are clean.
 
-- **74 unit tests** (`models/dsl/tests.rs`) — syntax, mode checking, every error message the
+- **74 unit tests** (`models/portcullis/tests.rs`) — syntax, mode checking, every error message the
   design calls for, and the migrator, including the 29 generator shapes the JSON format rejects,
   each with the loader's error. Includes a drift guard: every shipped default must migrate
   cleanly and load.
-- **50 engine tests** (`tests/model_dsl.rs`) — each input relation against a real program, the
+- **50 engine tests** (`tests/portcullis.rs`) — each input relation against a real program, the
   operators, every head kind, the two-import bridge, phase separation, and loading through the
   ordinary `try_load_models` entry point.
 - **JSON files on the DSL path** — the tests that used to exercise the JSON matcher
   (`tests/integration/{json_error_handling,models_loading,bridging_models,dispatch_models,...}.rs`,
   `models/tests.rs`) load their generators through the migration, with a shared `load_json`
   helper in `tests/integration/common.rs`.
-- **1 end-to-end fixture** (`tests/tnt/port_bare_dsl.tnt`) — the DSL twin of `port_bare.tnt`,
+- **1 end-to-end fixture** (`tests/tnt/port_bare_portcullis.tnt`) — the DSL twin of `port_bare.tnt`,
   driven through the real index pipeline. Verified load-bearing: break the model and the test
   fails.
 - **Equivalence** — `tests/integration/migration_equivalence.rs` (141 generators) and
@@ -643,4 +643,4 @@ identity, and every frontend must decide each function's simple name.
    spelling (match it as `F = "…"`); `qualified-id` goes away; a `name_of(F, N)` relation ranges
    over `simple` and `other`.
 5. **The migrator** emits `name_of` and `F = …` where the JSON matched every spelling, so the
-   equivalence goldens hold; `docs/model-dsl.md` and the `relations.rs` module docs follow.
+   equivalence goldens hold; `docs/portcullis.md` and the `relations.rs` module docs follow.

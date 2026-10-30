@@ -83,8 +83,8 @@ pub struct MigrateModelsArgs {
     /// The JSON / JSON5 / JSONL model file to translate.
     pub input: PathBuf,
 
-    /// Where to write the Portcullis file. Defaults to the input with a `.ctadl` extension; `-` writes to
-    /// standard output.
+    /// Where to write the Portcullis file. Defaults to the input with a `.ctadl` extension; `-`
+    /// writes to standard output.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
@@ -384,7 +384,8 @@ pub struct IndexArgs {
     ///
     /// A `.ctadl` (or `.dl`) file is written in Portcullis, which is what the engine runs;
     /// `.json`, `.json5` and `.jsonl` are the older model-generator format, deprecated: such a
-    /// file is migrated to Portcullis as it is loaded. `ctadl migrate-models` converts one for good.
+    /// file is migrated to Portcullis as it is loaded. `ctadl migrate-models` converts one for
+    /// good.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -811,7 +812,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
-    use ctadl_ascent::models::dsl;
+    use ctadl_ascent::models::portcullis;
 
     // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
     // writing the rest would silently drop it. Every such generator is listed, not just the
@@ -823,7 +824,7 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     }
     let languages: Vec<&str> = args.languages.iter().map(String::as_str).collect();
     let languages = (!languages.is_empty()).then_some(languages.as_slice());
-    let (text, report) = match dsl::migrate::migrate_file(&args.input, languages) {
+    let (text, report) = match portcullis::migrate::migrate_file(&args.input, languages) {
         Ok(migrated) => migrated,
         Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(
             "{} cannot be migrated exactly; nothing was written:\n{errors}",
@@ -837,7 +838,7 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
     // Loading it is part of migrating it. A file that translates but does not check is worse
     // than a failure: it would be discovered on the next index, against an artifact, with the
     // original no longer in play.
-    dsl::DslFile::from_text(args.input.clone(), text.clone())
+    portcullis::PortcullisFile::from_text(args.input.clone(), text.clone())
         .with_context(|| format!("the migration of {} does not load", args.input.display()))?;
 
     for warning in &report.warnings {

@@ -1,4 +1,4 @@
-id = "ctadl-models"
+id = "portcullis"
 name = "Portcullis"
 description = "Syntax highlighting for Portcullis (.ctadl), the taint-model language of the ctadl analyzer."
 version = "0.1.0"
@@ -9,7 +9,7 @@ repository = "https://github.com/sandialabs/ctadl-rs"
 # The grammar lives in a subdirectory of the ctadl-rs repository. Zed clones `repository` at
 # `rev` and builds the parser in `path`. For local grammar work, point `repository` at a
 # `file://` clone and `rev` at a commit in it.
-[grammars.ctadl_models]
+[grammars.portcullis]
 repository = "https://github.com/sandialabs/ctadl-rs"
 rev = "c9db0b7ce9e673d47b335b590f8e781cf952c31a"
-path = "ctadl-ascent/tree-sitter-ctadl-models"
+path = "ctadl-ascent/tree-sitter-portcullis"

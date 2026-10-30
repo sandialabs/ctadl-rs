@@ -1,5 +1,5 @@
 name = "Portcullis"
-grammar = "ctadl_models"
+grammar = "portcullis"
 path_suffixes = ["ctadl"]
 line_comments = ["// "]
 block_comment = ["/* ", " */"]

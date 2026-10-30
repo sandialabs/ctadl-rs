@@ -235,7 +235,7 @@ pub enum Error {
     /// rendered with `path:line:col` prefixes, because only the loader still has the file text
     /// to resolve a byte span against.
     #[error("Portcullis error\n{0}")]
-    DslModel(String),
+    PortcullisModel(String),
     #[error("{context}")]
     Context {
         context: String,

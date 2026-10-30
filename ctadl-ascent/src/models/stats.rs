@@ -2,7 +2,7 @@
 
 What the diagnostics read: `CTADL0004`'s per-generator endpoint counts and why a port matched
 nothing, `CTADL0011`'s match samples, and the index-time constructs `ctadl query` says it is
-ignoring. A DSL load fills them in through [`super::ModelLoadReport::from_dsl`].
+ignoring. A DSL load fills them in through [`super::ModelLoadReport::from_portcullis`].
 */
 
 use std::collections::BTreeSet;

@@ -140,7 +140,8 @@ fn tainted_paths(results: &[Value]) -> usize {
 
 /// Writes what `ctadl migrate-models` makes of `json` next to it, and returns its path.
 fn migrated(json: &Path) -> PathBuf {
-    let (text, _) = ctadl_ascent::models::dsl::migrate::migrate_file(json, None).expect("migrates");
+    let (text, _) =
+        ctadl_ascent::models::portcullis::migrate::migrate_file(json, None).expect("migrates");
     let path = json.with_extension("ctadl");
     std::fs::write(&path, text).expect("writing the migration");
     path
@@ -315,10 +316,10 @@ fn a_json_model_file_and_its_migration_give_the_same_results() {
     let (app, lib) = import_pair(case, LIB_PATHFUL);
     let project = AnalysisProject::try_create(case, &[app, lib], SubImports::All).expect("project");
     let from_json = index_and_query(&project, std::slice::from_ref(&json), &query_json);
-    let from_dsl = index_and_query(&project, &[migrated(&json)], &migrated(&query_json));
+    let from_portcullis = index_and_query(&project, &[migrated(&json)], &migrated(&query_json));
 
     assert!(tainted_paths(&from_json) >= 1, "the fixture finds a flow");
-    assert_eq!(from_json, from_dsl);
+    assert_eq!(from_json, from_portcullis);
 }
 
 /// Each JSON model file draws one deprecation warning however many times the process loads it:
@@ -335,7 +336,7 @@ fn a_json_model_file_draws_one_deprecation_warning() {
 
     let query = store_dir().join(format!("{case}-query.json"));
     for path in [&model, &query] {
-        let expected = ctadl_ascent::models::dsl::json_deprecation_warning(path);
+        let expected = ctadl_ascent::models::portcullis::json_deprecation_warning(path);
         let seen = crate::common::warnings()
             .iter()
             .filter(|w| **w == expected)

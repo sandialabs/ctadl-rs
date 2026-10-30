@@ -75,13 +75,15 @@ pub fn load_json(
     generators: impl IntoIterator<Item = serde_json::Value>,
     out: &mut ctadl_ascent::models::ProgramModelMatches,
 ) -> Result<ctadl_ascent::models::ModelLoadReport, ctadl_ascent::error::Error> {
-    use ctadl_ascent::models::{DslFile, DslMatcher, DslModelSet, DslPhase, ModelLoadReport};
+    use ctadl_ascent::models::{
+        ModelLoadReport, PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase,
+    };
     let generators: Vec<serde_json::Value> = generators.into_iter().collect();
-    let file = DslFile::from_json_generators("<models>", &generators)?;
-    let set = DslModelSet { files: vec![file] };
-    let mut matcher = DslMatcher::new(&set, DslPhase::All);
+    let file = PortcullisFile::from_json_generators("<models>", &generators)?;
+    let set = PortcullisModelSet { files: vec![file] };
+    let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
     matcher.observe_import(index, out);
-    matcher.finish(out).map(ModelLoadReport::from_dsl)
+    matcher.finish(out).map(ModelLoadReport::from_portcullis)
 }
 
 /// `e` without the context it was wrapped in on the way out: the error the context is about,

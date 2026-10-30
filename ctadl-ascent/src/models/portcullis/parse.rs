@@ -10,27 +10,27 @@ can be "arrow not allowed here" instead of a parse error pointing one token past
 The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving one or
 more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`, `dispatch`,
 `skip_analysis`) from a
-conjunction of *input* atoms over the built-in relations. See `models/dsl/mod.rs` for the
+conjunction of *input* atoms over the built-in relations. See `models/portcullis/mod.rs` for the
 semantics.
 */
 
 use ctadl_ir::mir::{Offset, PathSegment, Symbol};
 
 use super::ast::*;
-use super::{DslError, DslErrors};
+use super::{PortcullisError, PortcullisErrors};
 
 /// Parses one model file's text into a [`Program`].
 ///
 /// Errors accumulate: a file with three malformed rules reports three, in file order, rather
 /// than stopping at the first. A *syntax* error is the exception — the parser cannot resynch,
 /// so it is reported alone.
-pub fn parse_program(text: &str) -> Result<Program, DslErrors> {
-    let raw_rules = match dsl::program(text) {
+pub fn parse_program(text: &str) -> Result<Program, PortcullisErrors> {
+    let raw_rules = match portcullis::program(text) {
         Ok(rules) => rules,
         Err(e) => {
-            let mut errors = DslErrors::default();
+            let mut errors = PortcullisErrors::default();
             let at = e.location.offset;
-            errors.push(DslError::Syntax {
+            errors.push(PortcullisError::Syntax {
                 message: format!("expected {}", e.expected),
                 span: Span { start: at, end: at },
             });
@@ -38,7 +38,7 @@ pub fn parse_program(text: &str) -> Result<Program, DslErrors> {
         }
     };
     let mut builder = Builder {
-        errors: DslErrors::default(),
+        errors: PortcullisErrors::default(),
     };
     let mut rules = Vec::new();
     for raw in raw_rules {
@@ -153,7 +153,7 @@ fn span(start: usize, end: usize) -> Span {
 }
 
 peg::parser! {
-    grammar dsl() for str {
+    grammar portcullis() for str {
         pub rule program() -> Vec<RawRule<'input>> = _ rules:(rule_stmt() ** _) _ { rules }
 
         rule rule_stmt() -> RawRule<'input>
@@ -331,12 +331,12 @@ peg::parser! {
 // ---------------------------------------------------------------------------
 
 struct Builder {
-    errors: DslErrors,
+    errors: PortcullisErrors,
 }
 
 impl Builder {
     fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.errors.push(DslError::Rule {
+        self.errors.push(PortcullisError::Rule {
             message: message.into(),
             span,
         });

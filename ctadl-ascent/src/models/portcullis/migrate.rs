@@ -786,7 +786,7 @@ fn int_predicate(
         .get("constraint")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if let Some(op) = dsl_op(kind)
+    if let Some(op) = portcullis_op(kind)
         && let Some(v) = inner.get("value").and_then(|v| v.as_i64())
     {
         // `arity < -1` needs the space: `<-` is the flow arrow. `format!` writes one anyway,
@@ -847,7 +847,7 @@ fn int_expr(inner: &Value, var: &str) -> Option<IntExpr> {
             IntExpr::Text(t) => IntExpr::Text(format!("!({t})")),
         }),
         other => {
-            let op = dsl_op(other)?;
+            let op = portcullis_op(other)?;
             let v = inner.get("value")?.as_i64()?;
             Some(IntExpr::Text(format!("{var} {op} {v}")))
         }
@@ -1518,7 +1518,7 @@ fn negate(atoms: &[String]) -> String {
     }
 }
 
-fn dsl_op(kind: &str) -> Option<&'static str> {
+fn portcullis_op(kind: &str) -> Option<&'static str> {
     match kind {
         "<" => Some("<"),
         "<=" => Some("<="),

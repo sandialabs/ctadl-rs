@@ -1,6 +1,6 @@
 {
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
-  "name": "ctadl_models",
+  "name": "portcullis",
   "word": "_word",
   "rules": {
     "program": {

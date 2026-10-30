@@ -24,7 +24,7 @@ use crate::facts::Str;
 
 use super::ast::*;
 use super::eval::Value;
-use super::{DslError, DslErrors};
+use super::{PortcullisError, PortcullisErrors};
 
 /// What a variable ranges over. Used only for the handful of checks that need it; an
 /// [`VarType::Unknown`] never provokes a diagnostic.
@@ -346,7 +346,7 @@ pub enum Pattern {
 
 /// Checks one rule and builds its plan. Errors accumulate into `errors`; a rule with errors
 /// yields `None`.
-pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
+pub fn plan_rule(rule: &Rule, errors: &mut PortcullisErrors) -> Option<Plan> {
     let before = errors.len();
     let mut types: BTreeMap<String, VarType> = BTreeMap::new();
     let visible = visible_vars(&rule.heads, &rule.body);
@@ -377,7 +377,7 @@ pub fn plan_rule(rule: &Rule, errors: &mut DslErrors) -> Option<Plan> {
         })
     {
         let name = mode.relation_name();
-        errors.push(DslError::Rule {
+        errors.push(PortcullisError::Rule {
             message: format!(
                 "a rule with a '{name}' head must be satisfied within one import: its body has \
                  parts that share no variable, and those are joined only after every import is \
@@ -414,7 +414,7 @@ fn check_item(
     visible: &BTreeSet<String>,
     bound: &mut BTreeSet<String>,
     types: &mut BTreeMap<String, VarType>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
     match item {
         BodyItem::Atom(atom) if is_generator(item) => {
@@ -425,7 +425,7 @@ fn check_item(
             let span = item_span(item);
             for var in required_vars(item, visible) {
                 if !bound.contains(&var) {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: format!(
                             "'{var}' is not bound at this point. An operator can only test \
                              variables that an atom to its left has already bound; move the atom \
@@ -515,7 +515,7 @@ fn check_relation_atom(
     atom: &Atom,
     bound: &mut BTreeSet<String>,
     types: &mut BTreeMap<String, VarType>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
     if !check_relation_shape(atom, errors) {
         return;
@@ -536,16 +536,16 @@ fn check_relation_atom(
 ///
 /// Split out because a **negated** atom is checked for shape but binds nothing: `!fun(F, parent
 /// = _)` must still be told that `parnet` is a typo.
-fn check_relation_shape(atom: &Atom, errors: &mut DslErrors) -> bool {
+fn check_relation_shape(atom: &Atom, errors: &mut PortcullisErrors) -> bool {
     let Some(arity) = relation_arity(&atom.name) else {
-        errors.push(DslError::Rule {
+        errors.push(PortcullisError::Rule {
             message: unknown_relation_message(&atom.name),
             span: atom.span,
         });
         return false;
     };
     if atom.columns.len() != arity {
-        errors.push(DslError::Rule {
+        errors.push(PortcullisError::Rule {
             message: format!(
                 "'{}' takes {arity} column(s); {} were given",
                 atom.name,
@@ -559,7 +559,7 @@ fn check_relation_shape(atom: &Atom, errors: &mut DslErrors) -> bool {
     let mut ok = true;
     for attr in &atom.attrs {
         if !honored.contains(&attr.name.as_str()) {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: if honored.is_empty() {
                     format!("'{}' has no attributes", atom.name)
                 } else {
@@ -589,12 +589,12 @@ fn check_attr_rhs(
     want: VarType,
     bound: &mut BTreeSet<String>,
     types: &mut BTreeMap<String, VarType>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
     match &attr.rhs {
         Rhs::Set(items) => {
             if attr.op != CmpOp::In {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!(
                         "a set is only valid with 'in'; '{}' takes a single value",
                         attr.op
@@ -609,7 +609,7 @@ fn check_attr_rhs(
         }
         Rhs::Term(Term::Lit(lit)) => {
             if attr.op == CmpOp::In {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "'in' takes a set, e.g. in {\"a\", \"b\"}".to_string(),
                     span: attr.span,
                 });
@@ -620,7 +620,7 @@ fn check_attr_rhs(
         Rhs::Term(Term::Wildcard) => {
             // `parent = _` reads as "has a parent, whatever it is". Only equality makes sense.
             if attr.op != CmpOp::Eq {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!("'_' is only meaningful with '='; found '{}'", attr.op),
                     span: attr.span,
                 });
@@ -628,7 +628,7 @@ fn check_attr_rhs(
         }
         Rhs::Term(Term::Var(v)) => {
             if attr.op == CmpOp::In {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "'in' takes a set, e.g. in {\"a\", \"b\"}".to_string(),
                     span: attr.span,
                 });
@@ -637,7 +637,7 @@ fn check_attr_rhs(
             if attr.op == CmpOp::Eq && !bound.contains(v) {
                 bind(v, want, bound, types, attr.span, errors);
             } else if !bound.contains(v) {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!(
                         "'{v}' is not bound at this point. Only '=' can bind a variable through \
                          an attribute; '{}' compares against one that is already bound.",
@@ -650,14 +650,14 @@ fn check_attr_rhs(
     }
 }
 
-fn check_literal_type(lit: &Literal, want: VarType, span: Span, errors: &mut DslErrors) {
+fn check_literal_type(lit: &Literal, want: VarType, span: Span, errors: &mut PortcullisErrors) {
     let got = match lit {
         Literal::Str(_) => VarType::Str,
         Literal::Int(_) => VarType::Int,
         Literal::Bool(_) => VarType::Bool,
     };
     if got.unify(want).is_none() {
-        errors.push(DslError::Rule {
+        errors.push(PortcullisError::Rule {
             message: format!("expected {}, found {} ({lit})", want.name(), got.name()),
             span,
         });
@@ -670,12 +670,12 @@ fn bind(
     bound: &mut BTreeSet<String>,
     types: &mut BTreeMap<String, VarType>,
     span: Span,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
     let entry = types.entry(var.to_string()).or_insert(VarType::Unknown);
     match entry.unify(ty) {
         Some(t) => *entry = t,
-        None => errors.push(DslError::Rule {
+        None => errors.push(PortcullisError::Rule {
             message: format!(
                 "'{var}' is used as a {} here but was bound as a {} earlier",
                 ty.name(),
@@ -688,7 +688,7 @@ fn bind(
 }
 
 /// Structural checks a filter needs beyond modedness: known operator, right arity.
-fn check_filter_shape(item: &BodyItem, errors: &mut DslErrors) {
+fn check_filter_shape(item: &BodyItem, errors: &mut PortcullisErrors) {
     match item {
         BodyItem::Atom(atom) => {
             if atom.name.starts_with('$') {
@@ -698,7 +698,7 @@ fn check_filter_shape(item: &BodyItem, errors: &mut DslErrors) {
             }
             if atom.name == "regex_match" {
                 if atom.columns.len() != 2 {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: format!(
                             "'regex_match' takes 2 columns (subject, pattern); {} were given",
                             atom.columns.len()
@@ -708,7 +708,7 @@ fn check_filter_shape(item: &BodyItem, errors: &mut DslErrors) {
                     return;
                 }
                 if !atom.attrs.is_empty() {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: "'regex_match' has no attributes".to_string(),
                         span: atom.span,
                     });
@@ -716,14 +716,14 @@ fn check_filter_shape(item: &BodyItem, errors: &mut DslErrors) {
                 match &atom.columns[1] {
                     Term::Lit(Literal::Str(pattern)) => {
                         if let Err(e) = regex::Regex::new(pattern) {
-                            errors.push(DslError::Rule {
+                            errors.push(PortcullisError::Rule {
                                 message: format!("invalid regex {pattern:?}: {e}"),
                                 span: atom.span,
                             });
                         }
                     }
                     Term::Var(_) => {}
-                    _ => errors.push(DslError::Rule {
+                    _ => errors.push(PortcullisError::Rule {
                         message: "the second argument of 'regex_match' must be a string pattern"
                             .to_string(),
                         span: atom.span,
@@ -811,13 +811,13 @@ fn check_head(
     head: &Head,
     bound: &BTreeSet<String>,
     types: &BTreeMap<String, VarType>,
-    errors: &mut DslErrors,
+    errors: &mut PortcullisErrors,
 ) {
-    let require = |term: &Term, span: Span, what: &str, errors: &mut DslErrors| {
+    let require = |term: &Term, span: Span, what: &str, errors: &mut PortcullisErrors| {
         if let Term::Var(v) = term
             && !bound.contains(v)
         {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: format!(
                     "'{v}' appears in the head ({what}) but is not bound in the body. Every head \
                      variable must be bound by a body atom."
@@ -826,7 +826,7 @@ fn check_head(
             });
         }
         if matches!(term, Term::Wildcard) {
-            errors.push(DslError::Rule {
+            errors.push(PortcullisError::Rule {
                 message: format!("'_' cannot be used in a head ({what}): it binds nothing"),
                 span,
             });
@@ -854,7 +854,7 @@ fn check_head(
                         | VarType::CallSig
                         | VarType::Str
                         | VarType::Unknown => {}
-                        other => errors.push(DslError::Rule {
+                        other => errors.push(PortcullisError::Rule {
                             message: format!(
                                 "'{v}' is a {} and cannot anchor a port; a port hangs off a \
                                  function or a call site",
@@ -865,7 +865,7 @@ fn check_head(
                     }
                 }
             }
-            None => errors.push(DslError::Rule {
+            None => errors.push(PortcullisError::Rule {
                 message: "this port has no anchor. Write 'F::return' (or put the anchor on the \
                           atom, as in 'F::source(return)') so it names the function it belongs to."
                     .to_string(),
@@ -875,7 +875,7 @@ fn check_head(
         anchors.push(anchor);
         if let PortBase::ArgVar(v) = &port.port.base {
             if !bound.contains(v) {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!(
                         "'{v}' indexes an argument in the head but is not bound in the body; bind \
                          it with 'param(F, {v})'"
@@ -885,7 +885,7 @@ fn check_head(
             } else if let Some(t) = types.get(v)
                 && t.unify(VarType::Int).is_none()
             {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!("'{v}' indexes an argument but was bound as a {}", t.name()),
                     span: port.span,
                 });
@@ -906,7 +906,7 @@ fn check_head(
                 _ => true,
             };
             if !same {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "a propagation is one function's summary, so both ports must be \
                               anchored at the same function. Use 'bridge' to connect two \
                               functions."
@@ -918,7 +918,7 @@ fn check_head(
                 if let Term::Var(v) = anchor
                     && types.get(v) == Some(&VarType::Site)
                 {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: format!(
                             "'{v}' is a call site; a propagation is a whole-function summary and \
                              cannot depend on one. Use 'bridge', or anchor at the callee."
@@ -937,7 +937,7 @@ fn check_head(
                 _ => false,
             };
             if same {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: "both ports of this bridge are anchored at the same function, which \
                               is a propagation. Write 'propagation' instead."
                         .to_string(),
@@ -953,7 +953,7 @@ fn check_head(
                 if let Term::Var(v) = anchor
                     && types.get(v) == Some(&VarType::Site)
                 {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: format!(
                             "'{v}' is a call site, and a bridge attaches inside a function rather \
                              than at one call. Anchor at the callee — bind it with \
@@ -979,7 +979,7 @@ fn check_head(
                     if let Some(t) = types.get(v)
                         && !matches!(t, VarType::CallSig | VarType::Unknown)
                     {
-                        errors.push(DslError::Rule {
+                        errors.push(PortcullisError::Rule {
                             message: format!(
                                 "'{v}' is a {} and cannot anchor a 'dispatch' head; a dispatch \
                                  model attaches to a call signature. Bind it with 'callsig({v})'.",
@@ -990,7 +990,7 @@ fn check_head(
                     }
                 }
                 Some(_) => {}
-                None => errors.push(DslError::Rule {
+                None => errors.push(PortcullisError::Rule {
                     message: "this 'dispatch' head has no anchor. Write 'K::dispatch(...)' so it \
                               names the call signature it models."
                         .to_string(),
@@ -1008,7 +1008,7 @@ fn check_head(
                     _ => true,
                 };
                 if !same {
-                    errors.push(DslError::Rule {
+                    errors.push(PortcullisError::Rule {
                         message: "a dispatch model is one signature's summary, so both ports \
                                   must be anchored at the same 'callsig' key."
                             .to_string(),
@@ -1032,7 +1032,7 @@ fn check_head(
                 && let Some(t) = types.get(v)
                 && !matches!(t, VarType::Function | VarType::Str | VarType::Unknown)
             {
-                errors.push(DslError::Rule {
+                errors.push(PortcullisError::Rule {
                     message: format!(
                         "'{v}' is a {} and cannot be marked '{name}'; the mark applies to a \
                          function's body. Bind it with 'fun({v})'.",

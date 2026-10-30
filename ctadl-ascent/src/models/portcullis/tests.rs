@@ -1,10 +1,10 @@
 /*! Unit tests for the DSL: syntax, checking, and the migrator.
 
-Engine behaviour that needs a program lives in `tests/model_dsl.rs`, which builds one.
+Engine behaviour that needs a program lives in `tests/portcullis.rs`, which builds one.
 */
 
 use super::*;
-use crate::models::dsl::ast::*;
+use crate::models::portcullis::ast::*;
 
 fn parse(text: &str) -> Program {
     match parse::parse_program(text) {
@@ -14,14 +14,14 @@ fn parse(text: &str) -> Program {
 }
 
 fn check_err(text: &str) -> String {
-    match DslFile::from_text("test.ctadl", text) {
+    match PortcullisFile::from_text("test.ctadl", text) {
         Ok(_) => panic!("expected an error from:\n{text}"),
         Err(e) => e.to_string(),
     }
 }
 
-fn check_ok(text: &str) -> DslFile {
-    match DslFile::from_text("test.ctadl", text) {
+fn check_ok(text: &str) -> PortcullisFile {
+    match PortcullisFile::from_text("test.ctadl", text) {
         Ok(f) => f,
         Err(e) => panic!("{e}"),
     }
@@ -934,7 +934,7 @@ fn a_bridge_the_json_scan_rejects_does_not_migrate() {
 /// What the JSON loader accepts and the DSL cannot say fails to migrate, naming the generator and
 /// the construct, rather than migrating to something that means less or more.
 #[test]
-fn what_the_dsl_cannot_say_does_not_migrate() {
+fn what_the_portcullis_cannot_say_does_not_migrate() {
     let bridge = |extra: &str| {
         format!(
             r#"{{"find":"methods","where":[{{"constraint":"signature_match","name":"a"}}],
@@ -1093,11 +1093,11 @@ fn run_migrated(
 ) -> (String, crate::models::ProgramModelMatches) {
     let (text, _) = migrate::migrate_generators(std::iter::once(json), None, None)
         .unwrap_or_else(|e| panic!("{json}: {e:?}"));
-    let set = DslModelSet {
+    let set = PortcullisModelSet {
         files: vec![check_ok(&text)],
     };
     let mut out = crate::models::ProgramModelMatches::default();
-    let mut matcher = DslMatcher::new(&set, Phase::All);
+    let mut matcher = PortcullisMatcher::new(&set, Phase::All);
     matcher.observe_import(index, &mut out);
     matcher
         .finish(&mut out)
@@ -1148,9 +1148,9 @@ fn constructs_that_used_to_widen_match_what_the_json_matched() {
         .expect("valid json");
         let summarized: std::collections::BTreeSet<String> =
             summarized.iter().map(|f| f.to_string()).collect();
-        let (text, from_dsl) = run_migrated(&json, &index);
+        let (text, from_portcullis) = run_migrated(&json, &index);
         assert_eq!(
-            summarized_functions(&from_dsl),
+            summarized_functions(&from_portcullis),
             summarized,
             "{where_}:\n{text}"
         );
@@ -1272,8 +1272,9 @@ fn every_shipped_default_migrates_and_loads() {
             .filter(|(i, _)| !known.iter().any(|(k, _)| k == i))
             .map(|(_, v)| v)
             .collect();
-        let (dsl, report) = migrate::migrate_generators(rest.iter().copied(), Some(name), None)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let (portcullis, report) =
+            migrate::migrate_generators(rest.iter().copied(), Some(name), None)
+                .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         // The only warnings a shipped default may raise are about keys the JSON loader does
         // not act on either, so nothing is lost by not translating them. Anything else means a
         // construct the defaults use and the migrator does not understand.
@@ -1286,8 +1287,8 @@ fn every_shipped_default_migrates_and_loads() {
             );
         }
         assert_eq!(report.generators, rest.len(), "{name}");
-        if let Err(e) = DslFile::from_text(*name, dsl.clone()) {
-            panic!("migrated {name} does not load: {e}\n---\n{dsl}");
+        if let Err(e) = PortcullisFile::from_text(*name, portcullis.clone()) {
+            panic!("migrated {name} does not load: {e}\n---\n{portcullis}");
         }
     }
 }
@@ -1378,23 +1379,32 @@ fn dispatch_generators_migrate() {
     .iter()
     .map(|l| serde_json::from_str(l).expect("valid json"))
     .collect();
-    let (dsl, report) = migrate::migrate_generators(values.iter(), None, None)
+    let (portcullis, report) = migrate::migrate_generators(values.iter(), None, None)
         .expect("dispatch generators migrate");
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-    assert!(dsl.contains(r#"K::dispatch(return <- arg(_))"#), "{dsl}");
-    assert!(dsl.contains(r#"K::dispatch(resolve = "skip")"#), "{dsl}");
-    assert!(dsl.contains(r#"K::dispatch(resolve = "inline")"#), "{dsl}");
     assert!(
-        dsl.contains(r#"K::dispatch(closure_shaped = true)"#),
-        "{dsl}"
+        portcullis.contains(r#"K::dispatch(return <- arg(_))"#),
+        "{portcullis}"
+    );
+    assert!(
+        portcullis.contains(r#"K::dispatch(resolve = "skip")"#),
+        "{portcullis}"
+    );
+    assert!(
+        portcullis.contains(r#"K::dispatch(resolve = "inline")"#),
+        "{portcullis}"
+    );
+    assert!(
+        portcullis.contains(r#"K::dispatch(closure_shaped = true)"#),
+        "{portcullis}"
     );
     // Inlined and summarized: the flow rides in the `resolve` head.
     assert!(
-        dsl.contains(r#"K::dispatch(resolve = "inline", return <- arg(0))"#),
-        "{dsl}"
+        portcullis.contains(r#"K::dispatch(resolve = "inline", return <- arg(0))"#),
+        "{portcullis}"
     );
-    assert!(dsl.contains("callsig(K, "), "{dsl}");
-    check_ok(&dsl);
+    assert!(portcullis.contains("callsig(K, "), "{portcullis}");
+    check_ok(&portcullis);
 }
 
 /// The atom that binds the subject goes first, so a leading `not` tests a bound `F`.
@@ -1595,19 +1605,22 @@ fn a_migrated_file_names_generators_not_rules() {
         r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
     ]);
     let path = file.path();
-    let dsl = DslFile::read(path).expect("loads");
-    assert_eq!(dsl.program.rules.len(), 3);
-    assert_eq!(dsl.origin.as_ref().unwrap().rule_generators, vec![0, 0, 1]);
-    assert_eq!(dsl.provenance(1), format!("{}:0", path.display()));
-    assert_eq!(dsl.provenance(2), format!("{}:1", path.display()));
+    let portcullis = PortcullisFile::read(path).expect("loads");
+    assert_eq!(portcullis.program.rules.len(), 3);
+    assert_eq!(
+        portcullis.origin.as_ref().unwrap().rule_generators,
+        vec![0, 0, 1]
+    );
+    assert_eq!(portcullis.provenance(1), format!("{}:0", path.display()));
+    assert_eq!(portcullis.provenance(2), format!("{}:1", path.display()));
 
     // An error inside the third rule names generator 1, and says where to read the rule.
-    let mut errors = DslErrors::default();
-    errors.push(DslError::Rule {
+    let mut errors = PortcullisErrors::default();
+    errors.push(PortcullisError::Rule {
         message: "something is wrong".to_string(),
-        span: dsl.program.rules[2].span,
+        span: portcullis.program.rules[2].span,
     });
-    let text = dsl.error(errors).to_string();
+    let text = portcullis.error(errors).to_string();
     assert!(
         text.contains(&format!(
             "> {}: generator 1: something is wrong",
@@ -1619,8 +1632,10 @@ fn a_migrated_file_names_generators_not_rules() {
 
     // Both rules of generator 0 are dead in an empty program: reported once, as generator 0.
     // Generator 1 is the other phase's, and counts once among the skipped.
-    let set = DslModelSet { files: vec![dsl] };
-    let matcher = DslMatcher::new(&set, Phase::Index);
+    let set = PortcullisModelSet {
+        files: vec![portcullis],
+    };
+    let matcher = PortcullisMatcher::new(&set, Phase::Index);
     let report = matcher
         .finish(&mut ProgramModelMatches::default())
         .expect("finishes");
@@ -1636,19 +1651,19 @@ fn an_unmigratable_generator_fails_a_load_and_not_a_lint() {
         r#"{"find":"methods","where":[{"constraint":"signature_match","name":"a"}],"model":{"sources":[{"port":"Variable(x)","kind":"k"}]}}"#,
         r#"{"find":"methods","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"c"}],"model":{"sources":[{"port":"Return","kind":"k"}]}}"#,
     ]);
-    let err = match DslFile::read(file.path()) {
+    let err = match PortcullisFile::read(file.path()) {
         Ok(_) => panic!("a Variable port does not migrate"),
         Err(e) => format!("{:#}", anyhow::Error::from(e)),
     };
     assert!(err.contains("model generator at index 0"), "{err}");
 
-    let (dsl, rejected) = DslFile::read_json_lenient(file.path()).expect("lints");
+    let (portcullis, rejected) = PortcullisFile::read_json_lenient(file.path()).expect("lints");
     let rejected = format!("{:#}", anyhow::Error::from(rejected.expect("reports it")));
     assert!(
         rejected.contains("model generator at index 0"),
         "{rejected}"
     );
-    assert_eq!(dsl.origin.unwrap().rule_generators, vec![1]);
+    assert_eq!(portcullis.origin.unwrap().rule_generators, vec![1]);
 }
 
 /// The SSA modes are heads of the same shape as `skip_analysis`, one per JSON `modes` value.

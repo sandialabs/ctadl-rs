@@ -1,7 +1,7 @@
 # CTADL Model Generators
 
 > **This format is deprecated.** The engine executes **Portcullis**, the model language —
-> [`model-dsl.md`](model-dsl.md) — and a JSON file passed to `--models` is migrated to it in
+> [`portcullis.md`](portcullis.md) — and a JSON file passed to `--models` is migrated to it in
 > memory and then run on the Portcullis engine; nothing else reads it. Each JSON file draws a
 > deprecation warning, and the format will be removed in a future release. Write new models in
 > Portcullis; `ctadl migrate-models my-models.jsonl` converts an existing one and reports anything

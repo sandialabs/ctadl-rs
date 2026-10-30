@@ -68,7 +68,7 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
     // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.ctadl`,
-    // which `models::default_dsl_models` hands only to a
+    // which `models::default_portcullis_models` hands only to a
     // `Dispatch::Native` program -- i.e. the pcode import. A `-l c`
     // import has no method table (`Unknown`) and so gets no default file at all,
     // leaving every step between source and sink an unmodeled external. The

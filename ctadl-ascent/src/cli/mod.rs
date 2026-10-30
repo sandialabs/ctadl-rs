@@ -222,7 +222,7 @@ fn merged_method_guardrail(
 /// should be matching and is not. The *phase warning* separates a rule that belongs to the
 /// other command from one that is broken. The *dead rules* are the ones that ran and selected
 /// nothing, which is the failure mode that otherwise looks exactly like a clean program.
-fn report_dsl(report: &crate::models::DslReport) {
+fn report_portcullis(report: &crate::models::PortcullisReport) {
     if report.is_empty() {
         return;
     }
@@ -331,15 +331,19 @@ pub fn index(
     // migrated to the DSL first — and matched by a single matcher across the whole loop. A rule
     // whose body names two programs — a bridge — is satisfied by no single import, so its
     // components have to be collected as the imports stream by and joined after.
-    let dsl_models = crate::models::DslModelSet::scan(models)?;
-    let mut dsl_matcher =
-        crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Index);
+    let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
+    let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
+        &portcullis_models,
+        crate::models::PortcullisPhase::Index,
+    );
     // The source/sink heads too, though index time does not analyse them: a matched endpoint
     // in a signature's target set is what refuses a dispatch model (see
     // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is lowered. Not
     // reported, since `ctadl query` reports on them.
-    let mut endpoint_matcher =
-        crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Query);
+    let mut endpoint_matcher = crate::models::PortcullisMatcher::new(
+        &portcullis_models,
+        crate::models::PortcullisPhase::Query,
+    );
     // Every matched model, instantiated against the IR being indexed. It persists across the import
     // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
     // import cache is a pure function of the artifact, and persisting them would let `ctadl index
@@ -349,7 +353,7 @@ pub fn index(
     // discarding them in silence. Keyed by file: declaring an endpoint is a property of the
     // file, not of what it matched.
     let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
-        dsl_models.endpoint_files().collect();
+        portcullis_models.endpoint_files().collect();
 
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
@@ -410,12 +414,12 @@ pub fn index(
             let defaults = if no_default_models {
                 None
             } else {
-                crate::models::default_dsl_models(&program_info.vmt)?
+                crate::models::default_portcullis_models(&program_info.vmt)?
             };
             // Only when some generator asks for it: collecting the keys is a pass over every
             // statement, and the defaults are language-selected, so this is decided per import.
             let wants_dispatch =
-                dsl_models.uses_callsig() || defaults.is_some_and(|d| d.uses_callsig());
+                portcullis_models.uses_callsig() || defaults.is_some_and(|d| d.uses_callsig());
             let dispatch_keys = wants_dispatch
                 .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
             let match_index = crate::models::ProgramMatchIndex::new_with_dispatch(
@@ -425,19 +429,19 @@ pub fn index(
             );
             // One set of DSL relations for the defaults and the user's rules both, covering
             // what either reads.
-            let user_rules = !dsl_matcher.is_empty() || !endpoint_matcher.is_empty();
-            let dsl_facts = (defaults.is_some() || user_rules).then(|| {
-                let mut needs = dsl_matcher.needs();
+            let user_rules = !portcullis_matcher.is_empty() || !endpoint_matcher.is_empty();
+            let portcullis_facts = (defaults.is_some() || user_rules).then(|| {
+                let mut needs = portcullis_matcher.needs();
                 if let Some(defaults) = defaults {
                     needs.union(defaults.needs());
                 }
-                crate::models::dsl::program_facts(&match_index, &needs)
+                crate::models::portcullis::program_facts(&match_index, &needs)
             });
-            if let (Some(defaults), Some(facts)) = (defaults, &dsl_facts) {
+            if let (Some(defaults), Some(facts)) = (defaults, &portcullis_facts) {
                 crate::models::load_default_models_from_facts(defaults, facts, &mut model_matches)?;
             }
-            if let Some(facts) = &dsl_facts {
-                dsl_matcher.observe_facts(facts, &mut model_matches);
+            if let Some(facts) = &portcullis_facts {
+                portcullis_matcher.observe_facts(facts, &mut model_matches);
                 endpoint_matcher.observe_facts(facts, &mut model_matches);
             }
         }
@@ -505,8 +509,8 @@ pub fn index(
     // Every import has been seen, so a rule whose two components matched in two different
     // programs can finally be joined. Index time keeps the propagation / bridge / access-path
     // heads and says how many rules declared only the other phase's.
-    let dsl_report = dsl_matcher.finish(&mut model_matches)?;
-    report_dsl(&dsl_report);
+    let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
+    report_portcullis(&portcullis_report);
     endpoint_matcher.finish(&mut model_matches)?;
 
     // Streaming matching retains only the *matches* -- one interned name plus two
@@ -890,13 +894,15 @@ pub fn query(
         // Parsed and checked once, before any import is read — a JSON file is migrated to the
         // DSL first — and matched by one matcher across the whole loop; see `cli::index` for
         // why the DSL needs one accumulator rather than one load per (file, import).
-        let dsl_models = crate::models::DslModelSet::scan(models)?;
-        let mut dsl_matcher =
-            crate::models::DslMatcher::new(&dsl_models, crate::models::DslPhase::Query);
+        let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
+        let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
+            &portcullis_models,
+            crate::models::PortcullisPhase::Query,
+        );
         // Which files declare endpoints, by the same test `ctadl index` applies, so the two
         // digests are over the same thing.
         let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
-            dsl_models.endpoint_files().collect();
+            portcullis_models.endpoint_files().collect();
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
@@ -905,18 +911,18 @@ pub fn query(
                     &program_info,
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
-                dsl_matcher.observe_import(&match_index, &mut model_matches);
+                portcullis_matcher.observe_import(&match_index, &mut model_matches);
             }
         }
         // Query time keeps the source/sink heads. The rules whose heads are all index-time are
         // counted and reported, so a query that drops a propagation says so rather than
         // looking exactly like one whose models did nothing.
-        let dsl_report = dsl_matcher.finish(&mut model_matches)?;
-        report_dsl(&dsl_report);
+        let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
+        report_portcullis(&portcullis_report);
         // Re-keyed by file: the report is keyed by (rule label, direction) within a file, which
         // would conflate two model files that happen to number their rules the same.
-        for file in &dsl_report.files {
-            for ((rule, direction), stats) in crate::models::dsl_endpoint_stats(file) {
+        for file in &portcullis_report.files {
+            for ((rule, direction), stats) in crate::models::portcullis_endpoint_stats(file) {
                 diagnostics
                     .generator_stats
                     .entry((file.path.clone(), rule, direction))
