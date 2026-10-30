@@ -320,7 +320,7 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut fail_count = 0;
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
-    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
+    // import has `Dispatch::Unknown`, so a generator matches by the IR function name
     // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
     // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.

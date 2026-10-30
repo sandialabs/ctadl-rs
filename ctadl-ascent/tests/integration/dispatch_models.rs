@@ -16,7 +16,7 @@ use ctadl_ascent::models::{DispatchKeys, ImportScope, ProgramMatchIndex, Program
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+    CallStyle, Dispatch, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     VirtualMethodTable,
 };
 use ctadl_ir::mir::{Exp, FunctionData, ParameterType, Program, ProgramInfo};
@@ -103,7 +103,7 @@ fn program_info() -> ProgramInfo {
     }
     ProgramInfo {
         program,
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods: vec![method("LA;"), method("LB;")],
             hierarchy: [
                 (
@@ -124,7 +124,7 @@ fn program_info() -> ProgramInfo {
                 JavaSignature(DESC.into()),
             )],
             natives: Vec::new(),
-        },
+        }),
         ..Default::default()
     }
 }

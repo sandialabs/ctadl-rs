@@ -11,7 +11,8 @@ use ctadl_ir::mir::{PathSegment, ProgramInfo};
 /// local called `buf`.
 fn native_program(names: &[&str]) -> ProgramInfo {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
+        VirtualMethodTable,
     };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -33,7 +34,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: names
                 .iter()
                 .map(|name| {
@@ -45,7 +46,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
@@ -355,7 +356,7 @@ mod capture {
             })
             .collect();
         ProgramInfo {
-            vmt: VirtualMethodTable::Unknown,
+            vmt: VirtualMethodTable::default(),
             program: Program::new(Functions::new(functions)),
             ..Default::default()
         }
@@ -508,7 +509,7 @@ mod dispatch {
         blocks[entry].extend(vec![Statement::new_kind(StatementKind::Nop)]);
 
         ProgramInfo {
-            vmt: VirtualMethodTable::Java {
+            vmt: VirtualMethodTable::new(Dispatch::Java {
                 methods: vec![(
                     JavaClass("Lcom/example/Impl;".into()),
                     JavaSimpleName("next".into()),
@@ -519,7 +520,7 @@ mod dispatch {
                 interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
                 abstract_methods: Vec::new(),
                 natives: Vec::new(),
-            },
+            }),
             program: Program::new(Functions::new(vec![caller, impl_fn])),
             ..Default::default()
         }

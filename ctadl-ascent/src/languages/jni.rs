@@ -242,7 +242,7 @@ use hashbrown::hash_set::HashSet;
 use std::collections::BTreeMap;
 
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 /// The `RegisterNatives` table scan and its run attribution. [`ctadl_pcode`]'s crate docs say
 /// why the scan lives there.
@@ -674,7 +674,7 @@ impl JniObserver {
     /// Records the Java half of one import: the methods it declares `native`. Only imports of
     /// the project being indexed contribute these, since only their stubs are in the fact base.
     pub fn observe_java(&mut self, vmt: &VirtualMethodTable, slots: SlotModel) {
-        let VirtualMethodTable::Java { natives, .. } = vmt else {
+        let Dispatch::Java { natives, .. } = &vmt.dispatch else {
             return;
         };
         for (cls, name, sig, method, is_static) in natives {
@@ -696,7 +696,7 @@ impl JniObserver {
     /// Call it at most once per import. A second call puts two targets under every symbol, and
     /// the bridge then reports each as ambiguous.
     pub fn observe_native_vmt(&mut self, vmt: &VirtualMethodTable, abi: NativeAbi, origin: Origin) {
-        let VirtualMethodTable::Native { methods } = vmt else {
+        let Dispatch::Native { methods } = &vmt.dispatch else {
             return;
         };
         // Match against the *simple* name, not the IR function name: the pcode frontend

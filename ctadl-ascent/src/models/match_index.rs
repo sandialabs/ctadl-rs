@@ -20,7 +20,7 @@ use hashbrown::hash_map::HashMap;
 
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::FunctionData;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 use super::dsl::relations::FunKey;
 use super::spec::ImportScope;
@@ -194,14 +194,14 @@ impl<'p> ProgramMatchIndex<'p> {
 /// order, and within one function the canonical spelling of an attribute first: the DSL binds an
 /// output attribute to the first.
 ///
-/// Lua's metatable classes are reported as [`FunKey::Parent`]; a [`VirtualMethodTable::Unknown`]
+/// Lua's metatable classes are reported as [`FunKey::Parent`]; a [`Dispatch::Unknown`]
 /// table publishes nothing.
 pub(crate) fn for_each_spelling<'p>(
     vmt: &'p VirtualMethodTable,
     mut f: impl FnMut(&'p str, FunKey, &'p str),
 ) {
-    match vmt {
-        VirtualMethodTable::Java { methods, .. } => {
+    match &vmt.dispatch {
+        Dispatch::Java { methods, .. } => {
             // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`, is the qualified id:
             // descriptor-bearing and stable, so keying on it is what makes exact
             // fully-qualified matching possible on jvm/dex.
@@ -213,7 +213,7 @@ pub(crate) fn for_each_spelling<'p>(
                 f(fid, FunKey::QualifiedId, fid);
             }
         }
-        VirtualMethodTable::Cil { methods, .. } => {
+        Dispatch::Cil { methods, .. } => {
             // The Java arm, over .NET spellings: `[Asm]Ns.Type`, `Parse`,
             // `(System.String)->System.Int32`, and the method id
             // `[Asm]Ns.Type::Parse(System.String)->System.Int32`. An override alias row makes a
@@ -227,7 +227,7 @@ pub(crate) fn for_each_spelling<'p>(
                 f(fid, FunKey::QualifiedId, fid);
             }
         }
-        VirtualMethodTable::Native { methods } => {
+        Dispatch::Native { methods } => {
             // Native frontends (pcode, clang) carry, per function, a simple (un-decorated) name
             // and a best-effort type signature alongside the fully-qualified IR name. The simple
             // name comes first, so a pattern like `^system$` resolves even when the IR name is
@@ -245,7 +245,7 @@ pub(crate) fn for_each_spelling<'p>(
                 f(fq, FunKey::QualifiedId, fq);
             }
         }
-        VirtualMethodTable::Lua {
+        Dispatch::Lua {
             methods,
             functions,
             externals,
@@ -287,6 +287,6 @@ pub(crate) fn for_each_spelling<'p>(
                 f(fq.as_ref(), FunKey::Parent, cls.as_ref());
             }
         }
-        VirtualMethodTable::Unknown => {}
+        Dispatch::Unknown => {}
     }
 }

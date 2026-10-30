@@ -19,9 +19,9 @@ use ctadl_ascent::models::{
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::Symbol;
 use ctadl_ir::mir::call::{
-    CilClass, CilMethod, CilSignature, CilSimpleName, JavaClass, JavaMethod, JavaSignature,
-    JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-    VirtualMethodTable,
+    CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
+    JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature,
+    NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -159,13 +159,13 @@ fn java_program() -> ProgramInfo {
         ),
     ];
     program_with(
-        VirtualMethodTable::Java {
+        VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy: Default::default(),
             interfaces: Default::default(),
             abstract_methods: Default::default(),
             natives: Default::default(),
-        },
+        }),
         &[
             JAVA_PROBE,
             "Lcom/example/C;->strcpy(I)V",
@@ -189,7 +189,7 @@ fn native_program() -> ProgramInfo {
         })
         .collect();
     program(
-        VirtualMethodTable::Native { methods },
+        VirtualMethodTable::new(Dispatch::Native { methods }),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE, NATIVE_UNWINDER],
     )
 }
@@ -200,12 +200,12 @@ fn lua_program() -> ProgramInfo {
         .map(|n| (Symbol::from(n), Symbol::from(n)))
         .collect();
     program(
-        VirtualMethodTable::Lua {
+        VirtualMethodTable::new(Dispatch::Lua {
             methods: Vec::new(),
             functions,
             externals: Vec::new(),
             hierarchy: Default::default(),
-        },
+        }),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE],
     )
 }
@@ -262,20 +262,20 @@ fn cil_program() -> ProgramInfo {
     ];
     let names: Vec<String> = methods.iter().map(|m| m.3.to_string()).collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    let vmt = VirtualMethodTable::Cil {
+    let vmt = VirtualMethodTable::new(Dispatch::Cil {
         methods: methods.clone(),
         hierarchy: Default::default(),
         interfaces: Default::default(),
         abstract_methods: Default::default(),
         pinvokes: Default::default(),
-    };
+    });
     program(vmt, &names)
 }
 
 /// Flowy: no method table at all.
 fn unknown_program() -> ProgramInfo {
     program(
-        VirtualMethodTable::Unknown,
+        VirtualMethodTable::default(),
         &[NATIVE_PROBE, LUA_PROBE, JAVA_PROBE],
     )
 }

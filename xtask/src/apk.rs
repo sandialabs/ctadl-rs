@@ -20,14 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use ctadl_import::notifications::{
-    self, Notifications, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE,
+    self, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE, Notifications,
 };
 use serde_json::Value;
 
 use crate::exec;
-use crate::regression::{ctadl_bin, Outcome};
+use crate::regression::{Outcome, ctadl_bin};
 
 /// The import name every check shares. One import, read by all of them.
 const IMPORT: &str = "app";
@@ -79,7 +79,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "10";
+const IMPORT_FORMAT_VERSION: &str = "11";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -1065,7 +1065,7 @@ mod tests {
     /// and fails without the file, without the notification, or with a not-split one.
     #[test]
     fn merged_classes_are_read_from_notifications() {
-        use ctadl_import::notifications::{Level, DEFAULT_MESSAGE};
+        use ctadl_import::notifications::{DEFAULT_MESSAGE, Level};
         use std::collections::BTreeMap;
 
         let dir = std::env::temp_dir().join(format!("xtask_merged_{}", std::process::id()));

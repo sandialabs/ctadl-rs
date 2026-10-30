@@ -128,6 +128,7 @@ use thiserror::Error;
 
 use crate::parse::{Ap, LineIndex, Pos};
 use ctadl_ir::index::idx::Idx;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::mir::visit::MutVisitor;
 use ctadl_ir::mir::*;
 use ctadl_ir::ssa;
@@ -387,8 +388,8 @@ pub fn compile_program_contents(
 
     ctx.program.verify()?;
     let program_info = ProgramInfo {
+        vmt: VirtualMethodTable::named_by_ir(&ctx.program),
         program: ctx.program,
-        vmt: Default::default(),
         source_info: ctx.source_info_builder.finish(),
     };
     result.program_info = program_info;

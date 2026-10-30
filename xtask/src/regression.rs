@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_import::notifications::{
-    self, Notifications, NOTIFICATIONS_FILE, STACK_SLOTS_PROMOTED_FULLY,
+    self, NOTIFICATIONS_FILE, Notifications, STACK_SLOTS_PROMOTED_FULLY,
 };
 
 use crate::android_icc;
@@ -69,7 +69,7 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // pass for the frontend those defaults are written for. The chain it asserts
     // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.ctadl`,
     // which `models::default_dsl_models` hands only to a
-    // `VirtualMethodTable::Native` program -- i.e. the pcode import. A `-l c`
+    // `Dispatch::Native` program -- i.e. the pcode import. A `-l c`
     // import has no method table (`Unknown`) and so gets no default file at all,
     // leaving every step between source and sink an unmodeled external. The
     // Pcode twin (`defaultmodels`, unprefixed) is what enforces those defaults.
@@ -552,17 +552,19 @@ fn run_tasks(
 
     std::thread::scope(|scope| {
         for worker in &workers {
-            scope.spawn(move || loop {
-                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                    break;
-                };
-                let task = &tasks[index];
-                let start = Instant::now();
-                let outcomes = task.run(worker, opts);
-                let elapsed = start.elapsed();
-                // Held only to push a finished result; no test work happens
-                // under the lock.
-                results.lock().unwrap().push((index, outcomes, elapsed));
+            scope.spawn(move || {
+                loop {
+                    let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let task = &tasks[index];
+                    let start = Instant::now();
+                    let outcomes = task.run(worker, opts);
+                    let elapsed = start.elapsed();
+                    // Held only to push a finished result; no test work happens
+                    // under the lock.
+                    results.lock().unwrap().push((index, outcomes, elapsed));
+                }
             });
         }
     });
@@ -2719,9 +2721,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
+    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
     use ctadl_import::notifications::{
-        Level, Notifications, DEFAULT_MESSAGE, MERGED_CLASSES_NOT_SPLIT, STACK_SLOTS_PROMOTED_FULLY,
+        DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
     };
     use std::collections::BTreeMap;
 

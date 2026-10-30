@@ -232,7 +232,8 @@ fn test_endpoint_stats_merge_across_imports() {
 /// A native (binary-frontend) program with one 2-parameter function per name.
 fn native_program(names: &[&str]) -> ProgramInfo {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
+        VirtualMethodTable,
     };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -253,7 +254,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: names
                 .iter()
                 .map(|name| {
@@ -265,7 +266,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

@@ -148,7 +148,7 @@ fn test_valid_json_still_works() {
 #[test]
 fn test_callsites_matches_callee_and_caller() {
     use ctadl_ir::mir::call::{
-        CallEdges, CallStyle, NativeFunction, NativeQualifiedName, NativeSignature,
+        CallEdges, CallStyle, Dispatch, NativeFunction, NativeQualifiedName, NativeSignature,
         NativeSimpleName, VirtualMethodTable,
     };
 
@@ -170,9 +170,9 @@ fn test_callsites_matches_callee_and_caller() {
         args: Default::default(),
     })]);
     let program_info = ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: vec![method("get"), method("read_http_data"), method("unrelated")],
-        },
+        }),
         program: Program::new(Functions::new([
             make_function("get", 1, false, &[]),
             caller,
@@ -243,8 +243,8 @@ fn test_callsites_propagation_rejected() {
 // ---------------------------------------------------------------------------
 
 use ctadl_ir::mir::call::{
-    JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
-    NativeSignature, NativeSimpleName, VirtualMethodTable,
+    Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction,
+    NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     AccessPath, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx,
@@ -295,9 +295,9 @@ fn native_program() -> ProgramInfo {
         )
     };
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: vec![methods("a"), methods("b"), methods("c")],
-        },
+        }),
         program: Program::new(Functions::new([
             make_function("a", 1, true, &["secret"]),
             make_function("b", 0, false, &[]),
@@ -311,7 +311,7 @@ fn native_program() -> ProgramInfo {
 /// `Other`, no recorded hierarchy).
 fn java_program() -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods: vec![
                 (
                     JavaClass("Child".into()),
@@ -335,7 +335,7 @@ fn java_program() -> ProgramInfo {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        },
+        }),
         ..Default::default()
     }
 }
@@ -674,13 +674,13 @@ fn native_cpp_program() -> ProgramInfo {
         )
     };
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: vec![
                 method("bar", "Foo::bar", "Foo::bar@00101000"),
                 method("bar", "Baz::bar", "Baz::bar@00102000"),
                 method("main", "main", "main"),
             ],
-        },
+        }),
         program: Program::new(Functions::new([
             make_function("Foo::bar@00101000", 0, false, &[]),
             make_function("Baz::bar@00102000", 0, false, &[]),
@@ -786,13 +786,13 @@ fn qualified_id_matches_every_function_sharing_a_qualified_name() {
         )
     };
     let program = ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: vec![
                 method("<EXTERNAL>::system", "<EXTERNAL>::system@00008d90"),
                 method("<EXTERNAL>::system", "<EXTERNAL>::system@00008da4"),
                 method("<EXTERNAL>::system", "<EXTERNAL>::system@00008db8"),
             ],
-        },
+        }),
         program: Program::new(Functions::new([
             make_function("<EXTERNAL>::system@00008d90", 0, false, &[]),
             make_function("<EXTERNAL>::system@00008da4", 0, false, &[]),

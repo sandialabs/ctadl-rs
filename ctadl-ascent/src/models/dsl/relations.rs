@@ -46,7 +46,7 @@ use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
 use crate::facts::Str;
 use crate::models::dsl::ast::{BodyItem, Program};
 use crate::models::match_index::{ProgramMatchIndex, for_each_spelling};
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::Dispatch;
 
 /// One function, as the DSL sees it.
 #[derive(Clone, Debug)]
@@ -446,10 +446,10 @@ impl ProgramFacts {
         let mut supers_of: HashMap<Str, Vec<Str>> = HashMap::new();
         let mut subs_of: HashMap<Str, Vec<Str>> = HashMap::new();
         if needs.subclass {
-            match index.vmt() {
-                VirtualMethodTable::Java { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
-                VirtualMethodTable::Cil { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
-                VirtualMethodTable::Lua { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+            match &index.vmt().dispatch {
+                Dispatch::Java { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+                Dispatch::Cil { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
+                Dispatch::Lua { hierarchy, .. } => push_edges(hierarchy, &mut subclass),
                 _ => {}
             }
             subclass.sort_unstable();

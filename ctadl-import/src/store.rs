@@ -37,6 +37,16 @@ pub fn save_program_info(
     mut program_info: ProgramInfo,
     import: &ArtifactImport,
 ) -> Result<(), Error> {
+    program_info
+        .vmt
+        .check_names(
+            program_info
+                .program
+                .functions
+                .iter()
+                .map(|f| f.name.as_str()),
+        )
+        .map_err(Error::Names)?;
     let path = &import.program_path();
     let obj = std::mem::take(&mut program_info.program);
     for f in obj.functions.iter() {

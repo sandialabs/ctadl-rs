@@ -14,8 +14,8 @@ use ctadl_ascent::models::{
 use ctadl_ir::Idx;
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::call::{
-    CallEdges, CallStyle, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction,
-    NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    CallEdges, CallStyle, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
+    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     AccessPath, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program,
@@ -93,13 +93,13 @@ fn java_program() -> ProgramInfo {
         std::iter::once(JavaClass("Lc/Base;".into())).collect(),
     );
     ProgramInfo {
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        },
+        }),
         program: Program::new(Functions::new(vec![
             function(
                 "Lc/App;->handle()V",
@@ -116,7 +116,7 @@ fn java_program() -> ProgramInfo {
 /// A native program with one 2-parameter function per name.
 fn native_program(names: &[&str]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: names
                 .iter()
                 .map(|name| {
@@ -128,7 +128,7 @@ fn native_program(names: &[&str]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         program: Program::new(Functions::new(
             names
                 .iter()
@@ -781,13 +781,13 @@ fn java_call(cls: &str, name: &str, desc: &str) -> Statement {
 /// has no row in any app's method table, so `fun` cannot name it and `callsig` must.
 fn dispatch_program() -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods: Vec::new(),
             hierarchy: Default::default(),
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        },
+        }),
         program: Program::new(Functions::new(vec![function(
             "Lc/App;->handle()V",
             1,
@@ -1041,13 +1041,13 @@ fn subs_is_the_converse_of_supers_through_a_cycle() {
             .push(JavaClass((*sup).into()));
     }
     let program_info = ProgramInfo {
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods: Vec::new(),
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        },
+        }),
         ..Default::default()
     };
     let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());

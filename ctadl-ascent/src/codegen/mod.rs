@@ -40,7 +40,7 @@ use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::{
-    call::{JavaDispatch, VirtualMethodTable},
+    call::{Dispatch, JavaDispatch, VirtualMethodTable},
     visit::Visitor,
     *,
 };
@@ -375,7 +375,7 @@ pub fn codegen_function(
     };
     finder.visit_function_data(FunctionIdx::new(0), function_data);
 
-    let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
+    let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::default(), instantiated_classes);
     log::trace!("codegen for {}", function_data.name);
     let no_matches = crate::models::ProgramModelMatches::default();
     let mut v = CodegenVisitor::new(
@@ -1582,8 +1582,8 @@ impl ClassHierarchyAnalysis {
     }
 
     fn build(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>, rta: bool) -> Self {
-        match vmt {
-            VirtualMethodTable::Java {
+        match &vmt.dispatch {
+            Dispatch::Java {
                 methods,
                 hierarchy,
                 interfaces,
@@ -1629,7 +1629,7 @@ impl ClassHierarchyAnalysis {
                 }
             }
             // CIL is the Java arm over its own table, override bridges included.
-            VirtualMethodTable::Cil {
+            Dispatch::Cil {
                 methods,
                 hierarchy,
                 interfaces,
@@ -1674,7 +1674,7 @@ impl ClassHierarchyAnalysis {
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
             // empty descriptor sentinel, and each `__index` parent is a `direct_superclass`.
             // The shared `run_cha` then computes the `__index`-chain resolvents unchanged.
-            VirtualMethodTable::Lua {
+            Dispatch::Lua {
                 methods, hierarchy, ..
             } => {
                 let empty_desc = Symbol::from("");

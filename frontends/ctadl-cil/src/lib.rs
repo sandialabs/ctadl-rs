@@ -55,7 +55,9 @@ use std::path::{Path, PathBuf};
 use cil_reader::Module;
 use cil_reader::model::{AssemblyCache, DirectoryLoader, PdbSource, TypeDef};
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::call::{CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable};
+use ctadl_ir::call::{
+    CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames, VirtualMethodTable,
+};
 use ctadl_ir::*;
 use hashbrown::HashMap;
 use smallvec::SmallVec;
@@ -377,11 +379,19 @@ pub struct Stats {
 /// The VMT columns, gathered as `process` runs.
 #[derive(Default)]
 struct Table {
+    names: Vec<FunctionNames>,
     methods: Vec<(String, String, String, String)>,
     hierarchy: HashMap<String, Vec<String>>,
     interfaces: Vec<String>,
     abstract_methods: Vec<(String, String, String)>,
     pinvokes: Vec<(String, String, String, String, String, String)>,
+}
+
+/// What the table says about the function `fid`, whose key is `key`.
+fn names_of(fid: &str, key: &MethodKey) -> FunctionNames {
+    FunctionNames::new(fid, key.simple.as_str())
+        .with_parent(key.cls.as_str())
+        .with_signature(key.desc.as_str())
 }
 
 /// The translation of a set of assemblies into one program (see the crate docs).
@@ -488,6 +498,7 @@ impl Context {
                 log::debug!("cil: {fid} is defined twice; keeping the first");
                 continue;
             }
+            self.table.names.push(names_of(&fid, &mkey));
             let sig = md.signature()?;
             let fidx = self.program.new_function();
             self.defined.insert(fid.clone(), fidx);
@@ -561,6 +572,7 @@ impl Context {
             let arity = bridge.params.len();
             method::shape(&mut self.program[fidx], fid.clone(), bridge.params);
             method::bridge_body(&mut self.program[fidx], &bridge.target, arity);
+            self.table.names.push(names_of(&fid, &bridge.key));
             let MethodKey { cls, simple, desc } = bridge.key;
             self.table.methods.push((cls, simple, desc, fid));
             self.out.stats.bridges += 1;
@@ -573,6 +585,7 @@ impl Context {
             let fidx = self.program.new_function();
             self.defined.insert(fid.clone(), fidx);
             method::shape(&mut self.program[fidx], fid.clone(), params.clone());
+            self.table.names.push(names_of(fid, key));
             self.table.methods.push((
                 key.cls.clone(),
                 key.simple.clone(),
@@ -592,6 +605,10 @@ impl Context {
             let fdat = &mut self.program[fidx];
             let mut params = vec![ParameterType::Shared];
             params.extend(target_params.iter().copied());
+            // A thunk is the frontend's own; no source names it.
+            self.table
+                .names
+                .push(FunctionNames::new(thunk.as_str(), thunk.as_str()));
             method::shape(fdat, thunk, params);
             method::thunk_body(fdat, &target, target_params.len());
         }
@@ -599,6 +616,7 @@ impl Context {
         let program = self.program;
         program.verify()?;
         let Table {
+            names: function_names,
             mut methods,
             hierarchy,
             mut interfaces,
@@ -613,7 +631,7 @@ impl Context {
         abstract_methods.dedup();
         pinvokes.sort();
         pinvokes.dedup();
-        let vmt = VirtualMethodTable::Cil {
+        let dispatch = Dispatch::Cil {
             methods: methods
                 .into_iter()
                 .map(|(c, s, d, f)| {
@@ -664,6 +682,11 @@ impl Context {
                 })
                 .collect(),
         };
+        let mut vmt = VirtualMethodTable {
+            names: function_names,
+            dispatch,
+        };
+        vmt.finish_names();
         let s = &self.out.stats;
         log::info!(
             "cil: {} assembl{}, {} types, {} methods ({} bodies), {} extern stubs, {} override \

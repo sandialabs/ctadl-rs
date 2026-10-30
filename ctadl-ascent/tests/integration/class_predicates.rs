@@ -19,9 +19,9 @@ use ctadl_ascent::models::{
 };
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::call::{
-    CilClass, CilMethod, CilSignature, CilSimpleName, JavaClass, JavaMethod, JavaSignature,
-    JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-    VirtualMethodTable,
+    CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
+    JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName, NativeSignature,
+    NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
@@ -128,13 +128,13 @@ fn java_program_and(extra: Vec<FunctionData>) -> ProgramInfo {
         .collect();
     let names: Vec<String> = JAVA_CLASSES.iter().map(|(c, _)| java_method(c)).collect();
     program(
-        VirtualMethodTable::Java {
+        VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("Lp/I;".into())],
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        },
+        }),
         &names,
         extra,
     )
@@ -193,13 +193,13 @@ fn cil_program() -> ProgramInfo {
         .collect();
     let names: Vec<String> = classes.iter().map(|(c, _)| cil_method(c)).collect();
     program(
-        VirtualMethodTable::Cil {
+        VirtualMethodTable::new(Dispatch::Cil {
             methods,
             hierarchy,
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             pinvokes: Vec::new(),
-        },
+        }),
         &names,
         Vec::new(),
     )
@@ -213,7 +213,7 @@ fn lua_program() -> ProgramInfo {
     let deposit = "m.Account.deposit";
     let helper = "m.helper";
     program(
-        VirtualMethodTable::Lua {
+        VirtualMethodTable::new(Dispatch::Lua {
             methods: vec![(account.into(), "deposit".into(), deposit.into())],
             functions: vec![
                 (Symbol::from("deposit"), Symbol::from(deposit)),
@@ -226,7 +226,7 @@ fn lua_program() -> ProgramInfo {
             )]
             .into_iter()
             .collect(),
-        },
+        }),
         &[deposit.to_string(), helper.to_string()],
         Vec::new(),
     )
@@ -246,7 +246,7 @@ fn native_program() -> ProgramInfo {
         })
         .collect();
     program(
-        VirtualMethodTable::Native { methods },
+        VirtualMethodTable::new(Dispatch::Native { methods }),
         &names.map(String::from),
         Vec::new(),
     )

@@ -23,7 +23,7 @@ fn program(names: &[&str]) -> ProgramInfo {
 /// [`program`], where each `(caller, callee)` pair is a direct call in the caller's body.
 fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
     use ctadl_ir::mir::call::{
-        CallEdges, CallStyle, NativeFunction, NativeQualifiedName, NativeSignature,
+        CallEdges, CallStyle, Dispatch, NativeFunction, NativeQualifiedName, NativeSignature,
         NativeSimpleName, VirtualMethodTable,
     };
     use ctadl_ir::mir::{
@@ -56,7 +56,7 @@ fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: names
                 .iter()
                 .map(|name| {
@@ -68,7 +68,7 @@ fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

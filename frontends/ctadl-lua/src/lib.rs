@@ -83,7 +83,7 @@ use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
 use ctadl_ir::mir::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
@@ -966,7 +966,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lowers the recovered class maps -- and the name of every collected function -- into
-    /// [`VirtualMethodTable::Lua`] on `self.vmt`.
+    /// [`Dispatch::Lua`] on `self.vmt`.
     fn build_vmt(&mut self) {
         let mut methods: Vec<(Symbol, Symbol, Symbol)> = Vec::new();
         for (cls, ms) in &self.class_methods {
@@ -1032,11 +1032,31 @@ impl<'a> Lowerer<'a> {
             .collect();
         externals.sort_unstable();
 
-        self.vmt = VirtualMethodTable::Lua {
-            methods,
-            functions,
-            externals,
-            hierarchy,
+        // A function's class is the table that holds it as a method. A Lua function has exactly
+        // one name, so the fq name is its only other spelling.
+        let parent: HashMap<&Symbol, &Symbol> =
+            methods.iter().map(|(cls, _, fq)| (fq, cls)).collect();
+        let mut names: Vec<FunctionNames> = functions
+            .iter()
+            .chain(externals.iter())
+            .map(|(simple, fq)| {
+                let names = FunctionNames::new(fq.clone(), simple.clone());
+                match parent.get(fq) {
+                    Some(&cls) => names.with_parent(cls.clone()),
+                    None => names,
+                }
+            })
+            .collect();
+        names.sort_by(|a, b| a.fq.cmp(&b.fq));
+
+        self.vmt = VirtualMethodTable {
+            names,
+            dispatch: Dispatch::Lua {
+                methods,
+                functions,
+                externals,
+                hierarchy,
+            },
         };
     }
 
@@ -2618,8 +2638,8 @@ mod tests {
 
     /// The recovered `(class, method)` pairs, sorted, ignoring the function-id column.
     fn method_pairs(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { methods, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { methods, .. } => {
                 let mut v: Vec<(String, String)> = methods
                     .iter()
                     .map(|(cls, m, _fid)| (cls.to_string(), m.to_string()))
@@ -2627,15 +2647,15 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
     /// The VMT's `(simple name, fully-qualified name)` pair for every function, sorted by
     /// qualified name.
     fn vmt_functions(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { functions, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { functions, .. } => {
                 let mut v: Vec<(String, String)> = functions
                     .iter()
                     .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
@@ -2643,25 +2663,25 @@ mod tests {
                 v.sort_by(|a, b| a.1.cmp(&b.1));
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
     /// The VMT's `(simple name, fully-qualified name)` pair for every external.
     fn vmt_externals(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { externals, .. } => externals
+        match &vmt.dispatch {
+            Dispatch::Lua { externals, .. } => externals
                 .iter()
                 .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
                 .collect(),
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
     /// The recovered `subclass -> parent` edges, sorted.
     fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { hierarchy, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { hierarchy, .. } => {
                 let mut v: Vec<(String, String)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
@@ -2672,7 +2692,7 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 

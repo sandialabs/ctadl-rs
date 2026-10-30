@@ -1036,7 +1036,8 @@ fn a_bridge_is_one_rule_whatever_its_disjunctions() {
 /// A native program of one-parameter functions with bodies, one per name.
 fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+        Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
+        VirtualMethodTable,
     };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
@@ -1064,7 +1065,7 @@ fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
         })
         .collect();
     ProgramInfo {
-        vmt: VirtualMethodTable::Native { methods },
+        vmt: VirtualMethodTable::new(Dispatch::Native { methods }),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

@@ -18,7 +18,8 @@ use ctadl_ascent::models::{
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::call::{
-    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    Dispatch, NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
+    VirtualMethodTable,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ use ctadl_ir::mir::call::{
 /// Nothing here has a body, which is the point: a bridge's most important sides are bodyless.
 fn native_program(functions: &[&str]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: functions
                 .iter()
                 .map(|n| {
@@ -41,7 +42,7 @@ fn native_program(functions: &[&str]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         ..Default::default()
     }
 }

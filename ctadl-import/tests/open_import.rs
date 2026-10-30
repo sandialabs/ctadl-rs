@@ -256,14 +256,14 @@ fn only_a_finished_import_of_unchanged_contents_is_up_to_date() {
 #[test]
 fn load_vmt_agrees_with_load_import() {
     use ctadl_ir::mir::Symbol;
-    use ctadl_ir::mir::call::VirtualMethodTable;
+    use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
     store();
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("account.lua");
     std::fs::write(&artifact, b"-- not really lua").unwrap();
     let import = ArtifactImport::try_create("vmt_only", ArtifactLanguage::Lua, &artifact).unwrap();
-    let vmt = VirtualMethodTable::Lua {
+    let vmt = VirtualMethodTable::new(Dispatch::Lua {
         methods: vec![(
             Symbol::from("lua$class$Account"),
             Symbol::from("deposit"),
@@ -272,7 +272,7 @@ fn load_vmt_agrees_with_load_import() {
         functions: vec![(Symbol::from("deposit"), Symbol::from("Account.deposit"))],
         externals: vec![(Symbol::from("format"), Symbol::from("string.format"))],
         hierarchy: Default::default(),
-    };
+    });
     save_program_info(
         ProgramInfo {
             vmt: vmt.clone(),

@@ -24,7 +24,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
-    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    Dispatch, FunctionNames, NativeFunction, NativeQualifiedName, NativeSignature,
+    NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::*;
 
@@ -450,7 +451,15 @@ impl Context {
 
             // Register in the native VMT (after the `func` borrow ends) so the
             // model matcher can resolve simple names to this function's id.
-            if let VirtualMethodTable::Native { methods } = &mut builders.vmt {
+            // `func_data.name` is Ghidra's own spelling, before the leading underscores are
+            // stripped from `simple_name`.
+            builders.vmt.names.push(
+                FunctionNames::new(fq_name.as_str(), simple_name)
+                    .with_signature(signature.as_str())
+                    .with_other(qualified_name.as_str())
+                    .with_other(func_data.name.as_str()),
+            );
+            if let Dispatch::Native { methods } = &mut builders.vmt.dispatch {
                 methods.push((
                     NativeSimpleName(simple_name.into()),
                     NativeSignature(signature.as_str().into()),
@@ -1675,10 +1684,11 @@ impl Context {
         VariableRef::new_local_idx(locals.get_or_intern(&format!("temp_{}", n)))
     }
 
-    fn finish(self, builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
+    fn finish(self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         log::trace!("final program: {}", builders.program);
         // Verify the program
         builders.program.verify()?;
+        builders.vmt.finish_names();
 
         Ok(ProgramInfo {
             program: builders.program,

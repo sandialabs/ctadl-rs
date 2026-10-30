@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
 
 pub mod codegen;
 pub mod dsl;
@@ -199,12 +199,12 @@ pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str,
 
 /// Which entry of [`DEFAULT_DSL_MODELS`] a program with this [`VirtualMethodTable`] selects.
 fn default_dsl_index(vmt: &VirtualMethodTable) -> Option<usize> {
-    match vmt {
-        VirtualMethodTable::Java { .. } => Some(0),
-        VirtualMethodTable::Native { .. } => Some(1),
-        VirtualMethodTable::Lua { .. } => Some(2),
-        VirtualMethodTable::Cil { .. } => Some(3),
-        VirtualMethodTable::Unknown => None,
+    match &vmt.dispatch {
+        Dispatch::Java { .. } => Some(0),
+        Dispatch::Native { .. } => Some(1),
+        Dispatch::Lua { .. } => Some(2),
+        Dispatch::Cil { .. } => Some(3),
+        Dispatch::Unknown => None,
     }
 }
 

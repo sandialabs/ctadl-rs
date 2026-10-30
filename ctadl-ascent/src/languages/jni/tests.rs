@@ -234,7 +234,7 @@ fn port_map_rejects_a_malformed_descriptor() {
 /// frontends spell it, `<class>-><name><descriptor>`.
 fn java_program(natives: &[(&str, &str, &str, bool)]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Java {
+        vmt: VirtualMethodTable::new(Dispatch::Java {
             methods: Vec::new(),
             hierarchy: Default::default(),
             interfaces: Default::default(),
@@ -251,7 +251,7 @@ fn java_program(natives: &[(&str, &str, &str, bool)]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         ..Default::default()
     }
 }
@@ -280,7 +280,7 @@ fn native_program(symbols: &[(&str, &str)]) -> ProgramInfo {
 /// `()` for no recovered prototype.
 fn native_program_with(symbols: &[(&str, &str, &str)]) -> ProgramInfo {
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
+        vmt: VirtualMethodTable::new(Dispatch::Native {
             methods: symbols
                 .iter()
                 .map(|(simple, func, sig)| {
@@ -292,7 +292,7 @@ fn native_program_with(symbols: &[(&str, &str, &str)]) -> ProgramInfo {
                     )
                 })
                 .collect(),
-        },
+        }),
         ..Default::default()
     }
 }

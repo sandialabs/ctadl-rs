@@ -3,7 +3,7 @@
 //!
 //! **Which methods.** Every class a generator names in `parents` is listed by `model-run`
 //! (`frontends/ctadl-cil/tools/ModelRun`), which spells each public method and constructor by
-//! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::Cil`, and
+//! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::new(Dispatch::Cil)`, and
 //! the shipped file is migrated and run against it on the DSL engine, as the `.ctadl` default
 //! `ctadl index` loads was migrated from it, so the methods checked are exactly the overloads the
 //! generators select, and the ports are the ones the engine emits. A class that does not load,
@@ -35,14 +35,15 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ctadl_ascent::models::{
-    DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase, FormalIndexTypeTag, ImportScope,
-    ModelLoadReport, ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
+    CIL_DEFAULT_MODELS, DispatchKeys, DslFile, DslMatcher, DslModelSet, DslPhase,
+    FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort, ProgramMatchIndex,
+    ProgramModelMatches,
 };
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable,
+    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
@@ -553,13 +554,13 @@ fn program(rows: &[Row]) -> ProgramInfo {
     }
     functions.push(caller);
     ProgramInfo {
-        vmt: VirtualMethodTable::Cil {
+        vmt: VirtualMethodTable::new(Dispatch::Cil {
             methods,
             hierarchy: Default::default(),
             interfaces: Default::default(),
             abstract_methods: Default::default(),
             pinvokes: Default::default(),
-        },
+        }),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }

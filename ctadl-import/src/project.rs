@@ -112,7 +112,10 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `10`: The dex frontend splits a class-merged class (R8's merged lambdas) into one class per
 ///   class id, with clones of its switching methods and retagged construction sites. The file
 ///   format is unchanged, but an older import of such an app has the merged methods only.
-pub const IMPORT_FORMAT_VERSION: &str = "10";
+/// - `11`: `VirtualMethodTable` became a struct of the per-function name table every frontend
+///   fills and the per-language `Dispatch`, and the CIL frontend writes override bridges where
+///   it wrote alias rows. A `bitcode` wire-format change to every `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "11";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";

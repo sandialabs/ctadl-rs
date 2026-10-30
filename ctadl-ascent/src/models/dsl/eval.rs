@@ -467,7 +467,10 @@ impl<'a> Machine<'a> {
                 Access::Column(i) => match self.column_key(atom, *i) {
                     Some(f) => self.each(
                         atom,
-                        facts.uses_field_of(f).iter().map(|&r| Row::UsesField(r as usize)),
+                        facts
+                            .uses_field_of(f)
+                            .iter()
+                            .map(|&r| Row::UsesField(r as usize)),
                         k,
                     ),
                     None => true,

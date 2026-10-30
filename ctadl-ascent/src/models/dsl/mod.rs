@@ -750,10 +750,7 @@ impl DslReport {
         let phase = self.files.first().map(|f| f.phase)?;
         let (running, other) = match phase {
             Phase::Index => ("index", "source/sink"),
-            Phase::Query => (
-                "query",
-                "propagation/bridge/access_paths/dispatch/mode",
-            ),
+            Phase::Query => ("query", "propagation/bridge/access_paths/dispatch/mode"),
             Phase::All => return None,
         };
         Some(format!(

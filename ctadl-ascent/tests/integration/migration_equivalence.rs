@@ -40,7 +40,7 @@ use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::Idx;
 use ctadl_ir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{
-    CallEdges, CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, JavaClass,
+    CallEdges, CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass,
     JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
     NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
@@ -298,13 +298,13 @@ fn java_with(extra: Vec<FunctionData>) -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::Java {
+        VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("Lapp/Iface;".into())],
             abstract_methods: Default::default(),
             natives: Default::default(),
-        },
+        }),
         functions.into_iter().chain(extra).collect(),
     )
 }
@@ -379,7 +379,7 @@ fn native_with(extra: Vec<FunctionData>) -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::Native { methods },
+        VirtualMethodTable::new(Dispatch::Native { methods }),
         functions.into_iter().chain(extra).collect(),
     )
 }
@@ -450,12 +450,12 @@ fn lua() -> ProgramInfo {
         function(L_F1, 3, Body::default()),
     ];
     program_info(
-        VirtualMethodTable::Lua {
+        VirtualMethodTable::new(Dispatch::Lua {
             methods,
             functions,
             externals,
             hierarchy,
-        },
+        }),
         bodies,
     )
 }
@@ -514,13 +514,13 @@ fn cil() -> ProgramInfo {
         ),
     ];
     program_info(
-        VirtualMethodTable::Cil {
+        VirtualMethodTable::new(Dispatch::Cil {
             methods,
             hierarchy,
             interfaces: Default::default(),
             abstract_methods: Default::default(),
             pinvokes: Default::default(),
-        },
+        }),
         functions,
     )
 }
@@ -528,7 +528,7 @@ fn cil() -> ProgramInfo {
 /// Flowy / C: no method table at all, so the IR's function names are all there is.
 fn unknown() -> ProgramInfo {
     program_info(
-        VirtualMethodTable::Unknown,
+        VirtualMethodTable::default(),
         vec![
             function("f1", 1, Body::default()),
             function(
