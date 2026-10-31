@@ -384,7 +384,7 @@ macro_rules! dump_relations {
             formal_param, actual_param, call, call_target_assign, const_str_assign,
             update_sans_path, callee_info, callee_resolvents, intent_send, intent_filter, intent_component, paths, path_set,
             summary, config, intent_frame, locals, assign_like, prog_store, alias_of_formal,
-            call_target_assign_like, call_target_key, call_target_key_wild, const_reaches, resolved_call, fnptr_call, intent_pair,
+            call_target_assign_like, call_target_vp, call_target_key, call_target_key_wild, call_target_edge, const_reaches, resolved_call, fnptr_call, intent_pair,
             critical_summary, critical_call, resolvent, establishes_direct, establishes_via,
             call_site, reach_vp, locals_key,
             locals_key_wild, locals_wild, assign_wild, edge_split, edge_split_wild, ext_dst,
