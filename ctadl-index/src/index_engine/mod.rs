@@ -1412,6 +1412,13 @@ fn compute_paths(
     pre.paths
 }
 
+/// The exact splits of a call-target tag's path. The empty path need not be a member of the
+/// path set, but it still has one split: a tag on the whole variable meets an edge out of it.
+pub fn tag_splits<'a>(ps: &'a PathSet, p: &Path) -> &'a [(Path, Path)] {
+    const WHOLE: &[(Path, Path)] = &[(Path::EMPTY, Path::EMPTY)];
+    if p.is_empty() { WHOLE } else { ps.splits(p).exact }
+}
+
 pub fn mime_matches(filter: &str, actual: &str) -> bool {
     if filter == actual || filter == "*/*" {
         return true;
@@ -2035,14 +2042,36 @@ ascent_source! {
         call_target_assign(func_id, vx, tgt), let FlowVertex(v, p, ..) = vx,
         tag_closure_func(func_id);
 
-    call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-        // This results in large reduction on some test cases
-        tag_closure_func(func_id),
-        call_target_assign_like(func_id, v2, p_context, tgt),
-        assign_like(func_id, v1, p1, v2, p2, c),
+    // An edge `v1.p1 = v2.p2` carries a tag on `v2.(p2·rest)` to `v1.(p1·rest)`. As with
+    // `locals_key`, the tag's path is split once into `(p2, rest)`, so the step is a two-way
+    // join that probes the edge exactly by `(f, v2, p2)` from whichever side is new.
+    relation call_target_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    call_target_key(f, v, key, rest, tgt) <--
+        tag_closure_func(f),
+        call_target_assign_like(f, v, p, tgt),
+        path_set(ps),
+        for (key, rest) in tag_splits(ps, p);
+    relation call_target_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    call_target_key_wild(f, v, key, rest, tgt) <--
+        tag_closure_func(f),
+        call_target_assign_like(f, v, p, tgt),
+        path_set(ps),
+        for (key, rest) in ps.splits(p).wild;
+    call_target_assign_like(f, v1.clone(), p_new, tgt) <--
+        call_target_key(f, v2, key, rest, tgt),
+        assign_like(f, v1, p1, v2, key, c),
         if c.is_always(),
         path_set(ps),
-        if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
+        if let Some(p_new) = ps.concat(p1, None, rest);
+    // The wild half: the edge reads `key.[m]`, the tag sits on `key.[n]·tail`.
+    call_target_assign_like(f, v1.clone(), p_new, tgt) <--
+        call_target_key_wild(f, v2, key, rest, tgt),
+        assign_wild(f, v2, key, m, v1, p1, c),
+        if c.is_always(),
+        if let Some(n) = rest.head_offset(),
+        if n != *m,
+        path_set(ps),
+        if let Some(p_new) = ps.concat(p1, Some(n - *m), &rest.tail());
 
     call_target_assign_like(func_id, x.clone(), p.clone(), tgt) <--
         tag_closure_func(func_id),
@@ -2339,7 +2368,7 @@ impl<'a> EngineInput<'a> {
 pub mod rules_prelude {
     pub use super::{
         ACTION_PATH, COMPONENT_PATH, Cond, ContextJoin, Decision, DecisionId, DecisionSet,
-        HybridContext, IndexConfig, TYPE_PATH, decision, mime_matches,
+        HybridContext, IndexConfig, TYPE_PATH, decision, mime_matches, tag_splits,
     };
     pub use crate::call_arg;
     pub use crate::facts::{
