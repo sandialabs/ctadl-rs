@@ -1021,6 +1021,16 @@ offset arithmetic, and a path ends at it: `v.[*].deref.f` is `v.[*]`, one blob f
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 2, 6 and 8): `size`
   would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
+  **Tried on branch `exp/int-arith-merge`** (not merged here; its `problem.md` has the full
+  write-up, under "Ideas tried, still open"):
+  - **The code:** an import-time switch, `CTADL_EXP_INT_ARITH` (`da3ce42e`, `cc609511`).
+  - **What it removes:** cause 8 (libntfs 1.8x to about 0.25x) and `uclited` (3.7x to about
+    0.5x). It drops `malloc`'s `$globals <- p0` block, so the allocator analyzed goes from
+    2.2-11.5x to 0.3-1.8x.
+  - **Not sound:** dropping integer operands at import loses real integer taint (`loopflow`, the
+    `JniWide` cases). A sound version needs a value-only source in the IR, which the index would
+    match only on the empty path.
+  - **`nginx` is not this:** its cost is real pointer steps (cause 6).
 - **Bound a function's `$globals` summary** (causes 2 and 7), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 10): 0-30% of `locals` once cause 1 is
