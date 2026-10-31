@@ -176,7 +176,8 @@ fn codegen_propagations(
                     FlowVariable::formal_index(*src_index),
                     FormalType::Shared,
                 ));
-                if dst_index == src_index {
+                // Only the identity row is a no-op; `arg(0).f <- arg(0).g` is a real flow.
+                if dst_index == src_index && prop.dst.path == prop.src.path {
                     continue;
                 }
                 facts.summary.push((

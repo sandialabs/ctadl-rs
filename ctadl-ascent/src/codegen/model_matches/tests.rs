@@ -448,6 +448,34 @@ fn a_propagation_pushes_formals_for_both_ports_and_skips_dst_eq_src() {
     assert_eq!(formals_of(&facts, f), vec![RETURN_INDEX, 1, 2]);
 }
 
+/// A flow between two paths of one formal (`s->a = s->b`) is not a self-edge.
+#[test]
+fn a_propagation_within_one_formal_keeps_rows_whose_paths_differ() {
+    let (mut facts, mut source_info) = fact_base(&[("f", 0)]);
+    let f = id_of(&source_info, "f");
+    let path = |p| crate::models::spec::parse_declared_access_path(p, 0).unwrap();
+    let mut matches = ProgramModelMatches::default();
+    matches.propagations.push(PropagationMatch {
+        function: facts::Str::from("f"),
+        dst: ModelPort {
+            tag: FormalIndexTypeTag::Index,
+            index: Some(0),
+            path: path(".a"),
+        },
+        src: ModelPort {
+            tag: FormalIndexTypeTag::Index,
+            index: Some(0),
+            path: path(".b"),
+        },
+    });
+    codegen_model_matches(&matches, &mut facts, &mut source_info);
+
+    assert_eq!(
+        facts.summary,
+        vec![(f, FormalIndex::new(0), path(".a"), FormalIndex::new(0), path(".b"))]
+    );
+}
+
 /// Model paths must seed `model_paths` -- via `facts.summary` -- rather than `facts.paths`,
 /// which is the program-path bucket. Folding them into the wrong bucket turns the one-level
 /// model x program concatenation into a program x program self-join.
