@@ -333,7 +333,7 @@ pub trait DumpField<Row> {
     fn dump_field(&self, dump: &mut RelationDump<'_>, name: &str);
 }
 
-fn dump_rows<Row: DumpRow>(rows: &dyn Rows<Row>, dump: &mut RelationDump<'_>, name: &str) {
+pub fn dump_rows<Row: DumpRow>(rows: &dyn Rows<Row>, dump: &mut RelationDump<'_>, name: &str) {
     dump.relation(name, |w| {
         let mut it = rows.stream();
         while let Some(row) = it.next() {

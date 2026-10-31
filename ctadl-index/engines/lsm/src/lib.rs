@@ -20,8 +20,8 @@ use ctadl_index::index_engine::{EngineInput, EngineStores, IndexResult, StoreSiz
 // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
 // provider (Ascent keeps a relation's last declaration). Each is `counting`, or `seeded` if it
 // takes input rows, so none keeps its rows in its field; every one is read back, if at all,
-// from its store. `locals`, `assign_like` and the relations keyed on them are lattices, which
-// Ascent keeps in its own storage.
+// from its store. `locals`, `assign_like`, `edge_split` and `ext_dst` stay in the serial
+// `cond_trie` stores, which keep a condition per row.
 ascent! {
     #![measure_rule_times]
     #![generate_run_timeout]
@@ -63,6 +63,8 @@ impl EngineStores for LsmIndexProg {
         );
     }
 }
+
+ctadl_index::cond_stores!(LsmIndexProg, cond_trie);
 
 /// Runs the index rules to fixpoint on the calling thread.
 pub fn run(input: EngineInput<'_>) -> IndexResult {

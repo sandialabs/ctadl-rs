@@ -81,6 +81,12 @@ static SINGLETONS: LazyLock<ascent::boxcar::Vec<(DecisionSet, DecisionSet)>> =
     LazyLock::new(ascent::boxcar::Vec::new);
 
 impl DecisionId {
+    /// The id with raw value `i`, which need not name an interned decision.
+    #[cfg(test)]
+    pub(crate) fn from_raw(i: u32) -> DecisionId {
+        DecisionId(i)
+    }
+
     /// The id of `d`, minted on first use.
     pub fn of(d: Decision) -> DecisionId {
         {
