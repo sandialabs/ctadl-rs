@@ -2043,35 +2043,44 @@ ascent_source! {
         tag_closure_func(func_id);
 
     // An edge `v1.p1 = v2.p2` carries a tag on `v2.(p2·rest)` to `v1.(p1·rest)`. As with
-    // `locals_key`, the tag's path is split once into `(p2, rest)`, so the step is a two-way
-    // join that probes the edge exactly by `(f, v2, p2)` from whichever side is new.
-    relation call_target_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
-    call_target_key(f, v, key, rest, tgt) <--
+    // `locals`, each tagged path is split once into `(p2, rest)`, the edge is expanded per
+    // tagged path (`call_target_edge`, like `ext_dst`), and the tags then cross it exactly.
+    // Every step is a two-way join, so whichever side is new probes the other by its key.
+    // Splitting paths rather than tags keeps the split relation small: a vertex often holds
+    // several targets.
+    relation call_target_vp(FunctionId, FlowVariable, Path);
+    call_target_vp(f, v, p) <--
         tag_closure_func(f),
-        call_target_assign_like(f, v, p, tgt),
+        call_target_assign_like(f, v, p, _);
+    relation call_target_key(FunctionId, FlowVariable, Path, Path, Path);
+    call_target_key(f, v, key, rest, p) <--
+        call_target_vp(f, v, p),
         path_set(ps),
         for (key, rest) in tag_splits(ps, p);
-    relation call_target_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
-    call_target_key_wild(f, v, key, rest, tgt) <--
-        tag_closure_func(f),
-        call_target_assign_like(f, v, p, tgt),
+    relation call_target_key_wild(FunctionId, FlowVariable, Path, Path, Path);
+    call_target_key_wild(f, v, key, rest, p) <--
+        call_target_vp(f, v, p),
         path_set(ps),
         for (key, rest) in ps.splits(p).wild;
-    call_target_assign_like(f, v1.clone(), p_new, tgt) <--
-        call_target_key(f, v2, key, rest, tgt),
+    relation call_target_edge(FunctionId, FlowVariable, Path, FlowVariable, Path);
+    call_target_edge(f, v1, p13, v2, p23) <--
+        call_target_key(f, v2, key, rest, p23),
         assign_like(f, v1, p1, v2, key, c),
         if c.is_always(),
         path_set(ps),
-        if let Some(p_new) = ps.concat(p1, None, rest);
+        if let Some(p13) = ps.concat(p1, None, rest);
     // The wild half: the edge reads `key.[m]`, the tag sits on `key.[n]·tail`.
-    call_target_assign_like(f, v1.clone(), p_new, tgt) <--
-        call_target_key_wild(f, v2, key, rest, tgt),
+    call_target_edge(f, v1, p13, v2, p23) <--
+        call_target_key_wild(f, v2, key, rest, p23),
         assign_wild(f, v2, key, m, v1, p1, c),
         if c.is_always(),
         if let Some(n) = rest.head_offset(),
         if n != *m,
         path_set(ps),
-        if let Some(p_new) = ps.concat(p1, Some(n - *m), &rest.tail());
+        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+    call_target_assign_like(f, v1.clone(), p13.clone(), tgt) <--
+        call_target_edge(f, v1, p13, v2, p23),
+        call_target_assign_like(f, v2, p23, tgt);
 
     call_target_assign_like(func_id, x.clone(), p.clone(), tgt) <--
         tag_closure_func(func_id),
