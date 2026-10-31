@@ -1,12 +1,12 @@
-//! Decisions and decision sets: what the contextual relations of the index engine are keyed
-//! by.
+//! Decisions, decision sets and conditions: what the facts of the index engine hold under.
 //!
 //! A [`Decision`] names *what* a resolvent decided at a function -- "formal `n.p` holds call
-//! target `t`" -- and never the route it arrived by. A [`DecisionSet`] is the lattice column of
-//! the contextual relations: a contextual row `(f, v, p, a, p4)` holds under every decision in
-//! its set, and a row derived from it inherits the set. Two decisions whose flows meet at a row
-//! share the row instead of duplicating it, so the contextual relations are bounded by the
-//! context-free ones (one row per `(f, v, p, a, p4)`) without dropping any decision.
+//! target `t`" -- and never the route it arrived by. A [`Cond`] is the lattice column of
+//! `locals`, `assign_like` and `summary`: `Always`, or a [`DecisionSet`], under every decision
+//! of which the row holds. A row derived from it inherits the condition. Two decisions whose
+//! flows meet at a row share the row instead of duplicating it, and a row that also holds
+//! unconditionally is one `Always` row, so each relation has one row per fact whatever the
+//! number of decisions reaching a function.
 //!
 //! Decisions are interned to a dense [`DecisionId`] and sets are interned as sorted slices, so
 //! a set is a 4-byte `Copy` handle, equality is a handle compare, and rows that hold the same
@@ -195,7 +195,7 @@ pub fn set_spill(on: bool) {
     SPILL.store(on, Ordering::Relaxed);
 }
 
-/// `true` when `ds` is ⊤ and ⊤ rows spill: the row leaves the contextual closure here.
+/// `true` when `ds` is ⊤ and ⊤ rows spill: the row is `Always` instead ([`Cond::under`]).
 pub fn spills(ds: DecisionSet) -> bool {
     ds.is_top() && SPILL.load(Ordering::Relaxed)
 }
@@ -566,6 +566,117 @@ impl Display for DecisionSet {
             write!(f, "{d}")?;
         }
         write!(f, "}}")
+    }
+}
+
+/// The condition a fact holds under: in every calling context, or only under the decisions in
+/// a set. It is the lattice column of `locals`, `assign_like` and `summary`, so a fact derived
+/// both ways is one row, `Always`, and nothing is copied under a decision that it already holds
+/// without.
+///
+/// `Always` is above every set, ⊤ included: ⊤ is every decision reaching the function, and a
+/// caller that establishes none of them is covered by `Always` alone. Under
+/// `HybridContext::Spill` a set widened to ⊤ is `Always` (see [`Cond::under`]).
+///
+/// Two operations: [`Lattice::join_mut`], for one fact derived several ways (union), and
+/// [`Cond::and`], for a fact composed of two (intersection, with `Always` as its identity).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Cond {
+    Under(DecisionSet),
+    Always,
+}
+
+impl Cond {
+    /// The condition `ds`, or `Always` when `ds` is ⊤ and ⊤ spills.
+    pub fn under(ds: DecisionSet) -> Cond {
+        if spills(ds) {
+            Cond::Always
+        } else {
+            Cond::Under(ds)
+        }
+    }
+
+    pub fn is_always(self) -> bool {
+        self == Cond::Always
+    }
+
+    /// The set a conditional fact holds under; `None` for `Always`.
+    pub fn set(self) -> Option<DecisionSet> {
+        match self {
+            Cond::Under(ds) => Some(ds),
+            Cond::Always => None,
+        }
+    }
+
+    /// The condition of a fact composed of one under `self` and one under `other`: it holds
+    /// where both do. `None` when no decision is in both. A composition that needs two
+    /// decisions at once is a conjunction, which a set cannot hold, so it is not derived.
+    pub fn and(self, other: Cond) -> Option<Cond> {
+        match (self, other) {
+            (Cond::Always, c) | (c, Cond::Always) => Some(c),
+            (Cond::Under(a), Cond::Under(b)) => {
+                let ds = a.intersection(b);
+                (!ds.is_empty()).then(|| Cond::under(ds))
+            }
+        }
+    }
+}
+
+impl PartialOrd for Cond {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering::*;
+        match (self, other) {
+            (Cond::Always, Cond::Always) => Some(Equal),
+            (Cond::Always, _) => Some(Greater),
+            (_, Cond::Always) => Some(Less),
+            (Cond::Under(a), Cond::Under(b)) => a.partial_cmp(b),
+        }
+    }
+}
+
+impl Lattice for Cond {
+    fn join_mut(&mut self, other: Self) -> bool {
+        let joined = match (*self, other) {
+            (Cond::Always, _) | (_, Cond::Always) => Cond::Always,
+            (Cond::Under(a), Cond::Under(b)) => Cond::under(a.union(b)),
+        };
+        let changed = joined != *self;
+        *self = joined;
+        changed
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let met = match (*self, other) {
+            (Cond::Always, c) | (c, Cond::Always) => c,
+            (Cond::Under(a), Cond::Under(b)) => Cond::Under(a.intersection(b)),
+        };
+        let changed = met != *self;
+        *self = met;
+        changed
+    }
+}
+
+impl Default for Cond {
+    fn default() -> Self {
+        Cond::Under(DecisionSet::empty())
+    }
+}
+
+impl fmt::Debug for Cond {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cond::Always => write!(f, "always"),
+            Cond::Under(ds) => write!(f, "{ds:?}"),
+        }
+    }
+}
+
+impl Display for Cond {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cond::Always => write!(f, "always"),
+            Cond::Under(ds) => write!(f, "{ds}"),
+        }
     }
 }
 

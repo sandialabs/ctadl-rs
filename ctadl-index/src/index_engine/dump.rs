@@ -20,7 +20,9 @@ use crate::facts::{
     FormalType, FunctionId, IdMap, InsnId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 use crate::index_engine::path_set::PathSetRef;
-use crate::index_engine::{Decision, DecisionId, DecisionSet, IndexConfig, Rows, unpack_site};
+use crate::index_engine::{
+    Cond, Decision, DecisionId, DecisionSet, IndexConfig, Rows, unpack_site,
+};
 
 /// The environment variable that turns the dump on and names its directory.
 pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
@@ -134,6 +136,15 @@ impl DumpCol for Decision {
 impl DumpCol for DecisionId {
     fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
         self.get().dump_col(cx, out)
+    }
+}
+
+impl DumpCol for Cond {
+    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+        match self {
+            Cond::Always => out.push_str("always"),
+            Cond::Under(ds) => ds.dump_col(cx, out),
+        }
     }
 }
 
@@ -375,12 +386,11 @@ macro_rules! dump_relations {
             summary, config, intent_frame, locals, assign_like, prog_store, alias_of_formal,
             call_target_assign_like, const_reaches, resolved_call, fnptr_call, intent_pair,
             critical_summary, critical_call, resolvent, establishes_direct, establishes_via,
-            context_assign, context_locals, context_summary, reach_vp, locals_key,
+            call_site, reach_vp, locals_key,
             locals_key_wild, locals_wild, assign_wild, edge_split, edge_split_wild, ext_dst,
             ext_fml, critical_arg, critical_reach, context_summary_set, set_member,
             context_summary_top, set_establishes_direct, set_establishes_via, context_summary_d,
-            top_summary_func, ctx_edge_wild, ctx_edge_split, ctx_edge_split_wild, ctx_ext_dst,
-            ctx_ext_fml, tag_closure_func
+            top_summary_func, tag_closure_func
         ])
     };
     (@each $dump:expr, $prog:expr, [$($rel:ident),* $(,)?]) => {
