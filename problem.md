@@ -625,10 +625,11 @@ self-links would be unsound for real self-referencing lists.
 **Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
 
 **Two model-loader issues it exposed** (they affect any model, not just Lua's):
-1. **The loader drops every same-formal row.** `codegen_propagations`
-   (`ctadl-ascent/src/codegen/model_matches.rs:183`) skips every row whose input and output are
-   the same formal (`if dst_index == src_index { continue; }`), whatever the paths. That silently
-   dropped 5 of the 11 rows. It should drop a row only when the paths are equal too.
+1. **FIXED (`b6b2f653`): the loader dropped every same-formal row.** `codegen_propagations`
+   skipped every row whose input and output are the same formal, whatever the paths. That silently
+   dropped 5 of the 11 rows, the `o.[off] <- o` self-links among them. It now drops a row only
+   when the paths are equal too, so a model copied from the summary keeps the self-links and
+   brings the blowup back: a model has to leave them out on purpose.
 2. **A model's paths enlarge the path set of the whole program.** `compute_paths` joins every
    model path with every program path. With `reallymarkobject` skipped, putting its 6 kept rows on
    `hashnum`, a function that is never called, still takes `evLua` from 0.17 to 2.95 GiB
@@ -850,8 +851,7 @@ Before any of these fixes ships:
   - the extra-rows explanation in cause 4's `hnapserver` note;
   - how `realloc` reaches DSP-W115 functions that never call it, through `_cs_*` function pointers
     (cause 1).
-- **The model-loader issues** (cause 5): whether the dropped same-formal rows and the model-path
-  widening affect other benchmarks.
+- **The model-path widening** (cause 5): whether it affects other benchmarks.
 
 The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --mem2reg off`) is not
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
@@ -927,8 +927,7 @@ allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh
   write-back fix.
 - **Skip Lua's `reallymarkobject`** with no propagation (cause 5): measured 21-22x to about 1x,
   and sound for taint.
-- **Fix the model loader:** keep same-formal rows whose paths differ, and stop model paths from
-  widening the program's path set (cause 5's two loader issues).
+- **Stop model paths from widening the program's path set** (cause 5's second loader issue).
 - **Use the models of `memcpy`, `memset`, `memmove` and `str*` instead of their bodies** (cause 3).
   The firmware model already declares `memcpy`'s propagation.
 
