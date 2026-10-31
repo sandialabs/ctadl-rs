@@ -62,7 +62,9 @@ use crate::index_engine::path_set::{PathSet, PathSetRef};
 
 pub mod assign_like_trie;
 pub mod c_assign_like_trie;
+pub mod c_cond_trie;
 pub mod c_locals_trie;
+pub mod cond_trie;
 pub mod decision;
 pub mod dump;
 pub mod hybrid_set;
@@ -503,10 +505,10 @@ impl Parallelism {
     }
 }
 
-/// Where the index engine keeps the relations that dominate its memory: `locals`, `assign_like`
-/// and the three propagation relations that share their stores (`locals_key`, `edge_split`,
-/// `ext_dst`). `Lsm` also moves the next largest few relations onto the LSM; every other
-/// relation is an ordinary in-memory Ascent relation either way.
+/// Where the index engine keeps `locals_key` and the next largest few relations. `locals`,
+/// `assign_like`, `edge_split` and `ext_dst` carry a [`Cond`] and are in the in-memory
+/// [`cond_trie`] stores under both; every other relation is an ordinary in-memory Ascent relation
+/// either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
     /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
@@ -1018,10 +1020,126 @@ pub trait EngineStores {
 
 pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
 
-/// The store-backed relations every storage has. `locals`, `assign_like` and the relations
-/// keyed on them are lattices, which Ascent keeps in its own storage.
+/// The store-backed relations every storage has, other than the [`CondStores`].
 pub struct StoreSizes {
     pub locals_key: usize,
+}
+
+/// What `run_engine!` does with the [`cond_trie`] stores of `locals`, `assign_like`, `edge_split`
+/// and `ext_dst`, serial or concurrent. Implemented by [`cond_stores!`](crate::cond_stores).
+pub trait CondStores {
+    /// Seeds `assign_like` with the program's assignments, `Always`, before the run.
+    fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
+    /// Takes `assign_like`'s `Always` rows out, after the run.
+    fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
+    fn cond_sizes(&self) -> CondSizes;
+    /// The heap of the `locals` store's `Always` rows.
+    fn locals_heap_report(&self) -> locals_trie::HeapReport;
+    /// The heap of the conditional rows, one line.
+    fn cond_heap_report(&self) -> String;
+    fn locals_rows(&self) -> Box<dyn Rows<LocalsCondRow> + '_>;
+    fn assign_like_rows(&self) -> Box<dyn Rows<AssignLikeCondRow> + '_>;
+    /// Writes the four relations, whose fields hold no rows, to `dump`.
+    fn dump_cond_stores(&self, dump: &mut dump::RelationDump<'_>);
+}
+
+/// Row counts of the [`CondStores`]: every row, and the conditional ones.
+pub struct CondSizes {
+    pub locals: (usize, usize),
+    pub assign_like: (usize, usize),
+    pub edge_split: (usize, usize),
+    pub ext_dst: (usize, usize),
+    /// The distinct `(f, v)` an `Always` `locals` row reaches.
+    pub reached_variables: usize,
+}
+
+/// Implements [`CondStores`] for a program whose four conditional relations are in the stores
+/// of `$m`, [`cond_trie`] or [`c_cond_trie`].
+#[macro_export]
+macro_rules! cond_stores {
+    ($prog_ty:ty, $m:ident) => {
+        impl $crate::index_engine::CondStores for $prog_ty {
+            fn seed_assign_like(&mut self, rows: Vec<$crate::index_engine::AssignLikeRow>) {
+                self.__assign_like_ind_common =
+                    $crate::index_engine::assign_like_trie::FromRows::from_rows(rows);
+            }
+            fn take_assign_like(&mut self) -> Vec<$crate::index_engine::AssignLikeRow> {
+                $crate::index_engine::$m::assign::into_always_vec(std::mem::take(
+                    &mut self.__assign_like_ind_common,
+                ))
+            }
+            fn cond_sizes(&self) -> $crate::index_engine::CondSizes {
+                $crate::index_engine::CondSizes {
+                    locals: (
+                        self.__locals_ind_common.len(),
+                        self.__locals_ind_common.conditional_len(),
+                    ),
+                    assign_like: (
+                        self.__assign_like_ind_common.len(),
+                        self.__assign_like_ind_common.conditional_len(),
+                    ),
+                    edge_split: (
+                        self.__edge_split_ind_common.len(),
+                        self.__edge_split_ind_common.conditional_len(),
+                    ),
+                    ext_dst: (
+                        self.__ext_dst_ind_common.len(),
+                        self.__ext_dst_ind_common.conditional_len(),
+                    ),
+                    reached_variables: self.__locals_ind_common.always().num_reached_variables(),
+                }
+            }
+            fn locals_heap_report(&self) -> $crate::index_engine::locals_trie::HeapReport {
+                self.__locals_ind_common.always().heap_report()
+            }
+            fn cond_heap_report(&self) -> String {
+                let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+                format!(
+                    "conditional rows: locals {} ({:.1} MB), assign_like {} ({:.1} MB), \
+                     edge_split {} ({:.1} MB), ext_dst {} ({:.1} MB)",
+                    self.__locals_ind_common.conditional_len(),
+                    mb(self.__locals_ind_common.cond_heap_bytes()),
+                    self.__assign_like_ind_common.conditional_len(),
+                    mb(self.__assign_like_ind_common.cond_heap_bytes()),
+                    self.__edge_split_ind_common.conditional_len(),
+                    mb(self.__edge_split_ind_common.cond_heap_bytes()),
+                    self.__ext_dst_ind_common.conditional_len(),
+                    mb(self.__ext_dst_ind_common.cond_heap_bytes()),
+                )
+            }
+            fn locals_rows(
+                &self,
+            ) -> Box<dyn $crate::index_engine::Rows<$crate::index_engine::LocalsCondRow> + '_> {
+                Box::new($crate::index_engine::$m::locals::AsRows(
+                    &self.__locals_ind_common,
+                ))
+            }
+            fn assign_like_rows(
+                &self,
+            ) -> Box<dyn $crate::index_engine::Rows<$crate::index_engine::AssignLikeCondRow> + '_>
+            {
+                Box::new($crate::index_engine::$m::assign::AsRows(
+                    &self.__assign_like_ind_common,
+                ))
+            }
+            fn dump_cond_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
+                use $crate::index_engine::dump::dump_rows;
+                use $crate::index_engine::$m::{assign, locals};
+                dump_rows(&locals::AsRows(&self.__locals_ind_common), dump, "locals");
+                dump_rows(
+                    &assign::AsRows(&self.__assign_like_ind_common),
+                    dump,
+                    "assign_like",
+                );
+                dump_rows(
+                    &locals::AsRows(&self.__edge_split_ind_common),
+                    dump,
+                    "edge_split",
+                );
+                dump_rows(&assign::AsRows(&self.__ext_dst_ind_common), dump, "ext_dst");
+            }
+        }
+    };
 }
 
 pub struct HybridInliningRelations<'a> {
@@ -1351,8 +1469,13 @@ ascent_source! {
     // lattice join). The rules that do not reason about context (call-target propagation,
     // the critical summaries and resolvents, the aliasing summary, `const_reaches`) and the
     // outputs read only `Always` facts.
-    lattice locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
-    lattice assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
+    //
+    // They are plain relations to Ascent, which refuses a custom store on a `lattice`; the store
+    // keeps one row per fact and joins its conditions (`cond_trie`).
+    #[ds($crate::index_engine::cond_trie::locals)]
+    relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
+    #[ds($crate::index_engine::cond_trie::assign)]
+    relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
     relation prog_store(FunctionId, FlowVariable, Path);
     // A variable that whole-aliases a formal through original program copies, precomputed by
@@ -1454,7 +1577,9 @@ ascent_source! {
         path_set(ps),
         if let Some((key, m)) = ps.split_trailing_offset(p2);
     // The exact and wild keys of an edge's source path.
-    lattice edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path), Cond);
+    // Held in the `locals` store's shape: `(f, v2, key)` probed exactly.
+    #[ds($crate::index_engine::cond_trie::locals)]
+    relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path), Cond);
     edge_split(f, v2, key, rest, (*v1, *p1), *c) <--
         assign_like(f, v1, p1, v2, p2, c),
         path_set(ps),
@@ -1468,7 +1593,9 @@ ascent_source! {
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
     // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)
     // rather than once per `locals` row, so the reachability step below is an exact join.
-    lattice ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
+    // Held in the `assign_like` store's shape: an edge, probed exactly by `(f, v2, p23)`.
+    #[ds($crate::index_engine::cond_trie::assign)]
+    relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
     ext_dst(f, v1, p13, v2, p23, *c) <--
         locals_key(f, v2, key, rest, p23),
         assign_like(f, v1, p1, v2, key, c),
@@ -2267,6 +2394,7 @@ macro_rules! trie_stores {
 #[macro_export]
 macro_rules! run_engine {
     ($prog_ty:ty, $input:expr) => {{
+        use $crate::index_engine::CondStores as _;
         use $crate::index_engine::EngineStores as _;
         let $crate::index_engine::EngineInput {
             facts,
@@ -2334,11 +2462,7 @@ macro_rules! run_engine {
         prog.intent_filter = facts.intent_filter.into_iter().collect();
         prog.intent_component = facts.intent_component.into_iter().collect();
         prog.config = vec![(config,)].into_iter().collect();
-        prog.assign_like = $crate::index_engine::FromLatticeRows::from_lattice_rows(
-            assign_like
-                .into_iter()
-                .map(|(f, v1, p1, v2, p2)| (f, v1, p1, v2, p2, $crate::index_engine::Cond::Always)),
-        );
+        prog.seed_assign_like(assign_like);
         prog.prog_store = prog_store.into_iter().collect();
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
@@ -2383,7 +2507,17 @@ macro_rules! run_engine {
             prog.relation_sizes_summary()
         );
         let sizes = prog.store_sizes();
-        log::debug!("[relsizes] byods-backed: locals_key size: {}", sizes.locals_key);
+        let cond_sizes = prog.cond_sizes();
+        log::debug!(
+            "[relsizes] byods-backed (rows, conditional): assign_like {:?}, locals {:?}, \
+             edge_split {:?}, ext_dst {:?}; locals_key size: {}",
+            cond_sizes.assign_like,
+            cond_sizes.locals,
+            cond_sizes.edge_split,
+            cond_sizes.ext_dst,
+            sizes.locals_key
+        );
+        let locals_heap = prog.locals_heap_report();
         let mut profile = $crate::index_engine::profile::IndexProfile {
             reached_fixpoint,
             timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
@@ -2391,7 +2525,13 @@ macro_rules! run_engine {
             ..$crate::index_engine::profile::IndexProfile::from_summaries(
                 &prog.relation_sizes_summary(),
                 &prog.scc_times_summary(),
-                &[("locals_key", sizes.locals_key)],
+                &[
+                    ("assign_like", cond_sizes.assign_like.0),
+                    ("locals", cond_sizes.locals.0),
+                    ("edge_split", cond_sizes.edge_split.0),
+                    ("locals_key", sizes.locals_key),
+                    ("ext_dst", cond_sizes.ext_dst.0),
+                ],
             )
         };
         log::debug!(
@@ -2406,11 +2546,14 @@ macro_rules! run_engine {
             prog.locals_key_wild.len(),
             prog.locals_wild.len(),
             prog.assign_wild.len(),
-            prog.edge_split.len(),
+            cond_sizes.edge_split.0,
             prog.edge_split_wild.len(),
-            prog.ext_dst.len(),
+            cond_sizes.ext_dst.0,
             prog.ext_fml.len()
         );
+        log::debug!("{locals_heap}");
+        log::debug!("{}", prog.cond_heap_report());
+        profile.memory.locals = Some(locals_heap);
         profile.memory.fixpoint_interned = interned_after
             .into_iter()
             .map(|(name, n)| (name, n - interned_before[name]))
@@ -2426,6 +2569,7 @@ macro_rules! run_engine {
         if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);
+            prog.dump_cond_stores(&mut dump);
             dump.finish(&prog.relation_sizes_summary());
         }
         log::trace!(
@@ -2434,53 +2578,44 @@ macro_rules! run_engine {
                 critical_summary: &prog.critical_summary,
                 resolvent: &prog.resolvent,
                 call_target_assign_like: &prog.call_target_assign_like,
-                assign_like: &prog.assign_like,
-                locals: &prog.locals,
+                assign_like: &*prog.assign_like_rows(),
+                locals: &*prog.locals_rows(),
                 summary: &prog.summary,
                 id_map,
             }
         );
 
-        let assign_like_conditional = $crate::index_engine::conditional_count(&prog.assign_like);
-        let assign_like_out = $crate::index_engine::always_rows(&prog.assign_like);
-        prog.assign_like = Default::default();
+        let assign_like_out = prog.take_assign_like();
         let summary_out = $crate::index_engine::always_rows(&prog.summary);
-        let locals_out = $crate::index_engine::always_rows(&prog.locals);
-        let reached_variables = locals_out
-            .iter()
-            .map(|(f, v, ..)| (*f, *v))
-            .collect::<std::collections::HashSet<_>>()
-            .len();
 
         let stats = $crate::index_engine::IndexStats {
             profile,
             initial_assign,
             final_assign_like: assign_like_out.len(),
             initial_formals,
-            final_locals: locals_out.len(),
+            final_locals: cond_sizes.locals.0 - cond_sizes.locals.1,
             initial_call_target_assign,
             final_call_target_assign_like: prog.call_target_assign_like.len(),
             initial_summary,
             final_summary: summary_out.len(),
             num_functions,
             num_variables,
-            reached_variables,
+            reached_variables: cond_sizes.reached_variables,
             initial_callee_info: prog.callee_info.len(),
             final_resolved_call: prog.resolved_call.len(),
             hybrid_critical_summary: prog.critical_summary.len(),
             hybrid_resolvent: prog.resolvent.len(),
-            hybrid_context_assign: assign_like_conditional,
-            hybrid_context_locals: $crate::index_engine::conditional_count(&prog.locals),
+            hybrid_context_assign: cond_sizes.assign_like.1,
+            hybrid_context_locals: cond_sizes.locals.1,
             hybrid_context_summary: $crate::index_engine::conditional_count(&prog.summary),
         };
         stats.log();
         if stats.hybrid_context_locals > 0 {
             log::debug!(
                 "{}",
-                $crate::index_engine::context_histogram(&prog.locals, &prog.resolvent, id_map).trim_end()
+                $crate::index_engine::context_histogram(&*prog.locals_rows(), &prog.resolvent, id_map).trim_end()
             );
         }
-        drop(locals_out);
 
         $crate::index_engine::IndexResult {
             summary: summary_out,

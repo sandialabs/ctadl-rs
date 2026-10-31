@@ -23,6 +23,7 @@ ascent_par! {
     include_source!(ctadl_index::index_engine::index_rules);
 }
 ctadl_index::trie_stores!(ParIndexProg);
+ctadl_index::cond_stores!(ParIndexProg, c_cond_trie);
 
 /// Runs the index rules to fixpoint with rayon, in whatever pool the caller `install`s it in.
 pub fn run(input: EngineInput<'_>) -> IndexResult {

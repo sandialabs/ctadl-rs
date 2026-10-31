@@ -245,7 +245,7 @@ where
 {
     /// Forward map: `(F,V)` -> the `(P, M, Fp)` leaves for that group. It serves the `none`,
     /// `0_1`, `0_1_2`, and existence views.
-    fwd: Map<(F, V), Group<P, M, Fp>>,
+    pub(crate) fwd: Map<(F, V), Group<P, M, Fp>>,
     len: usize,
 }
 
@@ -336,7 +336,7 @@ where
     }
 
     /// Insert a full tuple. Returns true if it was new to *this* store.
-    fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
+    pub(crate) fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
         let (f, v, p, m, fp) = key;
         let group = self.fwd.entry((f.clone(), v.clone())).or_default();
         if group.insert((p.clone(), m.clone(), fp.clone())) {
@@ -348,7 +348,7 @@ where
     }
 
     /// Merge `from` into `self`, taking the union. The delta->total move uses this.
-    fn absorb(&mut self, from: &mut Self) {
+    pub(crate) fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
         for ((f, v), fromgroup) in from.fwd.drain() {
             match self.fwd.entry((f, v)) {
