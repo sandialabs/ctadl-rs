@@ -29,7 +29,7 @@ In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts e
 the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
 (`8e5c4179`), and for stripped allocators by shape (the `allocator` relation). Cause 3 is fixed for
 binaries that name `memcpy` and `memset`, which are all four that still needed it. Cause 4 is fixed on `unconditional-context`: the rules (`694e3c84`), and the storage, which puts
-the conditional relations back in tries.
+the conditional relations back in tries. Cause 12 is fixed (`eebdc068`, `dda5396b`).
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 was still needed in 4 (now fixed). Cause 4 only multiplies cause 2,
@@ -38,7 +38,7 @@ the conditional relations back in tries.
   binaries and sits inside the hubs of causes 2 and 8. Cause 7 never reaches a fixpoint. Cause 9
   sits on top of cause 6.
 - **10-12: not blowups.** Cause 10 is folded into 1, cause 11 is not a blowup at the default, and
-  cause 12 costs time, not memory.
+  cause 12 cost time, not memory (fixed; its fix costs memory under `above`).
 
 ### 1. FIXED: The frontend gives a global's `unique` and `register` temps fake addresses that unrelated globals share
 
@@ -834,13 +834,52 @@ costs `androidudpbus` 268.5 M `locals`, 699 s and 14.3 GiB, against 42.5 M, 58 s
   and a bound by escape position cannot help. A size for each escaped address, or versioning kept
   slots apart, could.
 
-### 12. `call_target_assign_like` joins on the function alone (time, not memory)
+### 12. FIXED: `call_target_assign_like` joins on the function alone (time, not memory)
 
-The rule joins on the function alone and tests the path prefix afterwards: the pattern the `locals`
-rules replaced with `edge_split`.
+**The cause.** The transitive rule joined `tag_closure_func`, the tags and `assign_like` in clause
+order, so every new edge rescanned all of its function's tags and tested the path prefix
+afterwards. Nearly all the time was the variant driven by new edges (1,083 of 1,091 s under
+`above`). A path-split join alone does not fix it: with three relations Ascent nests in clause
+order, and only a two-way join (`[SIMPLE JOIN]` in the profile) lets the new side probe the other.
 
-- **`androidudpbus`:** 11.6 of 58 s at the default, 446 of 699 s under `above`.
-- **`fir.tube`:** 14.3% of rule time.
+**The fix, in two commits.** Back out both (`git revert dda5396b eebdc068`) to try another
+solution. Local tags mark them: `cause12-before` (`47a467dd`), `cause12-split-tags` and
+`cause12-split-paths`.
+- **`eebdc068`: split each tag's path.** `call_target_key(f, v, key, rest, tgt)` holds every split
+  of every `(path, target)` tag, and the step probes `assign_like` exactly by `(f, v2, key)`, with a
+  wild half for offsets as `ext_dst` has. `tag_splits` gives the empty path its one split, since the
+  path set need not hold it.
+- **`dda5396b`: split each tagged path, not each tag,** as the `locals` rules do:
+  `call_target_vp` (the distinct tagged paths), their splits, `call_target_edge` (an edge expanded
+  per tagged path, like `ext_dst`), and an exact join of the tags across it. This saves memory only
+  where a path holds several targets: paths are 5.3x fewer than tags on `fir.tube`, 1.4x on
+  `androidudpbus`.
+
+**Measured** (`androidudpbus` and `fir.tube` re-imported from facts; the runs are in
+`/Volumes/Shampoo/nb-work/c12/`). Times are loose: some pairs ran side by side, and a build or a
+test loop overlapped the `above` runs.
+
+| | Before | `eebdc068` | `dda5396b` |
+|---|---|---|---|
+| `androidudpbus` default: the rule, of rule time | 20.2 s, 36% | 0.5 s, 1.4% | 0.3 s, 0.8% |
+| `androidudpbus` default: fixpoint, peak | 63 s, 2.21 GiB | 43 s, 2.51 GiB | 45 s, 2.54 GiB |
+| `androidudpbus` `above`: the rule, of rule time | 1,091 s, 83% | 7.1 s, 3.1% | 3.9 s, 1.7% |
+| `androidudpbus` `above`: fixpoint, peak | 1,388 s, 13.32 GiB | 296 s, 17.03 GiB | 289 s, 16.23 GiB |
+| `fir.tube`: the rule, of rule time | 11.6 s, 17% | 0.35 s, 0.7% | 0.24 s, 0.4% |
+| `fir.tube`: fixpoint, peak | 74 s, 3.30 GiB | 59 s, 3.68 GiB | 68 s, 3.36 GiB |
+
+- **Results unchanged.** On `fir.tube` every relation is the same set of rows (a full dump); on
+  `androidudpbus` every relation has the same count under both settings, and the one finding is
+  the same. `cargo test` (`ctadl-index`, `ctadl-ascent`) passes. The regression suite has not been
+  run.
+- **The cost is memory under `above`:** 2.9 GiB (22%) over the old rule. It is the splits of every
+  tagged path (19.2M rows, most of which no edge reads) and a new `(f, v, p)` index on the 9M tags.
+  Storing only the splits an edge reads would mean expanding from the edge to the tagged paths
+  below its source path, which needs a prefix-ordered store for them, like `locals_trie`, not an
+  ordinary rule.
+- **The earlier numbers** (11.6 of 58 s at the default, 446 of 699 s under `above`, 14.3% on
+  `fir.tube`) came from older builds and imports (`nb-work/verify/r/udpbus-*`). The "Before"
+  column re-measures them with this branch's build, from `1d19c0e6`.
 - **Elsewhere:** 0-2.6% of rule time on the apps, and absent from the firmware sweep.
 
 ## Not yet explained
@@ -870,6 +909,8 @@ Before any of these fixes ships:
     identical on 6 binaries.
   - Cause 10's INDIRECT drop: findings are unchanged on 5 binaries, but the regression suite has not
     been run.
+  - Cause 12's join (`eebdc068`, `dda5396b`): relations are unchanged on 2 apps, but the regression
+    suite has not been run.
 - **The offset-collapse factors** (causes 6 and 8: about 50x on `nginx`, 54x on `glxy`, 84x on
   `a2050`'s sorts, 24x on `FUN_002a2af4`, 3x on `inflate`). They are distinct-row counts from
   relation dumps, not engine runs.
