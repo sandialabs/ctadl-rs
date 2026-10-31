@@ -1530,7 +1530,7 @@ fn report_bridged_summaries(
 /// A summary is kept only when its function is in the current project's `IdMap` by name.
 /// `mapped_per_function` counts the summaries kept per function in the current project.
 ///
-/// Only context-free `summary` rows are mapped; `context_summary` and `critical_summary` are
+/// Only unconditional `summary` rows are mapped; conditional ones and `critical_summary` are
 /// not.
 fn load_and_map_summaries(
     summary_project: &AnalysisProject,
