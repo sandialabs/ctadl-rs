@@ -647,8 +647,9 @@ rewrite `n.p·s·r` to `n.p·r`. Applied offline to the base dump's `summary`
   them, and the return value and other vertices that hold the block have no cycle either.
 - **In the engine it would do no better.** The fold restates that `L.[8].deref` may be `L`, so
   `y = top.[16]` still derives `y <- L.[16]`; the offsets pile up the same way.
-- **What would work is cause 6's collapse**, bounded per formal and shape. It shrinks the
-  summary 7-54x here. Only the summary was estimated, not `locals` or peak.
+- **Cause 6's collapse looked like it would work,** bounded per formal and shape: 7-54x on the
+  summary, offline. In the engine it is worse (see "Collapse a loop's offset edges to `[*]` up
+  front").
 
 **Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
 
@@ -934,6 +935,40 @@ allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh
   are 2-6x `locals` on their own.
 - **Cause 7 (`avifview`) was not run.** Its summary is a cross product of parameters into
   globals, and kills do not remove that either.
+
+### Collapse a loop's offset edges to `[*]` up front (causes 5 and 6)
+
+**Worse on every binary measured.** The code is not on the branch; the patch, gated by
+`CTADL_OFFSET_CYCLES=collapse`, is `/Volumes/Shampoo/nb-work/fold/offset-cycles.patch`.
+
+**The patch.** `[*]` is a reserved `Offset` value (`i64::MIN`), so no path grows. It absorbs
+offset arithmetic, and a path ends at it: `v.[*].deref.f` is `v.[*]`, one blob for the region.
+- **Up front:** an SCC pass over each function's whole-variable edges (`x <- y`, `x <- y.[k]`)
+  rewrites every offset edge inside a cycle to `x <- y.[*]`. On `evLua` that is 69 edges in 40
+  functions (stride 12 and -12, a `TValue`, in the stack loops); on `uclited` 217.
+- **Path set:** every split `key` of an admissible path also admits `key.[*]`.
+- **Matching:** only through the existing offset-matching rules (a trailing `[*]` on a row
+  against an edge that reads `key.[n]·tail`). `match_prefix_split`, and the query side, still
+  treat `[*]` as one more concrete offset, so a region row does not match a longer concrete
+  read there. A sound version has to teach every prefix match about `[*]`.
+
+**Measured** (`/Volumes/Shampoo/nb-work/fold/run.sh`):
+
+| Binary | Default | Collapsed |
+|---|---|---|
+| `evLua` | 3.64 GiB, 19.3 M `locals` | killed at 10 GiB |
+| `evLua`, `reallymarkobject` skipped | 0.17 GiB, 0.47 M | 1.15 GiB, 3.85 M |
+| `uclited` | 0.67 GiB, 40.7 M | 2.14 GiB, 114 M |
+
+- **The offsets go, the region mixes more.** On `evLua`, `luaB_setfenv`'s sources fall from
+  365 to 137 and its rows from 5,842 to 3,139: no `L.[k]` is left. But every path reached
+  through a loop pointer gets a `.[*]` twin, and a region row `v.[*]` matches every offset read
+  below `v`, so each read in the loop gets everything stored anywhere in it. Concrete offsets
+  matched only equal offsets.
+- **With cause 5's self-link it smashes `L` itself.** `L->top` aliases `L`, so the stack's
+  region is `L`'s, and every field of `L` reads the whole stack.
+- **The offline estimate was wrong about this.** Replacing offsets by `[*]` in a finished dump
+  (cause 5's table) counts no twins and no extra mixing.
 
 ## Ideas, not tried
 
