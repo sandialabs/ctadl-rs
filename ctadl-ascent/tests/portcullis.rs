@@ -1578,10 +1578,13 @@ fn mode_heads_mark_their_functions() {
     m.check_mode_conflicts().unwrap();
     // A mode keys on a function's full name, which for a native symbol is the decorated one.
     let full = |n: &str| format!("<EXTERNAL>::{n}@00101008");
+    // A `Str` key orders by intern id, which depends on what the other tests interned first.
     fn named<T: Copy>(
         m: &std::collections::BTreeMap<ctadl_ascent::facts::Str, T>,
     ) -> Vec<(String, T)> {
-        m.iter().map(|(f, mode)| (f.to_string(), *mode)).collect()
+        let mut named: Vec<_> = m.iter().map(|(f, mode)| (f.to_string(), *mode)).collect();
+        named.sort_by(|a, b| a.0.cmp(&b.0));
+        named
     }
     assert_eq!(
         named(&m.mem2reg_modes),
@@ -1601,9 +1604,11 @@ fn mode_heads_mark_their_functions() {
     assert_eq!(skipped, [full("unwind")]);
 }
 
-/// The functions `skip_analysis` holds, by simple name.
+/// The functions `skip_analysis` holds, by simple name, sorted: the set orders its `Str`s by
+/// intern id, which depends on what the other tests interned first.
 fn skipped(m: &ProgramModelMatches) -> Vec<String> {
-    m.skip_analysis
+    let mut names: Vec<String> = m
+        .skip_analysis
         .iter()
         .map(|f| {
             let f = f.to_string();
@@ -1611,7 +1616,9 @@ fn skipped(m: &ProgramModelMatches) -> Vec<String> {
                 .trim_end_matches("@00101008")
                 .to_string()
         })
-        .collect()
+        .collect();
+    names.sort();
+    names
 }
 
 /// The highest priority wins whichever rule comes first, and `analyze` undoes a `skip_analysis`
@@ -1884,8 +1891,7 @@ fn the_defaults_skip_an_allocator_found_by_shape() {
     let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     let mut out = ProgramModelMatches::default();
     ctadl_ascent::models::try_load_default_models(&index, &mut out).unwrap();
-    let mut names = skipped(&out);
-    names.sort();
+    let names = skipped(&out);
     assert_eq!(names, ["FUN_free", "FUN_malloc", "FUN_realloc"]);
 
     let file = portcullis::PortcullisFile::from_text(
@@ -1898,7 +1904,6 @@ fn the_defaults_skip_an_allocator_found_by_shape() {
     matcher.observe_import(&index, &mut out);
     matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
     out.check_mode_conflicts().unwrap();
-    let mut names = skipped(&out);
-    names.sort();
+    let names = skipped(&out);
     assert_eq!(names, ["FUN_free", "FUN_realloc"]);
 }
