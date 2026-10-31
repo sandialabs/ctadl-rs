@@ -28,9 +28,8 @@ bipartite block, and every caller inherits it through summary composition. So:
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
 the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
 (`8e5c4179`), and for stripped allocators by shape (the `allocator` relation). Cause 3 is fixed for
-binaries that name `memcpy` and `memset`, which are all four that still needed it. Cause 4's rules
-are fixed on `unconditional-context` (`694e3c84`), but the fix costs memory until its relations
-get their tries back.
+binaries that name `memcpy` and `memset`, which are all four that still needed it. Cause 4 is fixed on `unconditional-context`: the rules (`694e3c84`), and the storage, which puts
+the conditional relations back in tries.
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 was still needed in 4 (now fixed). Cause 4 only multiplies cause 2,
@@ -410,13 +409,12 @@ binaries were already at or under 1.11x.
 - **Findings are identical** on all 15, by rule, message (site numbers masked) and logical
   location, including the three with 4 tainted paths each.
 
-### 4. RULES FIXED: The context relations copy the context-free ones, under a decision on `$globals`
+### 4. FIXED: The context relations copy the context-free ones, under a decision on `$globals`
 
 **Binaries:** the 13 binaries that were "problem 1". All of them link the allocator of cause 2.
 
-**The state.** The rules are fixed on `unconditional-context` (`694e3c84`), with identical findings
-on every binary measured. The storage is not fixed: on a binary with few decisions the peak is
-3.5-7x higher.
+**The state.** Fixed on `unconditional-context`: the rules (`694e3c84`), then the storage. Findings
+are identical on every binary measured, and the peak is at or below the base's on all six.
 
 - **The fix: every fact carries its condition.** `locals`, `assign_like` and `summary` each have a
   `Cond` column, `Always` or a decision set. `context_locals`, `context_assign`, `context_summary`
@@ -439,10 +437,24 @@ on every binary measured. The storage is not fixed: on a binary with few decisio
     `subsume` experiment lost (below).
 - **Checked.** `cargo test` (`ctadl-index`, `ctadl-ascent`) and the regression suite pass: 246
   passed, 0 failed, and the usual 3 xfails.
-- **The storage.** The conditional relations are plain Ascent lattices, and Ascent 0.8 refuses a
-  custom store on a lattice. So `locals`, `assign_like`, `edge_split` and `ext_dst` lose their
-  tries. Ascent also keeps a seeded lattice field as given, so the seed is de-duplicated. (The
-  base's seeded `summary` keeps 99 duplicate model rows on `GpioForCrond`.)
+- **The storage, first.** The rules alone made the conditional relations plain Ascent lattices,
+  and Ascent 0.8 refuses a custom store on a lattice. So `locals`, `assign_like`, `edge_split` and
+  `ext_dst` lost their tries. Ascent also keeps a seeded lattice field as given, so the seed is
+  de-duplicated. (The base's seeded `summary` keeps 99 duplicate model rows on `GpioForCrond`.)
+- **The storage fix: the store keeps the lattice** (`cond_trie`, `c_cond_trie`). The four are
+  declared as plain relations, so they can take a custom store, and the store keeps one row per
+  fact with the join of its conditions:
+  - Ascent adds a row only if `total` and `delta` do not hold it. Here "hold" means the condition
+    already held for the fact covers the new one.
+  - Inserting into `new` joins.
+  - The merge joins `delta` into `total`, and joins each conditional row of `new` with what
+    `total` holds for its fact, dropping the rows `total` covers.
+  - `Always` rows are in the old trie, unchanged and with no condition stored. Conditional rows
+    are in a side map beside it.
+  - No Ascent patch. A test runs the same rules over the store and over an Ascent `lattice`, on
+    random inputs, serial and parallel, and checks they reach the same fixpoint. A missing join
+    in the merge fails it. It does not reach a join that spills to `Always` (`Spill` is a
+    process-global switch).
 
 **Measured on the fix.** Firmware model, 32 GiB cap. The stores are the alloc experiment's,
 re-imported with `CTADL_REUSE_FACTS=1`. "Analyzed" brings the allocator back
@@ -458,6 +470,26 @@ re-imported with `CTADL_REUSE_FACTS=1`. "Analyzed" brings the allocator back
 | DSP-W115 `file`, analyzed | 10,624 → 10,666 | 2.63 → 17.7 GiB | 32 → 77 s | 57, identical |
 | MBM621 `chat`, analyzed | 18 → 18 | 0.39 → 2.42 GiB | 4.4 → 8.8 s | 12, identical |
 
+**Measured on the storage fix**, the same runs ("trie"; `/Volumes/Shampoo/nb-work/uc/trie.sh`,
+`logs/*.trie-*`). Row counts are the rules fix's.
+
+| Binary | Peak, base → rules fix → trie | Time, base → rules fix → trie | Findings |
+|---|---|---|---|
+| DSP-W115 `GpioForCrond`, analyzed | 8.22 → 8.83 → 3.02 GiB | 131 → 93 → 62 s | 44, identical |
+| DAP-2690 `captival_usockc`, analyzed | 1.30 → 2.84 → 0.73 GiB | 13 → 15 → 11 s | 25, identical |
+| DSP-W115 `hnapserver-combo` | 0.51 → 0.87 → 0.27 GiB | 3.9 → 2.8 → 2.8 s | 33, identical |
+| DIR-868L `signalc`, analyzed | 0.65 → 2.27 → 0.65 GiB | 7.6 → 9.8 → 8.3 s | 54, identical |
+| DSP-W115 `file`, analyzed | 2.63 → 17.7 → 2.76 GiB | 32 → 77 → 42 s | 57, identical |
+| MBM621 `chat`, analyzed | 0.39 → 2.42 → 0.42 GiB | 4.4 → 8.8 → 4.9 s | 12, identical |
+
+- **`locals` is back to 14-15 B a row,** in the trie's own estimate. On `file` that is 1.2 GB for
+  88.9 M rows, against 17.7 GiB of lattice.
+- **The conditional rows cost almost nothing:** under 2 MB per relation on all six (`edge_split`
+  1.6 MB on `signalc`, the most).
+- **`file`, `signalc` and `chat` are 0.5-8% over the base on peak, and 10-30% slower.** None of
+  them has copies to drop. `edge_split_wild`, `assign_wild` and `ext_fml` are still Ascent
+  lattices, where the base had plain relations; that they are the gap is not measured.
+
 - **The copies were nearly all of cause 4.** On `GpioForCrond`, conditional `assign_like` falls
   from 2.31 M to 6.2 K and conditional `summary` from 856 K to 6.2 K. On `captival_usockc` every
   conditional row was a copy.
@@ -471,9 +503,8 @@ re-imported with `CTADL_REUSE_FACTS=1`. "Analyzed" brings the allocator back
   unconditional rows: 88.9 M of them make 17.7 GiB on `file`.
 - **Not yet measured on the fix:** `--hybrid-context none` and `noglobals`. Most of the gap they
   closed was the copies.
-- **Next:** a custom store for lattices (patch `ascent_macro`), so these four relations get their
-  tries back with a condition per row. A row could store its condition only when it is not
-  `Always`.
+- **Next:** `edge_split_wild`, `assign_wild` and `ext_fml` could take the same store, or go back
+  to plain relations (they may be the rest of the gap on `file` and `chat`).
 
 **The diagnosis**, from before the fix:
 
@@ -882,8 +913,6 @@ allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh
   with identical findings. A plain subsumption filter is not enough (see cause 4). Mostly
   superseded by the rule fix, which removes the copies under any decision. It still applies: a
   decision on `$globals` separates no callers.
-- **Give a lattice relation a custom store** (cause 4's fix): patch `ascent_macro` to allow
-  `#[ds]` on a `lattice`, and keep the condition in the `locals` and `assign_like` tries.
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 2, 6 and 8): `size`
