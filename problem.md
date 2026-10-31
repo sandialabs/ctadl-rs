@@ -622,6 +622,34 @@ not sound as a heap model. A type-correct model (offset 100 only) costs 0.42 GiB
 of the model-path widening described under "Two model-loader issues". A generic rule against
 self-links would be unsound for real self-referencing lists.
 
+**What the block is: cause 6's offsets, on `L`.** The self-link makes `L->top`, the Lua stack
+pointer, an alias of `L`, so every `top + k` in the interpreter is `L + k`. In
+`luaB_setfenv`'s 5,842 rows, 16 destination paths of `L` each receive the same 364 sources,
+`L.[k]`, `L.[k].deref` and `L.[k].deref.deref` for about 120 offsets `k`. The block also leaves
+`L`: 22,193 of `luaB_coresume`'s 28,035 rows go from `L` into the return value.
+
+**Folding paths at the cycle does not fix it (estimated).** The generic fix tried: where a
+formal flows into a longer path of itself (`n.p·s <- n.p`, positive-weight cycle collapse),
+rewrite `n.p·s·r` to `n.p·r`. Applied offline to the base dump's `summary`
+(`/Volumes/Shampoo/nb-work/fold/scripts/`):
+
+| `summary` rows | `evLua` | `ipsWeb` |
+|---|---|---|
+| base | 2.36 M | 3.26 M |
+| without the self-link (`nop-all-gray`) | 0.06 M | |
+| cycle fold | 1.17 M (2.0x) | 0.72 M (4.6x) |
+| every offset collapsed to `[*]` | 51 K (46x) | 51 K (63x) |
+| a shape with more than 8 offsets on one formal collapsed | 108 K (22x) | 60 K (54x) |
+| ... more than 16 | 338 K (7.0x) | 366 K (8.9x) |
+
+- **The cycles are few:** 19 K self-extending rows in 369 functions, against 2.36 M rows.
+  The 16 destinations fold away, but the 364 sources are offset variants with no cycle on
+  them, and the return value and other vertices that hold the block have no cycle either.
+- **In the engine it would do no better.** The fold restates that `L.[8].deref` may be `L`, so
+  `y = top.[16]` still derives `y <- L.[16]`; the offsets pile up the same way.
+- **What would work is cause 6's collapse**, bounded per formal and shape. It shrinks the
+  summary 7-54x here. Only the summary was estimated, not `locals` or peak.
+
 **Not P6.** This was "wild relations next to `locals`" (P6). `assign_wild` is 0.13-5.6 M here (26-31 M in P6's case), and the wild rules take 0.9-6.4% of rule time.
 
 **Two model-loader issues it exposed** (they affect any model, not just Lua's):
