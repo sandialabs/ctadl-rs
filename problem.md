@@ -28,7 +28,9 @@ bipartite block, and every caller inherits it through summary composition. So:
 In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts every number, and
 the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
 (`8e5c4179`), and for stripped allocators by shape (the `allocator` relation). Cause 3 is fixed for
-binaries that name `memcpy` and `memset`, which are all four that still needed it.
+binaries that name `memcpy` and `memset`, which are all four that still needed it. Cause 4's rules
+are fixed on `unconditional-context` (`694e3c84`), but the fix costs memory until its relations
+get their tries back.
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 was still needed in 4 (now fixed). Cause 4 only multiplies cause 2,
@@ -408,9 +410,72 @@ binaries were already at or under 1.11x.
 - **Findings are identical** on all 15, by rule, message (site numbers masked) and logical
   location, including the three with 4 tainted paths each.
 
-### 4. The context relations copy the context-free ones, under a decision on `$globals`
+### 4. RULES FIXED: The context relations copy the context-free ones, under a decision on `$globals`
 
 **Binaries:** the 13 binaries that were "problem 1". All of them link the allocator of cause 2.
+
+**The state.** The rules are fixed on `unconditional-context` (`694e3c84`), with identical findings
+on every binary measured. The storage is not fixed: on a binary with few decisions the peak is
+3.5-7x higher.
+
+- **The fix: every fact carries its condition.** `locals`, `assign_like` and `summary` each have a
+  `Cond` column, `Always` or a decision set. `context_locals`, `context_assign`, `context_summary`
+  and the `ctx_*` relations are gone. A fact derived both ways is one `Always` row, in any
+  derivation order, so the copies below cannot exist.
+- **One rule set.** Composing two facts intersects their conditions, with `Always` as the
+  identity. That makes 3.3a/3.3b the ordinary propagation rules and 3.4 the ordinary summary rule.
+  Under Spill, ⊤ is `Always` (3.5).
+- **`call_site`** holds the condition under which a site calls its target. It is `Always` for a
+  direct call or a target the caller holds, and the resolving decision for 3.1. Summaries are
+  instantiated under it, and 3.2 composes with it.
+- **Everything else reads only `Always` facts:** the call-target, critical-summary and resolvent
+  rules, the aliasing rule, `const_reaches`, and the outputs.
+- **Two behaviour changes.**
+  - Two conditional facts whose sets share a decision now compose; before, none composed. That
+    adds little: at most 42 `locals` rows, on `file`. When the sets do not share a
+    decision, the composition would need a conjunction, so it is still not derived.
+  - A conditional summary established at a function-pointer site is applied under that site's
+    decision, no longer unconditionally. That accounts for the `assign_like` rows the
+    `subsume` experiment lost (below).
+- **Checked.** `cargo test` (`ctadl-index`, `ctadl-ascent`) and the regression suite pass: 246
+  passed, 0 failed, and the usual 3 xfails.
+- **The storage.** The conditional relations are plain Ascent lattices, and Ascent 0.8 refuses a
+  custom store on a lattice. So `locals`, `assign_like`, `edge_split` and `ext_dst` lose their
+  tries. Ascent also keeps a seeded lattice field as given, so the seed is de-duplicated. (The
+  base's seeded `summary` keeps 99 duplicate model rows on `GpioForCrond`.)
+
+**Measured on the fix.** Firmware model, 32 GiB cap. The stores are the alloc experiment's,
+re-imported with `CTADL_REUSE_FACTS=1`. "Analyzed" brings the allocator back
+(`analyze(F) :- allocator(F, ...)`). `hnapserver-combo` runs at the defaults. Run in
+`/Volumes/Shampoo/nb-work/uc/` (`blow.sh`, `cmp.py`).
+
+| Binary | Conditional `locals`, base → fix | Peak, base → fix | Time, base → fix | Findings |
+|---|---|---|---|---|
+| DSP-W115 `GpioForCrond`, analyzed | 17,009,880 → 12,533 | 8.22 → 8.83 GiB | 131 → 93 s | 44, identical |
+| DAP-2690 `captival_usockc`, analyzed | 2,436,977 → 0 | 1.30 → 2.84 GiB | 13 → 15 s | 25, identical |
+| DSP-W115 `hnapserver-combo` | 1,555,438 → 502,929 | 0.51 → 0.87 GiB | 3.9 → 2.8 s | 33, identical |
+| DIR-868L `signalc`, analyzed | 88,377 → 18,153 | 0.65 → 2.27 GiB | 7.6 → 9.8 s | 54, identical |
+| DSP-W115 `file`, analyzed | 10,624 → 10,666 | 2.63 → 17.7 GiB | 32 → 77 s | 57, identical |
+| MBM621 `chat`, analyzed | 18 → 18 | 0.39 → 2.42 GiB | 4.4 → 8.8 s | 12, identical |
+
+- **The copies were nearly all of cause 4.** On `GpioForCrond`, conditional `assign_like` falls
+  from 2.31 M to 6.2 K and conditional `summary` from 856 K to 6.2 K. On `captival_usockc` every
+  conditional row was a copy.
+- **`hnapserver-combo`'s rows were mostly copies too,** not real decisions. Its conditional
+  `summary` falls from 66 K to 6.9 K.
+- **Unconditional facts fall slightly,** through the function-pointer change: 2,086 `locals` and
+  1,029 `assign_like` on `GpioForCrond`, and 16% of `locals` on `hnapserver-combo`. No finding
+  changes.
+- **The peak is the lattice storage.** About 280 B per `locals` row, against the trie's 12-56 B.
+  On `GpioForCrond` the dropped copies pay for it. Elsewhere the peak rises with the
+  unconditional rows: 88.9 M of them make 17.7 GiB on `file`.
+- **Not yet measured on the fix:** `--hybrid-context none` and `noglobals`. Most of the gap they
+  closed was the copies.
+- **Next:** a custom store for lattices (patch `ascent_macro`), so these four relations get their
+  tries back with a condition per row. A row could store its condition only when it is not
+  `Always`.
+
+**The diagnosis**, from before the fix:
 
 - **Cause 4 multiplies cause 2's block. It is not a residual of its own.** With cause 1 fixed and
   the whole allocator skipped, `--hybrid-context none` changes the peak by under 5% in all 14
@@ -740,7 +805,8 @@ Before any of these fixes ships:
   - a2050's write-back and thunk changes (`CTADL_EXP_NO_OFFSET_WRITEBACK`, `CTADL_EXP_THUNK`):
     neither has been checked.
   - Cause 4's `noglobals`: findings are identical on 15 runs, but the regression suite has not
-    been run.
+    been run. Cause 4's rule fix (`694e3c84`) has passed the regression suite, with findings
+    identical on 6 binaries.
   - Cause 10's INDIRECT drop: findings are unchanged on 5 binaries, but the regression suite has not
     been run.
 - **The offset-collapse factors** (causes 6 and 8: about 50x on `nginx`, 54x on `glxy`, 84x on
@@ -813,7 +879,11 @@ allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh
 ## Ideas, not tried
 
 - **Make no hybrid decision on `$globals`** (cause 4): measured within 3% of `--hybrid-context none`,
-  with identical findings. A plain subsumption filter is not enough (see cause 4).
+  with identical findings. A plain subsumption filter is not enough (see cause 4). Mostly
+  superseded by the rule fix, which removes the copies under any decision. It still applies: a
+  decision on `$globals` separates no callers.
+- **Give a lattice relation a custom store** (cause 4's fix): patch `ascent_macro` to allow
+  `#[ds]` on a `lattice`, and keep the condition in the `locals` and `assign_like` tries.
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
 - **Do not lower integer arithmetic as a merge of its operands** (causes 2, 6 and 8): `size`
