@@ -1,0 +1,159 @@
+// `value(x)` (`Exp::Value`): the destination's value is computed from `x`'s, but nothing
+// reachable through the destination is reachable through `x`. Codegen lowers `t = value(a)` to
+// `t.#value <- a` and `t.#value <- a.#value`, and `#value` is terminal, so the fact rides
+// copies, stores, summaries and call sites as the last segment and never gains a suffix.
+
+// The value of a tainted variable is tainted, and a sink on `t` matches `t.#value`.
+def ValueOfTainted() {
+s:
+  a = source(S);
+  t = value(a);
+  sink(t, S);
+  return;
+}
+
+// Taint on the memory behind `a` is not taint on `a`'s value, and `t.deref` is not `a.deref`.
+def ValueIsNotMemory() {
+s:
+  a.deref = source(S);
+  t = value(a);
+  x = t.deref;
+  errsink(x, S);
+  errsink(t, S);
+  y = a.deref;
+  sink(y, S);
+  return;
+}
+
+// A merge with a full operand keeps that operand's memory: `p + i` with `p` the base.
+def BaseKeepsMemory() {
+s:
+  p.deref = source(S);
+  i = 4;
+  q = p, value(i);
+  x = q.deref;
+  sink(x, S);
+  return;
+}
+
+// An index operand contributes only its value: `table[i]` with `i` tainted loads from
+// `table`'s memory, so the element is clean, while the address itself carries `i`'s value.
+def IndexIsValueOnly() {
+s:
+  i = source(S);
+  addr = table, value(i);
+  x = addr.deref;
+  errsink(x, S);
+  sink(addr, S);
+  return;
+}
+
+// Copies carry `#value`.
+def CopiesCarry() {
+s:
+  a = source(S);
+  t = value(a);
+  u = t;
+  w = u;
+  sink(w, S);
+  return;
+}
+
+// A value of a value is the value: `t.#value <- u.#value` carries what `u` was computed from.
+def ValueOfValue() {
+s:
+  a = source(S);
+  u = value(a);
+  t = value(u);
+  sink(t, S);
+  return;
+}
+
+// Stores carry `#value`: a field sum stored back relates the field to each summand, not the
+// memory under one field to the memory under another.
+def StoresCarry() {
+s:
+  o.x = source(S);
+  a = o.x;
+  b = o.y;
+  sum = value(a), value(b);
+  o.z = sum;
+  z = o.z;
+  sink(z, S);
+  errsink(b, S);
+  return;
+}
+
+// A field sum does not mix the memory behind the fields (libntfs's `a->x + a->y`): under a
+// merge, `o.z` would alias `o.x`'s memory and `w` would be tainted.
+def StoreDoesNotMixFields() {
+s:
+  o.x.deref = source(S);
+  a = o.x;
+  b = o.y;
+  sum = value(a), value(b);
+  o.z = sum;
+  z = o.z;
+  w = z.deref;
+  errsink(w, S);
+  m = a.deref;
+  sink(m, S);
+  return;
+}
+
+// Summaries carry `#value`, and only `#value`.
+def Add(a, b):1
+where summaries [
+  return.#value <- a,
+  return.#value <- b,
+  return.#value <- a.#value,
+  return </- a,
+  return.deref </- a.deref
+]
+{
+s:
+  r = value(a), value(b);
+  return r;
+}
+
+// Call sites carry `#value`: the sum of a tainted number is tainted at the caller.
+def CallSitesCarry() {
+s:
+  x = source(S);
+  y = Add(x, 1);
+  sink(y, S);
+  return;
+}
+
+// A sum of a pointer whose memory is tainted is not a pointer to that memory.
+def CallSitesDoNotAlias() {
+s:
+  p.deref = source(S);
+  q = Add(p, 1);
+  z = q.deref;
+  errsink(z, S);
+  w = p.deref;
+  sink(w, S);
+  return;
+}
+
+// A model that moves the value into memory: `sprintf(buf, "%d", n)` writes `n`'s digits to
+// `buf.deref`, so a tainted `n` taints `buf.deref` through `buf.deref.#value`.
+def Fmt(buf, n)
+where summaries [buf.deref.#value <- n]
+{
+s:
+  t = value(n);
+  buf.deref = t;
+  return;
+}
+
+def ValueReachesMemorySink() {
+s:
+  n = source(S);
+  k = value(n);
+  Fmt(buf, k);
+  d = buf.deref;
+  sink(d, S);
+  return;
+}

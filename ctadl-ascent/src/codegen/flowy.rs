@@ -390,6 +390,18 @@ pub fn check_with_config<P: AsRef<Path>>(
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
+    // `#value` is terminal (`ctadl_ir::mir::VALUE_FIELD`): no admissible path, and so no derived
+    // row, has a segment after it.
+    for (p,) in &index_result.paths {
+        let segments: Vec<_> = p.iter().collect();
+        if let Some(i) = segments.iter().position(|s| s.is_value())
+            && i + 1 != segments.len()
+        {
+            log::warn!("admissible path with a segment after #value: {p}");
+            fail_count += 1;
+        }
+    }
+
     let (ipass, ifail) = index_check_summaries(
         &index_result,
         program.requirements.summary_requires,
