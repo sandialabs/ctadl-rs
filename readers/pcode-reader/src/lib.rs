@@ -265,6 +265,9 @@ impl PcodeFactsReader {
         let vnode_hvar_facts = self.read_vnode_hvar_facts()?;
         log::trace!("pcode: reading hvar class facts");
         let hvar_class_facts = self.read_hvar_class_facts()?;
+        log::trace!("pcode: reading hvar type facts");
+        let hvar_type_facts = self.read_hvar_type_facts()?;
+        let type_kinds = self.read_type_kinds()?;
         log::trace!("pcode: reading register facts");
         let register_facts = self.read_register_facts()?;
 
@@ -279,6 +282,8 @@ impl PcodeFactsReader {
             hvar_representative_facts,
             vnode_hvar_facts,
             hvar_class_facts,
+            hvar_type_facts,
+            type_kinds,
             register_facts,
         })
     }
@@ -1318,6 +1323,41 @@ impl PcodeFactsReader {
         Ok(facts.into_iter().collect())
     }
 
+    /// Read HVAR_TYPE facts, giving the id of the data type Ghidra assigned each high
+    /// variable.
+    ///
+    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
+    pub fn read_hvar_type_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
+        let facts = self
+            .read_csv_facts_optional::<(HighVariable, String)>("HVAR_TYPE.facts")?
+            .unwrap_or_default();
+        Ok(facts.into_iter().collect())
+    }
+
+    /// Read the kind of each exported data type id from the `TYPE_POINTER`,
+    /// `TYPE_INTEGER`, `TYPE_BOOLEAN`, `TYPE_FLOAT` and `TYPE_ENUM` facts. The exporter
+    /// resolves typedefs before classifying, so a typedef id gets its base type's kind.
+    /// Types in none of these files (Ghidra's `undefinedN`, structs, arrays) are absent.
+    pub fn read_type_kinds(&self) -> Result<BTreeMap<String, TypeKind>> {
+        let mut kinds = BTreeMap::new();
+        for (file, kind) in [
+            ("TYPE_INTEGER.facts", TypeKind::Scalar),
+            ("TYPE_BOOLEAN.facts", TypeKind::Scalar),
+            ("TYPE_FLOAT.facts", TypeKind::Scalar),
+            ("TYPE_ENUM.facts", TypeKind::Scalar),
+            // Last, so a type that is somehow both is a pointer.
+            ("TYPE_POINTER.facts", TypeKind::Pointer),
+        ] {
+            for id in self
+                .read_csv_facts_optional::<(String,)>(file)?
+                .unwrap_or_default()
+            {
+                kinds.insert(id.0, kind);
+            }
+        }
+        Ok(kinds)
+    }
+
     /// Helper function to read CSV facts
     fn read_csv_facts<T: serde::de::DeserializeOwned>(&self, filename: &str) -> Result<Vec<T>> {
         log::trace!("read_csv_facts: {filename}");
@@ -1355,6 +1395,15 @@ impl PcodeFactsReader {
     }
 }
 
+/// What Ghidra's data type says a value is, as far as pointer flow cares.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum TypeKind {
+    /// A pointer type.
+    Pointer,
+    /// An integer, boolean, float or enum type: a value that is not an address.
+    Scalar,
+}
+
 #[derive(Debug, Default)]
 pub struct PcodeFacts {
     pub hfunc_facts: BTreeMap<HighFunc, HFuncData>,
@@ -1367,6 +1416,8 @@ pub struct PcodeFacts {
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
     pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
     pub hvar_class_facts: BTreeMap<HighVariable, String>,
+    pub hvar_type_facts: BTreeMap<HighVariable, String>,
+    pub type_kinds: BTreeMap<String, TypeKind>,
     pub register_facts: Vec<RegisterData>,
 }
 
@@ -1390,6 +1441,15 @@ impl PcodeFacts {
         hvars
             .iter()
             .find_map(|hvar| self.hvar_representative_facts.get(hvar))
+    }
+
+    /// The kind of `vnode`'s data type, through its high variable. `None` when the
+    /// varnode has no high variable, or its type is neither a pointer nor a scalar
+    /// (for example Ghidra's `undefined4`).
+    pub fn vnode_type_kind(&self, vnode: &PcodeVarnode) -> Option<TypeKind> {
+        let hvar = self.vnode_hvar_facts.get(vnode)?;
+        let ty = self.hvar_type_facts.get(hvar)?;
+        self.type_kinds.get(ty).copied()
     }
 
     /// Whether `vnode` is storage for a global variable, i.e. whether it is a `ram`
