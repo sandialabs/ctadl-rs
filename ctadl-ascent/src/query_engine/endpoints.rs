@@ -264,7 +264,10 @@ pub fn build_query_endpoints(
                     let mut paths: Vec<&facts::Path> = paths.iter().collect();
                     paths.sort_unstable_by(|a, b| a.content_cmp(b));
                     for p in paths {
-                        if !p.is_extension_of(&ap) {
+                        // A sink on `p` already matches `p.#value` (see `search::value_path`), so
+                        // a `#value` path is not a sink of its own.
+                        if !p.is_extension_of(&ap) || p.iter().last().is_some_and(|s| s.is_value())
+                        {
                             continue;
                         }
                         if *p == ap {
