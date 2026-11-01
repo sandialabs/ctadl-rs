@@ -1416,10 +1416,11 @@ fn compute_paths(
 /// admissible for every admissible `p` and the empty path, and no path has a segment after
 /// `#value`. A program that never mentions `#value` keeps its paths as they are.
 ///
-/// That one property is all the index rules need to treat a value-derived fact as weaker than a
-/// copy: a row `t.#value <- a.q` cannot be extended by a suffix, so a read of `t.deref` never
-/// turns it into `t.deref <- a.q.deref`, and the suffix rules carry `#value` through copies,
-/// stores, summaries and call sites as the last segment of the rest.
+/// With [`PathSet::concat`] absorbing `#value · #value`, that is all the index rules need to
+/// treat a value-derived fact as weaker than a copy: a row `t.#value <- a.q` cannot be extended
+/// by a suffix, so a read of `t.deref` never turns it into `t.deref <- a.q.deref`, and the suffix
+/// rules carry `#value` through copies, stores, summaries and call sites as the last segment of
+/// the rest.
 fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
     let is_value = |s: &PathSegment| s.is_value();
     if !paths.iter().any(|(p,)| p.iter().any(is_value)) {

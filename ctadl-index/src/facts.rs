@@ -1668,6 +1668,15 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
+    // `#value` absorbs itself: what a value is computed from includes what that value's
+    // sources were computed from (see `ctadl_ir::mir::VALUE_FIELD`).
+    if comps.last().is_some_and(PathSegment::is_value)
+        && let Some((head, tail)) = suffix.uncons()
+        && head.is_value()
+        && tail.is_empty()
+    {
+        return *new_prefix;
+    }
     // Junction merge: if `new_prefix`'s last component and `suffix`'s head are both offsets, sum
     // them (matching `from_accesses`) into `suffix`'s head and drop `new_prefix`'s last component.
     // A sum of zero drops the component entirely, as `from_accesses` would.
