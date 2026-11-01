@@ -808,11 +808,23 @@ impl Builder {
 
     fn port_expr(&mut self, raw: RawPortExpr<'_>) -> Option<PortExpr> {
         let base = self.port_base(raw.base);
-        let path = raw
+        let path: Vec<PathSegment> = raw
             .path
             .into_iter()
             .filter_map(|seg| self.path_seg(seg))
             .collect();
+        // `#value` is the analysis's terminal value field (`ctadl_ir::mir::VALUE_FIELD`): nothing
+        // follows it in any admissible path, so a port that names a segment after it matches
+        // nothing.
+        if let Some(i) = path.iter().position(PathSegment::is_value)
+            && i + 1 != path.len()
+        {
+            self.error(
+                raw.span,
+                "`#value` is the reserved value field and must be the port's last segment",
+            );
+            return None;
+        }
         Some(PortExpr {
             anchor: raw.anchor,
             port: Port { base: base?, path },
