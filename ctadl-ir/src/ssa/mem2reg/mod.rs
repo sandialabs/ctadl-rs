@@ -325,7 +325,8 @@ fn slot(ap: &AccessPath) -> i64 {
 /// If `e` is an address on the frame base, its offset.
 fn exp_slot(e: &Exp, st: Variable) -> Option<i64> {
     match e {
-        Exp::Variable(v) if v.variable == st => Some(0),
+        // A value use of the frame base escapes it as a copy does, so `value` changes nothing.
+        Exp::Variable(v) | Exp::Value(v) if v.variable == st => Some(0),
         Exp::AccessPath(ap) if ap.base.variable == st => Some(slot(ap)),
         _ => None,
     }

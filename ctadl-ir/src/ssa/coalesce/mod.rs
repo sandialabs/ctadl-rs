@@ -117,20 +117,20 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         dead.push(p.stmt_pos);
                     } else {
                         for src in sources.iter_mut() {
-                            try_subst_exp(src, &mut pending, &mut dead);
+                            try_subst_exp(src, true, &mut pending, &mut dead);
                         }
                     }
                 }
                 StatementKind::Store { value, .. } => {
-                    try_subst_exp(value, &mut pending, &mut dead);
+                    try_subst_exp(value, false, &mut pending, &mut dead);
                 }
                 StatementKind::Update { value, .. } => {
-                    try_subst_exp(value, &mut pending, &mut dead);
+                    try_subst_exp(value, false, &mut pending, &mut dead);
                 }
                 StatementKind::Load { .. } => {}
                 StatementKind::CallAssign { args, style, .. } => {
                     for a in args.iter_mut() {
-                        try_subst_exp(a, &mut pending, &mut dead);
+                        try_subst_exp(a, false, &mut pending, &mut dead);
                     }
                     if let CallStyle::FuncPtrCall { callee, .. } = style {
                         try_subst_access_path(callee, &mut pending, &mut dead);
@@ -193,7 +193,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             && let TerminatorKind::Return { args } = &mut term.kind
         {
             for a in args.iter_mut() {
-                try_subst_exp(a, &mut pending, &mut dead);
+                try_subst_exp(a, false, &mut pending, &mut dead);
             }
         }
 
@@ -220,10 +220,20 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 /// (field reads are [`StatementKind::Load`]s, which this pass leaves
 /// untouched), so substitution is a plain variable/const copy:
 /// `t = y; use t` becomes `use y`.
-fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: &mut Vec<usize>) {
-    let Exp::Variable(vref) = exp else {
+///
+/// [`Exp::Value`] is valid only as an `Assign` source (`in_assign`), so a `t = value(y)` def
+/// substitutes only there, and a `value(t)` read takes only a variable: `value(t)` with `t = y`
+/// or `t = value(y)` is `value(y)`, while `value` of an address `y.[8]` has no spelling.
+fn try_subst_exp(
+    exp: &mut Exp,
+    in_assign: bool,
+    pending: &mut HashMap<Variable, Pending>,
+    dead: &mut Vec<usize>,
+) {
+    let (Exp::Variable(vref) | Exp::Value(vref)) = &*exp else {
         return;
     };
+    let is_value = matches!(exp, Exp::Value(_));
     if vref.version.is_some() {
         return;
     }
@@ -234,7 +244,12 @@ fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: 
     if p.sources.len() != 1 {
         return;
     }
-    let new_exp = p.sources[0].clone();
+    let new_exp = match (is_value, &p.sources[0]) {
+        (true, Exp::Variable(y) | Exp::Value(y)) => Exp::Value(y.clone()),
+        (true, _) => return,
+        (false, Exp::Value(_)) if !in_assign => return,
+        (false, src) => src.clone(),
+    };
     let p = pending.remove(&vref.variable).expect("checked");
     dead.push(p.stmt_pos);
     *exp = new_exp;
