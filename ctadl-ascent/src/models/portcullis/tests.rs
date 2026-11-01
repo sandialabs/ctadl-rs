@@ -151,6 +151,22 @@ fn an_out_of_range_integer_literal_is_an_error() {
     assert!(errors[2].0 >= text.find("source").unwrap(), "{errors:?}");
 }
 
+/// `#value` is the reserved, terminal value field: a port may end in it, and a segment after it
+/// is an error, since no admissible path has one.
+#[test]
+fn a_segment_after_the_value_field_is_an_error() {
+    check_ok(r#"propagation(F::return.#value <- F::arg(0)) :- fun(F);"#);
+    let errors = match parse::parse_program(
+        r#"propagation(F::return.#value.deref <- F::arg(0)) :- fun(F);"#,
+    ) {
+        Ok(_) => panic!("expected an error"),
+        Err(e) => e,
+    };
+    let messages: Vec<&str> = errors.iter().map(|e| e.message()).collect();
+    // The rejected port then leaves its head atom without one, which is reported after it.
+    assert!(messages[0].contains("#value"), "{messages:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Checking
 // ---------------------------------------------------------------------------
