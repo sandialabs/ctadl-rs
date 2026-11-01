@@ -171,12 +171,13 @@ pub type Symbol = ArcIntern<str>;
 pub const DEREF_FIELD: &str = "deref";
 
 /// Field name under which a variable records what its *value* was computed from, as opposed to
-/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v` and
-/// `t.#value <- v.#value`: `t`'s value depends on `v`'s, but nothing reachable through `t` (such
-/// as `t.deref`) is reachable through `v`.
+/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`: `t`'s value depends on
+/// `v`'s, but nothing reachable through `t` (such as `t.deref`) is reachable through `v`.
 ///
 /// The field is terminal: the analysis admits `p.#value` for every path `p` it admits, and no
-/// path with a segment after `#value`. The `#` keeps it apart from every front end's field names.
+/// path with a segment after `#value`. It also absorbs itself, `p.#value · #value = p.#value`, so
+/// `t.#value <- v` carries what `v`'s own value was computed from. The `#` keeps it apart from
+/// every front end's field names.
 pub const VALUE_FIELD: &str = "#value";
 
 /// A newtype wrapper for u64 representing a numeric offset in field access

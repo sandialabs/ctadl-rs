@@ -1,7 +1,8 @@
 // `value(x)` (`Exp::Value`): the destination's value is computed from `x`'s, but nothing
 // reachable through the destination is reachable through `x`. Codegen lowers `t = value(a)` to
-// `t.#value <- a` and `t.#value <- a.#value`, and `#value` is terminal, so the fact rides
-// copies, stores, summaries and call sites as the last segment and never gains a suffix.
+// `t.#value <- a`. `#value` is terminal, so the fact rides copies, stores, summaries and call
+// sites as the last segment and never gains a suffix, and it absorbs itself, so `a.#value` comes
+// along with `a`.
 
 // The value of a tainted variable is tainted, and a sink on `t` matches `t.#value`.
 def ValueOfTainted() {
@@ -59,7 +60,8 @@ s:
   return;
 }
 
-// A value of a value is the value: `t.#value <- u.#value` carries what `u` was computed from.
+// A value of a value is the value: `t.#value <- u` carries `u.#value`, what `u` was computed
+// from.
 def ValueOfValue() {
 s:
   a = source(S);
@@ -106,7 +108,6 @@ def Add(a, b):1
 where summaries [
   return.#value <- a,
   return.#value <- b,
-  return.#value <- a.#value,
   return </- a,
   return.deref </- a.deref
 ]
