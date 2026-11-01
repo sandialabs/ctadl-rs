@@ -1409,14 +1409,54 @@ fn compute_paths(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
     };
-    pre.paths
+    with_value_paths(pre.paths)
+}
+
+/// Closes `paths` under the terminal [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD): `p·#value` is
+/// admissible for every admissible `p` and the empty path, and no path has a segment after
+/// `#value`. A program that never mentions `#value` keeps its paths as they are.
+///
+/// That one property is all the index rules need to treat a value-derived fact as weaker than a
+/// copy: a row `t.#value <- a.q` cannot be extended by a suffix, so a read of `t.deref` never
+/// turns it into `t.deref <- a.q.deref`, and the suffix rules carry `#value` through copies,
+/// stores, summaries and call sites as the last segment of the rest.
+fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
+    let is_value = |s: &PathSegment| s.is_value();
+    if !paths.iter().any(|(p,)| p.iter().any(is_value)) {
+        return paths;
+    }
+    let mut base: Vec<Path> = vec![Path::empty()];
+    for (p,) in paths {
+        let segments: Vec<PathSegment> = p.iter().cloned().collect();
+        match segments.iter().position(is_value) {
+            None => base.push(p),
+            Some(i) if i + 1 == segments.len() => {
+                base.push(Path::from_accesses(segments[..i].iter().cloned()))
+            }
+            // `#value·rest`: never admissible.
+            Some(_) => {}
+        }
+    }
+    base.sort_unstable();
+    base.dedup();
+    let value = Path::from_accesses([PathSegment::value()]);
+    let mut out: Vec<(Path,)> = Vec::with_capacity(2 * base.len());
+    for p in base {
+        out.push((p,));
+        out.push((p.concat(&value),));
+    }
+    out
 }
 
 /// The exact splits of a call-target tag's path. The empty path need not be a member of the
 /// path set, but it still has one split: a tag on the whole variable meets an edge out of it.
 pub fn tag_splits<'a>(ps: &'a PathSet, p: &Path) -> &'a [(Path, Path)] {
     const WHOLE: &[(Path, Path)] = &[(Path::EMPTY, Path::EMPTY)];
-    if p.is_empty() { WHOLE } else { ps.splits(p).exact }
+    if p.is_empty() {
+        WHOLE
+    } else {
+        ps.splits(p).exact
+    }
 }
 
 pub fn mime_matches(filter: &str, actual: &str) -> bool {
@@ -2713,5 +2753,31 @@ mod tests {
         let with_model = compute_paths(program.clone(), vec![p(".deref")], false);
         let with_flag = compute_paths(program, vec![], true);
         assert_eq!(with_model, with_flag);
+    }
+
+    /// `#value` is terminal: once a program mentions it, every admissible path (and the empty
+    /// path) gains a `#value` extension, and no admissible path has a segment after it, not even
+    /// one the model-path concatenation builds.
+    #[test]
+    fn compute_paths_closes_under_terminal_value() {
+        let p = |s: &str| (Path::parse(s).unwrap(),);
+        let value = (Path::from_accesses([PathSegment::value()]),);
+        let program = vec![(Path::empty(),), p(".f"), value];
+        let paths = compute_paths(program, vec![], true);
+        for want in [".f", ".deref", ".f.deref"] {
+            let (q,) = p(want);
+            let qv = (q.concat(&value.0),);
+            assert!(paths.contains(&qv), "{want}.#value missing: {paths:?}");
+        }
+        assert!(paths.contains(&value));
+        for (q,) in &paths {
+            let segs: Vec<_> = q.iter().collect();
+            if let Some(i) = segs.iter().position(|s| s.is_value()) {
+                assert_eq!(i + 1, segs.len(), "a segment after #value: {q}");
+            }
+        }
+        // A program that never mentions `#value` keeps its paths.
+        let plain = vec![(Path::empty(),), p(".f")];
+        assert_eq!(compute_paths(plain.clone(), vec![], false), plain);
     }
 }
