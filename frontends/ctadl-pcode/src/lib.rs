@@ -165,8 +165,8 @@ struct Context {
     vnode_kinds: BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
     /// How integer arithmetic and comparisons are lowered (`CTADL_EXP_INT_ARITH`).
     int_arith: IntArith,
-    /// Under [`IntArith::Use`] and [`IntArith::Value`], the varnodes used as an address,
-    /// computed by [`address_vnodes`].
+    /// Under [`IntArith::Value`], the varnodes used as a memory address, computed by
+    /// [`address_vnodes`].
     addr_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
     /// Under [`IntArith::Value`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
     /// like a scaled index rather than a base when added to an address.
@@ -305,25 +305,19 @@ impl Context {
             .filter(|vn| pcode_facts.is_global_vnode(vn))
             .cloned()
             .collect();
-        if self.int_arith != IntArith::Merge {
+        if self.int_arith == IntArith::Value {
             self.vnode_kinds = pcode_facts
                 .vnode_facts
                 .keys()
                 .filter_map(|vn| Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?)))
                 .collect();
-        }
-        match self.int_arith {
-            IntArith::Use => self.addr_vnodes = address_vnodes(&pcode_facts, true),
-            IntArith::Value => {
-                self.addr_vnodes = address_vnodes(&pcode_facts, false);
-                self.scaled_vnodes = pcode_facts
-                    .pcode_facts
-                    .values()
-                    .filter(|op| matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT"))
-                    .flat_map(|op| op.outputs.iter().cloned())
-                    .collect();
-            }
-            IntArith::Merge | IntArith::Ptr | IntArith::None => {}
+            self.addr_vnodes = address_vnodes(&pcode_facts);
+            self.scaled_vnodes = pcode_facts
+                .pcode_facts
+                .values()
+                .filter(|op| matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT"))
+                .flat_map(|op| op.outputs.iter().cloned())
+                .collect();
         }
         self.register_facts = pcode_facts.register_facts.clone();
 
@@ -1040,16 +1034,9 @@ impl Context {
         }
 
         let mut stmts = Vec::new();
-        let kept = self.int_arith.kept_operands(
-            &pcode.mnemonic,
-            &pcode.inputs,
-            &self.vnode_kinds,
-            self.addr_vnodes.contains(&pcode.outputs[0]),
-        );
-        // Under `value`, `kept` is every operand, so `flows` lines up with it.
         let flows = self.operand_flows(pcode, vnode_facts, locals);
         let mut inputs: SmallVec<[Exp; 2]> = SmallVec::new();
-        for (i, vn) in kept.into_iter().enumerate() {
+        for (i, vn) in pcode.inputs.iter().enumerate() {
             let exp = self.get_exp(&mut stmts, vn, vnode_facts, locals)?;
             let exp = match (flows.get(i), exp) {
                 (Some(OperandFlow::Value), Exp::Variable(v)) => Exp::value(v),
@@ -1066,9 +1053,6 @@ impl Context {
                 self.binop_sources.count(&exp);
             }
             inputs.push(exp);
-        }
-        if inputs.is_empty() {
-            inputs.push(Exp::Int(0));
         }
 
         let temp = self.create_temp(locals);
@@ -1805,61 +1789,28 @@ impl Context {
     }
 }
 
-/// Experiment: how [`Context::handle_binop`] lowers integer arithmetic and comparisons, from
-/// `CTADL_EXP_INT_ARITH`. The default merges every operand into the result, so the result gets
-/// every path of every operand: an integer added to a pointer becomes a pointer too.
+/// How [`Context::handle_binop`] lowers integer arithmetic and comparisons, from
+/// `CTADL_EXP_INT_ARITH`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum IntArith {
-    /// `merge` (default): every operand flows into the result.
-    Merge,
-    /// `ptr`: comparisons and bool ops get no sources; arithmetic keeps only operands whose
-    /// Ghidra type is a pointer or unknown (`undefinedN`), dropping integer, bool, float and
-    /// enum operands.
-    Ptr,
-    /// `none`: integer arithmetic, comparisons and bool ops get no sources at all.
-    None,
-    /// `use`: like `ptr`, except that arithmetic whose result is used as an address (see
-    /// [`address_vnodes`]) keeps every operand. Ghidra types many pointers as `int`, so the
-    /// type alone drops real address arithmetic such as `param_1 + 4`.
-    Use,
-    /// `value`: keeps every operand, but most supply only their value ([`Exp::Value`]). The
-    /// base of an `INT_ADD` or `INT_SUB` whose result is used as a memory address merges; see
+    /// `value` (default): most operands supply only their value ([`Exp::Value`]), so a sum or
+    /// a comparison is not an alias of the memory behind its operands. The base of an `INT_ADD`
+    /// or `INT_SUB` whose result is used as a memory address merges; see
     /// [`Context::operand_flows`].
     Value,
+    /// `merge`: every operand flows into the result, so the result gets every path of every
+    /// operand and an integer added to a pointer becomes a pointer too. For comparison runs.
+    Merge,
 }
 
 impl IntArith {
     fn from_env() -> Self {
         match std::env::var("CTADL_EXP_INT_ARITH").as_deref() {
-            Ok("ptr") => IntArith::Ptr,
-            Ok("none") => IntArith::None,
-            Ok("use") => IntArith::Use,
-            Ok("value") => IntArith::Value,
-            Ok("merge") | Err(_) => IntArith::Merge,
-            Ok(other) => panic!("CTADL_EXP_INT_ARITH: unknown value {other:?}"),
-        }
-    }
-
-    /// The operands of a `handle_binop` op that flow into its result.
-    fn kept_operands<'a>(
-        self,
-        mnemonic: &str,
-        inputs: &'a [pcode_reader::PcodeVarnode],
-        kinds: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
-        output_is_address: bool,
-    ) -> Vec<&'a pcode_reader::PcodeVarnode> {
-        let compare = is_compare(mnemonic);
-        let arith = is_arith(mnemonic);
-        match self {
-            IntArith::Merge | IntArith::Value => inputs.iter().collect(),
-            _ if !compare && !arith => inputs.iter().collect(),
-            IntArith::None => Vec::new(),
-            IntArith::Ptr | IntArith::Use if compare => Vec::new(),
-            IntArith::Use if output_is_address => inputs.iter().collect(),
-            IntArith::Ptr | IntArith::Use => inputs
-                .iter()
-                .filter(|vn| kinds.get(*vn) != Some(&pcode_reader::TypeKind::Scalar))
-                .collect(),
+            Ok("value") | Err(_) => IntArith::Value,
+            Ok("merge") => IntArith::Merge,
+            Ok(other) => {
+                panic!("CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value or merge")
+            }
         }
     }
 }
@@ -1966,15 +1917,13 @@ impl BinopSources {
     }
 }
 
-/// The varnodes used as an address: a `LOAD` or `STORE` address, a `PTRADD` or `PTRSUB` base, a
-/// call argument or a returned value when `calls_are_uses`, and, backwards to a fixpoint, the
-/// inputs of a copy, cast, phi, `INDIRECT`, `INT_ADD` or `INT_SUB` whose output is one.
+/// The varnodes used as a memory address: a `LOAD` or `STORE` address, a `PTRADD` or `PTRSUB`
+/// base, and, backwards to a fixpoint, the inputs of a copy, cast, phi, `INDIRECT`, `INT_ADD` or
+/// `INT_SUB` whose output is one. A call argument or a returned value is not an address use: a
+/// value-only operand still carries its taint there.
 /// Propagation stops at every other operator, so an index scaled by a multiply or shift is not
 /// an address even when the scaled value is added to one.
-fn address_vnodes(
-    facts: &pcode_reader::PcodeFacts,
-    calls_are_uses: bool,
-) -> BTreeSet<pcode_reader::PcodeVarnode> {
+fn address_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::PcodeVarnode> {
     let mut defs: BTreeMap<&pcode_reader::PcodeVarnode, &pcode_reader::PcodeData> = BTreeMap::new();
     let mut work: Vec<&pcode_reader::PcodeVarnode> = Vec::new();
     for op in facts.pcode_facts.values() {
@@ -1984,9 +1933,6 @@ fn address_vnodes(
         match &**op.mnemonic {
             "LOAD" | "STORE" => work.extend(op.inputs.get(1)),
             "PTRADD" | "PTRSUB" => work.extend(op.inputs.first()),
-            "CALL" | "CALLIND" | "RETURN" if calls_are_uses => {
-                work.extend(op.inputs.iter().skip(1))
-            }
             _ => {}
         }
     }
