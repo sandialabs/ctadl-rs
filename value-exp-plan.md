@@ -1,5 +1,14 @@
 # A value-only source in the IR (`Exp::Value`)
 
+**Status:** steps 1-6 are done, and `value` is the pcode default. Two changes from the design
+below:
+- **One fact per operand.** `#value` absorbs itself (`p.#value · #value = p.#value`), so
+  `t = value(v)` is the single fact `t.#value <- v`. The second fact only gave every row a twin.
+- **Wildcard sinks.** A wildcard sink expands a path `q.#value` to the sink `q`.
+
+Step 5's allocator target holds on three of five binaries. `GpioForCrond` is 2.69x and `file`
+2.08x. `problem.md` has the measurements, under "Value-only integer arithmetic".
+
 The plan for the sound form of "do not lower integer arithmetic as a merge". The experiment is
 on branch `exp/int-arith-merge`: `da3ce42e` and `cc609511`, written up in its `problem.md` under
 "Ideas tried, still open". That experiment showed the win, and showed that dropping operands at

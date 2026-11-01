@@ -29,7 +29,9 @@ In priority order. Causes 2 and 4 explain most of the firmware, cause 1 shifts e
 the rest are one library each. Cause 1 is fixed (`3801214b`). Cause 2 is fixed: by name
 (`8e5c4179`), and for stripped allocators by shape (the `allocator` relation). Cause 3 is fixed for
 binaries that name `memcpy` and `memset`, which are all four that still needed it. Cause 4 is fixed on `unconditional-context`: the rules (`694e3c84`), and the storage, which puts
-the conditional relations back in tries. Cause 12 is fixed (`eebdc068`, `dda5396b`).
+the conditional relations back in tries. Cause 12 is fixed (`eebdc068`, `dda5396b`). Cause 8's
+libntfs case is fixed by value-only integer arithmetic, now the pcode default (see "Value-only
+integer arithmetic").
 
 - **1-4: the firmware.** Cause 1 first, since it shifts every number. Cause 2 is then the largest
   cause in 21 sweep binaries, and cause 3 was still needed in 4 (now fixed). Cause 4 only multiplies cause 2,
@@ -740,9 +742,10 @@ its O(offsets²)-per-argument-pair summary makes every caller mix them too.
     9,560 rows.
   - Not a loop SCC (6% without summary edges), not a +1 offset run: the offsets are field
     offsets, stride 4.
-- **Fix ideas.** Not lowering integer arithmetic as a merge would remove the libntfs case. The
-  offset collapse of cause 6 would shrink `libgdx`'s callee summary. A fix aimed only at the
-  caller's loop would not.
+- **FIXED for libntfs:** value-only integer arithmetic, `ntfsdebug` 1.83x to 0.43x and
+  `ntfslabel` 1.90x to 0.44x, with identical findings (see "Value-only integer arithmetic").
+- **Fix ideas for `libgdx`.** The offset collapse of cause 6 would shrink the callee summary. A fix
+  aimed only at the caller's loop would not.
 
 ### 9. The call-site write-back writes into an argument that is an address, and the wild join multiplies it
 
@@ -915,7 +918,6 @@ Before any of these fixes ships:
   `a2050`'s sorts, 24x on `FUN_002a2af4`, 3x on `inflate`). They are distinct-row counts from
   relation dumps, not engine runs.
 - **Readings not tested by experiment:**
-  - cause 8's libntfs field mechanism;
   - where `memcpy`'s `dst.deref <- src` and `src.deref <- dst.deref` rows come from (cause 3);
   - cause 7's self-recursion loop;
   - the extra-rows explanation in cause 4's `hnapserver` note;
@@ -927,6 +929,74 @@ The old problem 8 (path concatenation slowing `ntfs-3g` under `--frame store --m
 independent. It is the 44x row growth from turning promotion off, which is the stack problem P1
 fixed. There, 2.16 billion concatenation probes, 82% of them misses, at about 70 ns each through
 linked path segments take 150 s of 237 s. One probe per `(path, rest)` would cut it.
+
+## Value-only integer arithmetic (`Exp::Value`): the pcode default
+
+The plan is `value-exp-plan.md`, steps 1-6. Integer arithmetic, comparisons and bool ops no
+longer make the result an alias of the memory behind every operand. `t = a + i` with `a` the
+base of an address is `assign t = a, value(i)`, and `value(v)` lowers to `t.#value <- v`.
+
+**The commits.**
+- `a775f0c4`: `Exp::Value` and the terminal `#value` field in the IR, codegen and the path set.
+- `972476c3`: the query matches `p.#value` at a source or sink on `p`; flowy gets `value(..)`,
+  `tests/tnt/value_flow.tnt`.
+- `304a01d5`: Portcullis rejects a port with a segment after `#value`.
+- `7b5f1779`: the pcode lowering, behind `CTADL_EXP_INT_ARITH=value`.
+- `9b4cb6ee` and `ae828821`: wildcard sinks expand `q.#value` to the sink `q`.
+- `96b26cb9`: five C regression cases.
+- `f2cb01ee`: `#value` absorbs itself, so one fact per operand.
+- `a36eee86`: `value` is the default; `merge` stays for comparison runs; `ptr`, `none` and `use`
+  are gone.
+
+**Measured** with `ae828821`, x budget, firmware model. The merge column was re-run with the same
+binary under `CTADL_EXP_INT_ARITH=merge`, and it matches the old binary row for row. The runs are
+in `/Volumes/Shampoo/nb-work/ia/` (`final-run.sh`; tags `final` and `mergeH`).
+
+| Binary | merge | value | Findings against merge |
+|---|---|---|---|
+| MBM621 `chat`, allocator analyzed | 3.99x | 0.73x | identical |
+| DAP-2690 `captival_usockc`, analyzed | 3.70x | 0.66x | identical |
+| DSP-W115 `GpioForCrond`, analyzed | 11.55x | **2.69x** | identical |
+| DIR-868L `signalc`, analyzed | 2.20x | 0.57x | identical |
+| DSP-W115 `file`, analyzed | 7.60x | **2.08x** | see below |
+| the same five, allocator skipped (default) | 0.36-0.76x | 0.35-0.58x | identical but `file` |
+| `ntfsdebug` | 1.83x | 0.43x | identical |
+| `ntfslabel` | 1.90x | 0.44x | identical |
+| `uclited` | 3.68x | 0.73x | identical |
+| Tenda `nginx` (`fw-nginx`) | 5.53x | 3.08x | identical |
+| `fw-pppd` | 1.10x | 0.52x | 15 sink reports gone |
+| the other five sweep binaries | 0.39-0.71x | 0.35-0.68x | `761c767bf006d3a0`: 2 sink reports gone |
+
+- **The regression suite:** 256 passed and the 3 expected failures, of 259. That is the 246
+  passing before, and the 10 new cases (`val*` under both C frontends). `loopflow` and every
+  `Jni:JniWide*` pass: the integer taint the `ptr` and `none` variants lost is kept.
+- **No tainted path is lost.**
+  - **`fw-pppd` and `761c767bf006d3a0`:** the lost findings are `C0004` sink reports, one per
+    byte offset under `execve`'s argument (`arg(0).deref.[k]`). Only merged index arithmetic
+    minted those paths. The `arg(0).deref` sink and every `C0001` path are unchanged.
+  - **`file` (`execvp`):** 3 flows are reported at a different step (`@00428ec8`, `@00428dc0`
+    instead of `@00428ef4`, `@00428d30`, `@00428e0c`). The flows that are gone pass through
+    `strlen`'s return at `.deref`, that is, a string's length used as an alias of its memory.
+- **The allocator analyzed is not within 1.5x on two of five.**
+  - **The cost is the `#value` rows.** Rows that do not end in `#value` are fewer than under
+    `use` on both binaries.
+  - **`#value` stored into memory repeats on every alias.** In `file`, `regex_compile` holds 8,852
+    distinct (path, origin) pairs over 3,640 SSA pointers into the pattern buffer. That is 746x.
+  - **`use` itself is 1.75x on `GpioForCrond`,** from the free-list aliasing (open questions in
+    the plan). So no `#value` change alone gets that binary to 1.5x.
+  - **Leaving address-shaped origins out of `#value`** (the plan's `#addr`, step 7) is estimated
+    from the dump at a further -0.87 M `locals` on `GpioForCrond` and -3.36 M on `file`.
+  - The diagnosis scripts and dumps are in `/Volumes/Shampoo/nb-work/ia/diag/`.
+- **`#value` absorbing itself (`f2cb01ee`) cut 31-41% of `locals` here.** The second fact,
+  `t.#value <- v.#value`, gave every row a twin.
+- **`nginx` is cause 6**, as expected. It is 3.08x, down from 5.53x.
+- **Open:**
+  - **`sprintf("%d", n)`.** The shipped printf-family models move `arg(_).deref`, not
+    `arg(_)`, so a tainted number is never carried into the buffer, under merge or value.
+    `valfmt` uses a formatter with a body instead.
+  - **`p + 4` passed to a call.** A non-dereferenced `p + 4` lowers to `value(p)` when `p` is
+    int-typed, so a callee writing through it loses the aliasing. No finding changed, but none
+    of the cases covers it.
 
 ## Ideas tried and dropped
 
@@ -1019,18 +1089,10 @@ offset arithmetic, and a path ends at it: `v.[*].deref.f` is `v.[*]`, one blob f
   decision on `$globals` separates no callers.
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
-- **Do not lower integer arithmetic as a merge of its operands** (causes 2, 6 and 8): `size`
-  would not become a pointer in `malloc`, and libntfs's field sums would not mix fields.
-  **Tried on branch `exp/int-arith-merge`** (not merged here; its `problem.md` has the full
-  write-up, under "Ideas tried, still open"):
-  - **The code:** an import-time switch, `CTADL_EXP_INT_ARITH` (`da3ce42e`, `cc609511`).
-  - **What it removes:** cause 8 (libntfs 1.8x to about 0.25x) and `uclited` (3.7x to about
-    0.5x). It drops `malloc`'s `$globals <- p0` block, so the allocator analyzed goes from
-    2.2-11.5x to 0.3-1.8x.
-  - **Not sound:** dropping integer operands at import loses real integer taint (`loopflow`, the
-    `JniWide` cases). A sound version needs a value-only source in the IR, which the index would
-    match only on the empty path.
-  - **`nginx` is not this:** its cost is real pointer steps (cause 6).
+- **Separate address offsets from value flow (`#addr`)** (step 7 of `value-exp-plan.md`): the
+  size that moves `malloc`'s top chunk would stop reaching `ret.#value`, and address-shaped
+  origins would leave the `#value` rows. That is estimated above at -0.87 M and -3.36 M `locals` on
+  the two allocators still over 1.5x.
 - **Bound a function's `$globals` summary** (causes 2 and 7), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 10): 0-30% of `locals` once cause 1 is
