@@ -1,11 +1,12 @@
 # Memory in the IR: named states, so summaries run from entry to exit
 
 **Status:** proposal, as a change to `origin/main`. Nothing here is implemented or measured. The
-design puts memory order into the IR, and in time replaces codegen's `cap_path`. It keeps the split
-a frontend already has between `Store` and `Update`: a frontend decides which memory gets versions,
-writing the cells it wants ordered with `Update` and the rest with `Store`. What changes is what an
-`Update` versions: one cell, not the whole variable. The last section, "What it does for
-problem.md", covers the blowups that motivated it.
+design puts memory order into the IR, and in time takes over from codegen's `cap_path` and the index
+alias rule for the memory it versions. It keeps the split a frontend already has between `Store` and
+`Update`: a frontend decides which memory gets versions, writing the cells it wants ordered with
+`Update` and the rest with `Store`. What changes is what an `Update` versions: one cell, not the
+whole variable. The last section, "What it does for problem.md", covers the blowups that motivated
+it.
 
 The analysis computes function summaries: a relation from what a function sees on entry to what
 it leaves on exit, instantiated at every call site. It should stay what it is, reachability over
@@ -219,6 +220,31 @@ Entry, exit, a call's input and a call's output are always different vertices, s
 conflation cannot occur. Queries see cell versions as variables, and a result reported at a cell
 version is reported at the location it names.
 
+### Aliasing
+
+There are three kinds of aliasing today, and the redesign treats each differently:
+
+- **The index alias rule** (`alias_of_formal` and the aliasing summary rule) is the transitive
+  copy closure of each formal: a store through a copy (`l = p1; l.f = p2`), or a copy of a copy,
+  still gives the summary row `p2 -> p1.f`. It matters most, and it is preserved:
+  - **For versioned cells,** canonical naming does the same work, transitively: `l`, a copy of
+    `l`, and `p1` all name the cell `(p1, .f)`, so the write lands on `p1.f` directly. A phi of
+    copies of two formals, where the Andersen-style closure aliases both, is the two-roots policy:
+    a weak write to the cell under each. Canonical naming goes further than the rule, through
+    load chains as well as copies.
+  - **For weak cells,** nothing changes: they lower as today, so the alias rule's copy case and
+    `cap_path` stay for them.
+- **Query-time aliasing** (`copy_alias` and `alias_of_field` in `ctadl-ascent/src/query_engine`)
+  moves taint forward and backward along whole-variable copies and field reads. The redesign does
+  not change it, but it runs over cell versions as well as variables; see "Open questions".
+- **Implicit aliasing through shared vertices,** where one vertex per `(variable, path)` and one
+  call-argument vertex stand for every state at once, is the in/out conflation the redesign
+  removes. The one real flow it found, a callee's write through one argument read through
+  another that names the same object, is kept by the caller-aliasing policy.
+
+The redesign keeps today's assumption that different roots do not alias, and adds no analysis
+for them. One could be added later and would feed the two-roots and caller-aliasing policies.
+
 ### The example
 
 The frontend writes both fields with `Update`, so both cells are versioned. In the IR, after SSA
@@ -372,6 +398,13 @@ today's behavior.
 
 ## Plan
 
+Every step ends at the same gate: the firmware sweep, the regression suite and the apps, with
+findings compared by rule, message and location against the step before. Identical findings are
+not the bar, since the redesign removes spurious flows and canonical naming adds real ones. Every
+finding a step loses needs a reason it was spurious, the pattern that produced it; one that has
+none is a regression, and the step does not land. Where a step can be switched off
+(`--alias-rule`, a frontend's choice of `Update`), the comparison is an A/B run of one build.
+
 1. **Formals immutable, `return` carries the exit state, `param-flow` removed.** Semantics only,
    and independent of the rest.
    - **SSA:** renames an `Assign` to a parameter to a fresh local, so a parameter's later versions
@@ -395,14 +428,15 @@ today's behavior.
      restore; a write through a loaded pointer read through another name. One test for each
      policy above, that a frontend emitting only `Store` gets today's facts, and the Java and Lua
      frontends.
-3. **Measure, then switch frontends over.** Switch p-code's heap writes to `Update` first, then
-   the others. The firmware sweep, findings compared by rule, message and location, plus the
-   regression suite and the apps.
-4. **Strong updates,** then retire `cap_path` and the alias rule's copy case. Each becomes a
-   special case of cells. `Update` stays, as the frontend's way to ask for a versioned cell.
-   Retiring the copy case changes `docs/spec.md` (4.2, "Aliasing"): a store through a copy of a
-   formal (`l = p1; l.f = p2`) still gives `p2 -> p1.f`, but through canonical naming, which
-   makes it a write to `p1.f` directly, not through an Andersen-style alias analysis.
+3. **Switch frontends over, one at a time.** p-code's heap writes to `Update` first, then the
+   others, each through the gate.
+4. **Strong updates,** then stop using `cap_path` and the alias rule's copy case for versioned
+   cells, where canonical naming covers both. Weak cells keep both, so a frontend that writes
+   with `Store` loses nothing. Strong updates and each retirement go through the gate on their
+   own, with `--alias-rule` for the A/B run of the alias rule. `Update` stays, as the frontend's
+   way to ask for a versioned cell. `docs/spec.md` (4.2, "Aliasing") then says that a store
+   through a copy of a formal (`l = p1; l.f = p2`) gives `p2 -> p1.f` through canonical naming
+   for versioned cells and through the alias analysis for weak ones.
 
 ## Ruled out
 
@@ -426,6 +460,10 @@ today's behavior.
 - **Which writes a frontend should version.** p-code can version every heap write through a
   formal, or only those whose cell the function also reads. The second is cheaper at calls; how
   much order it gives up is unmeasured.
+- **Query-time aliasing over cell versions.** `copy_alias` and `alias_of_field` were written for
+  variables. Over cell versions, a backward step along a copy could reach a version from before
+  the write that tainted it, or miss one after it. Does each rule need to respect versions, and
+  does a query need to see a cell's versions as one location?
 - **Roots that are not formals.** Allocation and call results have no entry state. Should their
   cells start empty, or start from the defining call's output?
 - **A cost cap.** Every call defines a version of every versioned cell below its arguments' roots,
