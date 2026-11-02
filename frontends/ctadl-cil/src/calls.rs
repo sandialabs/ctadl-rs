@@ -174,7 +174,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                     args.insert(0, Exp::Variable(r));
                 }
                 CallStyle::FuncPtrCall {
-                    callee: AccessPath::without_fields(em.var(*callee)),
+                    callee: Address::without_offsets(em.var(*callee)),
                     signature: Some(self.names.descriptor(&site.sig, None)),
                 }
             }
@@ -419,7 +419,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             args.push(Exp::Variable(self.copy_in(em, ins, *a, &mut copy_outs)));
         }
         let style = CallStyle::FuncPtrCall {
-            callee: AccessPath::without_fields(m),
+            callee: Address::without_offsets(m),
             signature: Some(self.names.descriptor(&site.sig, None)),
         };
         self.emit_call(em, style, args, site.result, copy_outs);

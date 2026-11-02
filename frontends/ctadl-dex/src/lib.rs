@@ -508,7 +508,7 @@ impl Context {
                             .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
                         if succs.is_empty() {
-                            let throw_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                            let throw_exp = Exp::from(Address::without_offsets(reg_to_var(
                                 code,
                                 f.a,
                                 &mut fdat.locals,
@@ -525,7 +525,7 @@ impl Context {
                     Instruction::Return(reg)
                     | Instruction::ReturnWide(reg)
                     | Instruction::ReturnObject(reg) => {
-                        let ret_exp = Exp::from(AccessPath::without_fields(reg_to_var(
+                        let ret_exp = Exp::from(Address::without_offsets(reg_to_var(
                             code,
                             reg.a,
                             &mut fdat.locals,
@@ -720,7 +720,7 @@ impl Context {
         ) {
             let args = args_regs
                 .iter()
-                .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
+                .map(|reg| Address::without_offsets(reg_to_var(code, *reg, locals)).into())
                 .collect();
             return Some(self.call_assign(CallStyle::Unknown, args, locals));
         }
@@ -757,7 +757,7 @@ impl Context {
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
             .iter()
-            .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
+            .map(|reg| Address::without_offsets(reg_to_var(code, *reg, locals)).into())
             .collect();
         let style = match dispatch {
             None => CallStyle::DirectCall {
@@ -931,7 +931,7 @@ impl Context {
                 )));
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(VariableRef::new_global()),
+                    Address::without_offsets(VariableRef::new_global()),
                     ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
@@ -981,7 +981,7 @@ impl Context {
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(object),
+                    Address::without_offsets(object),
                     ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
@@ -1047,7 +1047,7 @@ impl Context {
                 )));
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(array_var),
+                    Address::without_offsets(array_var),
                     ctadl_ir::mir::FieldRef::symbol("[]"),
                     temp_var.into(),
                 )));

@@ -2,7 +2,7 @@
 
 [`generator_errors`] reports what the JSON format does not allow in one generator, by walking
 its structure alone: unknown and missing keys, `find`, every `where` constraint and predicate
-tree, the `in` scope, the `model` object of each `find`, ports, access paths, `modes` and
+tree, the `in` scope, the `model` object of each `find`, ports, paths, `modes` and
 bridges. The migrator runs it first, so a generator the format rejects fails the migration with
 these errors rather than being translated.
 
@@ -440,7 +440,7 @@ impl Walk {
             }
         }
         if let Some(paths) = model.get("access_paths") {
-            self.access_paths(paths);
+            self.declared_paths(paths);
         }
         if let Some(modes) = model.get("modes") {
             self.modes(modes);
@@ -544,7 +544,7 @@ impl Walk {
         }
     }
 
-    fn access_paths(&mut self, value: &Value) {
+    fn declared_paths(&mut self, value: &Value) {
         let Some(items) = value.as_array() else {
             self.not_array("access_paths");
             return;
@@ -554,7 +554,7 @@ impl Walk {
                 self.not_string("access_paths");
                 continue;
             };
-            if let Err(e) = spec::parse_declared_access_path(text, self.index) {
+            if let Err(e) = spec::parse_declared_path(text, self.index) {
                 self.push(e);
             }
         }
@@ -654,7 +654,7 @@ static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
 static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
 static VARIABLE_REGEX: OnceLock<Regex> = OnceLock::new();
 
-// All three are anchored, so "MyReturnType" is not a `Return` port with access path `Type`, and
+// All three are anchored, so "MyReturnType" is not a `Return` port with path `Type`, and
 // no text may surround an `Argument(n)`. A non-match falls through to `InvalidArgumentFormat`.
 
 #[inline]
@@ -670,7 +670,7 @@ fn return_regex() -> &'static Regex {
 #[inline]
 fn variable_regex() -> &'static Regex {
     // `Variable(name)` selects a source/sink port by the local's source name, with an
-    // optional trailing access path (`Variable(buf).headers`).
+    // optional trailing path (`Variable(buf).headers`).
     VARIABLE_REGEX.get_or_init(|| Regex::new(r#"^Variable\(([^)]+)\)(.*)$"#).unwrap())
 }
 
@@ -683,38 +683,38 @@ pub(crate) struct ParsedPort {
     pub(crate) index: Option<i16>,
     /// The local a `Variable(name)` port names.
     pub(crate) local: Option<String>,
-    /// The port's access path, parsed with the canonical grammar. A `PathSegment::Offset` here
+    /// The port's path, parsed with the canonical grammar. A `PathSegment::Offset` here
     /// is what lets a port name a real offset (`Argument(1).[8].deref`) and so match the
     /// offsets pcode emits.
-    pub(crate) ap: Vec<PathSegment>,
+    pub(crate) path: Vec<PathSegment>,
 }
 
 /// Parses a port, `Argument(n)`, `Argument(*)`, `Return` or `Variable(name)`, with an optional
-/// trailing access path. `index` is the generator the port belongs to, for error messages.
+/// trailing path. `index` is the generator the port belongs to, for error messages.
 pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonModelError> {
     // Note the absence of `?` in the two `if let` arms: an early return would skip the
     // index-patching `map_err` below, and the error would name generator 0.
     let parsed = if let Some(m) = variable_regex().captures(text) {
         // `Variable(name)` — name-based local selector, which no index can stand for.
-        parse_access_path(m.get(2).map(|m| m.as_str())).map(|ap| ParsedPort {
+        parse_port_path(m.get(2).map(|m| m.as_str())).map(|path| ParsedPort {
             tag: FormalIndexTypeTag::Local,
             index: None,
             local: Some(m[1].to_string()),
-            ap,
+            path,
         })
     } else if let Some(m) = return_regex().captures(text) {
-        parse_access_path(m.get(1).map(|m| m.as_str())).map(|ap| ParsedPort {
+        parse_port_path(m.get(1).map(|m| m.as_str())).map(|path| ParsedPort {
             tag: FormalIndexTypeTag::Return,
             index: None,
             local: None,
-            ap,
+            path,
         })
     } else {
-        parse_argument(text).map(|(tag, idx, ap)| ParsedPort {
+        parse_argument(text).map(|(tag, idx, path)| ParsedPort {
             tag,
             index: idx,
             local: None,
-            ap,
+            path,
         })
     };
     parsed.map_err(|mut err| {
@@ -726,7 +726,7 @@ pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonMod
             JsonModelError::InvalidInteger {
                 index: err_index, ..
             } => *err_index = index,
-            JsonModelError::InvalidAccessPath {
+            JsonModelError::InvalidPath {
                 index: err_index, ..
             } => *err_index = index,
             _ => {}
@@ -735,16 +735,16 @@ pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort, JsonMod
     })
 }
 
-/// Parses a port's trailing access path with the one canonical grammar, so `.[8]` is a real
+/// Parses a port's trailing path with the one canonical grammar, so `.[8]` is a real
 /// offset and a field name beginning with `[` is written `\[`.
 ///
 /// `".*"` parses as `Symbol("*")`, a literal field, as it does everywhere else, and `.[*]` is
 /// an `InvalidOffset` error.
-fn parse_access_path(input_text: Option<&str>) -> Result<Vec<PathSegment>, JsonModelError> {
+fn parse_port_path(input_text: Option<&str>) -> Result<Vec<PathSegment>, JsonModelError> {
     let Some(s) = input_text else {
         return Ok(Vec::new());
     };
-    mir::parse_segments(s).map_err(|source| JsonModelError::InvalidAccessPath {
+    mir::parse_segments(s).map_err(|source| JsonModelError::InvalidPath {
         index: 0, // filled in by `parse_port`
         text: s.to_string(),
         source,
@@ -778,7 +778,7 @@ fn parse_argument(
             ),
         ),
     };
-    let p = parse_access_path(m.get(2).map(|m| m.as_str()))?;
+    let p = parse_port_path(m.get(2).map(|m| m.as_str()))?;
     Ok((tag, index, p))
 }
 
@@ -791,14 +791,14 @@ mod parse_port_tests {
         let p = parse_port("Variable(buf)", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
         assert_eq!(p.index, None);
-        assert!(p.ap.is_empty());
+        assert!(p.path.is_empty());
     }
 
     #[test]
-    fn parses_variable_selector_with_access_path() {
+    fn parses_variable_selector_with_path() {
         let p = parse_port("Variable(buf).headers", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.ap, vec![PathSegment::symbol("headers")]);
+        assert_eq!(p.path, vec![PathSegment::symbol("headers")]);
     }
 
     #[test]
@@ -819,7 +819,7 @@ mod parse_port_tests {
         assert_eq!(p.tag, FormalIndexTypeTag::Index);
         assert_eq!(p.index, Some(1));
         assert_eq!(
-            p.ap,
+            p.path,
             vec![PathSegment::offset(8), PathSegment::symbol("deref")]
         );
     }
@@ -829,32 +829,32 @@ mod parse_port_tests {
     #[test]
     fn port_can_name_a_bracketed_field() {
         let p = parse_port(r"Argument(0).\[]", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("[]")]);
+        assert_eq!(p.path, vec![PathSegment::symbol("[]")]);
 
         let p = parse_port(r"Argument(0).\[_elem_]", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("[_elem_]")]);
+        assert_eq!(p.path, vec![PathSegment::symbol("[_elem_]")]);
     }
 
     /// `.*` is `Symbol("*")`, a literal field, as it is everywhere else in the tree.
     #[test]
     fn trailing_star_is_a_literal_field() {
         let p = parse_port("Argument(0).*", 0).expect("parse");
-        assert_eq!(p.ap, vec![PathSegment::symbol("*")]);
+        assert_eq!(p.path, vec![PathSegment::symbol("*")]);
 
         let r = parse_port("Return.*", 0).expect("parse");
         assert_eq!(r.tag, FormalIndexTypeTag::Return);
-        assert_eq!(r.ap, vec![PathSegment::symbol("*")]);
+        assert_eq!(r.path, vec![PathSegment::symbol("*")]);
     }
 
     #[test]
-    fn malformed_access_paths_are_hard_errors() {
+    fn malformed_paths_are_hard_errors() {
         use crate::error::JsonModelError;
         use ctadl_ir::mir::PathSyntaxErrorKind;
 
         // `*` is not an offset.
         let e = parse_port("Argument(0).[*]", 7).unwrap_err();
         assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { index: 7, source, .. }
+            matches!(&e, JsonModelError::InvalidPath { index: 7, source, .. }
                      if source.kind == PathSyntaxErrorKind::InvalidOffset("*".into())),
             "got {e:?}"
         );
@@ -862,7 +862,7 @@ mod parse_port_tests {
         // An empty segment is an error, not `Symbol("")`.
         let e = parse_port("Argument(0).a..b", 3).unwrap_err();
         assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { index: 3, source, .. }
+            matches!(&e, JsonModelError::InvalidPath { index: 3, source, .. }
                      if source.kind == PathSyntaxErrorKind::EmptySegment),
             "got {e:?}"
         );
@@ -870,7 +870,7 @@ mod parse_port_tests {
         // A bare bracketed name is an offset position, and the message says how to fix it.
         let e = parse_port("Argument(0).[_elem_]", 0).unwrap_err();
         assert!(
-            matches!(&e, JsonModelError::InvalidAccessPath { source, .. }
+            matches!(&e, JsonModelError::InvalidPath { source, .. }
                      if source.kind == PathSyntaxErrorKind::InvalidOffset("_elem_".into())),
             "got {e:?}"
         );
@@ -880,7 +880,7 @@ mod parse_port_tests {
         );
     }
 
-    /// The regexes are anchored: "MyReturnType" is not a `Return` port with access path `Type`,
+    /// The regexes are anchored: "MyReturnType" is not a `Return` port with path `Type`,
     /// and no text may surround an `Argument(n)`.
     #[test]
     fn regexes_are_anchored() {
@@ -901,13 +901,13 @@ mod parse_port_tests {
             );
         }
 
-        // Junk *after* the selector is captured as the trailing access path, so it is rejected
+        // Junk *after* the selector is captured as the trailing path, so it is rejected
         // by the grammar instead -- also a hard error, and a more specific message.
         for text in ["Argument(0)yy", "ReturnType", "Variable(b)zz"] {
             let e = parse_port(text, 5).unwrap_err();
             assert!(
-                matches!(&e, JsonModelError::InvalidAccessPath { index: 5, .. }),
-                "{text:?} should be InvalidAccessPath, got {e:?}"
+                matches!(&e, JsonModelError::InvalidPath { index: 5, .. }),
+                "{text:?} should be InvalidPath, got {e:?}"
             );
         }
     }

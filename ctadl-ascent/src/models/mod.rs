@@ -200,7 +200,7 @@ pub struct ModelLoadReport {
     /// Per generator, what its `propagation` list declared and emitted.
     pub propagation_stats: BTreeMap<usize, PropagationStats>,
     /// Per generator, how many `model.access_paths` entries were registered.
-    pub access_path_stats: BTreeMap<usize, usize>,
+    pub declared_path_stats: BTreeMap<usize, usize>,
     /// The DSL engine's own report, which every load is (a JSON file through its migration).
     /// The counters above are projected from it so every diagnostic surface reads one shape — a
     /// rule's label plays the part of a generator index, and is one for a migrated file — and
@@ -217,7 +217,7 @@ impl ModelLoadReport {
         let mut endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats> = BTreeMap::new();
         let mut matched: BTreeMap<usize, MatchedFunctions> = BTreeMap::new();
         let mut propagation_stats: BTreeMap<usize, PropagationStats> = BTreeMap::new();
-        let mut access_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut declared_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
         for file in &report.files {
             for (key, stats) in portcullis_endpoint_stats(file) {
                 endpoint_stats.entry(key).or_default().merge(&stats);
@@ -234,8 +234,8 @@ impl ModelLoadReport {
                             rows: stats.propagations,
                         });
                 }
-                if stats.access_paths > 0 {
-                    *access_path_stats.entry(i).or_default() += stats.access_paths;
+                if stats.declared_paths > 0 {
+                    *declared_path_stats.entry(i).or_default() += stats.declared_paths;
                 }
                 // A rule's match set is the functions its heads anchored at: a rule with an
                 // unconstrained `fun(F)` enumerates, so the count is exact and only the *names*
@@ -271,7 +271,7 @@ impl ModelLoadReport {
             },
             matched,
             propagation_stats,
-            access_path_stats,
+            declared_path_stats,
             portcullis: Some(report),
         }
     }

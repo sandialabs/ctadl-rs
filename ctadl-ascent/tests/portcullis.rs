@@ -19,8 +19,8 @@ use ctadl_ir::mir::call::{
     VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    AccessPath, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program,
-    Statement, StatementKind, VariableRef,
+    Address, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program, Statement,
+    StatementKind, VariableRef,
 };
 use ctadl_ir::mir::{LocalIdx, Symbol};
 
@@ -60,7 +60,7 @@ fn call(callee: &str) -> Statement {
 fn load(field: &str) -> Statement {
     Statement::new_kind(StatementKind::Load {
         dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: AccessPath::without_fields(VariableRef::new_local_idx(LocalIdx::new(1))),
+        source: Address::without_offsets(VariableRef::new_local_idx(LocalIdx::new(1))),
         field: FieldRef::symbol(field),
     })
 }
@@ -494,13 +494,13 @@ fn source_and_sink_flags_reach_the_match() {
 }
 
 #[test]
-fn a_bare_head_registers_an_access_path() {
+fn a_bare_head_registers_a_declared_path() {
     let program_info = java_program();
     let matches = run(&program_info, r#"access_paths(".next.next");"#);
-    assert_eq!(matches.access_paths.len(), 1);
+    assert_eq!(matches.declared_paths.len(), 1);
     assert_eq!(
         matches
-            .access_paths
+            .declared_paths
             .iter()
             .next()
             .expect("one path")
@@ -1782,7 +1782,7 @@ fn stripped_allocator() -> ProgramInfo {
         (0..n)
             .map(|i| {
                 Statement::new_kind(StatementKind::Store {
-                    dest: AccessPath::new(
+                    dest: Address::new(
                         VariableRef::new_global(),
                         [OffsetAccess::Offset(ctadl_ir::mir::Offset(
                             HEAP[i % HEAP.len()],
@@ -1796,7 +1796,7 @@ fn stripped_allocator() -> ProgramInfo {
     };
     let header_load = Statement::new_kind(StatementKind::Load {
         dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: AccessPath::new(
+        source: Address::new(
             VariableRef::new_parameter(ParameterIdx::new(0)),
             [OffsetAccess::Offset(ctadl_ir::mir::Offset(0xffff_fffc))],
         ),

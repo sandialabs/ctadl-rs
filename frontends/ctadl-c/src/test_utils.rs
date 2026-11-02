@@ -15,9 +15,10 @@ use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::mir::{LocalIdx, Locals, OffsetAccess};
 use ctadl_ir::{
-    AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
+    AccessPath, Address, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind,
+    VariableRef, ssa,
 };
-use ctadl_ir::{FieldRef, ParameterType, PathSegment, Program, ProgramInfo};
+use ctadl_ir::{FieldRef, ParameterType, PathSegment, Program, ProgramInfo, ThinVec};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -187,7 +188,7 @@ pub(crate) fn check_returns_const(prog: &Program, name: &str, value: &str) {
 
 /* Extracts every direct call (`CallStyle::DirectCall`) in function `name`, as `(callees, args)`
 pairs in source order: `callees` are the resolved callee name(s) on the call edge, `args` the
-argument expressions (access paths / constants). Returns an empty Vec if the function has no direct
+argument expressions (variables, addresses or constants). Returns an empty Vec if the function has no direct
 calls (or doesn't exist). The extraction primitive behind `check_direct_call` / the dex precedent of
 "pull out the narrow thing, then assert on it". */
 pub(crate) fn direct_calls_in(prog: &Program, name: &str) -> Vec<(Vec<String>, Vec<Exp>)> {
@@ -292,25 +293,16 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 }
 
 // A debugging aid for inspecting parsed blocks.
-/// Parses the access-path tail of a DSL string with the one canonical grammar
+/// Parses the path tail of a DSL access-path string with the one canonical grammar
 /// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
 /// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
 /// behavior of silently dropping empty segments.
 #[track_caller]
-fn parse_fields(s: &str) -> Vec<PathSegment> {
+fn parse_path(s: &str) -> Vec<PathSegment> {
     ctadl_ir::mir::parse_segments(s)
         .unwrap_or_else(|e| panic!("malformed access path {s:?} in test DSL: {e}"))
-}
-
-/// A base variable plus a mixed (offset + symbolic-field) path, parsed from the test DSL. Access
-/// paths in the IR are offset-only and load/store fields are single symbols, so the DSL's mixed
-/// paths are held here and composed against the actual `Load`/`Store` statements.
-#[derive(Debug, PartialEq, Eq)]
-struct DslPath {
-    base: VariableRef,
-    fields: Vec<PathSegment>,
 }
 
 /// Resolves a local's DSL name to a `VariableRef` using the same `Locals` table the parser built,
@@ -326,7 +318,7 @@ fn resolve_local(locals: &Locals, name: &str) -> VariableRef {
     VariableRef::new_local_idx(idx)
 }
 
-/// Splits a DSL string at the first `.` into the variable prefix and the access path, *keeping*
+/// Splits a DSL string at the first `.` into the variable prefix and the path, *keeping*
 /// the dot on the path — `"v.f1.f2"` -> `("v", ".f1.f2")`, `"v"` -> `("v", "")`. The path half is
 /// then in the canonical grammar, where every segment carries its leading dot.
 fn split_variable_prefix(s: &str) -> (&str, &str) {
@@ -336,28 +328,19 @@ fn split_variable_prefix(s: &str) -> (&str, &str) {
     }
 }
 
-fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
+fn access_path_from_str(s: &str, locals: &Locals) -> AccessPath {
     if let Some(rest) = s.strip_prefix("$globals") {
-        return DslPath {
-            base: VariableRef::new_global(),
-            fields: parse_fields(rest),
-        };
+        return AccessPath::new(VariableRef::new_global(), parse_path(rest));
     }
 
     if let Some(rest) = s.strip_prefix("@p") {
         let (n_str, suffix) = split_variable_prefix(rest);
         let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
-        return DslPath {
-            base: VariableRef::new_parameter(n.into()),
-            fields: parse_fields(suffix),
-        };
+        return AccessPath::new(VariableRef::new_parameter(n.into()), parse_path(suffix));
     }
 
     let (base, suffix) = split_variable_prefix(s);
-    DslPath {
-        base: resolve_local(locals, base),
-        fields: parse_fields(suffix),
-    }
+    AccessPath::new(resolve_local(locals, base), parse_path(suffix))
 }
 
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
@@ -369,8 +352,8 @@ pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
         None => {
             let dsl = access_path_from_str(s, locals);
             assert!(
-                dsl.fields.is_empty(),
-                "DSL source with a field path is not directly expressible; use check_loads: {s}"
+                dsl.is_pathless(),
+                "DSL source with a path is not directly expressible; use check_loads: {s}"
             );
             Exp::Variable(dsl.base)
         }
@@ -378,7 +361,7 @@ pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
 }
 
 /* Asserts the (single) function contains the given assignment or update (an update is expected when
-`dst` has a field path). If `block_id` is given, only that block is searched. Sources are DSL strings
+`dst` has a non-empty path). If `block_id` is given, only that block is searched. Sources are DSL strings
 (access paths, or `#literal` for a constant). Intended for Programs parsed from a single function.
 Panics at the caller's line if not found. */
 #[track_caller]
@@ -400,7 +383,7 @@ pub(crate) fn check_assign_or_update<I>(
 
     let dst_ap = access_path_from_str(dst, locals);
 
-    let expected = if dst_ap.fields.is_empty() {
+    let expected = if dst_ap.is_pathless() {
         StatementKind::assign(dst_ap.base, srcs)
     } else {
         assert_eq!(
@@ -412,11 +395,11 @@ pub(crate) fn check_assign_or_update<I>(
         // plus the single symbolic field written there, so the DSL path splits the same way:
         // `f.[4].deref` is the address `f.[4]` and the field `deref`. A destination with more
         // than one symbol would need intermediate loads and is not a single statement.
-        let mut fields = dst_ap.fields;
-        let Some(PathSegment::Symbol(sym)) = fields.pop() else {
+        let mut path = dst_ap.segments;
+        let Some(PathSegment::Symbol(sym)) = path.pop() else {
             panic!("update destination must end in a (symbolic) field: {dst}")
         };
-        let offsets: Vec<OffsetAccess> = fields
+        let offsets: Vec<OffsetAccess> = path
             .into_iter()
             .map(|seg| match seg {
                 PathSegment::Offset(off) => OffsetAccess::Offset(off),
@@ -427,7 +410,7 @@ pub(crate) fn check_assign_or_update<I>(
             })
             .collect();
         StatementKind::store(
-            AccessPath::new(dst_ap.base, offsets),
+            Address::new(dst_ap.base, offsets),
             FieldRef::new(sym),
             srcs.into_iter().next().unwrap(),
         )
@@ -453,7 +436,7 @@ pub(crate) fn check_assign_or_update<I>(
 
 /* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
 string like `f.[3].deref` or `$globals.a`). Field reads lower to loads through a temporary, so this is
-the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
+the load-based complement to `check_assign_or_update`, whose sources have no path. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
     let locals = &get_only_function(prog)
@@ -465,7 +448,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
             return false;
         };
         // The full read path is the source's offsets then the loaded symbolic field.
-        let full: Vec<PathSegment> = source
+        let full: ThinVec<PathSegment> = source
             .accesses
             .iter()
             .cloned()
@@ -474,7 +457,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
                 field.symbol_ref().clone(),
             )))
             .collect();
-        source.base == ap.base && full == ap.fields
+        source.base == ap.base && full == ap.segments
     });
     assert!(found, "could not find a load of `{source_str}`\n{prog}");
 }
@@ -489,15 +472,15 @@ pub(crate) fn statements_of(prog: &Program) -> impl Iterator<Item = &Statement> 
 }
 
 /* True if `kind` writes to `dst`, comparing only the destination -- the source(s) are ignored. A
-bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches an
-`Update` of that field. This is the same assign-vs-update split as `check_assign_or_update`'s
+bare `dst` (no path) matches an `Assign` to that variable; a `dst` with a path matches a `Store`
+to it. This is the same assign-vs-update split as `check_assign_or_update`'s
 destination, minus the source constraint. */
-fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
+fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
     match kind {
-        StatementKind::Assign { dest, .. } => dst.fields.is_empty() && *dest == dst.base,
+        StatementKind::Assign { dest, .. } => dst.is_pathless() && *dest == dst.base,
         StatementKind::Store { dest, field, .. } => {
             // The full written path is the dest's offsets then the (optional) symbolic field.
-            let full: Vec<PathSegment> = dest
+            let full: ThinVec<PathSegment> = dest
                 .accesses
                 .iter()
                 .cloned()
@@ -506,7 +489,7 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
                     field.symbol_ref().clone(),
                 )))
                 .collect();
-            !dst.fields.is_empty() && dest.base == dst.base && full == dst.fields
+            !dst.is_pathless() && dest.base == dst.base && full == dst.segments
         }
         _ => false,
     }
@@ -669,7 +652,7 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
-    // Fixtures are written in the canonical access-path grammar: every segment carries its
+    // Fixtures are written in the canonical path grammar: every segment carries its
     // leading dot (`.f2.f3`), and `""` is the empty path.
     let parse = |s: &str| {
         Path::parse(s).unwrap_or_else(|e| panic!("test access path {s:?} does not parse: {e}"))
@@ -939,22 +922,22 @@ mod ap_tests {
     use super::*;
 
     #[test]
-    fn local_no_fields() {
+    fn local_pathless() {
         let mut locals = Locals::default();
         let b = locals.get_or_intern("b");
         let ap = access_path_from_str("b", &locals);
         assert_eq!(ap.base, VariableRef::new_local_idx(b));
-        assert!(ap.fields.is_empty());
+        assert!(ap.is_pathless());
     }
 
     #[test]
     fn param_with_field() {
         assert_eq!(
             access_path_from_str("@p1.f2", &Locals::default()),
-            DslPath {
-                base: VariableRef::new_parameter(1u32.into()),
-                fields: vec![PathSegment::symbol("f2")],
-            },
+            AccessPath::new(
+                VariableRef::new_parameter(1u32.into()),
+                [PathSegment::symbol("f2")]
+            ),
         );
     }
 
@@ -962,10 +945,7 @@ mod ap_tests {
     fn global_with_field() {
         assert_eq!(
             access_path_from_str("$globals.a", &Locals::default()),
-            DslPath {
-                base: VariableRef::new_global(),
-                fields: vec![PathSegment::symbol("a")],
-            },
+            AccessPath::new(VariableRef::new_global(), [PathSegment::symbol("a")]),
         );
     }
 
@@ -975,18 +955,18 @@ mod ap_tests {
         let v = locals.get_or_intern("v");
         assert_eq!(
             access_path_from_str("v.f1.f2", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(v),
-                fields: vec![PathSegment::symbol("f1"), PathSegment::symbol("f2")],
-            },
+            AccessPath::new(
+                VariableRef::new_local_idx(v),
+                [PathSegment::symbol("f1"), PathSegment::symbol("f2")]
+            ),
         );
     }
 
     #[test]
     #[should_panic(expected = "empty access-path segment")]
-    fn parse_fields_rejects_empty_segments() {
+    fn parse_path_rejects_empty_segments() {
         // Silently dropping empties would make `.a..b.` and `.a.b` the same fixture.
-        parse_fields(".a..b.");
+        parse_path(".a..b.");
     }
 
     #[test]
@@ -999,10 +979,7 @@ mod ap_tests {
         let f = locals.get_or_intern("f");
         assert_eq!(
             access_path_from_str(r"f.\[3]", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(f),
-                fields: vec![PathSegment::symbol("[3]")],
-            },
+            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::symbol("[3]")]),
         );
     }
 
@@ -1014,10 +991,7 @@ mod ap_tests {
         let f = locals.get_or_intern("f");
         assert_eq!(
             access_path_from_str("f.[3]", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(f),
-                fields: vec![PathSegment::offset(3)],
-            },
+            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::offset(3)]),
         );
     }
 

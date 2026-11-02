@@ -69,9 +69,9 @@ pub struct Param<'s> {
 /// `dest <- source` or `dest </- source`.
 #[derive(Debug)]
 pub struct SummaryEntry<'s> {
-    pub dest: Path<'s>,
+    pub dest: AccessPath<'s>,
     pub flow: FlowSpec,
-    pub source: Path<'s>,
+    pub source: AccessPath<'s>,
 }
 
 #[derive(Debug)]
@@ -93,23 +93,26 @@ pub struct Stmt<'s> {
 pub enum StmtKind<'s> {
     /// `dest = [source := value];`
     Update {
-        dest: Path<'s>,
-        source: Path<'s>,
-        value: Ap<'s>,
+        dest: AccessPath<'s>,
+        source: AccessPath<'s>,
+        value: Operand<'s>,
     },
     /// `dest = a, b, ...;`
     Assign {
-        dest: Path<'s>,
-        sources: Vec<Ap<'s>>,
+        dest: AccessPath<'s>,
+        sources: Vec<Operand<'s>>,
     },
     /// `dest = callee(args);`
     AssignCall {
-        dest: Path<'s>,
-        callee: Path<'s>,
-        args: Vec<Ap<'s>>,
+        dest: AccessPath<'s>,
+        callee: AccessPath<'s>,
+        args: Vec<Operand<'s>>,
     },
     /// `callee(args);`
-    Call { callee: Path<'s>, args: Vec<Ap<'s>> },
+    Call {
+        callee: AccessPath<'s>,
+        args: Vec<Operand<'s>>,
+    },
 }
 
 #[derive(Debug)]
@@ -123,26 +126,27 @@ pub struct Terminator<'s> {
 #[derive(Debug)]
 pub enum TerminatorKind<'s> {
     Goto(Vec<Ident<'s>>),
-    Return(Option<Ap<'s>>),
+    Return(Option<Operand<'s>>),
 }
 
 /// An operand.
 #[derive(Debug)]
-pub enum Ap<'s> {
+pub enum Operand<'s> {
     /// `ptr<F>`
     FunctionPtr(Ident<'s>),
-    Path(Path<'s>),
-    /// `value(x.f)`: the value of the path, not its identity ([`ctadl_ir::mir::Exp::Value`]).
-    /// Only an assignment source.
-    Value(Path<'s>, Pos),
+    AccessPath(AccessPath<'s>),
+    /// `value(x.f)`: the value of the access path, not its identity
+    /// ([`ctadl_ir::mir::Exp::Value`]). Only an assignment source.
+    Value(AccessPath<'s>, Pos),
     Int(i64),
     /// The text between the quotes, with escapes left as written.
     Str(&'s str),
 }
 
-/// A variable followed by any number of segments: `x.foo.[8].bar`.
+/// An access path as written: a variable followed by any number of segments, `x.foo.[8].bar`.
+/// Lowering resolves it to a [`ctadl_ir::mir::AccessPath`].
 #[derive(Debug)]
-pub struct Path<'s> {
+pub struct AccessPath<'s> {
     pub base: Ident<'s>,
     pub segments: Vec<Segment<'s>>,
 }
@@ -153,7 +157,7 @@ pub enum Segment<'s> {
     Field(&'s str),
     /// `.[8]`
     Offset(i64),
-    /// `.*`, which parses but is not an access-path segment, so lowering rejects it. The position
+    /// `.*`, which parses but is not a path segment, so lowering rejects it. The position
     /// is the `.`'s.
     Star(Pos),
 }
@@ -199,7 +203,7 @@ peg::parser! {
             { entries }
 
         rule summary_entry() -> SummaryEntry<'input>
-            = dest:path() _ flow:summary_op() _ source:path()
+            = dest:access_path() _ flow:summary_op() _ source:access_path()
             { SummaryEntry { dest, flow, source } }
 
         rule summary_op() -> FlowSpec
@@ -216,13 +220,14 @@ peg::parser! {
 
         // `x2 = [x1.foo := val];` is a functional update; see the crate docs.
         rule stmt_kind() -> StmtKind<'input>
-            = dest:path() _ "=" _ "[" _ source:path() _ ":=" _ value:ap() _ "]" _ ";"
+            = dest:access_path() _ "=" _
+              "[" _ source:access_path() _ ":=" _ value:operand() _ "]" _ ";"
               { StmtKind::Update { dest, source, value } }
-            / dest:path() _ "=" _ sources:(ap() ++ (_ "," _)) _ ";"
+            / dest:access_path() _ "=" _ sources:(operand() ++ (_ "," _)) _ ";"
               { StmtKind::Assign { dest, sources } }
-            / dest:path() _ "=" _ callee:path() _ args:actuals() _ ";"
+            / dest:access_path() _ "=" _ callee:access_path() _ args:actuals() _ ";"
               { StmtKind::AssignCall { dest, callee, args } }
-            / callee:path() _ args:actuals() _ ";"
+            / callee:access_path() _ args:actuals() _ ";"
               { StmtKind::Call { callee, args } }
 
         rule terminator() -> Terminator<'input>
@@ -231,20 +236,22 @@ peg::parser! {
 
         rule terminator_kind() -> TerminatorKind<'input>
             = kw("goto") _ targets:(ident() ++ (_ "," _)) _ ";" { TerminatorKind::Goto(targets) }
-            / kw("return") _ value:ap()? _ ";" { TerminatorKind::Return(value) }
+            / kw("return") _ value:operand()? _ ";" { TerminatorKind::Return(value) }
 
-        rule actuals() -> Vec<Ap<'input>> = "(" _ args:(ap() ** (_ "," _)) _ ")" { args }
+        rule actuals() -> Vec<Operand<'input>>
+            = "(" _ args:(operand() ** (_ "," _)) _ ")" { args }
 
-        rule ap() -> Ap<'input>
-            = kw("ptr") _ "<" _ f:ident() _ ">" { Ap::FunctionPtr(f) }
-            / pos:position!() kw("value") _ "(" _ p:path() _ ")" { Ap::Value(p, lines.pos(pos)) }
-            / p:path() { Ap::Path(p) }
-            / n:int() { Ap::Int(n) }
-            / s:string() { Ap::Str(s) }
+        rule operand() -> Operand<'input>
+            = kw("ptr") _ "<" _ f:ident() _ ">" { Operand::FunctionPtr(f) }
+            / pos:position!() kw("value") _ "(" _ ap:access_path() _ ")"
+              { Operand::Value(ap, lines.pos(pos)) }
+            / ap:access_path() { Operand::AccessPath(ap) }
+            / n:int() { Operand::Int(n) }
+            / s:string() { Operand::Str(s) }
 
-        rule path() -> Path<'input>
+        rule access_path() -> AccessPath<'input>
             = base:ident() segments:(_ s:segment() { s })*
-            { Path { base, segments } }
+            { AccessPath { base, segments } }
 
         rule segment() -> Segment<'input>
             = p:position!() "." _ "*" { Segment::Star(lines.pos(p)) }

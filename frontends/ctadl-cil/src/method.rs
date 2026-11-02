@@ -41,7 +41,7 @@
 //! such point adds its `throwval` into `excout` (`excout := excout, throwval`), defined empty
 //! at entry, and the value reaches the caller through whichever return the method takes.
 //! Ending a block after every call instead would give each its own edge out, but would cut
-//! the load chains the index composes field paths along, which it does within a block only.
+//! the load chains the index composes paths along, which it does within a block only.
 
 use cil_reader::flow::{
     BlockId, BoundIns, Control, Effect, FlowOptions, HandlerKind, InsId, MethodFlow, Var,
@@ -141,14 +141,14 @@ impl<'f> Emitter<'f> {
     pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: FieldRef) {
         self.push(StatementKind::load(
             dst,
-            AccessPath::without_fields(base),
+            Address::without_offsets(base),
             field,
         ));
     }
 
     pub fn store(&mut self, base: VariableRef, field: FieldRef, value: Exp) {
         self.push(StatementKind::store(
-            AccessPath::without_fields(base),
+            Address::without_offsets(base),
             field,
             value,
         ));

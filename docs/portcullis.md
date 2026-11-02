@@ -176,9 +176,11 @@ relation name.
   in `F`". The anchor may be a variable or a literal name.
 - **Flows** connect two anchored ports: `A -> B`, `A <- B`, `A <-> B`.
 
-### Access paths
+### Paths
 
-A port can be extended into an **access path** that reaches *through* the value:
+A port can be extended by a **path** that reaches *through* the value. A path is a sequence of
+fields and offsets with no variable in it; a port plus its path is the model-level counterpart of
+an **access path**, which is a variable plus a path:
 
 ```
 path    := segment*
@@ -361,7 +363,7 @@ The point of a model file is to derive these.
 | `sink(<port>)` | an anchored port | `kind`, `wildcard` (default `true`) |
 | `propagation(<flow>)` | a flow within **one** function | — |
 | `bridge(<flow>)` | a flow between **two** functions | — |
-| `access_paths("…")` | a literal access path | — |
+| `access_paths("…")` | a literal path | — |
 | `K::dispatch(<flow>)` | a flow within **one** call signature | — |
 | `K::dispatch(…)` | — | `resolve` (`"inline"` / `"skip"`), `closure_shaped` |
 | `skip_analysis(F)`, `analyze(F)` | a function | `priority` (default `0`) |
@@ -371,7 +373,7 @@ The point of a model file is to derive these.
 - **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
   works without inventing a vocabulary first.
-- **`saturating`** (source only): any access path *extending* the source port is tainted too,
+- **`saturating`** (source only): any path *extending* the source port's path is tainted too,
   recursively. Reach for it when callers index into the value. C's `argv` is the motivating
   case: `argv[1]` is read at an offset path (`[8].deref`) that is a sibling of the `.deref` the
   source names, so a precise source never reaches it.
@@ -384,7 +386,7 @@ The point of a model file is to derive these.
 
   A precise source on a pointer does reach an address computed from it (`q = &p[2]`); what it
   does not reach is the memory at that address. Leave it off for precise sources like `getenv`.
-- **`wildcard`** (sink only): the sink matches any access-path extension of the port. On by
+- **`wildcard`** (sink only): the sink matches any extension of the port's path. On by
   default; set `false` to require the exact path.
 - **`dispatch`** attaches a model to a call *signature* rather than a function, and **replaces**
   the site's target set with it: one summary row instead of every implementation CHA can reach.
@@ -568,7 +570,7 @@ exactly that path or a prefix of it. A summary that lands deeper leaves a residu
 does not track, and the flow is dropped silently. So the Lua example above has a precondition the
 syntax does not show: `l_add` itself needs `propagation` rules at the map's paths, because a
 native frontend derives offset-only paths and can never mention `.stack[1]`. When you know the
-residues a callee produces, declare them with `access_paths`.
+residues a callee produces, declare those paths with `access_paths`.
 
 A bridge over a pair the built-in JNI pass also links bridges it twice. For a `Java_…` method,
 which should rarely need one, pass `--no-jni-bridge` to `ctadl index`.
@@ -769,7 +771,7 @@ looks exactly like a clean program.
 | A source or sink on a named local | `F::local(L)` with `local(F, L, name = "…")` |
 | Join a callee in one artifact to its implementation in another | `bridge(…)` |
 | Apply a model to only some of a project's imports | `fun(F, language = …)` or `fun(F, import = …)` |
-| Register an access path the code never writes | `access_paths("…")` |
+| Register a path the code never writes | `access_paths("…")` |
 | Trust the model and skip the body | `skip_analysis(F)` |
 | Keep a body another rule, or a default, skips | `analyze(F)`, with a `priority` above the other rule's |
 | Keep a function the allocator detector picked by mistake | `analyze(F) :- fun(F), F = "FUN_0042d400";` |

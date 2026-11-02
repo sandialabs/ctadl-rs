@@ -25,9 +25,9 @@ pub enum JsonModelError {
         index: usize,
         text: String,
     },
-    /// A port's trailing access path is not a path in the canonical grammar -- e.g.
+    /// A port's trailing path is not in the canonical grammar -- e.g.
     /// `Argument(0).[*]`, or a field name beginning with `[` that was not written `\[`.
-    InvalidAccessPath {
+    InvalidPath {
         index: usize,
         text: String,
         source: ctadl_ir::mir::PathSyntaxError,
@@ -63,7 +63,7 @@ impl JsonModelError {
             | JsonModelError::FieldNotArray { index, .. }
             | JsonModelError::InvalidRegex { index, .. }
             | JsonModelError::InvalidArgumentFormat { index, .. }
-            | JsonModelError::InvalidAccessPath { index, .. }
+            | JsonModelError::InvalidPath { index, .. }
             | JsonModelError::InvalidInteger { index, .. }
             | JsonModelError::UnexpectedConstraint { index, .. }
             | JsonModelError::UnexpectedField { index, .. }
@@ -109,7 +109,7 @@ impl std::fmt::Display for JsonModelError {
                     "invalid argument format '{text}' in model generator at index {index}"
                 )
             }
-            JsonModelError::InvalidAccessPath {
+            JsonModelError::InvalidPath {
                 index,
                 text,
                 source,

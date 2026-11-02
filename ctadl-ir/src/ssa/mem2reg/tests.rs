@@ -16,9 +16,9 @@ impl F {
     fn local(&mut self, name: &str) -> VariableRef {
         VariableRef::new_local_idx(self.0.intern_local(name))
     }
-    fn st(&mut self, k: i64) -> AccessPath {
+    fn st(&mut self, k: i64) -> Address {
         let st = self.local(STACK_TOP);
-        AccessPath::new(st, [OffsetAccess::Offset(Offset(k))])
+        Address::new(st, [OffsetAccess::Offset(Offset(k))])
     }
     /// `store __stack_top.[k].deref := v`
     fn store(&mut self, k: i64, v: &str) -> Statement {
@@ -50,7 +50,7 @@ impl F {
     }
     /// `f(__stack_top.[k])`: the address of slot `k` escapes into a call.
     fn escape_call(&mut self, k: i64) -> Statement {
-        let arg = Exp::AccessPath(self.st(k));
+        let arg = Exp::Address(self.st(k));
         Statement::new_kind(StatementKind::CallAssign {
             style: CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit(thin_vec::thin_vec!["f".to_string()]),
@@ -238,7 +238,7 @@ fn update_copying_the_frame_skips_function() {
     let st = f.local(STACK_TOP);
     let a = f.local("a");
     let copy = Statement::new_kind(StatementKind::update(
-        AccessPath::new(x, [OffsetAccess::Offset(Offset(-8))]),
+        Address::new(x, [OffsetAccess::Offset(Offset(-8))]),
         st,
         FieldRef::symbol(DEREF),
         Exp::Variable(a),
@@ -365,7 +365,7 @@ fn full() -> Mem2Reg {
 /// `x = __stack_top.[k]`: the address of slot `k` is copied.
 fn copy_addr(f: &mut F, x: &str, k: i64) -> Statement {
     let x = f.local(x);
-    let a = Exp::AccessPath(f.st(k));
+    let a = Exp::Address(f.st(k));
     Statement::new_kind(StatementKind::assign(x, [a]))
 }
 
@@ -439,10 +439,10 @@ fn full_skips_calls_that_do_not_reach_the_slot() {
 fn full_notes_copied_and_stored_addresses() {
     let mut f = F::new();
     let c = copy_addr(&mut f, "p", -16);
-    let addr = Exp::AccessPath(f.st(-8));
+    let addr = Exp::Address(f.st(-8));
     let g = f.local("g");
     let st = Statement::new_kind(StatementKind::store(
-        AccessPath::without_fields(g),
+        Address::without_offsets(g),
         FieldRef::symbol(DEREF),
         addr,
     ));
@@ -522,7 +522,7 @@ fn parse_configs() {
 fn full_keeps_a_returned_slot() {
     let mut f = F::new();
     let s = f.store(4, "a");
-    let ret = Exp::AccessPath(f.st(4));
+    let ret = Exp::Address(f.st(4));
     let mut f = f.0;
     let mut block = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
         args: smallvec![ret],

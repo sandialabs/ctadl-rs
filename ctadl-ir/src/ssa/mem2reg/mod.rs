@@ -317,9 +317,9 @@ pub(super) fn log_escape_note(note: &EscapeNote) {
     );
 }
 
-/// The sum of an address path's offsets: the slot it names.
-fn slot(ap: &AccessPath) -> i64 {
-    ap.accesses.offsets.iter().map(|a| a.offset().0).sum()
+/// The sum of an address's offsets: the slot it names.
+fn slot(addr: &Address) -> i64 {
+    addr.accesses.offsets.iter().map(|a| a.offset().0).sum()
 }
 
 /// If `e` is an address on the frame base, its offset.
@@ -327,7 +327,7 @@ fn exp_slot(e: &Exp, st: Variable) -> Option<i64> {
     match e {
         // A value use of the frame base escapes it as a copy does, so `value` changes nothing.
         Exp::Variable(v) | Exp::Value(v) if v.variable == st => Some(0),
-        Exp::AccessPath(ap) if ap.base.variable == st => Some(slot(ap)),
+        Exp::Address(addr) if addr.base.variable == st => Some(slot(addr)),
         _ => None,
     }
 }
@@ -636,13 +636,13 @@ pub fn promote_function(
             let source_info = s.source_info;
             blocks[bb].statements.push_back(s);
             for k in reload {
-                let path = AccessPath::new(
+                let addr = Address::new(
                     st_ref.clone(),
                     (k != 0).then_some(OffsetAccess::Offset(Offset(k))),
                 );
                 blocks[bb].statements.push_back(Statement {
                     source_info,
-                    kind: StatementKind::load(escaped[&k].clone(), path, deref.clone()),
+                    kind: StatementKind::load(escaped[&k].clone(), addr, deref.clone()),
                 });
                 stats.reloads += 1;
             }

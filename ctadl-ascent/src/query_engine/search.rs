@@ -90,7 +90,7 @@ pub enum ObjectScope {
     Fixed,
 }
 
-/// A node of the implicit taint graph: a variable and access path within a
+/// A node of the implicit taint graph: an access path (variable and path) within a
 /// function, plus the [`TaintLevel`] magnitude and the [`ObjectScope`] carried
 /// in-band. Both must live in the node (not the annotation) because successor
 /// generation ([`LazySuccessors::labeled_successors`]) sees only the node, and
@@ -100,7 +100,7 @@ pub enum ObjectScope {
 /// are orthogonal.
 pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel, ObjectScope);
 
-/// The level-agnostic vertex identity `(function, variable, access path)`, used
+/// The level-agnostic vertex identity `(function, variable, path)`, used
 /// for sink matching and emission — where the taint magnitude is invisible (the
 /// lattice "collapses" to a plain reached state).
 type TaintVertex = (FunctionId, FlowVariable, Path);
@@ -147,7 +147,7 @@ pub struct TaintSearchGraph {
     /// Calls accepting a heap, keyed by caller. Their actual vertex is the caller's
     /// heap formal, so it cannot encode the site as an ordinary `CallArg` does.
     heap_calls_by_caller: HashMap<FunctionId, Vec<(PackedInsnSiteId, FunctionId)>>,
-    /// The materialized access paths; a step producing a non-materialized path
+    /// The materialized paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
     /// Whole-variable copies `dst = src` (both paths empty) indexed by
@@ -162,7 +162,7 @@ pub struct TaintSearchGraph {
     /// entering and leaving the function -- the same cycle the index's
     /// `alias_of_formal` refuses to close.
     copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>>,
-    /// Sink access paths per `(function, variable)`, from the backward
+    /// Sink paths per `(function, variable)`, from the backward
     /// endpoints. Consulted only by the saturating rule: a saturating vertex
     /// `(v, p)` reaches any sink `(v, q)` whose path `q` extends `p` (reading
     /// further off the saturating value is tainted). This is the sink-side of
@@ -331,7 +331,7 @@ impl TaintSearchGraph {
             srcs.dedup();
         }
 
-        // Sink access paths per variable, for the saturating rule's sink-side
+        // Sink paths per variable, for the saturating rule's sink-side
         // read. Only backward endpoints contribute.
         let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> =
             HashMap::default();
@@ -489,7 +489,7 @@ impl LazySuccessors for TaintSearchGraph {
         // within `p`'s subtree (or of a pointer to it; see `saturating_read`) is tainted,
         // without the materialized-paths gate. For every load `x = v.q` off this vertex,
         // taint the destination `x` (at the empty path) and keep it `Saturating`, so
-        // saturation fills the whole access-path subtree (recursively). This is what
+        // saturation fills the whole path subtree (recursively). This is what
         // reconnects `@p1_0.[8].deref` to the saturating `@p1_0`. Plain nodes get no such
         // edges, so precise sources (e.g. `getenv`) keep their path-sensitive behavior and
         // cannot over-taint.
@@ -895,7 +895,7 @@ mod tests {
     use super::*;
     use crate::facts::{FlowVertex, FormalIndex, InsnId, Label, PackedCallArg};
 
-    /// A single-field access path `.field`.
+    /// A single-field path `.field`.
     fn field_path(field: &str) -> Path {
         Path::from_accesses([ctadl_ir::mir::PathSegment::Symbol(
             internment::ArcIntern::from(field),

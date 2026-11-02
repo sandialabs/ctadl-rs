@@ -9,7 +9,7 @@ This is one structure spanning two phases, and each field is consumed by exactly
 
 - [`ProgramModelMatches::propagations`] -- index time. Phase 2 of codegen
   ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
-- [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
+- [`ProgramModelMatches::declared_paths`] -- index time. Phase 2 seeds them into the initial
   indexer paths.
 - [`ProgramModelMatches::skip_analysis`] -- index time, and read by phase *1*:
   [`crate::codegen::codegen_program`] lowers those functions' signatures and drops their bodies,
@@ -55,7 +55,7 @@ use crate::facts::TaintDirection;
 use crate::models::FormalIndexTypeTag;
 use crate::models::portcullis::ast::{FunctionMode, ModeAxis, ModeHead};
 
-/// One end of a matched propagation model: the selector the port named, plus its access path,
+/// One end of a matched propagation model: the selector the port named, plus its path,
 /// resolved against nothing yet. `AnyArgument` is deliberately still a *tag* here -- expanding
 /// it needs the arity over actual parameters and call sites across every import, which is not
 /// known until phase 2.
@@ -154,7 +154,7 @@ pub struct PropagationMatch {
 }
 
 /// One matched source or sink port: everything Stage 1 of source/sink matching knows, with the
-/// names interned and the port's access path resolved.
+/// names interned and the port's path resolved.
 ///
 /// Stage 2 ([`crate::query_engine::build_query_endpoints`]) turns these into
 /// `QueryEndpoint`s, resolving names to [`crate::facts::FunctionId`]s and performing the two
@@ -169,13 +169,13 @@ pub struct EndpointMatch {
     pub selector_ty: FormalIndexTypeTag,
     /// Formal index, when the selector carries one.
     pub index: Option<i16>,
-    /// The port's access path.
+    /// The port's path.
     pub path: facts::Path,
     /// Taint label.
     pub label: facts::Str,
     /// Forward (source) or backward (sink).
     pub direction: TaintDirection,
-    /// Sink-only: match any access-path extension of the port (see
+    /// Sink-only: match any extension of the port's path (see
     /// [`crate::facts::Path::is_extension_of`]). Always `false` for sources.
     pub wildcard: bool,
     /// Source-only: this source is *saturating* -- the seeded vertex is tainted and reading any
@@ -218,8 +218,8 @@ pub struct ProgramModelMatches {
     /// endpoints, so deduplicating here would change a reported number. Two model files that
     /// match the same port on the same function legitimately contribute two entries.
     pub endpoints: Vec<EndpointMatch>,
-    /// Access paths a *user* declared that occur nowhere in the IR, so nothing else would ever
-    /// register them. Phase 2 seeds them into the initial indexer paths.
+    /// Paths a *user* declared (`access_paths`) that occur nowhere in the IR, so nothing else
+    /// would ever register them. Phase 2 seeds them into the initial indexer paths.
     ///
     /// This is the escape hatch for composition across a bridge: a pathful bridge composes with
     /// its callee's derived summary only where the summary's endpoints land exactly on the
@@ -227,7 +227,7 @@ pub struct ProgramModelMatches {
     /// nothing can enumerate. A user who knows the callee's summary shape pre-declares them
     /// here. Flows needing residues nobody declared are dropped, silently -- that is the
     /// documented default, not an oversight.
-    pub access_paths: BTreeSet<facts::Path>,
+    pub declared_paths: BTreeSet<facts::Path>,
     /// Functions whose winning body mode is `skip_analysis`. Codegen reads this set as it
     /// lowers each function and simply does not lower the body of one that is in it, so nothing
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
@@ -272,9 +272,9 @@ impl ProgramModelMatches {
         self.propagations.extend(propagations);
     }
 
-    /// Folds in the access paths one model file declared.
-    pub fn extend_access_paths(&mut self, paths: impl IntoIterator<Item = facts::Path>) {
-        self.access_paths.extend(paths);
+    /// Folds in the paths one model file declared.
+    pub fn extend_declared_paths(&mut self, paths: impl IntoIterator<Item = facts::Path>) {
+        self.declared_paths.extend(paths);
     }
 
     /// Records that the rule at `provenance` claims `head.mode` for `function`. Of the claims on
@@ -377,7 +377,7 @@ impl ProgramModelMatches {
     pub fn is_empty(&self) -> bool {
         self.propagations.is_empty()
             && self.endpoints.is_empty()
-            && self.access_paths.is_empty()
+            && self.declared_paths.is_empty()
             && self.skip_analysis.is_empty()
             && self.mem2reg_modes.is_empty()
             && self.frame_modes.is_empty()

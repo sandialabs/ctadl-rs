@@ -149,7 +149,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
 ///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
 ///   to `Offset(3)`.
-/// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
+/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::mir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
 /// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what

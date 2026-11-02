@@ -133,7 +133,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         try_subst_exp(a, false, &mut pending, &mut dead);
                     }
                     if let CallStyle::FuncPtrCall { callee, .. } = style {
-                        try_subst_access_path(callee, &mut pending, &mut dead);
+                        try_subst_address(callee, &mut pending, &mut dead);
                     }
                 }
                 StatementKind::Phi { .. }
@@ -255,18 +255,18 @@ fn try_subst_exp(
     *exp = new_exp;
 }
 
-/// [`try_subst_exp`] for a bare [`AccessPath`] read position (indirect-call
+/// [`try_subst_exp`] for a bare [`Address`] read position (indirect-call
 /// callee). Only a variable-copy source substitutes here; the callee's own
 /// offsets are preserved, with its base variable rewritten to the def's source.
-fn try_subst_access_path(
-    ap: &mut AccessPath,
+fn try_subst_address(
+    addr: &mut Address,
     pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
-    if ap.base.version.is_some() {
+    if addr.base.version.is_some() {
         return;
     }
-    let Some(p) = pending.get(&ap.base.variable) else {
+    let Some(p) = pending.get(&addr.base.variable) else {
         return;
     };
     if p.sources.len() != 1 {
@@ -276,9 +276,9 @@ fn try_subst_access_path(
         return;
     };
     let def_var = def_var.clone();
-    let p = pending.remove(&ap.base.variable).expect("checked");
+    let p = pending.remove(&addr.base.variable).expect("checked");
     dead.push(p.stmt_pos);
-    ap.base = def_var;
+    addr.base = def_var;
 }
 
 #[cfg(test)]

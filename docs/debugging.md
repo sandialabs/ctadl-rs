@@ -121,7 +121,7 @@ order ever matters; the third is not.
 3. Interned keys hash by address or id: `Symbol = ArcIntern<str>`
    (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
    interner id, which depends on the order paths were first interned. Every hash
-   container keyed by an access path or a field symbol therefore iterates in an
+   container keyed by a path or a field symbol therefore iterates in an
    order that moves per process. This is hasher-independent: ascent's relation
    indices and the BYODS tries both use `FxHasher` and are still id-ordered.
    Hashing `Path` by contents does not help, because that recurses into

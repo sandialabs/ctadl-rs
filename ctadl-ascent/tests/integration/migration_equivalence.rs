@@ -5,7 +5,7 @@
 //! the translation is *faithful*: for every generator, the migrated rules must match exactly what
 //! the retired JSON matcher matched. Each test here takes one generator,
 //! runs its migration, and compares the whole [`ProgramModelMatches`] -- propagations, function-
-//! and call-site-anchored endpoints, access paths, `skip-analysis` marks, dispatch dispositions,
+//! and call-site-anchored endpoints, declared paths, `skip-analysis` marks, dispatch dispositions,
 //! closure-shaped markers and bridges -- against what the JSON matcher matched.
 //!
 //! The JSON matcher has been retired. Its answers are frozen in `migration_equivalence.golden`,
@@ -570,7 +570,7 @@ struct Matched {
     propagations: BTreeSet<String>,
     endpoints: BTreeSet<String>,
     callsite_endpoints: BTreeSet<String>,
-    access_paths: BTreeSet<String>,
+    declared_paths: BTreeSet<String>,
     skip_analysis: BTreeSet<String>,
     dispatch: BTreeSet<String>,
     closure_shaped: BTreeSet<String>,
@@ -587,7 +587,7 @@ impl Matched {
             ("propagations", &self.propagations),
             ("endpoints", &self.endpoints),
             ("callsite endpoints", &self.callsite_endpoints),
-            ("access_paths", &self.access_paths),
+            ("access_paths", &self.declared_paths),
             ("skip_analysis", &self.skip_analysis),
             ("dispatch", &self.dispatch),
             ("closure_shaped", &self.closure_shaped),
@@ -602,7 +602,7 @@ impl Matched {
             &mut self.propagations,
             &mut self.endpoints,
             &mut self.callsite_endpoints,
-            &mut self.access_paths,
+            &mut self.declared_paths,
             &mut self.skip_analysis,
             &mut self.dispatch,
             &mut self.closure_shaped,
@@ -725,8 +725,8 @@ fn normalize(m: &ProgramModelMatches, sites: &BTreeSet<(String, String)>) -> Mat
             }
         }
     }
-    for p in &m.access_paths {
-        out.access_paths.insert(p.to_dot_string());
+    for p in &m.declared_paths {
+        out.declared_paths.insert(p.to_dot_string());
     }
     for f in &m.skip_analysis {
         out.skip_analysis.insert(f.to_string());
