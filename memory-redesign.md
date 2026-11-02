@@ -25,8 +25,9 @@ engine, which searches the resulting graph (`ctadl-ascent/src/query_engine`).
 - **Variables:** SSA (`ctadl-ir/src/ssa`) gives each variable a version per definition, so a use
   names the definition that reaches it. A parameter's unversioned name `@pN` is its value on
   entry, and the entry copy `@pN_0 = @pN` starts its versions.
-- **Memory through `Store`:** `Load` and `Store` take an access path and a field, and a `Store`
-  defines nothing. No operand names "the memory at `h.[8].deref` after this store".
+- **Memory through `Store`:** `Load` and `Store` take an address (a variable and offsets,
+  `mir::Address`) and a field, and a `Store` defines nothing. No operand names "the memory at
+  `h.[8].deref` after this store".
 - **Memory through `Update`:** `x = update (y.f := v)` writes one field like a `Store`, but it
   defines `x`, so SSA gives the written aggregate a new version. A frontend that emits `Update`
   for heap writes gets memory versioned this way: `$globals = update ($globals.[A].deref := v)`
@@ -44,14 +45,15 @@ engine, which searches the resulting graph (`ctadl-ascent/src/query_engine`).
 - **Exit:** `param-flow`, before the `return`, lists each parameter at version 0, and `$globals`,
   which SSA renames to its last version. Nothing names the memory below a parameter at exit.
 
-**Codegen makes one vertex per variable version and path.** A vertex is a `(variable, path)`
-pair. `store x.[k].deref := v` becomes an edge into `(x, .[k].deref)` and `load` an edge out of
-it, wherever the two are. `x = update (y.f := v)` becomes a copy of `y` into `x` except at `.f`
-and below (`update_sans_path`), plus the write `x.f <- v`. The new version holds `v` at `.f` and
-not what earlier writes put there. It still holds what `y` held as a whole: a flow into `y` at
-the empty path carries every path, `.f` included. After `$globals_1 = update ($globals_0.[A].deref
-:= v)`, a load of `$globals_1.[A].deref` sees `v` and `GLOBALS.[A].deref` from entry. A parameter's entry name and its `param-flow` write-back are the same
-vertex, the formal `@pN`: the entry copy is an edge `@pN_0 <- @pN`, and `param-flow` an edge
+**Codegen makes one vertex per variable version and path.** A vertex is a `(variable, path)` pair
+(`FlowVertex`, the fact-level form of an access path). `store x.[k].deref := v` becomes an edge into
+`(x, .[k].deref)` and `load` an edge out of it, wherever the two are. `x = update (y.f := v)`
+becomes a copy of `y` into `x` except at `.f` and below (`update_sans_path`), plus the write `x.f <-
+v`. The new version holds `v` at `.f` and not what earlier writes put there. It still holds what `y`
+held as a whole: a flow into `y` at the empty path carries every path, `.f` included. After
+`$globals_1 = update ($globals_0.[A].deref := v)`, a load of `$globals_1.[A].deref` sees `v` and
+`GLOBALS.[A].deref` from entry. A parameter's entry name and its `param-flow` write-back are the
+same vertex, the formal `@pN`: the entry copy is an edge `@pN_0 <- @pN`, and `param-flow` an edge
 `@pN <- @pN_0`. A call becomes one `actual_param(site, n, vertex)` fact per argument.
 
 **The index rules close over each function's edges without order.** `locals` is reachability
@@ -66,12 +68,12 @@ The formal `@pN` seeds `locals` at the empty path, and `summary` reads what reac
 `p1` from formal `N2` at `p2`. So one vertex is the entry (the seed) and the exit (what the summary
 reads).
 
-**At a call the rules make one vertex per argument.** From each `actual_param` fact the rules make
-a call-argument vertex (`call_arg`) and edges both ways between it and the actual. The callee's
-summary is instantiated as edges among the call's own call-argument vertices: a row
-`0.head <- 1` becomes `cv0.head <- cv1`. So the call's write lands on the vertex its reads come from, and a callee's
-write through an argument feeds the same call's read through it. The `$globals` argument is not
-even a call-argument vertex: it is the caller's own `$globals` formal.
+**At a call the rules make one vertex per argument.** From each `actual_param` fact the rules make a
+call-argument vertex (`call_arg`) and edges both ways between it and the actual. The callee's
+summary is instantiated as edges among the call's own call-argument vertices: a row `0.head <- 1`
+becomes `cv0.head <- cv1`. So the call's write lands on the vertex its reads come from, and a
+callee's write through an argument feeds the same call's read through it. The `$globals` argument is
+not even a call-argument vertex: it is the caller's own `$globals` formal.
 
 **Several mechanisms each recover a piece of that.** Nothing in the pipeline can say "`h->head` as
 of this statement", the way an SSA version says "`p` as of this definition". Each mechanism below
@@ -151,9 +153,9 @@ that much data.
    into parameter slots (`istore`, `starg`). It is an error after SSA, which `FunctionData::verify`
    checks on SSA's output, so no pass after SSA sees one.
 
-2. **Memory below a root is a set of cells,** each named by a root and an access path: `(h, .head)`,
-   or `(p, .[16].deref.[36].deref)`. Cells are how a version of a root is represented, not a
-   replacement for it.
+2. **Memory below a root is a set of cells,** each named by an access path whose base is a root:
+   `(h, .head)`, or `(p, .[16].deref.[36].deref)`. Cells are how a version of a root is
+   represented, not a replacement for it.
    - **Roots:** formals, `$globals`, allocation results and call results.
    - **Canonical names:** a cell is named function-wide through copies, address arithmetic and load
      chains, so `h->head` through `h`, through a copy of `h`, or through a pointer loaded from `h`
@@ -173,7 +175,7 @@ that much data.
      versioned cell below `p` refers to the version made by the last `Update` that wrote it, so
      `p_k` differs from `p_{k-1}` only at the cell written. A load from `p_k` reads the cell's
      version in `p_k`, and a phi of versions of `p` merges each cell's versions. This is mem2reg,
-     generalized from stack slots to rooted paths.
+     generalized from stack slots to access paths on roots.
    - **An `Update` through a name that is not a root,** such as a pointer loaded from `p`, versions
      that name in SSA. The pass, which knows the canonical names, makes it a version of the root:
      `t = load p_0.f; t_1 = update (t.g := v)` writes the cell `(p, .f.g)`, so it defines the next
@@ -201,12 +203,12 @@ that much data.
    it knows which roots those are.
 
 SSA versions the roots an `Update` writes. The cell pass runs after SSA and computes canonical
-names, which cells are versioned, the call destinations, and the per-cell form of each version. A frontend that keeps emitting `Store`
-changes nothing and gets today's behavior; a frontend opts in by writing a cell with `Update`.
-The p-code frontend already makes that choice in one place, `push_assign_or_store`
-(`frontends/ctadl-pcode/src/lib.rs`), which writes frame slots with `Update` and everything else
-with `Store`. Widening it to heap writes is how p-code gets ordered heap cells, and switching one
-frontend at a time is how the change is measured.
+names, which cells are versioned, the call destinations, and the per-cell form of each version. A
+frontend that keeps emitting `Store` changes nothing and gets today's behavior; a frontend opts in
+by writing a cell with `Update`. The p-code frontend already makes that choice in one place,
+`push_assign_or_store` (`frontends/ctadl-pcode/src/lib.rs`), which writes frame slots with `Update`
+and everything else with `Store`. Widening it to heap writes is how p-code gets ordered heap cells,
+and switching one frontend at a time is how the change is measured.
 
 ### The analysis
 
