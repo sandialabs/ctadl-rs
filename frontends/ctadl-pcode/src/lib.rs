@@ -1091,18 +1091,25 @@ impl Context {
             return Vec::new();
         }
         let n = pcode.inputs.len();
-        if matches!(m, "INT_ADD" | "INT_SUB") && self.addr_vnodes.contains(&pcode.outputs[0]) {
+        let is_pointer = |vn| self.vnode_kinds.get(vn) == Some(&pcode_reader::TypeKind::Pointer);
+        // Under `addrptr`, an add of one pointer is pointer arithmetic even when this function
+        // never dereferences the result.
+        let pointer_add = self.int_arith == IntArith::AddrPtr
+            && pcode.inputs.iter().filter(|vn| is_pointer(vn)).count() == 1;
+        if matches!(m, "INT_ADD" | "INT_SUB")
+            && (pointer_add || self.addr_vnodes.contains(&pcode.outputs[0]))
+        {
             let shapes: Vec<OperandShape> = pcode
                 .inputs
                 .iter()
                 .map(|vn| OperandShape {
-                    pointer: self.vnode_kinds.get(vn) == Some(&pcode_reader::TypeKind::Pointer),
+                    pointer: is_pointer(vn),
                     scaled: self.scaled_vnodes.contains(vn)
                         || self.get_const_value(vn, vnode_facts, locals).is_some(),
                 })
                 .collect();
             let offset = match self.int_arith {
-                IntArith::Addr => OperandFlow::Addr,
+                IntArith::Addr | IntArith::AddrPtr => OperandFlow::Addr,
                 _ => OperandFlow::Value,
             };
             return match base_operand(&shapes) {
@@ -1816,6 +1823,11 @@ enum IntArith {
     /// other than its base are offsets ([`Exp::Addr`]), not values. So what moved a pointer is
     /// not taken for data the pointer carries.
     Addr,
+    /// `addrptr` (experimental): as `addr`, and an `INT_ADD` or `INT_SUB` with exactly one
+    /// pointer-typed operand is address arithmetic too, with that operand as its base, even
+    /// when the result is not used as an address in this function (stored, passed or
+    /// returned).
+    AddrPtr,
     /// `merge`: every operand flows into the result, so the result gets every path of every
     /// operand and an integer added to a pointer becomes a pointer too. For comparison runs.
     Merge,
@@ -1826,10 +1838,11 @@ impl IntArith {
         match std::env::var("CTADL_EXP_INT_ARITH").as_deref() {
             Ok("value") | Err(_) => IntArith::Value,
             Ok("addr") => IntArith::Addr,
+            Ok("addrptr") => IntArith::AddrPtr,
             Ok("merge") => IntArith::Merge,
             Ok(other) => {
                 panic!(
-                    "CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value, addr or merge"
+                    "CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value, addr, addrptr or merge"
                 )
             }
         }
