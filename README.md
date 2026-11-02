@@ -161,6 +161,7 @@ cross this way, so a flow in the library that depends on resolving an indirect c
 
 ## Documentation
 
+- [Specification](docs/spec.md) — purpose, requirements, and high-level design.
 - [Portcullis](docs/portcullis.md) — the model language: sources, sinks, and propagation
   through code CTADL cannot see. Start here to write models.
 - [Debugging](docs/debugging.md).
