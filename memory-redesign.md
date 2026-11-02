@@ -319,10 +319,18 @@ The policies:
   its result is a root of its own, as today: an access through it is not a cell of `p`. An access
   through it could instead be a weak write to a summary cell for `p` at an unknown offset, which
   would connect flows today's engine misses.
-- **Unbounded paths.** A loop that walks a list (`p = p->next`) and recursion that passes
-  `p->next` make paths without end. Past a depth bound, the paths below a prefix collapse into a
-  summary cell. Offset variants from a loop-incremented pointer need a bound for a similar reason,
-  so the two should share one widening policy.
+- **Finite paths.** Cells introduce no paths the engine would not already build. `docs/spec.md`
+  (4.2, "Finite access paths") limits propagation to paths from the program text, from models,
+  and one-level concatenations of the two, and cells keep to that:
+  - **Canonical naming follows SSA definitions, not phis.** Definitions are acyclic except
+    through phis, so a canonical path is a finite composition of paths in the program text, as
+    `cap_path`'s composed paths are today. A loop that walks a list (`p = p->next`) or a
+    loop-incremented pointer meets itself only at a phi, and a phi of two names is the
+    two-roots case above, not a longer path.
+  - **A call defines versions only of the caller's own cells,** the ones its text names. It
+    never creates a cell from a callee's path, so recursion that passes `p->next` does not grow
+    paths. A summary row that writes a path with no cell in the caller lands on the root's
+    vertex, as today, and reaches the caller's summary the way it does today.
 - **Strong updates.** An `Update` kills the previous version of its cell, entry value included,
   only when it writes one cell below one root: not through a name with two roots, not to a summary
   cell, and never at a call. Today's lowering of `Update` kills only what earlier writes put at the
@@ -335,7 +343,7 @@ Each frontend decides which of its writes are `Update`s. A frontend that changes
 today's behavior.
 
 - **C and p-code** put objects behind offsets and `.deref`. Cells are offset paths, and the
-  offset, address-argument and widening policies above are about them. p-code writes frame slots
+  offset, address-argument and finite-path policies above are about them. p-code writes frame slots
   with `Update` already; heap writes through a formal are the next to switch.
 - **Java, Dalvik and CIL** put objects behind fields, so cells are field paths and offsets do not
   arise. A frontend can version per field, for example only fields of a class's own instance.
@@ -392,6 +400,9 @@ today's behavior.
    regression suite and the apps.
 4. **Strong updates,** then retire `cap_path` and the alias rule's copy case. Each becomes a
    special case of cells. `Update` stays, as the frontend's way to ask for a versioned cell.
+   Retiring the copy case changes `docs/spec.md` (4.2, "Aliasing"): a store through a copy of a
+   formal (`l = p1; l.f = p2`) still gives `p2 -> p1.f`, but through canonical naming, which
+   makes it a write to `p1.f` directly, not through an Andersen-style alias analysis.
 
 ## Ruled out
 
@@ -442,7 +453,8 @@ above.
   of the rest of `atomic` survives.
 
 **Cause 6 (offsets on a loop-incremented pointer).** Not fixed: each offset variant is its own
-cell. The widening bound in the policies should be the one cause 6 needs.
+cell. Cells keep to the paths the engine already builds ("Finite paths"), so they neither add
+variants nor remove them.
 
 **Cause 9 (a call writes back onto an address argument).** The write-back policy (cells below an
 argument, never the address) is the change that took `a2050` from 1.72x to 1.29x in cause 9's
