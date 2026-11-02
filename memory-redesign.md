@@ -35,8 +35,10 @@ engine, which searches the resulting graph (`ctadl-ascent/src/query_engine`).
   has `update` syntax; the `$globals` experiment in `problem.md` rewrote heap stores into it.
   Each version is of the whole variable, so it carries everything below it. Whether a
   version reaches the caller is up to `param-flow` (see "`param-flow` drifted").
-- **Calls:** `CallAssign { rets, args }` has one operand per argument, the variable version
-  passed. It defines only `rets`, so nothing names an argument's memory after the call.
+- **Calls:** `CallAssign { rets, args }` has one operand per argument, an expression: the
+  variable version passed, an address such as `p.[k]`, or a constant (a Java receiver is carried
+  on the call's style). It defines only `rets`, so nothing names an argument's memory after the
+  call.
 - **Exit:** `param-flow`, before the `return`, lists each parameter at version 0, and `$globals`,
   which SSA renames to its last version. Nothing names the memory below a parameter at exit.
 
@@ -64,8 +66,8 @@ reads).
 
 **At a call the rules make one vertex per argument.** From each `actual_param` fact the rules make
 a call-argument vertex (`call_arg`) and edges both ways between it and the actual. The callee's
-summary is instantiated as edges from that vertex to itself: a row `0.head <- 1` becomes
-`cv0.head <- cv1`. So the call's write lands on the vertex its reads come from, and a callee's
+summary is instantiated as edges among the call's own call-argument vertices: a row
+`0.head <- 1` becomes `cv0.head <- cv1`. So the call's write lands on the vertex its reads come from, and a callee's
 write through an argument feeds the same call's read through it. The `$globals` argument is not
 even a call-argument vertex: it is the caller's own `$globals` formal.
 
