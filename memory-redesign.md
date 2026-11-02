@@ -146,7 +146,10 @@ that much data.
    that merge them, so every version of `p` is the same pointer: `p_0` is the state on entry and
    `p_k` the state after the writes that reach it. The exit can take a formal's last version, and
    an assignment to the parameter's name never reaches the caller, which removes #154's problem
-   at its source.
+   at its source. An `Assign` to a parameter stays legal in the IR a frontend emits: Dex maps
+   parameter registers straight to parameters and reuses them as scratch, and JVM and CIL store
+   into parameter slots (`istore`, `starg`). It is an error after SSA, which `FunctionData::verify`
+   checks on SSA's output, so no pass after SSA sees one.
 
 2. **Memory below a root is a set of cells,** each named by a root and an access path: `(h, .head)`,
    or `(p, .[16].deref.[36].deref)`. Cells are how a version of a root is represented, not a
@@ -283,7 +286,10 @@ becomes weak overrides the frontend's choice, because ordering that cell would b
   canonicalization, not per statement.
 - **Aliasing within a function.** Different roots do not alias. This is the engine's behavior today.
   Aliasing created by a caller is handled at the call: passing the same root twice makes that
-  call's cells below it weak (one input and output shared by both arguments).
+  call's cells below it weak (one input and output shared by both arguments). A name with two
+  roots is handled at the write: in `if (c) p = q; p.f = v`, renaming the assignment leaves a phi
+  of `p_0` and a fresh local, so the `Update` through the merged name writes the caller's object
+  on one path and `q`'s on the other. It makes the cells it writes below both roots weak.
 - **Offsets.** A cell's path has constant offsets. An address argument (`p.[k]` passed to a call),
   or a non-constant offset, makes the cells below that root weak: one flow-insensitive cell that
   every access reads and writes, as today's vertex does. The prototype's poisoning is this rule.
@@ -350,6 +356,8 @@ today's behavior.
    - **SSA:** renames an `Assign` to a parameter to a fresh local, so a parameter's later versions
      come only from `Update`s and their phis, and each is the same pointer. Until cells exist, an
      `Update` still versions the whole variable.
+   - **Verify:** after SSA, `FunctionData::verify` rejects an `Assign` whose destination is a
+     parameter. Before SSA it stays legal, so Dex, JVM and CIL need no change.
    - **Exit:** `return` takes each parameter's final version, and the summary reads that.
    - **Entry:** the entry copy reads only the formal's entry seed, never the exit.
    - **Tests:** a versioned global read before a write sees the old value (the test
