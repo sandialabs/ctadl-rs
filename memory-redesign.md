@@ -161,16 +161,14 @@ that much data.
      chains, so `h->head` through `h`, through a copy of `h`, or through a pointer loaded from `h`
      is one cell. The prototype's `canonicalize` does this
      (`ctadl-ascent/src/codegen/memory_order.rs` on `problem/memory-order`).
-   - **The frontend chooses which cells are versioned.** A `Store` writes a weak cell: one
-     flow-insensitive vertex that every access reads and writes, as today. An `Update` writes a
-     versioned cell. A cell is versioned only if every write to it, under any of its names, is an
-     `Update`; one `Store` to it makes it weak. The policies below can also make a versioned cell
-     weak where ordering it would be unsound. They never make a `Store`'s cell versioned. The
-     frontend says what it wants, and the pass decides what it can deliver.
+   - **The frontend chooses which cells are versioned.** A cell written only with `Store` is
+     weak: one flow-insensitive vertex that every access reads and writes, as today. A cell an
+     `Update` writes is versioned, and a `Store` to it under another name is a weak write to it
+     (see "Mixed writes"). No policy below makes a versioned cell weak.
    - **`Update` threads state; `Store` does not.** `p_k = update (p_{k-1}.f := v)` takes the
      state of the memory below `p` from one version to the next. A `Store` names no state before
-     or after, and its cell is weak. The frontend's choice between them is a choice about
-     versions in the IR, not a flag on a write.
+     or after. The frontend's choice between them is a choice about versions in the IR, not a
+     flag on a write.
    - **Cell SSA is the sparse form of root versions.** `p_k` is not a copy of the aggregate. Each
      versioned cell below `p` refers to the version made by the last `Update` that wrote it, so
      `p_k` differs from `p_{k-1}` only at the cell written. A load from `p_k` reads the cell's
@@ -280,56 +278,77 @@ With strong updates, save and restore works the same way:
 ## Policies the IR has to state
 
 These are decided implicitly today by which vertices happen to be shared. The redesign makes each
-one explicit. They apply to the cells a frontend writes with `Update`; each one that says a cell
-becomes weak overrides the frontend's choice, because ordering that cell would be unsound.
+one explicit. No policy makes a versioned cell flow-insensitive: the only flow-insensitive cells
+are the ones a frontend writes only with `Store`. Where the pass cannot be exact, it uses one of
+two tools, each local to a statement:
+- **A weak write** defines a new version of a cell without killing the old one: `out = in ∪ v`.
+  The cell stays versioned, and only that statement is imprecise.
+- **A summary cell** stands for a set of paths below one prefix. A write to any of them is a weak
+  write to the summary cell, and a read reads its current version, so it stays ordered.
 
-- **Mixed writes.** A cell written with `Update` under one name and `Store` under another is
-  weak. Canonical naming is what finds the two writes on one cell, so this is decided after
-  canonicalization, not per statement.
-- **Aliasing within a function.** Different roots do not alias. This is the engine's behavior today.
-  Aliasing created by a caller is handled at the call: passing the same root twice makes that
-  call's cells below it weak (one input and output shared by both arguments). A name with two
-  roots is handled at the write: in `if (c) p = q; p.f = v`, renaming the assignment leaves a phi
-  of `p_0` and a fresh local, so the `Update` through the merged name writes the caller's object
-  on one path and `q`'s on the other. It makes the cells it writes below both roots weak.
-- **Offsets.** A cell's path has constant offsets. An address argument (`p.[k]` passed to a call),
-  or a non-constant offset, makes the cells below that root weak: one flow-insensitive cell that
-  every access reads and writes, as today's vertex does. The prototype's poisoning is this rule.
-- **Unknown writes.** A call whose callee's writes are unknown (no body, a skipped body, an
-  indirect or virtual call) makes the cells strictly below each argument it is passed weak. A
-  callee handed a pointer can write what it points to, never the slot the pointer was loaded from.
-  Poisoning the whole root instead is much coarser: one unknown call anywhere below a root leaves
-  nothing below it ordered.
-- **What a callee writes.** A call either defines every cell below an argument (output = input ∪
-  callee writes, sound and simple), or only the cells the callee may write. Bottom-up write sets
-  over direct calls (the prototype's `WriteSets`) make the second available before the
-  fixpoint.
+The policies:
+
+- **Mixed writes.** A `Store` to a cell that an `Update` also writes, under any of its names, is a
+  weak write to it. Canonical naming is what finds the two writes on one cell, so this is decided
+  after canonicalization, not per statement.
+- **Calls.** A call defines a new version of every versioned cell below the root of each argument,
+  as a weak write: the output is the input plus what the callee's summary writes there. This holds
+  whatever the callee is:
+  - **An address argument** (`p.[k]`, as in `&s->f`): the summary is instantiated with offsets
+    adjusted, so a callee's write at `0.[4].deref` lands on `p.[k+4].deref`. A callee can reach
+    back past the address (`container_of`), which is why the call versions every cell below the
+    root, not only those at or after `.[k]`.
+  - **An indirect or virtual call:** its summary arrives when the fixpoint resolves the call, and
+    is instantiated onto the same outputs.
+  - **A callee with no body, or a skipped one,** writes nothing unless a model says it does. That
+    is what today's engine assumes.
+- **What a callee writes.** Without write sets, a call defines a version of every versioned cell
+  below each argument's root, and the cells its summary does not write pass through unchanged.
+  Bottom-up write sets would narrow that to the cells the callee may write. They are an
+  optimization, not what makes a call sound.
 - **What a call writes back.** A call writes back only cells below an argument, never the
   argument's own address. An address argument (`&s->f`) names a location; it is not one.
+- **Aliasing within a function.** Different roots do not alias. This is the engine's behavior
+  today. A name with two roots is a weak write to both: in `if (c) p = q; p.f = v`, renaming the
+  assignment leaves a phi of `p_0` and a fresh local, so the `Update` through the merged name
+  writes the caller's object on one path and `q`'s on the other. It is a weak write to the cell
+  below each root, and neither kills.
+- **Aliasing created at a call.** A callee's summary assumes its formals do not alias. In
+  `f(a, b) { a->f = x; return b->f; }` called as `f(p, p)`, the callee's write through `a` comes
+  before its read through `b`, but the call's input version of `p.f` feeds the read and its output
+  version gets the write, so the return would miss `x`. So when two arguments name overlapping
+  cells (the same root twice, or one argument's cells below another's, as in `f(p, p->next)`), the
+  call's outputs for those cells also feed its inputs. That is today's behavior, at that call and
+  nowhere else. Different roots that alias at run time are assumed not to, as today.
+- **Offsets.** A cell's path has constant offsets. `p + i` with `i` not constant is arithmetic, and
+  its result is a root of its own, as today: an access through it is not a cell of `p`. An access
+  through it could instead be a weak write to a summary cell for `p` at an unknown offset, which
+  would connect flows today's engine misses.
 - **Unbounded paths.** A loop that walks a list (`p = p->next`) and recursion that passes
-  `p->next` make paths without end. Past a depth bound, a cell becomes weak. Offset variants from
-  a loop-incremented pointer need a bound for a similar reason, so the two should share one
-  widening policy.
-- **Strong updates.** An `Update` of a versioned cell whose root names one object kills the
-  previous version, entry value included. Today's lowering of `Update` kills only what earlier
-  writes put at the field, not what the variable held on entry. It comes free in this
-  representation, and it is a separate precision gain from ordering.
+  `p->next` make paths without end. Past a depth bound, the paths below a prefix collapse into a
+  summary cell. Offset variants from a loop-incremented pointer need a bound for a similar reason,
+  so the two should share one widening policy.
+- **Strong updates.** An `Update` kills the previous version of its cell, entry value included,
+  only when it writes one cell below one root: not through a name with two roots, not to a summary
+  cell, and never at a call. Today's lowering of `Update` kills only what earlier writes put at the
+  field, not what the variable held on entry. It comes free in this representation, and it is a
+  separate precision gain from ordering.
 
 ## Frontends
 
 Each frontend decides which of its writes are `Update`s. A frontend that changes nothing keeps
 today's behavior.
 
-- **C and p-code** put objects behind offsets and `.deref`. Cells are offset paths, and most of the
-  policies above (offsets, address arguments, unknown writes) are about them. p-code writes frame
-  slots with `Update` already; heap writes through a formal are the next to switch.
+- **C and p-code** put objects behind offsets and `.deref`. Cells are offset paths, and the
+  offset, address-argument and widening policies above are about them. p-code writes frame slots
+  with `Update` already; heap writes through a formal are the next to switch.
 - **Java, Dalvik and CIL** put objects behind fields, so cells are field paths and offsets do not
   arise. A frontend can version per field, for example only fields of a class's own instance.
-  Virtual calls make writes unknown at most sites until resolution, so less order survives. How
-  much is unmeasured. CIL's value types (structs copied by value, `docs/limitations.md`) want a
-  copied root, not a shared one.
-- **Lua** (the language) puts objects behind table keys. A key that is not a constant makes the
-  table's cells weak.
+  Most calls are virtual, so their summaries arrive only when the fixpoint resolves them; that
+  costs call operands, not order. CIL's value types (structs copied by value,
+  `docs/limitations.md`) want a copied root, not a shared one.
+- **Lua** (the language) puts objects behind table keys. An access with a key that is not a
+  constant is a weak write to, or a read of, a summary cell for the table.
 - **`$globals`** is a root every call reaches. Giving each call an input and output for every
   global cell is the cost the `$globals`-as-`Update` experiment measured. Global cells are weak by
   default because frontends write them with `Store`. A frontend can version the cells a function
@@ -368,8 +387,9 @@ today's behavior.
      not reach the caller. Fix C's out parameters in the frontend (`store out.deref := x`; #154
      left `C:outparam` failing).
 2. **Cells in the IR.**
-   - **Pass:** canonicalization, which cells are versioned (the frontend's `Update`s, less what
-     the policies weaken), cell SSA with phis, entry definitions, call inputs and outputs.
+   - **Pass:** canonicalization, which cells are versioned (those the frontend's `Update`s write),
+     cell SSA with phis, weak writes and summary cells, entry definitions, call inputs and
+     outputs.
    - **Analysis:** reads the new operands; weak cells lower as today.
    - **Tests:** the prototype's `frontends/ctadl-c/src/memory_order_tests.rs` (on
      `problem/memory-order`) carries over, with the cells it orders written with `Update`. Add
@@ -405,7 +425,11 @@ today's behavior.
   the prototype ordered every cell, so how much the first adds is unmeasured.
 - **Roots that are not formals.** Allocation and call results have no entry state. Should their
   cells start empty, or start from the defining call's output?
-- **How much order survives** in Java, CIL and Lua, where most calls are virtual.
+- **A cost cap.** Every call defines a version of every versioned cell below its arguments' roots,
+  so a function with many cells and many calls pays for both. A per-function budget past which
+  cells turn weak, like mem2reg's `full_above` threshold, would cap it. That would be a cost
+  cap, stated as one, not a soundness rule; a frontend's `Store` stays the main way to keep the
+  count down.
 - **Context.** Hybrid inlining's conditional summaries carry a decision per row. Cell versions
   multiply the vertices a condition sits on; whether that matters is unmeasured.
 
