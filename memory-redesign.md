@@ -139,14 +139,18 @@ that much data.
 
 ### The IR
 
-1. **Formals are immutable.** A rebinding of a parameter (`p = q`) defines a fresh local, and later
-   uses read it. An `Update` of a parameter (`p = update (p.f := v)`) is not a rebinding: it
-   defines a new version of the formal's cell, the same object with new contents. SSA tells the
-   two apart by the statement, `Assign` against `Update`. A new version of a parameter can then
-   only mean "same object", which removes #154's problem at its source.
+1. **A formal's versions are versions of its memory, never a new value.** SSA versions an
+   `Update`'s destination as it does today: `p_1 = update (p_0.f := v)` defines `p_1`. The one
+   change is that an `Assign` to a parameter (`p = q`) is renamed to a fresh local, and later uses
+   read it. A parameter's versions then come only from `Update`s, calls (point 4) and the phis
+   that merge them, so every version of `p` is the same pointer: `p_0` is the state on entry and
+   `p_k` the state after the writes that reach it. The exit can take a formal's last version, and
+   an assignment to the parameter's name never reaches the caller, which removes #154's problem
+   at its source.
 
 2. **Memory below a root is a set of cells,** each named by a root and an access path: `(h, .head)`,
-   or `(p, .[16].deref.[36].deref)`.
+   or `(p, .[16].deref.[36].deref)`. Cells are how a version of a root is represented, not a
+   replacement for it.
    - **Roots:** formals, `$globals`, allocation results and call results.
    - **Canonical names:** a cell is named function-wide through copies, address arithmetic and load
      chains, so `h->head` through `h`, through a copy of `h`, or through a pointer loaded from `h`
@@ -158,25 +162,43 @@ that much data.
      `Update`; one `Store` to it makes it weak. The policies below can also make a versioned cell
      weak where ordering it would be unsound. They never make a `Store`'s cell versioned. The
      frontend says what it wants, and the pass decides what it can deliver.
-   - **Cell SSA:** for a versioned cell, an `Update` defines a new version of the cell, a load uses
-     the version that reaches it, and joins get phis. This is mem2reg, generalized from stack slots
-     to rooted paths. `x = update (y.f := v)` keeps its syntax, but `x` now names the root's state
-     after a write to one cell, and the other cells below it are untouched: no copy of the
-     aggregate.
+   - **`Update` threads state; `Store` does not.** `p_k = update (p_{k-1}.f := v)` takes the
+     state of the memory below `p` from one version to the next. A `Store` names no state before
+     or after, and its cell is weak. The frontend's choice between them is a choice about
+     versions in the IR, not a flag on a write.
+   - **Cell SSA is the sparse form of root versions.** `p_k` is not a copy of the aggregate. Each
+     versioned cell below `p` refers to the version made by the last `Update` that wrote it, so
+     `p_k` differs from `p_{k-1}` only at the cell written. A load from `p_k` reads the cell's
+     version in `p_k`, and a phi of versions of `p` merges each cell's versions. This is mem2reg,
+     generalized from stack slots to rooted paths.
+   - **An `Update` through a name that is not a root,** such as a pointer loaded from `p`, versions
+     that name in SSA. The pass, which knows the canonical names, makes it a version of the root:
+     `t = load p_0.f; t_1 = update (t.g := v)` writes the cell `(p, .f.g)`, so it defines the next
+     version of `p`.
+   - **Different source and destination.** `x = update (y.f := v)` with `x` and `y` different
+     roots keeps its functional meaning: `x` is a new root whose cells are `y`'s, except at `.f`.
+     CIL's value types want this, and a `Store` cannot say it.
 
 3. **Entry and exit are explicit.**
-   - **Entry:** version 0 of a cell is an entry definition: its value is formal `j` at path `π` on
-     entry.
-   - **Exit:** `return` takes the final version of every cell below a formal or `$globals` as
-     operands. Those operands are the anchor; `param-flow` goes away.
+   - **Entry:** `p_0` is the entry state. Each versioned cell's version in `p_0` is an entry
+     definition: its value is formal `j` at path `π` on entry.
+   - **Exit:** `return` takes the last version of each formal and of `$globals` as operands, which
+     stands for the final version of every versioned cell below it. Those operands are the anchor;
+     `param-flow` goes away.
 
-4. **Calls are memory effects.** A call that passes root `r` takes the current version of each
-   versioned cell below `r` as an input. It defines a new version of each as an output, which is
-   the input plus whatever the callee writes there (weak). The call has its own input and output,
-   so its write cannot feed its own read. Weak cells get no call operands: the call reads and
-   writes their one vertex, as today.
+4. **Calls are memory effects.** A call defines a new version of each root it passes, as an
+   `Update` does: `p_1 = call f(p_0)` names the state before and after the call. Its cells are
+   the sparse form: the call takes each versioned cell's version in `p_0` as an input and defines
+   its version in `p_1` as an output, which is the input plus whatever the callee writes there
+   (weak). The input and output are different versions, so the call's write cannot feed its own
+   read. An argument that is not a root, such as a pointer loaded from `p`, versions its root, as
+   an `Update` through it does. Weak cells get no call operands: the call reads and writes their
+   one vertex, as today. `CallAssign` gains these versions as destinations beside `rets`. The
+   cell pass adds them, for the roots that have versioned cells below an argument, because only
+   it knows which roots those are.
 
-Cells are a pass over the IR after SSA, as mem2reg is. A frontend that keeps emitting `Store`
+SSA versions the roots an `Update` writes. The cell pass runs after SSA and computes canonical
+names, which cells are versioned, the call destinations, and the per-cell form of each version. A frontend that keeps emitting `Store`
 changes nothing and gets today's behavior; a frontend opts in by writing a cell with `Update`.
 The p-code frontend already makes that choice in one place, `push_assign_or_store`
 (`frontends/ctadl-pcode/src/lib.rs`), which writes frame slots with `Update` and everything else
@@ -201,7 +223,22 @@ cell version is reported at the location it names.
 
 ### The example
 
-The frontend writes both fields with `Update`, so both cells are versioned.
+The frontend writes both fields with `Update`, so both cells are versioned. In the IR, after SSA
+and the cell pass, each write and the call define versions of the roots:
+
+```
+push(@p0, @p1):
+  t     = load @p0_0.head
+  @p1_1 = update (@p1_0.next := t)
+  @p0_1 = update (@p0_0.head := @p1_0)
+  return [@p0_1, @p1_1]
+
+caller(@p0, @p1):
+  @p0_1, @p1_1 = call push(@p0_0, @p1_0)
+  return [@p0_1, @p1_1]
+```
+
+The same functions in the per-cell form the analysis sees:
 
 ```
 push(@p0, @p1):                        // void push(list *h, node *n) { n->next = h->head; h->head = n; }
@@ -310,8 +347,9 @@ today's behavior.
 
 1. **Formals immutable, `return` carries the exit state, `param-flow` removed.** Semantics only,
    and independent of the rest.
-   - **SSA:** renames a rebinding of a parameter to a fresh local; an `Update` of a parameter
-     still defines a new version of it.
+   - **SSA:** renames an `Assign` to a parameter to a fresh local, so a parameter's later versions
+     come only from `Update`s and their phis, and each is the same pointer. Until cells exist, an
+     `Update` still versions the whole variable.
    - **Exit:** `return` takes each parameter's final version, and the summary reads that.
    - **Entry:** the entry copy reads only the formal's entry seed, never the exit.
    - **Tests:** a versioned global read before a write sees the old value (the test
