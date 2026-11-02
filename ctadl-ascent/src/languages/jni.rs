@@ -220,8 +220,8 @@ legitimately has one per `native` declaration. So do unattributed table entries.
   frontend does not model a 64-bit return (`EDX:EAX`) on x86 as one value, even with DWARF. The
   `JniWide` regression case is shaped around all three.
 - **Only unconditional summaries cross from a summary project.** `--summary` maps the
-  unconditional `summary` rows, not the conditional ones or `critical_summary`, so a flow in the library that depends on resolving
-  an indirect call is lost.
+  unconditional `summary` rows, not the conditional ones or `critical_summary`, so a flow in the
+  library that depends on resolving an indirect call is lost.
 - **A result through a summary-sourced native is located on the Java side only.** The library's
   instructions are not in the app's index, only its summaries, so the SARIF has no location
   inside it. Co-index the library to see the native half of a flow.

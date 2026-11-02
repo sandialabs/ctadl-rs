@@ -472,7 +472,13 @@ fn a_propagation_within_one_formal_keeps_rows_whose_paths_differ() {
 
     assert_eq!(
         facts.summary,
-        vec![(f, FormalIndex::new(0), path(".a"), FormalIndex::new(0), path(".b"))]
+        vec![(
+            f,
+            FormalIndex::new(0),
+            path(".a"),
+            FormalIndex::new(0),
+            path(".b")
+        )]
     );
 }
 

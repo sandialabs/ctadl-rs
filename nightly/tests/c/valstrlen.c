@@ -1,7 +1,7 @@
 /* A string's length, `p - s`, used to index a clean buffer. The length is
  * computed from the pointer's value, not from the string's contents, so the
- * element read through it is clean. Lowered as a merge, the length aliased the
- * string's memory and every buffer it indexed looked tainted.
+ * element read through it is clean. Lowered as a merge, the length would
+ * alias the string's memory and taint every buffer it indexed.
  */
 
 const char *produce(void);

@@ -1021,9 +1021,9 @@ impl Visitor for CodegenVisitor<'_> {
                             Str::from(value.clone()),
                         ));
                     }
-                    // `dest = value(v)`: `dest.#value` gets `v`'s value, and `dest` itself gets
-                    // nothing. Whatever `v`'s value was computed from, `v.#value`, comes along as
-                    // the rest of the suffix, since `#value` absorbs itself.
+                    // `dest = value(v)` lowers to `dest.#value <- v`; `dest` itself gets nothing.
+                    // `v.#value` comes along since `#value` absorbs itself
+                    // (`ctadl_ir::mir::VALUE_FIELD`).
                     if let Exp::Value(v) = src {
                         let value = fx::Path::from_accesses([PathSegment::value()]);
                         self.paths_dedup.insert((value,));

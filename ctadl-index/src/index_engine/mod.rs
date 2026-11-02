@@ -60,8 +60,6 @@ use crate::facts::{
 pub use crate::index_engine::decision::{Cond, Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
-pub mod assign_like_trie;
-pub mod c_assign_like_trie;
 pub mod c_cond_trie;
 pub mod c_locals_trie;
 pub mod cond_trie;
@@ -413,13 +411,11 @@ pub enum HybridContext {
     /// route established the decision, until it lands as a plain edge in a function that held
     /// the call target. Two callers passing different targets get different flows.
     ///
-    /// A row's condition is a [`Cond`], a lattice: `Always`, or a [`DecisionSet`] under every
-    /// decision of which the row holds. Rows that several decisions reach are shared rather
-    /// than repeated, and a row that also holds unconditionally is one `Always` row, so there is
-    /// one row per `(f, v, p, a, p4)` whatever the number of decisions reaching a function.
-    /// Complete,
-    /// deterministic (the fixpoint does not depend on the order routes are found in), and the
-    /// default.
+    /// A row that several decisions reach is one row, with one [`Cond`], rather than repeated,
+    /// so there is one row per `(f, v, p, a, p4)` whatever the number of decisions reaching a
+    /// function.
+    /// Complete, deterministic (the fixpoint does not depend on the order routes are found in),
+    /// and the default.
     #[default]
     Decision,
     /// As `Decision`, with the set collapsed to ⊤ -- "every decision of this function" -- the
@@ -439,10 +435,10 @@ pub enum HybridContext {
     Bounded(usize),
     /// As `Bounded(k)`, but a row whose set widens to ⊤ is `Always` instead, so the flow is
     /// shared by every caller through the unconditional `summary` (as under `None`), and
-    /// nothing conditional is derived from it. Coarser than `Bounded(k)` downstream of the widened row
-    /// (`Bounded` still conditions the callers' inherited flows on their own decisions), but
-    /// no ⊤ summary is ever applied at every establishing caller, which is what makes
-    /// `Bounded` feed back on itself.
+    /// nothing conditional is derived from it. Coarser than `Bounded(k)` downstream of the
+    /// widened row (`Bounded` still conditions the callers' inherited flows on their own
+    /// decisions), but no ⊤ summary is ever applied at every establishing caller, which is what
+    /// makes `Bounded` feed back on itself.
     Spill(usize),
     /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
     /// directly resolved call's would be. The resolvent machinery still decides *which* callees
@@ -511,7 +507,7 @@ impl Parallelism {
 /// either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
-    /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
+    /// The in-memory trie of [`locals_trie`].
     #[default]
     Memory,
     /// The memory-mapped LSM maps of the `lsm` crate, which hold each index of a relation in
@@ -1061,7 +1057,7 @@ macro_rules! cond_stores {
         impl $crate::index_engine::CondStores for $prog_ty {
             fn seed_assign_like(&mut self, rows: Vec<$crate::index_engine::AssignLikeRow>) {
                 self.__assign_like_ind_common =
-                    $crate::index_engine::assign_like_trie::FromRows::from_rows(rows);
+                    $crate::index_engine::cond_trie::FromRows::from_rows(rows);
             }
             fn take_assign_like(&mut self) -> Vec<$crate::index_engine::AssignLikeRow> {
                 $crate::index_engine::$m::assign::into_always_vec(std::mem::take(
@@ -1510,16 +1506,9 @@ ascent_source! {
 
     // Local reachability, under its condition. The core, most expensive relation.
     //
-    // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]: `Always`, or the
-    // decisions it holds under. One fact is one row, however it is derived, so a flow that
-    // holds unconditionally is never also kept under a decision. A fact composed of two holds
-    // under both conditions (`Cond::and`); one derived two ways holds under either (the
-    // lattice join). The rules that do not reason about context (call-target propagation,
-    // the critical summaries and resolvents, the aliasing summary, `const_reaches`) and the
-    // outputs read only `Always` facts.
-    //
-    // They are plain relations to Ascent, which refuses a custom store on a `lattice`; the store
-    // keeps one row per fact and joins its conditions (`cond_trie`).
+    // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]. The rules that do
+    // not reason about context (call-target propagation, the critical summaries and resolvents,
+    // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts.
     #[ds($crate::index_engine::cond_trie::locals)]
     relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
     #[ds($crate::index_engine::cond_trie::assign)]
@@ -2461,7 +2450,7 @@ macro_rules! trie_stores {
 ///
 /// Everything from seeding the inputs to extracting the result is written once, here, and
 /// expanded once per engine crate. The program types spell their fields identically, but each
-/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `AssignTrie` vs `CAssignTrie`), so
+/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `CondTrie` vs `CCondTrie`), so
 /// no one function signature covers them all and a trait would only restate every field.
 //
 // Relation inputs are set here rather than as inline `= <init>` initializers, because the
