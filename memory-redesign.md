@@ -29,9 +29,11 @@ engine, which searches the resulting graph (`ctadl-ascent/src/query_engine`).
   defines `x`, so SSA gives the written aggregate a new version. A frontend that emits `Update`
   for heap writes gets memory versioned this way: `$globals = update ($globals.[A].deref := v)`
   makes each write a new version of the global heap, so a later load sees the write and an
-  earlier one does not. Today only the stack uses this (mem2reg and the frame pass) and flowy
-  (`frontends/ctadl-flowy`); the `$globals` experiment in `problem.md` rewrote heap stores into
-  it. Each version is of the whole variable, so it carries everything below it. Whether a
+  earlier one does not. Today the p-code frontend writes the stack frame this way
+  (`__stack_top = update (__stack_top.[k].deref := v)`; mem2reg promotes some slots to locals,
+  and the frame pass can turn the rest back into stores), and flowy (`frontends/ctadl-flowy`)
+  has `update` syntax; the `$globals` experiment in `problem.md` rewrote heap stores into it.
+  Each version is of the whole variable, so it carries everything below it. Whether a
   version reaches the caller is up to `param-flow` (see "`param-flow` drifted").
 - **Calls:** `CallAssign { rets, args }` has one operand per argument, the variable version
   passed. It defines only `rets`, so nothing names an argument's memory after the call.
