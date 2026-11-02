@@ -79,7 +79,8 @@ import, chosen by the frontend:
 | cil | `cil-index.ctadl` |
 | flowy | *(none)* |
 
-Your `--models` files are added on top. `--no-default-models` on `ctadl index` or `ctadl go`
+Your `--models` files are added on top, and a mode head of yours outranks a default's (see
+[Mode priority](#mode-priority)). `--no-default-models` on `ctadl index` or `ctadl go`
 leaves `--models` as the complete set. There are no default sources or sinks: what to search for
 is yours to say.
 
@@ -231,6 +232,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
 | `subclass+(Sub, Super)` | transitive closure | — |
 | `uses_field(F, Fld)` | function, field it loads, stores or updates | — |
+| `allocator(F)` | a C heap allocator's entry point (native code) | `kind`, `by` |
 
 Notes worth having:
 
@@ -269,6 +271,22 @@ Notes worth having:
   `import` are those of the import the call site was read from. Collecting
   the keys costs a pass over every statement, so an import pays for it only when some rule reads
   `callsig`; a rule that reads it against an import collected without them matches nothing.
+- `allocator` lists the entry points of a C heap allocator, in native code only. `kind` is
+  `"malloc"` (returns a fresh block: `malloc`, `calloc`, `memalign`, …), `"realloc"` (returns a
+  block holding its first argument's contents), `"free"`, or `"internal"` (`mallopt`,
+  `malloc_trim`, `malloc_consolidate`, …). `by` says how it was found:
+  - `"name"`: its simple name, or its full name without leading underscores, is one of the
+    allocator names in `ctadl-ascent/src/models/portcullis/allocator.rs`.
+  - `"shape"`: it has no allocator name, but has dlmalloc's shape. `free` and `realloc` read
+    the header word just before the pointer they are passed. Every entry point writes the globals
+    those two write themselves, hundreds of times. The kind comes from the signature and the
+    number of callers. This is what finds the allocator in a stripped binary. A pick is a
+    heuristic, so `ctadl index` reports every one as `CTADL0109`, saying whether its body was
+    skipped.
+
+  A function has at most one row; a name wins over a shape. Finding the by-shape rows costs a
+  pass over every native function body, so an import pays for it only when some rule reads
+  `allocator`. The native defaults do: they skip every allocator's body, found either way.
 
 Every relation name is built in. A file cannot define one, so a name that is not in the table is a
 typo and is reported as one.
@@ -346,9 +364,9 @@ The point of a model file is to derive these.
 | `access_paths("…")` | a literal access path | — |
 | `K::dispatch(<flow>)` | a flow within **one** call signature | — |
 | `K::dispatch(…)` | — | `resolve` (`"inline"` / `"skip"`), `closure_shaped` |
-| `skip_analysis(F)` | a function | — |
-| `mem2reg_full(F)`, `mem2reg_window(F)` | a function | — |
-| `frame_store(F)`, `frame_update(F)` | a function | — |
+| `skip_analysis(F)`, `analyze(F)` | a function | `priority` (default `0`) |
+| `mem2reg_full(F)`, `mem2reg_window(F)` | a function | `priority` (default `0`) |
+| `frame_store(F)`, `frame_update(F)` | a function | `priority` (default `0`) |
 
 - **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
@@ -411,6 +429,9 @@ The point of a model file is to derive these.
   `F::skip_analysis()` is the same head written with an anchor, and `skip_analysis("…")` names a
   function by its full name — for a native symbol that is the decorated one, such as
   `<EXTERNAL>::abort@00101008`, so binding through `fun(F, name = …)` is usually what you want.
+- **`analyze`** is the opposite of `skip_analysis`: the function's body is lowered. It exists to
+  override a `skip_analysis` from another rule, such as one in the built-in defaults (see
+  [Mode priority](#mode-priority)).
 - **`mem2reg_full`** / **`mem2reg_window`** force or forbid full stack-slot promotion for a native
   function, whatever its size and whatever `ctadl index --mem2reg` says. Full promotion gives every
   stack slot its own local, even one whose address escapes; `ctadl index` names each function
@@ -420,11 +441,36 @@ The point of a model file is to derive these.
   frame, so a load sees only the writes that reach it; with `frame_store` every load of a slot sees
   every store to it.
 
-  These five are *mode* heads: each takes one function and is read as that function's import is
+  These six are *mode* heads: each takes one function and is read as that function's import is
   lowered (SSA, then codegen). So a rule with one must be satisfied within one import — its body
   may not split into parts that share no variable, because those are joined only after every
-  import is lowered. When two rules give one function conflicting `mem2reg_*` (or `frame_*`)
-  modes, the later rule wins.
+  import is lowered.
+
+### Mode priority
+
+The mode heads come in three pairs of opposites, each choosing one setting of a function: its
+body (`skip_analysis` or `analyze`), its stack-slot promotion (`mem2reg_full` or
+`mem2reg_window`) and its frame writes (`frame_store` or `frame_update`). Each head may say
+`priority = N`, an integer constant; a head that does not say has priority 0.
+
+- Of the modes claimed on one function's setting, the **highest priority wins**, whatever order
+  the files and rules are read in.
+- Two rules claiming **the same mode** at one priority agree, and that is fine.
+- Two rules claiming **different modes** at the winning priority is an error, naming the function
+  and both rules, unless a higher claim settles it. `ctadl index` stops on it before lowering the
+  import, and a model check (`ctadl query` without an index) reports it.
+- The pairs are independent: `skip_analysis(F)` and `mem2reg_full(F)` never conflict.
+
+The built-in defaults claim their modes at `priority = -100`, so any rule of yours that names no
+priority outranks them:
+
+```
+// The native defaults skip the allocator's body; analyze this one anyway.
+analyze(F) :- fun(F, name = "malloc");
+
+// Two files of your own disagree; this one wins.
+skip_analysis(F, priority = 10) :- fun(F, name = "parse_config");
+```
 
 Each output relation takes exactly one port, flow or path. Several are written as several
 comma-separated heads:
@@ -659,7 +705,7 @@ How the JSON constructs map:
 | `model: {resolve: "inline"}` | `K::dispatch(resolve = "inline")` |
 | `model: {resolve: "inline", propagation: [...]}` | `K::dispatch(resolve = "inline", <out> <- <in>)` |
 | `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
-| `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)`, and likewise `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update`; within a generator the last of each pair wins |
+| `model: {modes: ["skip-analysis"]}` | `skip_analysis(F)`, and likewise `mem2reg_full`, `mem2reg_window`, `frame_store`, `frame_update`; within a generator the last of each pair wins. Every migrated mode is at priority 0, so two generators that disagree on a function are an error where the JSON let the last one read win (see [Mode priority](#mode-priority)) |
 
 A migrated file means what the JSON meant, with one exception: where the JSON matcher that used
 to run these files had a bug or a limitation, the migration takes Portcullis's meaning rather than
@@ -725,6 +771,8 @@ looks exactly like a clean program.
 | Apply a model to only some of a project's imports | `fun(F, language = …)` or `fun(F, import = …)` |
 | Register an access path the code never writes | `access_paths("…")` |
 | Trust the model and skip the body | `skip_analysis(F)` |
+| Keep a body another rule, or a default, skips | `analyze(F)`, with a `priority` above the other rule's |
+| Keep a function the allocator detector picked by mistake | `analyze(F) :- fun(F), F = "FUN_0042d400";` |
 | Take a contract method's implementations out of the call graph | `K::dispatch(<flow>)` |
 | Discard a call that moves nothing | `K::dispatch(resolve = "skip")` |
 | Keep a signature's bodies reachable but off CHA | `K::dispatch(resolve = "inline")` |

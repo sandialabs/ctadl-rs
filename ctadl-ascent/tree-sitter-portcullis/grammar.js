@@ -29,6 +29,7 @@ const OUT_RELS = [
   'access_paths',
   'dispatch',
   'skip_analysis',
+  'analyze',
   'mem2reg_full',
   'mem2reg_window',
   'frame_store',

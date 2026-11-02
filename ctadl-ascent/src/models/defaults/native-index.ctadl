@@ -35,8 +35,10 @@
 // COST. `compute_arg_arity` takes the max over *actual call sites*, so `arg(_)` on a variadic
 // fans out to the widest call in the program: one 12-argument `snprintf` anywhere makes every
 // `snprintf` summary 12x12 program-wide. The printf and scanf families are the only variadic
-// `arg(_)` users here; keep it that way. The allocator rule also uses `arg(_)`, but on a fixed
-// 1-2 argument signature, so its fan-out is bounded.
+// `arg(_)` users here; keep it that way.
+//
+// PRIORITY. Every `skip_analysis` here is claimed at `priority = -100`, below the 0 a rule gets
+// when it names none, so a user's plain `analyze(F)` keeps a body this file would skip.
 //
 // ---- copying ----
 propagation(F::arg(0).deref <- F::arg(1).deref),
@@ -240,13 +242,28 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
   F in {"mbsrtowcs", "wcsrtombs"};
 
 // ---- allocation ----
+// The allocator's bodies are skipped. A statically linked dlmalloc keeps its heap state (top
+// chunk, bins, fastbins) in globals and computes bin addresses from the request size, so its
+// summary relates nearly every `$globals` path to the size and to each other. `$globals` is an
+// implicit in/out of every function, so that block reaches the summary of every transitive
+// caller and is re-instantiated at every call site: tens of GiB on uClibc firmware. None of it
+// is application data flow, since a fresh block carries nothing from its size or from the free
+// lists. The internals are skipped too, for the callers outside `malloc` and `free` (`mallopt`,
+// `malloc_trim`).
+//
+// `allocator` finds the entry points by name, or in a stripped binary by dlmalloc's shape
+// (docs/portcullis.md §3). Every by-shape pick is reported as CTADL0109; `analyze(F)` keeps a
+// body picked by mistake.
+skip_analysis(F, priority = -100) :-
+  allocator(F, kind in {"malloc", "free", "internal"});
+
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
-// a flow through every grow-the-buffer loop in a parser.
-propagation(F::return.deref <- F::arg(0).deref) :-
-  fun(F, name in {"realloc", "reallocarray", "reallocf"});
-propagation(F::return.deref <- F::arg(0).deref) :-
-  fun(F),
-  F in {"realloc", "reallocarray", "reallocf"};
+// a flow through every grow-the-buffer loop in a parser. The body is skipped as for `malloc`:
+// uClibc's `realloc` is a second copy of dlmalloc, and the propagation is what it should
+// contribute.
+skip_analysis(F, priority = -100),
+  propagation(F::return.deref <- F::arg(0).deref) :-
+  allocator(F, kind = "realloc");
 
 // ---- the C++ exception unwinder ----
 // These carry NO propagation and exist purely for `skip_analysis(F)`, which tells the
@@ -274,9 +291,9 @@ propagation(F::return.deref <- F::arg(0).deref) :-
 // file: `__aeabi_unwind_cpp_pr0` reaches the matcher as `aeabi_unwind_cpp_pr0` and
 // `_Unwind_RaiseException` as `Unwind_RaiseException`. Capital `U` in the `_Unwind_*` family is
 // deliberate -- `name = ...` is exact, not case-folded.
-skip_analysis(F) :-
+skip_analysis(F, priority = -100) :-
   fun(F, name in {"aeabi_unwind_cpp_pr0", "aeabi_unwind_cpp_pr1", "aeabi_unwind_cpp_pr2", "gnu_unwind_frame", "gnu_unwind_execute", "gnu_unwind_pr_common", "gnu_Unwind_Resume", "gnu_Unwind_Resume_or_Rethrow", "gnu_Unwind_RaiseException", "gnu_Unwind_ForcedUnwind", "gnu_Unwind_Backtrace", "unwind_phase1", "unwind_phase2", "unwind_phase2_forced", "Unwind_RaiseException", "Unwind_Resume", "Unwind_Resume_or_Rethrow", "Unwind_ForcedUnwind", "Unwind_DeleteException", "Unwind_Backtrace", "Unwind_Complete", "Unwind_VRS_Get", "Unwind_VRS_Set", "Unwind_VRS_Pop", "Unwind_GetLanguageSpecificData", "Unwind_GetRegionStart", "Unwind_GetDataRelBase", "Unwind_GetTextRelBase", "cxa_begin_cleanup", "cxa_end_cleanup", "cxa_type_match", "cxa_call_unexpected"});
-skip_analysis(F) :-
+skip_analysis(F, priority = -100) :-
   fun(F),
   F in {"aeabi_unwind_cpp_pr0", "aeabi_unwind_cpp_pr1", "aeabi_unwind_cpp_pr2", "gnu_unwind_frame", "gnu_unwind_execute", "gnu_unwind_pr_common", "gnu_Unwind_Resume", "gnu_Unwind_Resume_or_Rethrow", "gnu_Unwind_RaiseException", "gnu_Unwind_ForcedUnwind", "gnu_Unwind_Backtrace", "unwind_phase1", "unwind_phase2", "unwind_phase2_forced", "Unwind_RaiseException", "Unwind_Resume", "Unwind_Resume_or_Rethrow", "Unwind_ForcedUnwind", "Unwind_DeleteException", "Unwind_Backtrace", "Unwind_Complete", "Unwind_VRS_Get", "Unwind_VRS_Set", "Unwind_VRS_Pop", "Unwind_GetLanguageSpecificData", "Unwind_GetRegionStart", "Unwind_GetDataRelBase", "Unwind_GetTextRelBase", "cxa_begin_cleanup", "cxa_end_cleanup", "cxa_type_match", "cxa_call_unexpected"};
 

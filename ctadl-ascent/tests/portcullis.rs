@@ -1135,6 +1135,7 @@ fn needs_are_read_from_every_atom_of_every_rule() {
             subclass: true,
             callsig: false,
             local: false,
+            allocator: false,
         }
     );
     let mut needs = needs_of(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "n");"#);
@@ -1558,8 +1559,8 @@ fn groundings_are_projected_onto_head_variables() {
     assert_eq!(out.endpoints.len(), 1);
 }
 
-/// The mode heads fill the maps the SSA pipeline and codegen read, and a later rule that
-/// disagrees on a function wins.
+/// The mode heads fill the maps the SSA pipeline and codegen read, and of two rules that
+/// disagree on a function the one with the higher priority wins.
 #[test]
 fn mode_heads_mark_their_functions() {
     use ctadl_ir::ssa::{FrameWrites, FullMode};
@@ -1570,10 +1571,11 @@ fn mode_heads_mark_their_functions() {
         mem2reg_full(F), frame_store(F) :- fun(F, name = "big");
         mem2reg_window(F) :- fun(F, name = "small");
         frame_update(F) :- fun(F, name = "small");
-        mem2reg_full(F) :- fun(F, name = "small");
+        mem2reg_full(F, priority = 1) :- fun(F, name = "small");
         skip_analysis(F) :- fun(F, name = "unwind");
         "#,
     );
+    m.check_mode_conflicts().unwrap();
     // A mode keys on a function's full name, which for a native symbol is the decorated one.
     let full = |n: &str| format!("<EXTERNAL>::{n}@00101008");
     fn named<T: Copy>(
@@ -1597,4 +1599,306 @@ fn mode_heads_mark_their_functions() {
     );
     let skipped: Vec<String> = m.skip_analysis.iter().map(|f| f.to_string()).collect();
     assert_eq!(skipped, [full("unwind")]);
+}
+
+/// The functions `skip_analysis` holds, by simple name.
+fn skipped(m: &ProgramModelMatches) -> Vec<String> {
+    m.skip_analysis
+        .iter()
+        .map(|f| {
+            let f = f.to_string();
+            f.trim_start_matches("<EXTERNAL>::")
+                .trim_end_matches("@00101008")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The highest priority wins whichever rule comes first, and `analyze` undoes a `skip_analysis`
+/// it outranks.
+#[test]
+fn the_highest_priority_mode_wins_in_either_order() {
+    let program_info = native_program(&["f", "g"]);
+    for source in [
+        r#"skip_analysis(F) :- fun(F); analyze(F, priority = 5) :- fun(F, name = "f");"#,
+        r#"analyze(F, priority = 5) :- fun(F, name = "f"); skip_analysis(F) :- fun(F);"#,
+    ] {
+        let m = run(&program_info, source);
+        m.check_mode_conflicts()
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert_eq!(skipped(&m), ["g"], "{source}");
+    }
+    // A negative priority is outranked by one left unwritten.
+    let m = run(
+        &program_info,
+        r#"skip_analysis(F, priority = -100) :- fun(F); analyze(F) :- fun(F, name = "g");"#,
+    );
+    m.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&m), ["f"]);
+}
+
+/// Two different modes at one priority are an error naming the function and both rules; two
+/// rules claiming the same mode are not.
+#[test]
+fn different_modes_at_one_priority_conflict() {
+    let program_info = native_program(&["f", "g"]);
+    let m = run(
+        &program_info,
+        r#"
+        skip_analysis(F) :- fun(F);
+        skip_analysis(F) :- fun(F, name = "g");
+        analyze(F) :- fun(F, name = "f");
+        "#,
+    );
+    let err = m.check_mode_conflicts().unwrap_err().to_string();
+    assert!(err.contains("<EXTERNAL>::f@00101008"), "{err}");
+    assert!(err.contains("'skip_analysis' from test.ctadl:0"), "{err}");
+    assert!(err.contains("'analyze' from test.ctadl:2"), "{err}");
+    assert!(err.contains("both at priority 0"), "{err}");
+    assert!(!err.contains("::g@"), "{err}");
+}
+
+/// A tie is settled by a higher claim, whether it comes before or after the tie.
+#[test]
+fn a_higher_priority_settles_a_tie() {
+    let program_info = native_program(&["f"]);
+    for source in [
+        r#"skip_analysis(F) :- fun(F); analyze(F) :- fun(F); analyze(F, priority = 1) :- fun(F);"#,
+        r#"analyze(F, priority = 1) :- fun(F); skip_analysis(F) :- fun(F); analyze(F) :- fun(F);"#,
+    ] {
+        let m = run(&program_info, source);
+        m.check_mode_conflicts()
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert!(skipped(&m).is_empty(), "{source}");
+    }
+}
+
+/// Modes on different axes never conflict.
+#[test]
+fn modes_on_different_axes_are_independent() {
+    let program_info = native_program(&["f"]);
+    let m = run(
+        &program_info,
+        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F); frame_store(F) :- fun(F);"#,
+    );
+    m.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&m), ["f"]);
+    assert_eq!(m.mem2reg_modes.len(), 1);
+    assert_eq!(m.frame_modes.len(), 1);
+}
+
+/// A user's `analyze` outranks the native defaults' allocator skip without naming a priority.
+#[test]
+fn a_user_analyze_overrides_a_default_skip() {
+    let program_info = native_program(&["malloc", "free", "realloc"]);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut out = ProgramModelMatches::default();
+    ctadl_ascent::models::try_load_default_models(&index, &mut out).unwrap();
+    let file = portcullis::PortcullisFile::from_text(
+        "user.ctadl",
+        r#"analyze(F) :- fun(F, name = "malloc");"#,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    matcher.observe_import(&index, &mut out);
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    out.check_mode_conflicts().unwrap();
+    assert_eq!(skipped(&out), ["free", "realloc"]);
+}
+
+// ---------------------------------------------------------------------------
+// allocator
+// ---------------------------------------------------------------------------
+
+/// The `allocator` rows `source` selects, as `name kind by` lines. Each rule's head is
+/// `skip_analysis(F)`, and the `kind` and `by` it reads come back through a second pass.
+fn allocators(program_info: &ProgramInfo, select: &str) -> Vec<String> {
+    let mut rows = Vec::new();
+    for kind in ["malloc", "realloc", "free", "internal"] {
+        for by in ["name", "shape"] {
+            let m = run(
+                program_info,
+                &format!(
+                    r#"skip_analysis(F) :- allocator(F, kind = "{kind}", by = "{by}"), {select};"#
+                ),
+            );
+            rows.extend(skipped(&m).into_iter().map(|f| format!("{f} {kind} {by}")));
+        }
+    }
+    rows.sort();
+    rows
+}
+
+/// Every allocator name is a row, with its kind; other functions are not.
+#[test]
+fn allocator_lists_named_entry_points_by_kind() {
+    let program_info = native_program(&["malloc", "realloc", "free", "mallopt", "strcpy"]);
+    assert_eq!(
+        allocators(&program_info, "fun(F)"),
+        [
+            "free free name",
+            "malloc malloc name",
+            "mallopt internal name",
+            "realloc realloc name",
+        ]
+    );
+}
+
+/// A Java method named like an allocator is not one.
+#[test]
+fn allocator_is_native_only() {
+    let mut program_info = java_program();
+    program_info.vmt = test_vmt::with_method_names(VirtualMethodTable::new(Dispatch::Java {
+        methods: vec![(
+            JavaClass("Lc/Pool;".into()),
+            JavaSimpleName("free".into()),
+            JavaSignature("()V".into()),
+            JavaMethod("Lc/Pool;->free()V".into()),
+        )],
+        hierarchy: Default::default(),
+        interfaces: Vec::new(),
+        abstract_methods: Vec::new(),
+        natives: Vec::new(),
+    }));
+    assert!(allocators(&program_info, "fun(F)").is_empty());
+}
+
+/// A stripped program with dlmalloc's shape: `free` and `realloc` read the header word before
+/// their pointer and write the heap state, which `malloc` writes too. `FUN_peek` reads a header
+/// word but writes nothing, `FUN_stats` writes the heap state but has no allocator signature,
+/// and `FUN_lonely` is shaped like `malloc` but has a single caller. `main` calls them.
+fn stripped_allocator() -> ProgramInfo {
+    use ctadl_ir::mir::{Exp, OffsetAccess, ParameterIdx, ReturnType};
+    const HEAP: [i64; 4] = [0x10003010, 0x10003014, 0x10003040, 0x10003044];
+    let heap_stores = |n: usize| -> Vec<Statement> {
+        (0..n)
+            .map(|i| {
+                Statement::new_kind(StatementKind::Store {
+                    dest: AccessPath::new(
+                        VariableRef::new_global(),
+                        [OffsetAccess::Offset(ctadl_ir::mir::Offset(
+                            HEAP[i % HEAP.len()],
+                        ))],
+                    ),
+                    field: FieldRef::symbol("deref"),
+                    value: Exp::Int(i as i64),
+                })
+            })
+            .collect()
+    };
+    let header_load = Statement::new_kind(StatementKind::Load {
+        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
+        source: AccessPath::new(
+            VariableRef::new_parameter(ParameterIdx::new(0)),
+            [OffsetAccess::Offset(ctadl_ir::mir::Offset(0xffff_fffc))],
+        ),
+        field: FieldRef::symbol("deref"),
+    });
+    let with = |name: &str, params: usize, returns: bool, body: Vec<Statement>| {
+        let mut f = function(name, params, body);
+        f.return_type = ReturnType {
+            arity: u8::from(returns),
+        };
+        f
+    };
+    let functions = vec![
+        with(
+            "FUN_free",
+            1,
+            false,
+            [vec![header_load.clone()], heap_stores(120)].concat(),
+        ),
+        with(
+            "FUN_realloc",
+            2,
+            true,
+            [vec![header_load.clone()], heap_stores(160)].concat(),
+        ),
+        with("FUN_malloc", 1, true, heap_stores(700)),
+        with("FUN_peek", 1, true, vec![header_load.clone()]),
+        with("FUN_stats", 3, true, heap_stores(200)),
+        with("FUN_lonely", 1, true, heap_stores(200)),
+        with(
+            "main",
+            0,
+            false,
+            [
+                "FUN_malloc",
+                "FUN_malloc",
+                "FUN_malloc",
+                "FUN_free",
+                "FUN_realloc",
+                "FUN_peek",
+                "FUN_stats",
+                "FUN_lonely",
+            ]
+            .into_iter()
+            .map(call)
+            .collect(),
+        ),
+    ];
+    let names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+    ProgramInfo {
+        vmt: test_vmt::native(
+            names
+                .iter()
+                .map(|n| (n.as_str(), "", n.as_str(), n.as_str())),
+        ),
+        program: Program::new(Functions::new(functions)),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn allocator_finds_a_stripped_dlmalloc_by_shape() {
+    assert_eq!(
+        allocators(&stripped_allocator(), "fun(F)"),
+        [
+            "FUN_free free shape",
+            "FUN_malloc malloc shape",
+            "FUN_realloc realloc shape",
+        ]
+    );
+}
+
+/// A global store sharing a call's statement is the frontend's copy of what the callee may
+/// change, not the function's own write, so a program whose heap stores all sit at calls has
+/// no heap state and no allocator.
+#[test]
+fn stores_at_a_call_are_not_the_functions_own() {
+    let mut program_info = stripped_allocator();
+    for f in program_info.program.functions.functions.iter_mut() {
+        if f.name != "main" {
+            let block = f.blocks.blocks_mut().iter_mut().next().unwrap();
+            block.extend([call("main")]);
+        }
+    }
+    assert!(allocators(&program_info, "fun(F)").is_empty());
+}
+
+/// The native defaults skip a stripped allocator's bodies too, and an `analyze` keeps one.
+#[test]
+fn the_defaults_skip_an_allocator_found_by_shape() {
+    let program_info = stripped_allocator();
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut out = ProgramModelMatches::default();
+    ctadl_ascent::models::try_load_default_models(&index, &mut out).unwrap();
+    let mut names = skipped(&out);
+    names.sort();
+    assert_eq!(names, ["FUN_free", "FUN_malloc", "FUN_realloc"]);
+
+    let file = portcullis::PortcullisFile::from_text(
+        "user.ctadl",
+        r#"analyze(F) :- fun(F), F = "FUN_malloc";"#,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    matcher.observe_import(&index, &mut out);
+    matcher.finish(&mut out).unwrap_or_else(|e| panic!("{e}"));
+    out.check_mode_conflicts().unwrap();
+    let mut names = skipped(&out);
+    names.sort();
+    assert_eq!(names, ["FUN_free", "FUN_realloc"]);
 }

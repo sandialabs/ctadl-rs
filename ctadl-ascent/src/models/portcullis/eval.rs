@@ -355,6 +355,7 @@ enum Row {
     /// `(sub, super)`.
     Class(Str, Str),
     UsesField(usize),
+    Allocator(usize),
 }
 
 /// The value one row has for one attribute.
@@ -575,6 +576,13 @@ impl<'a> Machine<'a> {
                 },
                 _ => self.each(atom, (0..facts.uses_field.len()).map(Row::UsesField), k),
             },
+            Relation::Allocator => match &atom.access {
+                Access::Column(i) => match self.column_key(atom, *i) {
+                    Some(f) => self.each(atom, facts.allocator_of(f).map(Row::Allocator), k),
+                    None => true,
+                },
+                _ => self.each(atom, (0..facts.allocators.len()).map(Row::Allocator), k),
+            },
         }
     }
 
@@ -777,6 +785,7 @@ impl<'a> Machine<'a> {
             (Row::Class(_, sup), _) => Value::Str(sup),
             (Row::UsesField(r), 0) => Value::Str(facts.uses_field[r].0),
             (Row::UsesField(r), _) => Value::Str(facts.uses_field[r].1),
+            (Row::Allocator(r), _) => Value::Str(facts.allocators[r].function),
         }
     }
 
@@ -797,7 +806,9 @@ impl<'a> Machine<'a> {
                     Attr::HasCode => row
                         .has_code
                         .map_or(AttrValues::Missing, |b| AttrValues::One(Value::Bool(b))),
-                    Attr::QualifiedId | Attr::CalleeString => AttrValues::Missing,
+                    Attr::QualifiedId | Attr::CalleeString | Attr::Kind | Attr::By => {
+                        AttrValues::Missing
+                    }
                 }
             }
             Row::CallSig(r) => {
@@ -820,6 +831,14 @@ impl<'a> Machine<'a> {
                 Attr::Name => str_value(Some(facts.locals[r].name)),
                 _ => AttrValues::Missing,
             },
+            Row::Allocator(r) => {
+                let row = &facts.allocators[r];
+                match attr {
+                    Attr::Kind => str_value(Some(Str::from(row.kind.name()))),
+                    Attr::By => str_value(Some(Str::from(row.by.name()))),
+                    _ => AttrValues::Missing,
+                }
+            }
             Row::NameOf(..) | Row::Param(..) | Row::Class(..) | Row::UsesField(_) => {
                 AttrValues::Missing
             }

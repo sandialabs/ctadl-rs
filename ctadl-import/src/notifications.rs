@@ -142,6 +142,27 @@ pub const MERGED_METHOD_CALLS_HIGH: Descriptor = Descriptor {
     )],
 };
 
+/// A function found to be a heap allocator by its shape rather than its name. One per function;
+/// the arguments are the function, its kind, and whether the models skipped its body. A warning
+/// when they did, since a wrong pick drops every flow through that body.
+pub const ALLOCATOR_BY_SHAPE: Descriptor = Descriptor {
+    id: "CTADL0109.allocator-by-shape",
+    name: "Allocator found by shape",
+    description: "A function was found to be a heap allocator by its shape; if its body was \
+                  skipped and the pick is wrong, flows through it are missing.",
+    messages: &[
+        (
+            "skipped",
+            "{0} looks like '{1}' (allocator(F, by = \"shape\")) and its body was skipped; if it \
+             is not an allocator, keep it with analyze(F)",
+        ),
+        (
+            "analyzed",
+            "{0} looks like '{1}' (allocator(F, by = \"shape\")); its body was analyzed",
+        ),
+    ],
+};
+
 /// A notification's SARIF `level`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {

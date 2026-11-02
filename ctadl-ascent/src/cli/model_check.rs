@@ -266,6 +266,13 @@ pub fn check_programs(
     // The DSL files, once, over every import. With no import there is nothing to absorb, the
     // same as for a JSON file: a rule that never ran did not match nothing.
     let portcullis_results = portcullis_matcher.finish_each(&mut matches);
+    // A tie between two files' modes is the index's error too, and belongs to neither file.
+    if let Err(e) = matches.check_mode_conflicts() {
+        outcome.check.file_errors.push(ModelFileError {
+            file: None,
+            message: render_chain(&e),
+        });
+    }
     if imports_checked > 0 {
         for (owner, result) in portcullis_owners.into_iter().zip(portcullis_results) {
             let (load, errors) = match result {
