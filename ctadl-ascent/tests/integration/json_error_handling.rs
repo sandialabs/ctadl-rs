@@ -234,8 +234,8 @@ use ctadl_ir::mir::call::{
     Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    AccessPath, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx,
-    ParameterType, Program, Statement, StatementKind, VariableRef,
+    Address, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx, ParameterType,
+    Program, Statement, StatementKind, VariableRef,
 };
 use std::collections::BTreeSet;
 
@@ -255,9 +255,9 @@ fn make_function(name: &str, num_params: usize, force_body: bool, fields: &[&str
             .iter()
             .map(|field| {
                 Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(p.clone()),
+                    Address::without_offsets(p.clone()),
                     FieldRef::symbol(*field),
-                    Exp::from(AccessPath::without_fields(p.clone())),
+                    Exp::from(Address::without_offsets(p.clone())),
                 ))
             })
             .collect();
@@ -955,7 +955,7 @@ fn test_missing_find_field_error() {
 }
 
 // ---------------------------------------------------------------------------
-// Malformed access paths in ports are hard errors.
+// Malformed paths in ports are hard errors.
 //
 // Ports parse with the one canonical grammar and a violation names the port. Splitting
 // on '.' and making every segment a `Symbol` would accept anything: `Argument(0).[*]`
@@ -966,7 +966,7 @@ fn test_missing_find_field_error() {
 
 /// Loads a generator with `port` as a source and returns the collected errors.
 /// Panics if the load succeeded, since these ports are malformed.
-fn access_path_errors_for(port: &str) -> Vec<String> {
+fn path_errors_for(port: &str) -> Vec<String> {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
@@ -982,27 +982,27 @@ fn access_path_errors_for(port: &str) -> Vec<String> {
     }
 }
 
-fn assert_invalid_access_path(port: &str) {
-    let errors = access_path_errors_for(port);
+fn assert_invalid_path(port: &str) {
+    let errors = path_errors_for(port);
     assert!(
-        errors.iter().any(|e| e.starts_with("InvalidAccessPath")),
-        "expected InvalidAccessPath for port {port:?}, got: {errors:?}"
+        errors.iter().any(|e| e.starts_with("InvalidPath")),
+        "expected InvalidPath for port {port:?}, got: {errors:?}"
     );
 }
 
 #[test]
 fn wildcard_offset_port_is_hard_error() {
-    assert_invalid_access_path("Argument(0).[*]");
+    assert_invalid_path("Argument(0).[*]");
 }
 
 #[test]
-fn empty_access_path_segment_is_hard_error() {
-    assert_invalid_access_path("Argument(0).a..b");
+fn empty_path_segment_is_hard_error() {
+    assert_invalid_path("Argument(0).a..b");
 }
 
 #[test]
 fn trailing_dot_in_port_is_hard_error() {
-    assert_invalid_access_path("Argument(0).a.");
+    assert_invalid_path("Argument(0).a.");
 }
 
 /// A bracketed *field name* must be escaped. Unescaped it reads as an offset position
@@ -1011,8 +1011,8 @@ fn trailing_dot_in_port_is_hard_error() {
 /// make. The message names the fix.
 #[test]
 fn unescaped_bracketed_field_name_is_hard_error() {
-    assert_invalid_access_path("Argument(0).[_elem_]");
-    let errors = access_path_errors_for("Argument(0).[_elem_]");
+    assert_invalid_path("Argument(0).[_elem_]");
+    let errors = path_errors_for("Argument(0).[_elem_]");
     assert!(
         errors.iter().any(|e| e.contains(r"\[_elem_]")),
         "message should name the escape: {errors:?}"
@@ -1021,10 +1021,10 @@ fn unescaped_bracketed_field_name_is_hard_error() {
 
 /// The port regexes are anchored, so junk around a selector is rejected rather than
 /// silently accepted. Unanchored, `Return(.*)?` would match "MyReturnType" and produce a
-/// `Return` port with access path `Type`.
+/// `Return` port with path `Type`.
 #[test]
 fn unanchored_port_text_is_hard_error() {
-    let errors = access_path_errors_for("MyReturnType");
+    let errors = path_errors_for("MyReturnType");
     assert!(
         errors
             .iter()
@@ -1051,10 +1051,10 @@ fn multiple_bad_ports_all_reported() {
         Err(Error::JsonModel(errors)) => {
             let n = errors
                 .iter()
-                .filter(|e| matches!(e, JsonModelError::InvalidAccessPath { .. }))
+                .filter(|e| matches!(e, JsonModelError::InvalidPath { .. }))
                 .count();
             assert_eq!(n, 2, "both bad ports should be reported, got: {errors:?}");
         }
-        other => panic!("expected two InvalidAccessPath errors, got: {other:?}"),
+        other => panic!("expected two InvalidPath errors, got: {other:?}"),
     }
 }

@@ -322,7 +322,7 @@ struct GeneratorState {
     applicable: bool,
     declares_endpoints: bool,
     declares_propagation: bool,
-    declares_access_paths: bool,
+    declares_paths: bool,
     /// A `modes` directive.
     declares_modes: bool,
     /// A dispatch model: `find: "dispatch"` in JSON, a `dispatch` head in the DSL.
@@ -375,7 +375,7 @@ impl FileState {
                 applicable: false,
                 declares_endpoints: has_entries(value, "sources") || has_entries(value, "sinks"),
                 declares_propagation: has_entries(value, "propagation"),
-                declares_access_paths: has_entries(value, "access_paths"),
+                declares_paths: has_entries(value, "access_paths"),
                 declares_modes: has_entries(value, "modes"),
                 declares_dispatch: value.get("find").and_then(|v| v.as_str()) == Some("dispatch"),
                 has_bridge: value.pointer("/model/bridge").is_some(),
@@ -422,10 +422,10 @@ impl FileState {
                     .heads
                     .iter()
                     .any(|h| matches!(h.kind, HeadKind::Propagation { .. })),
-                declares_access_paths: rule
+                declares_paths: rule
                     .heads
                     .iter()
-                    .any(|h| matches!(h.kind, HeadKind::AccessPath { .. })),
+                    .any(|h| matches!(h.kind, HeadKind::DeclaredPath { .. })),
                 declares_modes: rule
                     .heads
                     .iter()
@@ -522,7 +522,7 @@ impl FileState {
             }
             let declares_a_model = generator.declares_endpoints
                 || generator.declares_propagation
-                || generator.declares_access_paths
+                || generator.declares_paths
                 || generator.declares_modes
                 || generator.declares_dispatch
                 || generator.has_bridge;

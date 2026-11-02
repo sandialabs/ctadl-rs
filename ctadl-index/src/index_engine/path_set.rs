@@ -1,8 +1,8 @@
-//! The admissible access paths, frozen for the fixpoint: a per-index, read-only table that
+//! The admissible paths, frozen for the fixpoint: a per-index, read-only table that
 //! answers "is `prefix · [adjust] · rest` a path?" without building `prefix · [adjust] · rest`,
 //! and hands out each path's splits without interning them.
 //!
-//! The local propagation rules of the index engine extend an access path across an edge and
+//! The local propagation rules of the index engine extend a path across an edge and
 //! then test the result against the admissible paths. Most extensions fail the test: measured
 //! on a dense binary, the engine built four billion derived paths and kept six percent of them.
 //! Building one would intern a node per new segment, mid-run and under a shard lock.
@@ -471,16 +471,16 @@ mod tests {
             "", ".x", ".x.y", ".x.[3]", ".x.[3].y", ".x.[5].y", ".[2]", ".z.[1].y", ".z.y",
         ];
         let set = PathSet::from_paths(paths.iter().map(|s| p(s)));
-        for ap in paths {
+        for path in paths {
             for pre in paths {
                 for np in paths {
-                    let want = p(ap)
+                    let want = p(path)
                         .substitute_prefix(&p(pre), &p(np))
                         .filter(|q| set.contains(q));
                     assert_eq!(
-                        set.substitute_prefix(&p(ap), &p(pre), &p(np)),
+                        set.substitute_prefix(&p(path), &p(pre), &p(np)),
                         want,
-                        "{ap} [{pre} := {np}]"
+                        "{path} [{pre} := {np}]"
                     );
                 }
             }

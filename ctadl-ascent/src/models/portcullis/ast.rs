@@ -67,7 +67,7 @@ impl Rule {
                 // index-time like a propagation, never query-time.
                 HeadKind::Propagation { .. }
                 | HeadKind::Bridge { .. }
-                | HeadKind::AccessPath { .. }
+                | HeadKind::DeclaredPath { .. }
                 | HeadKind::Dispatch { .. }
                 | HeadKind::Mode(_) => index_time = true,
             }
@@ -90,7 +90,7 @@ pub struct Head {
 pub enum HeadKind {
     Source {
         port: PortExpr,
-        /// Any access path extending the source port is tainted too. Default false.
+        /// Any path extending the source port's path is tainted too. Default false.
         saturating: bool,
         /// The taint label. `kind` in the JSON schema; defaults to `"UserInput"` when the rule
         /// does not say, so a one-line model still works.
@@ -98,7 +98,7 @@ pub enum HeadKind {
     },
     Sink {
         port: PortExpr,
-        /// Match any access-path extension of the port. Default true.
+        /// Match any extension of the port's path. Default true.
         wildcard: bool,
         label: String,
     },
@@ -108,8 +108,8 @@ pub enum HeadKind {
     Bridge {
         flow: Flow,
     },
-    AccessPath {
-        /// Written literally, in the canonical access-path grammar (`.next.next`).
+    DeclaredPath {
+        /// Written literally, in the canonical path grammar (`.next.next`).
         text: String,
         segments: Vec<PathSegment>,
     },
@@ -252,7 +252,7 @@ impl HeadKind {
             HeadKind::Dispatch { disposition } => disposition.flow(),
             HeadKind::Source { .. }
             | HeadKind::Sink { .. }
-            | HeadKind::AccessPath { .. }
+            | HeadKind::DeclaredPath { .. }
             | HeadKind::Mode(_) => None,
         }
     }
@@ -263,7 +263,7 @@ impl HeadKind {
             HeadKind::Sink { .. } => "sink",
             HeadKind::Propagation { .. } => "propagation",
             HeadKind::Bridge { .. } => "bridge",
-            HeadKind::AccessPath { .. } => "access_paths",
+            HeadKind::DeclaredPath { .. } => "access_paths",
             HeadKind::Dispatch { .. } => "dispatch",
             HeadKind::Mode(head) => head.mode.relation_name(),
         }

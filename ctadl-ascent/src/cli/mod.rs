@@ -234,7 +234,7 @@ fn report_portcullis(report: &crate::models::PortcullisReport) {
         totals.sinks,
         totals.propagations,
         totals.bridges,
-        totals.access_paths,
+        totals.declared_paths,
         totals.dispatch,
         totals.modes
     );
@@ -556,7 +556,7 @@ pub fn index(
         "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge(s) \
          retained): {:.1} MB",
         model_matches.propagations.len(),
-        model_matches.access_paths.len(),
+        model_matches.declared_paths.len(),
         model_matches.resolved_bridges.len(),
         phys_footprint_mb()
     );

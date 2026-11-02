@@ -310,13 +310,13 @@ fn in_distinguishes_languages_the_vmt_cannot() {
 }
 
 // ---------------------------------------------------------------------------
-// Access paths
+// Declared paths
 // ---------------------------------------------------------------------------
 
 /// The human-declared registry: paths that occur nowhere in the IR, so nothing else registers
 /// them, reaching the initial indexer paths through phase 2.
 #[test]
-fn declared_access_paths_survive_loading_and_reach_the_facts() {
+fn declared_paths_survive_loading_and_reach_the_facts() {
     let mut file = tempfile::Builder::new()
         .suffix(".jsonl")
         .tempfile()
@@ -340,7 +340,7 @@ fn declared_access_paths_survive_loading_and_reach_the_facts() {
     );
     let mut matches = ProgramModelMatches::default();
     try_load_models(&index, file.path(), &mut matches).expect("load");
-    assert_eq!(matches.access_paths.len(), 2);
+    assert_eq!(matches.declared_paths.len(), 2);
 
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -351,7 +351,7 @@ fn declared_access_paths_survive_loading_and_reach_the_facts() {
 
 /// A misspelled path is a load-time error naming it, not a silently-mutated path.
 #[test]
-fn a_malformed_declared_access_path_fails_the_load() {
+fn a_malformed_declared_path_fails_the_load() {
     let mut file = tempfile::Builder::new()
         .suffix(".jsonl")
         .tempfile()

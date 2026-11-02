@@ -37,7 +37,7 @@ Every by-shape pick is reported as CTADL0109 (see `cli::index`).
 use hashbrown::{HashMap, HashSet};
 
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{AccessPath, Exp, FunctionData, OffsetAccess, StatementKind, Variable};
+use ctadl_ir::mir::{Address, Exp, FunctionData, OffsetAccess, StatementKind, Variable};
 
 use crate::facts::Str;
 
@@ -315,7 +315,7 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
         }
     }
 
-    let is_header = |path: &AccessPath| {
+    let is_header = |path: &Address| {
         from_param(&path.base.variable, &derived)
             && path.accesses.offsets.iter().any(|OffsetAccess::Offset(o)| {
                 // Some lowerings carry the borrow into the high word (`.[17179869176]` is -8);
@@ -329,7 +329,7 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
     let mut header_accesses = 0;
     let mut own_stores: HashMap<i64, u32> = HashMap::new();
     for stmt in statements() {
-        let paths: &mut dyn Iterator<Item = &AccessPath> = match &stmt.kind {
+        let paths: &mut dyn Iterator<Item = &Address> = match &stmt.kind {
             StatementKind::Store { dest, .. } => {
                 if dest.base.variable == Variable::GlobalHeap
                     && !call_spans.contains(&stmt.source_info.span_id)
@@ -342,7 +342,7 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
             StatementKind::Load { source, .. } => &mut std::iter::once(source),
             StatementKind::Update { dest, .. } => &mut std::iter::once(dest),
             StatementKind::Assign { sources, .. } => &mut sources.iter().filter_map(|e| match e {
-                Exp::AccessPath(p) => Some(p),
+                Exp::Address(p) => Some(p),
                 _ => None,
             }),
             _ => &mut std::iter::empty(),

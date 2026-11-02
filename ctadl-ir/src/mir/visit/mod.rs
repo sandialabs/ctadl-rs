@@ -81,8 +81,8 @@ macro_rules! make_ast_visitor {
             fn visit_variable_ref(&mut self, variable_ref: &$($mutability)? VariableRef) {
                 self.super_variable_ref(variable_ref);
             }
-            fn visit_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
-                self.super_access_path(access_path);
+            fn visit_address(&mut self, addr: &$($mutability)? Address) {
+                self.super_address(addr);
             }
             fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? OffsetAccesses) {
                 self.super_field_accesses(field_accesses);
@@ -181,14 +181,14 @@ macro_rules! make_ast_visitor {
                     }
                     Load { dest, source, field: _ } => {
                         self.visit_variable_ref(dest);
-                        self.visit_access_path(source);
+                        self.visit_address(source);
                     }
                     Store { dest, field: _, value } => {
-                        self.visit_access_path(dest);
+                        self.visit_address(dest);
                         self.visit_exp(value);
                     }
                     Update { dest, source, field: _, value } => {
-                        self.visit_access_path(dest);
+                        self.visit_address(dest);
                         self.visit_variable_ref(source);
                         self.visit_exp(value);
                     }
@@ -200,7 +200,7 @@ macro_rules! make_ast_visitor {
                 match call_style {
                     CallStyle::DirectCall { call_edges } => self.visit_call_edges(call_edges),
                     CallStyle::FuncPtrCall { callee, signature: _ } => {
-                        self.visit_access_path(callee);
+                        self.visit_address(callee);
                     }
                     CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _, dispatch: _, super_start: _ } => {
                         self.visit_variable_ref(receiver)
@@ -239,8 +239,8 @@ macro_rules! make_ast_visitor {
                     Exp::Variable(variable_ref) | Exp::Value(variable_ref) => {
                         self.visit_variable_ref(variable_ref);
                     }
-                    Exp::AccessPath(access_path) => {
-                        self.visit_access_path(access_path);
+                    Exp::Address(addr) => {
+                        self.visit_address(addr);
                     }
                     Exp::Bytes(_) => {}
                     Exp::Int(_) => {}
@@ -253,8 +253,8 @@ macro_rules! make_ast_visitor {
                 // Can't mut visit variable, so don't
             }
 
-            fn super_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
-                let AccessPath { base, accesses } = access_path;
+            fn super_address(&mut self, addr: &$($mutability)? Address) {
+                let Address { base, accesses } = addr;
                 self.visit_variable_ref(base);
                 self.visit_field_accesses(accesses);
             }

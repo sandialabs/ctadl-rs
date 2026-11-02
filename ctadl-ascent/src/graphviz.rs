@@ -6,7 +6,8 @@ use std::io::Write;
 
 use crate::facts::{FlowVariable, FunctionId, Path};
 
-/// A taint-graph vertex: `(function, variable, access-path)`.
+/// A taint-graph vertex: `(function, variable, path)`. The variable
+/// and path together are an access path.
 pub type TaintNode = (FunctionId, FlowVariable, Path);
 
 /// A taint-graph edge already oriented in *data-flow* direction
@@ -235,7 +236,8 @@ pub fn render_taint_graph<W: Write>(
     dot::render(&graph, writer)
 }
 
-/// An index-graph vertex: `(function, variable, access-path)`.
+/// An index-graph vertex: `(function, variable, path)`. The variable
+/// and path together are an access path.
 pub type IndexVertex = (FunctionId, FlowVariable, Path);
 
 /// One row of the `assign` relation: the assignment `dst = src` inside `function`, drawn as the
@@ -265,9 +267,9 @@ pub struct IndexGraphViz<'a> {
 }
 
 impl<'a> IndexGraphViz<'a> {
-    /// Renders a vertex as `function(<name>)\n<variable><access-path>`.
+    /// Renders a vertex as `function(<name>)\n<variable><path>`.
     ///
-    /// The access path is part of both the label and the node id, so vertices are
+    /// The path is part of both the label and the node id, so vertices are
     /// keyed by the triple `(function, variable, path)` — `local(t)` and
     /// `local(t).x` are distinct nodes. Note that [`Path::empty`] renders as the
     /// empty string: a label with no `.field` suffix denotes the *empty* path, not
@@ -473,7 +475,7 @@ mod tests {
     }
 
     /// Two vertices whose labels differ only in punctuation must still get distinct DOT
-    /// ids. `.a.b` and `.a_b` are distinct access paths, but sanitizing the label into
+    /// ids. `.a.b` and `.a_b` are distinct paths, but sanitizing the label into
     /// DOT's identifier alphabet maps both to `local_t__a_b`; ids derived that way would
     /// make graphviz draw them as one node owning both incident edges.
     #[test]

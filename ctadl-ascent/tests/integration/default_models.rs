@@ -5,7 +5,7 @@
 //! not pay for a match pass over the Java generators, and — the part that actually changes
 //! results — a function whose bare name collides with another language's library function must
 //! not pick up that language's summary. Second, that every shipped file still parses: the loader
-//! hard-errors on unknown keys and on malformed access paths, so a stale default file breaks
+//! hard-errors on unknown keys and on malformed paths, so a stale default file breaks
 //! *every* index of the language that selects it.
 //!
 //! What each default matches on the fixture programs is also pinned, in `default_models.golden`;
@@ -572,7 +572,7 @@ fn default_rows(m: &ProgramModelMatches) -> BTreeSet<String> {
             port(&src)
         ));
     }
-    for p in &m.access_paths {
+    for p in &m.declared_paths {
         out.insert(format!("access_path: {}", p.to_dot_string()));
     }
     for ((cls, name, desc), model) in &m.dispatch {

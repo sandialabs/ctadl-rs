@@ -108,7 +108,7 @@ fn a_function_anchored_port_fills_its_fields() {
     );
 }
 
-/// A sink port: the backward direction, a positional index, an empty access path, and the
+/// A sink port: the backward direction, a positional index, an empty path, and the
 /// sink-only `wildcard` (which defaults to `true`) -- the other end of the field matrix from
 /// the test above.
 #[test]

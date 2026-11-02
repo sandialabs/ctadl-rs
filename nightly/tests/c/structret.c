@@ -17,7 +17,7 @@
  * out with SUBPIECE(w, offset). Because handle_binop ignores the offset, taint
  * on either field spreads to the whole word and back to both fields.
  * structout.c instead reaches the fields through a pointer, so they stay
- * distinct .[off].deref access paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
+ * distinct .[off].deref paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
  * do not) and r.b stays clean. Adding padding so that a and b sit in different
  * 8-byte words also makes r.b come back clean, since the first-word PIECE no
  * longer mixes them. If SUBPIECE/PIECE ever become offset-aware, this test still

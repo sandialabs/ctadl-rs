@@ -1,7 +1,7 @@
 // Tests for CTADL IR verification errors
 use super::*;
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FunctionIdx, Offset, OffsetAccess,
+    Address, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FunctionIdx, Offset, OffsetAccess,
     OffsetAccesses, ParameterIdx, Params, ReturnType, StatementKind, TerminatorKind, VariableRef,
 };
 use smallvec::smallvec;
@@ -44,7 +44,7 @@ fn test_store_verifies() {
     let var = VariableRef::new_local_idx(f.locals.get_or_intern("x"));
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let store = StatementKind::store(
-        AccessPath::without_fields(var.clone()),
+        Address::without_offsets(var.clone()),
         FieldRef::symbol("f"),
         Exp::new_str("val"),
     );
@@ -192,23 +192,23 @@ fn test_field_accesses_with_offsets() {
     // Test display format for offsets
     assert_eq!(format!("{}", offset_path), ".[42]");
 
-    // Test multiple offsets (access paths are offset-only)
+    // Test multiple offsets (addresses are offset-only)
     let mixed_path = OffsetAccesses::with_offsets([10, 20]);
     assert_eq!(mixed_path.len(), 2);
     assert_eq!(format!("{}", mixed_path), ".[10].[20]");
 
-    // Test creating access path with offsets
+    // Test creating an address with offsets
     let mut locals = Locals::default();
     let var = VariableRef::new_local_idx(locals.get_or_intern("obj"));
     let field_accesses = OffsetAccesses::with_offset(5);
-    let access_path = AccessPath {
+    let addr = Address {
         base: var,
         accesses: field_accesses,
     };
     // Base is the local `obj`, followed by the single offset.
-    let base = access_path.base.variable.local().unwrap();
+    let base = addr.base.variable.local().unwrap();
     assert_eq!(locals.name(base), "obj");
-    assert_eq!(format!("{}", access_path.accesses), ".[5]");
+    assert_eq!(format!("{}", addr.accesses), ".[5]");
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn test_offset_newtype() {
     assert_eq!(format!("{}", offset_access), "[456]");
 }
 
-/// The IR's `Display` impls emit the canonical access-path grammar, so an IR dump can be pasted
+/// The IR's `Display` impls emit the canonical path grammar, so an IR dump can be pasted
 /// into a model port or a `.flowy` file and mean the same thing: a C field literally named `a.b`
 /// does not render like two segments, and the frontends' `Symbol("[3]")` does not render like an
 /// offset.

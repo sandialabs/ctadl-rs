@@ -2,7 +2,7 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldRef, FunctionData, LocalIdx, Locals,
+    Address, BasicBlockData, BasicBlockIdx, Exp, FieldRef, FunctionData, LocalIdx, Locals,
     OffsetAccesses, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
     VariableRef,
 };
@@ -132,12 +132,12 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `dest` - Destination variable
-    /// * `source` - Source address (offset-only access path)
+    /// * `source` - Source address
     /// * `field` - Symbolic field to load
     pub fn create_load(
         &mut self,
         dest: VariableRef,
-        source: impl Into<AccessPath>,
+        source: impl Into<Address>,
         field: impl Into<FieldRef>,
     ) -> StatementIdx {
         self.insert_kind(StatementKind::load(dest, source, field))
@@ -146,12 +146,12 @@ impl<'a> BasicBlockBuilder<'a> {
     /// Create and insert a store statement `store dest.field := source`.
     ///
     /// # Arguments
-    /// * `dest` - Destination address (offset-only access path)
+    /// * `dest` - Destination address
     /// * `field` - Symbolic field written
     /// * `source` - Source expression
     pub fn create_store(
         &mut self,
-        dest: impl Into<AccessPath>,
+        dest: impl Into<Address>,
         field: impl Into<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
@@ -162,12 +162,12 @@ impl<'a> BasicBlockBuilder<'a> {
     /// [`StatementKind::assign_or_store`]). Storing to an offset address with no field is an error.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path (offset-only)
+    /// * `dest` - Destination address
     /// * `field` - Symbolic field written, or `None` for a plain assign to a bare variable
     /// * `source` - Source expression
     pub fn create_assign_or_store(
         &mut self,
-        dest: impl Into<AccessPath>,
+        dest: impl Into<Address>,
         field: Option<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
@@ -183,13 +183,13 @@ impl<'a> BasicBlockBuilder<'a> {
     /// new version of the aggregate), so the `source` aggregate is named separately.
     ///
     /// # Arguments
-    /// * `dest` - Destination address (offset-only access path); its variable is (re)defined
+    /// * `dest` - Destination address; its variable is (re)defined
     /// * `source` - Source aggregate copied into `dest` before the field write
     /// * `field` - Symbolic field written
     /// * `value` - Source expression stored into the field
     pub fn create_update(
         &mut self,
-        dest: impl Into<AccessPath>,
+        dest: impl Into<Address>,
         source: VariableRef,
         field: impl Into<FieldRef>,
         value: impl Into<Exp>,
@@ -298,17 +298,17 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_global()
     }
 
-    /// Create a new offset-only access path
+    /// Create a new address
     ///
     /// # Arguments
     /// * `variable_ref` - Variable reference
     /// * `offsets` - Offset (pointer-arithmetic) field accesses
-    pub fn new_access_path(
+    pub fn new_address(
         &self,
         variable_ref: VariableRef,
         offsets: impl IntoIterator<Item = i64>,
-    ) -> AccessPath {
-        AccessPath {
+    ) -> Address {
+        Address {
             base: variable_ref,
             accesses: OffsetAccesses::with_offsets(offsets),
         }
