@@ -260,18 +260,22 @@ pub fn build_query_endpoints(
                 let mut seeded_port = false;
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
+                    // A sink on `q` already matches `q.#value` (see `search::value_path`), so a
+                    // path `q.#value` seeds the sink `q`, once.
+                    let mut paths: Vec<facts::Path> = paths
+                        .iter()
+                        .map(|p| strip_value(*p))
+                        .filter(|p| p.is_extension_of(&ap))
+                        .collect();
                     // In content order: endpoint order is the order of the query's seed rows.
-                    let mut paths: Vec<&facts::Path> = paths.iter().collect();
                     paths.sort_unstable_by(|a, b| a.content_cmp(b));
+                    paths.dedup();
                     for p in paths {
-                        if !p.is_extension_of(&ap) {
-                            continue;
-                        }
-                        if *p == ap {
+                        if p == ap {
                             seeded_port = true;
                         }
                         out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex::new(ep.vertex.0, *p),
+                            vertex: FlowVertex::new(ep.vertex.0, p),
                             ..ep.clone()
                         },));
                     }
@@ -286,5 +290,14 @@ pub fn build_query_endpoints(
         endpoints: out_eps,
         formals: out_formals,
         unresolved_functions,
+    }
+}
+
+/// `p` without a trailing [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD).
+fn strip_value(p: facts::Path) -> facts::Path {
+    let segments: Vec<_> = p.iter().cloned().collect();
+    match segments.split_last() {
+        Some((last, init)) if last.is_value() => facts::Path::from_accesses(init.iter().cloned()),
+        _ => p,
     }
 }

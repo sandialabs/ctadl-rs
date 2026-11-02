@@ -170,6 +170,23 @@ pub struct TaintSearchGraph {
     /// is external code, so it is not a `load` edge and must be matched here
     /// rather than through `loads_by_src`. Bounded by the number of sinks.
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
+    /// A source on `v.p` also taints `v.p.#value`, what `v.p`'s value is computed into: each
+    /// source vertex, keyed to its `#value` vertex. Empty when the program has no `#value`
+    /// paths (see [`ctadl_ir::mir::VALUE_FIELD`]).
+    value_of_source: HashMap<TaintVertex, Path>,
+    /// A sink on `v.p` also matches `v.p.#value`: each such `#value` vertex, keyed to the sink
+    /// path `p` it steps to. The step reaches the sink at the vertex its endpoint names, so a
+    /// sink matched both ways is still one finding.
+    sink_of_value: HashMap<TaintVertex, Path>,
+}
+
+/// `p·#value`, when it is a materialized path and `p` does not already end in `#value`.
+fn value_path(p: &Path, paths: &HashSet<Path>) -> Option<Path> {
+    if p.iter().last().is_some_and(|s| s.is_value()) {
+        return None;
+    }
+    let vp = p.concat(&Path::from_accesses([ctadl_ir::mir::PathSegment::value()]));
+    paths.contains(&vp).then_some(vp)
 }
 
 /// Whether a load at `q` off a vertex saturating at `p` reads a saturated value. Offsets
@@ -330,6 +347,23 @@ impl TaintSearchGraph {
             paths.sort_unstable_by(|a, b| a.content_cmp(b));
         }
 
+        let mut value_of_source: HashMap<TaintVertex, Path> = HashMap::default();
+        let mut sink_of_value: HashMap<TaintVertex, Path> = HashMap::default();
+        for (ep,) in &facts.endpoints {
+            let (v, p) = (ep.vertex.0, ep.vertex.1);
+            let Some(vp) = value_path(&p, &paths) else {
+                continue;
+            };
+            match ep.direction {
+                TaintDirection::Forward => {
+                    value_of_source.insert((ep.infunc, v, p), vp);
+                }
+                TaintDirection::Backward => {
+                    sink_of_value.insert((ep.infunc, v, vp), p);
+                }
+            }
+        }
+
         TaintSearchGraph {
             assign_by_src,
             loads_by_dst,
@@ -343,6 +377,8 @@ impl TaintSearchGraph {
             paths,
             copies_by_dst,
             sink_ext_by_var,
+            value_of_source,
+            sink_of_value,
         }
     }
 }
@@ -354,6 +390,15 @@ impl LazySuccessors for TaintSearchGraph {
     fn labeled_successors(&self, node: &TaintNode) -> Vec<(TaintNode, FlowEdge)> {
         let (f, v, p, level, scope) = *node;
         let mut out = Vec::new();
+
+        // A value-derived fact at an endpoint: a source's value is tainted, and a sink's value
+        // reaching it is a flow to the sink. Same variable, same object: keep the scope.
+        if let Some(vp) = self.value_of_source.get(&(f, v, p)) {
+            out.push(((f, v, *vp, level, scope), FlowEdge::Intra));
+        }
+        if let Some(sp) = self.sink_of_value.get(&(f, v, p)) {
+            out.push(((f, v, *sp, level, scope), FlowEdge::Intra));
+        }
 
         // The taint level rides along every existing edge unchanged, so
         // saturating-ness is preserved through precise propagation (e.g. across

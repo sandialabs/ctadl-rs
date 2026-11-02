@@ -1021,6 +1021,17 @@ impl Visitor for CodegenVisitor<'_> {
                             Str::from(value.clone()),
                         ));
                     }
+                    // `dest = value(v)` lowers to `dest.#value <- v`; `dest` itself gets nothing.
+                    // `v.#value` comes along since `#value` absorbs itself
+                    // (`ctadl_ir::mir::VALUE_FIELD`).
+                    if let Exp::Value(v) = src {
+                        let value = fx::Path::from_accesses([PathSegment::value()]);
+                        self.paths_dedup.insert((value,));
+                        let dest = FlowVertex::new(self.trans_variable_ref(dest), value);
+                        let v = FlowVertex::new(self.trans_variable_ref(v), fx::Path::empty());
+                        self.facts.assign.push((site, dest, v));
+                        continue;
+                    }
                     let Some(src) = self.trans_exp(src) else {
                         continue;
                     };
@@ -1476,7 +1487,9 @@ impl CodegenVisitor<'_> {
     #[inline]
     fn trans_exp(&mut self, exp: &Exp) -> Option<FlowVertex> {
         match exp {
-            Exp::Variable(v) => Some(FlowVertex::new(
+            // `Value` is an `Assign` source, which the `Assign` arm lowers itself. Anywhere else
+            // the whole variable flows, which loses nothing.
+            Exp::Variable(v) | Exp::Value(v) => Some(FlowVertex::new(
                 self.trans_variable_ref(v),
                 fx::Path::empty(),
             )),

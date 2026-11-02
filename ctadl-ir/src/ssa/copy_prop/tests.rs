@@ -411,3 +411,35 @@ fn program_entry_point_runs_on_every_function() {
         vec![v("y", 1)]
     );
 }
+
+#[test]
+fn value_source_is_not_a_copy() {
+    // t_1 = value(a_1); return t_1   =>   unchanged: `t` gets `a`'s value, not `a` itself
+    let mut f = one_block(
+        vec![Statement::new_kind(StatementKind::assign(
+            v("t", 1),
+            [Exp::value(v("a", 1))],
+        ))],
+        vec![read(v("t", 1))],
+    );
+    assert_eq!(propagate_copies_function(&mut f), 0);
+    assert_eq!(kinds(&f, 0).len(), 1);
+    assert_eq!(term_srcs(&f, 0), vec![v("t", 1)]);
+}
+
+#[test]
+fn value_use_is_rewritten_through_a_copy() {
+    // x_2 = x_1; t_1 = value(x_2); return t_1   =>   t_1 = value(x_1)
+    let mut f = one_block(
+        vec![
+            copy(v("x", 2), v("x", 1)),
+            Statement::new_kind(StatementKind::assign(v("t", 1), [Exp::value(v("x", 2))])),
+        ],
+        vec![read(v("t", 1))],
+    );
+    assert_eq!(propagate_copies_function(&mut f), 1);
+    let StatementKind::Assign { sources, .. } = kinds(&f, 0)[0] else {
+        panic!("expected assign");
+    };
+    assert_eq!(sources.as_slice(), &[Exp::value(v("x", 1))]);
+}

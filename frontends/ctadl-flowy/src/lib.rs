@@ -653,16 +653,50 @@ impl FlowyCtx {
                 let src = {
                     let mut result = Vec::new();
                     for p in sources {
-                        let r = parse_ref(locals, local_table, p, defined_functions)?;
-                        result.push(lower_ref(
-                            &mut self.counter,
-                            data,
-                            local_table,
-                            source_info,
-                            r,
-                        ));
+                        // `value(x.f)`: read the path into a variable, then take its value.
+                        let (r, value) = match p {
+                            Ap::Value(path, _) => {
+                                let (base, segments) = parse_path(locals, local_table, path)?;
+                                (ParsedRef::Ap(base, segments), true)
+                            }
+                            p => (parse_ref(locals, local_table, p, defined_functions)?, false),
+                        };
+                        let mut e = lower_ref(&mut self.counter, data, local_table, source_info, r);
+                        if value {
+                            let v = match e {
+                                Exp::Variable(v) => v,
+                                e => {
+                                    let t = VariableRef::new_local_idx(
+                                        local_table
+                                            .get_or_intern(&format!("t{}?", self.counter.next())),
+                                    );
+                                    data.push_back(Statement::new(
+                                        StatementKind::assign(t.clone(), [e]),
+                                        source_info,
+                                    ));
+                                    t
+                                }
+                            };
+                            e = Exp::Value(v);
+                        }
+                        result.push(e);
                     }
                     result
+                };
+                // A store takes a variable: `x.f = value(y)` is `t = value(y); x.f = t`.
+                let src = if !dst_segments.is_empty()
+                    && let [e @ Exp::Value(_)] = src.as_slice()
+                {
+                    let t = VariableRef::new_local_idx(
+                        local_table.get_or_intern(&format!("t{}?", self.counter.next())),
+                    );
+                    data.push_back(Statement::new(
+                        StatementKind::assign(t.clone(), [e.clone()]),
+                        source_info,
+                    ));
+                    vec![Exp::Variable(t)]
+                } else {
+                    src
                 };
                 if dst_segments.is_empty() {
                     data.push_back(Statement::new(
@@ -1207,6 +1241,12 @@ fn parse_ref(
         Ap::Path(path) => {
             let (base, segments) = parse_path(env, local_table, path)?;
             ParsedRef::Ap(base, segments)
+        }
+        Ap::Value(_, pos) => {
+            return Err(compile_error(
+                *pos,
+                "`value(..)` is only an assignment source: write `t = value(x); f(t)`",
+            ));
         }
     })
 }

@@ -26,8 +26,7 @@
 //! ## Layout
 //!
 //! Nearly every row is `Always`. Those live in a [`LocalsIndCommon`] of the five columns, the
-//! trie the relations had before they carried a condition, unchanged, and the condition is not
-//! stored. The conditional rows live beside it in a map keyed the same way, `(K1, K2)` then `P`,
+//! trie of [`super::locals_trie`], and the condition is not stored. The conditional rows live beside it in a map keyed the same way, `(K1, K2)` then `P`,
 //! with the condition per leaf. A fact is in at most one of the two after a merge; between merges
 //! `new` can hold a fact in both, and the merge resolves it.
 //!
@@ -49,7 +48,6 @@ use ascent::internal::{
 use streaming_iterator::StreamingIterator;
 
 use super::Rows;
-use super::assign_like_trie::FromRows;
 use super::decision::Cond;
 use super::locals_trie::{DynIter, LocalsIndCommon, NoopWrite, hb_bytes};
 use super::path_group::Get;
@@ -66,6 +64,14 @@ pub fn covers(held: Cond, c: Cond) -> bool {
         (_, Cond::Always) => false,
         (mut held, c) => !held.join_mut(c),
     }
+}
+
+/// Build a store from its seed rows, without the caller naming the store's type.
+pub trait FromRows<R> {
+    /// Build a store from the seed rows, consuming them.
+    ///
+    /// Rows are moved into the store, not cloned, and the input `Vec` is freed as we go.
+    fn from_rows(rows: Vec<R>) -> Self;
 }
 
 /// The conditional leaves of one group, by path.
@@ -437,8 +443,7 @@ where
 pub trait Col: Clone + Eq + Hash {}
 impl<T: Clone + Eq + Hash> Col for T {}
 
-/// The write target of the full index: the one place rows enter the store. Its merge is a
-/// no-op; the ind_common merges.
+/// The write target of the full index: the one place rows enter the store.
 pub struct FullWrite<'a, S, Ix>(&'a mut S, PhantomData<Ix>);
 
 impl<S, Ix> RelIndexMerge for FullWrite<'_, S, Ix> {
@@ -907,7 +912,7 @@ pub mod assign {
     }
 
     /// The `Always` rows as `(F, Vd, Pd, Vs, Ps)`, consuming the store, which frees as the output
-    /// fills: this is the run's peak.
+    /// fills.
     pub fn into_always_vec<T0: Col, T1: Col, T2: Col, T3: Col, T4: Col>(
         store: Store<T0, T1, T2, T3, T4>,
     ) -> Vec<(T0, T1, T2, T3, T4)> {
@@ -1054,7 +1059,7 @@ macro_rules! cond_trie_assign_rel_ind {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::BTreeSet;
 
     // Not `super::*`: the store's `ToRelIndex` in scope makes Ascent's generated calls ambiguous.
@@ -1065,7 +1070,7 @@ mod tests {
     use crate::index_engine::Rows;
     use crate::index_engine::decision::{Cond, DecisionId, DecisionSet};
 
-    type Row = (u32, u32, u32, u32, u32, Cond);
+    pub(crate) type Row = (u32, u32, u32, u32, u32, Cond);
 
     // The same rules over the store and over an Ascent lattice. `step` probes `0_1` and `link`
     // probes `0_1_2`; in `assign` order, `0_3` and `0_3_4`.
@@ -1081,7 +1086,7 @@ mod tests {
         r(a, b, q, m, fp, c) <-- link(a, b, p, q, c2), r(a, b, p, m, fp, c1), if let Some(c) = c1.and(*c2);
     }
     ascent::ascent! {
-        struct LatticeLocals;
+        pub(crate) struct LatticeLocals;
         relation seed(u32, u32, u32, u32, u32, Cond);
         relation step(u32, u32, u32, Cond);
         relation link(u32, u32, u32, u32, Cond);
@@ -1102,7 +1107,7 @@ mod tests {
         r(a, m, fp, b, q, c) <-- link(a, b, p, q, c2), r(a, m, fp, b, p, c1), if let Some(c) = c1.and(*c2);
     }
     ascent::ascent! {
-        struct LatticeAssign;
+        pub(crate) struct LatticeAssign;
         relation seed(u32, u32, u32, u32, u32, Cond);
         relation step(u32, u32, u32, Cond);
         relation link(u32, u32, u32, u32, Cond);
@@ -1113,7 +1118,7 @@ mod tests {
     }
 
     /// A small deterministic generator, so a failure reproduces.
-    struct Lcg(u64);
+    pub(crate) struct Lcg(pub(crate) u64);
     impl Lcg {
         fn next(&mut self, n: u32) -> u32 {
             self.0 = self
@@ -1139,15 +1144,15 @@ mod tests {
         }
     }
 
-    struct Input {
-        seed: Vec<Row>,
-        step: Vec<(u32, u32, u32, Cond)>,
-        link: Vec<(u32, u32, u32, u32, Cond)>,
+    pub(crate) struct Input {
+        pub(crate) seed: Vec<Row>,
+        pub(crate) step: Vec<(u32, u32, u32, Cond)>,
+        pub(crate) link: Vec<(u32, u32, u32, u32, Cond)>,
     }
 
-    fn input(rng: &mut Lcg, collapse: bool, vars: u32) -> Input {
-        // Few columns' values, so facts are re-derived under many conditions and groups grow
-        // past the small regime.
+    /// Few columns' values, so facts are re-derived under many conditions (under `ascent_par!`,
+    /// often by several threads in one iteration) and groups grow past the small regime.
+    pub(crate) fn input(rng: &mut Lcg, collapse: bool, vars: u32) -> Input {
         let seed = (0..40)
             .map(|_| {
                 (
@@ -1198,7 +1203,7 @@ mod tests {
     /// The rows in a canonical order, each condition as `None` for `Always` or its set's members
     /// and whether it is ⊤.
     #[allow(clippy::type_complexity)]
-    fn sorted(
+    pub(crate) fn sorted(
         rows: impl IntoIterator<Item = Row>,
     ) -> Vec<(u32, u32, u32, u32, u32, Option<(bool, Vec<DecisionId>)>)> {
         let set: BTreeSet<_> = rows

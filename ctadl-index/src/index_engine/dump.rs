@@ -369,9 +369,7 @@ macro_rules! store_backed {
 }
 store_backed!(
     super::locals_trie::CountingVec<Row>,
-    super::assign_like_trie::SeedVec<Row>,
     super::c_locals_trie::CCountingVec<Row>,
-    super::c_assign_like_trie::CSeedVec<Row>,
     lsm::ascent_provider::CountingVec<Row>,
     lsm::ascent_provider::SeedVec<Row>
 );

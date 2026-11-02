@@ -60,8 +60,6 @@ use crate::facts::{
 pub use crate::index_engine::decision::{Cond, Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
-pub mod assign_like_trie;
-pub mod c_assign_like_trie;
 pub mod c_cond_trie;
 pub mod c_locals_trie;
 pub mod cond_trie;
@@ -413,13 +411,11 @@ pub enum HybridContext {
     /// route established the decision, until it lands as a plain edge in a function that held
     /// the call target. Two callers passing different targets get different flows.
     ///
-    /// A row's condition is a [`Cond`], a lattice: `Always`, or a [`DecisionSet`] under every
-    /// decision of which the row holds. Rows that several decisions reach are shared rather
-    /// than repeated, and a row that also holds unconditionally is one `Always` row, so there is
-    /// one row per `(f, v, p, a, p4)` whatever the number of decisions reaching a function.
-    /// Complete,
-    /// deterministic (the fixpoint does not depend on the order routes are found in), and the
-    /// default.
+    /// A row that several decisions reach is one row, with one [`Cond`], rather than repeated,
+    /// so there is one row per `(f, v, p, a, p4)` whatever the number of decisions reaching a
+    /// function.
+    /// Complete, deterministic (the fixpoint does not depend on the order routes are found in),
+    /// and the default.
     #[default]
     Decision,
     /// As `Decision`, with the set collapsed to ⊤ -- "every decision of this function" -- the
@@ -439,10 +435,10 @@ pub enum HybridContext {
     Bounded(usize),
     /// As `Bounded(k)`, but a row whose set widens to ⊤ is `Always` instead, so the flow is
     /// shared by every caller through the unconditional `summary` (as under `None`), and
-    /// nothing conditional is derived from it. Coarser than `Bounded(k)` downstream of the widened row
-    /// (`Bounded` still conditions the callers' inherited flows on their own decisions), but
-    /// no ⊤ summary is ever applied at every establishing caller, which is what makes
-    /// `Bounded` feed back on itself.
+    /// nothing conditional is derived from it. Coarser than `Bounded(k)` downstream of the
+    /// widened row (`Bounded` still conditions the callers' inherited flows on their own
+    /// decisions), but no ⊤ summary is ever applied at every establishing caller, which is what
+    /// makes `Bounded` feed back on itself.
     Spill(usize),
     /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
     /// directly resolved call's would be. The resolvent machinery still decides *which* callees
@@ -511,7 +507,7 @@ impl Parallelism {
 /// either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
-    /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
+    /// The in-memory trie of [`locals_trie`].
     #[default]
     Memory,
     /// The memory-mapped LSM maps of the `lsm` crate, which hold each index of a relation in
@@ -1061,7 +1057,7 @@ macro_rules! cond_stores {
         impl $crate::index_engine::CondStores for $prog_ty {
             fn seed_assign_like(&mut self, rows: Vec<$crate::index_engine::AssignLikeRow>) {
                 self.__assign_like_ind_common =
-                    $crate::index_engine::assign_like_trie::FromRows::from_rows(rows);
+                    $crate::index_engine::cond_trie::FromRows::from_rows(rows);
             }
             fn take_assign_like(&mut self) -> Vec<$crate::index_engine::AssignLikeRow> {
                 $crate::index_engine::$m::assign::into_always_vec(std::mem::take(
@@ -1409,7 +1405,44 @@ fn compute_paths(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
     };
-    pre.paths
+    with_value_paths(pre.paths)
+}
+
+/// Closes `paths` under the terminal [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD): `p·#value` is
+/// admissible for every admissible `p` and the empty path, and no path has a segment after
+/// `#value`. A program that never mentions `#value` keeps its paths as they are.
+///
+/// With [`PathSet::concat`] absorbing `#value · #value`, that is all the index rules need to
+/// treat a value-derived fact as weaker than a copy: a row `t.#value <- a.q` cannot be extended
+/// by a suffix, so a read of `t.deref` never turns it into `t.deref <- a.q.deref`, and the suffix
+/// rules carry `#value` through copies, stores, summaries and call sites as the last segment of
+/// the rest.
+fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
+    let is_value = |s: &PathSegment| s.is_value();
+    if !paths.iter().any(|(p,)| p.iter().any(is_value)) {
+        return paths;
+    }
+    let mut base: Vec<Path> = vec![Path::empty()];
+    for (p,) in paths {
+        let segments: Vec<PathSegment> = p.iter().cloned().collect();
+        match segments.iter().position(is_value) {
+            None => base.push(p),
+            Some(i) if i + 1 == segments.len() => {
+                base.push(Path::from_accesses(segments[..i].iter().cloned()))
+            }
+            // `#value·rest`: never admissible.
+            Some(_) => {}
+        }
+    }
+    base.sort_unstable();
+    base.dedup();
+    let value = Path::from_accesses([PathSegment::value()]);
+    let mut out: Vec<(Path,)> = Vec::with_capacity(2 * base.len());
+    for p in base {
+        out.push((p,));
+        out.push((p.concat(&value),));
+    }
+    out
 }
 
 /// The exact splits of a call-target tag's path. The empty path need not be a member of the
@@ -1473,16 +1506,9 @@ ascent_source! {
 
     // Local reachability, under its condition. The core, most expensive relation.
     //
-    // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]: `Always`, or the
-    // decisions it holds under. One fact is one row, however it is derived, so a flow that
-    // holds unconditionally is never also kept under a decision. A fact composed of two holds
-    // under both conditions (`Cond::and`); one derived two ways holds under either (the
-    // lattice join). The rules that do not reason about context (call-target propagation,
-    // the critical summaries and resolvents, the aliasing summary, `const_reaches`) and the
-    // outputs read only `Always` facts.
-    //
-    // They are plain relations to Ascent, which refuses a custom store on a `lattice`; the store
-    // keeps one row per fact and joins its conditions (`cond_trie`).
+    // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]. The rules that do
+    // not reason about context (call-target propagation, the critical summaries and resolvents,
+    // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts.
     #[ds($crate::index_engine::cond_trie::locals)]
     relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
     #[ds($crate::index_engine::cond_trie::assign)]
@@ -2424,7 +2450,7 @@ macro_rules! trie_stores {
 ///
 /// Everything from seeding the inputs to extracting the result is written once, here, and
 /// expanded once per engine crate. The program types spell their fields identically, but each
-/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `AssignTrie` vs `CAssignTrie`), so
+/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `CondTrie` vs `CCondTrie`), so
 /// no one function signature covers them all and a trait would only restate every field.
 //
 // Relation inputs are set here rather than as inline `= <init>` initializers, because the
@@ -2717,5 +2743,31 @@ mod tests {
         let with_model = compute_paths(program.clone(), vec![p(".deref")], false);
         let with_flag = compute_paths(program, vec![], true);
         assert_eq!(with_model, with_flag);
+    }
+
+    /// `#value` is terminal: once a program mentions it, every admissible path (and the empty
+    /// path) gains a `#value` extension, and no admissible path has a segment after it, not even
+    /// one the model-path concatenation builds.
+    #[test]
+    fn compute_paths_closes_under_terminal_value() {
+        let p = |s: &str| (Path::parse(s).unwrap(),);
+        let value = (Path::from_accesses([PathSegment::value()]),);
+        let program = vec![(Path::empty(),), p(".f"), value];
+        let paths = compute_paths(program, vec![], true);
+        for want in [".f", ".deref", ".f.deref"] {
+            let (q,) = p(want);
+            let qv = (q.concat(&value.0),);
+            assert!(paths.contains(&qv), "{want}.#value missing: {paths:?}");
+        }
+        assert!(paths.contains(&value));
+        for (q,) in &paths {
+            let segs: Vec<_> = q.iter().collect();
+            if let Some(i) = segs.iter().position(|s| s.is_value()) {
+                assert_eq!(i + 1, segs.len(), "a segment after #value: {q}");
+            }
+        }
+        // A program that never mentions `#value` keeps its paths.
+        let plain = vec![(Path::empty(),), p(".f")];
+        assert_eq!(compute_paths(plain.clone(), vec![], false), plain);
     }
 }

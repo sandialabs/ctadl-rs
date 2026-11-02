@@ -170,6 +170,15 @@ pub type Symbol = ArcIntern<str>;
 /// rather than minting its own.
 pub const DEREF_FIELD: &str = "deref";
 
+/// Field name under which a variable records what its *value* was computed from, as opposed to
+/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`.
+///
+/// The field is terminal: the analysis admits `p.#value` for every path `p` it admits, and no
+/// path with a segment after `#value`. It also absorbs itself, `p.#value · #value = p.#value`, so
+/// `t.#value <- v` carries what `v`'s own value was computed from. The `#` keeps it apart from
+/// every front end's field names.
+pub const VALUE_FIELD: &str = "#value";
+
 /// A newtype wrapper for u64 representing a numeric offset in field access
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -246,6 +255,18 @@ impl PathSegment {
     #[inline]
     pub fn is_deref(&self) -> bool {
         matches!(self, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
+    }
+
+    /// The value segment, [`VALUE_FIELD`].
+    #[inline]
+    pub fn value() -> Self {
+        PathSegment::symbol(VALUE_FIELD)
+    }
+
+    /// True for the value segment ([`VALUE_FIELD`]).
+    #[inline]
+    pub fn is_value(&self) -> bool {
+        matches!(self, PathSegment::Symbol(s) if &**s == VALUE_FIELD)
     }
 }
 
@@ -475,6 +496,15 @@ pub enum Exp {
     ObjectRef(CallObject),
     /// An integer constant, sign-extended to `i64`.
     Int(i64),
+    /// The value of `v`, not its identity: the destination's value depends on `v`'s, but nothing
+    /// reachable through the destination is reachable through `v`. Integer arithmetic uses it
+    /// for operands that only supply a number, so `t = a + i` relates `t` to the memory behind
+    /// `a`, the base, and not to the memory behind `i`. See [`VALUE_FIELD`].
+    ///
+    /// Last, so that the other variants keep their encoding.
+    ///
+    /// Valid only as a source of [`StatementKind::Assign`].
+    Value(VariableRef),
 }
 
 /// A sequence of statements ending with a terminator.
@@ -1091,6 +1121,12 @@ impl Exp {
         Self::Variable(v)
     }
 
+    /// [`Exp::Value`] of `v`.
+    #[inline]
+    pub fn value(v: VariableRef) -> Self {
+        Self::Value(v)
+    }
+
     /// Builds an expression from an access path. A pathless access path is a bare
     /// [`Exp::Variable`]; an offset-only path is an [`Exp::AccessPath`] (pointer arithmetic).
     #[inline]
@@ -1107,11 +1143,12 @@ impl Exp {
     }
 
     /// Returns the base variable read by this expression, if it reads a variable or an address
-    /// derived from one (`Exp::Variable` or `Exp::AccessPath`). Constants return `None`.
+    /// derived from one (`Exp::Variable`, `Exp::Value` or `Exp::AccessPath`). Constants return
+    /// `None`.
     #[inline]
     pub fn base_variable(&self) -> Option<&VariableRef> {
         match self {
-            Exp::Variable(v) => Some(v),
+            Exp::Variable(v) | Exp::Value(v) => Some(v),
             Exp::AccessPath(ap) => Some(&ap.base),
             _ => None,
         }
@@ -1121,7 +1158,7 @@ impl Exp {
     #[inline]
     pub fn base_variable_mut(&mut self) -> Option<&mut VariableRef> {
         match self {
-            Exp::Variable(v) => Some(v),
+            Exp::Variable(v) | Exp::Value(v) => Some(v),
             Exp::AccessPath(ap) => Some(&mut ap.base),
             _ => None,
         }
@@ -1918,6 +1955,7 @@ impl Display for Exp {
             Exp::Int(value) => write!(f, "<const: {value}>"),
             Exp::Str(s) => write!(f, "<const: {s:#?}>"),
             Exp::Variable(v) => write!(f, "{}", v),
+            Exp::Value(v) => write!(f, "value({v})"),
             Exp::AccessPath(ap) => write!(f, "{}", ap),
             Exp::ObjectRef(obj) => write!(f, "{obj}"),
         }

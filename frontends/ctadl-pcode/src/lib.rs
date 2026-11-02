@@ -161,6 +161,17 @@ struct Context {
     sp_name: Option<String>,
     /// Varnodes that Ghidra classifies as storage for a global variable
     global_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
+    /// The kind of each varnode's Ghidra data type, where it is a pointer or a scalar.
+    vnode_kinds: BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
+    int_arith: IntArith,
+    /// Under [`IntArith::Value`], the varnodes used as a memory address, computed by
+    /// [`address_vnodes`].
+    addr_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
+    /// Under [`IntArith::Value`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
+    /// like a scaled index rather than a base when added to an address.
+    scaled_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
+    /// Logged at the end of the import.
+    binop_sources: BinopSources,
     /// Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
     /// Current function being processed
@@ -182,6 +193,11 @@ impl Context {
             cp_results: Default::default(),
             sp_name: None,
             global_vnodes: Default::default(),
+            vnode_kinds: Default::default(),
+            int_arith: IntArith::from_env(),
+            addr_vnodes: Default::default(),
+            scaled_vnodes: Default::default(),
+            binop_sources: Default::default(),
             register_facts: Default::default(),
             current_hfunc: None,
             entry_points: Default::default(),
@@ -287,6 +303,20 @@ impl Context {
             .filter(|vn| pcode_facts.is_global_vnode(vn))
             .cloned()
             .collect();
+        if self.int_arith == IntArith::Value {
+            self.vnode_kinds = pcode_facts
+                .vnode_facts
+                .keys()
+                .filter_map(|vn| Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?)))
+                .collect();
+            self.addr_vnodes = address_vnodes(&pcode_facts);
+            self.scaled_vnodes = pcode_facts
+                .pcode_facts
+                .values()
+                .filter(|op| matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT"))
+                .flat_map(|op| op.outputs.iter().cloned())
+                .collect();
+        }
         self.register_facts = pcode_facts.register_facts.clone();
 
         // Store bb_facts for later use
@@ -1002,11 +1032,26 @@ impl Context {
         }
 
         let mut stmts = Vec::new();
-        let inputs: SmallVec<[Exp; 2]> = pcode
-            .inputs
-            .iter()
-            .map(|vn| self.get_exp(&mut stmts, vn, vnode_facts, locals))
-            .collect::<Result<_, _>>()?;
+        let flows = self.operand_flows(pcode, vnode_facts, locals);
+        let mut inputs: SmallVec<[Exp; 2]> = SmallVec::new();
+        for (i, vn) in pcode.inputs.iter().enumerate() {
+            let exp = self.get_exp(&mut stmts, vn, vnode_facts, locals)?;
+            let exp = match (flows.get(i), exp) {
+                (Some(OperandFlow::Value), Exp::Variable(v)) => Exp::value(v),
+                // `x.[k]`, an address computed from `x`: copy it to a temp, whose value is
+                // then the source.
+                (Some(OperandFlow::Value), exp @ Exp::AccessPath(_)) => {
+                    let t = self.create_temp(locals);
+                    stmts.push(Statement::new_kind(StatementKind::assign(t.clone(), [exp])));
+                    Exp::value(t)
+                }
+                (_, exp) => exp,
+            };
+            if is_compare(&pcode.mnemonic) || is_arith(&pcode.mnemonic) {
+                self.binop_sources.count(&exp);
+            }
+            inputs.push(exp);
+        }
 
         let temp = self.create_temp(locals);
         stmts.push(Statement::new_kind(StatementKind::assign(
@@ -1015,6 +1060,50 @@ impl Context {
         )));
         self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp), locals);
         Ok(stmts)
+    }
+
+    /// Under [`IntArith::Value`], how each operand of `pcode` flows into its result, by
+    /// position. Empty, meaning every operand merges, under the other variants and for ops
+    /// that are neither arithmetic nor comparisons.
+    ///
+    /// The base of an `INT_ADD` or `INT_SUB` whose result is used as an address (see
+    /// [`base_operand`]) merges; every other operand of an arithmetic op or comparison supplies
+    /// only its value. When an address op has no clear base, every operand merges.
+    fn operand_flows(
+        &self,
+        pcode: &pcode_reader::PcodeData,
+        vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
+        locals: &mut Locals,
+    ) -> Vec<OperandFlow> {
+        let m: &str = &pcode.mnemonic;
+        if self.int_arith != IntArith::Value || !(is_compare(m) || is_arith(m)) {
+            return Vec::new();
+        }
+        let n = pcode.inputs.len();
+        if matches!(m, "INT_ADD" | "INT_SUB") && self.addr_vnodes.contains(&pcode.outputs[0]) {
+            let shapes: Vec<OperandShape> = pcode
+                .inputs
+                .iter()
+                .map(|vn| OperandShape {
+                    pointer: self.vnode_kinds.get(vn) == Some(&pcode_reader::TypeKind::Pointer),
+                    scaled: self.scaled_vnodes.contains(vn)
+                        || self.get_const_value(vn, vnode_facts, locals).is_some(),
+                })
+                .collect();
+            return match base_operand(&shapes) {
+                Some(base) => (0..n)
+                    .map(|i| {
+                        if i == base {
+                            OperandFlow::Merge
+                        } else {
+                            OperandFlow::Value
+                        }
+                    })
+                    .collect(),
+                None => vec![OperandFlow::Merge; n],
+            };
+        }
+        vec![OperandFlow::Value; n]
     }
 
     fn handle_ptrsub(
@@ -1673,6 +1762,18 @@ impl Context {
     }
 
     fn finish(self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
+        if self.int_arith != IntArith::Merge {
+            let BinopSources {
+                variable,
+                value,
+                other,
+            } = self.binop_sources;
+            log::info!(
+                "pcode: int arith {:?}: arithmetic and comparison sources: \
+                 {variable} variable, {value} value, {other} other",
+                self.int_arith
+            );
+        }
         log::trace!("final program: {}", builders.program);
         // Verify the program
         builders.program.verify()?;
@@ -1683,5 +1784,214 @@ impl Context {
             vmt: builders.vmt,
             source_info: builders.source_info_builder.finish(),
         })
+    }
+}
+
+/// How [`Context::handle_binop`] lowers integer arithmetic and comparisons, from
+/// `CTADL_EXP_INT_ARITH`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IntArith {
+    /// `value` (default): most operands supply only their value ([`Exp::Value`]), so a sum or
+    /// a comparison is not an alias of the memory behind its operands. [`Context::operand_flows`]
+    /// says which operands still merge.
+    Value,
+    /// `merge`: every operand flows into the result, so the result gets every path of every
+    /// operand and an integer added to a pointer becomes a pointer too. For comparison runs.
+    Merge,
+}
+
+impl IntArith {
+    fn from_env() -> Self {
+        match std::env::var("CTADL_EXP_INT_ARITH").as_deref() {
+            Ok("value") | Err(_) => IntArith::Value,
+            Ok("merge") => IntArith::Merge,
+            Ok(other) => {
+                panic!("CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value or merge")
+            }
+        }
+    }
+}
+
+/// Whether `mnemonic` is a comparison or a bool op.
+fn is_compare(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "INT_EQUAL"
+            | "INT_NOTEQUAL"
+            | "INT_LESS"
+            | "INT_SLESS"
+            | "INT_LESSEQUAL"
+            | "INT_SLESSEQUAL"
+            | "INT_CARRY"
+            | "INT_SCARRY"
+            | "INT_SBORROW"
+            | "BOOL_AND"
+            | "BOOL_OR"
+            | "BOOL_XOR"
+            | "FLOAT_EQUAL"
+            | "FLOAT_NOTEQUAL"
+            | "FLOAT_LESS"
+            | "FLOAT_LESSEQUAL"
+            | "FLOAT_NAN"
+    )
+}
+
+/// Whether `mnemonic` is integer or float arithmetic.
+fn is_arith(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "INT_ADD"
+            | "INT_SUB"
+            | "INT_MULT"
+            | "INT_DIV"
+            | "INT_SDIV"
+            | "INT_REM"
+            | "INT_SREM"
+            | "INT_AND"
+            | "INT_OR"
+            | "INT_XOR"
+            | "INT_LEFT"
+            | "INT_RIGHT"
+            | "INT_SRIGHT"
+            | "FLOAT_ADD"
+            | "FLOAT_SUB"
+            | "FLOAT_MULT"
+            | "FLOAT_DIV"
+    )
+}
+
+/// How one operand of a `handle_binop` op flows into its result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperandFlow {
+    /// The operand is a source as itself ([`Exp::Variable`]): the result gets all its paths.
+    Merge,
+    /// Only the operand's value flows ([`Exp::Value`]).
+    Value,
+}
+
+/// What [`base_operand`] knows about an operand of an address `INT_ADD` or `INT_SUB`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct OperandShape {
+    /// Ghidra types the operand as a pointer.
+    pointer: bool,
+    /// The operand is a constant or the output of `INT_MULT` or `INT_LEFT`.
+    scaled: bool,
+}
+
+/// Which operand of an `INT_ADD` or `INT_SUB` used as an address is the base, the one whose
+/// memory the address reaches: the only pointer-typed operand, or else the only one that is not
+/// a scaled index. `None` when neither rule picks exactly one.
+fn base_operand(shapes: &[OperandShape]) -> Option<usize> {
+    let only = |pred: fn(&OperandShape) -> bool| {
+        let mut it = shapes.iter().enumerate().filter(|(_, s)| pred(s));
+        match (it.next(), it.next()) {
+            (Some((i, _)), None) => Some(i),
+            _ => None,
+        }
+    };
+    only(|s| s.pointer).or_else(|| only(|s| !s.scaled))
+}
+
+/// The number of each kind of source of arithmetic and comparisons in [`Context::handle_binop`].
+#[derive(Clone, Copy, Debug, Default)]
+struct BinopSources {
+    /// [`Exp::Variable`] sources.
+    variable: usize,
+    /// [`Exp::Value`] sources.
+    value: usize,
+    /// Every other source: constants, and address computations ([`Exp::AccessPath`]) that
+    /// merge.
+    other: usize,
+}
+
+impl BinopSources {
+    fn count(&mut self, exp: &Exp) {
+        match exp {
+            Exp::Variable(_) => self.variable += 1,
+            Exp::Value(_) => self.value += 1,
+            _ => self.other += 1,
+        }
+    }
+}
+
+/// The varnodes used as a memory address: a `LOAD` or `STORE` address, a `PTRADD` or `PTRSUB`
+/// base, and, backwards to a fixpoint, the inputs of a copy, cast, phi, `INDIRECT`, `INT_ADD` or
+/// `INT_SUB` whose output is one. A call argument or a returned value is not an address use: a
+/// value-only operand still carries its taint there.
+/// Propagation stops at every other operator, so an index scaled by a multiply or shift is not
+/// an address even when the scaled value is added to one.
+fn address_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::PcodeVarnode> {
+    let mut defs: BTreeMap<&pcode_reader::PcodeVarnode, &pcode_reader::PcodeData> = BTreeMap::new();
+    let mut work: Vec<&pcode_reader::PcodeVarnode> = Vec::new();
+    for op in facts.pcode_facts.values() {
+        for out in &op.outputs {
+            defs.insert(out, op);
+        }
+        match &**op.mnemonic {
+            "LOAD" | "STORE" => work.extend(op.inputs.get(1)),
+            "PTRADD" | "PTRSUB" => work.extend(op.inputs.first()),
+            _ => {}
+        }
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(vn) = work.pop() {
+        if !seen.insert(vn.clone()) {
+            continue;
+        }
+        if let Some(op) = defs.get(vn)
+            && matches!(
+                &**op.mnemonic,
+                "COPY" | "CAST" | "MULTIEQUAL" | "INDIRECT" | "INT_ADD" | "INT_SUB"
+            )
+        {
+            work.extend(op.inputs.iter());
+        }
+    }
+    seen
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PTR: OperandShape = OperandShape {
+        pointer: true,
+        scaled: false,
+    };
+    const SCALED: OperandShape = OperandShape {
+        pointer: false,
+        scaled: true,
+    };
+    const PLAIN: OperandShape = OperandShape {
+        pointer: false,
+        scaled: false,
+    };
+
+    #[test]
+    fn base_is_the_pointer_typed_operand() {
+        assert_eq!(base_operand(&[PLAIN, PTR]), Some(1));
+        assert_eq!(base_operand(&[PTR, PLAIN]), Some(0));
+        // The type decides before the shape does.
+        let scaled_ptr = OperandShape {
+            pointer: true,
+            scaled: true,
+        };
+        assert_eq!(base_operand(&[scaled_ptr, PLAIN]), Some(0));
+    }
+
+    #[test]
+    fn base_is_the_operand_that_is_not_a_scaled_index() {
+        // `a + (i << 3)`, `p + 4`
+        assert_eq!(base_operand(&[PLAIN, SCALED]), Some(0));
+        assert_eq!(base_operand(&[SCALED, PLAIN]), Some(1));
+    }
+
+    #[test]
+    fn no_base_when_neither_rule_picks_one() {
+        assert_eq!(base_operand(&[PLAIN, PLAIN]), None);
+        assert_eq!(base_operand(&[SCALED, SCALED]), None);
+        // `p - q`, both pointers: neither is the base.
+        assert_eq!(base_operand(&[PTR, PTR]), None);
+        assert_eq!(base_operand(&[]), None);
     }
 }

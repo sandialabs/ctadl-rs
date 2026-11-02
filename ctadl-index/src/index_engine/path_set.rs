@@ -122,6 +122,8 @@ pub struct PathSet {
     max_depth: usize,
     /// Calls to [`PathSet::split_trailing_offset`] on a non-member, each a bug.
     split_misses: AtomicUsize,
+    /// The path `#value`, when it is a member: the one `rest` that [`PathSet::concat`] absorbs.
+    value: Option<Path>,
 }
 
 impl PathSet {
@@ -144,6 +146,7 @@ impl PathSet {
             wild: Vec::new(),
             max_depth: 0,
             split_misses: AtomicUsize::new(0),
+            value: None,
         };
         for &p in &members {
             set.bits[p.raw() as usize / 64] |= 1 << (p.raw() % 64);
@@ -161,6 +164,8 @@ impl PathSet {
         }
         set.exact_at.push(set.exact.len() as u32);
         set.wild_at.push(set.wild.len() as u32);
+        let value = Path::from_accesses([PathSegment::value()]);
+        set.value = members.binary_search(&value).is_ok().then_some(value);
         let mut before = 0u32;
         for (rank, word) in set.ranks.iter_mut().zip(&set.bits) {
             *rank = before;
@@ -254,6 +259,7 @@ impl PathSet {
         // Offsets merge only at the junction: `prefix` and `rest` are each normalized.
         let mut len = 0;
         let mut last_off = None;
+        let mut last_value = false;
         let mut p = *prefix;
         while let Some((head, tail)) = p.uncons() {
             len += 1;
@@ -262,8 +268,13 @@ impl PathSet {
                     PathSegment::Offset(Offset(o)) => Some(*o),
                     PathSegment::Symbol(_) => None,
                 };
+                last_value = head.is_value();
             }
             p = tail;
+        }
+        // `#value` absorbs itself (see `ctadl_ir::mir::VALUE_FIELD`).
+        if last_value && adjust.is_none() && Some(*rest) == self.value {
+            return self.contains(prefix).then_some(*prefix);
         }
         let candidate = if last_off.is_some() || adjust.is_some() {
             let rest_off = rest.head_offset();
@@ -474,6 +485,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `#value` absorbs itself, in the path set and in [`Path::substitute_prefix`] alike, and
+    /// nothing else follows it.
+    #[test]
+    fn value_absorbs_itself() {
+        let v = Path::from_accesses([PathSegment::value()]);
+        let x = p(".x");
+        let xv = x.concat(&v);
+        let set = PathSet::from_paths([Path::EMPTY, x, v, xv, p(".x.deref")]);
+        assert_eq!(set.concat(&xv, None, &v), Some(xv));
+        assert_eq!(set.concat(&v, None, &v), Some(v));
+        assert_eq!(set.concat(&x, None, &v), Some(xv));
+        assert_eq!(set.concat(&v, None, &p(".deref")), None);
+        assert_eq!(xv.substitute_prefix(&x, &xv), Some(xv));
     }
 
     #[test]
