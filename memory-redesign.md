@@ -272,27 +272,35 @@ becomes weak overrides the frontend's choice, because ordering that cell would b
 
 ## Frontends
 
+Each frontend decides which of its writes are `Update`s. A frontend that changes nothing keeps
+today's behavior.
+
 - **C and p-code** put objects behind offsets and `.deref`. Cells are offset paths, and most of the
-  policies above (offsets, address arguments, unknown writes) are about them.
+  policies above (offsets, address arguments, unknown writes) are about them. p-code writes frame
+  slots with `Update` already; heap writes through a formal are the next to switch.
 - **Java, Dalvik and CIL** put objects behind fields, so cells are field paths and offsets do not
-  arise. Virtual calls make writes unknown at most sites until resolution, so less order survives.
-  How much is unmeasured. CIL's value types (structs copied by value, `docs/limitations.md`) want
-  a copied root, not a shared one.
+  arise. A frontend can version per field, for example only fields of a class's own instance.
+  Virtual calls make writes unknown at most sites until resolution, so less order survives. How
+  much is unmeasured. CIL's value types (structs copied by value, `docs/limitations.md`) want a
+  copied root, not a shared one.
 - **Lua** (the language) puts objects behind table keys. A key that is not a constant makes the
   table's cells weak.
 - **`$globals`** is a root every call reaches. Giving each call an input and output for every
-  global cell is the cost the `$globals`-as-`Update` experiment measured. It probably wants weak
-  global cells by default, with only the cells a function both reads and writes ordered.
+  global cell is the cost the `$globals`-as-`Update` experiment measured. Global cells are weak by
+  default because frontends write them with `Store`. A frontend can version the cells a function
+  both reads and writes.
 
 ## Cost
 
-- **Cells, not whole variables.** A store copies one value. `Update` copies the aggregate per
-  version, and an escaped stack frame under mem2reg copies every kept slot per write. The
+- **Cells, not whole variables.** An `Update` of a cell copies one value. Today's lowering of
+  `Update` copies the aggregate per version, and an escaped stack frame under mem2reg copies
+  every kept slot per write. The
   prototype is the evidence that cells are cheap: its writer variables held 81 K rows in the
   largest function measured, against 119 M for the function.
 - **Calls with many cells below an argument** need one input and one output per cell. A shared
   edge per argument, with the cells' paths left out of it, kept that cheap in the prototype. In
-  the IR the same thing is one call operand per cell. Weak cells share one operand.
+  the IR the same thing is one call operand per versioned cell. Weak cells get none, so a frontend
+  bounds this cost by what it versions.
 - **Fewer vertices per cell.** A cell with three names today is three vertices; canonical naming
   makes it one, plus a version per write.
 - **More flows where names are unified.** A cell reached by two names now connects a write under
