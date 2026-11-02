@@ -235,6 +235,5 @@ See [limitations.md](limitations.md). Also:
 
 - Only context-free summaries cross a `--summary` boundary.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
-- Some declared model behaviours are accepted but have no effect yet.
 - The formatter does not yet check source hashes (a file edited since import gets wrong lines,
   and a missing one fails the query), and SARIF does not yet carry artifact hashes.
