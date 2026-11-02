@@ -238,8 +238,12 @@ With strong updates, save and restore works the same way:
 ## Policies the IR has to state
 
 These are decided implicitly today by which vertices happen to be shared. The redesign makes each
-one explicit.
+one explicit. They apply to the cells a frontend writes with `Update`; each one that says a cell
+becomes weak overrides the frontend's choice, because ordering that cell would be unsound.
 
+- **Mixed writes.** A cell written with `Update` under one name and `Store` under another is
+  weak. Canonical naming is what finds the two writes on one cell, so this is decided after
+  canonicalization, not per statement.
 - **Aliasing within a function.** Different roots do not alias. This is the engine's behavior today.
   Aliasing created by a caller is handled at the call: passing the same root twice makes that
   call's cells below it weak (one input and output shared by both arguments).
@@ -261,10 +265,10 @@ one explicit.
   `p->next` make paths without end. Past a depth bound, a cell becomes weak. Offset variants from
   a loop-incremented pointer need a bound for a similar reason, so the two should share one
   widening policy.
-- **Strong updates.** A store to a cell whose root names one object kills the previous version,
-  entry value included. `Update` kills only what earlier writes put at the field, not what the
-  variable held on entry. It comes free in this representation, and it is a separate precision
-  gain from ordering.
+- **Strong updates.** An `Update` of a versioned cell whose root names one object kills the
+  previous version, entry value included. Today's lowering of `Update` kills only what earlier
+  writes put at the field, not what the variable held on entry. It comes free in this
+  representation, and it is a separate precision gain from ordering.
 
 ## Frontends
 
