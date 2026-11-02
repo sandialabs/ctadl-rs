@@ -300,7 +300,7 @@ where
 {
     /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
     /// `none`, `0_1`, `0_1_2`, and existence views.
-    fwd: CMap<(F, V), Group<P, M, Fp>>,
+    pub(crate) fwd: CMap<(F, V), Group<P, M, Fp>>,
     /// Row count. Bumped once per winning insert, so it stays exact under concurrency.
     len: AtomicUsize,
 }
@@ -401,7 +401,7 @@ where
     /// The `(f, v)` entry is one shard write lock, held across the group insert (including a
     /// possible promotion). That lock is the store's contention point: the pessimal shape is
     /// many threads hitting one huge group.
-    fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
+    pub(crate) fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
         let (f, v, p, m, fp) = key;
         let added = self
             .fwd
@@ -420,7 +420,7 @@ where
     ///
     /// Reusing [`PathGroup::merge`] keeps the merge O(delta) rather than O(accumulated total),
     /// which is the whole point of promoting large groups.
-    fn absorb(&mut self, from: &mut Self) {
+    pub(crate) fn absorb(&mut self, from: &mut Self) {
         use ascent::dashmap::mapref::entry::Entry;
         let mut added = 0usize;
         {
