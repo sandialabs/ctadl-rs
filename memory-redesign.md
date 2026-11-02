@@ -310,7 +310,8 @@ today's behavior.
 
 1. **Formals immutable, `return` carries the exit state, `param-flow` removed.** Semantics only,
    and independent of the rest.
-   - **SSA:** renames a rebinding of a parameter to a fresh local.
+   - **SSA:** renames a rebinding of a parameter to a fresh local; an `Update` of a parameter
+     still defines a new version of it.
    - **Exit:** `return` takes each parameter's final version, and the summary reads that.
    - **Entry:** the entry copy reads only the formal's entry seed, never the exit.
    - **Tests:** a versioned global read before a write sees the old value (the test
@@ -319,16 +320,18 @@ today's behavior.
      not reach the caller. Fix C's out parameters in the frontend (`store out.deref := x`; #154
      left `C:outparam` failing).
 2. **Cells in the IR.**
-   - **Pass:** canonicalization, cell SSA with phis, entry definitions, call inputs and outputs, and
-     the policies above.
-   - **Analysis:** reads the new operands.
+   - **Pass:** canonicalization, which cells are versioned (the frontend's `Update`s, less what
+     the policies weaken), cell SSA with phis, entry definitions, call inputs and outputs.
+   - **Analysis:** reads the new operands; weak cells lower as today.
    - **Tests:** the prototype's `frontends/ctadl-c/src/memory_order_tests.rs` (on
-     `problem/memory-order`) carries over unchanged, plus tests for each policy above and the Java
-     and Lua frontends.
-3. **Measure, then make it the default.** The firmware sweep, findings compared by rule, message
-   and location, plus the regression suite and the apps.
-4. **Strong updates,** then retire `Update` for memory, `cap_path`, and the alias rule's copy case.
-   Each becomes a special case of cells.
+     `problem/memory-order`) carries over, with the cells it orders written with `Update`. Add
+     tests for each policy above, that a frontend emitting only `Store` gets today's facts, and
+     the Java and Lua frontends.
+3. **Measure, then switch frontends over.** Switch p-code's heap writes to `Update` first, then
+   the others. The firmware sweep, findings compared by rule, message and location, plus the
+   regression suite and the apps.
+4. **Strong updates,** then retire `cap_path` and the alias rule's copy case. Each becomes a
+   special case of cells. `Update` stays, as the frontend's way to ask for a versioned cell.
 
 ## Ruled out
 
@@ -337,8 +340,8 @@ today's behavior.
 - **A single memory chain with clobber walks** (LLVM's MemorySSA): each load walks back over every
   definition, which is expensive as Datalog. The per-path sparse form gives the same answers for
   memory below roots.
-- **More `Update`:** versioning a whole variable for one field's order copies the whole subtree per
-  version.
+- **More `Update` under today's lowering:** versioning a whole variable for one field's order
+  copies the whole subtree per version. The instruction stays; its lowering changes to one cell.
 - **Fixing `param-flow` alone:** it would make `Update` usable on parameters, but leaves the body's
   conflation, where a load sees a later store.
 - **A rule against self-links:** unsound for real self-referencing structures, and the link comes
@@ -349,6 +352,9 @@ today's behavior.
 - **Canonicalization's reach.** Unifying a load chain's names is what makes a write through a
   loaded pointer visible to a later read. It can also connect two names that the program never
   uses for the same object at the same time. Is a limit needed, and what is it?
+- **Which writes a frontend should version.** p-code can version every heap write through a
+  formal, or only those whose cell the function also reads. The second is cheaper at calls, and
+  the prototype ordered every cell, so how much the first adds is unmeasured.
 - **Roots that are not formals.** Allocation and call results have no entry state. Should their
   cells start empty, or start from the defining call's output?
 - **How much order survives** in Java, CIL and Lua, where most calls are virtual.
