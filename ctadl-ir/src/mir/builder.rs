@@ -132,7 +132,7 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `dest` - Destination variable
-    /// * `source` - Source address (offset-only)
+    /// * `source` - Source address
     /// * `field` - Symbolic field to load
     pub fn create_load(
         &mut self,
@@ -146,7 +146,7 @@ impl<'a> BasicBlockBuilder<'a> {
     /// Create and insert a store statement `store dest.field := source`.
     ///
     /// # Arguments
-    /// * `dest` - Destination address (offset-only)
+    /// * `dest` - Destination address
     /// * `field` - Symbolic field written
     /// * `source` - Source expression
     pub fn create_store(
@@ -162,7 +162,7 @@ impl<'a> BasicBlockBuilder<'a> {
     /// [`StatementKind::assign_or_store`]). Storing to an offset address with no field is an error.
     ///
     /// # Arguments
-    /// * `dest` - Destination address (offset-only)
+    /// * `dest` - Destination address
     /// * `field` - Symbolic field written, or `None` for a plain assign to a bare variable
     /// * `source` - Source expression
     pub fn create_assign_or_store(
@@ -183,7 +183,7 @@ impl<'a> BasicBlockBuilder<'a> {
     /// new version of the aggregate), so the `source` aggregate is named separately.
     ///
     /// # Arguments
-    /// * `dest` - Destination address (offset-only); its variable is (re)defined
+    /// * `dest` - Destination address; its variable is (re)defined
     /// * `source` - Source aggregate copied into `dest` before the field write
     /// * `field` - Symbolic field written
     /// * `value` - Source expression stored into the field
@@ -298,7 +298,7 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_global()
     }
 
-    /// Create a new (offset-only) address
+    /// Create a new address
     ///
     /// # Arguments
     /// * `variable_ref` - Variable reference

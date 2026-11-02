@@ -1322,8 +1322,9 @@ impl Context {
             let mut stmts = Vec::new();
             let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts, locals)?;
 
-            // Store through the (composed) access path; its base variable is not redefined. Any loads needed to materialize the stored value (above) or
-            // intermediate dereferences of the address are emitted first.
+            // Store through the (composed) access path; its base variable is not redefined. Any
+            // loads needed to materialize the stored value (above) or intermediate dereferences of
+            // the address are emitted first.
             self.push_assign_or_store(&mut stmts, dest, value_exp, locals);
             return Ok(stmts);
         }
@@ -1633,10 +1634,8 @@ impl Context {
         Ok(exp)
     }
 
-    /// Lowers the field reads (symbolic derefs) of `ap` into loads (see
-    /// [`mir::load_access_path`]), appending them to `stmts` and returning the residual
-    /// [`Address`]: the base variable plus any trailing offset arithmetic. Offsets emit no load,
-    /// so a pathless or offset-only `ap` becomes the same address.
+    /// Lowers `ap` with [`mir::load_access_path`], appending the loads to `stmts` and returning
+    /// the residual [`Address`].
     fn load_ap(
         &mut self,
         stmts: &mut Vec<Statement>,

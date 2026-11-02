@@ -2053,8 +2053,9 @@ fn funcptr_array_multistore_flows() {
 #[test_log::test]
 fn field_non_interference() {
     // Field sensitivity, stated as a negative: writing `x` into `s.a` and returning `s.b` must NOT
-    // leak `x` to the return -- `s.a` and `s.b` are distinct access paths. The positive halves (x ->
-    // s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the return.
+    // leak `x` to the return -- `s.a` and `s.b` are distinct access paths. The positive halves
+    // (x -> s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the
+    // return.
     let src = r"
         int f(Donkey s, int x) {
             s.a = x;

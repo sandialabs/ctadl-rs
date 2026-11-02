@@ -1,10 +1,11 @@
 //! The one path grammar: parser and printer for [`PathSegment`] sequences.
 //!
 //! A path is a sequence of [`PathSegment`]s, each a symbolic field name or a numeric offset; an
-//! access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This module owns the *only* textual encoding of that sequence. The fact store's
-//! on-disk columns, model-generator ports, the IR's `Display` impls, and the test DSLs all go
-//! through here, so printing and parsing are exact inverses and a malformed path fails loudly
-//! instead of silently mutating.
+//! access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This
+//! module owns the *only* textual encoding of that sequence. The fact store's on-disk columns,
+//! model-generator ports, the IR's `Display` impls, and the test DSLs all go through here, so
+//! printing and parsing are exact inverses and a malformed path fails loudly instead of silently
+//! mutating.
 //!
 //! ```text
 //! path    := segment*                      -- "" is the empty path

@@ -327,13 +327,12 @@ pub enum StatementKind {
     /// dest = load source.field;
     /// ```
     ///
-    /// The destination is defined; the source address is only read. `source` is an *address*
-    /// [`Address`] whose path is offset-only (pointer arithmetic, e.g. `x.[50]`); `field` is
-    /// the symbolic [`FieldRef`] read at that address (e.g. `.deref`), so a full load reads
-    /// `source.base` at `source.accesses ++ field`. The loaded `field` must be non-empty (a
-    /// pathless load is just an assign). See [`load_access_path`], which is the one place that
-    /// lowers a chain of field accesses into loads: offsets accumulate into `source`, and each
-    /// symbolic field emits one `Load`.
+    /// The destination is defined; the source address is only read. `source` is an [`Address`]
+    /// (e.g. `x.[50]`); `field` is the symbolic [`FieldRef`] read at that address (e.g. `.deref`),
+    /// so a full load reads `source.base` at `source.accesses ++ field`. The loaded `field` must be
+    /// non-empty (a pathless load is just an assign). See [`load_access_path`], which is the one
+    /// place that lowers a chain of field accesses into loads: offsets accumulate into `source`,
+    /// and each symbolic field emits one `Load`.
     Load {
         dest: VariableRef,
         source: Address,
@@ -502,9 +501,8 @@ pub struct FieldRef {
 pub enum Exp {
     /// A bare variable reference.
     Variable(VariableRef),
-    /// An [`Address`] with a non-empty (offset-only) path, such as `x.[50]` — pointer
-    /// arithmetic. Because an [`Address`] holds only offsets (never symbolic fields), this is
-    /// address computation, not a memory read, so it is expressible directly as an [`Exp`] with no
+    /// An [`Address`] with at least one offset, such as `x.[50]`. An address is pointer
+    /// arithmetic, not a memory read, so it is expressible directly as an [`Exp`] with no
     /// [`StatementKind::Load`].
     Address(Address),
     Str(ArcIntern<str>),
@@ -1443,9 +1441,7 @@ impl StatementKind {
         }
     }
 
-    /// Constructs a load `dest = source.field`. The loaded `field` is a single symbol; the
-    /// `source` address is offset-only (pointer arithmetic — see
-    /// [`StatementKind::Load`]).
+    /// Constructs a load `dest = source.field` (see [`StatementKind::Load`]).
     pub fn load(dest: VariableRef, source: impl Into<Address>, field: impl Into<FieldRef>) -> Self {
         StatementKind::Load {
             dest,
@@ -1978,10 +1974,7 @@ impl Display for ReturnType {
 }
 
 impl From<Address> for Exp {
-    /// Converts an address into an expression. An address with no offsets becomes an
-    /// [`Exp::Variable`]; otherwise it becomes an [`Exp::Address`] (address arithmetic). A symbolic
-    /// field read cannot be expressed as an [`Exp`]; lower it into a [`StatementKind::Load`] first
-    /// (see [`load_access_path`]).
+    /// Same as [`Exp::address`].
     fn from(addr: Address) -> Self {
         Exp::address(addr)
     }

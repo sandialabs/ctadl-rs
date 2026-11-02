@@ -2363,8 +2363,8 @@ impl<'a> Lowerer<'a> {
         VariableRef::new_local_idx(self.program[fidx].locals.get_or_intern(name))
     }
 
-    /// Builds an [`AccessPath`] for a bare name: a parameter or local becomes a bare variable; a free
-    /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
+    /// Builds an [`AccessPath`] for a bare name: a parameter or local becomes a bare variable; a
+    /// free name is a field of the global heap (`$globals.name`), modeling `_ENV`.
     fn build_var(&mut self, name: &str) -> AccessPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
         if self.cur_upvalues.contains(name)

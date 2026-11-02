@@ -1497,9 +1497,10 @@ impl Annotation<LabeledTaintGraph> for TaintState {
 }
 
 /// A node in the taint dataflow graph: a function-local vertex (a variable
-/// together with its path: an access path). The node carries no taint state — call/return matching is enforced by the [`TaintState`] annotation the
-/// realizable-path search threads along the [`FlowEdge`] labels, not by splitting
-/// a vertex into per-state copies.
+/// together with its path: an access path). The node carries no taint state —
+/// call/return matching is enforced by the [`TaintState`] annotation the
+/// realizable-path search threads along the [`FlowEdge`] labels, not by
+/// splitting a vertex into per-state copies.
 pub type FlowNode = (FunctionId, FlowVariable, Path);
 
 /// The taint dataflow graph the formatter walks to emit path (code-flow)

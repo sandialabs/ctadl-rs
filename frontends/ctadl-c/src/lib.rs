@@ -2088,8 +2088,8 @@ impl<'a> Context<'a> {
     }
 
     /// Walk the elements of an `initializer_list`, storing each into `base_ap`
-    /// extended by the path its position names: with a `members` layout element *i* writes the member
-    /// at position *i*; without one it gets the offset + `deref` shape a constant-index
+    /// extended by the path its position names: with a `members` layout element *i* writes the
+    /// member at position *i*; without one it gets the offset + `deref` shape a constant-index
     /// subscript read resolves to (see `push_element`). Nested braces recurse with the
     /// layout of whatever the inner level *is* -- a member's own record type, or the array's
     /// element layout once `depth` levels are entered; anything unresolvable falls back to
@@ -2112,8 +2112,8 @@ impl<'a> Context<'a> {
             if !elem.is_named() {
                 continue; // skip the `{`, `,`, `}` tokens
             }
-            // Pick the path this element extends `base_ap` by, its value node, and the layout to lower a
-            // nested brace with: a member's own record type, or the array element layout once
+            // Pick the path this element extends `base_ap` by, its value node, and the layout to
+            // lower a nested brace with: a member's own record type, or the array element layout once
             // `depth` array levels have been entered.
             let (path, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
@@ -4029,8 +4029,8 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        // A subscript read on the RHS: resolve the location (base access path + index segments) and lower
-        // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
+        // A subscript read on the RHS: resolve the location (base access path + index segments)
+        // and lower it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
         let ap = self.flatten_lvalue(program, node, source, scope_view)?;
         Ok(Exp::address(self.emit_loads(program, scope_view, ap)))
     }
@@ -4920,10 +4920,8 @@ impl<'a> Context<'a> {
         Ok(self.dead_temp_path(program, scope_view))
     }
 
-    /// Lowers the symbolic-field reads of `ap` into a sequence of loads (see
-    /// [`mir::load_access_path`]) appended to the current block, returning the residual *address*
-    /// (base variable plus any trailing offsets). A pathless or offset-only `ap` is returned as
-    /// that address, emitting nothing.
+    /// Lowers `ap` with [`mir::load_access_path`], appending the loads to the current block and
+    /// returning the residual address.
     fn emit_loads(
         &mut self,
         program: &mut Program,
