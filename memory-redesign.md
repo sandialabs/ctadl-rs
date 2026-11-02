@@ -1,13 +1,11 @@
 # Memory in the IR: named states, so summaries run from entry to exit
 
-**Status:** proposal, as a change to `origin/main`. Nothing here is implemented. A prototype that
-orders memory below formals outside the IR, the memory-order pass, is on the branch
-`problem/memory-order` (`--memory-order`, codegen side tables plus extra index relations). This
-design takes what the prototype learned into the IR, and in time replaces codegen's `cap_path`.
-It keeps the split a frontend already has between `Store` and `Update`: a frontend decides which
-memory gets versions, writing the cells it wants ordered with `Update` and the rest with `Store`.
-What changes is what an `Update` versions: one cell, not the whole variable. The last section,
-"What it does for problem.md", covers the blowups that motivated it.
+**Status:** proposal, as a change to `origin/main`. Nothing here is implemented or measured. The
+design puts memory order into the IR, and in time replaces codegen's `cap_path`. It keeps the split
+a frontend already has between `Store` and `Update`: a frontend decides which memory gets versions,
+writing the cells it wants ordered with `Update` and the rest with `Store`. What changes is what an
+`Update` versions: one cell, not the whole variable. The last section, "What it does for
+problem.md", covers the blowups that motivated it.
 
 The analysis computes function summaries: a relation from what a function sees on entry to what
 it leaves on exit, instantiated at every call site. It should stay what it is, reachability over
@@ -159,8 +157,7 @@ that much data.
    - **Roots:** formals, `$globals`, allocation results and call results.
    - **Canonical names:** a cell is named function-wide through copies, address arithmetic and load
      chains, so `h->head` through `h`, through a copy of `h`, or through a pointer loaded from `h`
-     is one cell. The prototype's `canonicalize` does this
-     (`ctadl-ascent/src/codegen/memory_order.rs` on `problem/memory-order`).
+     is one cell.
    - **The frontend chooses which cells are versioned.** A cell written only with `Store` is
      weak: one flow-insensitive vertex that every access reads and writes, as today. A cell an
      `Update` writes is versioned, and a `Store` to it under another name is a weak write to it
@@ -219,10 +216,8 @@ three things change, and only for versioned cells:
   and the callee's exit operands to the call's output versions.
 
 Entry, exit, a call's input and a call's output are always different vertices, so the in/out
-conflation cannot occur. The prototype needed four extra relations and a second vertex per call
-argument to get the same effect from outside the IR (`assign_sans`, `sans_rest`,
-`actual_in_sans`, and the `CallArgId` out bit). Queries see cell versions as variables, and a result reported at a
-cell version is reported at the location it names.
+conflation cannot occur. Queries see cell versions as variables, and a result reported at a cell
+version is reported at the location it names.
 
 ### The example
 
@@ -358,13 +353,10 @@ today's behavior.
 
 - **Cells, not whole variables.** An `Update` of a cell copies one value. Today's lowering of
   `Update` copies the aggregate per version, and an escaped stack frame under mem2reg copies
-  every kept slot per write. The
-  prototype is the evidence that cells are cheap: its writer variables held 81 K rows in the
-  largest function measured, against 119 M for the function.
-- **Calls with many cells below an argument** need one input and one output per cell. A shared
-  edge per argument, with the cells' paths left out of it, kept that cheap in the prototype. In
-  the IR the same thing is one call operand per versioned cell. Weak cells get none, so a frontend
-  bounds this cost by what it versions.
+  every kept slot per write.
+- **Calls** need one input and one output per versioned cell below each argument's root. Weak
+  cells get none, so a frontend bounds this cost by what it versions; write sets would narrow it
+  further, and the cost cap in "Open questions" would bound it.
 - **Fewer vertices per cell.** A cell with three names today is three vertices; canonical naming
   makes it one, plus a version per write.
 - **More flows where names are unified.** A cell reached by two names now connects a write under
@@ -391,10 +383,10 @@ today's behavior.
      cell SSA with phis, weak writes and summary cells, entry definitions, call inputs and
      outputs.
    - **Analysis:** reads the new operands; weak cells lower as today.
-   - **Tests:** the prototype's `frontends/ctadl-c/src/memory_order_tests.rs` (on
-     `problem/memory-order`) carries over, with the cells it orders written with `Update`. Add
-     tests for each policy above, that a frontend emitting only `Store` gets today's facts, and
-     the Java and Lua frontends.
+   - **Tests:** the push pattern directly, through a callee, twice, and in a loop; save and
+     restore; a write through a loaded pointer read through another name. One test for each
+     policy above, that a frontend emitting only `Store` gets today's facts, and the Java and Lua
+     frontends.
 3. **Measure, then switch frontends over.** Switch p-code's heap writes to `Update` first, then
    the others. The firmware sweep, findings compared by rule, message and location, plus the
    regression suite and the apps.
@@ -421,8 +413,8 @@ today's behavior.
   loaded pointer visible to a later read. It can also connect two names that the program never
   uses for the same object at the same time. Is a limit needed, and what is it?
 - **Which writes a frontend should version.** p-code can version every heap write through a
-  formal, or only those whose cell the function also reads. The second is cheaper at calls, and
-  the prototype ordered every cell, so how much the first adds is unmeasured.
+  formal, or only those whose cell the function also reads. The second is cheaper at calls; how
+  much order it gives up is unmeasured.
 - **Roots that are not formals.** Allocation and call results have no entry state. Should their
   cells start empty, or start from the defining call's output?
 - **A cost cap.** Every call defines a version of every versioned cell below its arguments' roots,
@@ -435,28 +427,19 @@ today's behavior.
 
 ## What it does for problem.md
 
-`problem.md`, on the branch `problem/native-blowups`, lists native blowups by cause. The
-prototype's measurements (cause 5, "The structural fix", checkpoints 0-4) are in its copy on
-`problem/memory-order`. The redesign is aimed at cause 5, and touches four
-others.
+`problem.md`, on the branch `problem/native-blowups`, lists native blowups by cause. The redesign
+is aimed at cause 5, and touches four others. None of the effects below has been measured.
 
 **Cause 5 (Lua's GC, `evLua` and `ipsWeb`, 21-22x).** `reallymarkobject(g, o)` pushes `o` onto
 `g->gray` (`g->gray = o; o->gclist = g->gray`), and `atomic` pushes the running thread `L`. The
 flow-insensitive heap makes `L->top`, Lua's stack pointer, an alias of `L`, and cause 6's offsets
 then pile up on it through Lua's 73-function call-graph SCC. It is the read-before-write pattern
 above.
-- **Both conflations had to go.** Ordering loads alone changed nothing (checkpoint 2). Ordering
-  calls too (checkpoint 3) took `evLua` to 1.42x and `ipsWeb` to 1.16x, with findings identical on
-  all 35 sweep binaries (checkpoint 4).
-- **The unknown-write policy came from it.** Poisoning whole roots left `atomic` with nothing
-  ordered, because `g` is `L->l_G` and `propagateall` reaches an indirect call (checkpoint 3).
-- **The redesign moves that fix into the IR** and adds the formal's entry/exit split, which the
-  prototype did not need because it never versions a formal.
-
-**`nginx` (3.07x to 3.67x under the prototype).** PCRE's `match()` gains sources
-`1.([32].deref)^k.[28].deref`, which cause 6 multiplies by its offsets. They come from canonical
-naming (a cell under two names becomes one), and may be real flows the old engine missed. This is
-the first open question above, and it should be settled before step 3.
+- **Both conflations matter here.** The push happens in callees, so ordering loads in a body is
+  not enough: the call's write must not feed its own read either, which point 4 provides.
+- **An indirect call does not lose the order.** `g` is `L->l_G`, and `propagateall` reaches an
+  indirect call. Under the call policy that call is a weak write at its own point, so the order
+  of the rest of `atomic` survives.
 
 **Cause 6 (offsets on a loop-incremented pointer).** Not fixed: each offset variant is its own
 cell. The widening bound in the policies should be the one cause 6 needs.
@@ -473,5 +456,3 @@ redesign's motivations: each version copied the whole heap (2-6x `locals`), and 
 `GLOBALS`/`$globals_0` loop let a read see a later write. Step 1 removes the loop; weak global
 cells by default avoid the copies. Cause 7's cross product into globals is a real flow, and the
 redesign does not shrink it.
-
-Scripts and outputs: `/Volumes/Shampoo/nb-work/c5/` (`scripts/idx.sh`, `scripts/findings.py`).
