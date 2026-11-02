@@ -654,20 +654,15 @@ impl FlowyCtx {
                     let mut result = Vec::new();
                     for p in sources {
                         // `value(x.f)`: read the path into a variable, then take its value.
-                        // `addr(x.f)` likewise.
-                        let (r, wrap) = match p {
-                            Ap::Value(path, _) | Ap::Addr(path, _) => {
+                        let (r, value) = match p {
+                            Ap::Value(path, _) => {
                                 let (base, segments) = parse_path(locals, local_table, path)?;
-                                let wrap: fn(VariableRef) -> Exp = match p {
-                                    Ap::Value(..) => Exp::Value,
-                                    _ => Exp::Addr,
-                                };
-                                (ParsedRef::Ap(base, segments), Some(wrap))
+                                (ParsedRef::Ap(base, segments), true)
                             }
-                            p => (parse_ref(locals, local_table, p, defined_functions)?, None),
+                            p => (parse_ref(locals, local_table, p, defined_functions)?, false),
                         };
                         let mut e = lower_ref(&mut self.counter, data, local_table, source_info, r);
-                        if let Some(wrap) = wrap {
+                        if value {
                             let v = match e {
                                 Exp::Variable(v) => v,
                                 e => {
@@ -682,7 +677,7 @@ impl FlowyCtx {
                                     t
                                 }
                             };
-                            e = wrap(v);
+                            e = Exp::Value(v);
                         }
                         result.push(e);
                     }
@@ -690,7 +685,7 @@ impl FlowyCtx {
                 };
                 // A store takes a variable: `x.f = value(y)` is `t = value(y); x.f = t`.
                 let src = if !dst_segments.is_empty()
-                    && let [e @ (Exp::Value(_) | Exp::Addr(_))] = src.as_slice()
+                    && let [e @ Exp::Value(_)] = src.as_slice()
                 {
                     let t = VariableRef::new_local_idx(
                         local_table.get_or_intern(&format!("t{}?", self.counter.next())),
@@ -1251,12 +1246,6 @@ fn parse_ref(
             return Err(compile_error(
                 *pos,
                 "`value(..)` is only an assignment source: write `t = value(x); f(t)`",
-            ));
-        }
-        Ap::Addr(_, pos) => {
-            return Err(compile_error(
-                *pos,
-                "`addr(..)` is only an assignment source: write `t = addr(x); f(t)`",
             ));
         }
     })

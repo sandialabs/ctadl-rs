@@ -180,9 +180,9 @@ pub struct TaintSearchGraph {
     sink_of_value: HashMap<TaintVertex, Path>,
 }
 
-/// `p·#value`, when it is a materialized path and `p` does not already end in a terminal.
+/// `p·#value`, when it is a materialized path and `p` does not already end in `#value`.
 fn value_path(p: &Path, paths: &HashSet<Path>) -> Option<Path> {
-    if p.iter().last().is_some_and(|s| s.is_terminal()) {
+    if p.iter().last().is_some_and(|s| s.is_value()) {
         return None;
     }
     let vp = p.concat(&Path::from_accesses([ctadl_ir::mir::PathSegment::value()]));

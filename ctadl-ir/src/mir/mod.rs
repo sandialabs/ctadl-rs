@@ -180,17 +180,6 @@ pub const DEREF_FIELD: &str = "deref";
 /// every front end's field names.
 pub const VALUE_FIELD: &str = "#value";
 
-/// Field name under which an address records what it was *offset by*, as opposed to what its
-/// value was computed from. [`Exp::Addr`] lowers `t = addr(i)` to `t.#addr <- i`: `i` decided
-/// where `t` points, but `t` neither holds `i`'s value nor reaches `i`'s memory.
-///
-/// It is terminal like [`VALUE_FIELD`], and the two absorb each other: a terminal followed by
-/// either terminal is the first one, so `t.#addr` carries what `i`'s value and offsets came
-/// from, and a value computed from an address (`p - s`) carries what the address was offset by.
-/// The index treats it as it treats `#value`. The query does not: a sink on `p` matches
-/// `p.#value` but not `p.#addr`, so a pointer's offset is not taken for the data it carries.
-pub const ADDR_FIELD: &str = "#addr";
-
 /// A newtype wrapper for u64 representing a numeric offset in field access
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -279,25 +268,6 @@ impl PathSegment {
     #[inline]
     pub fn is_value(&self) -> bool {
         matches!(self, PathSegment::Symbol(s) if &**s == VALUE_FIELD)
-    }
-
-    /// The address-offset segment, [`ADDR_FIELD`].
-    #[inline]
-    pub fn addr() -> Self {
-        PathSegment::symbol(ADDR_FIELD)
-    }
-
-    /// True for the address-offset segment ([`ADDR_FIELD`]).
-    #[inline]
-    pub fn is_addr(&self) -> bool {
-        matches!(self, PathSegment::Symbol(s) if &**s == ADDR_FIELD)
-    }
-
-    /// True for a terminal segment, [`VALUE_FIELD`] or [`ADDR_FIELD`]: nothing follows it in an
-    /// admissible path, and it absorbs a terminal that follows it.
-    #[inline]
-    pub fn is_terminal(&self) -> bool {
-        self.is_value() || self.is_addr()
     }
 }
 
@@ -536,15 +506,6 @@ pub enum Exp {
     ///
     /// Valid only as a source of [`StatementKind::Assign`].
     Value(VariableRef),
-    /// The offset `v` adds to an address: the destination points where `v` moved it, but
-    /// neither holds `v`'s value nor reaches its memory. The index operand of address
-    /// arithmetic uses it, so `t = a + i` with `a` the base relates `t.#addr`, not `t.#value`,
-    /// to `i`. See [`ADDR_FIELD`].
-    ///
-    /// After [`Exp::Value`], so that adding it left the encoding of the others unchanged.
-    ///
-    /// Valid only as a source of [`StatementKind::Assign`].
-    Addr(VariableRef),
 }
 
 /// A sequence of statements ending with a terminator.
@@ -1167,12 +1128,6 @@ impl Exp {
         Self::Value(v)
     }
 
-    /// [`Exp::Addr`] of `v`.
-    #[inline]
-    pub fn addr(v: VariableRef) -> Self {
-        Self::Addr(v)
-    }
-
     /// Builds an expression from an access path. A pathless access path is a bare
     /// [`Exp::Variable`]; an offset-only path is an [`Exp::AccessPath`] (pointer arithmetic).
     #[inline]
@@ -1189,12 +1144,12 @@ impl Exp {
     }
 
     /// Returns the base variable read by this expression, if it reads a variable or an address
-    /// derived from one (`Exp::Variable`, `Exp::Value`, `Exp::Addr` or `Exp::AccessPath`).
-    /// Constants return `None`.
+    /// derived from one (`Exp::Variable`, `Exp::Value` or `Exp::AccessPath`). Constants return
+    /// `None`.
     #[inline]
     pub fn base_variable(&self) -> Option<&VariableRef> {
         match self {
-            Exp::Variable(v) | Exp::Value(v) | Exp::Addr(v) => Some(v),
+            Exp::Variable(v) | Exp::Value(v) => Some(v),
             Exp::AccessPath(ap) => Some(&ap.base),
             _ => None,
         }
@@ -1204,7 +1159,7 @@ impl Exp {
     #[inline]
     pub fn base_variable_mut(&mut self) -> Option<&mut VariableRef> {
         match self {
-            Exp::Variable(v) | Exp::Value(v) | Exp::Addr(v) => Some(v),
+            Exp::Variable(v) | Exp::Value(v) => Some(v),
             Exp::AccessPath(ap) => Some(&mut ap.base),
             _ => None,
         }
@@ -2002,7 +1957,6 @@ impl Display for Exp {
             Exp::Str(s) => write!(f, "<const: {s:#?}>"),
             Exp::Variable(v) => write!(f, "{}", v),
             Exp::Value(v) => write!(f, "value({v})"),
-            Exp::Addr(v) => write!(f, "addr({v})"),
             Exp::AccessPath(ap) => write!(f, "{}", ap),
             Exp::ObjectRef(obj) => write!(f, "{obj}"),
         }
