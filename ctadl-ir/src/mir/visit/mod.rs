@@ -236,7 +236,7 @@ macro_rules! make_ast_visitor {
 
             fn super_exp(&mut self, exp: &$($mutability)? Exp) {
                 match exp {
-                    Exp::Variable(variable_ref) | Exp::Value(variable_ref) => {
+                    Exp::Variable(variable_ref) | Exp::Value(variable_ref) | Exp::Addr(variable_ref) => {
                         self.visit_variable_ref(variable_ref);
                     }
                     Exp::AccessPath(access_path) => {

@@ -221,19 +221,25 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 /// untouched), so substitution is a plain variable/const copy:
 /// `t = y; use t` becomes `use y`.
 ///
-/// [`Exp::Value`] is valid only as an `Assign` source (`in_assign`), so a `t = value(y)` def
-/// substitutes only there, and a `value(t)` read takes only a variable: `value(t)` with `t = y`
-/// or `t = value(y)` is `value(y)`, while `value` of an address `y.[8]` has no spelling.
+/// [`Exp::Value`] and [`Exp::Addr`] are valid only as `Assign` sources (`in_assign`), so a
+/// `t = value(y)` or `t = addr(y)` def substitutes only there, and a `value(t)` or `addr(t)` read
+/// takes only a variable. The outer wrapper wins, since the terminal fields absorb each other:
+/// `value(t)` with `t = y`, `t = value(y)` or `t = addr(y)` is `value(y)`, while `value` of an
+/// address `y.[8]` has no spelling.
 fn try_subst_exp(
     exp: &mut Exp,
     in_assign: bool,
     pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
-    let (Exp::Variable(vref) | Exp::Value(vref)) = &*exp else {
+    let (Exp::Variable(vref) | Exp::Value(vref) | Exp::Addr(vref)) = &*exp else {
         return;
     };
-    let is_value = matches!(exp, Exp::Value(_));
+    let wrap: Option<fn(VariableRef) -> Exp> = match exp {
+        Exp::Value(_) => Some(Exp::Value),
+        Exp::Addr(_) => Some(Exp::Addr),
+        _ => None,
+    };
     if vref.version.is_some() {
         return;
     }
@@ -244,11 +250,11 @@ fn try_subst_exp(
     if p.sources.len() != 1 {
         return;
     }
-    let new_exp = match (is_value, &p.sources[0]) {
-        (true, Exp::Variable(y) | Exp::Value(y)) => Exp::Value(y.clone()),
-        (true, _) => return,
-        (false, Exp::Value(_)) if !in_assign => return,
-        (false, src) => src.clone(),
+    let new_exp = match (wrap, &p.sources[0]) {
+        (Some(wrap), Exp::Variable(y) | Exp::Value(y) | Exp::Addr(y)) => wrap(y.clone()),
+        (Some(_), _) => return,
+        (None, Exp::Value(_) | Exp::Addr(_)) if !in_assign => return,
+        (None, src) => src.clone(),
     };
     let p = pending.remove(&vref.variable).expect("checked");
     dead.push(p.stmt_pos);

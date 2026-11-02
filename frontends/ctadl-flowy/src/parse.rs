@@ -135,6 +135,9 @@ pub enum Ap<'s> {
     /// `value(x.f)`: the value of the path, not its identity ([`ctadl_ir::mir::Exp::Value`]).
     /// Only an assignment source.
     Value(Path<'s>, Pos),
+    /// `addr(x.f)`: the path as an offset added to an address ([`ctadl_ir::mir::Exp::Addr`]).
+    /// Only an assignment source.
+    Addr(Path<'s>, Pos),
     Int(i64),
     /// The text between the quotes, with escapes left as written.
     Str(&'s str),
@@ -238,6 +241,7 @@ peg::parser! {
         rule ap() -> Ap<'input>
             = kw("ptr") _ "<" _ f:ident() _ ">" { Ap::FunctionPtr(f) }
             / pos:position!() kw("value") _ "(" _ p:path() _ ")" { Ap::Value(p, lines.pos(pos)) }
+            / pos:position!() kw("addr") _ "(" _ p:path() _ ")" { Ap::Addr(p, lines.pos(pos)) }
             / p:path() { Ap::Path(p) }
             / n:int() { Ap::Int(n) }
             / s:string() { Ap::Str(s) }
@@ -249,6 +253,7 @@ peg::parser! {
         rule segment() -> Segment<'input>
             = p:position!() "." _ "*" { Segment::Star(lines.pos(p)) }
             / "." _ "#value" { Segment::Field(ctadl_ir::mir::VALUE_FIELD) }
+            / "." _ "#addr" { Segment::Field(ctadl_ir::mir::ADDR_FIELD) }
             / "." _ f:ident() { Segment::Field(f.name) }
             / "." _ "[" _ n:int() _ "]" { Segment::Offset(n) }
 

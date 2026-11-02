@@ -242,3 +242,23 @@ fn value_use_of_an_address_is_kept() {
     coalesce_function(&mut f);
     assert_eq!(block_kinds(&f).len(), 2);
 }
+
+#[test]
+fn the_outer_terminal_wins() {
+    // t = addr(a); x = value(t)  =>  x = value(a), and t = value(a); x = addr(t)  =>  x = addr(a):
+    // a terminal absorbs the one under it.
+    let addr = |name: &str| Exp::addr(local(name));
+    for (inner, outer, want) in [
+        (addr("a"), value("t"), value("a")),
+        (value("a"), addr("t"), addr("a")),
+    ] {
+        let mut f = one_block_function(vec![assign("t", vec![inner]), assign("x", vec![outer])]);
+        coalesce_function(&mut f);
+        let kinds = block_kinds(&f);
+        assert_eq!(kinds.len(), 1);
+        let StatementKind::Assign { sources, .. } = kinds[0] else {
+            panic!("expected assign");
+        };
+        assert_eq!(sources.as_slice(), &[want]);
+    }
+}

@@ -1409,27 +1409,36 @@ fn compute_paths(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
     };
-    with_value_paths(pre.paths)
+    with_terminal_paths(pre.paths)
 }
 
-/// Closes `paths` under the terminal [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD): `p·#value` is
-/// admissible for every admissible `p` and the empty path, and no path has a segment after
-/// `#value`. A program that never mentions `#value` keeps its paths as they are.
+/// Closes `paths` under the terminal fields [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD) and
+/// [`ADDR_FIELD`](ctadl_ir::mir::ADDR_FIELD) that the program mentions: `p·t` is admissible for
+/// each such terminal `t`, every admissible `p` and the empty path, and no path has a segment
+/// after a terminal. A program that mentions neither keeps its paths as they are.
 ///
-/// With [`PathSet::concat`] absorbing `#value · #value`, that is all the index rules need to
-/// treat a value-derived fact as weaker than a copy: a row `t.#value <- a.q` cannot be extended
-/// by a suffix, so a read of `t.deref` never turns it into `t.deref <- a.q.deref`, and the suffix
-/// rules carry `#value` through copies, stores, summaries and call sites as the last segment of
-/// the rest.
-fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
-    let is_value = |s: &PathSegment| s.is_value();
-    if !paths.iter().any(|(p,)| p.iter().any(is_value)) {
+/// With [`PathSet::concat`] absorbing a terminal after a terminal, that is all the index rules
+/// need to treat a value-derived fact as weaker than a copy: a row `t.#value <- a.q` cannot be
+/// extended by a suffix, so a read of `t.deref` never turns it into `t.deref <- a.q.deref`, and
+/// the suffix rules carry the terminal through copies, stores, summaries and call sites as the
+/// last segment of the rest.
+fn with_terminal_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
+    let mentions = |is: fn(&PathSegment) -> bool| paths.iter().any(|(p,)| p.iter().any(is));
+    let terminals: Vec<Path> = [
+        (mentions(PathSegment::is_value), PathSegment::value()),
+        (mentions(PathSegment::is_addr), PathSegment::addr()),
+    ]
+    .into_iter()
+    .filter(|(mentioned, _)| *mentioned)
+    .map(|(_, s)| Path::from_accesses([s]))
+    .collect();
+    if terminals.is_empty() {
         return paths;
     }
     let mut base: Vec<Path> = vec![Path::empty()];
     for (p,) in paths {
         let segments: Vec<PathSegment> = p.iter().cloned().collect();
-        match segments.iter().position(is_value) {
+        match segments.iter().position(PathSegment::is_terminal) {
             None => base.push(p),
             Some(i) if i + 1 == segments.len() => {
                 base.push(Path::from_accesses(segments[..i].iter().cloned()))
@@ -1440,11 +1449,12 @@ fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
     }
     base.sort_unstable();
     base.dedup();
-    let value = Path::from_accesses([PathSegment::value()]);
-    let mut out: Vec<(Path,)> = Vec::with_capacity(2 * base.len());
+    let mut out: Vec<(Path,)> = Vec::with_capacity((1 + terminals.len()) * base.len());
     for p in base {
         out.push((p,));
-        out.push((p.concat(&value),));
+        for t in &terminals {
+            out.push((p.concat(t),));
+        }
     }
     out
 }
@@ -2780,5 +2790,33 @@ mod tests {
         // A program that never mentions `#value` keeps its paths.
         let plain = vec![(Path::empty(),), p(".f")];
         assert_eq!(compute_paths(plain.clone(), vec![], false), plain);
+    }
+
+    /// `#addr` closes the paths as `#value` does, each terminal only when the program mentions
+    /// it, and nothing follows either, not even the other terminal.
+    #[test]
+    fn compute_paths_closes_under_each_terminal_mentioned() {
+        let p = |s: &str| (Path::parse(s).unwrap(),);
+        let value = Path::from_accesses([PathSegment::value()]);
+        let addr = Path::from_accesses([PathSegment::addr()]);
+        let only_addr = compute_paths(vec![(Path::empty(),), p(".f"), (addr,)], vec![], true);
+        assert!(only_addr.contains(&(p(".f").0.concat(&addr),)));
+        assert!(
+            !only_addr.contains(&(value,)),
+            "#value not mentioned: {only_addr:?}"
+        );
+        let both = compute_paths(
+            vec![(Path::empty(),), p(".f"), (addr,), (value,)],
+            vec![],
+            true,
+        );
+        assert!(both.contains(&(p(".f").0.concat(&addr),)));
+        assert!(both.contains(&(p(".f").0.concat(&value),)));
+        for (q,) in &both {
+            let segs: Vec<_> = q.iter().collect();
+            if let Some(i) = segs.iter().position(|s| s.is_terminal()) {
+                assert_eq!(i + 1, segs.len(), "a segment after a terminal: {q}");
+            }
+        }
     }
 }

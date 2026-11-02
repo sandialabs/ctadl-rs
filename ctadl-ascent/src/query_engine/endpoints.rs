@@ -261,9 +261,11 @@ pub fn build_query_endpoints(
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
                     // A sink on `q` already matches `q.#value` (see `search::value_path`), so a
-                    // path `q.#value` seeds the sink `q`, once.
+                    // path `q.#value` seeds the sink `q`, once. A path `q.#addr` seeds nothing:
+                    // what moved a pointer is not data the sink reads.
                     let mut paths: Vec<facts::Path> = paths
                         .iter()
+                        .filter(|p| !p.iter().last().is_some_and(|s| s.is_addr()))
                         .map(|p| strip_value(*p))
                         .filter(|p| p.is_extension_of(&ap))
                         .collect();

@@ -813,15 +813,16 @@ impl Builder {
             .into_iter()
             .filter_map(|seg| self.path_seg(seg))
             .collect();
-        // `#value` is the analysis's terminal value field (`ctadl_ir::mir::VALUE_FIELD`): nothing
-        // follows it in any admissible path, so a port that names a segment after it matches
-        // nothing.
-        if let Some(i) = path.iter().position(PathSegment::is_value)
+        // `#value` and `#addr` are the analysis's terminal fields (`ctadl_ir::mir::VALUE_FIELD`,
+        // `ADDR_FIELD`): nothing follows one in any admissible path, so a port that names a
+        // segment after one matches nothing.
+        if let Some(i) = path.iter().position(PathSegment::is_terminal)
             && i + 1 != path.len()
         {
             self.error(
                 raw.span,
-                "`#value` is the reserved value field and must be the port's last segment",
+                "`#value` and `#addr` are reserved terminal fields and must be the port's last \
+                 segment",
             );
             return None;
         }

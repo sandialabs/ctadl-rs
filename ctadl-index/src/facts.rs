@@ -1668,11 +1668,11 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
-    // `#value` absorbs itself: what a value is computed from includes what that value's
-    // sources were computed from (see `ctadl_ir::mir::VALUE_FIELD`).
-    if comps.last().is_some_and(PathSegment::is_value)
+    // A terminal absorbs a terminal: what a value is computed from includes what that value's
+    // sources were computed from and offset by (see `ctadl_ir::mir::ADDR_FIELD`).
+    if comps.last().is_some_and(PathSegment::is_terminal)
         && let Some((head, tail)) = suffix.uncons()
-        && head.is_value()
+        && head.is_terminal()
         && tail.is_empty()
     {
         return *new_prefix;

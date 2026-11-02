@@ -1,0 +1,84 @@
+// `addr(i)` (`Exp::Addr`): `i` is an offset added to an address. The destination points where
+// `i` moved it, but neither holds `i`'s value nor reaches `i`'s memory. Codegen lowers
+// `t = addr(i)` to `t.#addr <- i`. `#addr` is terminal like `#value`, and the two absorb each
+// other. A sink on `p` matches `p.#value` but not `p.#addr`.
+
+// A tainted index moves the address, but a sink on the address does not see it, and the
+// element is not tainted. The index itself stays tainted.
+def IndexIsNotData() {
+s:
+  i = source(S);
+  a = table, addr(i);
+  errsink(a, S);
+  x = a.deref;
+  errsink(x, S);
+  sink(i, S);
+  return;
+}
+
+// A pointer difference turns the offset back into data: `n = p - s` with `p = s + i`.
+def DifferenceIsData() {
+s:
+  i = source(S);
+  p = s, addr(i);
+  n = value(p), value(s);
+  sink(n, S);
+  return;
+}
+
+// The offset of an offset, and the value an offset was computed from, are the offset:
+// `addr(value(a))` and `addr(addr(a))` are `addr(a)`.
+def OffsetOfValue() {
+s:
+  a = source(S);
+  v = value(a);
+  p = base, addr(v);
+  q = base2, addr(p);
+  errsink(q, S);
+  n = value(q);
+  sink(n, S);
+  return;
+}
+
+// Copies and stores carry `#addr`, and the base of another address keeps it.
+def CopiesAndStoresCarry() {
+s:
+  i = source(S);
+  p = s, addr(i);
+  o.f = p;
+  q = o.f;
+  r = q, addr(k);
+  errsink(r, S);
+  n = value(r);
+  sink(n, S);
+  return;
+}
+
+// `malloc`'s shape: the size moves the pointer it returns, so the summary has
+// `return.#addr <- size` and no `return.#value <- size`.
+def Alloc(size):1
+where summaries [
+  return.#addr <- size,
+  return.#value </- size,
+  return </- size
+]
+{
+s:
+  nb = value(size);
+  p = heap, addr(nb);
+  return p;
+}
+
+// At a call site the size taints neither the pointer nor its memory, but the pointer's
+// difference from another does carry it.
+def CallSitesCarry() {
+s:
+  x = source(S);
+  r = Alloc(x);
+  errsink(r, S);
+  d = r.deref;
+  errsink(d, S);
+  n = value(r), value(base);
+  sink(n, S);
+  return;
+}

@@ -1022,10 +1022,16 @@ impl Visitor for CodegenVisitor<'_> {
                         ));
                     }
                     // `dest = value(v)`: `dest.#value` gets `v`'s value, and `dest` itself gets
-                    // nothing. Whatever `v`'s value was computed from, `v.#value`, comes along as
-                    // the rest of the suffix, since `#value` absorbs itself.
-                    if let Exp::Value(v) = src {
-                        let value = fx::Path::from_accesses([PathSegment::value()]);
+                    // nothing. Whatever `v`'s value was computed from or offset by, `v.#value`
+                    // and `v.#addr`, comes along as the rest of the suffix, since a terminal
+                    // absorbs a terminal. `dest = addr(v)` is the same under `#addr`.
+                    let terminal = match src {
+                        Exp::Value(v) => Some((v, PathSegment::value())),
+                        Exp::Addr(v) => Some((v, PathSegment::addr())),
+                        _ => None,
+                    };
+                    if let Some((v, terminal)) = terminal {
+                        let value = fx::Path::from_accesses([terminal]);
                         self.paths_dedup.insert((value,));
                         let dest = FlowVertex::new(self.trans_variable_ref(dest), value);
                         let v = FlowVertex::new(self.trans_variable_ref(v), fx::Path::empty());
@@ -1487,9 +1493,9 @@ impl CodegenVisitor<'_> {
     #[inline]
     fn trans_exp(&mut self, exp: &Exp) -> Option<FlowVertex> {
         match exp {
-            // `Value` is an `Assign` source, which the `Assign` arm lowers itself. Anywhere else
-            // the whole variable flows, which loses nothing.
-            Exp::Variable(v) | Exp::Value(v) => Some(FlowVertex::new(
+            // `Value` and `Addr` are `Assign` sources, which the `Assign` arm lowers itself.
+            // Anywhere else the whole variable flows, which loses nothing.
+            Exp::Variable(v) | Exp::Value(v) | Exp::Addr(v) => Some(FlowVertex::new(
                 self.trans_variable_ref(v),
                 fx::Path::empty(),
             )),
