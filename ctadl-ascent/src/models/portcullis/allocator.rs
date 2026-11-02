@@ -1,13 +1,9 @@
-/*! The `allocator` relation: the functions that are a C heap allocator's entry points.
-
-A statically linked allocator keeps its heap state in globals and derives bin addresses from the
-request size, so its summary relates nearly every `$globals` path to the size and to each other,
-and every transitive caller inherits that block (`problem.md`, cause 2). The defaults skip these
-bodies. This relation says which functions they are, two ways:
+/*! The `allocator` relation: the functions that are a C heap allocator's entry points, found
+two ways:
 
 - **By name** (`by = "name"`): a function whose simple name is in [`NAMED`].
 - **By shape** (`by = "shape"`): a function with no allocator name that has dlmalloc's shape. This
-  is what finds the allocator in a stripped binary, where it is `FUN_0042d400`.
+  is what finds the allocator in a stripped binary, where Ghidra names it `FUN_<address>`.
 
 Both are native code only: a Java method named `free` is not an allocator.
 
@@ -31,14 +27,11 @@ A function is picked when it writes the heap state heavily ([`MIN_HEAP_GLOBALS`]
 | `realloc` | yes    | 2          | a value | at least 1        |
 | `malloc`  | no     | 1          | a value | at least 3        |
 
-On the 15 sweep binaries that keep their allocator's names, with the names hidden, this finds
-`malloc`, `free` and `realloc` in every one that links them statically, and nothing else. On the
-15 stripped ones it finds the same three that were picked by hand. It misses the small wrappers
-(`calloc`, `malloc_consolidate`), whose bodies do not carry the block, and entry-point aliases
-nothing calls directly.
+It finds `malloc`, `free` and `realloc` in a statically linked dlmalloc. It misses the small
+wrappers (`calloc`, `malloc_consolidate`), whose bodies do not carry the block, and entry-point
+aliases nothing calls directly.
 
-A false pick drops every flow through that function's body, so every pick is reported (see
-`cli::index`), and `analyze(F)` keeps a body the defaults would skip.
+Every by-shape pick is reported as CTADL0109 (see `cli::index`).
 */
 
 use hashbrown::{HashMap, HashSet};
@@ -152,8 +145,8 @@ pub const NAMED: &[(&str, AllocatorKind)] = &[
     ("sysmalloc", AllocatorKind::Internal),
 ];
 
-/// An anchor writes at least this many globals' worth of its own stores. `free` and `realloc`
-/// make 130-1,800; a function that merely reads a header word makes a handful.
+/// An anchor writes at least this many globals' worth of its own stores, as `free` and `realloc`
+/// do ([`MIN_HEAP_STORES`]); a function that merely reads a header word makes a handful.
 const MIN_ANCHOR_STORES: u32 = 20;
 
 /// A global more functions than this write themselves is shared state (`errno`, a lock), not

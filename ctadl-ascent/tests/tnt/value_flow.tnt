@@ -86,7 +86,7 @@ s:
   return;
 }
 
-// A field sum does not mix the memory behind the fields (libntfs's `a->x + a->y`): under a
+// A field sum does not mix the memory behind the fields (`a->x + a->y`): under a
 // merge, `o.z` would alias `o.x`'s memory and `w` would be tainted.
 def StoreDoesNotMixFields() {
 s:

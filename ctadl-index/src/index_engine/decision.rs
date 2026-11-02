@@ -1,12 +1,8 @@
 //! Decisions, decision sets and conditions: what the facts of the index engine hold under.
 //!
 //! A [`Decision`] names *what* a resolvent decided at a function -- "formal `n.p` holds call
-//! target `t`" -- and never the route it arrived by. A [`Cond`] is the lattice column of
-//! `locals`, `assign_like` and `summary`: `Always`, or a [`DecisionSet`], under every decision
-//! of which the row holds. A row derived from it inherits the condition. Two decisions whose
-//! flows meet at a row share the row instead of duplicating it, and a row that also holds
-//! unconditionally is one `Always` row, so each relation has one row per fact whatever the
-//! number of decisions reaching a function.
+//! target `t`" -- and never the route it arrived by. A [`Cond`] is what a fact holds under:
+//! `Always`, or a [`DecisionSet`].
 //!
 //! Decisions are interned to a dense [`DecisionId`] and sets are interned as sorted slices, so
 //! a set is a 4-byte `Copy` handle, equality is a handle compare, and rows that hold the same
@@ -192,8 +188,8 @@ pub fn set_widen_bound(k: usize) {
     WIDEN_BOUND.store(k, Ordering::Relaxed);
 }
 
-/// Whether a widened (⊤) row spills into the context-free relations instead of staying a
-/// contextual row (`HybridContext::Spill(k)`). Read on the closure's hot rules, so an atomic
+/// Whether a widened (⊤) row is `Always` instead of staying a conditional row
+/// (`HybridContext::Spill(k)`). Read on the closure's hot rules, so an atomic
 /// rather than a `config` clause.
 static SPILL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

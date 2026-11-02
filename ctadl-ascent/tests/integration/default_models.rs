@@ -789,7 +789,9 @@ fn the_native_portcullis_defaults_skip_memcpy_and_memset() {
     assert_eq!(skipped, expected);
     for f in &expected {
         assert!(
-            out.propagations.iter().any(|p| p.function.to_string() == *f),
+            out.propagations
+                .iter()
+                .any(|p| p.function.to_string() == *f),
             "{f} is skipped with no model"
         );
     }

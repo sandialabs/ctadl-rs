@@ -171,8 +171,7 @@ pub type Symbol = ArcIntern<str>;
 pub const DEREF_FIELD: &str = "deref";
 
 /// Field name under which a variable records what its *value* was computed from, as opposed to
-/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`: `t`'s value depends on
-/// `v`'s, but nothing reachable through `t` (such as `t.deref`) is reachable through `v`.
+/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`.
 ///
 /// The field is terminal: the analysis admits `p.#value` for every path `p` it admits, and no
 /// path with a segment after `#value`. It also absorbs itself, `p.#value · #value = p.#value`, so
@@ -502,7 +501,7 @@ pub enum Exp {
     /// for operands that only supply a number, so `t = a + i` relates `t` to the memory behind
     /// `a`, the base, and not to the memory behind `i`. See [`VALUE_FIELD`].
     ///
-    /// Last, so that adding it left the encoding of the other variants unchanged.
+    /// Last, so that the other variants keep their encoding.
     ///
     /// Valid only as a source of [`StatementKind::Assign`].
     Value(VariableRef),

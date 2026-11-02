@@ -272,8 +272,7 @@ impl PathSet {
             }
             p = tail;
         }
-        // `#value` absorbs itself: `p.#value · #value` is `p.#value`. See
-        // `ctadl_ir::mir::VALUE_FIELD`.
+        // `#value` absorbs itself (see `ctadl_ir::mir::VALUE_FIELD`).
         if last_value && adjust.is_none() && Some(*rest) == self.value {
             return self.contains(prefix).then_some(*prefix);
         }
