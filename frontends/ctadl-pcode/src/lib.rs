@@ -165,14 +165,14 @@ struct Context {
     vnode_kinds: BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
     /// How integer arithmetic and comparisons are lowered (`CTADL_EXP_INT_ARITH`).
     int_arith: IntArith,
-    /// Under [`IntArith::Value`], the varnodes used as a memory address, computed by
+    /// Unless under [`IntArith::Merge`], the varnodes used as a memory address, computed by
     /// [`address_vnodes`].
     addr_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
-    /// Under [`IntArith::Value`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
+    /// Unless under [`IntArith::Merge`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
     /// like a scaled index rather than a base when added to an address.
     scaled_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
-    /// How many `handle_binop` sources were lowered as [`Exp::Variable`], [`Exp::Value`] and
-    /// constants, logged at the end of the import.
+    /// How many `handle_binop` sources were lowered as [`Exp::Variable`], [`Exp::Value`],
+    /// [`Exp::Addr`] and constants, logged at the end of the import.
     binop_sources: BinopSources,
     /// Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
@@ -305,7 +305,7 @@ impl Context {
             .filter(|vn| pcode_facts.is_global_vnode(vn))
             .cloned()
             .collect();
-        if self.int_arith == IntArith::Value {
+        if self.int_arith != IntArith::Merge {
             self.vnode_kinds = pcode_facts
                 .vnode_facts
                 .keys()
@@ -1040,12 +1040,20 @@ impl Context {
             let exp = self.get_exp(&mut stmts, vn, vnode_facts, locals)?;
             let exp = match (flows.get(i), exp) {
                 (Some(OperandFlow::Value), Exp::Variable(v)) => Exp::value(v),
+                (Some(OperandFlow::Addr), Exp::Variable(v)) => Exp::addr(v),
                 // `x.[k]`, an address computed from `x`: copy it to a temp, whose value is
                 // then the source.
-                (Some(OperandFlow::Value), exp @ Exp::AccessPath(_)) => {
+                (
+                    Some(flow @ (OperandFlow::Value | OperandFlow::Addr)),
+                    exp @ Exp::AccessPath(_),
+                ) => {
                     let t = self.create_temp(locals);
                     stmts.push(Statement::new_kind(StatementKind::assign(t.clone(), [exp])));
-                    Exp::value(t)
+                    if *flow == OperandFlow::Addr {
+                        Exp::addr(t)
+                    } else {
+                        Exp::value(t)
+                    }
                 }
                 (_, exp) => exp,
             };
@@ -1064,13 +1072,14 @@ impl Context {
         Ok(stmts)
     }
 
-    /// Under [`IntArith::Value`], how each operand of `pcode` flows into its result, by
-    /// position. Empty, meaning every operand merges, under the other variants and for ops
-    /// that are neither arithmetic nor comparisons.
+    /// Under [`IntArith::Value`] and [`IntArith::Addr`], how each operand of `pcode` flows into
+    /// its result, by position. Empty, meaning every operand merges, under
+    /// [`IntArith::Merge`] and for ops that are neither arithmetic nor comparisons.
     ///
     /// The base of an `INT_ADD` or `INT_SUB` whose result is used as an address (see
-    /// [`base_operand`]) merges; every other operand of an arithmetic op or comparison supplies
-    /// only its value. When an address op has no clear base, every operand merges.
+    /// [`base_operand`]) merges, and under [`IntArith::Addr`] its other operands are offsets;
+    /// every other operand of an arithmetic op or comparison supplies only its value. When an
+    /// address op has no clear base, every operand merges.
     fn operand_flows(
         &self,
         pcode: &pcode_reader::PcodeData,
@@ -1078,7 +1087,7 @@ impl Context {
         locals: &mut Locals,
     ) -> Vec<OperandFlow> {
         let m: &str = &pcode.mnemonic;
-        if self.int_arith != IntArith::Value || !(is_compare(m) || is_arith(m)) {
+        if self.int_arith == IntArith::Merge || !(is_compare(m) || is_arith(m)) {
             return Vec::new();
         }
         let n = pcode.inputs.len();
@@ -1092,13 +1101,17 @@ impl Context {
                         || self.get_const_value(vn, vnode_facts, locals).is_some(),
                 })
                 .collect();
+            let offset = match self.int_arith {
+                IntArith::Addr => OperandFlow::Addr,
+                _ => OperandFlow::Value,
+            };
             return match base_operand(&shapes) {
                 Some(base) => (0..n)
                     .map(|i| {
                         if i == base {
                             OperandFlow::Merge
                         } else {
-                            OperandFlow::Value
+                            offset
                         }
                     })
                     .collect(),
@@ -1768,11 +1781,12 @@ impl Context {
             let BinopSources {
                 variable,
                 value,
+                addr,
                 other,
             } = self.binop_sources;
             log::info!(
                 "pcode: int arith {:?}: arithmetic and comparison sources: \
-                 {variable} variable, {value} value, {other} other",
+                 {variable} variable, {value} value, {addr} addr, {other} other",
                 self.int_arith
             );
         }
@@ -1798,6 +1812,10 @@ enum IntArith {
     /// or `INT_SUB` whose result is used as a memory address merges; see
     /// [`Context::operand_flows`].
     Value,
+    /// `addr`: as `value`, except that the operands of such an address `INT_ADD` or `INT_SUB`
+    /// other than its base are offsets ([`Exp::Addr`]), not values. So what moved a pointer is
+    /// not taken for data the pointer carries.
+    Addr,
     /// `merge`: every operand flows into the result, so the result gets every path of every
     /// operand and an integer added to a pointer becomes a pointer too. For comparison runs.
     Merge,
@@ -1807,9 +1825,12 @@ impl IntArith {
     fn from_env() -> Self {
         match std::env::var("CTADL_EXP_INT_ARITH").as_deref() {
             Ok("value") | Err(_) => IntArith::Value,
+            Ok("addr") => IntArith::Addr,
             Ok("merge") => IntArith::Merge,
             Ok(other) => {
-                panic!("CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value or merge")
+                panic!(
+                    "CTADL_EXP_INT_ARITH: unknown value {other:?}, expected value, addr or merge"
+                )
             }
         }
     }
@@ -1870,6 +1891,8 @@ enum OperandFlow {
     Merge,
     /// Only the operand's value flows ([`Exp::Value`]).
     Value,
+    /// The operand only offsets an address ([`Exp::Addr`]).
+    Addr,
 }
 
 /// What [`base_operand`] knows about an operand of an address `INT_ADD` or `INT_SUB`.
@@ -1902,6 +1925,8 @@ struct BinopSources {
     variable: usize,
     /// [`Exp::Value`] sources.
     value: usize,
+    /// [`Exp::Addr`] sources.
+    addr: usize,
     /// Every other source: constants, and address computations ([`Exp::AccessPath`]) that
     /// merge.
     other: usize,
@@ -1912,6 +1937,7 @@ impl BinopSources {
         match exp {
             Exp::Variable(_) => self.variable += 1,
             Exp::Value(_) => self.value += 1,
+            Exp::Addr(_) => self.addr += 1,
             _ => self.other += 1,
         }
     }
