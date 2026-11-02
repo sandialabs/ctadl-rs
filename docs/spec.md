@@ -47,7 +47,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Summary** | How data flows between a function's formals (and return), as pairs of access paths. |
 | **Access path** | A variable followed by fields or offsets (`x.f.g`, `p.[8].deref`); the unit of taint. |
 | **Port** | The part of a matched program element that a model attaches to: an argument, the return, or an access path through one. |
-| **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [model-generators.md](model-generators.md), a guide to the current implementation, not part of this spec. |
+| **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [portcullis.md](portcullis.md), a guide to the current model language, not part of this spec. |
 
 ## 3. Requirements
 

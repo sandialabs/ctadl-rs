@@ -1,0 +1,26 @@
+// PORT SEMANTICS 1/6, IN THE DSL -- the same fixture as `port_bare.tnt`, modelled in the
+// model DSL rather than in JSON. Both files must reach the same summaries, which is what makes
+// this an end-to-end check of the engine through the real index pipeline rather than a
+// re-statement of the unit tests.
+//
+// What the port pair means, and why each probe sits where it does, is in `port_bare.tnt`.
+def id(v): 1
+where summaries [return <- v]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.f = source(Secret);
+  u = id(t);
+  // Predicted: u.f
+  probe = u.f;
+  sink(probe, Secret);
+  // One level up is clean -- the port shifts nothing.
+  shallow = u;
+  errsink(shallow, Secret);
+  return;
+}

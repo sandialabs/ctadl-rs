@@ -34,8 +34,8 @@ fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
-        let options =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         for (name, contents) in entries {
             writer.start_file(*name, options).unwrap();
             writer.write_all(contents).unwrap();

@@ -551,36 +551,38 @@ macro_rules! impl_encode_newtype {
 }
 
 // A `Path` is stored as its canonical string (`Path::to_dot_string`), which `Path::parse` reads
-// back.
+// back. Both go straight between the string column and the path, so encoding interns no `Str`.
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        let strings: Vec<Str> = col
-            .into_iter()
-            .map(|path| path.to_dot_string().into())
-            .collect();
-        <Self as EncodeColumn<Str>>::encode_column(name, strings)
+        let strings: Vec<String> = col.iter().map(facts::Path::to_dot_string).collect();
+        <Self as EncodeColumn<String>>::encode_column(name, strings)
     }
 }
 
 impl DecodeColumn<facts::Path> for DefaultDecoder {
     #[inline]
     fn into_decode_array(name: &str, batch: &RecordBatch) -> impl IntoIterator<Item = facts::Path> {
-        <Self as DecodeColumn<Str>>::into_decode_array(name, batch)
-            .into_iter()
+        batch
+            .column_by_name(name)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<GenericStringArray<i64>>()
+            .unwrap()
+            .iter()
             .map(move |s| {
+                let s = s.unwrap();
                 if s.is_empty() {
-                    facts::Path::empty()
-                } else {
-                    s.parse().unwrap_or_else(|e| {
-                        panic!(
-                            "corrupt access path {:?} in fact column {name:?}: {e}\n\
-                             this index was written by an incompatible build; re-run `ctadl index`",
-                            s.as_str()
-                        )
-                    })
+                    return facts::Path::empty();
                 }
+                s.parse().unwrap_or_else(|e| {
+                    panic!(
+                        "corrupt access path {s:?} in fact column {name:?}: {e}\n\
+                         this index was written by an incompatible build; re-run `ctadl index`"
+                    )
+                })
             })
+            .collect_vec()
     }
 }
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
@@ -921,14 +923,14 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
         name: &str,
         col: Vec<facts::CallTargetObject>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::CallTargetObject::*;
+        use facts::CallTargetObjectKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let func_column_name = name.to_owned() + "_func";
         let symbol_column_name = name.to_owned() + "_symbol";
         let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
             &tag_column_name,
             col.iter()
-                .map(|o| match o {
+                .map(|o| match o.kind() {
                     FunctionId(_) => 0u8,
                     Symbol(_) => 1,
                     LuaClass(_) => 2,
@@ -940,7 +942,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
             <Self as EncodeColumn<Option<facts::FunctionId>>>::encode_column(
                 &func_column_name,
                 col.iter()
-                    .map(|o| match o {
+                    .map(|o| match o.kind() {
                         FunctionId(f) => Some(*f),
                         Symbol(_) | LuaClass(_) | CilClass(_) => None,
                     })
@@ -949,10 +951,10 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
         let (symbol_fields, symbol_arrays) =
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &symbol_column_name,
-                col.into_iter()
-                    .map(|o| match o {
+                col.iter()
+                    .map(|o| match o.kind() {
                         FunctionId(_) => None,
-                        Symbol(s) | LuaClass(s) | CilClass(s) => Some(s),
+                        Symbol(s) | LuaClass(s) | CilClass(s) => Some(s.clone()),
                     })
                     .collect_vec(),
             );
@@ -970,7 +972,7 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::CallTargetObject> {
-        use facts::CallTargetObject::*;
+        use facts::CallTargetObjectKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let func_column_name = name.to_owned() + "_func";
         let symbol_column_name = name.to_owned() + "_symbol";
@@ -991,6 +993,7 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
                 3 => CilClass(symbol.expect("CilClass CallTargetObject missing symbol")),
                 _ => panic!("bad encoding of CallTargetObject"),
             })
+            .map(facts::CallTargetObject::from)
             .collect_vec()
     }
 }
@@ -1005,14 +1008,14 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
         name: &str,
         col: Vec<facts::CallDispatchKey>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::CallDispatchKey::*;
+        use facts::CallDispatchKeyKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
         let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
             &tag_column_name,
             col.iter()
-                .map(|c| match c {
+                .map(|c| match c.kind() {
                     Java(_, _) => 0u8,
                     C => 1,
                     Lua(_) => 2,
@@ -1024,7 +1027,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &name_column_name,
                 col.iter()
-                    .map(|c| match c {
+                    .map(|c| match c.kind() {
                         Java(n, _) | Lua(n) | Cil(n, _) => Some(n.clone()),
                         C => None,
                     })
@@ -1033,9 +1036,9 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
         let (desc_fields, desc_arrays) =
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &desc_column_name,
-                col.into_iter()
-                    .map(|c| match c {
-                        Java(_, d) | Cil(_, d) => Some(d),
+                col.iter()
+                    .map(|c| match c.kind() {
+                        Java(_, d) | Cil(_, d) => Some(d.clone()),
                         C | Lua(_) => None,
                     })
                     .collect_vec(),
@@ -1054,7 +1057,7 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::CallDispatchKey> {
-        use facts::CallDispatchKey::*;
+        use facts::CallDispatchKeyKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
@@ -1081,6 +1084,7 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
                 ),
                 _ => panic!("bad encoding of CallDispatchKey"),
             })
+            .map(facts::CallDispatchKey::from)
             .collect_vec()
     }
 }
@@ -1234,7 +1238,7 @@ impl DecodeColumn<QueryEndpoint> for DefaultDecoder {
         .map(
             |(infunc, var, path, label, direction, call_site)| QueryEndpoint {
                 infunc,
-                vertex: facts::FlowVertex(var, path),
+                vertex: facts::FlowVertex::new(var, path),
                 label,
                 direction,
                 call_site,

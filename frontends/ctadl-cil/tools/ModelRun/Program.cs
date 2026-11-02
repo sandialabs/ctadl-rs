@@ -1,6 +1,6 @@
 // ModelRun: calls .NET library methods with marked arguments and prints which
 // inputs reached which outputs, the reference side of xtask's `cil:models`
-// check of the default models (`defaults/cil-index.jsonl`).
+// check of the default models (`defaults/cil-index.ctadl`).
 //
 //     model-run list <classes-file>
 //     model-run run [--trials N] [--seed S] <fids-file>

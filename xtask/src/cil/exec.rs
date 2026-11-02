@@ -35,8 +35,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value as Json;
 
-use cil_reader::flow::FlowOptions;
 use cil_reader::Module;
+use cil_reader::flow::FlowOptions;
 
 use super::parallel_map;
 use crate::exec::which;
@@ -274,12 +274,12 @@ fn record(
                 .failures
                 .push(format!("{at}: differs at line {line}: {first}"));
             let _ = write!(
-                    report.detail,
-                    "== MISMATCH {fixture} {at}\nargs: {}\nexpected (.NET):\n{}actual (interpreter):\n{}\n",
-                    serde_json::to_string(&trial.args).unwrap_or_default(),
-                    trial.outcome,
-                    actual
-                );
+                report.detail,
+                "== MISMATCH {fixture} {at}\nargs: {}\nexpected (.NET):\n{}actual (interpreter):\n{}\n",
+                serde_json::to_string(&trial.args).unwrap_or_default(),
+                trial.outcome,
+                actual
+            );
         }
         Err(Stop::Bug(msg)) => {
             counts.bugs += 1;

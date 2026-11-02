@@ -109,7 +109,13 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   implementation below the named class. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
 /// - `9`: APK imports gained persisted Android manifest triple tables.
-pub const IMPORT_FORMAT_VERSION: &str = "9";
+/// - `10`: The dex frontend splits a class-merged class (R8's merged lambdas) into one class per
+///   class id, with clones of its switching methods and retagged construction sites. The file
+///   format is unchanged, but an older import of such an app has the merged methods only.
+/// - `11`: `VirtualMethodTable` became a struct of the per-function name table every frontend
+///   fills and the per-language `Dispatch`, and the CIL frontend writes override bridges where
+///   it wrote alias rows. A `bitcode` wire-format change to every `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "11";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -143,7 +149,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
 ///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
 ///   to `Offset(3)`.
-/// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
+/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::mir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
 /// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
@@ -157,7 +163,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   wants the final call graph must union the two, as query does.
 /// - `5`: the CIL front end's call-resolution key space: `CallTargetObject::CilClass` and
 ///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
-pub const INDEX_FORMAT_VERSION: &str = "5";
+/// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
+///   which loading an index result now requires.
+pub const INDEX_FORMAT_VERSION: &str = "6";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";

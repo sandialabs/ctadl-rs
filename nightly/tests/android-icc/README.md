@@ -13,7 +13,7 @@ Spec format:
 ```json5
 {
   apk: "SomeCase.apk",
-  model: "models/some-case.json",
+  model: "models/some-case.ctadl",
   expect_flow: true,
   expected_intent_pairs: 1,
   status: "pass",
@@ -21,7 +21,8 @@ Spec format:
 ```
 
 - `apk` is a file name inside `$CTADL_ANDROID_ICC_APKS`; add new APKs to `droidbenchIccApks`.
-- `model` is a normal CTADL model file passed to `ctadl query -m`, relative to the spec file.
+- `model` is a Portcullis model file (`.ctadl`, see `docs/portcullis.md`) passed to
+  `ctadl query -m`, relative to the spec file.
 - `expect_flow: true` requires a SARIF code flow connecting a source to a sink.
 - `expect_flow: false` is a negative case.
 - `expected_intent_pairs` is optional and checks persisted `intent_pair.parquet` rows.

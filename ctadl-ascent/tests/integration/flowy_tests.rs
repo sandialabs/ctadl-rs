@@ -27,23 +27,33 @@ fn configs() -> Vec<IndexConfig> {
 
 /// Indexes a .tnt file and ensures the summary requirements are met.
 ///
-/// A sibling `<stem>.models.jsonl` is loaded as if passed to `ctadl index --models`. That is how
-/// a `.tnt` fixture pins what a *model port* means: flowy needs no toolchain, gets no default
-/// models of its own, and its `where summaries [...]` clause asserts on the index summary
-/// relation directly — so a fixture can say where taint lands, not merely whether one fixed
-/// probe fires.
+/// A sibling `<stem>.models.jsonl` or `<stem>.models.ctadl` is loaded as if passed to
+/// `ctadl index --models`. That is how a `.tnt` fixture pins what a *model port* means: flowy
+/// needs no toolchain, gets no default models of its own, and its `where summaries [...]` clause
+/// asserts on the index summary relation directly — so a fixture can say where taint lands, not
+/// merely whether one fixed probe fires.
+///
+/// Both extensions are picked up, so a fixture can be written in either format.
 fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     let filename = filename.as_ref();
-    let models: Vec<std::path::PathBuf> = vec![filename.with_extension("models.jsonl")]
-        .into_iter()
-        .filter(|p| p.exists())
-        .collect();
+    let models: Vec<std::path::PathBuf> = vec![
+        filename.with_extension("models.jsonl"),
+        filename.with_extension("models.ctadl"),
+    ]
+    .into_iter()
+    .filter(|p| p.exists())
+    .collect();
+    tnt_test_with(filename, &models)
+}
+
+/// [`tnt_test`] with the model files given.
+fn tnt_test_with(filename: &std::path::Path, models: &[std::path::PathBuf]) -> anyhow::Result<()> {
     for config in configs() {
-        flowy::check_with_config(filename, None, &models, config.clone())
+        flowy::check_with_config(filename, None, models, config.clone())
             .map(|_| ())
             .with_context(|| {
                 format!(
-            "Running test {} under {:?}. The per-check failures are logged at `warn`, and this test binary installs no logger, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
+            "Running test {} under {:?}. The per-check failures are logged at `warn`, and this test binary prints no log, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
             filename.display(),
             config,
             filename.display()
@@ -97,5 +107,37 @@ fn all_flowy_tests() -> anyhow::Result<()> {
         }
         Err(_) => panic!("Could not read test dir: {:?}", dir_path),
     }
+    Ok(())
+}
+
+/// Every fixture with a JSON model file passes with what `ctadl migrate-models` makes of it in
+/// its place, so the JSON file and its migration reach the same summaries through the real
+/// index pipeline. `port_bare_portcullis.tnt` is the hand-written twin of one of these; this
+/// covers the rest without a second copy of each.
+#[test]
+fn every_json_fixture_passes_as_its_migration() -> anyhow::Result<()> {
+    let dir: std::path::PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "tnt"]
+        .iter()
+        .collect();
+    let out = tempfile::tempdir()?;
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let path = entry.path();
+        let json = path.with_extension("models.jsonl");
+        if path.extension().and_then(|s| s.to_str()) != Some("tnt")
+            || is_known_limitation(&path)
+            || !json.exists()
+        {
+            continue;
+        }
+        let (text, _) = ctadl_ascent::models::portcullis::migrate::migrate_file(&json, None)?;
+        let migrated = out
+            .path()
+            .join(json.with_extension("ctadl").file_name().unwrap());
+        std::fs::write(&migrated, text)?;
+        tnt_test_with(&path, &[migrated])?;
+        checked += 1;
+    }
+    assert!(checked > 0, "no fixture has a JSON model file");
     Ok(())
 }

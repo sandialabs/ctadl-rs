@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::error::ClassFileError;
 use crate::jar::JarFileParser;
-use crate::parse_utils::{read_i32_be, read_u16_be, read_u8};
+use crate::parse_utils::{read_i32_be, read_u8, read_u16_be};
 use crate::parser::ClassFileParser;
 use crate::types::{ClassFile, CodeAttribute, CpEntry, FieldInfo, MethodInfo};
 
@@ -430,20 +430,21 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
             name_and_type_index,
         } => {
             let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
-            let field_str = match cf.this_class_name() {
+
+            match cf.this_class_name() {
                 Ok(this) if this == cf.get_class_name(*class_index).unwrap_or("") => {
                     format!("Field {}:{}", name, descriptor)
                 }
                 _ => format!("Field {}", cf.get_field_ref(index)?),
-            };
-            field_str
+            }
         }
         CpEntry::Methodref {
             class_index,
             name_and_type_index,
         } => {
             let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
-            let method_str = match cf.this_class_name() {
+
+            match cf.this_class_name() {
                 Ok(this) if this == cf.get_class_name(*class_index).unwrap_or("") => {
                     let name_part = if name == "<init>" || name == "<clinit>" {
                         format!("\"{}\"", name)
@@ -453,15 +454,15 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
                     format!("Method {}:{}", name_part, descriptor)
                 }
                 _ => format!("Method {}", cf.get_method_ref(index)?),
-            };
-            method_str
+            }
         }
         CpEntry::InterfaceMethodref {
             class_index,
             name_and_type_index,
         } => {
             let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
-            let method_str = match cf.this_class_name() {
+
+            match cf.this_class_name() {
                 Ok(this) if this == cf.get_class_name(*class_index).unwrap_or("") => {
                     let name_part = if name == "<init>" || name == "<clinit>" {
                         format!("\"{}\"", name)
@@ -471,8 +472,7 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
                     format!("InterfaceMethod {}:{}", name_part, descriptor)
                 }
                 _ => format!("InterfaceMethod {}", cf.get_method_ref(index)?),
-            };
-            method_str
+            }
         }
         CpEntry::Integer(i) => format!("int {}", i),
         CpEntry::Float(_) => "float".to_string(),

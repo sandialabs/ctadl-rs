@@ -4,11 +4,11 @@
 //! compiler emits these shapes, so each test patches a corpus image in
 //! memory.
 
-use super::{cecil_root, read_fixture, read_resource, Test};
+use super::{Test, cecil_root, read_fixture, read_resource};
+use cil_reader::model::Resource;
 use cil_reader::model::custom_attributes::MAX_ATTRIBUTE_DEPTH;
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
-use cil_reader::model::Resource;
 use cil_reader::raw::pe::PeImage;
 use cil_reader::raw::tables::{
     CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw, ModuleRaw,
@@ -806,10 +806,12 @@ fn operand_tokens_not_found() {
     let method_m = MetadataToken::new(TokenType::Method, 1);
     data[ldtoken_operand..ldtoken_operand + 4].copy_from_slice(&method_m.raw().to_le_bytes());
     let module = Module::read(&data).unwrap();
-    assert!(module
-        .lookup_token(MetadataToken::new(TokenType::Field, 1))
-        .unwrap()
-        .is_none());
+    assert!(
+        module
+            .lookup_token(MetadataToken::new(TokenType::Field, 1))
+            .unwrap()
+            .is_none()
+    );
     assert!(module.lookup_token(method_m).unwrap().is_none());
     let n = module.method_def(2).unwrap();
     assert_eq!(n.declaring_type().unwrap().unwrap().name().unwrap(), "C");
@@ -818,10 +820,11 @@ fn operand_tokens_not_found() {
         body.format_instruction(&body.instructions[0]).unwrap(),
         "IL_0000: ldtoken"
     );
-    assert!(body
-        .resolve_operand(&body.instructions[0])
-        .unwrap()
-        .is_none());
+    assert!(
+        body.resolve_operand(&body.instructions[0])
+            .unwrap()
+            .is_none()
+    );
 }
 
 // Values that fail to read, which cil-dump prints as `!error` while it

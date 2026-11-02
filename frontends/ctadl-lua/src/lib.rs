@@ -10,7 +10,7 @@
 //! The lowering mirrors the C tree-sitter frontend (`ctadl_ascent::languages::tree_sitter_c`):
 //! walk the parse tree, build a [`Program`](ctadl_ir::mir::Program) of functions and
 //! basic blocks, and lower Lua assignments, calls, table constructors, field/index
-//! accesses, and control flow into IR statements with access paths.
+//! accesses, and control flow into IR statements.
 //!
 //! ## Functions and control flow
 //!
@@ -83,7 +83,7 @@ use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
 use ctadl_ir::mir::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
@@ -239,22 +239,6 @@ fn lower_lua_units(units: Vec<SourceUnit>) -> Result<ProgramInfo, Error> {
         source_info,
         vmt,
     })
-}
-
-/// A base variable plus a mixed (offset + symbolic-field) path, before lowering to loads/stores.
-/// Access paths in the IR are offset-only and load/store fields are single symbols, so Lua
-/// field/index accesses are threaded here and lowered via [`load_access_path`] /
-/// [`store_access_path`].
-#[derive(Debug, Clone)]
-struct RawPath {
-    base: VariableRef,
-    fields: ThinVec<PathSegment>,
-}
-
-impl RawPath {
-    fn is_pathless(&self) -> bool {
-        self.fields.is_empty()
-    }
 }
 
 /// A name bound in a lexical scope: a parameter (by index) or an ordinary local.
@@ -966,7 +950,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lowers the recovered class maps -- and the name of every collected function -- into
-    /// [`VirtualMethodTable::Lua`] on `self.vmt`.
+    /// [`Dispatch::Lua`] on `self.vmt`.
     fn build_vmt(&mut self) {
         let mut methods: Vec<(Symbol, Symbol, Symbol)> = Vec::new();
         for (cls, ms) in &self.class_methods {
@@ -1032,11 +1016,27 @@ impl<'a> Lowerer<'a> {
             .collect();
         externals.sort_unstable();
 
-        self.vmt = VirtualMethodTable::Lua {
-            methods,
-            functions,
-            externals,
-            hierarchy,
+        // A function's class is the table that holds it as a method. A Lua function has exactly
+        // one name, its fq; `simple` is what its definition wrote, or an external's last
+        // component.
+        let parent: HashMap<&Symbol, &Symbol> =
+            methods.iter().map(|(cls, _, fq)| (fq, cls)).collect();
+        let mut names: Vec<FunctionNames> = functions
+            .iter()
+            .chain(externals.iter())
+            .map(|(simple, fq)| {
+                let names = FunctionNames::new(fq.clone(), simple.clone());
+                match parent.get(fq) {
+                    Some(&cls) => names.with_parent(cls.clone()),
+                    None => names,
+                }
+            })
+            .collect();
+        names.sort_by(|a, b| a.fq.cmp(&b.fq));
+
+        self.vmt = VirtualMethodTable {
+            names,
+            dispatch: Dispatch::Lua { methods, hierarchy },
         };
     }
 
@@ -1127,7 +1127,7 @@ impl<'a> Lowerer<'a> {
 
     /// A name for a function that has none of its own, as `(fully-qualified, simple)`. The
     /// counter runs across the whole import, not per file (see the `%anonN` warning in
-    /// `docs/model-generators.md`).
+    /// `docs/portcullis.md`).
     fn fresh_anon_name(&mut self) -> (String, String) {
         let n = self.anon_counter;
         self.anon_counter += 1;
@@ -1841,17 +1841,15 @@ impl<'a> Lowerer<'a> {
     fn eval_expr(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> Exp {
         match node.kind() {
             "identifier" | "dot_index_expression" | "bracket_index_expression" | "global" => {
-                let rp = self.eval_lvalue(node, blk);
-                let ap = self.emit_loads(blk, rp);
-                Exp::from(ap)
+                let ap = self.eval_lvalue(node, blk);
+                Exp::from(self.emit_loads(blk, ap))
             }
             "number" | "string" | "true" | "false" | "nil" => Exp::new_str(self.node_text(node)),
             "vararg_expression" => {
                 // `...` resolves to the vararg parameter when the enclosing function declares one
                 // (otherwise it degrades to a global-heap read, which is harmless).
-                let rp = self.build_var("...");
-                let ap = self.emit_loads(blk, rp);
-                Exp::from(ap)
+                let ap = self.build_var("...");
+                Exp::from(self.emit_loads(blk, ap))
             }
             "parenthesized_expression" => {
                 // Parenthesizing truncates a multi-value expression to one value; the inner
@@ -1886,33 +1884,33 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Resolves an assignable location to a [`RawPath`] WITHOUT emitting loads, so the field path
+    /// Resolves an assignable location to an [`AccessPath`] WITHOUT emitting loads, so the path
     /// is preserved for a store (or for load lowering by the caller).
-    fn eval_lvalue(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> RawPath {
+    fn eval_lvalue(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> AccessPath {
         match node.kind() {
             "identifier" => self.build_var(self.node_text(node)),
             "global" => self.build_var(self.node_text(node)),
             "dot_index_expression" => {
                 let table = node.child_by_field_name("table");
                 let field = node.child_by_field_name("field");
-                let mut rp = table
+                let mut ap = table
                     .map(|t| self.eval_lvalue(t, blk))
                     .unwrap_or_else(|| self.build_var("_"));
                 if let Some(field) = field {
-                    rp.fields.push(PathSegment::symbol(self.node_text(field)));
+                    ap.segments.push(PathSegment::symbol(self.node_text(field)));
                 }
-                rp
+                ap
             }
             "bracket_index_expression" => {
                 let table = node.child_by_field_name("table");
                 let key = node.child_by_field_name("field");
-                let mut rp = table
+                let mut ap = table
                     .map(|t| self.eval_lvalue(t, blk))
                     .unwrap_or_else(|| self.build_var("_"));
                 if let Some(key) = key {
-                    rp.fields.push(self.key_segment(key, blk));
+                    ap.segments.push(self.key_segment(key, blk));
                 }
-                rp
+                ap
             }
             "parenthesized_expression" => match node.named_child(0) {
                 Some(inner) => self.eval_lvalue(inner, blk),
@@ -1926,17 +1924,11 @@ impl<'a> Lowerer<'a> {
                 // Not a syntactic lvalue (e.g. a call result being indexed): evaluate it and use
                 // the resulting variable as the base.
                 match self.eval_expr(node, blk) {
-                    Exp::Variable(v) => RawPath {
-                        base: v,
-                        fields: ThinVec::new(),
-                    },
+                    Exp::Variable(v) => AccessPath::from(v),
                     other => {
                         let t = self.fresh_temp();
                         self.push_stmt(blk, StatementKind::assign(t.clone(), [other]));
-                        RawPath {
-                            base: t,
-                            fields: ThinVec::new(),
-                        }
+                        AccessPath::from(t)
                     }
                 }
             }
@@ -1986,10 +1978,7 @@ impl<'a> Lowerer<'a> {
                 // Positional array entry.
                 PathSegment::symbol("[_elem_]")
             };
-            let target = RawPath {
-                base: table.clone(),
-                fields: ThinVec::from(vec![seg]),
-            };
+            let target = AccessPath::new(table.clone(), [seg]);
             self.assign_to(blk, target, value);
         }
         Exp::Variable(table)
@@ -2047,13 +2036,10 @@ impl<'a> Lowerer<'a> {
         );
         for u in &upvalues {
             let value = {
-                let rp = self.build_var(u);
-                Exp::from(self.emit_loads(blk, rp))
+                let ap = self.build_var(u);
+                Exp::from(self.emit_loads(blk, ap))
             };
-            let target = RawPath {
-                base: closure.clone(),
-                fields: ThinVec::from(vec![PathSegment::symbol(u)]),
-            };
+            let target = AccessPath::new(closure.clone(), [PathSegment::symbol(u)]);
             self.assign_to(blk, target, value);
         }
         self.closure_upvalues.insert(fidx, upvalues);
@@ -2061,14 +2047,10 @@ impl<'a> Lowerer<'a> {
     }
 
     /// If `name_node` names a first-class function value (a local/parameter that is not a defined
-    /// function), returns the callee's access path for an indirect call; otherwise `None` (the call
+    /// function), returns the callee's address for an indirect call; otherwise `None` (the call
     /// resolves by name). A `local function f`/global function is a defined name, so it stays a
     /// direct call.
-    fn indirect_call_target(
-        &mut self,
-        name_node: Node<'a>,
-        blk: BasicBlockIdx,
-    ) -> Option<AccessPath> {
+    fn indirect_call_target(&mut self, name_node: Node<'a>, blk: BasicBlockIdx) -> Option<Address> {
         if !matches!(name_node.kind(), "identifier" | "global") {
             return None;
         }
@@ -2081,8 +2063,8 @@ impl<'a> Lowerer<'a> {
         }
         match self.lookup(name) {
             Some(Binding::Local | Binding::Param(_)) => {
-                let rp = self.eval_lvalue(name_node, blk);
-                Some(self.emit_loads(blk, rp))
+                let ap = self.eval_lvalue(name_node, blk);
+                Some(self.emit_loads(blk, ap))
             }
             _ => None,
         }
@@ -2225,7 +2207,7 @@ impl<'a> Lowerer<'a> {
             if base == Some("table") && field == Some("insert") && arg_nodes.len() >= 2 {
                 let mut target = self.eval_lvalue(arg_nodes[0], blk);
                 let value = self.eval_expr(*arg_nodes.last().unwrap(), blk);
-                target.fields.push(PathSegment::symbol("[_elem_]"));
+                target.segments.push(PathSegment::symbol("[_elem_]"));
                 self.assign_to(blk, target, value);
                 return Some(nil_exp());
             }
@@ -2241,9 +2223,9 @@ impl<'a> Lowerer<'a> {
             // read of `t`'s generic element, so a generic `for` flows table elements into the loop
             // variables (see `lower_for`).
             "ipairs" | "pairs" if !arg_nodes.is_empty() => {
-                let mut rp = self.eval_lvalue(arg_nodes[0], blk);
-                rp.fields.push(PathSegment::symbol("[_elem_]"));
-                Some(Exp::from(self.emit_loads(blk, rp)))
+                let mut ap = self.eval_lvalue(arg_nodes[0], blk);
+                ap.segments.push(PathSegment::symbol("[_elem_]"));
+                Some(Exp::from(self.emit_loads(blk, ap)))
             }
             // `select(k, ...)`: returns the selected varargs; over-approximate by flowing every
             // vararg operand into the result.
@@ -2381,54 +2363,42 @@ impl<'a> Lowerer<'a> {
         VariableRef::new_local_idx(self.program[fidx].locals.get_or_intern(name))
     }
 
-    /// Builds a [`RawPath`] for a bare name: a parameter or local becomes a bare variable; a free
-    /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
-    fn build_var(&mut self, name: &str) -> RawPath {
+    /// Builds an [`AccessPath`] for a bare name: a parameter or local becomes a bare variable; a
+    /// free name is a field of the global heap (`$globals.name`), modeling `_ENV`.
+    fn build_var(&mut self, name: &str) -> AccessPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
         if self.cur_upvalues.contains(name)
             && let Some(Binding::Param(idx)) = self.lookup("%self")
         {
-            return RawPath {
-                base: VariableRef::new_parameter(idx),
-                fields: ThinVec::from(vec![PathSegment::symbol(name)]),
-            };
+            return AccessPath::new(VariableRef::new_parameter(idx), [PathSegment::symbol(name)]);
         }
         match self.lookup(name) {
-            Some(Binding::Param(idx)) => RawPath {
-                base: VariableRef::new_parameter(idx),
-                fields: ThinVec::new(),
-            },
-            Some(Binding::Local) => RawPath {
-                base: self.local_ref(name),
-                fields: ThinVec::new(),
-            },
-            None => RawPath {
-                base: VariableRef::new_global(),
-                fields: ThinVec::from(vec![PathSegment::symbol(name)]),
-            },
+            Some(Binding::Param(idx)) => AccessPath::from(VariableRef::new_parameter(idx)),
+            Some(Binding::Local) => AccessPath::from(self.local_ref(name)),
+            None => AccessPath::new(VariableRef::new_global(), [PathSegment::symbol(name)]),
         }
     }
 
-    /// Lowers the symbolic-field reads of `rp` into a sequence of loads appended to `blk`, and
-    /// returns the residual (offset-only / pathless) address as an access path.
-    fn emit_loads(&mut self, blk: BasicBlockIdx, rp: RawPath) -> AccessPath {
+    /// Lowers the symbolic-field reads of `ap` into a sequence of loads appended to `blk`, and
+    /// returns the residual address (the base plus any trailing offsets).
+    fn emit_loads(&mut self, blk: BasicBlockIdx, ap: AccessPath) -> Address {
         let mut stmts = Vec::new();
         let mut counter = self.temp_counter;
         let fidx = self.fidx;
         let locals = &mut self.program[fidx].locals;
-        let ap = load_access_path(rp.base, rp.fields, &mut stmts, || {
+        let addr = load_access_path(ap, &mut stmts, || {
             let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
             counter += 1;
             v
         });
         self.temp_counter = counter;
         self.push_stmts_stamped(blk, stmts);
-        ap
+        addr
     }
 
-    /// Assigns `value` into `target`: a bare variable becomes an [`StatementKind::Assign`]; a field
-    /// path becomes a store (with loads for intermediate dereferences).
-    fn assign_to(&mut self, blk: BasicBlockIdx, target: RawPath, value: Exp) {
+    /// Assigns `value` into `target`: a bare variable becomes an [`StatementKind::Assign`]; any
+    /// longer access path becomes a store (with loads for intermediate dereferences).
+    fn assign_to(&mut self, blk: BasicBlockIdx, target: AccessPath, value: Exp) {
         if target.is_pathless() {
             self.push_stmt(blk, StatementKind::assign(target.base, [value]));
         } else {
@@ -2436,7 +2406,7 @@ impl<'a> Lowerer<'a> {
             let mut counter = self.temp_counter;
             let fidx = self.fidx;
             let locals = &mut self.program[fidx].locals;
-            store_access_path(target.base, target.fields, value, &mut stmts, || {
+            store_access_path(target, value, &mut stmts, || {
                 let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
                 counter += 1;
                 v
@@ -2447,7 +2417,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Assigns multiple source values into `target` (a bare variable), flowing all of them in.
-    fn assign_multi(&mut self, blk: BasicBlockIdx, target: RawPath, srcs: Vec<Exp>) {
+    fn assign_multi(&mut self, blk: BasicBlockIdx, target: AccessPath, srcs: Vec<Exp>) {
         if target.is_pathless() {
             let sources: Vec<Exp> = if srcs.is_empty() {
                 vec![nil_exp()]
@@ -2618,8 +2588,8 @@ mod tests {
 
     /// The recovered `(class, method)` pairs, sorted, ignoring the function-id column.
     fn method_pairs(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { methods, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { methods, .. } => {
                 let mut v: Vec<(String, String)> = methods
                     .iter()
                     .map(|(cls, m, _fid)| (cls.to_string(), m.to_string()))
@@ -2627,41 +2597,48 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
-    /// The VMT's `(simple name, fully-qualified name)` pair for every function, sorted by
+    /// The `(simple name, fully-qualified name)` pair of every lowered function, sorted by
     /// qualified name.
-    fn vmt_functions(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { functions, .. } => {
-                let mut v: Vec<(String, String)> = functions
-                    .iter()
-                    .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
-                    .collect();
-                v.sort_by(|a, b| a.1.cmp(&b.1));
-                v
-            }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
-        }
+    fn vmt_functions(info: &ProgramInfo) -> Vec<(String, String)> {
+        let lowered: HashSet<&str> = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        vmt_names(&info.vmt, |fq| lowered.contains(fq))
     }
 
-    /// The VMT's `(simple name, fully-qualified name)` pair for every external.
-    fn vmt_externals(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { externals, .. } => externals
-                .iter()
-                .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
-                .collect(),
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
-        }
+    /// The `(simple name, fully-qualified name)` pair of every external: a name the table
+    /// describes and the program does not lower.
+    fn vmt_externals(info: &ProgramInfo) -> Vec<(String, String)> {
+        let lowered: HashSet<&str> = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        vmt_names(&info.vmt, |fq| !lowered.contains(fq))
+    }
+
+    fn vmt_names(vmt: &VirtualMethodTable, keep: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+        vmt.names
+            .iter()
+            .filter(|n| keep(n.fq.as_ref()))
+            .map(|n| (n.simple.to_string(), n.fq.to_string()))
+            .collect()
     }
 
     /// The recovered `subclass -> parent` edges, sorted.
     fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
-        match vmt {
-            VirtualMethodTable::Lua { hierarchy, .. } => {
+        match &vmt.dispatch {
+            Dispatch::Lua { hierarchy, .. } => {
                 let mut v: Vec<(String, String)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
@@ -2672,7 +2649,7 @@ mod tests {
                 v.sort();
                 v
             }
-            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+            other => panic!("expected Dispatch::Lua, got {other:?}"),
         }
     }
 
@@ -2751,7 +2728,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_functions(&info.vmt),
+            vmt_functions(&info),
             vec![
                 ("%anon0".to_string(), "m.%anon0".to_string()),
                 ("%chunk".to_string(), "m.%chunk".to_string()),
@@ -2762,7 +2739,7 @@ mod tests {
         );
         // The column covers the whole program, not just the class methods.
         assert_eq!(
-            vmt_functions(&info.vmt)
+            vmt_functions(&info)
                 .iter()
                 .map(|(_, fq)| fq.clone())
                 .collect::<Vec<_>>(),
@@ -2786,7 +2763,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_externals(&info.vmt),
+            vmt_externals(&info),
             vec![
                 ("execute".to_string(), "os.execute".to_string()),
                 ("format".to_string(), "string.format".to_string()),
@@ -2797,7 +2774,7 @@ mod tests {
         // The simple name of a dotted external is its last component -- there is no definition
         // site to read one off, unlike `functions`.
         assert!(
-            !vmt_functions(&info.vmt)
+            !vmt_functions(&info)
                 .iter()
                 .any(|(_, fq)| fq == "os.execute"),
             "an external must not also appear as a defined function"
@@ -2815,7 +2792,7 @@ mod tests {
         "#;
         let info = import_str(src);
         assert_eq!(
-            vmt_functions(&info.vmt),
+            vmt_functions(&info),
             vec![
                 ("%chunk".to_string(), "m.%chunk".to_string()),
                 ("f".to_string(), "m.f".to_string()),

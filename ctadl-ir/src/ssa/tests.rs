@@ -27,15 +27,15 @@ fn function_f() -> FunctionData {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let a = AccessPath {
+        let a = Address {
             base: VariableRef::new_local_idx(a_idx),
             accesses: Default::default(),
         };
-        let p = AccessPath {
+        let p = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let q = AccessPath {
+        let q = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(1)),
             accesses: Default::default(),
         };
@@ -69,15 +69,15 @@ fn function_g() -> FunctionData {
     g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
-    let a = AccessPath {
+    let a = Address {
         base: VariableRef::new_local_idx(a_idx),
         accesses: Default::default(),
     };
-    let b = AccessPath {
+    let b = Address {
         base: VariableRef::new_parameter(ParameterIdx::new(0)),
         accesses: Default::default(),
     };
-    let c = AccessPath {
+    let c = Address {
         base: VariableRef::new_local_idx(c_idx),
         accesses: Default::default(),
     };
@@ -121,19 +121,19 @@ fn function_g1() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
-    let a = AccessPath {
+    let a = Address {
         base: VariableRef::new_local_idx(a_idx),
         accesses: Default::default(),
     };
-    let b = AccessPath {
+    let b = Address {
         base: VariableRef::new_parameter(ParameterIdx::new(0)),
         accesses: Default::default(),
     };
-    let _c = AccessPath {
+    let _c = Address {
         base: VariableRef::new_local_idx(c_idx),
         accesses: Default::default(),
     };
-    let c1 = AccessPath {
+    let c1 = Address {
         base: VariableRef::new_local_idx(c1_idx),
         accesses: Default::default(),
     };
@@ -179,14 +179,14 @@ fn program_h() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = AccessPath {
+        let p = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
-                AccessPath::without_fields(global_ref.clone()),
+                Address::without_offsets(global_ref.clone()),
                 FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             )),];
@@ -222,14 +222,14 @@ fn program_h_update() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = AccessPath {
+        let p = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::update(
-                AccessPath::without_fields(global_ref.clone()),
+                Address::without_offsets(global_ref.clone()),
                 global_ref.clone(),
                 FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
@@ -415,8 +415,18 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
 /// report might compare.
 #[test]
 fn test_pipeline_tag() {
-    assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
-    assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
+    assert_eq!(
+        Pipeline::index_default().tag(),
+        "dt+co+m2r(w8)+ssa(prune)+cp"
+    );
+    assert_eq!(
+        Pipeline::index_default().prune(false).tag(),
+        "dt+co+m2r(w8)+ssa+cp"
+    );
+    assert_eq!(
+        Pipeline::index_default().frame(FrameWrites::Store).tag(),
+        "fs+dt+co+m2r(w8)+ssa(prune)+cp"
+    );
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::ssa_only().prune(false).tag(), "ssa");
     assert_eq!(Pipeline::none().tag(), "none");

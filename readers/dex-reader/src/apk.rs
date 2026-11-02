@@ -134,6 +134,7 @@ pub fn split_apk_entries_of_file(path: &std::path::Path) -> DexResult<Vec<SplitA
         .map_err(|_| crate::error::DexError::InvalidDex("app bundle is not a valid ZIP"))?;
     let mut entries: Vec<SplitApkEntry> = archive
         .file_names()
+        .filter_map(Result::ok)
         .filter_map(|name| {
             let trimmed = name.trim_start_matches('/');
             if trimmed.contains('/') {
@@ -180,7 +181,10 @@ pub fn has_dex_entries_of_file(path: &std::path::Path) -> DexResult<bool> {
         .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
     let archive = ZipArchive::new(file)
         .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
-    Ok(archive.file_names().any(is_dex_entry_name))
+    Ok(archive
+        .file_names()
+        .filter_map(Result::ok)
+        .any(|name| is_dex_entry_name(&name)))
 }
 
 /// The `lib/<abi>/*.so` entries of an already-opened archive, sorted by entry name.
@@ -189,8 +193,9 @@ fn collect_native_lib_entries<R: std::io::Read + std::io::Seek>(
 ) -> Vec<NativeLibEntry> {
     let mut entries: Vec<NativeLibEntry> = archive
         .file_names()
+        .filter_map(Result::ok)
         .filter_map(|name| {
-            parse_native_lib_entry(name).map(|(abi, file_name)| NativeLibEntry {
+            parse_native_lib_entry(&name).map(|(abi, file_name)| NativeLibEntry {
                 entry_name: name.to_string(),
                 abi: abi.to_string(),
                 file_name: file_name.to_string(),
@@ -299,14 +304,17 @@ pub fn read_native_libs(apk_bytes: &[u8], abi: &str) -> DexResult<Vec<(NativeLib
         let mut zip_file = archive
             .by_index(index)
             .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
-        let Some((entry_abi, file_name)) = parse_native_lib_entry(zip_file.name()) else {
+        let Ok(name) = zip_file.name().map(|n| n.into_owned()) else {
+            continue;
+        };
+        let Some((entry_abi, file_name)) = parse_native_lib_entry(&name) else {
             continue;
         };
         if entry_abi != abi {
             continue;
         }
         let entry = NativeLibEntry {
-            entry_name: zip_file.name().to_string(),
+            entry_name: name.clone(),
             abi: entry_abi.to_string(),
             file_name: file_name.to_string(),
         };
@@ -374,6 +382,7 @@ impl APKParser {
 
         let mut names: Vec<String> = archive
             .file_names()
+            .filter_map(Result::ok)
             .filter(|n| is_dex_entry_name(n))
             .map(String::from)
             .collect();
@@ -520,8 +529,8 @@ mod native_lib_tests {
     /// Builds an in-memory ZIP from `(name, contents)` pairs.
     fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let options =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         for (name, contents) in entries {
             writer.start_file(*name, options).unwrap();
             writer.write_all(contents).unwrap();

@@ -174,6 +174,23 @@ impl<K: Clone + Eq + Hash, V> CMap<K, V> {
         }
     }
 
+    /// Applies `f` to `k`'s value, in either state. Takes `k`'s shard read lock when unfrozen.
+    #[inline]
+    pub fn get_with<R>(&self, k: &K, f: impl FnOnce(&V) -> R) -> Option<R> {
+        match self {
+            CMap::Frozen(v) => v.get(k).map(f),
+            CMap::Unfrozen(dm) => dm.get(k).map(|e| f(e.value())),
+        }
+    }
+
+    /// Visits every entry, in either state. Takes each shard's read lock in turn when unfrozen.
+    pub fn for_each(&self, mut f: impl FnMut(&K, &V)) {
+        match self {
+            CMap::Unfrozen(dm) => dm.iter().for_each(|e| f(e.key(), e.value())),
+            CMap::Frozen(v) => v.iter().for_each(|(k, val)| f(k, val)),
+        }
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -283,7 +300,7 @@ where
 {
     /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
     /// `none`, `0_1`, `0_1_2`, and existence views.
-    fwd: CMap<(F, V), Group<P, M, Fp>>,
+    pub(crate) fwd: CMap<(F, V), Group<P, M, Fp>>,
     /// Row count. Bumped once per winning insert, so it stays exact under concurrency.
     len: AtomicUsize,
 }
@@ -353,6 +370,15 @@ where
         self.len() == 0
     }
 
+    /// Visits every row.
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
+        self.fwd.for_each(|(fk, v), group| {
+            for (p, m, fp) in group.iter() {
+                f((fk, v, p, m, fp));
+            }
+        });
+    }
+
     /// Number of distinct `(F, V)` groups, that is, of variables reached by some formal. O(shards).
     /// Works in either freeze state, because a run can leave the store frozen: the last SCC to
     /// mention `locals` uses it body-only, and that path freezes without unfreezing.
@@ -361,15 +387,12 @@ where
         self.fwd.len()
     }
 
-    /// Existence probe against the **frozen** store. Rules only ever probe `total`/`delta`, which
-    /// are frozen for the whole evaluation phase.
+    /// Existence probe, in either freeze state. Takes the `(f, v)` shard read lock when unfrozen.
     #[inline]
     pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
-        // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16.
         self.fwd
-            .frozen()
-            .get(&(f.clone(), v.clone()))
-            .is_some_and(|group| group.contains(p, m, fp))
+            .get_with(&(f.clone(), v.clone()), |group| group.contains(p, m, fp))
+            .unwrap_or(false)
     }
 
     /// Insert a full tuple through a **shared** reference. Returns true if it was new to *this*
@@ -378,7 +401,7 @@ where
     /// The `(f, v)` entry is one shard write lock, held across the group insert (including a
     /// possible promotion). That lock is the store's contention point: the pessimal shape is
     /// many threads hitting one huge group.
-    fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
+    pub(crate) fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
         let (f, v, p, m, fp) = key;
         let added = self
             .fwd
@@ -397,7 +420,7 @@ where
     ///
     /// Reusing [`PathGroup::merge`] keeps the merge O(delta) rather than O(accumulated total),
     /// which is the whole point of promoting large groups.
-    fn absorb(&mut self, from: &mut Self) {
+    pub(crate) fn absorb(&mut self, from: &mut Self) {
         use ascent::dashmap::mapref::entry::Entry;
         let mut added = 0usize;
         {
@@ -1234,6 +1257,13 @@ mod tests {
         want.dedup();
         assert_eq!(store.len(), want.len(), "row count");
         assert_eq!(store.heap_report().rows, want.len(), "unfrozen heap_report");
+        for &(f, v, p, m, fp) in &want {
+            assert!(
+                store.contains(&f, &v, &p, &m, &fp),
+                "missing {f:?} unfrozen"
+            );
+        }
+        assert!(!store.contains(&999, &0, &0, &0, &0));
 
         store.freeze();
 

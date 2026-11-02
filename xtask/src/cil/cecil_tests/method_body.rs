@@ -5,10 +5,10 @@
 //! running framework's corlib), UnattachedMethodBody/Add/Insert/Remove
 //! (ILProcessor, write side).
 
-use super::{normalize, read_fixture, read_resource, Test};
+use super::{Test, normalize, read_fixture, read_resource};
+use cil_reader::Module;
 use cil_reader::cil::{Code, RawOperand};
 use cil_reader::model::{MethodDef, TypeDef};
-use cil_reader::Module;
 
 fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
     ty.methods()

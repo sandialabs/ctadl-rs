@@ -23,6 +23,7 @@ ascent! {
     include_source!(ctadl_index::index_engine::index_rules);
 }
 ctadl_index::trie_stores!(IndexProg);
+ctadl_index::cond_stores!(IndexProg, cond_trie);
 
 /// Runs the index rules to fixpoint on the calling thread.
 pub fn run(input: EngineInput<'_>) -> IndexResult {

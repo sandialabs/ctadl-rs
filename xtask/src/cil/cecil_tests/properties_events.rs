@@ -2,7 +2,7 @@
 //! (read subsets). Skipped: UnattachedProperty/UnattachedEvent (construct
 //! definitions).
 
-use super::{read_fixture, Test};
+use super::{Test, read_fixture};
 use cil_reader::Module;
 
 // Test/Mono.Cecil.Tests/PropertyTests.cs:11 (AbstractMethod)
@@ -140,12 +140,14 @@ fn event_abstract_method() {
     );
 
     assert!(event.add_method().unwrap().unwrap().is_add_on().unwrap());
-    assert!(event
-        .remove_method()
-        .unwrap()
-        .unwrap()
-        .is_remove_on()
-        .unwrap());
+    assert!(
+        event
+            .remove_method()
+            .unwrap()
+            .unwrap()
+            .is_remove_on()
+            .unwrap()
+    );
 }
 
 // Test/Mono.Cecil.Tests/EventTests.cs:39 (OtherMethod)

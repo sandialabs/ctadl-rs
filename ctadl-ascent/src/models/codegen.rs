@@ -1,4 +1,6 @@
-use ctadl_ir::call::{JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable};
+use ctadl_ir::call::{
+    Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+};
 
 use crate::facts::{FunctionId, IdMap, PackedInsnSiteId};
 use crate::index_engine::{FunctionSummary, IndexFacts};
@@ -7,7 +9,7 @@ use crate::index_engine::{FunctionSummary, IndexFacts};
 /// easily expressible at the language level, can be generated. This includes models that are based
 /// on finding call sites and models that bridge languages.
 pub fn load_models(vmt: &VirtualMethodTable, facts: &mut IndexFacts, idmap: &IdMap) {
-    if let VirtualMethodTable::Java { methods, .. } = vmt {
+    if let Dispatch::Java { methods, .. } = &vmt.dispatch {
         let result = ascent::ascent_run! {
             relation method(JavaClass, JavaSimpleName, JavaSignature, JavaMethod) = methods.clone();
             relation call(PackedInsnSiteId, FunctionId) = facts.call.clone();
@@ -56,13 +58,13 @@ mod tests {
         let sig = "([Ljava/lang/Object;)Ljava/lang/Object;";
         let mine = java_method("Lcom/example/MyTask;", "doInBackground", sig);
         let other = java_method("Lcom/example/OtherTask;", "doInBackground", sig);
-        let vmt = VirtualMethodTable::Java {
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
             methods: vec![mine.clone(), other.clone()],
             hierarchy: Default::default(),
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        };
+        });
 
         let mut idmap = IdMap::new();
         let mut add = |name: &str| idmap.get_or_add_function(Function::from(Str::from(name)));

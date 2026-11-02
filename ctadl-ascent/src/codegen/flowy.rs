@@ -320,9 +320,9 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut fail_count = 0;
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
-    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
-    // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
-    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // import has `Dispatch::Unknown` and names each function by its IR name, so a generator
+    // matches by the IR function name directly and gets no default models of its own. That
+    // makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
     let match_index = crate::models::ProgramMatchIndex::new(
         &program.program_info,
@@ -351,14 +351,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         crate::codegen::CallPolicy::default(),
         &model_matches,
     );
-    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
-    // them is about pairing two bridge sides.
     crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &[],
         &mut index_facts,
         &mut source_info,
-    )?;
+    );
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);
@@ -393,6 +390,17 @@ pub fn check_with_config<P: AsRef<Path>>(
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
+    // `#value` is terminal (`ctadl_ir::mir::VALUE_FIELD`).
+    for (p,) in &index_result.paths {
+        let segments: Vec<_> = p.iter().collect();
+        if let Some(i) = segments.iter().position(|s| s.is_value())
+            && i + 1 != segments.len()
+        {
+            log::warn!("admissible path with a segment after #value: {p}");
+            fail_count += 1;
+        }
+    }
+
     let (ipass, ifail) = index_check_summaries(
         &index_result,
         program.requirements.summary_requires,
@@ -417,6 +425,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         // endpoints to their call-site-anchored forms during the query check.
         call: final_call.clone(),
         assign: index_result.assign_like,
+        update_sans_path: index_result.update_sans_path,
         paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,
@@ -469,7 +478,7 @@ fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
     use fx::*;
     let vertex = {
         let (var, fields) = &e.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
     };
     TaintEndpoint {
         infunc: Function(e.infunc.clone().into()),
@@ -492,7 +501,7 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
         .unwrap();
     let vertex = {
         let (var, fields) = &endpoint.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        FlowVertex::new(var.try_into().unwrap(), fields.into())
     };
     QueryEndpoint {
         infunc,

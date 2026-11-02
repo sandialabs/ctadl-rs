@@ -3,15 +3,15 @@
 //! what the Cecil corpus barely exercises. Each is a plain `fn()` that panics
 //! on failure.
 
+use cil_reader::Module;
 use cil_reader::cil::{Code, RawOperand};
 use cil_reader::flow::check::layer2_violations;
-use cil_reader::flow::delegate::{classify, DelegateOp, ModuleTypes, TypeOracle};
+use cil_reader::flow::delegate::{DelegateOp, ModuleTypes, TypeOracle, classify};
 use cil_reader::flow::{
     CallKind, CallSite, Effect, Field, FlowOptions, FlowWarning, HandlerKind, InsFlow, InsId,
     MethodFlow, Path, Place, Root, Slot, StackKind, TypeOp, Var,
 };
 use cil_reader::model::{MethodBody, MethodDef};
-use cil_reader::Module;
 
 use super::read_fixture;
 

@@ -1,43 +1,5 @@
 {
   // Flow: x = o.data = source() (15) -> sink(x) (16). The positive twin of
   // DupX1Chain: the value dup_x1 copies must still reach x.
-  "expected_lines": [15, 16],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "source",
-          "parent": "LDupX1ChainFlow;"
-        }
-      ],
-      "model": {
-        "sources": [
-          {
-            "kind": "UserInput",
-            "port": "Return"
-          }
-        ]
-      }
-    },
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "sink",
-          "parent": "LDupX1ChainFlow;"
-        }
-      ],
-      "model": {
-        "sinks": [
-          {
-            "kind": "TaintedData",
-            "port": "Argument(0)"
-          }
-        ]
-      }
-    }
-  ]
+  "expected_lines": [15, 16]
 }

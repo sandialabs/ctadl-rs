@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn vmt_round_trips() {
         for vmt in [
-            VirtualMethodTable::Unknown,
+            VirtualMethodTable::default(),
             VirtualMethodTable::new_java(),
             VirtualMethodTable::new_native(),
             VirtualMethodTable::new_lua(),

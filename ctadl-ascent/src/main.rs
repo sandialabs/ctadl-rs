@@ -48,10 +48,18 @@ pub enum Command {
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
 
-    /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
-    /// are used to specify sources and sinks (see the 'query' command) as well as specifying
-    /// external function behavior (see the 'index' command)
+    /// Generate a template Portcullis model file to help write custom analysis models. Analysis
+    /// models are used to specify sources and sinks (see the 'query' command) as well as
+    /// specifying external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
+
+    /// Rewrite a JSON/JSON5/JSONL model-generator file in Portcullis.
+    ///
+    /// Portcullis is the format the engine executes; a JSON file is translated through this and
+    /// then run, so migrating one changes nothing about what it matches. What it buys is a file
+    /// you can read: the migrator also reports every construct that does not carry across,
+    /// which a silent translation would hide.
+    MigrateModels(MigrateModelsArgs),
 
     /// Inspect the CTADL store
     Inspect(InspectArgs),
@@ -61,78 +69,33 @@ pub enum Command {
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
     /// analysis; no index is read, and none is written.
     Report(ReportArgs),
-
-    /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
-    #[command(name = "legacy-pcode-cli")]
-    LegacyPcodeCli(LegacyPcodeCliArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct InitModelArgs {
-    /// Path where the template model file will be written (defaults to model.json5)
-    #[arg(default_value = "model.json5")]
+    /// Path where the template model file will be written (defaults to model.ctadl)
+    #[arg(default_value = "model.ctadl")]
     pub output: PathBuf,
 }
 
 #[derive(Debug, Args)]
-pub struct LegacyPcodeCliArgs {
-    /// Directory where the index/store is located
+pub struct MigrateModelsArgs {
+    /// The JSON / JSON5 / JSONL model file to translate.
+    pub input: PathBuf,
+
+    /// Where to write the Portcullis file. Defaults to the input with a `.ctadl` extension; `-`
+    /// writes to standard output.
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Check the translated file loads, and report what it says, without writing anything.
     #[arg(long)]
-    pub directory: Option<PathBuf>,
+    pub dry_run: bool,
 
-    #[command(subcommand)]
-    pub cmd: LegacyPcodeSubcommand,
-
-    #[arg(long, short, action = clap::ArgAction::Append)]
-    pub models: Vec<PathBuf>,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum LegacyPcodeSubcommand {
-    /// Legacy index command compatible with Ghidra
-    Index(LegacyIndexArgs),
-    /// Legacy query command compatible with Ghidra
-    Query(LegacyQueryArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct LegacyIndexArgs {
-    /// Number of parallel jobs (ignored)
-    #[arg(short = 'j', default_value_t = 8)]
-    pub jobs: usize,
-
-    /// Path to the directory containing pcode facts
-    #[arg(short = 'f')]
-    pub facts_path: PathBuf,
-}
-
-#[derive(Debug, Args)]
-pub struct LegacyQueryArgs {
-    /// Taint direction to compute slices for
-    #[arg(long, value_name = "DIRECTION")]
-    pub compute_slices: Option<LegacyTaintDirection>,
-
-    /// Skip compiling analysis (ignored)
-    #[arg(long)]
-    pub no_compile_analysis: bool,
-
-    /// Number of parallel jobs (ignored)
-    #[arg(short = 'j', default_value_t = 8)]
-    pub jobs: usize,
-
-    /// Output format
-    #[arg(long, default_value = "sarif")]
-    pub format: String,
-
-    /// Query file path
-    pub query_file: PathBuf,
-}
-
-#[derive(Debug, Clone, ValueEnum, Copy)]
-pub enum LegacyTaintDirection {
-    All,
-    Fwd,
-    Bwd,
+    /// A language the file is for (repeatable), as a generator's `in` names one. A rule that only
+    /// another language could match is left out.
+    #[arg(long = "language", value_name = "LANGUAGE")]
+    pub languages: Vec<String>,
 }
 
 impl Command {
@@ -289,9 +252,9 @@ pub struct ReportArgs {
     #[arg(long)]
     pub no_recursion: bool,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files, as `ctadl index`
-    /// would. The report reads nothing but writes the `policy` section against them, so this is
-    /// how to see what a `find: "dispatch"` model would cover before re-indexing.
+    /// Load additional models from one or more model files (`.ctadl`, or the deprecated JSON
+    /// formats), as `ctadl index` would. The report reads nothing but writes the `policy` section
+    /// against them, so this is how to see what a `dispatch` model would cover before re-indexing.
     #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
     pub models: Vec<PathBuf>,
 
@@ -415,10 +378,14 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_native_libs: bool,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files. This option is use primarily to provide
-    /// propagation models, which provide function summaries for indexing external or
-    /// hard-to-analyze code.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. This option is used primarily to provide propagation models, which
+    /// provide function summaries for indexing external or hard-to-analyze code.
+    ///
+    /// A `.ctadl` (or `.dl`) file is written in Portcullis, which is what the engine runs;
+    /// `.json`, `.json5` and `.jsonl` are the older model-generator format, deprecated: such a
+    /// file is migrated to Portcullis as it is loaded. `ctadl migrate-models` converts one for
+    /// good.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -478,17 +445,15 @@ pub struct IndexArgs {
     /// decisions meet at a flow, sharing that flow among every caller that passed any target:
     /// coarser, and far cheaper on a function that thousands of targets reach. `none` shares
     /// the resolved callee's flows among all callers, which is the cheapest and the least
-    /// precise. `CTADL_HYBRID_CONTEXT` in the environment sets the default, for a harness that
-    /// does not pass the flag.
-    #[arg(long, default_value = "decision", env = "CTADL_HYBRID_CONTEXT")]
+    /// precise.
+    #[arg(long, default_value = "decision")]
     pub hybrid_context: HybridContext,
 
     /// How the index engine pairs a function's conditional summaries with the calls that
     /// established a decision at it (rule 3.2 of hybrid inlining). `sets` (the default) and
     /// `unfold` join on the decision exactly; `scan` joins on the function and filters, which
     /// is quadratic on functions that many decisions reach. Same result under all three.
-    /// `CTADL_CONTEXT_JOIN` in the environment sets the default.
-    #[arg(long, default_value = "sets", env = "CTADL_CONTEXT_JOIN")]
+    #[arg(long, default_value = "sets")]
     pub context_join: ContextJoin,
 
     /// Number of threads to compute the flow relation with.
@@ -526,6 +491,63 @@ pub struct IndexArgs {
     /// program's facts still take what they take.
     #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
     pub lsm_memory_budget: Option<usize>,
+
+    /// How stack slots of native code are promoted to locals before SSA.
+    ///
+    /// A slot whose address escapes (passed to a call, stored, copied, returned) stays in
+    /// memory, and the policy says how far an escaped address reaches: `window:N` (the next N
+    /// slots; `window:8` is the default), `exact` (the slot alone) or `above` (every slot above
+    /// it). `off` promotes nothing.
+    ///
+    /// Experimental: `full` promotes every slot, escaped or not, in a function with more than
+    /// 1000 direct stack accesses (`full:N` for another threshold), and `window:8` elsewhere. It
+    /// cuts the index of a large native function by a large factor, but a callee or a copy of
+    /// the address no longer sees what the function stored directly. Each function where this
+    /// may lose flows is named in the index's `notifications.sarif` and in the query's SARIF. A
+    /// model's `modes: ["mem2reg-full"]` or `["mem2reg-window"]` forces or forbids it for one
+    /// function.
+    #[arg(
+        long,
+        value_name = "POLICY",
+        default_value = "window:8",
+        value_parser = parse_mem2reg
+    )]
+    pub mem2reg: Mem2RegFlag,
+
+    /// How native code's writes to its stack frame reach SSA.
+    ///
+    /// The pcode frontend writes a stack slot as a functional update of the frame, which SSA can
+    /// version. `update` (the default) keeps them, so SSA versions the frame for the slots
+    /// `--mem2reg` leaves in memory, and a write to a slot overwrites what it held. `store`
+    /// coarsens every such update into a store, so every load of a slot sees every store to it.
+    /// A model's `modes: ["frame-store"]` or `["frame-update"]` picks one for one function.
+    #[arg(
+        long,
+        value_name = "WRITES",
+        default_value = "update",
+        value_parser = parse_frame
+    )]
+    pub frame: ctadl_ir::ssa::FrameWrites,
+}
+
+/// The value of `--mem2reg`: `None` is `off`.
+#[derive(Debug, Clone, Copy)]
+pub struct Mem2RegFlag(Option<ctadl_ir::ssa::Mem2Reg>);
+
+fn parse_mem2reg(s: &str) -> Result<Mem2RegFlag, String> {
+    if s == "off" {
+        return Ok(Mem2RegFlag(None));
+    }
+    ctadl_ir::ssa::Mem2Reg::parse(s)
+        .map(|m| Mem2RegFlag(Some(m)))
+        .ok_or_else(|| {
+            format!("`{s}` is not a policy; use window:N, exact, above, full, full:N or off")
+        })
+}
+
+fn parse_frame(s: &str) -> Result<ctadl_ir::ssa::FrameWrites, String> {
+    ctadl_ir::ssa::FrameWrites::parse(s)
+        .ok_or_else(|| format!("`{s}` is not a frame write; use store or update"))
 }
 
 /// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
@@ -560,8 +582,10 @@ pub struct QueryArgs {
     /// Analysis project (index) name
     pub name: String,
 
-    /// The query to run, or load additional models from one or more JSON, JSON5, or JSONL files.
-    /// Can be specified multiple times to load multiple model files.
+    /// The query to run, or load additional models from one or more files. Can be specified
+    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in
+    /// Portcullis; `.json`, `.json5` and `.jsonl` are the older model-generator format,
+    /// deprecated, and migrated to Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -584,8 +608,10 @@ pub struct GoArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. A `.ctadl` (or `.dl`) file is written in Portcullis; `.json`,
+    /// `.json5` and `.jsonl` are the older model-generator format, deprecated, and migrated to
+    /// Portcullis as they are loaded.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -659,8 +685,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Apply the global store override before any store interaction. This sets the
-    // store root directly to the given directory (no `ctadl` subdirectory), the
-    // same mechanism `legacy-pcode-cli --directory` uses.
+    // store root directly to the given directory (no `ctadl` subdirectory).
     if let Some(dir) = &cli.store {
         project::init_store_path(Some(dir))
             .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
@@ -755,6 +780,8 @@ fn main() -> anyhow::Result<()> {
                 lsm: false,
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
+                mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
+                frame: ctadl_ir::ssa::Pipeline::index_default().frame,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -767,182 +794,102 @@ fn main() -> anyhow::Result<()> {
             })
             .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
-        Command::LegacyPcodeCli(args) => {
-            handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
-        }
         Command::InitModel(args) => {
             handle_init_model(args).context("running 'init-model'")?;
+        }
+        Command::MigrateModels(args) => {
+            handle_migrate_models(args).context("running 'migrate-models'")?;
         }
     };
 
     Ok(())
 }
 
-fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
-    let template = r#"{
-    // Link to the schema to enable IDE features like autocomplete and hover documentation.
-    // Adjust the path to match your installation if necessary.
-    "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
+fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
+    use ctadl_ascent::models::portcullis;
 
-    "model_generators": [
-        {
-            // Example 1: Define a data source using a signature pattern.
-            // This will match any method containing 'readData' in its signature
-            // and mark its return value as a source of taint.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_pattern",
-                    "pattern": ".*readData.*"
-                }
-            ],
-            "model": {
-                "sources": [
-                    {
-                        "port": "Return",
-                        "kind": "input_data"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 2: Define a sink using an exact signature match.
-            // This will match the exact method signature 'executeQuery' and mark its first argument
-            // as a sink for taint analysis.
-            //
-            // "name" matches the bare method name, so it selects every 'executeQuery' in the
-            // program. To pin down one specific method, use "qualified-id" instead: an exact
-            // (non-regex) match on the fully-qualified id, e.g.
-            //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
-            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
-            // "kong.db.executeQuery" on lua.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "executeQuery"
-                }
-            ],
-            "model": {
-                "sinks": [
-                    {
-                        "port": "Argument(0)",
-                        "kind": "sql_injection"
-                    }
-                ]
-            }
-        },
-        {
-            // Example 3: Define a propagation model.
-            // This models a method 'canonicalize_url' that transforms data.
-            // We model it as propagating taint from its first argument to its return value.
-            "find": "methods",
-            "where": [
-                {
-                    "constraint": "signature_match",
-                    "name": "canonicalize_url"
-                }
-            ],
-            "model": {
-                "propagation": [
-                    {
-                        "input": "Argument(0)",
-                        "output": "Return"
-                    }
-                ]
-            }
+    for language in &args.languages {
+        if ctadl_ascent::project::ArtifactLanguage::from_name(language).is_none() {
+            anyhow::bail!("--language {language:?} is not a language ctadl imports");
         }
-        ]
-        }"#;
+    }
+    let languages: Vec<&str> = args.languages.iter().map(String::as_str).collect();
+    let languages = (!languages.is_empty()).then_some(languages.as_slice());
+    // A generator that cannot be translated exactly fails the whole file, `--dry-run` included:
+    // writing the rest would silently drop it. Every such generator is listed, not just the
+    // first, so one run is enough to see what needs fixing.
+    let (text, report) = match portcullis::migrate::migrate_file(&args.input, languages) {
+        Ok(migrated) => migrated,
+        Err(ctadl_ascent::error::Error::JsonModel(errors)) => anyhow::bail!(
+            "{} cannot be migrated exactly; nothing was written:\n{errors}",
+            args.input.display()
+        ),
+        Err(e) => {
+            return Err(e).with_context(|| format!("migrating {}", args.input.display()));
+        }
+    };
 
-    std::fs::write(&args.output, template)
-        .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
-    log::info!("Wrote template model file to '{}'", args.output.display());
+    // Loading it is part of migrating it. A file that translates but does not check is worse
+    // than a failure: it would be discovered on the next index, against an artifact, with the
+    // original no longer in play.
+    portcullis::PortcullisFile::from_text(args.input.clone(), text.clone())
+        .with_context(|| format!("the migration of {} does not load", args.input.display()))?;
+
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    eprintln!(
+        "{}: {} generator(s) -> {} rule(s)",
+        args.input.display(),
+        report.generators,
+        report.rules
+    );
+
+    if args.dry_run {
+        return Ok(());
+    }
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.input.with_extension("ctadl"));
+    if output == std::path::Path::new("-") {
+        print!("{text}");
+    } else {
+        std::fs::write(&output, &text).with_context(|| format!("writing {}", output.display()))?;
+        eprintln!("wrote {}", output.display());
+    }
     Ok(())
 }
 
-fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
-    // Initialize the store path to the directory provided by Ghidra, if provided.
-    if let Some(dir) = &args.directory {
-        project::init_store_path(Some(dir))
-            .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
-    }
+/// What `ctadl init-model` writes: one source, one sink and one propagation to edit.
+const MODEL_TEMPLATE: &str = r#"// A Portcullis model file. The language reference is docs/portcullis.md.
+//
+// Each rule derives its heads (left of ':-') for every way its body (right of ':-') matches.
+// Pass this file to `ctadl query --models` for its sources and sinks, and to
+// `ctadl index --models` for its propagations.
 
-    let legacy_name = "legacy_pcode";
+// A source: the return value of every method named `readData` is untrusted. `kind` is a label
+// you choose; a flow is reported when a source's kind reaches a sink of the same kind.
+source(F::return, kind = "input_data") :-
+  fun(F, name = N), regex_match(N, "readData");
 
-    match &args.cmd {
-        LegacyPcodeSubcommand::Index(index_args) => {
-            log::info!("Legacy Index: facts='{}'", index_args.facts_path.display());
+// A sink: the first argument of `executeQuery`. `name` is the simple name, so this selects every
+// `executeQuery` in the program. To pin down one method, test its full name instead:
+//   fun(F), F = "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"
+// On an instance method arg(0) is the receiver, so the first argument is arg(1).
+sink(F::arg(1), kind = "input_data") :-
+  fun(F, name = "executeQuery");
 
-            // 1. Import pcode facts
-            let import_args = ImportArgs {
-                artifact: index_args.facts_path.clone(),
-                name: Some(legacy_name.to_string()),
-                language: ImportLanguage::Pcode,
-                // This legacy path always re-imports.
-                force: true,
-                // Not an APK: this legacy path imports a directory of pcode facts.
-                no_native_libs: false,
-                native_abi: None,
-                include_framework: false,
-                jobs: 0,
-            };
-            import_artifact_to_store(&import_args)?;
+// A propagation: `canonicalize_url` returns what its first argument carries. This is a summary
+// for code CTADL cannot see, and takes effect at `ctadl index`.
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "canonicalize_url");
+"#;
 
-            // 2. Index the imported program
-            let index_args = IndexArgs {
-                name: legacy_name.to_string(),
-                progs: vec![legacy_name.to_string()],
-                summary: vec![],
-                no_native_libs: false,
-                models: args.models.clone(),
-                no_default_models: false,
-                no_jni_bridge: false,
-                no_jni_registry: false,
-                call: CallPolicyArgs {
-                    strategy: CallResolutionStrategy::Mixed,
-                    cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
-                    cha_threshold_interface: None,
-                    no_dispatch_models: false,
-                    no_dispatch_models_interface: false,
-                    dispatch_order: DispatchOrder::ModelFirst,
-                },
-                prune_unreachable_cfg_nodes: None,
-                alias_rule: None,
-                hybrid_context: HybridContext::default(),
-                context_join: ContextJoin::default(),
-                jobs: None,
-                lsm: false,
-                lsm_memtable_limit: None,
-                lsm_memory_budget: None,
-            };
-            index_artifacts_to_store(&index_args)?;
-        }
-        LegacyPcodeSubcommand::Query(query_args) => {
-            log::info!("Legacy Query: file='{}'", query_args.query_file.display());
-            if let Some(dir) = query_args.compute_slices {
-                log::warn!(
-                    "--compute-slices {:?} is currently ignored; the direction is controlled by the query file",
-                    dir
-                );
-            }
-            if query_args.no_compile_analysis {
-                log::warn!("--no-compile-analysis is currently ignored");
-            }
-
-            let mut models = args.models.clone();
-            models.push(query_args.query_file.clone());
-            let q_args = QueryArgs {
-                name: legacy_name.to_string(),
-                models,
-                output: PathBuf::from("results.sarif"),
-                sarif_profile: SarifProfile::Human,
-                dump_taint_graph: None,
-            };
-            query_project(&q_args)?;
-        }
-    }
-
+fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
+    std::fs::write(&args.output, MODEL_TEMPLATE)
+        .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
+    log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
 
@@ -1059,6 +1006,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             } else {
                 Storage::Memory
             },
+            mem2reg: args.mem2reg.0,
+            frame: args.frame,
         },
     )?;
     Ok(())
@@ -1334,6 +1283,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    /// `init-model` writes a file the loader accepts, so the first edit starts from one that works.
+    #[test]
+    fn the_model_template_loads() {
+        let file = ctadl_ascent::models::portcullis::PortcullisFile::from_text(
+            "model.ctadl",
+            MODEL_TEMPLATE,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(file.program.rules.len(), 3);
+    }
 
     #[test]
     fn sizes_parse() {

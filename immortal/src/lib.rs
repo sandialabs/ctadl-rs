@@ -1,3 +1,7 @@
+mod id;
+
+pub use id::{Id, IdInterner, Internable, Stats};
+
 use hashbrown::HashTable;
 use parking_lot::RwLock;
 use rustc_hash::FxBuildHasher;
@@ -20,11 +24,11 @@ impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
 
     #[inline]
     fn shard_index(&self, hash: u64) -> usize {
-        // Shard on the HIGH bits: hashbrown indexes its buckets with the LOW bits of
-        // the same hash, so sharding on the high bits keeps full entropy inside each
-        // shard's table (sharding on low bits would collapse every entry in a shard
-        // into the same handful of hashbrown buckets).
-        (hash >> 57) as usize % self.shards.len()
+        // Shard on the MIDDLE bits: hashbrown indexes its buckets with the low bits of
+        // the same hash and takes its 7-bit control tag from the top 7, so sharding on
+        // either would make those bits constant within a shard (crowding the buckets,
+        // or making the tag match about half of each probe group).
+        (hash >> 32) as usize % self.shards.len()
     }
 
     pub fn intern(&self, value: &T) -> &'static T
@@ -158,7 +162,6 @@ impl<'de> serde::Deserialize<'de> for StringRef {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::Deserialize;
         let s = String::deserialize(deserializer)?;
         Ok(StringRef::intern(&s))
     }

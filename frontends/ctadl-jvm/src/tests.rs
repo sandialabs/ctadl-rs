@@ -1,6 +1,6 @@
 use super::import_class;
 use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::Dispatch;
 
 /// A class file for `Demo` with a `public static` method for each
 /// `(name, descriptor, bytecode)`.
@@ -170,7 +170,7 @@ fn receiverless_invokedynamic_extern_class_matches_its_signature() {
     .expect("write class");
 
     let info = import_class(&path).expect("the class imports");
-    let VirtualMethodTable::Java { methods, .. } = &info.vmt else {
+    let Dispatch::Java { methods, .. } = &info.vmt.dispatch else {
         panic!("a Java VMT");
     };
     let (class, _, _, method) = methods

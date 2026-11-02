@@ -1,0 +1,9 @@
+// DroidBench ICC: a value put into an Intent extra is the source; Log.i is the sink.
+
+source(S::arg(2), kind = "DroidBenchIccExtra") :-
+  callsite(C, S, callee_string = F),
+  fun(F, name = "putExtra", parent = "Landroid/content/Intent;");
+
+sink(F::arg(1), kind = "LogLeak") :-
+  fun(F, name = "i", parent = "Landroid/util/Log;");
+

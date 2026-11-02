@@ -52,8 +52,8 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -413,11 +413,13 @@ fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
     let results = Mutex::new(Vec::with_capacity(items.len()));
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(index) else { break };
-                let result = f(item);
-                results.lock().unwrap().push((index, result));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else { break };
+                    let result = f(item);
+                    results.lock().unwrap().push((index, result));
+                }
             });
         }
     });

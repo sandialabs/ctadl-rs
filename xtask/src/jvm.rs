@@ -10,12 +10,12 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use jvm_reader::flow::compute_basic_blocks_for_method;
 use jvm_reader::types::CpEntry;
 use jvm_reader::{
-    collect_line_map_entries, disassemble_class_file, disassemble_jar_file, ClassFile,
-    ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location, MethodInfo,
+    ClassFile, ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location,
+    MethodInfo, collect_line_map_entries, disassemble_class_file, disassemble_jar_file,
 };
 
 use crate::regression::Outcome;
@@ -570,10 +570,10 @@ fn check_stack_slots(samples: &[Sample]) -> Result<()> {
                         for loc in df.sources.iter().chain(std::iter::once(&df.destination)) {
                             assert_normalized(loc, &mut saw_stack_slot)?;
                         }
-                        if let Location::StackSlot(id) = &df.destination {
-                            if !seen_dest_slots.insert(*id) {
-                                saw_duplicate_dest = true;
-                            }
+                        if let Location::StackSlot(id) = &df.destination
+                            && !seen_dest_slots.insert(*id)
+                        {
+                            saw_duplicate_dest = true;
                         }
                     }
                     if let Some(call) = &inst.call {
@@ -728,13 +728,13 @@ fn check_utf8_constants(samples: &[Sample]) -> Result<()> {
     }
     let mut unpaired: Vec<Vec<u16>> = Vec::new();
     for entry in cf.constant_pool.iter().flatten() {
-        if let CpEntry::Utf8(s) = entry {
-            if s.as_str().is_none() {
-                if !s.to_string_lossy().contains('\u{FFFD}') {
-                    bail!("an unpaired surrogate should read back lossily as U+FFFD");
-                }
-                unpaired.push(s.code_units().collect());
+        if let CpEntry::Utf8(s) = entry
+            && s.as_str().is_none()
+        {
+            if !s.to_string_lossy().contains('\u{FFFD}') {
+                bail!("an unpaired surrogate should read back lossily as U+FFFD");
             }
+            unpaired.push(s.code_units().collect());
         }
     }
     if unpaired.is_empty() {

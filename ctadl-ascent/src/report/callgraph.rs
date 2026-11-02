@@ -981,9 +981,9 @@ pub fn measure(
     matches: &crate::models::ProgramModelMatches,
 ) -> CallGraphReport {
     let top = opts.top;
-    let language = match &program_info.vmt {
-        ctadl_ir::call::VirtualMethodTable::Java { .. } => Language::Java,
-        ctadl_ir::call::VirtualMethodTable::Lua { .. } => Language::Lua,
+    let language = match &program_info.vmt.dispatch {
+        ctadl_ir::call::Dispatch::Java { .. } => Language::Java,
+        ctadl_ir::call::Dispatch::Lua { .. } => Language::Lua,
         // `callvirt` records no dispatch kind, so CIL has no per-kind split to report.
         _ => Language::Other,
     };
@@ -1770,7 +1770,8 @@ mod tests {
     use super::*;
     use ctadl_ir::mir::builder::FunctionBuilder;
     use ctadl_ir::mir::call::{
-        CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+        CallObject, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
+        VirtualMethodTable,
     };
     use ctadl_ir::mir::{Exp, FunctionData, Program};
 
@@ -1789,9 +1790,10 @@ mod tests {
                 JavaMethod(format!("{cls}->{name}()V").into()),
             )
         };
-        let vmt = VirtualMethodTable::Java {
-            // `LI;` itself declares no implementation. An interface method has no body, so
-            // it goes in `abstract_methods` below instead.
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
+            // `LI;->m` is abstract, so it is in `abstract_methods` below. The frontends also
+            // give it a row here, a CHA target with no body; it is left out so that the
+            // counts below are of implementations only.
             methods: vec![
                 method("LA;", "m"),
                 method("LB;", "m"),
@@ -1821,7 +1823,7 @@ mod tests {
                 JavaSignature("()V".into()),
             )],
             natives: Vec::new(),
-        };
+        });
 
         let mut f = FunctionData {
             name: "Lmain;->run()V".to_string(),

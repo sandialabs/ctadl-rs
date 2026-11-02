@@ -150,8 +150,8 @@ fn test_builder_convenience_methods() {
     let local_var = builder.new_local_var("test");
     let param_var = builder.new_param_var(ParameterIdx::new(0));
     let global_var = builder.new_global_var();
-    // Access path creation (offset-only)
-    let access_path = builder.new_access_path(local_var.clone(), [1, 2]);
+    // Address creation (offset-only)
+    let addr = builder.new_address(local_var.clone(), [1, 2]);
     // Expression creation
     let str_exp = builder.new_str_exp("hello");
     let bytes_exp = builder.new_bytes_exp(vec![1, 2, 3]);
@@ -161,9 +161,9 @@ fn test_builder_convenience_methods() {
     assert_eq!(param_var.to_string(), "@p0");
     assert_eq!(global_var.to_string(), "$globals");
 
-    // Access path base is the local `test`, followed by the two offsets.
-    assert_eq!(local_name(&locals, &access_path.base), "test");
-    assert_eq!(access_path.accesses.to_string(), ".[1].[2]");
+    // Address base is the local `test`, followed by the two offsets.
+    assert_eq!(local_name(&locals, &addr.base), "test");
+    assert_eq!(addr.accesses.to_string(), ".[1].[2]");
 
     match str_exp {
         Exp::Str(s) => assert_eq!(format!("{}", s), "hello"),

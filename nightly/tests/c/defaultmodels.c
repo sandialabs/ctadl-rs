@@ -1,5 +1,5 @@
 /* Exercises the SHIPPED native propagation defaults
- * (`ctadl-ascent/src/models/defaults/native-index.jsonl`).
+ * (`ctadl-ascent/src/models/defaults/native-index.ctadl`).
  *
  * This case supplies no propagation model of its own -- only a source on
  * produce() and a sink on consume(). Every step between them is a libc

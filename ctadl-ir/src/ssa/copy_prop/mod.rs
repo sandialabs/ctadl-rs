@@ -43,7 +43,7 @@ The pass is conservative and SSA-only:
   the [`StatementKind::ParamFlow`] round-trip that depends on them — are
   preserved.
 - Only bare variable copies propagate. Multi-source assigns, address-arithmetic
-  ([`Exp::AccessPath`]), constants, loads, and call results are never aliased:
+  ([`Exp::Address`]), constants, loads, and call results are never aliased:
   a phi operand and a copy target must both be plain variables for the rename to
   stay within SSA names.
 - A phi that survives (two or more distinct resolved operands) is kept, and

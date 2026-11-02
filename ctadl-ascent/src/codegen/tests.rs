@@ -179,6 +179,7 @@ fn test_basic2_source_sink() {
         actual_param: facts.actual_param,
         call: facts.call,
         assign: index_result.assign_like,
+        update_sans_path: index_result.update_sans_path,
         paths: facts.paths,
         external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]
@@ -413,7 +414,7 @@ fn string_constant_call_argument_emits_const_fact_without_actual_param() {
             .iter()
             .all(|(_, formal, _)| **formal != 0)
     );
-    let FlowVertex(var, path) = &facts.const_str_assign[0].1;
+    let FlowVertex(var, path, ..) = &facts.const_str_assign[0].1;
     assert!(path.is_empty());
     assert_eq!(
         var.as_call_arg()
@@ -564,13 +565,13 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let ss = SourceSinkQuery {
         source: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
+            vertex: FlowVertex::new(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Forward,
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(
+            vertex: FlowVertex::new(
                 FlowVariable::formal_index(RETURN_INDEX.into()),
                 fx::Path::empty(),
             ),
@@ -869,7 +870,7 @@ fn rta_keeps_only_allocated_implementers() {
             )
         })
         .collect();
-    let vmt = VirtualMethodTable::Java {
+    let vmt = VirtualMethodTable::new(Dispatch::Java {
         methods,
         hierarchy,
         // `I` is an interface declaring one abstract `m()V`: the shape a functional
@@ -881,7 +882,7 @@ fn rta_keeps_only_allocated_implementers() {
             JavaSignature(desc.clone()),
         )],
         natives: Default::default(),
-    };
+    });
 
     // A function whose body is `x = new A; x.m()`.
     let mut f = FunctionData {
@@ -959,7 +960,7 @@ mod ladder {
     use super::*;
     use crate::models::{DispatchModel, Disposition, ProgramModelMatches};
     use ctadl_ir::mir::call::{
-        JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+        Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 
     /// A hierarchy where `LI;->m()V` has `count` implementers, so the ladder has a target
@@ -980,7 +981,7 @@ mod ladder {
                 smallvec::smallvec![JavaClass("LI;".into())],
             );
         }
-        VirtualMethodTable::Java {
+        VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("LI;".into())],
@@ -990,7 +991,7 @@ mod ladder {
                 JavaSignature("()V".into()),
             )],
             natives: Vec::new(),
-        }
+        })
     }
 
     fn key() -> SignatureKey {
@@ -1462,7 +1463,7 @@ mod super_resolution {
         implementations: &[(&str, &str)],
         hierarchy: &[(&str, &[&str])],
     ) -> ClassHierarchyAnalysis {
-        let vmt = VirtualMethodTable::Java {
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
             methods: implementations
                 .iter()
                 .map(|(cls, name)| {
@@ -1486,7 +1487,7 @@ mod super_resolution {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        };
+        });
         ClassHierarchyAnalysis::new(&vmt, Default::default())
     }
 
@@ -1564,7 +1565,7 @@ mod super_resolution {
     /// The whole rung, at a call site: one `call` row, counted as an exact super.
     #[test]
     fn a_resolved_super_site_emits_one_edge() {
-        let vmt = VirtualMethodTable::Java {
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
             methods: vec![
                 (
                     JavaClass("LA;".into()),
@@ -1588,7 +1589,7 @@ mod super_resolution {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        };
+        });
 
         let mut f = FunctionData {
             name: "LB;->caller()V".to_string(),

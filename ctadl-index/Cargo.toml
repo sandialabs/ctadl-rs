@@ -16,9 +16,8 @@ ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 datafusion-common = "55"
 derive_builder = "0.20"
 dex-reader = { path = "../readers/dex-reader" }
-elsa = "1.11"
 hashbrown = "0.16"
-immortal = { path = "../immortal" }
+immortal = { path = "../immortal", features = ["serde"] }
 internment = { version = "0.8", features = ["arc", "serde"] }
 itertools = "0.14"
 json5 = "1.3"
@@ -38,7 +37,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
 source-info = { path = "../source-info", features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
-tailshare = { path = "../tailshare", features = ["serde"] }
 thiserror = "2"
 
 [dev-dependencies]

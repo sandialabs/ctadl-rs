@@ -1,4 +1,4 @@
-// The default .NET models (cil-index.jsonl): taint through library calls
+// The default .NET models (cil-index.ctadl): taint through library calls
 // the frontend stubs, at the call shapes C# compiles them to. Each scenario sinks into its own
 // function.
 using System;

@@ -1,10 +1,10 @@
 //! Ported from Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs (read
 //! subset). Skipped: DefineSecurityDeclarationByBlob (writes a module).
 
-use super::{read_resource, Test};
-use cil_reader::model::custom_attributes::SecurityDeclarationValue;
-use cil_reader::model::CaValue;
+use super::{Test, read_resource};
 use cil_reader::Module;
+use cil_reader::model::CaValue;
+use cil_reader::model::custom_attributes::SecurityDeclarationValue;
 
 // SecurityAction values.
 const DENY: u16 = 4;

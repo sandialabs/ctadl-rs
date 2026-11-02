@@ -157,10 +157,6 @@
         packages.gap-gen = cil.gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
-        # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
-        packages.legacy-pcode-cli = pkgs.writeShellScriptBin "ctadl-legacy-pcode-cli" ''
-          ${self.packages.${system}.default}/bin/ctadl legacy-pcode-cli "$@"
-        '';
         packages.checksarif = checksarif;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
@@ -242,12 +238,6 @@
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
                   export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
-                  # The `models:*` checks hold the model files ctadl ships to
-                  # `ctadl-model-generator.schema.json`. Both live in the
-                  # ctadl-ascent crate, outside ./nightly, and this sandbox has
-                  # no source tree, so point xtask at them explicitly or they
-                  # would self-skip here -- which is the one place the drift is
-                  # meant to be caught.
                   # The `cil:*` checks read Cecil's test corpus (the pinned
                   # input), the Cecil goldens and the built fixtures, and diff
                   # against the `cecil-dump` that testEnv puts on PATH.
@@ -255,7 +245,6 @@
                     --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
-                    --models-dir ${./ctadl-ascent/src/models} \
                     --cil-goldens ${./xtask/cil-goldens} \
                     --cecil-src ${cecil} \
                     --cil-fixtures ${cil.cilFixtures}

@@ -245,7 +245,7 @@ where
 {
     /// Forward map: `(F,V)` -> the `(P, M, Fp)` leaves for that group. It serves the `none`,
     /// `0_1`, `0_1_2`, and existence views.
-    fwd: Map<(F, V), Group<P, M, Fp>>,
+    pub(crate) fwd: Map<(F, V), Group<P, M, Fp>>,
     len: usize,
 }
 
@@ -264,6 +264,15 @@ where
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Visits every row.
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
+        for ((fk, v), group) in &self.fwd {
+            for (p, m, fp) in group.iter() {
+                f((fk, v, p, m, fp));
+            }
+        }
     }
 
     /// Number of distinct `(F, V)` groups. That is the number of distinct variables reached by
@@ -327,7 +336,7 @@ where
     }
 
     /// Insert a full tuple. Returns true if it was new to *this* store.
-    fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
+    pub(crate) fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
         let (f, v, p, m, fp) = key;
         let group = self.fwd.entry((f.clone(), v.clone())).or_default();
         if group.insert((p.clone(), m.clone(), fp.clone())) {
@@ -339,7 +348,7 @@ where
     }
 
     /// Merge `from` into `self`, taking the union. The delta->total move uses this.
-    fn absorb(&mut self, from: &mut Self) {
+    pub(crate) fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
         for ((f, v), fromgroup) in from.fwd.drain() {
             match self.fwd.entry((f, v)) {
@@ -358,7 +367,7 @@ where
 
 /// Byte estimate for the `locals` store, broken down per structure. See
 /// [`LocalsIndCommon::heap_report`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HeapReport {
     /// Logical row count. Equals the size of `locals`.
     pub rows: usize,

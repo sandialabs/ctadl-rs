@@ -113,31 +113,31 @@ fn keeps_temp_read_by_terminator() {
     assert_eq!(block_kinds(&f, 0).len(), 1);
 }
 
-/// A bare variable read expressed as a pathless [`Exp::AccessPath`] rather than
+/// A bare variable read expressed as an offset-less [`Exp::Address`] rather than
 /// an [`Exp::Variable`]. Frontends can emit either for the same read.
-fn read_access_path(name: &str) -> Exp {
-    Exp::AccessPath(AccessPath::without_fields(local(name)))
+fn read_bare_address(name: &str) -> Exp {
+    Exp::Address(Address::without_offsets(local(name)))
 }
 
 #[test]
-fn terminator_iter_src_var_yields_access_path_base() {
-    // `return <access-path t>` reads t, even though the operand is an
-    // Exp::AccessPath rather than an Exp::Variable.
+fn terminator_iter_src_var_yields_address_base() {
+    // `return <address t>` reads t, even though the operand is an
+    // Exp::Address rather than an Exp::Variable.
     let term = TerminatorKind::Return {
-        args: smallvec![read_access_path("t")],
+        args: smallvec![read_bare_address("t")],
     };
     let reads: Vec<VariableRef> = term.iter_src_var().cloned().collect();
     assert_eq!(reads, vec![local("t")]);
 }
 
 #[test]
-fn keeps_temp_returned_via_access_path() {
-    // t = y.f; return <access-path t>
-    // The return operand is a pathless Exp::AccessPath, so t is used and its
+fn keeps_temp_returned_via_address() {
+    // t = y.f; return <address t>
+    // The return operand is an offset-less Exp::Address, so t is used and its
     // defining Load must survive.
     let mut f = one_block_function(vec![load("t", "y", "f")]);
     f.blocks[BasicBlockIdx::ZERO].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-        args: smallvec![read_access_path("t")],
+        args: smallvec![read_bare_address("t")],
     }));
     eliminate_dead_temps_function(&mut f);
     assert_eq!(dests(&f, 0), vec![local("t")]);
@@ -220,7 +220,7 @@ fn call_arg_keeps_feeding_temp_alive() {
 fn keeps_store() {
     // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
-        AccessPath::without_fields(VariableRef::new_global()),
+        Address::without_offsets(VariableRef::new_global()),
         FieldRef::symbol("f"),
         read("v"),
     ))]);

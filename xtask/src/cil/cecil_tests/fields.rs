@@ -3,11 +3,11 @@
 //! Skipped: FieldRVAAlignment (round-trips through Write), UnattachedField
 //! (constructs definitions).
 
-use super::{read_fixture, read_resource, Test};
-use cil_reader::model::marshal::{native_type, MarshalInfo};
-use cil_reader::model::{ConstantValue, FieldDef, TypeDef, TypeSig};
+use super::{Test, read_fixture, read_resource};
 use cil_reader::Module;
 use cil_reader::TokenType;
+use cil_reader::model::marshal::{MarshalInfo, native_type};
+use cil_reader::model::{ConstantValue, FieldDef, TypeDef, TypeSig};
 
 fn get_field<'a>(ty: &TypeDef<'a>, name: &str) -> FieldDef<'a> {
     ty.fields()

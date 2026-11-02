@@ -157,3 +157,128 @@ fn provenance_says_when_it_cannot_check_staleness() {
         }]
     );
 }
+
+/// A summary project's notifications reach the app through its summaries, so the app's index
+/// repeats them, naming the project in their properties as it names an import for its imports'
+/// notifications, and the app's query reports them under their own descriptor. Indexing the app
+/// again without the summary project drops the summary project's.
+#[test]
+fn summary_project_notifications_reach_the_app_and_its_sarif() {
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+    use ctadl_import::notifications::{self, Level, Notifications};
+
+    import_lua(
+        "notes_lib",
+        "local function f(x)\n  return x\nend\nreturn f\n",
+    );
+    let summary = AnalysisProject::try_create("notes_sp", &["notes_lib"], SubImports::All)
+        .expect("summary project");
+    cli::index(&summary, &[], &[], false, cli::IndexOptions::default()).expect("indexing sp");
+    // Lua has no stack slots to promote, so the note stands in for one mem2reg would write.
+    let note = "mem2reg full: f: frame address escapes (call input); flows through those slots \
+                may be missed";
+    let mut summary_notes = Notifications::default();
+    summary_notes.push(
+        &notifications::STACK_SLOTS_PROMOTED_FULLY,
+        notifications::DEFAULT_MESSAGE,
+        Level::Warning,
+        vec!["f".into(), "call input".into()],
+        [("callInput".to_string(), serde_json::json!(1))].into(),
+    );
+    let summary_index = summary.index_path().expect("summary index path");
+    summary_notes.save(&summary_index).expect("writing note");
+
+    let app_import = import_lua("notes_app", "print(io.read())\n");
+    let mut import_notes = Notifications::default();
+    import_notes.push(
+        &notifications::MERGED_CLASSES_SPLIT,
+        notifications::DEFAULT_MESSAGE,
+        Level::Note,
+        vec!["3".into()],
+        Default::default(),
+    );
+    import_notes
+        .save(app_import.import_path())
+        .expect("writing import note");
+    let app = AnalysisProject::try_create("notes_app", &["notes_app"], SubImports::All)
+        .expect("app project");
+    let app_index = app.index_path().expect("app index path");
+    let from_import = "split 3 merged classes";
+    cli::index(
+        &app,
+        &["notes_sp".to_string()],
+        &[],
+        false,
+        cli::IndexOptions::default(),
+    )
+    .expect("indexing app");
+    let texts = |n: &Notifications| -> Vec<String> {
+        n.notifications()
+            .iter()
+            .map(|n| notifications::text(n).to_string())
+            .collect()
+    };
+    let app_notes = Notifications::load(&app_index).expect("reading app notes");
+    assert_eq!(texts(&app_notes), [note, from_import]);
+    let origin = |descriptor, key| {
+        let n = app_notes.of(descriptor).next().expect("carried");
+        notifications::property(n, key).cloned()
+    };
+    let carried = app_notes
+        .of(&notifications::STACK_SLOTS_PROMOTED_FULLY)
+        .next()
+        .expect("the summary project's note");
+    assert_eq!(notifications::property_u64(carried, "callInput"), Some(1));
+    assert_eq!(
+        carried.message.arguments,
+        Some(vec!["f".to_string(), "call input".to_string()])
+    );
+    assert_eq!(
+        origin(&notifications::STACK_SLOTS_PROMOTED_FULLY, "summaryProject"),
+        Some(serde_json::json!("notes_sp"))
+    );
+    assert_eq!(
+        origin(&notifications::MERGED_CLASSES_SPLIT, "import"),
+        Some(serde_json::json!("notes_app"))
+    );
+
+    let sarif = store_dir().join("notes_app.sarif");
+    cli::query(&app, &[], &sarif, SarifProfile::default(), None).expect("querying");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
+            .expect("parsing sarif");
+    let run = &doc["runs"][0];
+    let warnings: Vec<&str> = run["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .expect("toolExecutionNotifications")
+        .iter()
+        .filter(|n| n["descriptor"]["id"] == notifications::STACK_SLOTS_PROMOTED_FULLY.id)
+        .map(|n| {
+            assert_eq!(n["level"], "warning");
+            n["message"]["text"].as_str().expect("message text")
+        })
+        .collect();
+    assert_eq!(warnings, [note]);
+    let declared: Vec<&str> = run["tool"]["driver"]["notifications"]
+        .as_array()
+        .expect("driver notifications")
+        .iter()
+        .map(|d| d["id"].as_str().expect("descriptor id"))
+        .collect();
+    for id in [
+        notifications::STACK_SLOTS_PROMOTED_FULLY.id,
+        notifications::MERGED_CLASSES_SPLIT.id,
+    ] {
+        assert_eq!(
+            declared.iter().filter(|d| **d == id).count(),
+            1,
+            "{id} is declared once"
+        );
+    }
+
+    cli::index(&app, &[], &[], false, cli::IndexOptions::default()).expect("reindexing app");
+    assert_eq!(
+        texts(&Notifications::load(&app_index).expect("reading app notes")),
+        [from_import]
+    );
+}

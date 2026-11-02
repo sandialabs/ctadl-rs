@@ -14,7 +14,7 @@ use lsm::lsm_col;
 /// A 16-byte column: forces a 2-slot `LsmCol` encoding (size > 8 bytes).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 struct Lab(u64, u64);
-lsm_col!(Lab, 2);
+lsm_col!(Lab, 2, [u64, u64]);
 
 // ---- LSM-backed program -------------------------------------------------------
 ascent! {

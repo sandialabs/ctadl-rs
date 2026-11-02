@@ -52,7 +52,7 @@ destination `x` it defines, so everything in `y` that the update did not overwri
 as well. Naming the two apart is also what lets SSA give the destination a fresh version of the
 variable the source reads, which is why `x = [x.foo := v]` is meaningful rather than circular.
 
-The path may carry offsets (`x = [y.[8].foo := v]`), which are address arithmetic, but it names
+The source's path may carry offsets (`x = [y.[8].foo := v]`), which are address arithmetic, but it names
 exactly one field: the form denotes a single update instruction, and a nested update would instead
 have to rebuild each enclosing aggregate. Globals cannot be updated, since a global is itself a
 field of the global heap.
@@ -126,8 +126,9 @@ use internment::ArcIntern;
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::parse::{Ap, LineIndex, Pos};
+use crate::parse::{LineIndex, Operand, Pos};
 use ctadl_ir::index::idx::Idx;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::mir::visit::MutVisitor;
 use ctadl_ir::mir::*;
 use ctadl_ir::ssa;
@@ -154,8 +155,8 @@ impl Display for PortBase {
     }
 }
 
-/// A port is an access path in a summary or source-sink requirement. See
-/// [`SummaryRequires`] and [`EndpointRequires`]
+/// A port is an access path in a summary or source-sink requirement: a [`PortBase`] (a variable,
+/// or the return value) and its path, `fields`. See [`SummaryRequires`] and [`EndpointRequires`]
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Port {
@@ -387,8 +388,8 @@ pub fn compile_program_contents(
 
     ctx.program.verify()?;
     let program_info = ProgramInfo {
+        vmt: VirtualMethodTable::named_by_ir(&ctx.program),
         program: ctx.program,
-        vmt: Default::default(),
         source_info: ctx.source_info_builder.finish(),
     };
     result.program_info = program_info;
@@ -647,25 +648,59 @@ impl FlowyCtx {
         let local_table = &mut func.locals;
         match &stmt.kind {
             parse::StmtKind::Assign { dest, sources } => {
-                let (dst_base, dst_segments) = parse_path(locals, local_table, dest)?;
+                let dest = parse_access_path(locals, local_table, dest)?;
                 // src is comma-separated; a field read on the RHS lowers to loads.
                 let src = {
                     let mut result = Vec::new();
                     for p in sources {
-                        let r = parse_ref(locals, local_table, p, defined_functions)?;
-                        result.push(lower_ref(
-                            &mut self.counter,
-                            data,
-                            local_table,
-                            source_info,
-                            r,
-                        ));
+                        // `value(x.f)`: read the access path into a variable, then take its value.
+                        let (r, value) = match p {
+                            Operand::Value(ap, _) => {
+                                let ap = parse_access_path(locals, local_table, ap)?;
+                                (ParsedRef::AccessPath(ap), true)
+                            }
+                            p => (parse_ref(locals, local_table, p, defined_functions)?, false),
+                        };
+                        let mut e = lower_ref(&mut self.counter, data, local_table, source_info, r);
+                        if value {
+                            let v = match e {
+                                Exp::Variable(v) => v,
+                                e => {
+                                    let t = VariableRef::new_local_idx(
+                                        local_table
+                                            .get_or_intern(&format!("t{}?", self.counter.next())),
+                                    );
+                                    data.push_back(Statement::new(
+                                        StatementKind::assign(t.clone(), [e]),
+                                        source_info,
+                                    ));
+                                    t
+                                }
+                            };
+                            e = Exp::Value(v);
+                        }
+                        result.push(e);
                     }
                     result
                 };
-                if dst_segments.is_empty() {
+                // A store takes a variable: `x.f = value(y)` is `t = value(y); x.f = t`.
+                let src = if !dest.is_pathless()
+                    && let [e @ Exp::Value(_)] = src.as_slice()
+                {
+                    let t = VariableRef::new_local_idx(
+                        local_table.get_or_intern(&format!("t{}?", self.counter.next())),
+                    );
                     data.push_back(Statement::new(
-                        StatementKind::assign(dst_base, src),
+                        StatementKind::assign(t.clone(), [e.clone()]),
+                        source_info,
+                    ));
+                    vec![Exp::Variable(t)]
+                } else {
+                    src
+                };
+                if dest.is_pathless() {
+                    data.push_back(Statement::new(
+                        StatementKind::assign(dest.base, src),
                         source_info,
                     ));
                 } else if src.len() > 1 {
@@ -674,22 +709,16 @@ impl FlowyCtx {
                         "cannot update a field with multiple sources",
                     ));
                 } else {
-                    // A field/offset write. A location with intermediate symbolic dereferences
+                    // A field/offset write. An access path with intermediate symbolic dereferences
                     // needs loads before the store, so lower it with `store_access_path`.
-                    check_store_target(&dst_segments, stmt.pos)?;
+                    check_store_target(&dest.segments, stmt.pos)?;
                     let mut stmts = Vec::new();
                     let counter = &mut self.counter;
-                    ctadl_ir::mir::store_access_path(
-                        dst_base,
-                        dst_segments,
-                        src[0].clone(),
-                        &mut stmts,
-                        || {
-                            VariableRef::new_local_idx(
-                                local_table.get_or_intern(&format!("t{}?", counter.next())),
-                            )
-                        },
-                    );
+                    ctadl_ir::mir::store_access_path(dest, src[0].clone(), &mut stmts, || {
+                        VariableRef::new_local_idx(
+                            local_table.get_or_intern(&format!("t{}?", counter.next())),
+                        )
+                    });
                     for mut s in stmts {
                         s.source_info = source_info;
                         data.push_back(s);
@@ -711,12 +740,12 @@ impl FlowyCtx {
                          form `g.f = v`",
                     ));
                 }
-                let (dst_base, dst_segments) = parse_path(locals, local_table, dest)?;
-                let (src_base, mut src_segments) = parse_path(locals, local_table, source)?;
+                let dest = parse_access_path(locals, local_table, dest)?;
+                let mut source = parse_access_path(locals, local_table, source)?;
                 // The destination is the variable the update *defines* — the fresh version of the
                 // aggregate — so it is a bare name. The path being written belongs to the source,
                 // which is where it reads.
-                if !dst_segments.is_empty() {
+                if !dest.is_pathless() {
                     return Err(compile_error(
                         stmt.pos,
                         "an update's destination is the variable it defines, so it takes no \
@@ -726,20 +755,20 @@ impl FlowyCtx {
                 // An `Update` writes exactly one symbolic field, so the source names exactly one.
                 // A nested update would have to rebuild every enclosing aggregate, which is a
                 // chain of updates rather than the single instruction this syntax denotes.
-                let Some(i) = src_segments.iter().position(PathSegment::is_symbol) else {
+                let Some(i) = source.segments.iter().position(PathSegment::is_symbol) else {
                     return Err(compile_error(
                         stmt.pos,
                         "an update must write a field: write `x = [y.f := v]`",
                     ));
                 };
-                if src_segments[i + 1..].iter().any(PathSegment::is_symbol) {
+                if source.segments[i + 1..].iter().any(PathSegment::is_symbol) {
                     return Err(compile_error(
                         stmt.pos,
                         "an update writes a single field, so its source names one: write \
                          `x = [y.f := v]`",
                     ));
                 }
-                let PathSegment::Symbol(field) = src_segments.remove(i) else {
+                let PathSegment::Symbol(field) = source.segments.remove(i) else {
                     unreachable!()
                 };
                 let value = {
@@ -751,17 +780,16 @@ impl FlowyCtx {
                 // it through `load_access_path` merges consecutive offsets and emits nothing.
                 let mut offsets = Vec::new();
                 let counter = &mut self.counter;
-                let addr =
-                    ctadl_ir::mir::load_access_path(src_base, src_segments, &mut offsets, || {
-                        VariableRef::new_local_idx(
-                            local_table.get_or_intern(&format!("t{}?", counter.next())),
-                        )
-                    });
+                let addr = ctadl_ir::mir::load_access_path(source, &mut offsets, || {
+                    VariableRef::new_local_idx(
+                        local_table.get_or_intern(&format!("t{}?", counter.next())),
+                    )
+                });
                 debug_assert!(offsets.is_empty(), "an offset-only path emits no loads");
                 data.push_back(Statement::new(
                     StatementKind::update(
-                        AccessPath {
-                            base: dst_base,
+                        Address {
+                            base: dest.base,
                             accesses: addr.accesses,
                         },
                         addr.base,
@@ -772,8 +800,8 @@ impl FlowyCtx {
                 ));
             }
             parse::StmtKind::AssignCall { dest, callee, args } => {
-                let (lhs_base, lhs_segments) = parse_path(locals, local_table, dest)?;
-                let callee = parse_path(locals, local_table, callee)?;
+                let dest = parse_access_path(locals, local_table, dest)?;
+                let callee = parse_access_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
                 let style = lower_call_style(
                     &mut self.counter,
@@ -822,27 +850,21 @@ impl FlowyCtx {
 
                 // assign the temporary to the field (if applicable), lowering any intermediate
                 // dereferences into loads plus a store.
-                check_store_target(&lhs_segments, stmt.pos)?;
+                check_store_target(&dest.segments, stmt.pos)?;
                 let mut stmts = Vec::new();
                 let counter = &mut self.counter;
-                ctadl_ir::mir::store_access_path(
-                    lhs_base,
-                    lhs_segments,
-                    Exp::Variable(tmp),
-                    &mut stmts,
-                    || {
-                        VariableRef::new_local_idx(
-                            local_table.get_or_intern(&format!("t{}?", counter.next())),
-                        )
-                    },
-                );
+                ctadl_ir::mir::store_access_path(dest, Exp::Variable(tmp), &mut stmts, || {
+                    VariableRef::new_local_idx(
+                        local_table.get_or_intern(&format!("t{}?", counter.next())),
+                    )
+                });
                 for mut s in stmts {
                     s.source_info = source_info;
                     data.push_back(s);
                 }
             }
             parse::StmtKind::Call { callee, args } => {
-                let callee = parse_path(locals, local_table, callee)?;
+                let callee = parse_access_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
 
                 let style = lower_call_style(
@@ -886,7 +908,7 @@ impl FlowyCtx {
                             ));
                         }
                     }
-                    // `t0 = x.y.z`, loading the port's field path if any.
+                    // `t0 = x.y.z`, loading through the port's path if it has fields.
                     if let Some(port) = port_ref {
                         let port_val =
                             lower_ref(&mut self.counter, data, local_table, source_info, port);
@@ -950,9 +972,9 @@ struct BlockLabel(String);
 
 /// A summary access path is parsed into a port, which is a spec for the parameters or return value
 /// of a function.
-fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyError> {
-    let name = path.base.name;
-    let field_accesses = path_segments(&path.segments)?;
+fn parse_summary_ap(env: &Env, ap: &parse::AccessPath<'_>) -> Result<Port, FlowyError> {
+    let name = ap.base.name;
+    let field_accesses = path_segments(&ap.segments)?;
     if name == "return" {
         return Ok(Port {
             base: PortBase::Return,
@@ -977,7 +999,7 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
     }
 }
 
-/// Converts the segments of a path, rejecting `.*`.
+/// Converts a path (the segments of a syntactic access path), rejecting `.*`.
 ///
 /// The grammar accepts `.*`, but flowy has no wildcard field, so there is no [`PathSegment`] to
 /// return for one: it is a positioned compile error.
@@ -1004,22 +1026,22 @@ fn compile_error(pos: Pos, message: impl Into<String>) -> FlowyError {
     }
 }
 
-/// A parsed operand: either a non-path value (constant / function pointer) or an access path
-/// (`ident ~ p*`). A field read is not expressible as an [`Exp`], so an access path with fields
-/// must be lowered into loads (see [`lower_ref`]) before it can be used as an rvalue; when used
-/// as an lvalue or callee its path is consumed directly.
+/// A parsed operand: either a value (constant / function pointer) or an [`AccessPath`]. A field
+/// read is not expressible as an [`Exp`], so an access path with fields must be lowered into loads
+/// (see [`lower_ref`]) before it can be used as an rvalue; when used as an lvalue or callee its
+/// path is consumed directly.
 enum ParsedRef {
     Value(Exp),
-    /// A base variable plus a (possibly mixed) sequence of path segments. Symbolic segments are
+    /// An access path, whose path may mix offsets and symbolic fields. Symbolic segments are
     /// resolved into loads by [`lower_ref`] (rvalue) or lowered to a store/callee elsewhere.
-    Ap(VariableRef, ThinVec<PathSegment>),
+    AccessPath(AccessPath),
 }
 
 impl std::fmt::Display for ParsedRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParsedRef::Value(e) => write!(f, "{e}"),
-            ParsedRef::Ap(base, segments) => {
+            ParsedRef::AccessPath(AccessPath { base, segments }) => {
                 write!(f, "{base}")?;
                 for s in segments {
                     write!(f, ".{s}")?;
@@ -1038,7 +1060,7 @@ fn label_string(local_table: &Locals, r: &ParsedRef) -> String {
     use std::fmt::Write as _;
     match r {
         ParsedRef::Value(e) => format!("{e}"),
-        ParsedRef::Ap(base, segments) => {
+        ParsedRef::AccessPath(AccessPath { base, segments }) => {
             let mut s = String::new();
             match &base.variable {
                 Variable::Local(idx) => {
@@ -1071,9 +1093,9 @@ fn lower_ref(
 ) -> Exp {
     match r {
         ParsedRef::Value(e) => e,
-        ParsedRef::Ap(base, segments) => {
+        ParsedRef::AccessPath(ap) => {
             let mut loads = Vec::new();
-            let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
+            let addr = ctadl_ir::mir::load_access_path(ap, &mut loads, || {
                 VariableRef::new_local_idx(
                     local_table.get_or_intern(&format!("t{}?", counter.next())),
                 )
@@ -1082,23 +1104,22 @@ fn lower_ref(
                 s.source_info = source_info;
                 data.push_back(s);
             }
-            Exp::access_path(addr)
+            Exp::address(addr)
         }
     }
 }
 
-/// Lowers a parsed callee `base ~ segments` into an offset-only callee [`AccessPath`], emitting
-/// loads (appended to `data`) for any symbolic dereferences (a function pointer read from a field).
+/// Lowers a parsed callee access path into a callee [`Address`], emitting loads (appended to
+/// `data`) for any symbolic dereferences (a function pointer read from a field).
 fn lower_callee_addr(
     counter: &mut Counter,
     data: &mut BasicBlockData,
     local_table: &mut Locals,
     source_info: SourceInfo,
-    base: VariableRef,
-    segments: ThinVec<PathSegment>,
-) -> AccessPath {
+    callee: AccessPath,
+) -> Address {
     let mut loads = Vec::new();
-    let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
+    let addr = ctadl_ir::mir::load_access_path(callee, &mut loads, || {
         VariableRef::new_local_idx(local_table.get_or_intern(&format!("t{}?", counter.next())))
     });
     for mut s in loads {
@@ -1109,24 +1130,25 @@ fn lower_callee_addr(
 }
 
 /// Chooses how to call `callee`: directly when it names one of `builtins` or a function defined in
-/// this program, otherwise through a function pointer, lowering any symbolic derefs in the callee
-/// path to loads that leave an offset-only callee.
+/// this program, otherwise through a function pointer, lowering any symbolic derefs in the callee's
+/// path to loads that leave a callee [`Address`].
 fn lower_call_style(
     counter: &mut Counter,
     data: &mut BasicBlockData,
     local_table: &mut Locals,
     source_info: SourceInfo,
-    (variable, segments): (VariableRef, ThinVec<PathSegment>),
+    callee: AccessPath,
     builtins: &[&str],
     defined_functions: &HashSet<String>,
 ) -> CallStyle {
-    if !segments.is_empty() {
-        let callee = lower_callee_addr(counter, data, local_table, source_info, variable, segments);
+    if !callee.is_pathless() {
+        let callee = lower_callee_addr(counter, data, local_table, source_info, callee);
         return CallStyle::FuncPtrCall {
             callee,
             signature: None,
         };
     }
+    let variable = callee.base;
     if let Variable::Local(idx) = &variable.variable {
         let name = local_table.name(*idx);
         if builtins.contains(&name) || defined_functions.contains(name) {
@@ -1136,12 +1158,12 @@ fn lower_call_style(
         }
     }
     CallStyle::FuncPtrCall {
-        callee: AccessPath::without_fields(variable),
+        callee: Address::without_offsets(variable),
         signature: None,
     }
 }
 
-/// Rejects a store whose target is an offset-only location with no symbolic field (e.g. `x.[10]`).
+/// Rejects a store whose target path is offset-only, with no symbolic field (e.g. `x.[10]`).
 /// A store always writes a symbolic field; a write to a bare offset address is a memory write that
 /// must spell its dereference explicitly (e.g. `x.[10].deref = ..`).
 fn check_store_target(segments: &[PathSegment], pos: Pos) -> Result<(), FlowyError> {
@@ -1155,31 +1177,33 @@ fn check_store_target(segments: &[PathSegment], pos: Pos) -> Result<(), FlowyErr
     Ok(())
 }
 
-/// Whether a path's variable is a global. A global is modeled as a symbolic field of the global
-/// heap, so its name contributes a leading path segment that belongs to the variable itself rather
-/// than to any field path spelled after it.
-fn names_global(env: &Env, path: &parse::Path<'_>) -> bool {
-    let name = path.base.name;
+/// Whether an access path's variable is a global. A global is modeled as a symbolic field of the
+/// global heap, so its name contributes a leading path segment that belongs to the variable itself
+/// rather than to any path spelled after it.
+fn names_global(env: &Env, ap: &parse::AccessPath<'_>) -> bool {
+    let name = ap.base.name;
     !env.parameters.contains_key(name) && env.globals.contains(name)
 }
 
-/// A regular access path is variable + fields (as opposed to a summary access path)
-fn parse_path(
+/// Resolves a syntactic access path in a function body (as opposed to a summary access path, see
+/// [`parse_summary_ap`]) to an [`AccessPath`]. A global becomes the global heap with the global's
+/// name as the path's leading field.
+fn parse_access_path(
     env: &Env,
     local_table: &mut Locals,
-    path: &parse::Path<'_>,
-) -> Result<(VariableRef, ThinVec<PathSegment>), FlowyError> {
-    let name = path.base.name;
-    let field_accesses = path_segments(&path.segments)?;
+    ap: &parse::AccessPath<'_>,
+) -> Result<AccessPath, FlowyError> {
+    let name = ap.base.name;
+    let field_accesses = path_segments(&ap.segments)?;
     Ok(if let Some(v) = env.parameters.get(name) {
-        (v.clone(), field_accesses)
+        AccessPath::new(v.clone(), field_accesses)
     } else if env.globals.contains(name) {
         let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
         global_field_accesses.extend(field_accesses);
-        (VariableRef::new_global(), global_field_accesses)
+        AccessPath::new(VariableRef::new_global(), global_field_accesses)
     } else {
         // treat it as local
-        (
+        AccessPath::new(
             VariableRef::new_local_idx(local_table.get_or_intern(name)),
             field_accesses,
         )
@@ -1189,13 +1213,13 @@ fn parse_path(
 fn parse_ref(
     env: &Env,
     local_table: &mut Locals,
-    ap: &Ap<'_>,
+    operand: &Operand<'_>,
     defined_functions: &HashSet<String>,
 ) -> Result<ParsedRef, FlowyError> {
-    Ok(match ap {
-        Ap::Int(i) => ParsedRef::Value(Exp::new_int(*i)),
-        Ap::Str(s) => ParsedRef::Value(Exp::Str((*s).into())),
-        Ap::FunctionPtr(f) => {
+    Ok(match operand {
+        Operand::Int(i) => ParsedRef::Value(Exp::new_int(*i)),
+        Operand::Str(s) => ParsedRef::Value(Exp::Str((*s).into())),
+        Operand::FunctionPtr(f) => {
             if !defined_functions.contains(f.name) {
                 log::warn!("function '{}' is not defined", f.name);
             }
@@ -1203,9 +1227,12 @@ fn parse_ref(
                 f.name,
             ))))
         }
-        Ap::Path(path) => {
-            let (base, segments) = parse_path(env, local_table, path)?;
-            ParsedRef::Ap(base, segments)
+        Operand::AccessPath(ap) => ParsedRef::AccessPath(parse_access_path(env, local_table, ap)?),
+        Operand::Value(_, pos) => {
+            return Err(compile_error(
+                *pos,
+                "`value(..)` is only an assignment source: write `t = value(x); f(t)`",
+            ));
         }
     })
 }
@@ -1213,11 +1240,11 @@ fn parse_ref(
 fn parse_actuals(
     locals: &Env,
     local_table: &mut Locals,
-    args: &[Ap<'_>],
+    args: &[Operand<'_>],
     defined_functions: &HashSet<String>,
 ) -> Result<Vec<ParsedRef>, FlowyError> {
     args.iter()
-        .map(|ap| parse_ref(locals, local_table, ap, defined_functions))
+        .map(|operand| parse_ref(locals, local_table, operand, defined_functions))
         .collect()
 }
 
@@ -1371,7 +1398,7 @@ mod path_grammar_tests {
         compile_program_contents("test.tnt", src)
     }
 
-    /// Every access-path segment flowy parses, in source order.
+    /// Every path segment flowy parses, in source order.
     fn segments_of(prog: &FlowyProgram) -> Vec<PathSegment> {
         let mut segs = Vec::new();
         for reqs in prog.requirements.summary_requires.requires.values() {

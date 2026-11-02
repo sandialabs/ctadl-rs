@@ -2,7 +2,7 @@
 // Dataflow/Call/Other kind and source/destination locations.
 
 use crate::error::{ClassFileError, ClassFileResult, MethodContext};
-use crate::parse_utils::{read_i32_be, read_u16_be, read_u8};
+use crate::parse_utils::{read_i32_be, read_u8, read_u16_be};
 use crate::parser::ClassFileParser;
 use crate::types::{ClassFile, CpEntry, MethodInfo};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -418,20 +418,20 @@ pub fn compute_basic_blocks_for_method<'a>(
 
         // Branch successors.
         for &t in &meta.branch_targets {
-            if let Some(&succ_idx) = pc_to_block_index.get(&t) {
-                if !block.successors.contains(&succ_idx) {
-                    block.successors.push(succ_idx);
-                }
+            if let Some(&succ_idx) = pc_to_block_index.get(&t)
+                && !block.successors.contains(&succ_idx)
+            {
+                block.successors.push(succ_idx);
             }
         }
 
         // Fall-through successor.
-        if meta.falls_through && end < code_len_u32 {
-            if let Some(&succ_idx) = pc_to_block_index.get(&end) {
-                if !block.successors.contains(&succ_idx) {
-                    block.successors.push(succ_idx);
-                }
-            }
+        if meta.falls_through
+            && end < code_len_u32
+            && let Some(&succ_idx) = pc_to_block_index.get(&end)
+            && !block.successors.contains(&succ_idx)
+        {
+            block.successors.push(succ_idx);
         }
     }
 
@@ -705,15 +705,15 @@ pub fn instruction_stack_effect(inst: &InstructionFlowInfo<'_>) -> (usize, usize
             produce += 1;
         }
     }
-    if inst.kind == InstructionKind::Call {
-        if let Some(call) = &inst.call {
-            let ret_desc = match call.call_kind {
-                CallKind::Dynamic => call.dynamic_type.as_deref(),
-                _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
-            };
-            consume = consume.max(call.stack_slots_consumed as usize);
-            produce = produce.max(ret_desc.map_or(0, descriptor_return_slot_count));
-        }
+    if inst.kind == InstructionKind::Call
+        && let Some(call) = &inst.call
+    {
+        let ret_desc = match call.call_kind {
+            CallKind::Dynamic => call.dynamic_type.as_deref(),
+            _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
+        };
+        consume = consume.max(call.stack_slots_consumed as usize);
+        produce = produce.max(ret_desc.map_or(0, descriptor_return_slot_count));
     }
     if inst.dataflow.is_empty() && inst.kind != InstructionKind::Call {
         let (misc_consume, misc_produce) = misc_stack_effect(inst.opcode);
@@ -778,50 +778,50 @@ fn simulate_block<'a>(
 
         // Rewrite receiver/arguments stack locations from StackInput(depth)
         // into absolute StackSlot ids based on the current stack state.
-        if inst.kind == InstructionKind::Call {
-            if let Some(call) = inst.call.as_mut() {
-                let len = state.slots.len();
-                if let Some(receiver) = call.receiver.as_mut() {
-                    if let Location::StackInput(depth) = receiver {
-                        let depth_usize = *depth as usize;
-                        if depth_usize >= len {
-                            return Err(ClassFileError::InvalidClassFileMessage(format!(
-                                "stack underflow while rewriting receiver StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
-                                class_name,
-                                method_name,
-                                method_desc,
-                                inst.pc,
-                                inst.opcode,
-                                inst.mnemonic,
-                                depth_usize,
-                                len,
-                                call.stack_slots_consumed
-                            )));
-                        }
-                        let slot_index = len - 1 - depth_usize;
-                        *receiver = Location::StackSlot(slot_index as StackSlotId);
-                    }
+        if inst.kind == InstructionKind::Call
+            && let Some(call) = inst.call.as_mut()
+        {
+            let len = state.slots.len();
+            if let Some(receiver) = call.receiver.as_mut()
+                && let Location::StackInput(depth) = receiver
+            {
+                let depth_usize = *depth as usize;
+                if depth_usize >= len {
+                    return Err(ClassFileError::InvalidClassFileMessage(format!(
+                        "stack underflow while rewriting receiver StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
+                        class_name,
+                        method_name,
+                        method_desc,
+                        inst.pc,
+                        inst.opcode,
+                        inst.mnemonic,
+                        depth_usize,
+                        len,
+                        call.stack_slots_consumed
+                    )));
                 }
-                for arg in &mut call.arguments {
-                    if let Location::StackInput(depth) = arg {
-                        let depth_usize = *depth as usize;
-                        if depth_usize >= len {
-                            return Err(ClassFileError::InvalidClassFileMessage(format!(
-                                "stack underflow while rewriting call argument StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
-                                class_name,
-                                method_name,
-                                method_desc,
-                                inst.pc,
-                                inst.opcode,
-                                inst.mnemonic,
-                                depth_usize,
-                                len,
-                                call.stack_slots_consumed
-                            )));
-                        }
-                        let slot_index = len - 1 - depth_usize;
-                        *arg = Location::StackSlot(slot_index as StackSlotId);
+                let slot_index = len - 1 - depth_usize;
+                *receiver = Location::StackSlot(slot_index as StackSlotId);
+            }
+            for arg in &mut call.arguments {
+                if let Location::StackInput(depth) = arg {
+                    let depth_usize = *depth as usize;
+                    if depth_usize >= len {
+                        return Err(ClassFileError::InvalidClassFileMessage(format!(
+                            "stack underflow while rewriting call argument StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
+                            class_name,
+                            method_name,
+                            method_desc,
+                            inst.pc,
+                            inst.opcode,
+                            inst.mnemonic,
+                            depth_usize,
+                            len,
+                            call.stack_slots_consumed
+                        )));
                     }
+                    let slot_index = len - 1 - depth_usize;
+                    *arg = Location::StackSlot(slot_index as StackSlotId);
                 }
             }
         }
@@ -870,10 +870,10 @@ fn simulate_block<'a>(
         }
 
         // Rewrite call return value location.
-        if let Some(ret_loc) = inst.call.as_mut().and_then(|c| c.return_value.as_mut()) {
-            if matches!(ret_loc, Location::StackOutput) {
-                *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
-            }
+        if let Some(ret_loc) = inst.call.as_mut().and_then(|c| c.return_value.as_mut())
+            && matches!(ret_loc, Location::StackOutput)
+        {
+            *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
         }
 
         // Update stack state: keep the bottom `remaining_len` depths, then
@@ -2248,14 +2248,14 @@ impl<'a> Iterator for InstructionFlowIter<'a> {
             if self.method_done || self.current_cf.is_none() || self.current_method.is_none() {
                 self.method_pc = 0;
                 self.method_done = false;
-                if let Some(ref mut methods) = self.current_methods {
-                    if let Some((cf, method)) = methods.next() {
-                        self.current_cf = Some(cf);
-                        self.current_method = Some(method);
-                        self.current_code = method.code.as_ref().map(|c| c.code.as_slice());
-                        self.method_done = self.current_code.is_none();
-                        continue;
-                    }
+                if let Some(ref mut methods) = self.current_methods
+                    && let Some((cf, method)) = methods.next()
+                {
+                    self.current_cf = Some(cf);
+                    self.current_method = Some(method);
+                    self.current_code = method.code.as_ref().map(|c| c.code.as_slice());
+                    self.method_done = self.current_code.is_none();
+                    continue;
                 }
                 if let Some(next_parser) = self.class_parsers.next() {
                     let cf = next_parser.class_file();
@@ -2298,11 +2298,11 @@ impl<'a> Iterator for InstructionFlowIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_basic_blocks_for_method, decode_dataflow, descriptor_param_slot_count,
-        descriptor_parameter_info, descriptor_returns_value, field_slot_width, instruction_length,
-        misc_stack_effect, normalize_stack_slots_for_method, stack_effect, ClassFileError,
-        ClassFileResult, ConstantValue, Location, MethodParameterInfo, MethodParameterKind,
-        ParameterSlotMap,
+        ClassFileError, ClassFileResult, ConstantValue, Location, MethodParameterInfo,
+        MethodParameterKind, ParameterSlotMap, compute_basic_blocks_for_method, decode_dataflow,
+        descriptor_param_slot_count, descriptor_parameter_info, descriptor_returns_value,
+        field_slot_width, instruction_length, misc_stack_effect, normalize_stack_slots_for_method,
+        stack_effect,
     };
     use crate::types::{ClassFile, CodeAttribute, CpEntry, ExceptionEntry, JvmString, MethodInfo};
 

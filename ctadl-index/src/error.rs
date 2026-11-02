@@ -25,9 +25,9 @@ pub enum JsonModelError {
         index: usize,
         text: String,
     },
-    /// A port's trailing access path is not a path in the canonical grammar -- e.g.
+    /// A port's trailing path is not in the canonical grammar -- e.g.
     /// `Argument(0).[*]`, or a field name beginning with `[` that was not written `\[`.
-    InvalidAccessPath {
+    InvalidPath {
         index: usize,
         text: String,
         source: ctadl_ir::mir::PathSyntaxError,
@@ -45,6 +45,31 @@ pub enum JsonModelError {
         field_name: String,
         message: String,
     },
+    /// A generator the JSON format allows but `ctadl migrate-models` cannot carry into
+    /// Portcullis without changing what it means. `what` names the construct.
+    Untranslatable {
+        index: usize,
+        what: String,
+        message: String,
+    },
+}
+
+impl JsonModelError {
+    /// The index of the generator the error is about.
+    pub fn index(&self) -> usize {
+        match self {
+            JsonModelError::MissingField { index, .. }
+            | JsonModelError::FieldNotString { index, .. }
+            | JsonModelError::FieldNotArray { index, .. }
+            | JsonModelError::InvalidRegex { index, .. }
+            | JsonModelError::InvalidArgumentFormat { index, .. }
+            | JsonModelError::InvalidPath { index, .. }
+            | JsonModelError::InvalidInteger { index, .. }
+            | JsonModelError::UnexpectedConstraint { index, .. }
+            | JsonModelError::UnexpectedField { index, .. }
+            | JsonModelError::Untranslatable { index, .. } => *index,
+        }
+    }
 }
 
 impl std::fmt::Display for JsonModelError {
@@ -84,7 +109,7 @@ impl std::fmt::Display for JsonModelError {
                     "invalid argument format '{text}' in model generator at index {index}"
                 )
             }
-            JsonModelError::InvalidAccessPath {
+            JsonModelError::InvalidPath {
                 index,
                 text,
                 source,
@@ -117,6 +142,16 @@ impl std::fmt::Display for JsonModelError {
                 write!(
                     f,
                     "unexpected field '{field_name}' in model generator at index {index}: {message}"
+                )
+            }
+            JsonModelError::Untranslatable {
+                index,
+                what,
+                message,
+            } => {
+                write!(
+                    f,
+                    "cannot migrate {what} in model generator at index {index}: {message}"
                 )
             }
         }
@@ -196,12 +231,11 @@ pub enum Error {
     FactsConvert(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
-    /// A model was well-formed but could not be applied: a bridge side that matched nothing
-    /// under `on-unmatched: error`, or an ambiguous pairing under `on-ambiguous: error`.
-    /// Distinct from [`Error::JsonModel`], which is about the file's *syntax*; this one needs a
-    /// program to detect.
-    #[error("model error: {message}")]
-    Model { message: String },
+    /// A Portcullis file that does not parse, or whose rules do not mean anything. Already
+    /// rendered with `path:line:col` prefixes, because only the loader still has the file text
+    /// to resolve a byte span against.
+    #[error("Portcullis error\n{0}")]
+    PortcullisModel(String),
     #[error("{context}")]
     Context {
         context: String,

@@ -9,13 +9,13 @@ This is one structure spanning two phases, and each field is consumed by exactly
 
 - [`ProgramModelMatches::propagations`] -- index time. Phase 2 of codegen
   ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
-- [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
+- [`ProgramModelMatches::declared_paths`] -- index time. Phase 2 seeds them into the initial
   indexer paths.
 - [`ProgramModelMatches::skip_analysis`] -- index time, and read by phase *1*:
   [`crate::codegen::codegen_program`] lowers those functions' signatures and drops their bodies,
   so nothing about them ever enters the fact base.
-- [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
-  `call`/`actual_param`/`assign`/`formal_param` rows.
+- [`ProgramModelMatches::resolved_bridges`] -- index time. Phase 2 emits the
+  `call`/`actual_param`/`assign`/`formal_param` rows for each pair.
 - [`ProgramModelMatches::dispatch`] -- index time, and also read by phase *1*:
   codegen classifies every Java and CIL call site against it before it emits anything for the
   site, and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
@@ -32,7 +32,7 @@ silence: `ctadl index` warns that the given files declare source/sink models it 
 `cli::mod`).
 
 The alternative -- a second, sibling structure for the query-time half -- was considered and
-rejected: one matcher pass produces both halves, and splitting its output across two
+rejected: one engine pass produces both halves, and splitting its output across two
 accumulators buys nothing but a second thing to thread and document. The cost is paid here, in
 having to say which field belongs to which phase.
 
@@ -40,14 +40,11 @@ Nothing here is written to disk, stored in the VMT, or applied to the IR. Matche
 of (artifact x models files) and the import cache must stay a pure function of the artifact
 alone, or `ctadl index --models a.json` would poison the next `ctadl index --models b.json`.
 
-# Eager evaluation, late classification
+# Bridges are paired after the stream
 
-The bridging semantics say that if the `from` side matches nothing, the `to` side "isn't even
-attempted". That is *reporting* semantics, not evaluation order. Under streaming, side B's
-import may arrive before side A's, so whether `from` matched is unknowable when B's VMT is in
-hand. Both sides are therefore matched eagerly, per import, and accumulate here; pairing,
-`on-unmatched` classification and warning emission all happen once, in phase 2, after the stream
-ends.
+A bridge's two sides may live in two imports, and side B's may arrive first. The DSL engine
+accumulates each side of a bridging rule as the imports go past and pairs them once the loop
+ends (see [`super::portcullis`]), so what lands here is already a pair of function names.
 */
 
 use std::collections::BTreeSet;
@@ -56,16 +53,13 @@ use crate::error::Error;
 use crate::facts;
 use crate::facts::TaintDirection;
 use crate::models::FormalIndexTypeTag;
-use crate::models::spec::{BridgeSpec, Severity};
+use crate::models::portcullis::ast::{FunctionMode, ModeAxis, ModeHead};
 
-use super::json::ModelGeneratorIngest;
-use super::match_index::ProgramMatchIndex;
-
-/// One end of a matched propagation model: the selector the port named, plus its access path,
+/// One end of a matched propagation model: the selector the port named, plus its path,
 /// resolved against nothing yet. `AnyArgument` is deliberately still a *tag* here -- expanding
 /// it needs the arity over actual parameters and call sites across every import, which is not
 /// known until phase 2.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ModelPort {
     pub tag: FormalIndexTypeTag,
     /// Set only for a positional `Argument(n)` port.
@@ -152,7 +146,7 @@ impl DispatchModel {
 /// The function is named, not resolved to a [`crate::facts::FunctionId`]: a summary attaches to
 /// any function that was so much as *called*, including ones with no IR body at all, and the id
 /// map that would resolve it does not hold every import's functions until the loop is over.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PropagationMatch {
     pub function: facts::Str,
     pub dst: ModelPort,
@@ -160,14 +154,14 @@ pub struct PropagationMatch {
 }
 
 /// One matched source or sink port: everything Stage 1 of source/sink matching knows, with the
-/// names interned and the port's access path resolved.
+/// names interned and the port's path resolved.
 ///
 /// Stage 2 ([`crate::query_engine::build_query_endpoints`]) turns these into
 /// `QueryEndpoint`s, resolving names to [`crate::facts::FunctionId`]s and performing the two
 /// index-dependent expansions (call-site fan-out and sink wildcard expansion). The split
 /// exists because Stage 1 runs while each import's IR is in hand and Stage 2 needs the index,
 /// which does not exist until every import has been codegen'd.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct EndpointMatch {
     /// Name of the endpoint function. For a callsite-scoped endpoint this is the callee.
     pub function: facts::Str,
@@ -175,13 +169,13 @@ pub struct EndpointMatch {
     pub selector_ty: FormalIndexTypeTag,
     /// Formal index, when the selector carries one.
     pub index: Option<i16>,
-    /// The port's access path.
+    /// The port's path.
     pub path: facts::Path,
     /// Taint label.
     pub label: facts::Str,
     /// Forward (source) or backward (sink).
     pub direction: TaintDirection,
-    /// Sink-only: match any access-path extension of the port (see
+    /// Sink-only: match any extension of the port's path (see
     /// [`crate::facts::Path::is_extension_of`]). Always `false` for sources.
     pub wildcard: bool,
     /// Source-only: this source is *saturating* -- the seeded vertex is tainted and reading any
@@ -197,90 +191,17 @@ pub struct EndpointMatch {
     /// every other selector.
     ///
     /// This field is why an endpoint has to be recorded at all rather than re-derived at query
-    /// time. The name is resolved against the *matched function's* `locals` during Stage 1
-    /// (`json.rs`), and it **cannot** be recovered later: Stage 2 sees only the
+    /// time. The name has to be resolved against the *matched function's* `locals` during
+    /// Stage 1, and it **cannot** be recovered later: Stage 2 sees only the
     /// post-`eliminate_dead_temps`/`coalesce_copies` graph, where the name may no longer exist.
+    /// Portcullis spells it `F::local(L)`, with `L` bound by `local(F, L, name = ...)`.
     pub local_index: Option<u32>,
-}
-
-/// The accumulated matches of one bridge spec's two sides, across every import.
-///
-/// "Unmatched" means *not matched anywhere in the project*, so these sets union over imports
-/// rather than being classified per import. A scope that admits no import at all leaves both
-/// sets empty.
-#[derive(Clone, Debug, Default)]
-pub struct BridgeSideMatches {
-    /// fq-names side A (the call side) matched.
-    pub from: BTreeSet<facts::Str>,
-    /// fq-names side B (the implementation side) matched.
-    pub to: BTreeSet<facts::Str>,
-}
-
-impl BridgeSideMatches {
-    /// The cross product of the two sides. There is no `cardinality` key: every matched A pairs
-    /// with every matched B, and a pairing that is not singleton x singleton is reported through
-    /// `on-ambiguous` rather than restricted.
-    pub fn pairs(&self) -> impl Iterator<Item = (facts::Str, facts::Str)> + '_ {
-        self.from
-            .iter()
-            .flat_map(|a| self.to.iter().map(move |b| (*a, *b)))
-    }
-
-    /// Singleton x singleton -- the unambiguous case `on-ambiguous` exists to distinguish.
-    pub fn is_unique(&self) -> bool {
-        self.from.len() == 1 && self.to.len() == 1
-    }
-}
-
-/// Matches for every scanned bridge spec, in spec order.
-#[derive(Clone, Debug, Default)]
-pub struct BridgeMatches {
-    sides: Vec<BridgeSideMatches>,
-}
-
-impl BridgeMatches {
-    /// Sizes the table to the scanned specs. Call once, before the import loop.
-    pub fn prepare(&mut self, specs: &[BridgeSpec]) {
-        self.sides.resize_with(specs.len(), Default::default);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.sides.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.sides.len()
-    }
-
-    /// One spec's accumulated sides.
-    ///
-    /// A spec with no entry -- because no import was ever observed against it -- reads as two
-    /// empty sets, which is the same thing observing it and matching nothing would give. That
-    /// keeps a project with zero imports on the ordinary "matched nothing" path rather than
-    /// panicking.
-    pub fn get(&self, spec_index: usize) -> &BridgeSideMatches {
-        static EMPTY: BridgeSideMatches = BridgeSideMatches {
-            from: BTreeSet::new(),
-            to: BTreeSet::new(),
-        };
-        self.sides.get(spec_index).unwrap_or(&EMPTY)
-    }
-
-    /// Mutable access to one spec's accumulated sides. [`observe_import`] is the only writer in
-    /// the pipeline; tests use it to build a fixture without running a match pass.
-    pub fn side_mut(&mut self, spec_index: usize) -> &mut BridgeSideMatches {
-        &mut self.sides[spec_index]
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &BridgeSideMatches> {
-        self.sides.iter()
-    }
 }
 
 /// Everything a models file matched, accumulated across every (import x model file) pair.
 ///
 /// Accumulation is append-only and its *order* is only required to be deterministic, not
-/// specific: the SARIF writer sorts endpoints into `BTreeSet`s before writing anything, so
+/// specific: the SARIF writer sorts endpoints by content before writing anything, so
 /// insertion order does not reach the output. The natural loop order (import outer, model file
 /// inner, visit order within a file) is deterministic and is what accumulation gets for free;
 /// the one rule is never to route it through unordered iteration.
@@ -297,8 +218,8 @@ pub struct ProgramModelMatches {
     /// endpoints, so deduplicating here would change a reported number. Two model files that
     /// match the same port on the same function legitimately contribute two entries.
     pub endpoints: Vec<EndpointMatch>,
-    /// Access paths a *user* declared that occur nowhere in the IR, so nothing else would ever
-    /// register them. Phase 2 seeds them into the initial indexer paths.
+    /// Paths a *user* declared (`access_paths`) that occur nowhere in the IR, so nothing else
+    /// would ever register them. Phase 2 seeds them into the initial indexer paths.
     ///
     /// This is the escape hatch for composition across a bridge: a pathful bridge composes with
     /// its callee's derived summary only where the summary's endpoints land exactly on the
@@ -306,14 +227,21 @@ pub struct ProgramModelMatches {
     /// nothing can enumerate. A user who knows the callee's summary shape pre-declares them
     /// here. Flows needing residues nobody declared are dropped, silently -- that is the
     /// documented default, not an oversight.
-    pub access_paths: BTreeSet<facts::Path>,
-    /// Functions a `modes: ["skip-analysis"]` generator matched. Codegen reads this set as it
+    pub declared_paths: BTreeSet<facts::Path>,
+    /// Functions whose winning body mode is `skip_analysis`. Codegen reads this set as it
     /// lowers each function and simply does not lower the body of one that is in it, so nothing
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
     /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
-    /// Matched bridge sides, parallel to the scanned specs.
-    pub bridges: BridgeMatches,
+    /// Functions whose winning promotion mode is `mem2reg_full` or `mem2reg_window`. The SSA
+    /// pipeline reads this before codegen, to force or forbid full stack-slot promotion.
+    pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
+    /// Functions whose winning frame mode is `frame_store` or `frame_update`. The SSA pipeline
+    /// reads this before codegen, to coarsen or keep the function's frame updates.
+    pub frame_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FrameWrites>,
+    /// The highest-priority mode claimed on each function and axis, which the three maps above
+    /// follow. Kept so a later claim can be compared against it; see [`Self::claim_mode`].
+    pub mode_claims: std::collections::BTreeMap<(facts::Str, ModeAxis), ModeClaim>,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
     /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
@@ -330,6 +258,9 @@ pub struct ProgramModelMatches {
     /// framework name is something an obfuscator cannot touch, so the two together cover what
     /// either alone misses.
     pub closure_shaped: BTreeSet<DispatchKey>,
+    /// Bridges the DSL engine grounded: both sides are function names, paired across every
+    /// import. Phase 2 emits them.
+    pub resolved_bridges: Vec<crate::models::spec::ResolvedBridge>,
 }
 
 impl ProgramModelMatches {
@@ -341,14 +272,95 @@ impl ProgramModelMatches {
         self.propagations.extend(propagations);
     }
 
-    /// Folds in the access paths one model file declared.
-    pub fn extend_access_paths(&mut self, paths: impl IntoIterator<Item = facts::Path>) {
-        self.access_paths.extend(paths);
+    /// Folds in the paths one model file declared.
+    pub fn extend_declared_paths(&mut self, paths: impl IntoIterator<Item = facts::Path>) {
+        self.declared_paths.extend(paths);
     }
 
-    /// Folds in the functions one load marked `skip-analysis`.
-    pub fn extend_skip_analysis(&mut self, functions: impl IntoIterator<Item = facts::Str>) {
-        self.skip_analysis.extend(functions);
+    /// Records that the rule at `provenance` claims `head.mode` for `function`. Of the claims on
+    /// one function and axis the highest priority wins, whatever order the rules ran in. A
+    /// claim of a different mode at the winning priority is kept as a conflict, which
+    /// [`Self::check_mode_conflicts`] reports unless a higher claim arrives first.
+    pub fn claim_mode(&mut self, function: facts::Str, head: ModeHead, provenance: &str) {
+        use std::collections::btree_map::Entry;
+        let claim = ModeClaim {
+            mode: head.mode,
+            priority: head.priority,
+            provenance: provenance.to_string(),
+            conflict: None,
+        };
+        match self.mode_claims.entry((function, head.mode.axis())) {
+            Entry::Vacant(e) => {
+                e.insert(claim);
+            }
+            Entry::Occupied(mut e) => {
+                let held = e.get_mut();
+                if head.priority < held.priority {
+                    return;
+                }
+                if head.priority == held.priority {
+                    if head.mode != held.mode && held.conflict.is_none() {
+                        held.conflict = Some((head.mode, provenance.to_string()));
+                    }
+                    return;
+                }
+                *held = claim;
+            }
+        }
+        self.apply_mode(function, head.mode);
+    }
+
+    /// Makes `mode` the function's setting on its axis.
+    fn apply_mode(&mut self, function: facts::Str, mode: FunctionMode) {
+        use ctadl_ir::ssa::{FrameWrites, FullMode};
+        match mode {
+            FunctionMode::SkipAnalysis => {
+                self.skip_analysis.insert(function);
+            }
+            FunctionMode::Analyze => {
+                self.skip_analysis.remove(&function);
+            }
+            FunctionMode::Mem2RegFull => {
+                self.mem2reg_modes.insert(function, FullMode::Force);
+            }
+            FunctionMode::Mem2RegWindow => {
+                self.mem2reg_modes.insert(function, FullMode::Forbid);
+            }
+            FunctionMode::FrameStore => {
+                self.frame_modes.insert(function, FrameWrites::Store);
+            }
+            FunctionMode::FrameUpdate => {
+                self.frame_modes.insert(function, FrameWrites::Update);
+            }
+        }
+    }
+
+    /// Fails if two rules claimed different modes on one function and axis at the same
+    /// priority, with no higher claim to settle it, naming every such function.
+    pub fn check_mode_conflicts(&self) -> Result<(), Error> {
+        let conflicts: Vec<String> = self
+            .mode_claims
+            .iter()
+            .filter_map(|((function, _), claim)| {
+                let (mode, provenance) = claim.conflict.as_ref()?;
+                Some(format!(
+                    "'{function}': '{}' from {} and '{}' from {}, both at priority {}",
+                    claim.mode.relation_name(),
+                    claim.provenance,
+                    mode.relation_name(),
+                    provenance,
+                    claim.priority,
+                ))
+            })
+            .collect();
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+        Err(Error::PortcullisModel(format!(
+            "conflicting modes at the same priority; give the one that should win a higher \
+             'priority', such as 'analyze(F, priority = 1)':\n  {}",
+            conflicts.join("\n  ")
+        )))
     }
 
     /// Folds one matched dispatch model in, merging with anything already matched for the key.
@@ -365,135 +377,24 @@ impl ProgramModelMatches {
     pub fn is_empty(&self) -> bool {
         self.propagations.is_empty()
             && self.endpoints.is_empty()
-            && self.access_paths.is_empty()
+            && self.declared_paths.is_empty()
             && self.skip_analysis.is_empty()
-            && self.bridges.is_empty()
+            && self.mem2reg_modes.is_empty()
+            && self.frame_modes.is_empty()
+            && self.mode_claims.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()
+            && self.resolved_bridges.is_empty()
     }
 }
 
-/// Evaluates both sides of every bridge spec against one import, accumulating the matches.
-///
-/// Called per import, while its [`ProgramMatchIndex`] is in hand and before the IR is dropped.
-/// Both sides are attempted eagerly; see the module docs for why the conditional `to`-side
-/// semantics cannot be applied here.
-pub fn observe_import(
-    index: &ProgramMatchIndex<'_>,
-    specs: &[BridgeSpec],
-    matches: &mut ProgramModelMatches,
-) -> Result<(), Error> {
-    if specs.is_empty() {
-        return Ok(());
-    }
-    matches.bridges.prepare(specs);
-    // The ingest emits into `matches`, so it holds that borrow for as long as it lives and
-    // `matches.bridges` cannot be written through it. Collect each spec's matched names while
-    // the ingest is alive, release it, then fold.
-    let mut matched: Vec<(Vec<String>, Vec<String>)> = Vec::with_capacity(specs.len());
-    let result = {
-        let mut ingest = ModelGeneratorIngest::new(index, matches);
-        for spec in specs {
-            let mut from = Vec::new();
-            let mut to = Vec::new();
-            if spec.from.scope.admits(&index.scope) {
-                from = ingest.match_where(spec.index, &spec.from.where_);
-                log::trace!(
-                    "bridge {} from side matched {} function(s) in {}",
-                    spec.provenance(),
-                    from.len(),
-                    index.scope.describe()
-                );
-            }
-            if spec.to.scope.admits(&index.scope) {
-                to = ingest.match_where(spec.index, &spec.to.where_);
-                log::trace!(
-                    "bridge {} to side matched {} function(s) in {}",
-                    spec.provenance(),
-                    to.len(),
-                    index.scope.describe()
-                );
-            }
-            matched.push((from, to));
-        }
-        // A malformed constraint on either side is a hard error, exactly as it is anywhere else
-        // in the loader. The bridge's shape was validated before the loop; this catches what
-        // only the evaluator can see.
-        ingest.take_errors()
-    };
-    // Folded in even when the evaluation errored: an errored side yields no matches, and the
-    // sides that did match keep theirs.
-    for (i, (from, to)) in matched.into_iter().enumerate() {
-        let side = matches.bridges.side_mut(i);
-        side.from
-            .extend(from.iter().map(|f| facts::Str::from(f.as_str())));
-        side.to
-            .extend(to.iter().map(|f| facts::Str::from(f.as_str())));
-    }
-    result
-}
-
-/// The verdict on one bridge spec's accumulated sides: `on-unmatched` per side, then
-/// `on-ambiguous`.
-///
-/// Returns what to *say*, not the saying of it. This is where the conditional `to`-side
-/// semantics are applied (see the module docs), once, over the whole project: "unmatched" means
-/// *not matched anywhere*, not "not matched in this import".
-///
-/// This reads nothing but the spec and the two match sets, which is what lets `ctadl query`
-/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of
-/// codegen wraps it in [`crate::codegen::model_matches::classify`], which is the only caller that
-/// acts on the severity.
-pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(Severity, String)> {
-    let where_ = spec.provenance();
-    if side.from.is_empty() {
-        // A scope admitting no import in the project lands here too, which is deliberate: it is
-        // the same observable condition (nothing matched) and gets the same warning, rather
-        // than a separate configuration-error category.
-        return Some((
-            spec.from.on_unmatched,
-            format!(
-                "bridge {where_}: the 'from' side matched no function in this project, so \
-                 nothing is bridged. Check the 'where' constraints and the 'in' scope."
-            ),
-        ));
-    }
-    if side.to.is_empty() {
-        return Some((
-            spec.to.on_unmatched,
-            format!(
-                "bridge {where_}: the 'from' side matched {} function(s) ({}) but the 'to' side \
-                 matched none, so nothing is bridged. Set 'on-unmatched': 'ignore' on the 'to' \
-                 block if the implementation is legitimately absent.",
-                side.from.len(),
-                sample(&side.from, 3)
-            ),
-        ));
-    }
-    if !side.is_unique() {
-        return Some((
-            spec.on_ambiguous,
-            format!(
-                "bridge {where_}: matched {} 'from' function(s) ({}) and {} 'to' function(s) \
-                 ({}); every combination is bridged, for {} pair(s). Add \
-                 'on-ambiguous': 'ignore' to silence this, or narrow the 'where' constraints.",
-                side.from.len(),
-                sample(&side.from, 3),
-                side.to.len(),
-                sample(&side.to, 3),
-                side.from.len() * side.to.len()
-            ),
-        ));
-    }
-    None
-}
-
-/// The functions a set of matches names, for a diagnostic that has to list a few of them.
-pub(crate) fn sample(names: &BTreeSet<facts::Str>, limit: usize) -> String {
-    let shown: Vec<&str> = names.iter().take(limit).map(|s| s.as_str()).collect();
-    if names.len() > limit {
-        format!("{}, … and {} more", shown.join(", "), names.len() - limit)
-    } else {
-        shown.join(", ")
-    }
+/// The mode a function holds on one [`ModeAxis`], and who claimed it.
+#[derive(Clone, Debug)]
+pub struct ModeClaim {
+    pub mode: FunctionMode,
+    pub priority: i64,
+    /// The claiming rule, as `file:rule`.
+    pub provenance: String,
+    /// A different mode another rule claimed at the same priority, with its provenance.
+    pub conflict: Option<(FunctionMode, String)>,
 }

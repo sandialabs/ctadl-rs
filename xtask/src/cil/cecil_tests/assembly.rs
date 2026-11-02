@@ -5,7 +5,7 @@
 //! half (the FullName half is covered below),
 //! MismatchedLibraryAndSymbols (symbols).
 
-use super::{read_resource, Test};
+use super::{Test, read_resource};
 use cil_reader::Module;
 
 // Test/Mono.Cecil.Tests/AssemblyTests.cs:13 (Name)

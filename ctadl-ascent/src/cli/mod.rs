@@ -29,6 +29,7 @@ use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
+use ctadl_import::notifications::{self, Level, Notifications};
 use ctadl_ir::ssa;
 
 /// Writes an import to the store. Re-exported here, where the command-line code calls it. The
@@ -90,6 +91,10 @@ pub struct IndexOptions {
     pub parallelism: Parallelism,
     /// Where the large relations are stored; see [`Storage`].
     pub storage: Storage,
+    /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
+    pub mem2reg: Option<ssa::Mem2Reg>,
+    /// How native code's frame writes reach SSA; see [`ssa::FrameWrites`].
+    pub frame: ssa::FrameWrites,
 }
 
 impl Default for IndexOptions {
@@ -105,7 +110,201 @@ impl Default for IndexOptions {
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
+            mem2reg: ssa::Pipeline::index_default().mem2reg,
+            frame: ssa::Pipeline::index_default().frame,
         }
+    }
+}
+
+/// A merged method counts as large from this many statements on.
+const LARGE_MERGED_METHOD: usize = 50;
+/// Call edges into large live merged methods above which the guardrail warns. With the split
+/// working, the apps measured have 0-8; with merged methods left live, an estimated 195-1,073.
+const MERGED_METHOD_CALL_EDGES: usize = 300;
+
+/// The large merged methods of R8-merged classes that the dex frontend split but could not empty:
+/// a function `LC;->m(..)` beside a clone `LC$r8id<k>;->m(..)`, with a body of at least
+/// [`LARGE_MERGED_METHOD`] statements. Such a method is the union of every lambda merged into
+/// the class.
+fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
+    let size: HashMap<&str, usize> = program
+        .functions
+        .iter()
+        .map(|f| {
+            let n = f
+                .blocks
+                .iter_enumerated()
+                .map(|(_, b)| b.statements.len())
+                .sum();
+            (f.name.as_str(), n)
+        })
+        .collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for name in size.keys() {
+        let Some(at) = name.find("$r8id") else {
+            continue;
+        };
+        let Some(end) = name[at..].find(';') else {
+            continue;
+        };
+        let merged = format!("{}{}", &name[..at], &name[at + end..]);
+        if size
+            .get(merged.as_str())
+            .is_some_and(|n| *n >= LARGE_MERGED_METHOD)
+        {
+            out.insert(merged);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Warns when many calls still reach large merged methods. A call resolved by class hierarchy
+/// reaches every target, so one that lands on a live merged method takes on every lambda merged
+/// into its class. Pushes a [`notifications::MERGED_METHOD_CALLS`] note with the counts when
+/// `live` is not empty, and a [`notifications::MERGED_METHOD_CALLS_HIGH`] warning when the calls
+/// are many.
+fn merged_method_guardrail(
+    live: &[String],
+    call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
+    ids: &facts::IdMap,
+    notes: &mut Notifications,
+) {
+    if live.is_empty() {
+        return;
+    }
+    let targets: std::collections::HashSet<facts::FunctionId> = live
+        .iter()
+        .filter_map(|name| ids.get_function_id(facts::Function(name.as_str().into())))
+        .collect();
+    let edges = call.iter().filter(|(_, t)| targets.contains(t)).count();
+    log::info!(
+        "merged classes guardrail: {edges} of {} call edges reach one of {} large live merged \
+         methods",
+        call.len(),
+        live.len()
+    );
+    let counts = std::collections::BTreeMap::from([
+        ("edges".to_string(), serde_json::json!(edges)),
+        ("callEdges".to_string(), serde_json::json!(call.len())),
+        ("liveMethods".to_string(), serde_json::json!(live.len())),
+    ]);
+    notes.push(
+        &notifications::MERGED_METHOD_CALLS,
+        notifications::DEFAULT_MESSAGE,
+        Level::Note,
+        vec![
+            edges.to_string(),
+            call.len().to_string(),
+            live.len().to_string(),
+        ],
+        counts.clone(),
+    );
+    if edges > MERGED_METHOD_CALL_EDGES {
+        log::warn!(
+            "merged classes: {edges} call edges reach {} large merged methods that the class split \
+             left live; each such call takes on every lambda merged into the method's class",
+            live.len()
+        );
+        notes.push(
+            &notifications::MERGED_METHOD_CALLS_HIGH,
+            notifications::DEFAULT_MESSAGE,
+            Level::Warning,
+            vec![edges.to_string(), live.len().to_string()],
+            counts,
+        );
+    }
+}
+
+/// What a DSL load did, said once, for whichever phase just ran.
+///
+/// Three things, and they answer three different questions. The *counts* are the matched
+/// model heads kept for that phase — the number to look at when a model should be matching
+/// and is not. The *phase warning* separates a rule that belongs to the
+/// other command from one that is broken. The *dead rules* are the ones that ran and selected
+/// nothing, which is the failure mode that otherwise looks exactly like a clean program.
+fn report_portcullis(report: &crate::models::PortcullisReport) {
+    if report.is_empty() {
+        return;
+    }
+    let totals = report.totals();
+    log::info!(
+        "Portcullis: {} source, {} sink, {} propagation, {} bridge, {} access-path, {} \
+         dispatch, {} mode head(s) kept for this phase",
+        totals.sources,
+        totals.sinks,
+        totals.propagations,
+        totals.bridges,
+        totals.declared_paths,
+        totals.dispatch,
+        totals.modes
+    );
+    if let Some(warning) = report.phase_warning() {
+        log::warn!("{warning}");
+    }
+    let dead = report.dead_rules();
+    if !dead.is_empty() {
+        log::warn!(
+            "{} model rule(s) are live for this phase and matched nothing: {}",
+            dead.len(),
+            dead.join(", ")
+        );
+    }
+}
+
+/// The [`notifications::STACK_SLOTS_PROMOTED_FULLY`] warning for `note`, with its escape counts
+/// by kind as properties.
+fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
+    let counts = note
+        .kinds
+        .iter()
+        .map(|(kind, n)| {
+            let key = match kind {
+                ssa::EscapeKind::CallInput => "callInput",
+                ssa::EscapeKind::Copied => "copied",
+                ssa::EscapeKind::FieldAccess => "fieldAccess",
+                ssa::EscapeKind::Returned => "returned",
+                ssa::EscapeKind::Stored => "stored",
+            };
+            (key.to_string(), serde_json::json!(n))
+        })
+        .collect();
+    notes.push(
+        &notifications::STACK_SLOTS_PROMOTED_FULLY,
+        notifications::DEFAULT_MESSAGE,
+        Level::Warning,
+        vec![note.function.clone(), note.kind_names()],
+        counts,
+    );
+}
+
+/// One [`notifications::ALLOCATOR_BY_SHAPE`] per function `facts` found to be an allocator by
+/// its shape, saying whether the models skipped its body, with the measurements as properties.
+fn push_allocator_notes(
+    notes: &mut Notifications,
+    facts: &crate::models::portcullis::relations::ProgramFacts,
+    matches: &crate::models::ProgramModelMatches,
+) {
+    use crate::models::portcullis::allocator::Evidence;
+    for row in &facts.allocators {
+        let Evidence::Shape(shape) = row.by else {
+            continue;
+        };
+        let skipped = matches.skip_analysis.contains(&row.function);
+        notes.push(
+            &notifications::ALLOCATOR_BY_SHAPE,
+            if skipped { "skipped" } else { "analyzed" },
+            if skipped { Level::Warning } else { Level::Note },
+            vec![row.function.to_string(), row.kind.name().to_string()],
+            [
+                ("headerAccesses", shape.header_accesses),
+                ("heapGlobals", shape.heap_globals),
+                ("heapStores", shape.heap_stores),
+                ("callSites", shape.call_sites),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+            .collect(),
+        );
     }
 }
 
@@ -134,6 +333,8 @@ pub fn index(
         context_join,
         parallelism,
         storage,
+        mem2reg,
+        frame,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -157,17 +358,29 @@ pub fn index(
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
-    let file_specs = crate::models::scan_model_files(models)?;
+    let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
+    let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
+        &portcullis_models,
+        crate::models::PortcullisPhase::Index,
+    );
+    // The source/sink heads too, though index time does not analyse them: a matched endpoint
+    // in a signature's target set is what refuses a dispatch model (see
+    // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is
+    // lowered. Not reported, since `ctadl query` reports on them.
+    let mut endpoint_matcher = crate::models::PortcullisMatcher::new(
+        &portcullis_models,
+        crate::models::PortcullisPhase::Query,
+    );
     // Every matched model, instantiated against the IR being indexed. It persists across the import
     // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
     // import cache is a pure function of the artifact, and persisting them would let `ctadl index
     // --models a.json` poison the next `ctadl index --models b.json`.
     let mut model_matches = crate::models::ProgramModelMatches::default();
-    model_matches.bridges.prepare(&file_specs.bridges);
-    // Source/sink models are inert at index time; warn once rather than discarding in silence.
-    // Keyed by file, not counted per (file, import) pair -- declaring an endpoint is a property
-    // of the file, and every file is re-matched once per import.
-    let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
+    // Source/sink models are inert at index time but for that refusal; warn once rather than
+    // discarding them in silence. Keyed by file: declaring an endpoint is a property of the
+    // file, not of what it matched.
+    let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
+        portcullis_models.endpoint_files().collect();
 
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
@@ -177,8 +390,25 @@ pub fn index(
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
+    // Saved next to the index as `notifications.sarif`.
+    let mut notes = Notifications::new();
+    // A summary project's notifications reach this index through its summaries.
+    for summary_project in &summary_projects {
+        let dir = summary_project.index_path()?;
+        let loaded = Notifications::load(&dir)
+            .err_context(|| format!("loading notifications from: {}", dir.display()))?;
+        notes.extend(
+            loaded,
+            Some(notifications::Origin::SummaryProject(&summary_project.name)),
+        );
+    }
+    let mut live_merged_methods: Vec<String> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
+        let dir = import.import_path();
+        let loaded = Notifications::load(&dir)
+            .err_context(|| format!("loading notifications from: {}", dir.display()))?;
+        notes.extend(loaded, Some(notifications::Origin::Import(&import.name)));
         // Everything codegen records from here to the next import belongs to this one. Source
         // spans are per-import indices, so this is what keeps them resolvable afterwards.
         source_info.begin_import(&import.name);
@@ -208,11 +438,15 @@ pub fn index(
         // the memory posture streaming rather than "every import's match index resident".
         {
             let scope = crate::models::ImportScope::new(import.language, &import.name);
+            let defaults = if no_default_models {
+                None
+            } else {
+                crate::models::default_portcullis_models(&program_info.vmt)?
+            };
             // Only when some generator asks for it: collecting the keys is a pass over every
             // statement, and the defaults are language-selected, so this is decided per import.
-            let wants_dispatch = file_specs.finds_dispatch
-                || (!no_default_models
-                    && crate::models::default_models_find_dispatch(&program_info.vmt));
+            let wants_dispatch =
+                portcullis_models.uses_callsig() || defaults.is_some_and(|d| d.uses_callsig());
             let dispatch_keys = wants_dispatch
                 .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
             let match_index = crate::models::ProgramMatchIndex::new_with_dispatch(
@@ -220,21 +454,30 @@ pub fn index(
                 scope,
                 dispatch_keys.as_ref(),
             );
-            if !no_default_models {
-                crate::models::try_load_default_models(&match_index, &mut model_matches)?;
-            }
-            for model_path in models {
-                let report =
-                    crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
-                if !report.endpoint_stats.is_empty() {
-                    files_declaring_endpoints.insert(model_path);
+            // One set of DSL relations for the defaults and the user's rules both, covering
+            // what either reads.
+            let user_rules = !portcullis_matcher.is_empty() || !endpoint_matcher.is_empty();
+            let portcullis_facts = (defaults.is_some() || user_rules).then(|| {
+                let mut needs = portcullis_matcher.needs();
+                if let Some(defaults) = defaults {
+                    needs.union(defaults.needs());
                 }
+                crate::models::portcullis::program_facts(&match_index, &needs)
+            });
+            if let (Some(defaults), Some(facts)) = (defaults, &portcullis_facts) {
+                crate::models::load_default_models_from_facts(defaults, facts, &mut model_matches)?;
             }
-            crate::models::matches::observe_import(
-                &match_index,
-                &file_specs.bridges,
-                &mut model_matches,
-            )?;
+            if let Some(facts) = &portcullis_facts {
+                portcullis_matcher.observe_facts(facts, &mut model_matches);
+                endpoint_matcher.observe_facts(facts, &mut model_matches);
+            }
+            // Every rule that can claim a mode on this import's functions has run: a mode rule
+            // is satisfied within one import. So the winners are final, and a tie is an error
+            // before SSA reads them.
+            model_matches.check_mode_conflicts()?;
+            if let Some(facts) = &portcullis_facts {
+                push_allocator_notes(&mut notes, facts, &model_matches);
+            }
         }
 
         // Delete assigned-but-never-read temporaries, then fuse single-use
@@ -248,18 +491,39 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        ssa::run_pipeline_with_threads(
+        let modes = ssa::FunctionModes {
+            mem2reg: model_matches
+                .mem2reg_modes
+                .iter()
+                .map(|(f, mode)| (f.to_string(), *mode))
+                .collect(),
+            frame: model_matches
+                .frame_modes
+                .iter()
+                .map(|(f, mode)| (f.to_string(), *mode))
+                .collect(),
+        };
+        if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
-            ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            ssa::Pipeline::index_default()
+                .prune(prune_unreachable_cfg_nodes)
+                .mem2reg(mem2reg)
+                .frame(frame),
             match parallelism {
                 Parallelism::Serial => 1,
                 Parallelism::Threads(n) => n.get(),
             },
-        );
+            &modes,
+        ) {
+            for note in &report.notes {
+                push_escape_note(&mut notes, note);
+            }
+        }
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
         );
+        live_merged_methods.extend(large_live_merged_methods(&program_info.program));
         // The match block above has already contributed every `modes: ["skip-analysis"]` name
         // this import can, so codegen can drop those bodies as it goes rather than lowering
         // facts the analysis would then have to ignore.
@@ -276,18 +540,32 @@ pub fn index(
             phys_footprint_mb()
         );
     }
+    // Every import has been seen, so a rule whose two components matched in two different
+    // programs can be joined. Index time keeps every head but `source` and `sink`, and says how
+    // many rules declared only those.
+    let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
+    report_portcullis(&portcullis_report);
+    endpoint_matcher.finish(&mut model_matches)?;
+
     // Streaming matching retains only the *matches* -- one interned name plus two
     // (tag, index, path) triples per propagation -- and drops each import's match index and IR
     // with the import, so memory here stays near the per-import peak rather than the sum, even
     // when an APK brings its native libraries in as pcode sub-imports (see
     // [`ctadl_frontends::apk_native`]).
     log::debug!(
-        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
-         spec(s) retained): {:.1} MB",
+        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge(s) \
+         retained): {:.1} MB",
         model_matches.propagations.len(),
-        model_matches.access_paths.len(),
-        file_specs.bridges.len(),
+        model_matches.declared_paths.len(),
+        model_matches.resolved_bridges.len(),
         phys_footprint_mb()
+    );
+
+    merged_method_guardrail(
+        &live_merged_methods,
+        &facts.call,
+        &source_info.sites,
+        &mut notes,
     );
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
@@ -306,10 +584,9 @@ pub fn index(
 
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &file_specs.bridges,
         &mut facts,
         &mut source_info,
-    )?;
+    );
     let android_intent_stats = android_intent::emit_phase2_facts(&mut facts, &source_info.sites);
     log::info!(
         "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \
@@ -474,6 +751,21 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
+    let warnings = notes
+        .notifications()
+        .iter()
+        .filter(|n| n.level == Some(serde_json::json!("warning")))
+        .count();
+    if warnings > 0 {
+        log::warn!(
+            "{warnings} warning(s) about parts of the program analyzed in a way that may miss or \
+             add flows; see {}",
+            path.join(notifications::NOTIFICATIONS_FILE).display()
+        );
+    }
+    notes
+        .save(&path)
+        .err_context(|| format!("saving notifications: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
     project.write_index_config(Some(call_policy_record(
         strategy,
@@ -621,15 +913,11 @@ pub fn query(
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
     let mut diagnostics = query_engine::formatter::QueryDiagnostics {
-        command_line: std::env::args_os()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" "),
-        arguments: std::env::args_os()
-            .skip(1)
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect(),
+        command_line: ctadl_import::sarif::command_line(),
+        arguments: ctadl_import::sarif::arguments(),
         start_time_utc,
+        index_notifications: Notifications::load(&index_path)
+            .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
         ..Default::default()
     };
 
@@ -637,16 +925,15 @@ pub fn query(
         // One accumulator across every (import x model file) pair. Endpoints carry their own
         // `facts::Path`, so accumulation is an append and there is nothing to renumber.
         let mut model_matches = crate::models::ProgramModelMatches::default();
-        // Counted across every file and import, and reported once at the end: bridges and
-        // propagations are index-time constructs, and a query that silently drops them looks
-        // exactly like one whose models did nothing.
-        let mut ignored = crate::models::IndexTimeModelCounts::default();
+        let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
+        let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
+            &portcullis_models,
+            crate::models::PortcullisPhase::Query,
+        );
         // Which files declare endpoints, by the same test `ctadl index` applies, so the two
         // digests are over the same thing.
-        let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
-        // Import outer, model file inner: one `ProgramInfo` decode and one match index per
-        // import, reused across every model file, rather than one of each per (file, import)
-        // pair. The match tables are a function of the program alone.
+        let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
+            portcullis_models.endpoint_files().collect();
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
@@ -655,29 +942,22 @@ pub fn query(
                     &program_info,
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
-                for model_path in models {
-                    let report = crate::models::try_load_models(
-                        &match_index,
-                        model_path,
-                        &mut model_matches,
-                    )?;
-                    ignored.merge(&report.index_time_models);
-                    if !report.endpoint_stats.is_empty() {
-                        files_declaring_endpoints.insert(model_path);
-                    }
-                    // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
-                    // (generator index, direction) alone, which would conflate two model files
-                    // that happen to number their generators the same. Merging over imports is
-                    // what makes a generator that is dead against one import but live against
-                    // another come out live.
-                    for ((index, direction), stats) in &report.endpoint_stats {
-                        diagnostics
-                            .generator_stats
-                            .entry((model_path.clone(), *index, *direction))
-                            .or_default()
-                            .merge(stats);
-                    }
-                }
+                portcullis_matcher.observe_import(&match_index, &mut model_matches);
+            }
+        }
+        // Query time keeps the source/sink heads. The rules whose heads are all index-time are
+        // counted and reported, so a query that drops a propagation says so rather than
+        // looking exactly like one whose models did nothing.
+        let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
+        report_portcullis(&portcullis_report);
+        // Re-keyed by file (see [`crate::models::portcullis_endpoint_stats`]).
+        for file in &portcullis_report.files {
+            for ((rule, direction), stats) in crate::models::portcullis_endpoint_stats(file) {
+                diagnostics
+                    .generator_stats
+                    .entry((file.path.clone(), rule, direction))
+                    .or_default()
+                    .merge(&stats);
             }
         }
         log::debug!(
@@ -687,13 +967,6 @@ pub fn query(
             model_matches.propagations.len(),
             crate::index_engine::phys_footprint_mb()
         );
-        if !ignored.is_empty() {
-            log::warn!(
-                "ignoring {} in the given model file(s); they take effect at \
-                 `ctadl index` time, so re-run `ctadl index` with them to use them",
-                ignored.describe()
-            );
-        }
         warn_on_endpoint_digest_mismatch(indexed_policy.as_ref(), &files_declaring_endpoints)?;
         let mut builder = QueryFactsBuilder::default();
         let mut endpoints = Vec::new();
@@ -776,6 +1049,7 @@ pub fn query(
             .actual_param(index_facts.actual_param.clone())
             .call(final_call.clone())
             .assign(index_result.assign_like)
+            .update_sans_path(index_result.update_sans_path)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
         builder.build().unwrap()
@@ -858,14 +1132,8 @@ fn query_model_check(
 
     let has_file_errors = outcome.has_file_errors();
     let mut diagnostics = outcome.into_diagnostics();
-    diagnostics.command_line = std::env::args_os()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ");
-    diagnostics.arguments = std::env::args_os()
-        .skip(1)
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
+    diagnostics.command_line = ctadl_import::sarif::command_line();
+    diagnostics.arguments = ctadl_import::sarif::arguments();
     diagnostics.start_time_utc = start_time_utc;
 
     let execution_successful =
@@ -988,6 +1256,12 @@ fn dump_taint_graph_dot(
             .and_modify(|c| *c = c.join(cone))
             .or_insert(cone);
     }
+    // `oriented` iterates in handle order; the file wants content order.
+    let mut oriented: Vec<_> = oriented.into_iter().collect();
+    oriented.sort_unstable_by(|((s1, d1), _), ((s2, d2), _)| {
+        crate::graphviz::index_vertex_cmp(s1, s2)
+            .then_with(|| crate::graphviz::index_vertex_cmp(d1, d2))
+    });
     let edges: Vec<_> = oriented
         .into_iter()
         .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))
@@ -1256,7 +1530,7 @@ fn report_bridged_summaries(
 /// A summary is kept only when its function is in the current project's `IdMap` by name.
 /// `mapped_per_function` counts the summaries kept per function in the current project.
 ///
-/// Only context-free `summary` rows are mapped; `context_summary` and `critical_summary` are
+/// Only unconditional `summary` rows are mapped; conditional ones and `critical_summary` are
 /// not.
 fn load_and_map_summaries(
     summary_project: &AnalysisProject,
@@ -2135,6 +2409,50 @@ mod tests {
         assert_eq!(
             summary_imports(&app, &summaries),
             [("xproj", "app__x86__libx"), ("yproj", "app__x86__liby")]
+        );
+    }
+
+    /// The guardrail records its counts as a note, and adds a warning once the calls are many.
+    #[test]
+    fn merged_method_guardrail_pushes_its_counts() {
+        let mut ids = facts::IdMap::default();
+        let merged = "LA;->run()V";
+        let target = ids.get_or_add_function(facts::Function(merged.into()));
+        let other = ids.get_or_add_function(facts::Function("LB;->run()V".into()));
+        let edges = |n: u64, to: facts::FunctionId| -> Vec<_> {
+            (0..n)
+                .map(|i| {
+                    let site =
+                        facts::PackedInsnSiteId::try_from_parts(other, facts::InsnId::new(i))
+                            .unwrap();
+                    (site, to)
+                })
+                .collect()
+        };
+        let live = [merged.to_string()];
+
+        let mut call = edges(2, target);
+        call.extend(edges(1, other));
+        let mut notes = Notifications::default();
+        merged_method_guardrail(&live, &call, &ids, &mut notes);
+        let note = notes
+            .of(&notifications::MERGED_METHOD_CALLS)
+            .next()
+            .expect("the counts");
+        assert_eq!(notifications::property_u64(note, "edges"), Some(2));
+        assert_eq!(notifications::property_u64(note, "callEdges"), Some(3));
+        assert_eq!(notifications::property_u64(note, "liveMethods"), Some(1));
+        assert_eq!(
+            notes.of(&notifications::MERGED_METHOD_CALLS_HIGH).count(),
+            0
+        );
+
+        let call = edges(MERGED_METHOD_CALL_EDGES as u64 + 1, target);
+        let mut notes = Notifications::default();
+        merged_method_guardrail(&live, &call, &ids, &mut notes);
+        assert_eq!(
+            notes.of(&notifications::MERGED_METHOD_CALLS_HIGH).count(),
+            1
         );
     }
 }

@@ -20,11 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
+use ctadl_import::notifications::{
+    self, MERGED_CLASSES_NOT_SPLIT, MERGED_CLASSES_SPLIT, NOTIFICATIONS_FILE, Notifications,
+};
 use serde_json::Value;
 
 use crate::exec;
-use crate::regression::{ctadl_bin, Outcome};
+use crate::regression::{Outcome, ctadl_command};
 
 /// The import name every check shares. One import, read by all of them.
 const IMPORT: &str = "app";
@@ -42,10 +45,30 @@ pub const CHECKS: &[&str] = &[
     "apk:report-invariants",
     "apk:reimport",
     INDEX_CHECK,
+    MERGED_CHECK,
 ];
 
-/// The check [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
+/// The checks [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
 const INDEX_CHECK: &str = "apk:manifest-and-intents";
+const MERGED_CHECK: &str = "apk:merged-classes";
+
+/// What the dex frontend's split of R8-merged classes does with this app, from the properties of
+/// its `MERGED_CLASSES_SPLIT` notification: classes split, split classes it could not close (their
+/// merged methods stay live), classes over the id cap, and allocations of split classes with no
+/// known id, of all of them. Pinned because a regression in the split moves them. Re-pin from the
+/// notification in `imports/app/notifications.sarif` under the store of
+/// `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in the commit message
+/// which change moved them.
+const MERGED_CLASSES: (u64, u64, u64, u64, u64) = (140, 3, 0, 3, 667);
+
+/// The [`MERGED_CLASSES`] properties, in order.
+const MERGED_CLASSES_KEYS: [&str; 5] = [
+    "split",
+    "notClosed",
+    "overCap",
+    "unresolvedAllocations",
+    "allocations",
+];
 
 // The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
 // even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
@@ -56,16 +79,14 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "9";
+const IMPORT_FORMAT_VERSION: &str = "11";
 
-/// A model file that selects something in any Java app: every `toString` override. The point is
-/// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
-/// right one.
-const MODELS: &str = r#"{"model_generators": [
-  {"find": "methods",
-   "where": [{"constraint": "signature_match", "name": "toString"}],
-   "model": {"sources": [{"kind": "k", "port": "Return"}]}}
-]}"#;
+/// A Portcullis model file that selects something in any Java app: every `toString` override.
+/// The point is the *checking*, not the model, so the cheapest rule that cannot match nothing is
+/// the right one.
+const MODELS: &str = r#"source(F::return, kind = "k") :-
+  fun(F, name = "toString");
+"#;
 
 /// Import the app once, then run every check but [`INDEX_CHECK`] against that store. Returns named
 /// (check, outcome) pairs to fold into the regression report.
@@ -74,7 +95,11 @@ const MODELS: &str = r#"{"model_generators": [
 /// others to look at. It is reported as `apk:import` failing and the rest are Skipped naming it,
 /// which reads as what happened rather than as several independent breakages.
 pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
-    let shared = &CHECKS[..CHECKS.len() - 1];
+    let shared: Vec<&str> = CHECKS
+        .iter()
+        .copied()
+        .filter(|c| ![INDEX_CHECK, MERGED_CHECK].contains(c))
+        .collect();
     let state = work.join("state");
     std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
     let store = state.join("ctadl");
@@ -120,9 +145,65 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
     let store = state.join("ctadl");
     let apk = std::fs::canonicalize(apk)
         .with_context(|| format!("failed to canonicalize {}", apk.display()))?;
-    let outcome = import(work, &state, &apk, &[])
-        .and_then(|()| check_manifest_and_intents(work, &state, &store));
-    Ok(vec![(INDEX_CHECK.to_string(), to_outcome(outcome))])
+    if let Err(err) = import(work, &state, &apk, &[]) {
+        let why = format!("{err:#}");
+        return Ok(vec![
+            (INDEX_CHECK.to_string(), Outcome::Fail(why.clone())),
+            (MERGED_CHECK.to_string(), Outcome::Fail(why)),
+        ]);
+    }
+    Ok(vec![
+        (
+            INDEX_CHECK.to_string(),
+            to_outcome(check_manifest_and_intents(work, &state, &store)),
+        ),
+        (
+            MERGED_CHECK.to_string(),
+            to_outcome(check_merged_classes(&import_dir(&store))),
+        ),
+    ])
+}
+
+/// The split of R8-merged classes still works on this app: the `notifications.sarif` in `dir`,
+/// an import's directory, has a `MERGED_CLASSES_SPLIT` notification whose properties are
+/// [`MERGED_CLASSES`], and no `MERGED_CLASSES_NOT_SPLIT` one.
+fn check_merged_classes(dir: &Path) -> Result<()> {
+    let path = dir.join(NOTIFICATIONS_FILE);
+    ensure!(path.is_file(), "the import wrote no {}", path.display());
+    let found = Notifications::load(dir).with_context(|| format!("reading {}", path.display()))?;
+    let split = found.of(&MERGED_CLASSES_SPLIT).next().with_context(|| {
+        format!(
+            "{} has no {} notification",
+            path.display(),
+            MERGED_CLASSES_SPLIT.id
+        )
+    })?;
+    let n = |i: usize| {
+        notifications::property_u64(split, MERGED_CLASSES_KEYS[i]).with_context(|| {
+            format!(
+                "the {} notification has no integer property {:?}",
+                MERGED_CLASSES_SPLIT.id, MERGED_CLASSES_KEYS[i]
+            )
+        })
+    };
+    let got = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
+    ensure!(
+        got == MERGED_CLASSES,
+        "merged classes {MERGED_CLASSES_KEYS:?}: the import says {got:?}, this APK has \
+         {MERGED_CLASSES:?}. Re-pin MERGED_CLASSES in xtask/src/apk.rs if a frontend change \
+         really moved them"
+    );
+    let not_split: Vec<&str> = found
+        .of(&MERGED_CLASSES_NOT_SPLIT)
+        .map(notifications::text)
+        .collect();
+    ensure!(
+        not_split.is_empty(),
+        "the import left merged classes unsplit ({}):\n{}",
+        MERGED_CLASSES_NOT_SPLIT.id,
+        not_split.join("\n")
+    );
+    Ok(())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -216,7 +297,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// and writes nothing into the store.
 ///
 /// Two halves, and both matter. The report has to name the imports it checked and say the
-/// generator matched something -- a check that silently matches nothing is worse than no check,
+/// rule matched something -- a check that silently matches nothing is worse than no check,
 /// because it reads as a clean bill of health. And the command must leave the store alone: it
 /// could not run a query, so a project written here would be an empty index that the next real
 /// `ctadl query` would happily use.
@@ -225,7 +306,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// store -- stays in `ctadl-ascent/tests/integration/model_check.rs`, which needs no artifact and runs in
 /// milliseconds. What is here is the half that needs a real import.
 fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
-    let models = work.join("models.json");
+    let models = work.join("models.ctadl");
     std::fs::write(&models, MODELS).with_context(|| format!("writing {}", models.display()))?;
     let sarif = work.join("model-check.sarif");
 
@@ -293,13 +374,13 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
         checked["properties"]
     );
 
-    // And that the generator selected something. This one matches `toString`, which any real
+    // And that the rule selected something. This one matches `toString`, which any real
     // Java app has hundreds of.
     let matched = by_id("CTADL0011.generator-matched")
-        .with_context(|| format!("the generator matched nothing:\n{text}"))?;
+        .with_context(|| format!("the rule matched nothing:\n{text}"))?;
     ensure!(
         matched["level"] == "note",
-        "a matched generator is a note, not {}",
+        "a matched rule is a note, not {}",
         matched["level"]
     );
 
@@ -322,10 +403,10 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 /// by running `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk` followed by
 /// `ctadl report app --format json` and reading the four numbers back out, and say in the
 /// commit message which frontend change moved them.
-const REPORT_TOTAL_SITES: u64 = 178_310;
-const REPORT_VIRTUAL_SITES: u64 = 99_551;
-const REPORT_CHA_EDGES: u64 = 2_080_404;
-const REPORT_RTA_EDGES: u64 = 2_026_852;
+const REPORT_TOTAL_SITES: u64 = 178_939;
+const REPORT_VIRTUAL_SITES: u64 = 99_828;
+const REPORT_CHA_EDGES: u64 = 2_145_517;
+const REPORT_RTA_EDGES: u64 = 2_065_205;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.
@@ -348,9 +429,9 @@ const REPORT_SECTIONS: &[&str] = &[
 /// instruction, and every other assertion here would still pass. The three sum to
 /// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
 const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
-    ("virtual", 76_791),
-    ("interface", 21_153),
-    ("super", 1_607),
+    ("virtual", 77_014),
+    ("interface", 21_200),
+    ("super", 1_614),
     ("unknown", 0),
 ];
 
@@ -916,10 +997,8 @@ fn import(work: &Path, state: &Path, apk: &Path, extra: &[&str]) -> Result<()> {
 /// A `ctadl` invocation against the scratch store. `XDG_STATE_HOME` rather than `--store`, so
 /// the default store resolution is exercised too -- it is what a user gets.
 fn command(work: &Path, state: &Path, args: &[&str]) -> Result<Command> {
-    let mut cmd = Command::new(ctadl_bin()?);
-    cmd.current_dir(work)
-        .env("XDG_STATE_HOME", state)
-        .args(args);
+    let mut cmd = ctadl_command(args)?;
+    cmd.current_dir(work).env("XDG_STATE_HOME", state);
     Ok(cmd)
 }
 
@@ -960,17 +1039,17 @@ fn modified(path: &Path) -> Result<SystemTime> {
 mod tests {
     use super::*;
 
-    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] positionally, so a check added
-    /// to one and not the other would silently drop a result or mislabel one. The count is what a
-    /// compiler cannot catch.
+    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] and [`MERGED_CHECK`]
+    /// positionally, so a check added to one and not the other would silently drop a result or
+    /// mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 7, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 8, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
         assert_eq!(
-            CHECKS.last(),
-            Some(&INDEX_CHECK),
-            "run_index_check's check is last"
+            CHECKS[CHECKS.len() - 2..],
+            [INDEX_CHECK, MERGED_CHECK],
+            "run_index_check's checks are last"
         );
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),
@@ -978,15 +1057,77 @@ mod tests {
         );
     }
 
+    /// The merged-classes check reads the pinned counts off the split notification's properties,
+    /// and fails without the file, without the notification, or with a not-split one.
+    #[test]
+    fn merged_classes_are_read_from_notifications() {
+        use ctadl_import::notifications::{DEFAULT_MESSAGE, Level};
+        use std::collections::BTreeMap;
+
+        let dir = std::env::temp_dir().join(format!("xtask_merged_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails_with = |needle: &str| {
+            let err = format!("{:#}", check_merged_classes(&dir).unwrap_err());
+            assert!(err.contains(needle), "{needle:?} not in {err:?}");
+        };
+        fails_with("wrote no");
+
+        let mut found = Notifications::default();
+        found.save(&dir).unwrap();
+        fails_with("has no CTADL0105");
+
+        let (a, b, c, d, e) = MERGED_CLASSES;
+        let counts = |split: u64| -> BTreeMap<String, serde_json::Value> {
+            MERGED_CLASSES_KEYS
+                .iter()
+                .zip([split, b, c, d, e])
+                .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+                .collect()
+        };
+        let mut moved = Notifications::default();
+        let split = |n: u64| vec![n.to_string()];
+        moved.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a + 1),
+            counts(a + 1),
+        );
+        moved.save(&dir).unwrap();
+        fails_with("Re-pin");
+
+        found.push(
+            &MERGED_CLASSES_SPLIT,
+            DEFAULT_MESSAGE,
+            Level::Note,
+            split(a),
+            counts(a),
+        );
+        found.save(&dir).unwrap();
+        check_merged_classes(&dir).unwrap();
+
+        found.push(
+            &MERGED_CLASSES_NOT_SPLIT,
+            "notClosed",
+            Level::Warning,
+            vec!["30".into(), "140".into()],
+            BTreeMap::new(),
+        );
+        found.save(&dir).unwrap();
+        fails_with("30 of 140 split classes still have live merged methods");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The model file the model check is run with has to be a model file. It is written from a
     /// string constant, so nothing else would catch a typo in it until the nightly ran.
     #[test]
-    fn the_model_file_is_valid_json() {
-        let value: Value = serde_json::from_str(MODELS).expect("MODELS parses");
+    fn the_model_file_is_portcullis() {
+        let program =
+            ctadl_ascent::models::portcullis::parse::parse_program(MODELS).expect("MODELS parses");
         assert_eq!(
-            value["model_generators"].as_array().map(Vec::len),
-            Some(1),
-            "one generator, which the check expects to match"
+            program.rules.len(),
+            1,
+            "one rule, which the check expects to match"
         );
     }
 }

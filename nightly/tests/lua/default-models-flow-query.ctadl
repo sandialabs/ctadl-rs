@@ -1,0 +1,12 @@
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "read");
+source(F::return, kind = "UserInput") :-
+  fun(F),
+  F = "read";
+
+sink(F::arg(0), kind = "CommandInjection") :-
+  fun(F, name = "execute");
+sink(F::arg(0), kind = "CommandInjection") :-
+  fun(F),
+  F = "execute";
+

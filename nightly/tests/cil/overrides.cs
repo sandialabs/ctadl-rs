@@ -1,6 +1,6 @@
 // Generic overrides and explicit implementations.
-// CIL has no bridge methods, so each needs an override alias (`hierarchy.rs`) for CHA to
-// find it under the key the call site uses.
+// CIL has no bridge methods, so the frontend synthesizes one for each (`hierarchy.rs`) for
+// CHA to find it under the key the call site uses.
 using System.Collections.Generic;
 
 namespace Cases
@@ -12,6 +12,7 @@ namespace Cases
         public static void Sink2(object o) { }
         public static void Sink3(object o) { }
         public static void Sink4(object o) { }
+        public static void Sink5(object o) { }
     }
 
     public class Store<T>
@@ -45,6 +46,20 @@ namespace Cases
     public class StringBox : IBox<string>
     {
         public string Put(string x) => x;
+    }
+
+    public interface IQux
+    {
+        string Baz(string s);
+    }
+
+    // An explicit implementation beside a public method with the interface method's key: the
+    // bridge cannot take the key's name. `IQux` has no other implementation to carry the flow.
+    public class TwoWays : IQux
+    {
+        string IQux.Baz(string s) => s;
+
+        public string Baz(string s) => "clean";
     }
 
     // A BCL interface whose metadata comes from the framework.
@@ -85,6 +100,12 @@ namespace Cases
             IComparer<string> i = c;
             i.Compare(Taint.Source(), "clean");
             Taint.Sink4(c.Last);
+        }
+
+        public static void SharedKey()
+        {
+            IQux q = new TwoWays();
+            Taint.Sink5(q.Baz(Taint.Source()));
         }
     }
 }

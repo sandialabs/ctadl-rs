@@ -11,6 +11,7 @@
 //!     cargo xtask regression --frontend pcode
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
+//!     cargo xtask regression --frontend pcode,jni --mem2reg full:0
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
 //!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint
@@ -29,7 +30,6 @@ mod discovery;
 mod exec;
 mod jvm;
 mod jvm_opcodes;
-mod models;
 mod regression;
 mod report_eval;
 mod sarif;
@@ -38,7 +38,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::discovery::Frontend;
 
@@ -80,6 +80,16 @@ fn run() -> Result<bool> {
     }
 }
 
+fn parse_jobs(value: &str) -> Result<usize> {
+    let jobs: usize = value
+        .parse()
+        .with_context(|| format!("--jobs expects a number, got `{value}`"))?;
+    if jobs == 0 {
+        bail!("--jobs must be at least 1");
+    }
+    Ok(jobs)
+}
+
 fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regression::Options> {
     let mut opts = regression::Options::default();
     // `--frontend` is additive across occurrences, so the first one seen has to
@@ -94,7 +104,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil");
+                    bail!(
+                        "--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil"
+                    );
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -103,16 +115,20 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             }
             "--jobs" | "-j" => {
                 let value = args.next().context("--jobs requires a value")?;
-                let jobs: usize = value
-                    .parse()
-                    .with_context(|| format!("--jobs expects a number, got `{value}`"))?;
-                if jobs == 0 {
-                    bail!("--jobs must be at least 1");
-                }
-                opts.jobs = Some(jobs);
+                opts.jobs = Some(parse_jobs(&value)?);
+            }
+            // The value can also be attached: `-j4`, `--jobs=4`.
+            other if other.starts_with("--jobs=") || other.starts_with("-j") => {
+                let value = other
+                    .strip_prefix("--jobs=")
+                    .or_else(|| other.strip_prefix("-j"));
+                opts.jobs = Some(parse_jobs(value.unwrap_or_default())?);
             }
             "--release" => {
                 opts.release = true;
+            }
+            "--mem2reg" => {
+                opts.mem2reg = Some(args.next().context("--mem2reg requires a value")?);
             }
             "--tests-dir" => {
                 let dir = args.next().context("--tests-dir requires a value")?;
@@ -125,10 +141,6 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             "--dex-apk" => {
                 let path = args.next().context("--dex-apk requires a value")?;
                 opts.dex_apk = Some(PathBuf::from(path));
-            }
-            "--models-dir" => {
-                let dir = args.next().context("--models-dir requires a value")?;
-                opts.models_dir = Some(PathBuf::from(dir));
             }
             "--cil-goldens" => {
                 let dir = args.next().context("--cil-goldens requires a value")?;
@@ -371,6 +383,12 @@ Tasks:
                              capped). Cases are independent and each runs in its
                              own scratch dir, so this only trades memory for wall
                              clock; `-j 1` reverts to running them one at a time.
+    --mem2reg <policy>       Index every case with `ctadl index --mem2reg <policy>`
+                             (default: ctadl's own default). For a policy that
+                             can lose flows, such as `full:0`: a case that loses
+                             its flow is an XFAIL when an index's
+                             notifications.sarif names a function it promoted
+                             fully, and a FAIL when none does.
     --release                Build and exercise the release `ctadl` binary
                              (default: debug). Either way the binary is rebuilt
                              from current source before any case runs, so the
@@ -387,11 +405,6 @@ Tasks:
                              checks drive `ctadl` itself and need no toolchain,
                              so they run whenever `dex` is selected and this
                              resolves; both self-skip when it does not.
-    --models-dir <dir>       Directory holding the model generator schema and
-                             the built-in model files checked against it
-                             (default: auto-detect `ctadl-ascent/src/models`).
-                             The `models:*` checks self-skip when neither the
-                             flag nor the default directory is present.
     --cil-goldens <dir>      The committed Cecil goldens that `cil:goldens`
                              compares against (default: auto-detect
                              `xtask/cil-goldens`).
@@ -481,7 +494,7 @@ Tasks:
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_regression_args, Frontend};
+    use super::{Frontend, parse_regression_args};
     use std::collections::BTreeSet;
 
     fn frontends(args: &[&str]) -> BTreeSet<Frontend> {
@@ -530,6 +543,8 @@ mod tests {
         assert_eq!(jobs(&[]), None);
         assert_eq!(jobs(&["--jobs", "4"]), Some(4));
         assert_eq!(jobs(&["-j", "4"]), Some(4));
+        assert_eq!(jobs(&["-j4"]), Some(4));
+        assert_eq!(jobs(&["--jobs=4"]), Some(4));
     }
 
     #[test]
@@ -540,6 +555,9 @@ mod tests {
         assert!(err(&["--jobs", "nope"]));
         // Zero workers would silently run nothing; say so instead.
         assert!(err(&["--jobs", "0"]));
+        assert!(err(&["-j0"]));
+        assert!(err(&["--jobs="]));
+        assert!(err(&["-jx"]));
     }
 
     #[test]

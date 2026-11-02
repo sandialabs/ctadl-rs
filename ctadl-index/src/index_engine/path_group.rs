@@ -1,10 +1,9 @@
-//! Everything known about one variable of one function, keyed by access path.
+//! Everything known about one variable of one function, keyed by path.
 //!
-//! The BYODS stores keep one *group* per `(function, variable)`. For `locals`
-//! ([`super::locals_trie`], [`super::c_locals_trie`]) the group is what reaches that variable:
-//! each leaf is an access path `p` of the variable together with the formal `a.p4` that reaches
-//! `v.p`. For `assign_like` ([`super::assign_like_trie`], [`super::c_assign_like_trie`]) the
-//! group is the edges read from that variable: each leaf is a source path `p` together with the
+//! The BYODS stores ([`super::locals_trie`], [`super::c_locals_trie`], and the `Always` rows of
+//! [`super::cond_trie`] and [`super::c_cond_trie`]) keep one *group* per `(function, variable)`.
+//! For `locals` the group is what reaches that variable: each leaf is a path `p` of the
+//! variable together with the formal `a.p4` that reaches `v.p`. For `assign_like` the group is the edges read from that variable: each leaf is a source path `p` together with the
 //! destination vertex `v1.p1` that `v1.p1 = v.p` writes. In both, the path is the first
 //! component of the leaf, and the local propagation rules probe it exactly: "which formals
 //! reach `v.p`", "which edges read `v.p`".
@@ -38,7 +37,7 @@ use super::locals_trie::hb_bytes;
 type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 type Set<T> = HybridSet<T>;
 
-/// The leaves of one group, keyed by their access path `P`. See the module docs.
+/// The leaves of one group, keyed by their path `P`. See the module docs.
 pub struct PathGroup<P, A, B> {
     inner: Inner<P, A, B>,
 }

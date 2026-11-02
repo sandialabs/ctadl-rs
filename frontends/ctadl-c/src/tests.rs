@@ -669,11 +669,8 @@ fn address_of_element_forms_an_address() {
         }";
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "transfer");
-    let Exp::AccessPath(addr) = &args[0] else {
-        panic!(
-            "`&x[1]` should be an address access path, got {:?}\n{prog}",
-            args[0]
-        )
+    let Exp::Address(addr) = &args[0] else {
+        panic!("`&x[1]` should be an address, got {:?}\n{prog}", args[0])
     };
     assert_eq!(addr.base, local_ref(&prog, "f", "x"));
     let offsets: Vec<i64> = addr.accesses.iter().map(|f| f.offset().0).collect();
@@ -2056,8 +2053,9 @@ fn funcptr_array_multistore_flows() {
 #[test_log::test]
 fn field_non_interference() {
     // Field sensitivity, stated as a negative: writing `x` into `s.a` and returning `s.b` must NOT
-    // leak `x` to the return -- `s.a` and `s.b` are distinct field paths. The positive halves (x ->
-    // s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the return.
+    // leak `x` to the return -- `s.a` and `s.b` are distinct access paths. The positive halves
+    // (x -> s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the
+    // return.
     let src = r"
         int f(Donkey s, int x) {
             s.a = x;
@@ -2073,7 +2071,7 @@ fn field_non_interference() {
 #[test_log::test]
 fn arrow_field_returns_param() {
     // Reading a field through an arrow (`return p->x;`) on a pointer parameter summarizes as the
-    // field path @p0.x reaching the return. (The equivalent `(*p).x` spelling is covered by
+    // access path @p0.x reaching the return. (The equivalent `(*p).x` spelling is covered by
     // `deref_paren_field_equivalent`.)
     let src = r"
         int f(Field *p) {
@@ -2158,7 +2156,7 @@ fn elvis_ternary_is_not_a_frontend_gap() {
 fn elvis_ternary_propagates_struct_field() {
     // The `field ?: fallback` idiom usually blends a field read with a
     // fallback. Reusing the condition's already-lowered value (rather than re-lowering
-    // it) keeps the field path intact, so `p->x` still reaches the result.
+    // it) keeps the access path intact, so `p->x` still reaches the result.
     let src = r"
         typedef struct Field { int x; } Field;
         int f(Field *p, int c) {
@@ -2293,7 +2291,7 @@ fn whole_struct_copy_carries_field() {
 #[test_log::test]
 fn nested_field_depth_returns() {
     // A deep field read (`v.a.b.c`) preserves the full access path: the summary endpoint is the
-    // three-deep field path on the formal, not a flattened or truncated one.
+    // three-deep path on the formal, not a flattened or truncated one.
     let src = r"
         int f(Thing v) {
             return v.a.b.c;
@@ -2408,7 +2406,7 @@ fn unary_ops_blend_through() {
 
 #[test_log::test]
 fn constant_index_field_precision() {
-    // Constant subscripts are distinct field paths: `src` into `v.a[0]` must NOT leak to a
+    // Constant subscripts are distinct access paths: `src` into `v.a[0]` must NOT leak to a
     // read of `v.a[1]` -- the array-index analogue of `field_non_interference`. (`.[1]` in
     // the path strings is an *offset*; `.deref` names the memory at that address; index 0
     // contributes no offset segment at all.)
@@ -2645,7 +2643,7 @@ fn vararg_call_carries_argument() {
 fn designated_initializer_flows() {
     // A designated initializer `Thing v = {.a = src}` taints field `a`, so `return v.a` carries src.
     // The designator gives the member name, so the store lands at `v.a` -- exactly where the `v.a`
-    // read resolves. (`src` is a scalar param, so it reaches the return at path "" -- the field path
+    // read resolves. (`src` is a scalar param, so it reaches the return at path "" -- the path
     // lives on the local `v`, not on the param.)
     let src = r"
         int f(int src) {
@@ -2956,19 +2954,15 @@ fn import_c_registers_externs_and_spans() {
     assert!(has_span, "no statement carried a source-info span");
 }
 
-/// End-to-end check of the `Variable(name)` source/sink selector: Stage 1 resolves the local
-/// name to a base `LocalIdx`, and Stage 2 (`build_query_endpoints`) seeds exactly ONE versioned
-/// vertex — the lowest *existing* SSA version — against a real index. `buf` is defined twice, so
+/// Stage 2 of the `Variable(name)` source/sink selector: given the base `LocalIdx` Stage 1
+/// resolved a local name to, `build_query_endpoints` seeds exactly ONE versioned vertex — the
+/// lowest *existing* SSA version — against a real index. `buf` is defined twice, so
 /// it has multiple SSA versions; the test pins that we seed one (the lowest), not one per version.
 #[test_log::test]
 fn variable_port_selects_lowest_ssa_version() {
     use ctadl_ascent::facts::{Function, TaintDirection};
-    use ctadl_ascent::models::ProgramModelMatches;
-    use ctadl_ascent::models::json::ModelGeneratorIngest;
-    use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
+    use ctadl_ascent::models::{EndpointMatch, FormalIndexTypeTag};
     use ctadl_ascent::query_engine::build_query_endpoints;
-    use ctadl_ir::ProgramInfo;
-    use serde_json::json;
 
     // `buf` is assigned twice → two SSA versions (`%L{idx}_1`, `%L{idx}_2`).
     let src = r"
@@ -2982,34 +2976,23 @@ fn variable_port_selects_lowest_ssa_version() {
             MySink(buf);
         }";
 
-    // Stage 1 runs on the pre-SSA program (local names → base LocalIdx).
-    let ingest_prog = program_from_string(src).0;
-    // `%L{idx}` for `buf`; strip the `%L` to get the numeric base index the selector resolves to.
-    let render = local_render(&ingest_prog, "f", "buf");
+    // The base LocalIdx is read off the pre-SSA program, as Stage 1 would resolve the name,
+    // and the row is built directly, so the test exercises Stage 2 alone.
+    let render = local_render(&program_from_string(src).0, "f", "buf");
     let idx: u32 = render.strip_prefix("%L").unwrap().parse().unwrap();
-    let program_info = ProgramInfo {
-        program: ingest_prog,
-        ..Default::default()
-    };
-    let mut matches = ProgramModelMatches::default();
-    {
-        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
-        let generator = json!({
-            "find": "methods",
-            "where": [{"constraint": "name", "pattern": "^f$"}],
-            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
-        });
-        ingest.encode_models(vec![generator]).unwrap();
-    }
-    // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
-    let rows = &matches.endpoints;
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].selector_ty,
-        ctadl_ascent::models::FormalIndexTypeTag::Local
-    );
-    assert_eq!(rows[0].local_index, Some(idx));
+    let endpoints = [EndpointMatch {
+        function: "f".into(),
+        selector_ty: FormalIndexTypeTag::Local,
+        index: None,
+        path: ctadl_ascent::facts::Path::empty(),
+        label: "K".into(),
+        direction: TaintDirection::Forward,
+        wildcard: false,
+        saturating: false,
+        in_function: None,
+        callsite_scoped: false,
+        local_index: Some(idx),
+    }];
 
     // Index the same source and run Stage 2.
     let (facts, source_info, assign_like) = index_program(program_from_string(src).0);
@@ -3058,7 +3041,7 @@ fn variable_port_selects_lowest_ssa_version() {
         formals,
         ..
     } = build_query_endpoints(
-        &matches.endpoints,
+        &endpoints,
         &facts,
         &source_info.sites,
         &assign_like,
@@ -3075,90 +3058,6 @@ fn variable_port_selects_lowest_ssa_version() {
     assert!(formals.is_empty(), "a local selector registers no formal");
     let seeded = ep.vertex.0.as_local().expect("seeded a local vertex");
     assert_eq!(seeded.as_str(), format!("%L{idx}_{expected_version}"));
-}
-
-/// `Variable(name)` is resolved to a `LocalIdx` *per matched function*, not once for the
-/// generator: one generator matching several functions must record each function's own index for
-/// the same name. `g2` declares two locals ahead of `buf`, so `buf` lands on a different index
-/// there than in `g1` — a resolution hoisted out of the per-function loop would give both rows the
-/// same index and fail here. `g3` has no `buf` at all: that function is skipped with a warning
-/// (the other matches still emit) rather than failing the whole model.
-#[test_log::test]
-fn variable_port_resolves_per_matched_function() {
-    use ctadl_ascent::models::ProgramModelMatches;
-    use ctadl_ascent::models::json::ModelGeneratorIngest;
-    use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
-    use ctadl_ir::ProgramInfo;
-    use serde_json::json;
-
-    let src = r"
-        int MySource();
-        void MySink(int x);
-        void g1() {
-            int buf = MySource();
-            MySink(buf);
-        }
-        void g2() {
-            int pad1 = MySource();
-            int pad2 = MySource();
-            int buf = MySource();
-            MySink(pad1);
-            MySink(pad2);
-            MySink(buf);
-        }
-        void g3() {
-            int other = MySource();
-            MySink(other);
-        }";
-
-    let prog = program_from_string(src).0;
-    // Expected base index per function, read from each function's own locals table.
-    let want = |func: &str| -> u32 {
-        local_render(&prog, func, "buf")
-            .strip_prefix("%L")
-            .unwrap()
-            .parse()
-            .unwrap()
-    };
-    let (g1_idx, g2_idx) = (want("g1"), want("g2"));
-    assert_ne!(
-        g1_idx, g2_idx,
-        "fixture must give buf different indices in g1/g2 for this test to mean anything"
-    );
-
-    let program_info = ProgramInfo {
-        program: prog,
-        ..Default::default()
-    };
-    let mut matches = ProgramModelMatches::default();
-    {
-        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
-        let generator = json!({
-            "find": "methods",
-            "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],
-            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
-        });
-        // g3 lacking `buf` is a skip, not an error.
-        ingest.encode_models(vec![generator]).unwrap();
-    }
-
-    let rows: std::collections::BTreeMap<&str, Option<u32>> = matches
-        .endpoints
-        .iter()
-        .map(|r| {
-            assert_eq!(
-                r.selector_ty,
-                ctadl_ascent::models::FormalIndexTypeTag::Local
-            );
-            (r.function.as_str(), r.local_index)
-        })
-        .collect();
-    assert_eq!(
-        rows,
-        std::collections::BTreeMap::from([("g1", Some(g1_idx)), ("g2", Some(g2_idx))]),
-        "expected one row per matched function that has `buf`, each with that function's own index"
-    );
 }
 
 // --- Positional record initializers ------------------------------------------------------
@@ -3462,7 +3361,7 @@ fn asm_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn asm_output_into_struct_field_is_stored() {
-    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field path.
+    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field.
     // That is the case the single-operand blend temp exists for -- a store lowers exactly one
     // value (`add_assign_to_program`), so handing the write two operands would silently drop
     // the second and lose half the transfer.

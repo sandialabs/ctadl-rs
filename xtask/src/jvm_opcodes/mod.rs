@@ -32,9 +32,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
-use jvm_reader::flow::compute_basic_blocks_for_method;
+use anyhow::{Context, Result, anyhow, bail};
 use jvm_reader::ClassFileParser;
+use jvm_reader::flow::compute_basic_blocks_for_method;
 
 use crate::asm_flow::{self, LocalNames};
 use crate::exec;
@@ -261,11 +261,11 @@ fn slots_of(atom: &str, out: &mut BTreeSet<String>) {
         if let Some((_, object)) = field.split_once('@') {
             out.insert(object.to_string());
         }
-    } else if let Some(elem) = atom.strip_prefix("elem:") {
-        if let Some((array, rest)) = elem.split_once('[') {
-            out.insert(array.to_string());
-            out.insert(rest.trim_end_matches(']').to_string());
-        }
+    } else if let Some(elem) = atom.strip_prefix("elem:")
+        && let Some((array, rest)) = elem.split_once('[')
+    {
+        out.insert(array.to_string());
+        out.insert(rest.trim_end_matches(']').to_string());
     }
 }
 

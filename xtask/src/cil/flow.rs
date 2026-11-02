@@ -21,12 +21,12 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
+use cil_reader::Module;
 use cil_reader::cil::Ins;
 use cil_reader::flow::check::{layer1_violations, layer2_violations};
 use cil_reader::flow::{FlowCx, InsFlow, MethodFlow};
 use cil_reader::model::{MethodBody, MethodDef};
 use cil_reader::raw::Table;
-use cil_reader::Module;
 
 use super::cecil_tests::{install_panic_hook, run_one};
 use super::parity::Input;

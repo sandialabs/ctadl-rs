@@ -41,7 +41,7 @@
 //! such point adds its `throwval` into `excout` (`excout := excout, throwval`), defined empty
 //! at entry, and the value reaches the caller through whichever return the method takes.
 //! Ending a block after every call instead would give each its own edge out, but would cut
-//! the load chains the index composes field paths along, which it does within a block only.
+//! the load chains the index composes paths along, which it does within a block only.
 
 use cil_reader::flow::{
     BlockId, BoundIns, Control, Effect, FlowOptions, HandlerKind, InsId, MethodFlow, Var,
@@ -141,14 +141,14 @@ impl<'f> Emitter<'f> {
     pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: FieldRef) {
         self.push(StatementKind::load(
             dst,
-            AccessPath::without_fields(base),
+            Address::without_offsets(base),
             field,
         ));
     }
 
     pub fn store(&mut self, base: VariableRef, field: FieldRef, value: Exp) {
         self.push(StatementKind::store(
-            AccessPath::without_fields(base),
+            Address::without_offsets(base),
             field,
             value,
         ));
@@ -344,9 +344,20 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
 /// The body of a delegate thunk (`calls.rs`): call `target` with every parameter but the first,
 /// the ignored target, and return what it returns.
 pub fn thunk_body(fdat: &mut FunctionData, target: &str, target_arity: usize) {
+    forward_body(fdat, target, 1..=target_arity);
+}
+
+/// The body of an override bridge (`hierarchy.rs`): call `target` with every parameter, and
+/// return what it returns.
+pub fn bridge_body(fdat: &mut FunctionData, target: &str, arity: usize) {
+    forward_body(fdat, target, 0..arity);
+}
+
+/// A body that calls `target` with `params`, and returns what it returns.
+fn forward_body(fdat: &mut FunctionData, target: &str, params: impl Iterator<Item = usize>) {
     fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     let mut em = Emitter::new(fdat);
-    let args: ThinVec<Exp> = (1..=target_arity)
+    let args: ThinVec<Exp> = params
         .map(|n| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(n))))
         .collect();
     let retval = em.retval();

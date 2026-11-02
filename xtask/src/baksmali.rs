@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
-use dex_reader::{smali, DexParser};
+use anyhow::{Context, Result, anyhow, bail};
+use dex_reader::{DexParser, smali};
 
 use crate::exec;
 
@@ -580,10 +580,10 @@ fn parse_baksmali_methods(smali_path: &Path) -> Result<HashMap<String, Vec<Strin
         if current_key.is_some() && !in_annotation {
             // Capture register allocation so we can map pX -> vN.
             if let Some(rest) = line.strip_prefix(".registers") {
-                if let Ok(total_regs) = rest.trim().parse::<usize>() {
-                    if total_regs >= current_ins_size {
-                        current_p_base = Some(total_regs - current_ins_size);
-                    }
+                if let Ok(total_regs) = rest.trim().parse::<usize>()
+                    && total_regs >= current_ins_size
+                {
+                    current_p_base = Some(total_regs - current_ins_size);
                 }
                 continue;
             }

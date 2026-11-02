@@ -237,10 +237,10 @@ pub fn collect_codeflow_sink_functions(sarif: &Path) -> Result<BTreeSet<String>>
                     if !msgs.iter().any(|m| m.starts_with("source ")) {
                         continue;
                     }
-                    if let Some(sink) = msgs.iter().rev().find(|m| m.starts_with("sink ")) {
-                        if let Some((_, function)) = sink.split_once(" in ") {
-                            found.insert(function.to_string());
-                        }
+                    if let Some(sink) = msgs.iter().rev().find(|m| m.starts_with("sink "))
+                        && let Some((_, function)) = sink.split_once(" in ")
+                    {
+                        found.insert(function.to_string());
                     }
                 }
             }
@@ -348,10 +348,10 @@ fn collect_int_values(value: &Value, key: &str, out: &mut BTreeSet<i64>) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
-                if k == key {
-                    if let Some(n) = v.as_i64() {
-                        out.insert(n);
-                    }
+                if k == key
+                    && let Some(n) = v.as_i64()
+                {
+                    out.insert(n);
                 }
                 collect_int_values(v, key, out);
             }

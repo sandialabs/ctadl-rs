@@ -1,15 +1,22 @@
 //! What the fixpoint did, in machine-readable form: every relation's tuple count and every SCC's
-//! iterations and time, with each rule's time. `IndexResult::try_save` writes it next to the
-//! index as `profile.json`, so runs can be compared relation by relation (across commits, or
-//! against a run stopped by `CTADL_INDEX_TIMEOUT_SECS`) without rerunning them with logging on.
+//! iterations and time, with each rule's time, and the heap bytes of the `locals` store and of
+//! every interner. `IndexResult::try_save` writes it next to the index as `profile.json`, so runs
+//! can be compared relation by relation (across commits, or against a run stopped by
+//! `CTADL_INDEX_TIMEOUT_SECS`) without rerunning them with logging on.
 //!
-//! The numbers come from the summaries ascent generates (`relation_sizes_summary`,
+//! The counts and times come from the summaries ascent generates (`relation_sizes_summary`,
 //! `scc_times_summary`), which are the only form in which ascent exposes them; this module
 //! parses that text.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+
+pub use immortal::Stats;
+
+use crate::facts::{CallDispatchKey, CallTargetObject, PathId, Str};
+use crate::index_engine::decision;
+use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
 
@@ -24,6 +31,50 @@ pub struct IndexProfile {
     /// Tuple count of every relation, by name.
     pub relations: BTreeMap<String, usize>,
     pub sccs: Vec<SccProfile>,
+    pub memory: MemoryProfile,
+    /// How many times a rule asked the path set to split a path that is not in it. Each is a
+    /// bug that drops rows, so this is 0.
+    pub split_misses: usize,
+}
+
+/// Where the index's bytes are, so a memory regression can be traced to a store.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MemoryProfile {
+    /// The `locals` store's heap report at the fixpoint. `None` under `Storage::Lsm`, whose
+    /// store is not on the heap.
+    pub locals: Option<HeapReport>,
+    /// Entries and heap bytes of each store of interned values, by name. See
+    /// [`MemoryProfile::read_interned`].
+    pub interned: BTreeMap<&'static str, Stats>,
+    /// The entries each interner that the fixpoint may only read gained while it ran. All 0
+    /// when this process built one index at a time.
+    pub fixpoint_interned: BTreeMap<&'static str, usize>,
+}
+
+impl MemoryProfile {
+    /// Reads the size of each `id_handle!` interner into `interned`, beside the frozen path set
+    /// that the engine put there (`PathSet`, whose entries are its members). Interned values are
+    /// never freed, so the sizes cover every index this process has built, up to the moment of
+    /// the call.
+    pub fn read_interned(&mut self) {
+        self.interned.extend([
+            ("Str", Str::stats()),
+            ("CallTargetObject", CallTargetObject::stats()),
+            ("CallDispatchKey", CallDispatchKey::stats()),
+            ("Path", PathId::stats()),
+        ]);
+        self.interned.extend(decision::interner_stats());
+    }
+
+    /// The entries of each interner that the fixpoint may not add to, by name.
+    pub fn frozen_interner_entries() -> BTreeMap<&'static str, usize> {
+        BTreeMap::from([
+            ("Str", Str::stats().entries),
+            ("CallTargetObject", CallTargetObject::stats().entries),
+            ("CallDispatchKey", CallDispatchKey::stats().entries),
+            ("Path", PathId::stats().entries),
+        ])
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -64,7 +115,7 @@ impl IndexProfile {
 }
 
 /// Lines of the form `<relation> size: <n>`.
-fn parse_relation_sizes(text: &str) -> BTreeMap<String, usize> {
+pub(crate) fn parse_relation_sizes(text: &str) -> BTreeMap<String, usize> {
     text.lines()
         .filter_map(|line| {
             let (name, n) = line.rsplit_once(" size: ")?;
@@ -147,6 +198,38 @@ mod tests {
         assert!((parse_debug_duration("3.2µs").unwrap() - 3.2e-6).abs() < 1e-12);
         assert_eq!(parse_debug_duration("0ns"), Some(0.0));
         assert_eq!(parse_debug_duration("soon"), None);
+    }
+
+    #[test]
+    fn memory_reports_each_interner() {
+        Str::intern("memory_reports_each_interner");
+        let target = CallTargetObject::intern(&crate::facts::CallTargetObjectKind::Symbol(
+            "memory_reports_each_interner".into(),
+        ));
+        CallDispatchKey::c();
+        let path = crate::facts::Path::from_symbol_names(["memory_reports_each_interner"]);
+        // Mints the decision's singleton set of each kind.
+        crate::index_engine::DecisionId::of(crate::index_engine::Decision {
+            formal: crate::facts::FormalIndex::new(0),
+            path,
+            target,
+        });
+        let mut p = IndexProfile::default();
+        p.memory.read_interned();
+        let json = serde_json::to_value(&p).unwrap();
+        for name in [
+            "Str",
+            "CallTargetObject",
+            "CallDispatchKey",
+            "Path",
+            "DecisionSet.exact",
+            "DecisionSet.collapsing",
+        ] {
+            let s = &json["memory"]["interned"][name];
+            assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");
+            assert!(s["bytes"].as_u64().unwrap() > 0, "{name}");
+        }
+        assert!(json["memory"]["locals"].is_null());
     }
 
     #[test]
