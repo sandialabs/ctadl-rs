@@ -1,5 +1,5 @@
-/* A field sum stored back into the struct through a pointer (libntfs's
- * `a->x + a->y`). The sum's value is computed from the tainted field, so it is
+/* A field sum stored back into the struct through a pointer (`a->x +
+ * a->y`). The sum's value is computed from the tainted field, so it is
  * tainted; the struct's other fields are not, because adding two numbers
  * relates the sum to their values and not to the memory behind them.
  */

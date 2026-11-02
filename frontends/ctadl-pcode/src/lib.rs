@@ -163,7 +163,6 @@ struct Context {
     global_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
     /// The kind of each varnode's Ghidra data type, where it is a pointer or a scalar.
     vnode_kinds: BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
-    /// How integer arithmetic and comparisons are lowered (`CTADL_EXP_INT_ARITH`).
     int_arith: IntArith,
     /// Under [`IntArith::Value`], the varnodes used as a memory address, computed by
     /// [`address_vnodes`].
@@ -171,8 +170,7 @@ struct Context {
     /// Under [`IntArith::Value`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
     /// like a scaled index rather than a base when added to an address.
     scaled_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
-    /// How many `handle_binop` sources were lowered as [`Exp::Variable`], [`Exp::Value`] and
-    /// constants, logged at the end of the import.
+    /// Logged at the end of the import.
     binop_sources: BinopSources,
     /// Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
@@ -1794,9 +1792,8 @@ impl Context {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum IntArith {
     /// `value` (default): most operands supply only their value ([`Exp::Value`]), so a sum or
-    /// a comparison is not an alias of the memory behind its operands. The base of an `INT_ADD`
-    /// or `INT_SUB` whose result is used as a memory address merges; see
-    /// [`Context::operand_flows`].
+    /// a comparison is not an alias of the memory behind its operands. [`Context::operand_flows`]
+    /// says which operands still merge.
     Value,
     /// `merge`: every operand flows into the result, so the result gets every path of every
     /// operand and an integer added to a pointer becomes a pointer too. For comparison runs.
@@ -1984,7 +1981,7 @@ mod tests {
 
     #[test]
     fn base_is_the_operand_that_is_not_a_scaled_index() {
-        // `bin_array + (idx << 3)`, `p + 4`
+        // `a + (i << 3)`, `p + 4`
         assert_eq!(base_operand(&[PLAIN, SCALED]), Some(0));
         assert_eq!(base_operand(&[SCALED, PLAIN]), Some(1));
     }

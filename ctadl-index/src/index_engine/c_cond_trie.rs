@@ -2,7 +2,7 @@
 //!
 //! Same lattice semantics, same layout: the `Always` rows in a [`CLocalsIndCommon`], the trie of
 //! [`super::c_locals_trie`], and the conditional rows beside it in a map keyed the same way, here
-//! a [`CMap`] whose group values are the serial module's [`CondLeaves`]. What changes is what
+//! a [`CMap`] whose group values are the serial module's `CondLeaves`. What changes is what
 //! [`super::c_locals_trie`] explains parallel Ascent asks for: `total` and `delta` are frozen
 //! while rules run and only read, `new` is unfrozen and only written, through a shared reference,
 //! and the merge runs single-threaded on `&mut`. Both halves freeze and unfreeze together, so a
@@ -971,8 +971,7 @@ macro_rules! views {
     };
 }
 
-/// `locals(F, V, P, M, Fp, Cond)` and `edge_split`: the store's own column order, grouped on
-/// columns 0 and 1 and probed on 2. Indices `none`, `0_1`, `0_1_2` and the full index.
+/// The concurrent [`crate::index_engine::cond_trie::locals`].
 pub mod locals {
     use std::marker::PhantomData;
 
@@ -1017,9 +1016,7 @@ pub mod locals {
     views!(ToNone, To01, To012, ToFull; store [T0, T1, T2, T3, T4]; group_val [T2, T3, T4]);
 }
 
-/// `assign_like(F, Vd, Pd, Vs, Ps, Cond)` and `ext_dst`: an edge `Vd.Pd = Vs.Ps`, grouped on its
-/// source `(F, Vs)` and probed on `Ps`, so the store's order is `(F, Vs, Ps, Vd, Pd)`. Indices
-/// `none`, `0_3`, `0_3_4` and the full index.
+/// The concurrent [`crate::index_engine::cond_trie::assign`].
 pub mod assign {
     use std::marker::PhantomData;
 
@@ -1033,8 +1030,8 @@ pub mod assign {
     use super::{CCol, CCondTrie, CGroupsParIter, CRowsParIter, CollectedParIter, SRow, View};
     use super::{covers, group_rows};
     use crate::index_engine::Rows;
-    use crate::index_engine::assign_like_trie::FromRows;
     use crate::index_engine::cond_trie::CondGet;
+    use crate::index_engine::cond_trie::FromRows;
     use crate::index_engine::decision::Cond;
     use crate::index_engine::locals_trie::DynIter;
 
@@ -1082,7 +1079,7 @@ pub mod assign {
     }
 
     /// The `Always` rows as `(F, Vd, Pd, Vs, Ps)`, consuming the store, which frees as the output
-    /// fills: this is the run's peak.
+    /// fills.
     pub fn into_always_vec<T0: CCol, T1: CCol, T2: CCol, T3: CCol, T4: CCol>(
         store: Store<T0, T1, T2, T3, T4>,
     ) -> Vec<(T0, T1, T2, T3, T4)> {
@@ -1102,20 +1099,17 @@ pub mod assign {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     // Not `super::*`: the store's `ToRelIndex` in scope makes Ascent's generated calls ambiguous.
     use streaming_iterator::StreamingIterator;
 
     use super::{assign, locals};
     use crate::index_engine::Rows;
-    use crate::index_engine::decision::{Cond, DecisionId, DecisionSet};
+    use crate::index_engine::cond_trie::tests::{LatticeAssign, LatticeLocals, Lcg, input, sorted};
+    use crate::index_engine::decision::Cond;
 
-    type Row = (u32, u32, u32, u32, u32, Cond);
-
-    // The serial store's test rules, with the stores under `ascent_par!` and the reference
-    // lattices under `ascent!`. `step` probes `0_1` and `link` probes `0_1_2`; in `assign` order,
-    // `0_3` and `0_3_4`.
+    // The serial store's test rules, with the stores under `ascent_par!`, checked against the
+    // serial test's reference lattices. `step` probes `0_1` and `link` probes `0_1_2`; in
+    // `assign` order, `0_3` and `0_3_4`.
     ascent::ascent_par! {
         struct StoreLocals;
         relation seed(u32, u32, u32, u32, u32, Cond);
@@ -1123,16 +1117,6 @@ mod tests {
         relation link(u32, u32, u32, u32, Cond);
         #[ds(crate::index_engine::cond_trie::locals)]
         relation r(u32, u32, u32, u32, u32, Cond);
-        r(a, b, p, m, fp, *c) <-- seed(a, b, p, m, fp, c);
-        r(a, b2, p, m, fp, c) <-- step(a, b, b2, c2), r(a, b, p, m, fp, c1), if let Some(c) = c1.and(*c2);
-        r(a, b, q, m, fp, c) <-- link(a, b, p, q, c2), r(a, b, p, m, fp, c1), if let Some(c) = c1.and(*c2);
-    }
-    ascent::ascent! {
-        struct LatticeLocals;
-        relation seed(u32, u32, u32, u32, u32, Cond);
-        relation step(u32, u32, u32, Cond);
-        relation link(u32, u32, u32, u32, Cond);
-        lattice r(u32, u32, u32, u32, u32, Cond);
         r(a, b, p, m, fp, *c) <-- seed(a, b, p, m, fp, c);
         r(a, b2, p, m, fp, c) <-- step(a, b, b2, c2), r(a, b, p, m, fp, c1), if let Some(c) = c1.and(*c2);
         r(a, b, q, m, fp, c) <-- link(a, b, p, q, c2), r(a, b, p, m, fp, c1), if let Some(c) = c1.and(*c2);
@@ -1148,88 +1132,6 @@ mod tests {
         r(a, m, fp, b2, p, c) <-- step(a, b, b2, c2), r(a, m, fp, b, p, c1), if let Some(c) = c1.and(*c2);
         r(a, m, fp, b, q, c) <-- link(a, b, p, q, c2), r(a, m, fp, b, p, c1), if let Some(c) = c1.and(*c2);
     }
-    ascent::ascent! {
-        struct LatticeAssign;
-        relation seed(u32, u32, u32, u32, u32, Cond);
-        relation step(u32, u32, u32, Cond);
-        relation link(u32, u32, u32, u32, Cond);
-        lattice r(u32, u32, u32, u32, u32, Cond);
-        r(a, m, fp, b, p, *c) <-- seed(a, b, p, m, fp, c);
-        r(a, m, fp, b2, p, c) <-- step(a, b, b2, c2), r(a, m, fp, b, p, c1), if let Some(c) = c1.and(*c2);
-        r(a, m, fp, b, q, c) <-- link(a, b, p, q, c2), r(a, m, fp, b, p, c1), if let Some(c) = c1.and(*c2);
-    }
-
-    /// A small deterministic generator, so a failure reproduces.
-    struct Lcg(u64);
-    impl Lcg {
-        fn next(&mut self, n: u32) -> u32 {
-            self.0 = self
-                .0
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((self.0 >> 33) % u64::from(n)) as u32
-        }
-        fn cond(&mut self, collapse: bool) -> Cond {
-            match self.next(4) {
-                0 => Cond::Always,
-                _ => {
-                    let ids: Vec<DecisionId> = (0..1 + self.next(2))
-                        .map(|_| DecisionId::from_raw(self.next(4)))
-                        .collect();
-                    let mut ds = DecisionSet::singleton(ids[0], collapse);
-                    for d in &ids[1..] {
-                        ds = ds.union(DecisionSet::singleton(*d, collapse));
-                    }
-                    Cond::Under(ds)
-                }
-            }
-        }
-    }
-
-    struct Input {
-        seed: Vec<Row>,
-        step: Vec<(u32, u32, u32, Cond)>,
-        link: Vec<(u32, u32, u32, u32, Cond)>,
-    }
-
-    /// Few columns' values, so facts are re-derived under many conditions, often by several
-    /// threads in one iteration.
-    fn input(rng: &mut Lcg, collapse: bool, vars: u32) -> Input {
-        let seed = (0..40)
-            .map(|_| {
-                (
-                    rng.next(2),
-                    rng.next(vars),
-                    rng.next(4),
-                    rng.next(3),
-                    rng.next(3),
-                    rng.cond(collapse),
-                )
-            })
-            .collect();
-        let step = (0..60)
-            .map(|_| {
-                (
-                    rng.next(2),
-                    rng.next(vars),
-                    rng.next(vars),
-                    rng.cond(collapse),
-                )
-            })
-            .collect();
-        let link = (0..30)
-            .map(|_| {
-                (
-                    rng.next(2),
-                    rng.next(vars),
-                    rng.next(4),
-                    rng.next(4),
-                    rng.cond(collapse),
-                )
-            })
-            .collect();
-        Input { seed, step, link }
-    }
 
     macro_rules! run {
         ($prog:ident, $input:expr) => {{
@@ -1240,28 +1142,6 @@ mod tests {
             prog.run();
             prog
         }};
-    }
-
-    /// The rows in a canonical order, each condition as `None` for `Always` or its set's members
-    /// and whether it is ⊤.
-    #[allow(clippy::type_complexity)]
-    fn sorted(
-        rows: impl IntoIterator<Item = Row>,
-    ) -> Vec<(u32, u32, u32, u32, u32, Option<(bool, Vec<DecisionId>)>)> {
-        let set: BTreeSet<_> = rows
-            .into_iter()
-            .map(|(a, b, c, d, e, f)| {
-                (
-                    a,
-                    b,
-                    c,
-                    d,
-                    e,
-                    f.set().map(|ds| (ds.is_top(), ds.ids().collect())),
-                )
-            })
-            .collect();
-        set.into_iter().collect()
     }
 
     #[test]

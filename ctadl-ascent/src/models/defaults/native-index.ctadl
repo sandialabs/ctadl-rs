@@ -71,14 +71,13 @@ propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"memset", "memset_chk", ".pic.memset"};
 
-// The bodies of `memcpy` and `memset` are skipped. MIPS uClibc writes them in assembly with
-// `swl`/`swr`/`lwl`, which Ghidra expands into a masked read-modify-write of the aligned word,
-// with mask and shift computed from the low bits of the address. The frontend merges every
-// operand of that arithmetic, so the stored word carries the address and the summary gets
-// `arg(0).deref <- arg(0)`. Through stdio's buffer arithmetic that becomes a complete bipartite
-// self-link of every string, copied at every call site (about 10x the index on uClibc
-// firmware). The models above are what the bodies should contribute. `bcopy` is skipped with
-// them: its model is the whole copy, as theirs are.
+// The bodies of `memcpy` and `memset` are skipped: the models above are what they should
+// contribute. They have been observed written in assembly with `swl`/`swr`/`lwl`, which Ghidra
+// expands into a masked read-modify-write of the aligned word, with mask and shift computed from
+// the low bits of the address. Under `CTADL_EXP_INT_ARITH=merge` the stored word then carries the
+// address and the summary gets `arg(0).deref <- arg(0)`; through stdio's buffer arithmetic that
+// becomes a complete bipartite self-link of every string, copied at every call site. `bcopy` is
+// skipped with them: its model is the whole copy, as theirs are.
 //
 // A MIPS non-PIC-to-PIC call goes through a `.pic.<name>` stub that the linker places right
 // before its target and that falls through into it, so Ghidra gives the stub the whole body
@@ -278,10 +277,9 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
 // chunk, bins, fastbins) in globals and computes bin addresses from the request size, so its
 // summary relates nearly every `$globals` path to the size and to each other. `$globals` is an
 // implicit in/out of every function, so that block reaches the summary of every transitive
-// caller and is re-instantiated at every call site: tens of GiB on uClibc firmware. None of it
-// is application data flow, since a fresh block carries nothing from its size or from the free
-// lists. The internals are skipped too, for the callers outside `malloc` and `free` (`mallopt`,
-// `malloc_trim`).
+// caller and is re-instantiated at every call site. None of it is application data flow, since a
+// fresh block carries nothing from its size or from the free lists. The internals are skipped
+// too, for the callers outside `malloc` and `free` (`mallopt`, `malloc_trim`).
 //
 // `allocator` finds the entry points by name, or in a stripped binary by dlmalloc's shape
 // (docs/portcullis.md §3). Every by-shape pick is reported as CTADL0109; `analyze(F)` keeps a
@@ -291,8 +289,8 @@ skip_analysis(F, priority = -100) :-
 
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
 // a flow through every grow-the-buffer loop in a parser. The body is skipped as for `malloc`:
-// uClibc's `realloc` is a second copy of dlmalloc, and the propagation is what it should
-// contribute.
+// a statically linked `realloc` can be a second copy of dlmalloc, and the propagation is what it
+// should contribute.
 skip_analysis(F, priority = -100),
   propagation(F::return.deref <- F::arg(0).deref) :-
   allocator(F, kind = "realloc");
