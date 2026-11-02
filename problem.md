@@ -984,8 +984,10 @@ in `/Volumes/Shampoo/nb-work/ia/` (`final-run.sh`; tags `final` and `mergeH`).
     distinct (path, origin) pairs over 3,640 SSA pointers into the pattern buffer. That is 746x.
   - **`use` itself is 1.75x on `GpioForCrond`,** from the free-list aliasing (open questions in
     the plan). So no `#value` change alone gets that binary to 1.5x.
-  - **Leaving address-shaped origins out of `#value`** (the plan's `#addr`, step 7) is estimated
-    from the dump at a further -0.87 M `locals` on `GpioForCrond` and -3.36 M on `file`.
+  - **`#addr` does not remove the address-shaped origins.** The estimate here, a further
+    -0.87 M `locals` on `GpioForCrond` and -3.36 M on `file`, counted every `#value` row whose
+    origin is a pointer. Implemented, `#addr` moved 134 rows on `GpioForCrond` and 841 on `file`
+    (see "Separate address offsets from value flow" under the ideas tried and dropped).
   - The diagnosis scripts and dumps are in `/Volumes/Shampoo/nb-work/ia/diag/`.
 - **`#value` absorbing itself (`f2cb01ee`) cut 31-41% of `locals` here.** The second fact,
   `t.#value <- v.#value`, gave every row a twin.
@@ -1047,6 +1049,70 @@ allocator's bodies back. Run in `/Volumes/Shampoo/nb-work/gup/` (`scripts/one.sh
 - **Cause 7 (`avifview`) was not run.** Its summary is a cross product of parameters into
   globals, and kills do not remove that either.
 
+### Separate address offsets from value flow (`#addr`, step 7 of `value-exp-plan.md`)
+
+**It removes no rows anywhere, changes no finding, and costs 29% more on `nginx`.** The code was
+committed (`13356e0b`, `cde03b77`, `30d451fc`) and reverted (`ca8d0654`); the patch is
+`/Volumes/Shampoo/nb-work/addr/addr.patch`.
+
+**The patch.**
+- **IR:** `Exp::Addr(v)` and the terminal field `#addr`. `t = addr(i)` lowers to `t.#addr <- i`.
+- **Index:** `#addr` is terminal like `#value`. The path set admits `p.#addr` for each admissible
+  `p` once a program mentions it, and a terminal absorbs a terminal. So `addr(value(a))` is
+  `addr(a)`, and `value(p)` of an offset pointer carries what `p` was offset by.
+- **Query:** a sink on `p` matches `p.#value`, not `p.#addr`. A wildcard sink does not expand
+  to a `q.#addr` path.
+- **Frontend:** `CTADL_EXP_INT_ARITH=addr` lowers the non-base operands of an address
+  `INT_ADD`/`INT_SUB` as `addr(..)`, not `value(..)`.
+- **Experiment `addrptr`:** as `addr`, and an add with exactly one pointer-typed operand is
+  address arithmetic with that operand as base, even when the function never dereferences the
+  result.
+- **Tests:** `tests/tnt/addr_flow.tnt`, 35 checks. 9 of them fail with `value(..)` in place of
+  `addr(..)`. The pcode and JNI regression cases pass under `addr`: 47 of 47, `loopflow`,
+  `Jni:JniWide*` and the `val*` cases included.
+
+**Measured** with one binary for all three variants, firmware model, re-imported with
+`CTADL_REUSE_FACTS=1`. "Analyzed" brings the allocator's bodies back. Peaks of a few hundred MB
+vary by about 0.05x between runs with identical `locals`, so only the `locals` column separates
+the variants. Runs and scripts are in `/Volumes/Shampoo/nb-work/addr/` (`scripts/run.sh`,
+`run2.sh`, `sum.py`, `terms.py`).
+
+| Binary | `value` | `addr` | `addrptr` | `addr(..)` operands |
+|---|---|---|---|---|
+| DSP-W115 `GpioForCrond`, analyzed | 2.80x, 4.68 M | 2.75x, 4.68 M | 2.73x, 4.69 M | 44 of 5,323 |
+| DSP-W115 `file`, analyzed | 2.16x, 13.15 M | 2.14x, 13.15 M | 2.18x, 13.18 M | 169 of 11,865 |
+| the other three allocators, analyzed | 0.54-0.72x | 0.53-0.73x | 0.60-0.69x | 25-63 |
+| the five, allocator skipped | 0.35-0.55x | 0.30-0.56x | 0.37-0.55x | |
+| `ntfsdebug`, `ntfslabel` | 0.41-0.42x, 0.71-0.72 M | 0.42x, 0.71-0.72 M | 0.41-0.43x, 0.80-0.88 M | 207-230 |
+| `uclited` | 0.74x, 1.97 M | 0.72x, 1.97 M | 0.71x, 1.99 M | 192 |
+| Tenda `nginx` (`fw-nginx`) | 3.08x, 120.45 M | **3.98x, 150.92 M** | 3.99x, 158.06 M | 801 of 28,364 |
+| the other six sweep binaries | 0.36-0.65x | 0.37-0.67x | 0.33-0.64x | 34-63 |
+
+Findings are identical to `value` in every run, under both `addr` and `addrptr`.
+
+- **Few operands are offsets.** The frontend uses the base rule only on an add whose result is
+  dereferenced. Most of those adds have a constant offset, which is an `x.[k]` path and not
+  an operand. So 25-801 operands per binary become `addr(..)`, against thousands of
+  `value(..)`.
+- **`malloc`'s top split is not one of them.** `victim + nb` is stored as the new top, not
+  dereferenced in `malloc`, so both operands stay `value`. `addrptr` does not catch it either:
+  Ghidra types the size class as a pointer (`puVar23 = (size + 11) & ~7`), so the add has two
+  pointer operands and no base. In every variant, `malloc`'s summary relates `size` to 32
+  `#value` paths (12 under the return, 20 under `$globals`, `$globals.[top].deref.#value`
+  among them) and to no `#addr` path.
+- **The estimate counted something else.** The 0.87 M rows on `GpioForCrond` are the `#value`
+  rows whose origin is a pointer: 725 K in memory, 161 K at a root. They come from values
+  computed from pointers (compares, masks, differences, and adds that are stored, passed or
+  returned), not from offsets. All of them stay in `#value` under `addr`.
+- **`nginx`: one row becomes two.** 30.85 M rows end in `#addr`, 30.66 M of them in
+  `FUN_0005e130` (PCRE `match()`, cause 6). 30.47 M (variable, path, origin) keys are held
+  under both `#value` and `#addr`, where `value` had one row. The loop pointer gets each
+  origin both as an offset (`p = p + i`) and as a value (through the comparisons and sums
+  that feed `i`), and the two fields no longer share it.
+- **The false flow it was meant to remove does not show.** No finding changed on any of the 15
+  binaries, root-level sinks included. A sink that wanted `#addr` would need a query option
+  that was not written.
+
 ### Collapse a loop's offset edges to `[*]` up front (causes 5 and 6)
 
 **Worse on every binary measured.** The code is not on the branch; the patch, gated by
@@ -1089,10 +1155,6 @@ offset arithmetic, and a path ends at it: `v.[*].deref.f` is `v.[*]`, one blob f
   decision on `$globals` separates no callers.
 - **Collapse offset-only variants of a formal source** (causes 6 and 8): about 50x on `nginx`,
   54x on `glxy`'s hub, 84x on `a2050`'s sorts, 3x on `inflate` (all estimated from dumps).
-- **Separate address offsets from value flow (`#addr`)** (step 7 of `value-exp-plan.md`): the
-  size that moves `malloc`'s top chunk would stop reaching `ret.#value`, and address-shaped
-  origins would leave the `#value` rows. That is estimated above at -0.87 M and -3.36 M `locals` on
-  the two allocators still over 1.5x.
 - **Bound a function's `$globals` summary** (causes 2 and 7), for example field-insensitive
   above a threshold, since every transitive caller inherits it.
 - **Drop identity `INDIRECT` reloads of globals** (cause 10): 0-30% of `locals` once cause 1 is

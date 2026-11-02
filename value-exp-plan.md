@@ -9,6 +9,11 @@ below:
 Step 5's allocator target holds on three of five binaries. `GpioForCrond` is 2.69x and `file`
 2.08x. `problem.md` has the measurements, under "Value-only integer arithmetic".
 
+Step 7 (`#addr`, below) was implemented, measured and reverted. It moves almost no rows,
+changes no finding, and costs 29% more on `nginx`. `malloc`'s top split never gets an `#addr`
+operand, because the frontend cannot find its base. See `problem.md`, "Separate address offsets
+from value flow", under the ideas tried and dropped.
+
 The plan for the sound form of "do not lower integer arithmetic as a merge". The experiment is
 on branch `exp/int-arith-merge`: `da3ce42e` and `cc609511`, written up in its `problem.md` under
 "Ideas tried, still open". That experiment showed the win, and showed that dropping operands at
