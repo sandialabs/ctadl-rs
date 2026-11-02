@@ -3,9 +3,11 @@
 **Status:** proposal, as a change to `origin/main`. Nothing here is implemented. A prototype that
 orders memory below formals outside the IR, the memory-order pass, is on the branch
 `problem/memory-order` (`--memory-order`, codegen side tables plus extra index relations). This
-design takes what the prototype learned into the IR, and in time replaces `Update`'s use for
-memory and codegen's `cap_path`. The last section, "What it does for problem.md", covers the
-blowups that motivated it.
+design takes what the prototype learned into the IR, and in time replaces codegen's `cap_path`.
+It keeps the split a frontend already has between `Store` and `Update`: a frontend decides which
+memory gets versions, writing the cells it wants ordered with `Update` and the rest with `Store`.
+What changes is what an `Update` versions: one cell, not the whole variable. The last section,
+"What it does for problem.md", covers the blowups that motivated it.
 
 The analysis computes function summaries: a relation from what a function sees on entry to what
 it leaves on exit, instantiated at every call site. It should stay what it is, reachability over
@@ -138,8 +140,10 @@ that much data.
 ### The IR
 
 1. **Formals are immutable.** A rebinding of a parameter (`p = q`) defines a fresh local, and later
-   uses read it. A new version of a parameter can then only mean "same object", which removes
-   #154's problem at its source.
+   uses read it. An `Update` of a parameter (`p = update (p.f := v)`) is not a rebinding: it
+   defines a new version of the formal's cell, the same object with new contents. SSA tells the
+   two apart by the statement, `Assign` against `Update`. A new version of a parameter can then
+   only mean "same object", which removes #154's problem at its source.
 
 2. **Memory below a root is a set of cells,** each named by a root and an access path: `(h, .head)`,
    or `(p, .[16].deref.[36].deref)`.
@@ -148,8 +152,17 @@ that much data.
      chains, so `h->head` through `h`, through a copy of `h`, or through a pointer loaded from `h`
      is one cell. The prototype's `canonicalize` does this
      (`ctadl-ascent/src/codegen/memory_order.rs` on `problem/memory-order`).
-   - **Cell SSA:** a store defines a new version of its cell, a load uses the version that reaches
-     it, and joins get phis. This is mem2reg, generalized from stack slots to rooted paths.
+   - **The frontend chooses which cells are versioned.** A `Store` writes a weak cell: one
+     flow-insensitive vertex that every access reads and writes, as today. An `Update` writes a
+     versioned cell. A cell is versioned only if every write to it, under any of its names, is an
+     `Update`; one `Store` to it makes it weak. The policies below can also make a versioned cell
+     weak where ordering it would be unsound. They never make a `Store`'s cell versioned. The
+     frontend says what it wants, and the pass decides what it can deliver.
+   - **Cell SSA:** for a versioned cell, an `Update` defines a new version of the cell, a load uses
+     the version that reaches it, and joins get phis. This is mem2reg, generalized from stack slots
+     to rooted paths. `x = update (y.f := v)` keeps its syntax, but `x` now names the root's state
+     after a write to one cell, and the other cells below it are untouched: no copy of the
+     aggregate.
 
 3. **Entry and exit are explicit.**
    - **Entry:** version 0 of a cell is an entry definition: its value is formal `j` at path `π` on
@@ -157,18 +170,24 @@ that much data.
    - **Exit:** `return` takes the final version of every cell below a formal or `$globals` as
      operands. Those operands are the anchor; `param-flow` goes away.
 
-4. **Calls are memory effects.** A call that passes root `r` takes the current version of each cell
-   below `r` as an input. It defines a new version of each as an output, which is the input plus
-   whatever the callee writes there (weak). The call has its own input and output, so its write
-   cannot feed its own read.
+4. **Calls are memory effects.** A call that passes root `r` takes the current version of each
+   versioned cell below `r` as an input. It defines a new version of each as an output, which is
+   the input plus whatever the callee writes there (weak). The call has its own input and output,
+   so its write cannot feed its own read. Weak cells get no call operands: the call reads and
+   writes their one vertex, as today.
 
-A frontend keeps emitting `Load` and `Store`. Cells are a pass over the IR after SSA, as mem2reg
-is, so no frontend changes except where a frontend relies on rebinding a parameter.
+Cells are a pass over the IR after SSA, as mem2reg is. A frontend that keeps emitting `Store`
+changes nothing and gets today's behavior; a frontend opts in by writing a cell with `Update`.
+The p-code frontend already makes that choice in one place, `push_assign_or_store`
+(`frontends/ctadl-pcode/src/lib.rs`), which writes frame slots with `Update` and everything else
+with `Store`. Widening it to heap writes is how p-code gets ordered heap cells, and switching one
+frontend at a time is how the change is measured.
 
 ### The analysis
 
-Cell versions are ordinary variables, so loads, stores and phis become ordinary edges. Only three
-things change:
+Cell versions are ordinary variables, so loads, updates and phis become ordinary edges. A weak
+cell is today's `(variable, path)` vertex, and its loads and stores lower as they do today. Only
+three things change, and only for versioned cells:
 - **summary inputs** are the entry definitions, which are vertices of their own;
 - **summary outputs** are what reaches the exit operands;
 - **call instantiation** connects a call's input versions to the callee's formal paths at entry,
@@ -182,12 +201,14 @@ cell version is reported at the location it names.
 
 ### The example
 
+The frontend writes both fields with `Update`, so both cells are versioned.
+
 ```
 push(@p0, @p1):                        // void push(list *h, node *n) { n->next = h->head; h->head = n; }
   h.head#0 = entry(0, .head)
   n.next#0 = entry(1, .next)
   t        = h.head#0                  // the load uses the reaching version
-  n.next#1 = t                         // a store defines a version
+  n.next#1 = t                         // an update defines a version
   h.head#1 = @p1
   return [h.head#1, n.next#1]          // the exit operands
 // summary: 0.head <- 1, 1.next <- 0.head.  h.head#1 never reaches t, so no 1.next <- 1.
