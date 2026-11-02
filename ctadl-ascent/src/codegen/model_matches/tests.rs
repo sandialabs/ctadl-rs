@@ -46,7 +46,7 @@ fn port(index: i16, path: &str) -> BridgePort {
         path: if path.is_empty() {
             facts::Path::empty()
         } else {
-            crate::models::spec::parse_declared_access_path(path, 0).expect("path")
+            crate::models::spec::parse_declared_path(path, 0).expect("path")
         },
     }
 }
@@ -453,7 +453,7 @@ fn a_propagation_pushes_formals_for_both_ports_and_skips_dst_eq_src() {
 fn a_propagation_within_one_formal_keeps_rows_whose_paths_differ() {
     let (mut facts, mut source_info) = fact_base(&[("f", 0)]);
     let f = id_of(&source_info, "f");
-    let path = |p| crate::models::spec::parse_declared_access_path(p, 0).unwrap();
+    let path = |p| crate::models::spec::parse_declared_path(p, 0).unwrap();
     let mut matches = ProgramModelMatches::default();
     matches.propagations.push(PropagationMatch {
         function: facts::Str::from("f"),
@@ -494,7 +494,7 @@ fn propagation_paths_do_not_land_in_facts_paths() {
         dst: ModelPort {
             tag: FormalIndexTypeTag::Return,
             index: None,
-            path: crate::models::spec::parse_declared_access_path(".deref", 0).unwrap(),
+            path: crate::models::spec::parse_declared_path(".deref", 0).unwrap(),
         },
         src: model_port(FormalIndexTypeTag::Index, Some(0)),
     });
@@ -503,13 +503,13 @@ fn propagation_paths_do_not_land_in_facts_paths() {
     assert!(facts.paths.is_empty());
 }
 
-/// The declared-access-path registry is the one thing that *does* push `facts.paths` rows.
+/// The declared-path registry is the one thing that *does* push `facts.paths` rows.
 #[test]
-fn declared_access_paths_reach_the_initial_indexer_paths() {
+fn declared_paths_reach_the_initial_indexer_paths() {
     let (mut facts, mut source_info) = fact_base(&[("f", 0)]);
     let mut matches = ProgramModelMatches::default();
-    let p = crate::models::spec::parse_declared_access_path(".next.next.next", 0).unwrap();
-    matches.access_paths.insert(p);
+    let p = crate::models::spec::parse_declared_path(".next.next.next", 0).unwrap();
+    matches.declared_paths.insert(p);
     let report = codegen_model_matches(&matches, &mut facts, &mut source_info);
     assert_eq!(report.declared_paths, 1);
     assert_eq!(facts.paths, vec![(p,)]);

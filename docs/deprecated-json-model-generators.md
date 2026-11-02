@@ -8,7 +8,7 @@
 > index` and `ctadl query` the same way, naming the generator.
 >
 > This document is kept only as the reference for reading and migrating existing JSON files. The
-> semantics it describes (ports, access paths, port pairs, bridges, modes) are documented, in
+> semantics it describes (ports, paths, port pairs, bridges, modes) are documented, in
 > Portcullis syntax, in [`portcullis.md`](portcullis.md), which is the one to keep current.
 
 The **model generator** is CTADL's declarative language for telling the taint
@@ -377,7 +377,7 @@ An id that names no function in the program matches nothing (it does not match e
 
 ---
 
-## 6. Ports and access paths
+## 6. Ports and paths
 
 Sources, sinks, and propagations attach to a **port** — the part of a matched
 element that carries taint. A port is a string:
@@ -387,8 +387,9 @@ element that carries taint. A port is a string:
   `Argument(0)` is typically the receiver / `this`).
 - `Argument(*)` — *all* arguments (wildcard).
 
-Ports can be extended into **access paths** to reach *through* a value. An access
-path is a sequence of segments, each introduced by a `.`:
+Ports can be extended by a **path** to reach *through* a value. A path is a
+sequence of segments, each introduced by a `.`; a port plus its path is the
+model-level counterpart of an **access path**, which is a variable plus a path:
 
 ```
 path    := segment*                      -- "" is the empty path (the bare port)
@@ -471,7 +472,7 @@ Source ports carry one extra knob:
 - **`saturating`** (source-only, default **false**): mark the source as
   *saturating* — the seeded vertex is tainted **and any subfield/offset read off
   it is tainted too, recursively**. A precise (non-saturating) source taints
-  only the exact path you name; a saturating source taints the whole access-path
+  only the exact path you name; a saturating source taints the whole path
   subtree beneath it. Set it on a value where "all of it is attacker-controlled"
   regardless of how callers index in. (Rejected on sinks/propagations — it's the
   source-side mirror of the sink-only `wildcard` flag.)
@@ -529,8 +530,8 @@ Marks a port as a *dangerous consumer*. A flow from a source of the matching
 
 Sink ports carry two extra knobs:
 
-- **`wildcard`** (sink-only, default **true**): the sink matches any access-path
-  *extension* of the port — `Argument(1)` also catches `Argument(1).deref` and
+- **`wildcard`** (sink-only, default **true**): the sink matches any
+  *extension* of the port's path — `Argument(1)` also catches `Argument(1).deref` and
   `Argument(1).[12].deref`. Set `false` to require the exact path. (Rejected on
   sources/propagations.)
 - **`all_fields`** / **`field`** / **`fields`**: sensitize specific (or all)
@@ -725,7 +726,7 @@ site of it composes with — one edge per bridged method, not one per call. (`fi
 rejected outright rather than ignored; see the note at the end of this section.)
 
 **`arguments` is the feature, not a refinement.** Read one entry as *"the caller's `from`
-vertex is the callee's `to` vertex"*. Ports use the [port grammar](#6-ports-and-access-paths)
+vertex is the callee's `to` vertex"*. Ports use the [port grammar](#6-ports-and-paths)
 and name **slots**, not declaration order, so a map is correct only for the frontend the method
 was observed through — Dex numbers parameters by register (a `long` or `double` consumes two)
 while JVM numbers them by argument position. `Argument(*)` is rejected: a wildcard has no
@@ -827,7 +828,7 @@ so. Adding a native artifact late means re-running `ctadl index`.
 
 ### `access_paths`
 
-A list of access paths to register with the indexer, written with the same grammar as a port's
+A list of paths to register with the indexer, written with the same grammar as a port's
 trailing path:
 
 ```jsonc
@@ -1000,7 +1001,7 @@ design is drawn on.
 | Source/sink only in a specific calling context | `callsites` | `sources`/`sinks` + `in_function` |
 | Join a callee in one artifact to its implementation in another | `methods` | `bridge` |
 | Apply a model to only some of a project's imports | any | `in` (a generator key, not a model key) |
-| Register a composed access path the code never writes | `methods` | `access_paths` |
+| Register a composed path the code never writes | `methods` | `access_paths` |
 | Frameworks that call your override indirectly | `methods` | `forward_self` *(not yet implemented)* |
 | Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` |
 

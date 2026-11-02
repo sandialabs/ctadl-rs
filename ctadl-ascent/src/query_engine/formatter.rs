@@ -1367,7 +1367,7 @@ pub struct FormatFacts {
 }
 
 pub struct TaintedInstructions {
-    // (site id, label, variable, access path)
+    // (site id, label, variable, path)
     pub tainted_insn: Vec<(PackedInsnSiteId, Label, FlowVariable, Path)>,
 }
 
@@ -1497,7 +1497,7 @@ impl Annotation<LabeledTaintGraph> for TaintState {
 }
 
 /// A node in the taint dataflow graph: a function-local vertex (a variable
-/// together with its access path). The node carries no taint state — call/return matching is enforced by the [`TaintState`] annotation the
+/// together with its path: an access path). The node carries no taint state — call/return matching is enforced by the [`TaintState`] annotation the
 /// realizable-path search threads along the [`FlowEdge`] labels, not by splitting
 /// a vertex into per-state copies.
 pub type FlowNode = (FunctionId, FlowVariable, Path);
@@ -2647,7 +2647,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // only against a step at the same instruction: a source-level location can be a
         // whole statement (a CIL sequence point), so in `Sink(F(Source()))` every call has
         // the one location, and deduping by it alone would drop the sink step. `message`
-        // describes the step (the full vertex — variable *and* access path — its function,
+        // describes the step (the full vertex — variable *and* path — its function,
         // and the edge kind); `kinds` are the
         // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
         // bumped so every emitted step carries its temporal order.
@@ -3142,7 +3142,7 @@ fn format_source_sink_results(
             } else {
                 TAINT_SINK_RULE_ID
             };
-            // Render the full vertex (variable *and* access path) so distinct
+            // Render the full vertex (variable *and* path) so distinct
             // endpoints on the same variable -- e.g. a model that taints both
             // `Argument(1).deref` and `Argument(1).deref.deref` -- read as the
             // separate sources they are, instead of collapsing to identical
@@ -3589,7 +3589,7 @@ mod tests {
         )
     }
 
-    /// A graph vertex `(func, var)` (with the empty access path).
+    /// A graph vertex `(func, var)` (with the empty path).
     fn node(func: u32, var: FlowVariable) -> FlowNode {
         (FunctionId::new(func), var, Path::empty())
     }

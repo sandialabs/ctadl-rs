@@ -1,7 +1,7 @@
-//! The one access-path grammar: parser and printer for [`PathSegment`] sequences.
+//! The one path grammar: parser and printer for [`PathSegment`] sequences.
 //!
-//! An access path is a sequence of [`PathSegment`]s, each a symbolic field name or a numeric
-//! offset. This module owns the *only* textual encoding of that sequence. The fact store's
+//! A path is a sequence of [`PathSegment`]s, each a symbolic field name or a numeric offset; an
+//! access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This module owns the *only* textual encoding of that sequence. The fact store's
 //! on-disk columns, model-generator ports, the IR's `Display` impls, and the test DSLs all go
 //! through here, so printing and parsing are exact inverses and a malformed path fails loudly
 //! instead of silently mutating.
@@ -29,7 +29,7 @@ use internment::ArcIntern;
 
 use crate::mir::{Offset, PathSegment};
 
-/// Where and why an access-path string is not a path. `at` is a byte offset into the string that
+/// Where and why a string is not a path. `at` is a byte offset into the string that
 /// was parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathSyntaxError {
@@ -210,7 +210,7 @@ pub fn write_segment(out: &mut String, seg: &PathSegment) {
             let name: &str = symbol.as_ref();
             debug_assert!(
                 !name.is_empty(),
-                "Symbol(\"\") has no spelling in the access-path grammar"
+                "Symbol(\"\") has no spelling in the path grammar"
             );
             for (i, ch) in name.char_indices() {
                 match ch {

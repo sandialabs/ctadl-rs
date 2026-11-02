@@ -32,15 +32,15 @@ fn function_f() -> FunctionData {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let a = AccessPath {
+        let a = Address {
             base: VariableRef::new_local_idx(a_idx),
             accesses: Default::default(),
         };
-        let p = AccessPath {
+        let p = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let q = AccessPath {
+        let q = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(1)),
             accesses: Default::default(),
         };
@@ -74,15 +74,15 @@ fn function_g() -> FunctionData {
     g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
-    let a = AccessPath {
+    let a = Address {
         base: VariableRef::new_local_idx(a_idx),
         accesses: Default::default(),
     };
-    let b = AccessPath {
+    let b = Address {
         base: VariableRef::new_parameter(ParameterIdx::new(0)),
         accesses: Default::default(),
     };
-    let c = AccessPath {
+    let c = Address {
         base: VariableRef::new_local_idx(c_idx),
         accesses: Default::default(),
     };
@@ -126,15 +126,15 @@ fn function_g1() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
-    let a = AccessPath {
+    let a = Address {
         base: VariableRef::new_local_idx(a_idx),
         accesses: Default::default(),
     };
-    let b = AccessPath {
+    let b = Address {
         base: VariableRef::new_parameter(ParameterIdx::new(0)),
         accesses: Default::default(),
     };
-    let c1 = AccessPath {
+    let c1 = Address {
         base: VariableRef::new_local_idx(c1_idx),
         accesses: Default::default(),
     };
@@ -180,14 +180,14 @@ fn program_h() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = AccessPath {
+        let p = Address {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
-                AccessPath::without_fields(global_ref.clone()),
+                Address::without_offsets(global_ref.clone()),
                 ctadl_ir::mir::FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             ))];

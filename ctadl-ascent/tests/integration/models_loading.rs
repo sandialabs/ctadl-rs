@@ -287,7 +287,7 @@ fn native_program_with_f() -> ProgramInfo {
     native_program(&["f"])
 }
 
-/// Loads one propagation generator and returns every access path in the resulting
+/// Loads one propagation generator and returns every path in the resulting
 /// summary batch, as `facts::Path`.
 fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path> {
     use serde_json::json;
@@ -356,7 +356,7 @@ fn escaped_bracketed_port_stays_a_symbol() {
 }
 
 // ---------------------------------------------------------------------------
-// An endpoint keeps the access path its own model file declared.
+// An endpoint keeps the path its own model file declared.
 //
 // `cli::query` accumulates one batch per (import x model file) pair. Accumulating must not
 // let one pair's trailing port path reach another pair's endpoint -- a source or sink that is
@@ -382,7 +382,7 @@ fn endpoint_model_file(kind: &str, func: &str, port: &str) -> NamedTempFile {
 }
 
 /// Loads `(program, file)` pairs in the given order, accumulating them the way `cli::query`
-/// does, and returns each matched endpoint's label paired with the access path it resolves to.
+/// does, and returns each matched endpoint's label paired with the path it resolves to.
 ///
 /// Only this accumulation harness is specific to how matches are represented; the fixtures
 /// above and the assertions below are not.

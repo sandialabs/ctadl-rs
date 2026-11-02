@@ -81,7 +81,7 @@ pub enum CallStyle {
     },
     /// C function pointer call
     FuncPtrCall {
-        callee: super::AccessPath,
+        callee: super::Address,
         signature: Option<String>,
     },
     /// Java virtual call. At analysis time, this consults metadata in the

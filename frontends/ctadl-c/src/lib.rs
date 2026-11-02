@@ -68,26 +68,6 @@ enum VarKind {
     Parameter, // Function argument
 }
 
-/// A base variable plus a mixed (offset + symbolic-field) path, before lowering to loads/stores.
-/// Access paths in the IR are offset-only and load/store fields are single symbols, so C member
-/// and subscript accesses are threaded here and lowered via [`mir::load_access_path`] /
-/// [`mir::store_access_path`].
-#[derive(Debug, Clone)]
-struct RawPath {
-    base: VariableRef,
-    fields: ThinVec<PathSegment>,
-}
-
-impl RawPath {
-    fn new(base: VariableRef, fields: ThinVec<PathSegment>) -> Self {
-        Self { base, fields }
-    }
-
-    fn is_pathless(&self) -> bool {
-        self.fields.is_empty()
-    }
-}
-
 enum BlockTypeRequest {
     NewBlockOrScopedBlock, // things that induce lexical scope like compound statements.
     JustScope, // things like the conditional of an if.  or compound statements mid expression run.
@@ -530,10 +510,11 @@ const UNION_FIELD: &str = "$union";
 /// the constant's *text* (`0` and `0x0` are two names for one address -- normalizing would
 /// mean re-implementing C integer-literal semantics for a distinction real code rarely
 /// draws). `<...>` is not C identifier syntax, so no collision with declared globals.
-fn literal_address_path(constant: &str) -> RawPath {
-    let mut fields = ThinVec::with_capacity(1);
-    fields.push(PathSegment::symbol(format!("<address {constant}>")));
-    RawPath::new(VariableRef::new_global(), fields)
+fn literal_address_path(constant: &str) -> AccessPath {
+    AccessPath::new(
+        VariableRef::new_global(),
+        [PathSegment::symbol(format!("<address {constant}>"))],
+    )
 }
 
 /// The compile-time value of a lowered subscript index, if it has one. Only an integer literal
@@ -567,21 +548,15 @@ fn integer_literal(text: &str) -> Option<i64> {
 /// The location a dereference of `pointee` names, for a pointer bound by address-of
 /// ([`Context::addr_alias`]). An interior element address (`p = &x[1]` binds the address
 /// `x.[1]`) is dereferenced by reading the memory there, so `*p` is `x.[1].deref`. A pointee
-/// that is a bare variable (`p = &x`) has no address path: CTADL models it as the variable
+/// that is a bare variable (`p = &x`) has no offsets: CTADL models it as the variable
 /// itself (the value-copy model), so there is nothing to add and this returns `None`.
-fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
+fn deref_of_pointee(pointee: &Address) -> Option<AccessPath> {
     if pointee.accesses.is_empty() {
         return None;
     }
-    let mut fields: ThinVec<PathSegment> = pointee
-        .accesses
-        .offsets
-        .iter()
-        .cloned()
-        .map(PathSegment::from)
-        .collect();
-    fields.push(PathSegment::deref());
-    Some(RawPath::new(pointee.base.clone(), fields))
+    let mut ap = AccessPath::from(pointee.clone());
+    ap.segments.push(PathSegment::deref());
+    Some(ap)
 }
 
 /// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a
@@ -589,13 +564,13 @@ fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
 /// there. See [`DEREF_FIELD`]. A non-constant index has no offset to name and lowers to the
 /// bare dereference -- deliberately the same path `a[0]` produces, so the two may-alias with
 /// no help from the path matcher; see the module-level note for what that still misses.
-fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
+fn push_element(path: &mut ThinVec<PathSegment>, index: Option<i64>) {
     match index {
         Some(n) if n != 0 => {
-            fields.push(PathSegment::offset(n));
-            fields.push(PathSegment::deref());
+            path.push(PathSegment::offset(n));
+            path.push(PathSegment::deref());
         }
-        Some(_) | None => fields.push(PathSegment::deref()),
+        Some(_) | None => path.push(PathSegment::deref()),
     }
 }
 
@@ -605,9 +580,9 @@ fn cell_local_name(param: &str) -> String {
 }
 
 /// An address-taken scalar's path: its value is at `deref`.
-fn in_cell(mut fields: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
-    fields.insert(0, PathSegment::symbol(DEREF_FIELD));
-    fields
+fn in_cell(mut path: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
+    path.insert(0, PathSegment::symbol(DEREF_FIELD));
+    path
 }
 
 /// A declarator's name and its nearest declarator kind, or `""`.
@@ -776,7 +751,7 @@ struct Context<'a> {
     /// model is sound for reads but drops the write-back). A lookup only trusts an entry
     /// whose block matches the current `blidx`, so the alias never crosses control flow.
     /// Reset per function.
-    addr_alias: HashMap<VariableRef, (AccessPath, BasicBlockIdx)>,
+    addr_alias: HashMap<VariableRef, (Address, BasicBlockIdx)>,
     /// Variables declared with a `union` type. Union members share storage, so member
     /// accesses on these variables collapse to the single synthetic field `UNION_FIELD`,
     /// making all members one access path. Populated from `union_specifier`-typed local
@@ -1972,7 +1947,7 @@ impl<'a> Context<'a> {
         // operand; read it (a field target lowers to loads) before the write.
         let compound = operator_node.is_some_and(|o| o.kind() != "=");
         let right_op = if compound {
-            Some(Exp::access_path(self.emit_loads(
+            Some(Exp::address(self.emit_loads(
                 program,
                 scope_view,
                 target_ap.clone(),
@@ -1996,10 +1971,10 @@ impl<'a> Context<'a> {
                     .is_some_and(|op| to_str(&op, source) == "&")
             {
                 // `p = &x`: `rhs_var` is the pointee (`&x` flattened to `x`). A plain local
-                // pointee is an `Exp::Variable`; a field/global pointee is an `Exp::AccessPath`.
+                // pointee is an `Exp::Variable`; a field/global pointee is an `Exp::Address`.
                 match &rhs_var {
-                    Exp::Variable(v) => Some(AccessPath::without_fields(v.clone())),
-                    Exp::AccessPath(pointee) => Some(pointee.clone()),
+                    Exp::Variable(v) => Some(Address::without_offsets(v.clone())),
+                    Exp::Address(pointee) => Some(pointee.clone()),
                     _ => None,
                 }
             } else {
@@ -2063,14 +2038,14 @@ impl<'a> Context<'a> {
     /// (`own`) and that type's array `rank`. Shared by the two places a brace can appear: a
     /// declaration's initializer ([`Context::collect_initializer_list`]) and a C99 compound
     /// literal in expression position (`(T){ ... }`, lowered in [`Context::flatten_expr`]).
-    /// The two differ only in where the base path comes from -- a declarator versus a fresh
+    /// The two differ only in where the base access path comes from -- a declarator versus a fresh
     /// temp -- so everything downstream of that is here.
     fn lower_braced_value(
         &mut self,
         source: &'a str,
         program: &mut Program,
         scope_view: &mut ScopeView,
-        base_ap: &RawPath,
+        base_ap: &AccessPath,
         init_list: Node<'_>,
         own: Option<Vec<MemberSlot>>,
         rank: usize,
@@ -2112,8 +2087,8 @@ impl<'a> Context<'a> {
         )
     }
 
-    /// Walk the elements of an `initializer_list`, storing each into the sub-path of
-    /// `base_ap` its position names: with a `members` layout element *i* writes the member
+    /// Walk the elements of an `initializer_list`, storing each into `base_ap`
+    /// extended by the path its position names: with a `members` layout element *i* writes the member
     /// at position *i*; without one it gets the offset + `deref` shape a constant-index
     /// subscript read resolves to (see `push_element`). Nested braces recurse with the
     /// layout of whatever the inner level *is* -- a member's own record type, or the array's
@@ -2125,7 +2100,7 @@ impl<'a> Context<'a> {
         source: &'a str,
         program: &mut Program,
         scope_view: &mut ScopeView,
-        base_ap: &RawPath,
+        base_ap: &AccessPath,
         init_list: Node<'_>,
         members: Option<&[MemberSlot]>,
         elem_layout: Option<&[MemberSlot]>,
@@ -2137,10 +2112,10 @@ impl<'a> Context<'a> {
             if !elem.is_named() {
                 continue; // skip the `{`, `,`, `}` tokens
             }
-            // Pick this element's target sub-path, its value node, and the layout to lower a
+            // Pick the path this element extends `base_ap` by, its value node, and the layout to lower a
             // nested brace with: a member's own record type, or the array element layout once
             // `depth` array levels have been entered.
-            let (fields, value_node, nested) = if elem.kind() == "initializer_pair" {
+            let (path, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
                     .child_by_field_name("designator")
@@ -2149,31 +2124,31 @@ impl<'a> Context<'a> {
                     .child_by_field_name("value")
                     .expect("initializer_pair always has a value");
                 let dtext = to_str(&designator, source);
-                let mut fields = ThinVec::new();
+                let mut path = ThinVec::new();
                 if let Some(member) = dtext.strip_prefix('.') {
                     // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
                     let member = member.trim();
-                    fields.push(PathSegment::symbol(member));
+                    path.push(PathSegment::symbol(member));
                     let nested = self.member_layout(members, |m| m.name == member);
-                    (fields, value, nested)
+                    (path, value, nested)
                 } else {
                     // `[n]` array designator -> the same offset + dereference a subscript read
                     // of that index resolves to.
                     let index = dtext.trim().trim_start_matches('[').trim_end_matches(']');
                     push_element(
-                        &mut fields,
+                        &mut path,
                         constant_index(&Exp::Str(ArcIntern::<str>::from(index))),
                     );
                     let nested = self.elem_layout_at(elem_layout, depth);
-                    (fields, value, nested)
+                    (path, value, nested)
                 }
             } else {
-                let mut fields = ThinVec::new();
+                let mut path = ThinVec::new();
                 let nested = match members.and_then(|m| m.get(idx)) {
                     // Positional element of a record whose layout is known -> the member that
                     // position names.
                     Some(slot) => {
-                        fields.push(PathSegment::symbol(slot.name.as_str()));
+                        path.push(PathSegment::symbol(slot.name.as_str()));
                         slot.type_tag
                             .as_deref()
                             .and_then(|tag| self.struct_layouts.get(tag).cloned())
@@ -2181,15 +2156,15 @@ impl<'a> Context<'a> {
                     // Array element, or a record with more elements than its layout describes
                     // -> successive indices.
                     None => {
-                        push_element(&mut fields, Some(idx as i64));
+                        push_element(&mut path, Some(idx as i64));
                         self.elem_layout_at(elem_layout, depth)
                     }
                 };
                 idx += 1;
-                (fields, elem, nested)
+                (path, elem, nested)
             };
             let mut elem_ap = base_ap.clone();
-            elem_ap.fields.extend(fields);
+            elem_ap.segments.extend(path);
             if value_node.kind() == "initializer_list" {
                 // One array level consumed; the element layout applies when `depth` reaches 0.
                 self.lower_initializer_list(
@@ -2568,12 +2543,11 @@ impl<'a> Context<'a> {
     /// A fresh local nothing else names, as an access path: the standard recovery for a
     /// location this frontend could not resolve. A store to it is dropped; a read of it is
     /// opaque. Either way the surrounding function still lowers.
-    fn dead_temp_path(&mut self, program: &mut Program, scope_view: &ScopeView) -> RawPath {
+    fn dead_temp_path(&mut self, program: &mut Program, scope_view: &ScopeView) -> AccessPath {
         let temp_name = self.allocator.next_temp();
-        RawPath::new(
-            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name)),
-            ThinVec::new(),
-        )
+        AccessPath::from(VariableRef::new_local_idx(
+            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+        ))
     }
 
     fn walk_declaration(
@@ -3263,10 +3237,10 @@ impl<'a> Context<'a> {
     fn build_access_path(
         &self,
         name_pre_scope: &str,
-        mut field_path: ThinVec<PathSegment>,
+        mut path: ThinVec<PathSegment>,
         scope_view: &ScopeView,
         locals: &mut Locals,
-    ) -> RawPath {
+    ) -> AccessPath {
         let name: String;
         let varkind: VarKind;
         if let Some(vardecl) = self
@@ -3290,31 +3264,31 @@ impl<'a> Context<'a> {
         // An address-taken scalar lives in memory (see `Context::cells`).
         let is_cell = varkind != VarKind::Global && self.cells.contains(name_pre_scope);
         match varkind {
-            // A global `name` is a symbolic field of the globals object: `$globals.name.<fields>`.
+            // A global `name` is a symbolic field of the globals object: `$globals.name.<path>`.
             VarKind::Global => {
-                let mut fields = ThinVec::with_capacity(field_path.len() + 1);
-                fields.push(PathSegment::symbol(name.as_str()));
-                fields.append(&mut field_path);
-                RawPath::new(VariableRef::new_global(), fields)
+                let mut segments = ThinVec::with_capacity(path.len() + 1);
+                segments.push(PathSegment::symbol(name.as_str()));
+                segments.append(&mut path);
+                AccessPath::new(VariableRef::new_global(), segments)
             }
-            VarKind::Local if is_cell => RawPath::new(
+            VarKind::Local if is_cell => AccessPath::new(
                 VariableRef::new_local_idx(locals.get_or_intern(&name)),
-                in_cell(field_path),
+                in_cell(path),
             ),
-            VarKind::Local => RawPath::new(
+            VarKind::Local => AccessPath::new(
                 VariableRef::new_local_idx(locals.get_or_intern(&name)),
-                field_path,
+                path,
             ),
             // The parameter's value was copied into its cell at entry (`lower_function`).
-            VarKind::Parameter if is_cell => RawPath::new(
+            VarKind::Parameter if is_cell => AccessPath::new(
                 VariableRef::new_local_idx(locals.get_or_intern(&cell_local_name(name_pre_scope))),
-                in_cell(field_path),
+                in_cell(path),
             ),
             VarKind::Parameter => {
                 if let Some(param_idx) =
                     self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
                 {
-                    RawPath::new(VariableRef::new_parameter(param_idx), field_path)
+                    AccessPath::new(VariableRef::new_parameter(param_idx), path)
                 } else {
                     panic!("no parameter index for parameters");
                 }
@@ -3437,7 +3411,7 @@ impl<'a> Context<'a> {
                         scope_view,
                         &mut program[scope_view.fidx].locals,
                     );
-                    Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
+                    Ok(Exp::address(self.emit_loads(program, scope_view, ap)))
                 }
             }
             "comma_expression" => {
@@ -3502,7 +3476,7 @@ impl<'a> Context<'a> {
                 // loads. Keeping read and lvalue on one resolver is what lets `a[i].f` work
                 // on both sides of an assignment.
                 let ap = self.flatten_lvalue(program, node, source, scope_view)?;
-                Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
+                Ok(Exp::address(self.emit_loads(program, scope_view, ap)))
             }
             "assignment_expression" => self.collect_assignment(
                 source,
@@ -3793,7 +3767,7 @@ impl<'a> Context<'a> {
             let target = self.flatten_lvalue(program, value, source, scope_view)?;
             if gnu_asm_operand_is_readwrite(*operand, source) {
                 let old = self.emit_loads(program, scope_view, target.clone());
-                sources.push(Exp::access_path(old));
+                sources.push(Exp::address(old));
             }
             targets.push(target);
         }
@@ -3814,12 +3788,12 @@ impl<'a> Context<'a> {
                 None
             } else {
                 let so_far = self.emit_loads(program, scope_view, blend.clone());
-                Some(Exp::access_path(so_far))
+                Some(Exp::address(so_far))
             };
             self.add_assign_to_program(program, scope_view, &blend, src, running.as_ref());
         }
 
-        let blended = Exp::access_path(self.emit_loads(program, scope_view, blend));
+        let blended = Exp::address(self.emit_loads(program, scope_view, blend));
         for target in &targets {
             self.add_assign_to_program(program, scope_view, target, &blended, None);
         }
@@ -3832,7 +3806,7 @@ impl<'a> Context<'a> {
         let value = match targets.first() {
             Some(target) => {
                 let read_back = self.emit_loads(program, scope_view, target.clone());
-                Exp::access_path(read_back)
+                Exp::address(read_back)
             }
             None => blended,
         };
@@ -3916,7 +3890,7 @@ impl<'a> Context<'a> {
                     scope_view,
                     &mut program[scope_view.fidx].locals,
                 );
-                Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
+                Ok(Exp::address(self.emit_loads(program, scope_view, ap)))
             } else {
                 //iden was something nested
                 self.flatten_expr(program, iden, source, scope_view)
@@ -3989,7 +3963,7 @@ impl<'a> Context<'a> {
     ) -> Result<Exp, Error> {
         if is_deref {
             let ap = self.deref_location(program, arg, source, scope_view)?;
-            return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
+            return Ok(Exp::address(self.emit_loads(program, scope_view, ap)));
         }
         let operand = unparenthesized_callee(arg);
         if operand.kind() == "identifier" && self.cells.contains(to_str(&operand, source)) {
@@ -3999,7 +3973,8 @@ impl<'a> Context<'a> {
                 scope_view,
                 &mut program[scope_view.fidx].locals,
             );
-            if cell.fields.len() == 1 && cell.fields.first().is_some_and(PathSegment::is_deref) {
+            if cell.segments.len() == 1 && cell.segments.first().is_some_and(PathSegment::is_deref)
+            {
                 self.cell_vars.insert(cell.base.clone());
                 return Ok(Exp::Variable(cell.base));
             }
@@ -4013,7 +3988,7 @@ impl<'a> Context<'a> {
             return self.flatten_expr(program, inner, source, scope_view);
         }
         if let Some(addr) = self.flatten_address_of(program, arg, source, scope_view)? {
-            return Ok(Exp::access_path(addr));
+            return Ok(Exp::address(addr));
         }
         self.flatten_expr(program, arg, source, scope_view)
     }
@@ -4029,7 +4004,7 @@ impl<'a> Context<'a> {
         let argument = node.child_by_field_name("argument").expect("missing left");
         let loc = self.flatten_lvalue(program, argument, source, scope_view)?;
         // Its current value (a field location lowers to loads).
-        let cur = Exp::access_path(self.emit_loads(program, scope_view, loc.clone()));
+        let cur = Exp::address(self.emit_loads(program, scope_view, loc.clone()));
         let one = Exp::Str(ArcIntern::<str>::from("1"));
         // temp = cur + 1
         let temp_name = self.allocator.next_temp();
@@ -4054,10 +4029,10 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        // A subscript read on the RHS: resolve the location (base path + index field) and lower
+        // A subscript read on the RHS: resolve the location (base access path + index segments) and lower
         // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
         let ap = self.flatten_lvalue(program, node, source, scope_view)?;
-        Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
+        Ok(Exp::address(self.emit_loads(program, scope_view, ap)))
     }
 
     fn collect_arguments(
@@ -4338,13 +4313,13 @@ impl<'a> Context<'a> {
                     signature: (Some("indirect-call".to_string())),
                 }
             }
-            // A global's access path is `$globals.<name>.<fields>`, so the base being the
+            // A global's access path is `$globals.<name>.<path>`, so the base being the
             // globals object says nothing about whether the callee is a name -- the PATH
             // does. `$globals.f` alone is the name `f`; anything past that leading segment
             // is a location *inside* the object, reached by a load -- a function pointer a
             // file-scope object holds, not a function. `callee_is_a_value` covers the shapes
             // whose path cannot say it.
-            Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
+            Variable::GlobalHeap if access_path.segments.len() > 1 || callee_is_a_value => {
                 log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
@@ -4540,7 +4515,7 @@ impl<'a> Context<'a> {
             self.add_assign_to_program(
                 program,
                 &block_scope_view,
-                &RawPath::new(cell, in_cell(ThinVec::new())),
+                &AccessPath::new(cell, in_cell(ThinVec::new())),
                 &Exp::Variable(VariableRef::new_parameter(idx)),
                 None,
             );
@@ -4601,7 +4576,7 @@ impl<'a> Context<'a> {
             self.add_assign_to_program(program, scope_view, &target, first, second);
             for extra in rest {
                 let so_far = self.emit_loads(program, scope_view, target.clone());
-                let running = Exp::access_path(so_far);
+                let running = Exp::address(so_far);
                 self.add_assign_to_program(program, scope_view, &target, extra, Some(&running));
             }
         }
@@ -4615,7 +4590,7 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         scope_view: &ScopeView,
-        target: &RawPath,
+        target: &AccessPath,
         left_op: &Exp,
         right_op: Option<&Exp>,
     ) {
@@ -4630,26 +4605,22 @@ impl<'a> Context<'a> {
                 self.cur_span,
             ));
         } else {
-            // A store writes a single value into the field path (the field read is not
+            // A store writes a single value into the access path (the field read is not
             // expressible as an operand, so a compound op's second operand is dropped for
             // field stores); intermediate dereferences are materialized by
             // `store_access_path`. A store must end in a symbolic field: an offsets-only
             // target names memory, so it is terminated with the dereference field, as the
             // pcode frontend does.
-            let mut fields = target.fields.clone();
-            if fields.iter().all(PathSegment::is_offset) {
-                fields.push(PathSegment::deref());
+            let mut ap = target.clone();
+            if ap.segments.iter().all(PathSegment::is_offset) {
+                ap.segments.push(PathSegment::deref());
             }
             let mut stmts = Vec::new();
             let allocator = &mut self.allocator;
             let locals = &mut program[scope_view.fidx].locals;
-            ctadl_ir::mir::store_access_path(
-                target.base.clone(),
-                fields,
-                val_exp.clone(),
-                &mut stmts,
-                || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
-            );
+            ctadl_ir::mir::store_access_path(ap, val_exp.clone(), &mut stmts, || {
+                VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp()))
+            });
             for mut s in stmts {
                 s.source_info = self.cur_span;
                 program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
@@ -4672,7 +4643,7 @@ impl<'a> Context<'a> {
         node: Node<'_>,
         source: &'a str,
         scope_view: &mut ScopeView,
-    ) -> Result<Option<AccessPath>, Error> {
+    ) -> Result<Option<Address>, Error> {
         match node.kind() {
             "parenthesized_expression" => {
                 let inner = node.child(1).expect("missing inner expr");
@@ -4684,7 +4655,7 @@ impl<'a> Context<'a> {
                 // Symbolic fields left in the prefix (`&s.a[1]`) are real dereferences that
                 // `emit_loads` materializes, returning the residual base + offsets.
                 // (`flatten_lvalue` of a subscript always ends in a dereference.)
-                match ap.fields.pop() {
+                match ap.segments.pop() {
                     Some(seg) if seg.is_deref() => {}
                     _ => return Ok(None),
                 }
@@ -4695,7 +4666,7 @@ impl<'a> Context<'a> {
     }
 
     /// Resolves an assignable location to its access path WITHOUT emitting loads. Used for the
-    /// left-hand side of assignments and for the base of subscripts, where the field path must be
+    /// left-hand side of assignments and for the base of subscripts, where the path must be
     /// preserved so a store (or a composed subscript) can target it.
     fn flatten_lvalue(
         &mut self,
@@ -4703,7 +4674,7 @@ impl<'a> Context<'a> {
         node: Node<'_>,
         source: &'a str,
         scope_view: &mut ScopeView,
-    ) -> Result<RawPath, Error> {
+    ) -> Result<AccessPath, Error> {
         match node.kind() {
             // The store side of the same repair: a name tree-sitter inserted quotes to the
             // empty string and names no location, so the store lands on a dead temp.
@@ -4778,7 +4749,7 @@ impl<'a> Context<'a> {
                 } else {
                     PathSegment::symbol(to_str(&field, source))
                 };
-                base.fields.push(seg);
+                base.segments.push(seg);
                 Ok(base)
             }
             "subscript_expression" => {
@@ -4802,7 +4773,7 @@ impl<'a> Context<'a> {
                     Some(n) => offset.checked_add(n),
                     None => Some(offset),
                 };
-                push_element(&mut ap.fields, index);
+                push_element(&mut ap.segments, index);
                 Ok(ap)
             }
             // A GNU statement expression in lvalue position -- a macro expansion like
@@ -4812,7 +4783,7 @@ impl<'a> Context<'a> {
             "compound_statement" => {
                 let outer_sidx = scope_view.sidx;
                 let outer_span = self.cur_span;
-                let path = match self
+                let ap = match self
                     .lower_statement_expression_effects(program, node, source, scope_view)?
                 {
                     Some(inner) => self.flatten_lvalue(program, inner, source, scope_view)?,
@@ -4820,7 +4791,7 @@ impl<'a> Context<'a> {
                 };
                 scope_view.sidx = outer_sidx;
                 self.cur_span = outer_span;
-                Ok(path)
+                Ok(ap)
             }
             // A string literal as a location (`"\004\002\006\006"[i & 3]` is real C): it is
             // an object, so a legitimate subscript base and operand of `&` -- but also a
@@ -4862,12 +4833,12 @@ impl<'a> Context<'a> {
             // location position (`3[a] = b`, the commuted subscript) still goes through
             // the catch-all.
             "cast_expression" => match self.flatten_expr(program, node, source, scope_view)? {
-                Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                Exp::Variable(v) => Ok(AccessPath::from(v)),
                 Exp::Str(constant) if !constant.is_empty() => Ok(literal_address_path(&constant)),
                 _ => self.not_a_location(program, node, scope_view),
             },
             _ => match self.flatten_expr(program, node, source, scope_view)? {
-                Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                Exp::Variable(v) => Ok(AccessPath::from(v)),
                 _ => self.not_a_location(program, node, scope_view),
             },
         }
@@ -4880,12 +4851,12 @@ impl<'a> Context<'a> {
         arg: Node<'_>,
         source: &'a str,
         scope_view: &mut ScopeView,
-    ) -> Result<RawPath, Error> {
+    ) -> Result<AccessPath, Error> {
         let mut operand = unparenthesized_callee(arg);
         // `*(a + K)` is `a[K]`, and resolves as the subscript does.
         if let Some((pointer, offset)) = self.constant_pointer_offset(operand, source, scope_view) {
             let mut ap = self.flatten_lvalue(program, pointer, source, scope_view)?;
-            push_element(&mut ap.fields, Some(offset));
+            push_element(&mut ap.segments, Some(offset));
             return Ok(ap);
         }
         if operand.kind() == "update_expression" {
@@ -4912,27 +4883,19 @@ impl<'a> Context<'a> {
                     ThinVec::new()
                 };
                 return Ok(deref_of_pointee(pointee)
-                    .unwrap_or_else(|| RawPath::new(pointee.base.clone(), whole)));
+                    .unwrap_or_else(|| AccessPath::new(pointee.base.clone(), whole)));
             }
         }
         let mut ap = match self.flatten_expr(program, operand, source, scope_view)? {
-            Exp::Variable(v) => RawPath::new(v, ThinVec::new()),
-            Exp::AccessPath(addr) => RawPath::new(
-                addr.base.clone(),
-                addr.accesses
-                    .offsets
-                    .iter()
-                    .cloned()
-                    .map(PathSegment::from)
-                    .collect(),
-            ),
+            Exp::Variable(v) => AccessPath::from(v),
+            Exp::Address(addr) => AccessPath::from(addr),
             Exp::Str(constant) if operand.kind() == "cast_expression" && !constant.is_empty() => {
                 literal_address_path(&constant)
             }
             // A constant, a string or a function: no memory this program writes.
             _ => return Ok(self.dead_temp_path(program, scope_view)),
         };
-        push_element(&mut ap.fields, Some(0));
+        push_element(&mut ap.segments, Some(0));
         Ok(ap)
     }
 
@@ -4947,7 +4910,7 @@ impl<'a> Context<'a> {
         program: &mut Program,
         node: Node<'_>,
         scope_view: &ScopeView,
-    ) -> Result<RawPath, Error> {
+    ) -> Result<AccessPath, Error> {
         if recovery_region(node).is_some() {
             let func_name = scope_view.func_name.clone();
             self.report_unanalyzed_recovery(&func_name)?;
@@ -4959,18 +4922,18 @@ impl<'a> Context<'a> {
 
     /// Lowers the symbolic-field reads of `ap` into a sequence of loads (see
     /// [`mir::load_access_path`]) appended to the current block, returning the residual *address*
-    /// (base variable plus any trailing offsets) as an offset-only access path. A pathless or
-    /// offset-only `ap` is returned unchanged, emitting nothing.
+    /// (base variable plus any trailing offsets). A pathless or offset-only `ap` is returned as
+    /// that address, emitting nothing.
     fn emit_loads(
         &mut self,
         program: &mut Program,
         scope_view: &ScopeView,
-        ap: RawPath,
-    ) -> AccessPath {
+        ap: AccessPath,
+    ) -> Address {
         let mut stmts = Vec::new();
         let allocator = &mut self.allocator;
         let locals = &mut program[scope_view.fidx].locals;
-        let v = ctadl_ir::mir::load_access_path(ap.base, ap.fields, &mut stmts, || {
+        let v = ctadl_ir::mir::load_access_path(ap, &mut stmts, || {
             VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp()))
         });
         for mut s in stmts {

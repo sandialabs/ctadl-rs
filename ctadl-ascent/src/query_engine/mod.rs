@@ -73,7 +73,7 @@ pub struct QueryResult {
         Path,
     )>,
     /// Tainted call-argument vertices keyed by call instruction, for
-    /// instruction-level reporting: `(site, label, variable, access path)`.
+    /// instruction-level reporting: `(site, label, variable, path)`.
     /// Derived from the taint closure in the same pass.
     pub tainted_insn: Vec<(PackedInsnSiteId, Label, FlowVariable, Path)>,
     /// External functions that receive tainted data as an argument (they "absorb"

@@ -123,7 +123,7 @@ fn scans_json_and_json5_as_well_as_jsonl() {
 }
 
 /// A bridge's callee-side path is what makes it more than a bare call edge, so the port map has
-/// to survive the canonical access-path grammar intact -- including the offset-vs-symbol
+/// to survive the canonical path grammar intact -- including the offset-vs-symbol
 /// distinction, which gets it backwards silently rather than loudly.
 #[test]
 fn port_paths_keep_the_offset_symbol_distinction() {
@@ -400,15 +400,15 @@ fn direction_defaults_to_both() {
 }
 
 // ---------------------------------------------------------------------------
-// Declared access paths
+// Declared paths
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_declared_access_path_parses_with_the_canonical_grammar() {
-    let path = parse_declared_access_path(".next.next.next", 0).expect("parse");
+fn a_declared_path_parses_with_the_canonical_grammar() {
+    let path = parse_declared_path(".next.next.next", 0).expect("parse");
     assert_eq!(path.len(), 3);
     // Offsets stay offsets; `\[` escapes a field name that begins with a bracket.
-    let path = parse_declared_access_path(r".stack.[1]", 0).expect("parse");
+    let path = parse_declared_path(r".stack.[1]", 0).expect("parse");
     let segs: Vec<_> = path.iter().cloned().collect();
     assert_eq!(
         segs,
@@ -420,10 +420,10 @@ fn a_declared_access_path_parses_with_the_canonical_grammar() {
 }
 
 #[test]
-fn a_malformed_declared_access_path_is_an_error() {
-    assert!(parse_declared_access_path(".a..b", 0).is_err());
+fn a_malformed_declared_path_is_an_error() {
+    assert!(parse_declared_path(".a..b", 0).is_err());
     // The empty path is registered by construction, so naming it is a mistake worth reporting.
-    assert!(parse_declared_access_path("", 0).is_err());
+    assert!(parse_declared_path("", 0).is_err());
 }
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@
  *   - `sink_hit` must be reached. The bytes behind `req->arg` are the source's bytes, and no
  *     libc call is on the data path. Nothing in this program spells `.arg.deref` in one frame
  *     (`run` loads the pointer, the sink derefs its own formal), so if `compute_paths` admitted
- *     a compound access path only by concatenating a *model* path with a program path,
+ *     a compound path only by concatenating a *model* path with a program path,
  *     `arg.deref` would never be admissible and an index built with no models would lose the
  *     flow.
  *

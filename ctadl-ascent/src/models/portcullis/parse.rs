@@ -660,7 +660,7 @@ impl Builder {
                         );
                         None
                     }
-                    Ok(segments) => Some(HeadKind::AccessPath { text, segments }),
+                    Ok(segments) => Some(HeadKind::DeclaredPath { text, segments }),
                     Err(e) => {
                         self.error(lspan, format!("malformed access path {text:?}: {e}"));
                         None
@@ -1019,7 +1019,7 @@ pub const fn default_label() -> &'static str {
 
 /// String-literal escapes: `\"`, `\\`, `\n`, `\t`, `\r`, and `\<anything>` for the literal char.
 ///
-/// Deliberately *not* the access-path escape set. A quoted access-path segment
+/// Deliberately *not* the path escape set. A quoted path segment
 /// (`arg(4)."weird.field[0]"`) carries its dots and brackets literally: the quotes are what take
 /// them out of the path grammar, so re-interpreting `\.` here would need a second escape level
 /// for no gain.

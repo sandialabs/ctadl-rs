@@ -1433,13 +1433,13 @@ fn endpoint_port_text(
     let name = value
         .and_then(|v| v.as_str())
         .and_then(|text| json_schema::parse_port(text, index).ok())
-        .and_then(|parsed| Some((parsed.local?, parsed.ap)));
-    let Some((name, ap)) = name else {
+        .and_then(|parsed| Some((parsed.local?, parsed.path)));
+    let Some((name, path)) = name else {
         return Ok((port_text(value, "port", index)?, None));
     };
     let var = fresh.next("L");
     let mut port = format!("local({var})");
-    for seg in &ap {
+    for seg in &path {
         port.push_str(&segment_text(seg));
     }
     let atom = format!("local({anchor}, {var}, name = {})", quote(&name));
@@ -1486,13 +1486,13 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
         }
     };
     let mut out = base;
-    for seg in &parsed.ap {
+    for seg in &parsed.path {
         out.push_str(&segment_text(seg));
     }
     Ok(out)
 }
 
-/// One access-path segment in DSL syntax. A name that is not a plain identifier is quoted, which
+/// One path segment in DSL syntax. A name that is not a plain identifier is quoted, which
 /// is the DSL's way of taking it out of the path grammar — `.\[]` in JSON becomes `."[]"` here.
 pub fn segment_text(seg: &PathSegment) -> String {
     match seg {
@@ -1643,7 +1643,7 @@ fn collect_strings(value: &Value, single: &str, plural: &str) -> Vec<String> {
     out
 }
 
-/// A DSL string literal. `"`, `\`, newline and tab are escaped; a quoted access-path segment
+/// A DSL string literal. `"`, `\`, newline and tab are escaped; a quoted path segment
 /// carries its dots and brackets literally.
 pub fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);

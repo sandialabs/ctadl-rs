@@ -453,7 +453,7 @@ struct CodegenVisitor<'a> {
     strategy: CallResolutionStrategy,
     /// Name of the function under translation (set in visit_function_data)
     function: Option<fx::FunctionId>,
-    /// We may see the same access path multiple times so we dedup them with this set
+    /// We may see the same path multiple times so we dedup them with this set
     paths_dedup: BTreeSet<(fx::Path,)>,
     /// Per-block map from a load-chain temporary to the (root variable, composed field path) it
     /// stands for (`t2 = load t1.b` where `t1 = load x.a` ⟹ `t2 ↦ (x, .a.b)`). Populated in the
@@ -897,17 +897,17 @@ impl Visitor for CodegenVisitor<'_> {
                         // path `<captured path of v> ++ [k]` rooted at v's root; record it so a
                         // later Load/Store through `dest` composes onto it and the composed path
                         // enters the `paths` gate.
-                        Exp::AccessPath(ap) => {
+                        Exp::Address(addr) => {
                             let (root, base_path) = self
                                 .cap_path
-                                .get(&ap.base)
+                                .get(&addr.base)
                                 .cloned()
-                                .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
+                                .unwrap_or_else(|| (addr.base.clone(), fx::Path::empty()));
                             let path = fx::Path::from_accesses(
                                 base_path
                                     .iter()
                                     .cloned()
-                                    .chain(ap.accesses.iter().cloned().map(PathSegment::from)),
+                                    .chain(addr.accesses.iter().cloned().map(PathSegment::from)),
                             );
                             self.paths_dedup.insert((path,));
                             self.cap_path.insert(dest.clone(), (root, path));
@@ -1207,7 +1207,7 @@ impl Visitor for CodegenVisitor<'_> {
                         }
                     }
                     CallStyle::FuncPtrCall { callee, .. } => {
-                        let vertex = self.trans_access_path(callee);
+                        let vertex = self.trans_address(callee);
                         self.facts
                             .callee_info
                             .push((site, vertex, fx::CallDispatchKey::c()));
@@ -1468,7 +1468,7 @@ impl Visitor for CodegenVisitor<'_> {
         }
     }
 
-    // Generates access paths
+    // Generates paths
     #[inline]
     fn visit_field_accesses(&mut self, fields: &OffsetAccesses) {
         self.super_field_accesses(fields);
@@ -1494,7 +1494,7 @@ impl CodegenVisitor<'_> {
                 fx::Path::empty(),
             )),
             // An address expression `x.[k]` flows structurally from x's offset field.
-            Exp::AccessPath(ap) => Some(self.trans_access_path(ap)),
+            Exp::Address(addr) => Some(self.trans_address(addr)),
             // A constant is not a vertex. The taint index tracks flow between storage
             // locations, and a literal value is not one. These variants are listed out instead
             // of matched with `_`, so that adding an `Exp` variant fails to compile here and
@@ -1504,9 +1504,9 @@ impl CodegenVisitor<'_> {
     }
 
     #[inline]
-    fn trans_access_path(&mut self, ap: &AccessPath) -> FlowVertex {
-        let v = self.trans_variable_ref(&ap.base);
-        let fields = &ap.accesses;
+    fn trans_address(&mut self, addr: &Address) -> FlowVertex {
+        let v = self.trans_variable_ref(&addr.base);
+        let fields = &addr.accesses;
         FlowVertex::new(v, fields.into())
     }
 

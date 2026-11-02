@@ -165,10 +165,12 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
     ((m >> 64) as u64 ^ m as u64) as u32
 }
 
-/// A sequence of field/array accesses
+/// A path: a sequence of field/array accesses, with no variable.
 ///
-/// The access path is represented as a stack of accesses, innermost first. So an access path like
-/// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. Each cons cell is a
+/// A path is the segment part of an access path (see [`mir::AccessPath`]); [`FlowVertex`] pairs
+/// one with a variable. It is represented as a stack of accesses, innermost first. So the path of
+/// the access path x.foo.bar.baz, `.foo.bar.baz`, is represented as
+/// `cons(.foo, cons(.bar, cons(.baz)))`. Each cons cell is a
 /// [`PathNode`] interned in a process-wide interner that never frees, so common suffixes are
 /// shared and a `Path` is a 4-byte handle: a [`PathId`]'s bits, or for the empty path a reserved
 /// value no `PathId` has, so [`Path::EMPTY`] is a compile-time constant and `Option<Path>` is 4
@@ -178,7 +180,7 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 /// runs: sort with [`Path::content_cmp`] wherever the order is printed. serde, `Display` and
 /// [`Path::parse`] go through the content.
 ///
-/// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
+/// Paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are
 /// "addresses of" the containing field.
 ///
@@ -256,13 +258,13 @@ impl Path {
         self.node().map(|n| (&n.head, Path::from_id(n.tail)))
     }
 
-    /// Creates access path from a sequences of accesses
+    /// Creates a path from a sequence of accesses
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
         let mut items = Vec::new();
         for item in iter {
             debug_assert!(
                 !matches!(&item, mir::PathSegment::Symbol(s) if s.is_empty()),
-                "Symbol(\"\") is not a representable access-path segment"
+                "Symbol(\"\") is not a representable path segment"
             );
             match (items.last_mut(), &item) {
                 (Some(mir::PathSegment::Offset(last_off)), mir::PathSegment::Offset(new_off)) => {
@@ -341,7 +343,7 @@ impl Path {
     /// [`mir::PathSegment::Symbol`].
     ///
     /// This is deliberately named rather than a `FromIterator<S: AsRef<str>>` impl: an iterator
-    /// of strings is exactly as plausible a spelling for "parse these as access-path segments",
+    /// of strings is exactly as plausible a spelling for "parse these as path segments",
     /// and silently choosing `Symbol` for all of them is how a model port could never name an
     /// offset. Callers holding *syntax* want [`Path::parse`]; callers holding names want this.
     pub fn from_symbol_names(iter: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
@@ -351,7 +353,7 @@ impl Path {
         )
     }
 
-    /// Parses an access path in the canonical grammar ([`mir::path_syntax`]).
+    /// Parses a path in the canonical grammar ([`mir::path_syntax`]).
     ///
     /// Not injective, and deliberately so: parsing normalizes through [`Path::from_accesses`],
     /// which sums adjacent offset runs and drops `Offset(0)`. So `".[1].[2]"` and `".[3]"` both
@@ -404,7 +406,7 @@ impl Path {
     /// `port` matches every path.
     ///
     /// This is the "extension of the port" predicate used to expand wildcard sink
-    /// ports into the concrete access paths that live beneath them: a port
+    /// ports into the concrete paths that live beneath them: a port
     /// `Argument(3)` (empty path) matches `Argument(3).deref`, `Argument(3).[12].deref`,
     /// etc.; a port `Argument(3).deref` matches `Argument(3).deref.foo` but not
     /// `Argument(3).[12].deref` (the offset precedes the deref, so it is not a suffix).
@@ -1225,7 +1227,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
     }
 }
 
-/// Variable and access path
+/// An access path: a variable and its path. The fact-level form of [`mir::AccessPath`].
 ///
 /// The third field is padding: it makes the 4-byte [`Path`] fill the vertex's 16 bytes, so the
 /// LSM provider, which stores and compares a value's raw bytes, never reads an uninitialized one.
@@ -1635,13 +1637,13 @@ pub fn isin(formal: i64) -> bool {
 
 /// Returns true if the formal flows output
 #[inline(always)]
-pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> bool {
+pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -> bool {
     let i: i16 = **formal_index;
     if i >= 0 {
         match formal_type {
             FormalType::Copied => false,
             FormalType::Shared => true,
-            FormalType::SharedFields => !ap.is_empty(),
+            FormalType::SharedFields => !path.is_empty(),
         }
     } else {
         true
@@ -1663,7 +1665,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 #[inline]
 fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     use mir::{Offset, PathSegment};
-    // `new_prefix` is a short program access-path prefix (usually 0–2 components).
+    // `new_prefix` is a short program path prefix (usually 0–2 components).
     let comps: Vec<PathSegment> = new_prefix.iter().cloned().collect();
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
@@ -1698,59 +1700,59 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     acc
 }
 
-/// Returns the suffix solving the equation ap = prefix + suffix, if there is one. The suffix may
+/// Returns the suffix solving the equation path = prefix + suffix, if there is one. The suffix may
 /// be empty. Otherwise returns none.
 ///
-/// This supports offset arithmetic. For example, if `ap = .x.[2]` and `prefix = .x.[1]`,
+/// This supports offset arithmetic. For example, if `path = .x.[2]` and `prefix = .x.[1]`,
 /// the suffix is `.[1]`.
 #[inline]
-pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<Path> {
-    match_prefix_split(ap, prefix).map(|(adjust, rest)| match adjust {
+pub fn match_prefix(path: &Path, prefix: &Path) -> Option<Path> {
+    match_prefix_split(path, prefix).map(|(adjust, rest)| match adjust {
         Some(adj) => Path::cons(mir::PathSegment::Offset(Offset(adj)), rest),
         None => rest,
     })
 }
 
 /// [`match_prefix`]'s suffix without building it: `(adjust, rest)` for the suffix
-/// `[adjust] · rest`, where `rest` is a tail of `ap` and `[adjust]` is a nonzero offset segment,
+/// `[adjust] · rest`, where `rest` is a tail of `path` and `[adjust]` is a nonzero offset segment,
 /// present only when `adjust` is `Some`. Interns nothing.
 #[inline]
-pub fn match_prefix_split(ap: &Path, prefix: &Path) -> Option<(Option<i64>, Path)> {
+pub fn match_prefix_split(path: &Path, prefix: &Path) -> Option<(Option<i64>, Path)> {
     use mir::PathSegment;
-    let mut ap_seq = *ap;
+    let mut path_seq = *path;
     let mut prefix_seq = *prefix;
 
     if prefix_seq.is_empty() {
-        return Some((None, ap_seq));
+        return Some((None, path_seq));
     }
 
     // Check that all components except the last one match exactly
     // Invariant: prefix_seq.tail() is a non-empty seq
     while !prefix_seq.tail().is_empty() {
-        if prefix_seq.head() != ap_seq.head() {
+        if prefix_seq.head() != path_seq.head() {
             return None;
         }
         prefix_seq = prefix_seq.tail();
-        ap_seq = ap_seq.tail();
+        path_seq = path_seq.tail();
     }
     // unwrap() safety follows from while condition
     let prefix_last = prefix_seq.head().unwrap();
 
-    // There's one prefix component left. If there are no more ap components, we fail to match.
-    let ap_last = ap_seq.head()?;
+    // There's one prefix component left. If there are no more path components, we fail to match.
+    let path_last = path_seq.head()?;
 
-    match (ap_last, prefix_last) {
+    match (path_last, prefix_last) {
         // The last offsets match with a nonzero offset adjustment. An exact offset match
         // (an == pn) is handled by the branch below, which consumes the component: emitting
         // a leading `Offset(0)` here instead would make the substitution non-injective
         // (`.x` and `.x.[0]` are distinct paths that concatenate identically), letting a
         // backward walk pick a preimage whose forward image was a different path.
         (PathSegment::Offset(Offset(an)), PathSegment::Offset(Offset(pn))) if an != pn => {
-            Some((Some(an - pn), ap_seq.tail()))
+            Some((Some(an - pn), path_seq.tail()))
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some((None, ap_seq.tail()))
+            Some((None, path_seq.tail()))
         }
         _ => None,
     }
@@ -1998,7 +2000,7 @@ mod tests {
         assert!(match_prefix(&elem, &elem).is_some());
         assert!(match_prefix(&c0, &c0).is_some());
         // Every distinct pair, bracketed or not, stays disjoint.
-        for (ap, prefix) in [
+        for (path, prefix) in [
             (&c0, &elem),
             (&elem, &c0),
             (&c0, &c1),
@@ -2007,9 +2009,9 @@ mod tests {
             (&elem, &field),
         ] {
             assert!(
-                match_prefix(ap, prefix).is_none(),
+                match_prefix(path, prefix).is_none(),
                 "{} must not match {}",
-                ap.to_dot_string(),
+                path.to_dot_string(),
                 prefix.to_dot_string()
             );
         }
@@ -2076,52 +2078,52 @@ mod tests {
         use ctadl_ir::mir::{Offset, PathSegment};
 
         // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
-        let ap = parse_path(".x.[2]");
+        let path = parse_path(".x.[2]");
         let prefix = parse_path(".x.[2]");
-        let suffix = match_prefix(&ap, &prefix).unwrap();
+        let suffix = match_prefix(&path, &prefix).unwrap();
         assert!(suffix.is_empty());
 
         // Via substitute_prefix: result is `.y`, not `.y.[0]`.
         let new_prefix = parse_path(".y");
         assert_eq!(
-            ap.substitute_prefix(&prefix, &new_prefix),
+            path.substitute_prefix(&prefix, &new_prefix),
             Some(parse_path(".y"))
         );
 
         // Exact offset match mid-path: the offset is consumed, suffix starts at `.f`.
-        let ap = parse_path(".x.[2].f");
-        let suffix = match_prefix(&ap, &prefix).unwrap();
+        let path = parse_path(".x.[2].f");
+        let suffix = match_prefix(&path, &prefix).unwrap();
         assert_eq!(
             suffix.iter().cloned().collect::<Vec<_>>(),
             vec![PathSegment::Symbol(ArcIntern::from("f"))]
         );
         assert_eq!(
-            ap.substitute_prefix(&prefix, &new_prefix),
+            path.substitute_prefix(&prefix, &new_prefix),
             Some(parse_path(".y.f"))
         );
 
         // Round trip: forward then backward substitution is the identity, including the
         // exact-offset case.
-        for (ap_s, pre_s, np_s) in [
+        for (path_s, pre_s, np_s) in [
             (".x.[2]", ".x.[2]", ".y"),
             (".x.[2].f", ".x.[2]", ".y"),
             (".x.[2]", ".x.[2]", ".y.[3]"),
             (".x.[5]", ".x.[2]", ".y"),
         ] {
-            let ap = parse_path(ap_s);
+            let path = parse_path(path_s);
             let pre = parse_path(pre_s);
             let np = parse_path(np_s);
-            let fwd = ap.substitute_prefix(&pre, &np).unwrap();
+            let fwd = path.substitute_prefix(&pre, &np).unwrap();
             assert_eq!(
                 fwd.substitute_prefix(&np, &pre),
-                Some(ap),
-                "substitute_prefix({ap_s}, {pre_s}, {np_s}) did not round-trip"
+                Some(path),
+                "substitute_prefix({path_s}, {pre_s}, {np_s}) did not round-trip"
             );
         }
 
         // A nonzero adjustment merges offsets.
-        let ap = parse_path(".x.[5]");
-        let suffix = match_prefix(&ap, &prefix).unwrap();
+        let path = parse_path(".x.[5]");
+        let suffix = match_prefix(&path, &prefix).unwrap();
         assert_eq!(
             suffix.iter().cloned().collect::<Vec<_>>(),
             vec![PathSegment::Offset(Offset(3))]
@@ -2135,14 +2137,14 @@ mod tests {
     #[test]
     fn test_substitute_prefix_matches_rebuild() {
         // Reference: flatten new_prefix ++ suffix and rebuild.
-        fn rebuild(ap: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
-            match_prefix(ap, prefix)
+        fn rebuild(path: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
+            match_prefix(path, prefix)
                 .map(|suffix| Path::from_accesses(new_prefix.iter().chain(suffix.iter()).cloned()))
         }
         // A spread of prefixes/new-prefixes exercising: empty new_prefix (zero-intern path),
         // junction offset+offset merge, offset-next-to-symbol (no merge), empty suffix, and
         // non-matching prefix (None).
-        let aps = [
+        let paths = [
             ".x.[5].g",
             ".x.[1].[2]",
             ".a.b.c",
@@ -2153,16 +2155,16 @@ mod tests {
         ];
         let prefixes = ["", ".x", ".x.[1]", ".a", ".[3]", ".x.[4]", ".p.q", ".nope"];
         let new_prefixes = ["", ".y", ".y.[3]", ".[7]", ".m.n", ".[0]"];
-        for ap_s in aps {
-            let ap = parse_path(ap_s);
+        for path_s in paths {
+            let path = parse_path(path_s);
             for pre_s in prefixes {
                 let pre = parse_path(pre_s);
                 for np_s in new_prefixes {
                     let np = parse_path(np_s);
                     assert_eq!(
-                        ap.substitute_prefix(&pre, &np),
-                        rebuild(&ap, &pre, &np),
-                        "substitute_prefix({ap_s}, {pre_s}, {np_s}) diverged from rebuild"
+                        path.substitute_prefix(&pre, &np),
+                        rebuild(&path, &pre, &np),
+                        "substitute_prefix({path_s}, {pre_s}, {np_s}) diverged from rebuild"
                     );
                 }
             }
@@ -2346,7 +2348,7 @@ mod tests {
     fn test_path_parse_normalizes() {
         use ctadl_ir::mir::{Offset, PathSegment};
 
-        // Adjacent offsets are summed: an access path holds at most one offset in a row.
+        // Adjacent offsets are summed: a path holds at most one offset in a row.
         assert_eq!(
             Path::parse(".[1].[2]").unwrap(),
             Path::parse(".[3]").unwrap()
@@ -2411,8 +2413,8 @@ mod prefix_key_tests {
         Path::parse(s).unwrap()
     }
 
-    /// Every `(ap, prefix)` pair agrees with `match_prefix`: the suffix it returns is exactly
-    /// what the keys of `ap` reconstruct for `prefix`, and nothing else matches.
+    /// Every `(path, prefix)` pair agrees with `match_prefix`: the suffix it returns is exactly
+    /// what the keys of `path` reconstruct for `prefix`, and nothing else matches.
     #[test]
     fn prefix_keys_agree_with_match_prefix() {
         let paths: Vec<Path> = [
@@ -2436,11 +2438,11 @@ mod prefix_key_tests {
         .iter()
         .map(|s| p(s))
         .collect();
-        for ap in &paths {
-            let keys = ap.prefix_keys();
-            let wild_keys = ap.prefix_keys_wild();
+        for path in &paths {
+            let keys = path.prefix_keys();
+            let wild_keys = path.prefix_keys_wild();
             for prefix in &paths {
-                let expected = match_prefix(ap, prefix);
+                let expected = match_prefix(path, prefix);
                 // Reconstruct from the keys: an exact key equal to `prefix`, or a wild key whose
                 // `prefix` is `key.[m]`.
                 let mut found: Vec<Path> = Vec::new();
@@ -2465,8 +2467,8 @@ mod prefix_key_tests {
                 assert_eq!(
                     found,
                     expected.into_iter().collect::<Vec<_>>(),
-                    "ap={} prefix={}",
-                    ap.to_dot_string(),
+                    "path={} prefix={}",
+                    path.to_dot_string(),
                     prefix.to_dot_string()
                 );
             }

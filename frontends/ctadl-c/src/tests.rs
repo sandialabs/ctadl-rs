@@ -669,11 +669,8 @@ fn address_of_element_forms_an_address() {
         }";
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "transfer");
-    let Exp::AccessPath(addr) = &args[0] else {
-        panic!(
-            "`&x[1]` should be an address access path, got {:?}\n{prog}",
-            args[0]
-        )
+    let Exp::Address(addr) = &args[0] else {
+        panic!("`&x[1]` should be an address, got {:?}\n{prog}", args[0])
     };
     assert_eq!(addr.base, local_ref(&prog, "f", "x"));
     let offsets: Vec<i64> = addr.accesses.iter().map(|f| f.offset().0).collect();
@@ -2056,7 +2053,7 @@ fn funcptr_array_multistore_flows() {
 #[test_log::test]
 fn field_non_interference() {
     // Field sensitivity, stated as a negative: writing `x` into `s.a` and returning `s.b` must NOT
-    // leak `x` to the return -- `s.a` and `s.b` are distinct field paths. The positive halves (x ->
+    // leak `x` to the return -- `s.a` and `s.b` are distinct access paths. The positive halves (x ->
     // s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the return.
     let src = r"
         int f(Donkey s, int x) {
@@ -2073,7 +2070,7 @@ fn field_non_interference() {
 #[test_log::test]
 fn arrow_field_returns_param() {
     // Reading a field through an arrow (`return p->x;`) on a pointer parameter summarizes as the
-    // field path @p0.x reaching the return. (The equivalent `(*p).x` spelling is covered by
+    // access path @p0.x reaching the return. (The equivalent `(*p).x` spelling is covered by
     // `deref_paren_field_equivalent`.)
     let src = r"
         int f(Field *p) {
@@ -2158,7 +2155,7 @@ fn elvis_ternary_is_not_a_frontend_gap() {
 fn elvis_ternary_propagates_struct_field() {
     // The `field ?: fallback` idiom usually blends a field read with a
     // fallback. Reusing the condition's already-lowered value (rather than re-lowering
-    // it) keeps the field path intact, so `p->x` still reaches the result.
+    // it) keeps the access path intact, so `p->x` still reaches the result.
     let src = r"
         typedef struct Field { int x; } Field;
         int f(Field *p, int c) {
@@ -2293,7 +2290,7 @@ fn whole_struct_copy_carries_field() {
 #[test_log::test]
 fn nested_field_depth_returns() {
     // A deep field read (`v.a.b.c`) preserves the full access path: the summary endpoint is the
-    // three-deep field path on the formal, not a flattened or truncated one.
+    // three-deep path on the formal, not a flattened or truncated one.
     let src = r"
         int f(Thing v) {
             return v.a.b.c;
@@ -2408,7 +2405,7 @@ fn unary_ops_blend_through() {
 
 #[test_log::test]
 fn constant_index_field_precision() {
-    // Constant subscripts are distinct field paths: `src` into `v.a[0]` must NOT leak to a
+    // Constant subscripts are distinct access paths: `src` into `v.a[0]` must NOT leak to a
     // read of `v.a[1]` -- the array-index analogue of `field_non_interference`. (`.[1]` in
     // the path strings is an *offset*; `.deref` names the memory at that address; index 0
     // contributes no offset segment at all.)
@@ -2645,7 +2642,7 @@ fn vararg_call_carries_argument() {
 fn designated_initializer_flows() {
     // A designated initializer `Thing v = {.a = src}` taints field `a`, so `return v.a` carries src.
     // The designator gives the member name, so the store lands at `v.a` -- exactly where the `v.a`
-    // read resolves. (`src` is a scalar param, so it reaches the return at path "" -- the field path
+    // read resolves. (`src` is a scalar param, so it reaches the return at path "" -- the path
     // lives on the local `v`, not on the param.)
     let src = r"
         int f(int src) {
@@ -3363,7 +3360,7 @@ fn asm_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn asm_output_into_struct_field_is_stored() {
-    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field path.
+    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field.
     // That is the case the single-operand blend temp exists for -- a store lowers exactly one
     // value (`add_assign_to_program`), so handing the write two operands would silently drop
     // the second and lose half the transfer.

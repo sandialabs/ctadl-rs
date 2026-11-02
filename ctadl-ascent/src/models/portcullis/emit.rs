@@ -72,7 +72,7 @@ pub struct RuleStats {
     pub sinks: usize,
     pub propagations: usize,
     pub bridges: usize,
-    pub access_paths: usize,
+    pub declared_paths: usize,
     /// `dispatch` heads the rule declares.
     pub dispatch_heads: usize,
     /// Signature keys a `dispatch` head attached a model, skip, inline or marker to.
@@ -99,7 +99,7 @@ impl RuleStats {
             + self.sinks
             + self.propagations
             + self.bridges
-            + self.access_paths
+            + self.declared_paths
             + self.dispatch
             + self.modes
     }
@@ -116,7 +116,7 @@ impl RuleStats {
         self.sinks += other.sinks;
         self.propagations += other.propagations;
         self.bridges += other.bridges;
-        self.access_paths += other.access_paths;
+        self.declared_paths += other.declared_paths;
         self.dispatch += other.dispatch;
         self.modes += other.modes;
         for miss in &other.missed_locals {
@@ -158,7 +158,7 @@ impl Phase {
                     Phase::Index,
                     HeadKind::Propagation { .. }
                         | HeadKind::Bridge { .. }
-                        | HeadKind::AccessPath { .. }
+                        | HeadKind::DeclaredPath { .. }
                         | HeadKind::Dispatch { .. }
                         | HeadKind::Mode(_)
                 )
@@ -507,10 +507,10 @@ fn emit_head(
             tally.stats.bridges += 1;
             note_match(tally, from.function);
         }
-        HeadKind::AccessPath { segments, .. } => {
-            out.access_paths
+        HeadKind::DeclaredPath { segments, .. } => {
+            out.declared_paths
                 .insert(facts::Path::from_accesses(segments.iter().cloned()));
-            tally.stats.access_paths += 1;
+            tally.stats.declared_paths += 1;
         }
         HeadKind::Dispatch { disposition } => {
             let Some((key, id)) = resolve_callsig(rule, head, disposition, binding, errors) else {

@@ -234,10 +234,7 @@ fn value_use_takes_a_copied_variable() {
 #[test]
 fn value_use_of_an_address_is_kept() {
     // t = a.[8]; x = value(t)  =>  unchanged: `value(a.[8])` has no spelling
-    let addr = Exp::access_path(AccessPath::new(
-        local("a"),
-        [OffsetAccess::Offset(Offset(8))],
-    ));
+    let addr = Exp::address(Address::new(local("a"), [OffsetAccess::Offset(Offset(8))]));
     let mut f = one_block_function(vec![assign("t", vec![addr]), assign("x", vec![value("t")])]);
     coalesce_function(&mut f);
     assert_eq!(block_kinds(&f).len(), 2);

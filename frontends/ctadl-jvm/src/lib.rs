@@ -310,9 +310,9 @@ impl Context {
                                 let except = Self::except(&mut fdat.locals);
                                 bb_data.push_back(Statement::new_kind(StatementKind::Assign {
                                     dest,
-                                    sources: smallvec![Exp::from(AccessPath::without_fields(
-                                        except
-                                    ),)],
+                                    sources: smallvec![
+                                        Exp::from(Address::without_offsets(except),)
+                                    ],
                                 }));
                             }
 
@@ -346,7 +346,7 @@ impl Context {
                                                 Statement::new_kind(StatementKind::Assign {
                                                     dest,
                                                     sources: smallvec![Exp::from(
-                                                        AccessPath::without_fields(ret),
+                                                        Address::without_offsets(ret),
                                                     )],
                                                 });
                                             assign.source_info = source_info;
@@ -407,7 +407,7 @@ impl Context {
                                             TerminatorKind::Return {
                                                 args: smallvec![
                                                     empty_exp(),
-                                                    Exp::from(AccessPath::without_fields(except)),
+                                                    Exp::from(Address::without_offsets(except)),
                                                 ],
                                             }
                                         } else {
@@ -702,7 +702,7 @@ impl Context {
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
-        Exp::from(AccessPath::without_fields(
+        Exp::from(Address::without_offsets(
             self.convert_location_to_var_ref(loc, locals),
         ))
     }
@@ -734,7 +734,7 @@ impl Context {
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
         Statement::new_kind(StatementKind::Assign {
             dest,
-            sources: smallvec![Exp::from(AccessPath::without_fields(src))],
+            sources: smallvec![Exp::from(Address::without_offsets(src))],
         })
     }
 
@@ -838,7 +838,7 @@ impl Context {
                 .iter()
                 .map(|loc| match Self::stack_slot_index(loc) {
                     Some(n) if saved.contains(&n) => {
-                        Exp::from(AccessPath::without_fields(Self::shuffle_temp(n, locals)))
+                        Exp::from(Address::without_offsets(Self::shuffle_temp(n, locals)))
                     }
                     _ => self.convert_location_to_exp(loc, locals),
                 })
@@ -902,7 +902,7 @@ impl Context {
                     locals,
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(VariableRef::new_global()),
+                    Address::without_offsets(VariableRef::new_global()),
                     Self::jvm_field_symbol(field),
                     value,
                 ))]
@@ -934,7 +934,7 @@ impl Context {
                 let object_slot = stacks.last().expect("putfield object");
                 let object = self.convert_location_to_var_ref(object_slot, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(object),
+                    Address::without_offsets(object),
                     Self::jvm_field_symbol(field),
                     value,
                 ))]
@@ -976,7 +976,7 @@ impl Context {
                 );
                 let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::without_fields(object),
+                    Address::without_offsets(object),
                     mir::FieldRef::symbol("[]"),
                     value,
                 ))]
@@ -997,7 +997,7 @@ impl Context {
     fn convert_location_to_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
         match loc {
             Location::StackSlot(_) | Location::StackInput(_) => Exp::from(
-                AccessPath::without_fields(self.convert_location_to_var_ref(loc, locals)),
+                Address::without_offsets(self.convert_location_to_var_ref(loc, locals)),
             ),
             Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
             Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
@@ -1019,10 +1019,10 @@ impl Context {
             // Load instructions in the getfield/getstatic/aload opcode arms. This &self helper
             // cannot emit a load, so a FieldRef reaching here (a rare generic-source fallback)
             // degrades to its base variable.
-            Location::FieldRef(_) => Exp::from(AccessPath::without_fields(
+            Location::FieldRef(_) => Exp::from(Address::without_offsets(
                 self.convert_location_to_var_ref(loc, locals),
             )),
-            _ => Exp::from(AccessPath::without_fields(
+            _ => Exp::from(Address::without_offsets(
                 self.convert_location_to_var_ref(loc, locals),
             )),
         }

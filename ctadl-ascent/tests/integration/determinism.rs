@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ctadl_ascent::cli;
-use ctadl_ascent::facts::{Path as AccessPath, PathId, Str};
+use ctadl_ascent::facts::{Path as FactPath, PathId, Str};
 use ctadl_ascent::project::*;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 
@@ -89,13 +89,13 @@ fn collect_values(kind: Kind) -> Vec<serde_json::Value> {
         }
         Kind::Path => {
             let entries = PathId::stats().entries;
-            let paths: Vec<AccessPath> = (1..=u32::MAX)
+            let paths: Vec<FactPath> = (1..=u32::MAX)
                 .filter(|&raw| path_issued(raw))
-                .filter_map(AccessPath::from_raw)
+                .filter_map(FactPath::from_raw)
                 .take(entries)
                 .collect();
-            let tails: HashSet<AccessPath> = paths.iter().map(|p| p.tail()).collect();
-            let mut whole: Vec<AccessPath> =
+            let tails: HashSet<FactPath> = paths.iter().map(|p| p.tail()).collect();
+            let mut whole: Vec<FactPath> =
                 paths.into_iter().filter(|p| !tails.contains(p)).collect();
             whole.sort_unstable_by(|a, b| a.content_cmp(b));
             whole
@@ -141,14 +141,14 @@ fn pre_intern(kind: Kind, values: &[serde_json::Value]) {
         }
         Kind::Path => {
             read_depths(&mut depth, path_issued);
-            let mut last: Option<AccessPath> = None;
+            let mut last: Option<FactPath> = None;
             for value in values {
                 while depth.iter().any(|&d| d < floor) {
-                    let f = AccessPath::from_symbol_names([format!("\u{1}filler{fillers}")]);
+                    let f = FactPath::from_symbol_names([format!("\u{1}filler{fillers}")]);
                     fillers += 1;
                     depth[shard(f.raw())] = position(f.raw()) + 1;
                 }
-                let p: AccessPath = serde_json::from_value(value.clone()).unwrap();
+                let p: FactPath = serde_json::from_value(value.clone()).unwrap();
                 // The suffixes `p` brought with it went into shards of their own.
                 read_depths(&mut depth, path_issued);
                 floor = floor.max(position(p.raw()) + 1);

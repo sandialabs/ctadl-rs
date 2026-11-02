@@ -139,7 +139,7 @@ fn dispatch_propagations(
 
 /// Turns matched propagation models into `facts.summary` rows.
 ///
-/// This is where a propagation's access paths enter `model_paths` -- the bucket that
+/// This is where a propagation's port paths enter `model_paths` -- the bucket that
 /// concatenates with every program path -- so the port semantics documented for `propagation`
 /// depend on the rows landing here rather than in `facts.paths`.
 fn codegen_propagations(
@@ -217,10 +217,10 @@ fn expand_port(
 }
 
 // ---------------------------------------------------------------------------
-// Declared access paths
+// Declared paths
 // ---------------------------------------------------------------------------
 
-/// Seeds user-declared access paths into the initial indexer paths.
+/// Seeds user-declared paths (`access_paths`) into the initial indexer paths.
 ///
 /// This registry exists because path *composition* past a bridge seam is exact-match only: a
 /// pathful bridge composes with its callee's derived summary only where the summary's endpoints
@@ -228,10 +228,10 @@ fn expand_port(
 /// output, so nothing can enumerate them -- but a user who knows the callee's summary shape can
 /// name them by hand. Flows needing residues nobody declared are dropped, silently.
 fn codegen_declared_paths(matches: &ProgramModelMatches, facts: &mut IndexFacts) -> usize {
-    for path in &matches.access_paths {
+    for path in &matches.declared_paths {
         facts.paths.push((*path,));
     }
-    matches.access_paths.len()
+    matches.declared_paths.len()
 }
 
 // ---------------------------------------------------------------------------

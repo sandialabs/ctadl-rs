@@ -1,5 +1,5 @@
 /*! Program-independent parts of a JSON model generator: `in` scopes, bridges, and declared
-access paths.
+paths.
 
 These are read by the JSON validator ([`super::json_schema`]), which rejects what the JSON
 format does not allow before the migrator translates it, and by the model check's inventory
@@ -278,7 +278,7 @@ impl ImportScope {
     }
 }
 
-/// One end of a port map entry: a formal index plus a literal access path.
+/// One end of a port map entry: a formal index plus a literal path.
 ///
 /// The index is a [`FormalIndex`] rather than a tag/index pair because the port space a bridge
 /// admits is exactly `Argument(n)` and `Return`; the globals pseudo-parameter is mapped
@@ -337,7 +337,7 @@ impl BridgePort {
         };
         Ok(BridgePort {
             index: formal,
-            path: facts::Path::from_accesses(port.ap),
+            path: facts::Path::from_accesses(port.path),
         })
     }
 }
@@ -775,17 +775,13 @@ pub(crate) fn check_keys(
 
 /// Parses one entry of a `model.access_paths` list: a path in the canonical grammar, written the
 /// way a port's trailing path is (`.next.next.next`).
-pub(crate) fn parse_declared_access_path(
-    text: &str,
-    index: usize,
-) -> Result<facts::Path, JsonModelError> {
-    let segments = ctadl_ir::mir::parse_segments(text).map_err(|source| {
-        JsonModelError::InvalidAccessPath {
+pub(crate) fn parse_declared_path(text: &str, index: usize) -> Result<facts::Path, JsonModelError> {
+    let segments =
+        ctadl_ir::mir::parse_segments(text).map_err(|source| JsonModelError::InvalidPath {
             index,
             text: text.to_string(),
             source,
-        }
-    })?;
+        })?;
     if segments.is_empty() {
         return Err(JsonModelError::UnexpectedField {
             index,

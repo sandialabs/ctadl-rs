@@ -28,7 +28,7 @@ fn stmts(f: &FunctionData) -> Vec<String> {
 
 /// `base = update (source.[k].deref := v)`
 fn update(f: &mut FunctionData, base: &str, source: &str, k: i64, v: &str) -> Statement {
-    let dest = AccessPath::new(local(f, base), [OffsetAccess::Offset(Offset(k))]);
+    let dest = Address::new(local(f, base), [OffsetAccess::Offset(Offset(k))]);
     let source = local(f, source);
     let v = local(f, v);
     Statement::new_kind(StatementKind::update(
@@ -43,7 +43,7 @@ fn update(f: &mut FunctionData, base: &str, source: &str, k: i64, v: &str) -> St
 fn a_frame_update_becomes_the_store_it_stands_for() {
     let mut f = function(|f| vec![update(f, STACK_TOP, STACK_TOP, -16, "v")]);
     let mut store = function(|f| {
-        let dest = AccessPath::new(local(f, STACK_TOP), [OffsetAccess::Offset(Offset(-16))]);
+        let dest = Address::new(local(f, STACK_TOP), [OffsetAccess::Offset(Offset(-16))]);
         let v = local(f, "v");
         vec![Statement::new_kind(StatementKind::store(
             dest,

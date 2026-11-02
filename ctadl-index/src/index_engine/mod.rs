@@ -1377,7 +1377,7 @@ pub static ACTION_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_name
 /// `<type>`, the path of an intent's MIME type.
 pub static TYPE_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_names(["<type>"]));
 
-/// Computes `paths`, the admissible access paths: the syntactic program paths, the paths the
+/// Computes `paths`, the admissible paths: the syntactic program paths, the paths the
 /// input summaries mention, and each one-level concatenation of the two. Its own small
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
@@ -1490,7 +1490,7 @@ ascent_source! {
 
     // Analysis drivers:
 
-    // Set of syntactic access paths. Computed before the run by `compute_paths`, and read by no
+    // Set of syntactic paths. Computed before the run by `compute_paths`, and read by no
     // rule: it is the output's copy. `path_set` holds the same set frozen as a [`PathSet`],
     // which every rule that tests or splits a path asks.
     relation paths(Path);
@@ -2297,7 +2297,7 @@ impl<'a> EngineInput<'a> {
             assign_like.len(),
             phys_footprint_mb()
         );
-        // Model paths = access paths introduced by summaries ONLY. Do NOT fold `facts.paths` in here:
+        // Model paths = paths introduced by summaries ONLY. Do NOT fold `facts.paths` in here:
         // those are program paths (already in `program_paths`), and the one-level concat rules below
         // combine `model_paths` with `program_paths`. Adding `facts.paths` makes model_paths ≈
         // program_paths, turning that concat into a program×program self-join (|facts.paths|² rows).
@@ -2335,7 +2335,7 @@ impl<'a> EngineInput<'a> {
                 .iter()
                 .map(|(_, _, FlowVertex(_, p, ..))| (*p,)),
         );
-        // The receiver access path of an indirect / virtual call is also a syntactic program path.
+        // The receiver's path in an indirect / virtual call is also a syntactic program path.
         // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
         // version of the receiver (the transitive rules gate on the path set). Without this, a
         // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or

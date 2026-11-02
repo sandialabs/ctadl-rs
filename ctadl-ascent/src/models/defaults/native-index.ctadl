@@ -3,7 +3,7 @@
 // Propagation only. CTADL ships no default sources or sinks, and `cli::index` uses only the
 // `summary` half of a loaded model batch.
 //
-// ACCESS PATHS. `.deref` is an ordinary symbol segment -- pcode's spelling for a pointee -- so
+// PATHS. `.deref` is an ordinary symbol segment -- pcode's spelling for a pointee -- so
 // it behaves as written. `.[<n>]` is a real `PathSegment::Offset` and matches what pcode emits;
 // a field whose *name* begins with `[` would have to be quoted (`."[..."`), which pcode never
 // needs. A port pair is a PREFIX SUBSTITUTION, not a filter: `return <- arg(0).deref` unwraps a
