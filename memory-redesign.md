@@ -43,8 +43,10 @@ engine, which searches the resulting graph (`ctadl-ascent/src/query_engine`).
 **Codegen makes one vertex per variable version and path.** A vertex is a `(variable, path)`
 pair. `store x.[k].deref := v` becomes an edge into `(x, .[k].deref)` and `load` an edge out of
 it, wherever the two are. `x = update (y.f := v)` becomes a copy of `y` into `x` except at `.f`
-and below (`update_sans_path`), plus the write `x.f <- v`, so the new version holds `v` at `.f`
-and not the old value. A parameter's entry name and its `param-flow` write-back are the same
+and below (`update_sans_path`), plus the write `x.f <- v`. The new version holds `v` at `.f` and
+not what earlier writes put there. It still holds what `y` held as a whole: a flow into `y` at
+the empty path carries every path, `.f` included. After `$globals_1 = update ($globals_0.[A].deref
+:= v)`, a load of `$globals_1.[A].deref` sees `v` and `GLOBALS.[A].deref` from entry. A parameter's entry name and its `param-flow` write-back are the same
 vertex, the formal `@pN`: the entry copy is an edge `@pN_0 <- @pN`, and `param-flow` an edge
 `@pN <- @pN_0`. A call becomes one `actual_param(site, n, vertex)` fact per argument.
 
@@ -236,9 +238,10 @@ one explicit.
   `p->next` make paths without end. Past a depth bound, a cell becomes weak. Offset variants from
   a loop-incremented pointer need a bound for a similar reason, so the two should share one
   widening policy.
-- **Strong updates.** A store to a cell whose root names one object kills the previous version, as
-  `Update` does for a whole variable. It comes free in this representation, and it is a separate
-  precision gain from ordering.
+- **Strong updates.** A store to a cell whose root names one object kills the previous version,
+  entry value included. `Update` kills only what earlier writes put at the field, not what the
+  variable held on entry. It comes free in this representation, and it is a separate precision
+  gain from ordering.
 
 ## Frontends
 
