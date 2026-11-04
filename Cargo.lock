@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "ascent-tc-lsm-bench"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "ascent-byods-rels",
@@ -783,14 +783,14 @@ dependencies = [
 
 [[package]]
 name = "cil-dump"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cil-reader",
 ]
 
 [[package]]
 name = "cil-reader"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "flate2",
  "memmap2",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ascent"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-c"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "ctadl-ascent",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-cil"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cil-reader",
  "ctadl-import",
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-dex"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-flowy"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-frontends"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bitcode",
  "ctadl-c",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-import"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bitcode",
  "chrono",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow",
  "ascent",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index-lsm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index-par"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-index-serial"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "ctadl-index",
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ir"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bit-set",
  "bitcode",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-jvm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-lua"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-pcode"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "dex-reader"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "log",
  "smallvec",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "immortal"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "hashbrown 0.15.5",
  "parking_lot 0.12.5",
@@ -2889,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "jvm-reader"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "zip",
 ]
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "lsm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "bytemuck",
@@ -3362,7 +3362,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pcode-reader"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ascent",
  "ascent_base",
@@ -3730,7 +3730,7 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_graphviz"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "rustc_version"
@@ -4002,7 +4002,7 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "source-info"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow",
  "datafusion",
@@ -4404,7 +4404,7 @@ dependencies = [
 
 [[package]]
 name = "trie"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "parking_lot 0.12.5",
@@ -5059,7 +5059,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "cil-dump",
