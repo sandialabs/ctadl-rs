@@ -21,8 +21,9 @@ normal form, given by these equations:
 - Fields and deref obey no equations: `p.f ≠ p`, `p.f.g ≠ p.g.f`. deref is its own segment,
   not a field name, so a source field named `deref` cannot be mistaken for it. Frontends use
   it, and only it, for the step from an address to the memory there.
-- #value absorbs itself and offsets: `p.#value.#value = p.#value`, `p.#value.[k] = p.#value`.
-  A value plus a constant is still computed from the same value.
+- #value absorbs itself and adjacent offsets, on both sides: `p.#value.#value = p.#value`,
+  `p.[k].#value = p.#value`, `p.#value.[k] = p.#value`. A value plus a constant is still
+  computed from the same value.
 
 Every path in normal form is exactly one of the following, checked in this order:
 
@@ -36,16 +37,17 @@ Every path in normal form is exactly one of the following, checked in this order
   cell carrying a set of labels.
 
 Each label at a location has a *scope*, `All` or `Fixed`, saying whether it may move backward
-along copies (below).
+along copies (below). A location holds a set of (label, scope) pairs; `All` subsumes `Fixed`.
+
+A source or sink on a path `p` labels or observes both `p` and `p.#value`.
 
 ## Assignment
 
 `y.d = x.s`, classified after normalizing:
 
-- An address destination is rewritten first: `p.[k] = e` is `p = e.[-k]`.
+- An address destination is rewritten first: `p.[k] = e` is `p = e.[-k]`, normalized again.
 - *store*: `d` is non-empty.
-- *load*: `d` is empty and `x.s` is a location with a non-empty path.
-- *copy*: `d` is empty and `s` is empty or an address (`y = x`, `y = x.[8]`). Pointer
+- *copy*: `d` is empty (`y = x`, `y = x.f`, `y = x.[8]`). A load is a copy, and pointer
   arithmetic shares the object, like a whole-variable copy.
 
 Propagation:
@@ -53,13 +55,21 @@ Propagation:
 - Forward: for every suffix `t`, including the empty one, with `x.s.t` and `y.d.t` both
   locations, `y.d.t` gets `labels(x.s.t)`. With `t` empty and `x.s` an address, that is the
   labels of its base, so assigning from an address is defined.
-- Scope: a label arriving by a copy has scope `Fixed`. A label arriving by a store or a load,
-  or introduced by a source or a call or return, has scope `All`.
+- Scope: a label placed by a store, at `y.d` or at any suffix of it, or introduced by a
+  source, has scope `All`. A label arriving by a copy has scope `Fixed`.
 - Backward: for every non-empty suffix `t` not ending in #value, with both locations, labels at
   `y.d.t` of scope `All` also reach `x.s.t`, keeping scope `All`. This makes a write through
   a copy of a pointer reach the original, while a label copied forward (`Fixed`) never moves
-  back, so a phi or multi-source assignment does not merge its sources.
+  back, so a phi, a multi-source assignment, or a formal with several callers does not merge
+  its sources. Two stores to one destination do merge: `y.f = x; y.f = w` sends `x.g` to
+  `w.g`, because the first store's labels at `y.f.g` must be `All` for `l = y; l.f = x` to
+  reach `y.f.g`. That imprecision is accepted.
 - The empty suffix and suffixes ending in #value move forward only.
+
+## Calls
+
+A call `r = f(a_1, …, a_n)` is the copies `p_i = a_i` and `r = ret`, with `p_i` and `ret`
+the formals and return of `f`. Their labels have scope `Fixed`, like any copy's.
 
 Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
 other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through
