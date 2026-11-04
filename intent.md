@@ -1,32 +1,66 @@
 # Redesign IR with solid semantics and simplicity
 
-- The IR is a translation target for *real languages* (which do arbitrary things)
-- The IR is the source of a flow-insensitive, *unsound* static taint analysis. It needs to have
-  solid semantics so that passes on the IR can obey some sort of correctness/abstraction criterion.
-  Also, so that our analysis can approximate appropriately
+- The IR is a translation target for *real languages* (which do arbitrary things that static
+  analysis can't precisely, scalably reason about)
+- The IR is the analysis source of a flow-insensitive, *unsound* static taint analysis. It needs to
+  have solid semantics so that passes on the IR can obey some sort of correctness/abstraction
+  criterion. Also, so that our analysis can approximate appropriately
 - It is a data flow language whose semantics is labeling. Beginning with an initial labeling, the
   semantics says how labels propagate across various IR constructs.
-- Offsets are inspired by offsets into data structures (in binaries), like how C lays out a struct. Offsets are *always* constants.
+- Offsets are inspired by offsets into data structures (in binaries), like how C lays out a struct.
+  Offsets are *always* constants. There is no [*], no arbitrary offset or field.
 - Fields are symbolic field names and do not have any layout characteristics.
-- There is no [*], no arbitrary offset or field.
 
-Semantics of instructions:
+## Paths
 
-- assignment: `y.d = x.s`. `labels(x.s)` propagates to `y.d`.
-  - If `s` is an address, then `labels(x.s) = labels(x)`
-  - For every suffix `t` such that `x.s.t` is a location, `y.d.t` gets `labels(x.s.t)`
-  - This makes assigning *from* an address allowed and defined and propagate labels
-- assignment to an address is allowed: `p.[k] = e`
-  - Note that `p.[k] = e` is equivalent to `p = e.[-k]`
-- `labels(p.[k]) = labels(p)`. If `q` was attacker-controlled and `p = q.[8]` then `p` is also
-  attacker-controlled.
+An access path `x.s` is a variable `x` followed by a path `s`: a sequence of segments, each a
+field `f`, an offset `[k]`, `deref`, or `#value`. Paths are compared and classified only in
+normal form, given by these equations:
 
+- Offsets add, and zero does nothing: `p.[i].[j] = p.[i+j]`, `p.[0] = p`.
+- Fields and deref obey no equations: `p.f ≠ p`, `p.f.g ≠ p.g.f`. deref is its own segment,
+  not a field name, so a source field named `deref` cannot be mistaken for it. Frontends use
+  it, and only it, for the step from an address to the memory there.
+- #value absorbs itself and offsets: `p.#value.#value = p.#value`, `p.#value.[k] = p.#value`.
+  A value plus a constant is still computed from the same value.
 
-REVISE THESE IF NECESSARY:
-- Cells. Every access path x.s1...sn names a cell. A cell carries a set of labels and has a sub-cell for every access path segment.
-- Equations. These are what separate offsets from fields:
-  - Offsets add: p.[i].[j] = p.[i+j].
-  - A zero offset does nothing: p.[0] = p.
-  - Fields obey no equations, so p.f ≠ p and p.f.g ≠ p.g.f.
-  - deref is an ordinary field. It means "memory" only because frontends agree to use it that way.
-  - #value is terminal and absorbs itself, as today.
+Every path in normal form is exactly one of the following, checked in this order:
+
+- *void*: a field or deref follows #value (`p.#value.f`). It denotes nothing, holds no
+  labels, and an assignment to or from it propagates nothing. This keeps #value terminal while
+  every path stays meaningful.
+- *address*: ends in an offset. Not a cell; it holds no labels. Its labels are those of the
+  location before the trailing offset: `labels(p.[k]) = labels(p)`, so if `q` is
+  attacker-controlled and `p = q.[8]`, then `p` is too.
+- *location*: every other path (empty, or ending in a field, deref, or #value). A location is a
+  cell carrying a set of labels.
+
+Each label at a location has a *scope*, `All` or `Fixed`, saying whether it may move backward
+along copies (below).
+
+## Assignment
+
+`y.d = x.s`, classified after normalizing:
+
+- An address destination is rewritten first: `p.[k] = e` is `p = e.[-k]`.
+- *store*: `d` is non-empty.
+- *load*: `d` is empty and `x.s` is a location with a non-empty path.
+- *copy*: `d` is empty and `s` is empty or an address (`y = x`, `y = x.[8]`). Pointer
+  arithmetic shares the object, like a whole-variable copy.
+
+Propagation:
+
+- Forward: for every suffix `t`, including the empty one, with `x.s.t` and `y.d.t` both
+  locations, `y.d.t` gets `labels(x.s.t)`. With `t` empty and `x.s` an address, that is the
+  labels of its base, so assigning from an address is defined.
+- Scope: a label arriving by a copy has scope `Fixed`. A label arriving by a store or a load,
+  or introduced by a source or a call or return, has scope `All`.
+- Backward: for every non-empty suffix `t` not ending in #value, with both locations, labels at
+  `y.d.t` of scope `All` also reach `x.s.t`, keeping scope `All`. This makes a write through
+  a copy of a pointer reach the original, while a label copied forward (`Fixed`) never moves
+  back, so a phi or multi-source assignment does not merge its sources.
+- The empty suffix and suffixes ending in #value move forward only.
+
+Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
+other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through
+`v` becomes reachable through `t`.
