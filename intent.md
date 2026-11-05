@@ -39,7 +39,10 @@ Every path in normal form is exactly one of the following, checked in this order
 Each label at a location has a *scope*, `All` or `Fixed`, saying whether it may move backward
 along assignments (below). A location holds a set of (label, scope) pairs; `All` subsumes `Fixed`.
 
-A source or sink on a path `p` labels or observes both `p` and `p.#value`.
+A source or sink on a path `p` labels or observes exactly `p` and `p.#value`, nothing under
+them: a label at `p` says nothing about `p.f`. A model that means depth names more ports. If
+a wildcard is ever offered, it is a model-language convenience expanded to a finite set of
+paths from the program text, never a path in the IR.
 
 ## Assignment
 
@@ -126,8 +129,9 @@ definition, not a pass: it is what makes a variable one cell, so `x1 = src; x2 =
 sink(x2)` reports nothing, while memory stays flow-insensitive (`sink(p.f); p.f = src` is
 reported). A phi is the set of its copies.
 
-The observable is the labeling at ports: which sources' labels reach which sinks. A reported
-path is a witness from the derivation, not part of the semantics.
+The observable is the labeling at ports: which sources' labels reach which sinks, per program
+point, as the union over instances of the unfolding. A reported path is a witness from the
+derivation, not part of the semantics.
 
 A pass is correct if the SSA form of its output has the same observable labeling as the SSA
 form of its input. A pass that creates or merges cells (`mem2reg`, coalescing) is correct
