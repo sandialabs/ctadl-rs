@@ -7,11 +7,11 @@ numbers (S*, R*) are the spec's.
 
 Order rationale: the path algebra and the removal of `Update` are small and independent, so
 they go first; the statement change is the big mechanical one and everything after needs its
-shape; the reference implementation comes next so that the engine and the passes are checked
-against it rather than against each other; the index precedes the query because the query
-consumes the index's edges; front-end conventions come last so their regression deltas are
+shape; the reference implementation comes next so that the passes are checked against it and
+the engines measured against it; the engines themselves change only where stages 1–3 take
+their input away; front-end conventions come last so their regression deltas are
 attributable on their own; docs close. Stages 1 and 2 can run in parallel, as can 4 and 5,
-and the per-front-end PRs of stage 8.
+and the per-front-end PRs of stage 7.
 
 ## Stage 1: path segments and normalization (R1, R2, R7)
 
@@ -148,74 +148,47 @@ Tests (the corpus, one program per rule):
 - Pass differential: all green except two crafted programs that document the `mem2reg
   window:N` loss and the `full` loss, marked as the register's rows.
 
-## Stage 5: index rules (R26–R32, R40, R41)
+## Stage 5: engines (R26–R37, R40, R41)
+
+The Datalog rules do not change. This stage documents them, measures them against the
+reference, deletes the second query engine, and adds the notifications.
 
 Files:
 
-- `ctadl-index/src/index_engine/mod.rs`: `locals` gains `scope`; forward rules carry scope;
-  one backward rule (§3.9) replaces `edge_split`/`ext_fml` formal-side rules and the alias
-  summary rule; `summary` uses `out(n, p, scope)`; call sites are one-way `actual_param`
-  copies plus a result copy; `call_target_assign_like` and `const_reaches` rules generated
-  from the shared shapes; `compute_alias_of_formal` and `prog_store` deleted; unresolved
-  `callee_info` and bodyless `call` rows collected for notifications.
-- `ctadl-index/src/index_engine/{locals_trie,c_locals_trie,cond_trie,c_cond_trie}.rs`:
-  storage of the scope column.
-- `ctadl-index/src/facts.rs` (`FormalType`, `isout` deleted), `facts/schema.rs`
-  (`formal_param` columns), `engines/{serial,par,lsm}/src/lib.rs`.
-- `ctadl-ascent/src/codegen/{mod,model_matches}.rs`, `models/endpoints.rs`: no formal types;
-  `languages/jni.rs`: explicit outward copies for `.deref` out-parameters;
-  `languages/android_intent.rs`: unchanged, verified.
-- `ctadl-ascent/src/cli/mod.rs`: `--alias-rule` removed; notifications written;
-  `ctadl-import/src/{project,sarif}.rs`: `INDEX_FORMAT_VERSION` bump, `index_config.json`
-  records `hybrid_context` and `deref_paths`, two new notification message ids.
+- `ctadl-index/src/index_engine/mod.rs`: the R26 doc comment on `ext_dst`, `edge_split`,
+  `ext_fml`, the alias summary rule and the call-site rules; collection of unresolved
+  `callee_info` and bodyless `call` rows for notifications. No rule text changes.
+- `ctadl-ascent/src/query_engine/mod.rs`: `taint_analysis_datalog`, `copy_alias`,
+  `alias_of_field` and the `CTADL_QUERY_DATALOG` switch deleted; `ctadl-ascent/src/cli/mod.rs`:
+  the env var's help text.
+- `ctadl-ascent/src/cli/mod.rs`, `ctadl-import/src/{project,sarif}.rs`: notifications
+  written; `index_config.json` records `alias_rule`, `hybrid_context`, `deref_paths`; two new
+  notification message ids.
 
 Tests:
 
-- `ctadl-ascent/src/index_engine_tests.rs`: existing cases re-baselined with each change
-  named; a case whose answer depends on a path being admissible names that path in its
-  program (a statement that mentions it, or a `// paths:` line), so a re-baseline can tell a
-  rule change from a path-set change; new cases: backward through a store, two-store merge, function pointer through an
-  alias (`t = s; t.fp = &f; call s.fp`), summary `out` under scope (a formal's empty path
-  never flows out; `p.deref.#value` does), guard discharged at one site only.
-- `ctadl-ascent/tests/integration/{bridging_models,bridging_end_to_end,absorbing_functions,port_semantics}.rs`.
-- `ctadl-ascent/tests/tnt/*.tnt`, re-baselined.
-- Nightly regression, all languages, attributed. Performance: index time and peak memory on
-  the firmware set and one large APK against the stage-3 tree (`profile.json`); the backward
-  rule replaces the alias rule, so the budget is parity.
+- New, `ctadl-ascent/tests/integration/reference_parity.rs`: for every corpus program and
+  every `tests/tnt` program, diff the search's (source, sink) pairs against the reference's;
+  every difference must match a row of the §4 register by name, and the test fails on an
+  unmatched difference (R36). The register rows for the index and query are thereby
+  exercised, each by at least one corpus program.
+- `ctadl-ascent/src/index_engine_tests.rs` and `ctadl-ascent/tests/tnt/*.tnt`: unchanged in
+  expectation; a case that stages 1–3 re-baselined names its cause. A case whose answer
+  depends on a path being admissible names that path in its program (a statement that
+  mentions it, or a `// paths:` line), so any later re-baseline can tell a rule change from a
+  path-set change.
+- `ctadl-ascent/tests/integration/{bridging_models,bridging_end_to_end,absorbing_functions,port_semantics}.rs`
+  unchanged.
 - Notifications: an integration test with an unresolved function-pointer call and a bodyless
   callee checks both message ids appear in `notifications.sarif` and in the query's SARIF.
+- Nightly regression: no changed answers (nothing in the rules changed).
 
-## Stage 6: query (R33–R37)
-
-Files:
-
-- `ctadl-ascent/src/query_engine/mod.rs`: `taint_analysis_datalog`, `copy_alias`,
-  `alias_of_field` and the `CTADL_QUERY_DATALOG` switch deleted.
-- `ctadl-ascent/src/query_engine/search.rs`: `labeled_successors` restated per §3.10; the
-  empty-path object hop, `saturating_read`, `sink_ext_by_var` deleted; `ObjectScope` is S7.
-- `ctadl-ascent/src/query_engine/endpoints.rs`: saturating sources expand to seeds over the
-  admissible extensions, beside the existing wildcard-sink expansion.
-- `ctadl-ascent/src/cli/mod.rs`: the env var and its help text.
-
-Tests:
-
-- `search.rs` unit tests re-baselined (`plain_source_value_does_not_reach_offset_pointee`,
-  `saturating_source_reaches_offset_read`, the `callsite_smear_field` expectation).
-- New, `ctadl-ascent/tests/integration/reference_parity.rs`: for every corpus program and
-  every `tests/tnt` program, the search's (source, sink) pairs equal the reference's (R36).
-- `ctadl-ascent/tests/tnt/*.tnt` and `tests/tnt-aspirational` reviewed: any aspirational
-  case the new rules now satisfy moves to `tnt`; cases sensitive to the admissible set name
-  their paths, as in stage 5.
-- Nightly regression attributed.
-
-## Stage 7: models and ports (R38, R39)
+## Stage 6: models and ports (R38, R39)
 
 Files:
 
 - `ctadl-ascent/src/models/portcullis/{parse,emit,check}.rs`: port paths normalized, `.*`
   rejected with a message, `#value` only terminal (kept).
-- `ctadl-ascent/src/models/{matches,spec}.rs`, `codegen/model_matches.rs`: no formal types
-  (completing stage 5).
 - `docs/portcullis.md`: ports section cites S17/S18; prefix substitution cites S6.
 
 Tests:
@@ -223,7 +196,7 @@ Tests:
 - `ctadl-ascent/src/models/portcullis/tests.rs`: `.*` rejected; `x.[0].f` parses as `x.f`.
 - `ctadl-ascent/tests/portcullis.rs`, `tests/integration/class_predicates.rs`.
 
-## Stage 8: front-end conventions (R14–R19, R43, R44)
+## Stage 7: front-end conventions (R14–R19, R43, R44)
 
 One PR per front end; they are independent.
 
@@ -244,7 +217,7 @@ One PR per front end; they are independent.
 - **Lua**, `frontends/ctadl-lua/src/lib.rs`: arithmetic value-only. Tests: nightly `lua`.
 - Each front end's crate docs gain the S19 conventions paragraph (R14).
 
-## Stage 9: documentation and configuration (R41, R45)
+## Stage 8: documentation and configuration (R41, R45)
 
 Files:
 
@@ -265,9 +238,9 @@ Tests: `cargo doc --no-deps` clean; the `ctadl inspect` and `--dump-ir` paths in
 
 - `cargo test` across the workspace, `cargo xtask regression` for every front end, each
   changed answer attributed to a rule or a register row in the PR that changed it.
-- Reference parity (stage 6) green on the corpus and `tests/tnt`.
-- Index time and peak memory on the firmware set and one large APK within parity of the
-  tree before stage 5.
+- Reference parity (stage 5) green on the corpus and `tests/tnt`: every difference between
+  the engines and the reference matches a register row.
+- Index time and peak memory on the firmware set and one large APK within noise of the tree
+  before stage 1 (the rules did not change; a regression is a codegen or path-set bug).
 - `grep` finds no `DEREF_FIELD`, `VALUE_FIELD`, `Load`, `Store`, `Address`, `FieldRef`,
-  `Update`, `update_sans_path`, `FormalType`, `isout`, `alias_of_formal`,
-  `CTADL_QUERY_DATALOG`.
+  `Update`, `update_sans_path`, `CTADL_QUERY_DATALOG`.

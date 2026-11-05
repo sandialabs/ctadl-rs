@@ -188,52 +188,54 @@ them.
 
 ### 2.5 Index
 
-- R26. The index rules are the rules of §1 with labels = *paths rooted at formals* (including
-  return and `globals`) and *target labels*, plus guards. Forward (S6), scope (S7) and
-  backward (S8) are each one rule shape; there is no separate alias analysis
-  (`compute_alias_of_formal`, `ctadl-index/src/index_engine/mod.rs:1327`), no `FormalType`
-  (`Copied`/`SharedFields`/`Shared`) and no `isout` (`facts.rs:1640`): whether a formal path
-  flows out is decided by scope. The bidirectional actual↔call-arg edges (`mod.rs:1686`) go;
-  a call site is the copies of S10 and the backward rule.
-- R27. A summary row is `out ← in` as today (`summary.parquet` keeps its columns), derived
-  as: `out` is a return path with any scope, or a formal or `globals` path that is non-empty,
-  not `#value`, and holds the `in` label with scope `All`. Guards stay as `Cond` over
-  `Decision {formal, path, target}` (`decision.rs:34`).
-- R28. Target labels and string labels run through the same rules as formal-path labels. They
-  may be stored in their own relations for cost (as `call_target_assign_like` and
-  `const_reaches` are), but the rules are the same text, shared by macro or source
-  inclusion, so the three label kinds cannot drift.
+The Datalog rules change as little as possible. The index consumes the new IR through codegen
+and agrees with it on normal form; its rules stay, and their relation to §1 is written down
+and measured rather than changed.
+
+- R26. The rules in `ctadl-index/src/index_engine/mod.rs` are unchanged except where the IR
+  no longer supplies their input (the `update_sans_path` rules, R20). Each rule that carries
+  semantics gets a doc comment naming the rule of §1 it implements and how it deviates:
+  `ext_dst` is S6; the formal-side rules (`edge_split`, `ext_fml`) are S6 applied to a
+  label's suffixes; the alias summary rule (`compute_alias_of_formal` + `prog_store`,
+  `mod.rs:1327,1760`) is S8 restricted to whole-variable copy chains rooted at a formal and
+  to program-store destinations; the bidirectional actual↔call-arg edges with `isout`
+  (`mod.rs:1686`, `facts.rs:1640`) are S10's copies with S8's "empty suffix forward only"
+  (`SharedFields`) and two deviations (`Shared`, `Copied`). The deviations are rows of §4.
+- R27. `summary` rows, `FormalType` and `isout` are unchanged. `ParameterType` stays in the
+  IR as the hint the index reads; it is not part of the semantics.
+- R28. The target-label and string-label relations (`call_target_assign_like`,
+  `const_reaches`) are unchanged.
 - R29. Path finiteness stays the admissible set of program paths ∪ model paths ∪ one-level
   concatenations (`compute_paths`, `mod.rs:1387`), applied through `PathSet` membership. It
   is an approximation that loses flows and is listed in §4; the admissible set is closed
   under S2 (so `p.[k].#value` and `p.#value` are one member) and contains `p.#value` for
-  every member `p`.
+  every member `p`. This closure, in `PathSet` and `facts::Path`, is the one change to the
+  engine's path handling.
 - R30. The resolution ladder (super, dispatch model, CHA under the threshold, hybrid
   inlining) only adds targets, and its configuration is recorded with the index as today
-  (`index_config.json`). The engine `IndexConfig` fields that change results (`alias_rule`
-  is gone; `hybrid_context`, `deref_paths`) are recorded too (docs/spec.md N2).
+  (`index_config.json`). The engine `IndexConfig` fields that change results (`alias_rule`,
+  `hybrid_context`, `deref_paths`) are recorded too (docs/spec.md N2).
 - R31. The three engines (serial, par, lsm) share one rule text and differ only in execution
   and storage, as today.
 - R32. The index format version is bumped; an index built by an older build is rejected.
 
 ### 2.6 Query
 
-- R33. The query propagates source labels with the rules of §1 over the summarized program:
-  the index's `assign_like` edges (program assignments, per-site summary edges, call-site
-  copies) within a function, and the call and return copies of S10 between a caller and a
-  callee body. Scope is the scope of S7; the query has no scope rule of its own. The present
-  search engine's deviations (the object hop at the empty path, `query_engine/search.rs:477`;
-  its own `ObjectScope`) are removed or shown equal to S7/S8.
+- R33. The query consumes the index's edges as today. Its propagation (`labeled_successors`
+  in `query_engine/search.rs`) is unchanged except where the IR no longer supplies its input
+  (the functional-update step, R20). Its deviations from S7/S8 (the object hop at the empty
+  path, `search.rs:477`) are rows of §4, not changes.
 - R34. Sources and sinks are exact (S17): a port `p` labels or observes `p` and `p.#value`.
-  Sink `wildcard` and source `saturating` are model expansions over the admissible path set,
-  computed before the query runs, and documented as such; nothing in the propagation rules
-  implements "taint at `p` implies taint at `p.f`".
+  Sink `wildcard` and source `saturating` stay as they are and are documented as model
+  expansions over the admissible path set (rows of §4); nothing in §1 implements "taint at
+  `p` implies taint at `p.f`".
 - R35. Call/return matching is a property of witness extraction (S17), applied as today by
   the `TaintState` discipline, and is not a propagation rule.
-- R36. The search engine is tested differentially against the reference implementation
-  (R10) on the flowy corpus. The Datalog query engine (`CTADL_QUERY_DATALOG`,
-  `query_engine/mod.rs:232`) is deleted: the search is the one query engine, and the
-  reference is what it is checked against.
+- R36. The search is measured against the reference implementation (R10) on the flowy
+  corpus: the two sets of (source, sink) pairs are diffed, and every difference must match a
+  row of §4. A difference that matches no row is a bug in one of them. The Datalog query
+  engine (`CTADL_QUERY_DATALOG`, `query_engine/mod.rs:232`) is deleted, so there is one
+  engine to adapt and to measure.
 - R37. C0002 (tainted instructions) and C0007 (absorbing functions) are debugging and
   agent views and need only the labels at call-argument vertices, as today.
 
@@ -241,8 +243,7 @@ them.
 
 - R38. A propagation model is a summary row (a store or copy between ports) and nothing else;
   a bridge is a call with explicit port pairs; a dispatch model adds targets; a source or sink
-  is an endpoint. No model sets a formal's type (`formal_param(.., Shared)` in
-  `models/endpoints.rs:229` and `codegen/model_matches.rs` goes with `FormalType`).
+  is an endpoint. The `formal_param(.., Shared)` rows models emit stay (R27).
 - R39. A port path is in normal form, `#value` may only end it (already enforced,
   `portcullis/parse.rs:816`), and `.*` is rejected (today it parses as a field named `*`,
   docs/portcullis.md:201). `arg(_)` remains an index wildcard.
@@ -251,7 +252,8 @@ them.
 
 - R40. No silent loss (docs/spec.md N3): a call with no body and no model, an indirect or
   virtual call with no target, and a function where `mem2reg full` may lose a flow are each
-  reported in the index's `notifications.sarif` and carried into the query's SARIF.
+  reported in the index's `notifications.sarif` and carried into the query's SARIF. This is
+  output collected after the fixpoint, not a rule.
 - R41. The index records the options of R30; the import records its front-end conventions'
   options (`CTADL_EXP_INT_ARITH`, mem2reg policy) when they are not the
   default.
@@ -275,18 +277,20 @@ them.
             ┌──────────────┼──────────────────┐
             ▼              ▼                  ▼
    ctadl-ir::semantics   index rules       query engine
-   (reference, R10)      (ctadl-index)     (ctadl-ascent)
-            ▲              labels = formal     labels = sources
-            │              paths, targets,     over the summarized
-   differential tests      strings; guards     program
-   (passes, search)
+   (reference, R10)      (ctadl-index,     (ctadl-ascent,
+            ▲             unchanged)        unchanged)
+            │              │                  │
+   differential tests      └── measured against the reference;
+   (passes)                    deviations are rows of §4
 ```
 
-The rules are written once as Datalog (docs/spec.md §4.2) in `ctadl-index`, parameterized by
-label kind. The index runs them with symbolic labels (formal paths) to produce summaries; the
-query runs them with concrete labels (sources) over the program the index summarized. The
-reference implementation is a third, naive evaluation of the same rules, written for clarity
-and used only in tests.
+The pipeline is input → front end → IR → passes → codegen → index → query. The IR and its
+semantics are what this work changes; the front ends change to obey them, codegen adapts
+to read the new IR, and the index and query are left as they are. The reference
+implementation is a naive evaluation of §1, used to check the passes exactly and to
+*measure* the engines: where an engine's answer differs from the reference, the difference
+must be a named approximation (§4). Making the engines equal to the semantics is later
+work (§6).
 
 ### 3.2 `ctadl-ir`: data model
 
@@ -308,8 +312,8 @@ and used only in tests.
 
   `Load`, `Store` and `Update` are `Assign` (an update is a store, R20). The classification
   store/copy is a method, not a variant, so no pass can disagree with S5.
-- `CallStyle` is unchanged. `FuncPtrCall.callee` becomes an `AccessPath`. `ParameterType` is
-  deleted from `FunctionData` (R26).
+- `CallStyle` is unchanged. `FuncPtrCall.callee` becomes an `AccessPath`. `ParameterType`
+  stays on `FunctionData` as an index hint (R27).
 - `load_access_path` / `store_access_path` reduce to building one `Assign`. Front ends that
   wanted a temporary per segment (so that SSA could version intermediate pointers) no longer
   need one: the suffix rules make a chain and its composition equivalent (R24), and the
@@ -384,8 +388,8 @@ Per front end, what changes; everything else stays.
   with a non-constant operand become copy-plus-value (R16). Frame slot writes, including the
   entry block's binding of stack parameters, become stores (R20), and `push_assign_or_store`
   loses its `Update` branch. `__stack_top.[k].deref` and `$globals.[A].deref` are already
-  S19. All parameters were `Shared`; the type is gone and whole-variable write-back through a
-  parameter no longer exists (it was not a flow S10 admits).
+  S19. All parameters stay `Shared`, a whole-variable write-back S10 does not admit; it is a
+  row of §4 for now.
 - **C.** `p->f` becomes `p.deref.f` (R15). Arithmetic becomes value-only (R17); comparisons
   stop merging (`<`, `>`, `!=` at `lib.rs:3935` merge today by oversight). `q = p + i` becomes
   copy-plus-value. `&s.f` remains unnameable and falls back to a copy of `s.f`, listed in
@@ -409,8 +413,7 @@ Per front end, what changes; everything else stays.
   is `dst.path.is_empty()`, computed where needed, so the fact needs no column.
   `update_sans_path` is deleted (R20). `value(p)` lowers to `dst.#value <- p` as today.
 - `call_target_assign` and `const_str_assign` stay as the seeds of target and string labels.
-- `formal_param` loses its type column. `actual_param` stays; it is now the premise of the
-  call-site copies only, never of a reverse edge.
+- `formal_param` and `actual_param` are unchanged.
 - `cap_path` stays (R3), rewritten over `Assign` operands. It is the one place codegen has
   path logic of its own, and it determines which composed paths are program paths, so a
   change to it is a change to the admissible set and is tested as such (plan, stage 3).
@@ -420,76 +423,34 @@ Per front end, what changes; everything else stays.
 
 ### 3.9 Index rules (`ctadl-index/src/index_engine/mod.rs`)
 
-The rule set keeps its skeleton (`locals`, `assign_like`, `summary`, `call_site`, the
-`Decision`/`Cond` machinery, the split tables for joining on path prefixes) and changes the
-rules that carry semantics:
+Unchanged, except:
 
-- `locals(f, v, p, a, pa, scope, cond)`: one new column, `scope ∈ {Fixed, All}`, a lattice
-  column stored the way `Cond` is (`cond_trie`: `Always`/`All` rows in the main trie, the
-  rest in the side map, or a second bit in the same store).
-- Seed: `locals(f, formal_i, ε, i, ε, Fixed, Always)`. Scope at a bare variable is never read
-  (S8 needs a non-empty suffix), so `Fixed` is a placeholder.
-- Forward (S6): the existing `ext_dst` rules, extended to carry scope: through a copy the
-  derived row is `Fixed`; through a store (destination path non-empty) it is `All`.
-- Backward (S8): one rule shape replaces the "formal side" rules (`edge_split` at
-  `mod.rs:1664`, `ext_fml`) and the alias summary rule (`mod.rs:1760`):
-
-  ```
-  locals(f, v2, p2·t, a, pa, All, c) <--
-      assign_like(f, v1, p1, v2, p2, c1), locals(f, v1, p1·t, a, pa, All, c2),
-      t ≠ ε, t ≠ #value, ps.concat(p2, t) = Some(p2·t), c = c1.and(c2);
-  ```
-
-  with the split tables used to find `t` as they are used today for the forward direction.
-- Summary (S14, R27): `summary(f, n1, p1, n2, p2, c) <-- locals(f, dst, p1, n2, p2, s, c),
-  formal_param(f, dst), n1 = dst.as_formal(), out(n1, p1, s)` where `out` is: `n1` is a
-  return index, or `p1 ≠ ε ∧ p1 ≠ #value ∧ s = All`. `isout` and `FormalType` are deleted.
-- Call sites (S10): `assign_like(caller, call_arg(insn, n), ε, v, p, Always) <-- actual_param`
-  (one direction), the summary replay rule as today, and `assign_like(caller, v, p,
-  call_arg(insn, ret), ε)` for results. The backward rule then carries a callee's `All`
-  labels at `p_i.t` to `a_i.t`, which is what the reverse edge used to approximate.
-- Target labels: `call_target_assign_like` keeps its relation but its rules are generated
-  from the same forward/backward shapes (R28), with the backward direction now included
-  (a function pointer stored through an alias reaches the original, S11/S8). `const_reaches`
-  likewise.
-- Guards: unchanged (`critical_summary`, `resolvent`, rule 3.1/3.2, `ContextJoin`).
-- `compute_alias_of_formal` and `prog_store` are deleted from `EngineInput`.
+- The `update_sans_path` rules (`mod.rs:1652`, `2115`) and the relation go with `Update`
+  (R20); `EngineInput` and the engine crates drop its declaration.
+- `PathSet` and `facts::Path` apply S2 in full (R29), which is a change in `path_set.rs` and
+  `facts.rs`, not in the rules.
+- Each semantics-carrying rule gets the doc comment of R26.
 - Reporting (R40): `callee_info` rows that never acquire a `call_site`, and `call` rows to a
-  bodyless function with no summary, are collected into notifications at the end of the
-  fixpoint.
+  bodyless function with no summary, are collected into notifications after the fixpoint.
 
 ### 3.10 Query (`ctadl-ascent/src/query_engine`)
 
-- The search engine's successor relation (`labeled_successors`) is restated as S6/S7/S8
-  over the query's `assign` edges, with `Call`/`Return` edges as S10's copies. Concretely:
-  the direct-assign step keeps carrying the suffix; the destination scope is `All` iff the
-  edge is a store or the node is a seed; the object hop is the backward rule and fires only
-  for a non-empty suffix that is not `#value` (today it also fires at the empty path,
-  `search.rs:477`, which S8 forbids); the "field-alias back-flow" step (`search.rs:459`) is
-  the same backward rule and merges with it; the address step (`search.rs:440`) is S3; the
-  functional-update step (`search.rs:430`) is deleted.
-- `TaintLevel::Saturating` and sink `wildcard` move out of the successor relation into
-  endpoint expansion (`endpoints.rs`): a saturating source at `p` becomes one seed per
-  admissible extension of `p`; a wildcard sink likewise (as it already is). The
-  `saturating_read` and `sink_ext_by_var` steps are deleted.
+- `search.rs`: the functional-update step (`search.rs:430`) goes with `Update`; everything
+  else in `labeled_successors`, including its `ObjectScope`, stays. The empty-path object
+  hop, `saturating_read` and `sink_ext_by_var` are rows of §4.
 - `#value`: a source at `p` also seeds `p.#value`; a sink at `p` also matches `p.#value`
   (S17), as today.
 - The Datalog query engine (`taint_analysis_datalog`, with its `copy_alias` union-find and
-  `alias_of_field` rules) is deleted (R36). The search engine is the only query engine; its
-  agreement with the semantics is established against the reference implementation, not
-  against a second engine.
-- Witness extraction, `TaintState`, SARIF formatting, C0001–C0007: unchanged in shape.
+  `alias_of_field` rules) is deleted (R36).
+- Witness extraction, `TaintState`, SARIF formatting, C0001–C0007: unchanged.
 
 ### 3.11 Models (`ctadl-ascent/src/models`, Portcullis)
 
 - Propagation → `summary` rows, unchanged. Whether a row is a store or copy follows from its
   paths (S5), so docs/portcullis.md's "prefix substitution" paragraph becomes a citation of S6.
-- Bridges and JNI → `call` plus `actual_param` in one direction and explicit `assign` rows
-  for the outward direction where a port pair is bidirectional; the JNI bridge's reliance on
-  `actual_param` being bidirectional (`languages/jni.rs:20-31`) becomes explicit outward
-  copies for out-parameters (`.deref` paths), which S8 then carries.
-- Endpoints: `formal_param(.., Shared)` is no longer emitted. Call-site anchoring of a source
-  on an external function's return stays.
+- Bridges, JNI and endpoints: unchanged. The JNI bridge's reliance on `actual_param` being
+  bidirectional (`languages/jni.rs:20-31`) and the `Shared` rows endpoints emit are covered
+  by the `Shared` row of §4.
 - Dispatch models: unchanged.
 - The port parser normalizes and rejects `.*` (R39).
 
@@ -504,8 +465,8 @@ versioned as today.
 
 - Import: `bitcode` of the new `ProgramInfo`; format version bumped; `open_import` rejects
   older versions with the re-import message.
-- Index: parquet schemas unchanged in column names except `formal_param` (type column
-  removed); `paths.parquet` holds normal-form paths; index format version bumped;
+- Index: parquet schemas unchanged in column names except that `update_sans_path.parquet`
+  goes; `paths.parquet` holds normal-form paths; index format version bumped;
   `index_config.json` records `hybrid_context`, `deref_paths` and the import-time convention
   options (R41).
 - Summary projects (`--summary`): a summary written by an older index is rejected like an
@@ -518,11 +479,12 @@ versioned as today.
 - `ctadl-ir::semantics`: the R42 corpus, one flowy program per rule with its expected
   observable, as the reference's own unit tests.
 - Passes: R12 differential tests over the corpus plus the existing pass tests.
-- Index: the existing `index_engine_tests.rs` cases, re-baselined with each change explained;
-  new cases for backward through a store (`l = y; l.f = x`), two-store merge (S9),
-  function pointer through an alias, and summary `out` under scope.
-- Query: R36 differential tests of the search against the reference on the corpus; the
-  existing `tests/tnt` cases, re-baselined.
+- Index: the existing `index_engine_tests.rs` cases, unchanged in expectation except where
+  stages 1–3 change the program text (normal form, `Update`, chains); each re-baseline names
+  its cause.
+- Engines: the R36 measurement of the search against the reference on the corpus, with every
+  difference matched to a row of §4; the existing `tests/tnt` cases, likewise re-baselined
+  only for stage 1–3 causes.
 - Front ends: golden tests regenerated (R44); nightly regression (R43) with every changed
   answer attributed.
 
@@ -537,6 +499,11 @@ may be absent; "adds" means a flow the semantics does not derive may be present.
 | index | Cells inside a callee merge all callers (S14) | adds | no (structural) |
 | index | Resolution ladder: dispatch model, CHA under threshold | adds | config recorded |
 | index | Hybrid context widening (`collapse`, `bounded`, `spill`) | adds | config recorded |
+| index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary `cap_path` composes; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (R26 doc comment) |
+| index | `Shared` formals (pcode, endpoints, JNI): whole-variable write-back through a parameter | adds | no (R26 doc comment) |
+| index | `Copied` formals: no field write-back through a parameter | loses | no (R26 doc comment) |
+| query | Object hop at the empty path (`search.rs:477`) | adds | no |
+| query | Saturating sources read below the port; wildcard sinks match below the port | adds (model opt-in) | model text |
 | passes | `mem2reg window:N`: an escape reaching past the window | loses | no; `exact`/`above` avoid it |
 | passes | `mem2reg full` | loses | per function |
 | query | Call/return matching by one bit, not a site stack (R35) | adds (witness only) | no |
@@ -549,3 +516,20 @@ Anything not in this table that differs from the reference implementation is a b
 
 None. Every decision raised while writing this document has been taken and is recorded in the
 rules and requirements above.
+
+## 6. Later work
+
+Not part of this document's requirements; recorded so the §4 rows have a known remedy.
+
+- **Load-chain composition as an IR pass.** `cap_path` moves out of codegen into the last
+  pass before it, and the admissible set's dependence on composition (R3, R29) is stated and
+  tested there.
+- **Index equal to the semantics.** `locals` gains a scope column (`Fixed`/`All`, stored
+  like `Cond`); one backward rule of S8's shape replaces the formal-side rules and the alias
+  summary rule; `summary`'s `out` is decided by scope, retiring `FormalType` and `isout`;
+  call sites become one-way copies with the backward rule carrying write-back; target and
+  string labels share the rule text by macro. This removes the four index rows of §4.
+- **Query equal to the semantics.** `labeled_successors` restated as S6–S8; saturating
+  sources and wildcard sinks become endpoint expansions. This removes the two query rows.
+- **Exception propagation in JVM and Dex** (docs/limitations.md, branch
+  `jvm-exception-propagation`).
