@@ -90,7 +90,9 @@ like a call without a body.
 
 Target labels are ordinary labels: they follow the path rules and scopes, and cross
 functions like any label, so a function pointer stored in a struct in one function resolves
-a call in another.
+a call in another. A constant string is a label of the same standing, consumed only by a
+bridge that resolves its target from it (an Android intent's component or action). Other
+constants carry nothing.
 
 ## Globals
 
