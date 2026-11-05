@@ -106,3 +106,14 @@ ordering of passes.
 
 Resolving a call by other means (a dispatch model, class hierarchy analysis for a small
 candidate set) only adds targets, so the implementation over-approximates the labeling.
+
+## Front ends
+
+The semantics is exact over the IR. Whatever a source language does that the IR cannot say is
+decided at lowering, by convention:
+
+- No address-of. What has its address taken lives behind a `deref` (`frame.[k].deref`), and
+  `&x` is the address `frame.[k]`.
+- A non-constant offset (`p + i`, `a[i]`) is a copy of `p`.
+- Offsets have no width; `p.[0].deref` and `p.[4].deref` are distinct locations, and overlap
+  is lost.
