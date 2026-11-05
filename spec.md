@@ -94,9 +94,12 @@ them.
   (`ctadl-index/src/facts.rs:262`), `prepend_onto` (`facts.rs:1673`) and `PathSet::concat`
   (`index_engine/path_set.rs:271`), and none of them absorbs an offset before `#value`.
 - R3. An assignment's destination and source are full access paths. The one-field-per-
-  statement forms (`Load`, `Store` over an offset-only `Address` plus one `FieldRef`) go; the
+  statement forms (`Load`, `Store` over an offset-only `Address` plus one `FieldRef`) go. The
   load-chain recomposition in codegen (`cap_path`, `ctadl-ascent/src/codegen/mod.rs:874`)
-  goes with them. Lowering `x.f.[8] = v` must keep the path `x.f.[8]`; the present
+  stays, adapted to the new form: the admissible path set (R29) is built from the paths the
+  program text mentions, and pcode mentions one `deref` per statement, so without
+  recomposition a binary has no multi-`deref` program path. Replacing it by an IR pass is
+  later work. Lowering `x.f.[8] = v` must keep the path `x.f.[8]`; the present
   `store_access_path` moves the field behind the offsets (`mir/mod.rs:1707`), which S2 forbids.
 - R4. The statement set is: assignment (one destination, one or more sources; several sources
   are sugar for several assignments), call, phi, nop, plus the SSA-internal
@@ -369,8 +372,9 @@ pipeline and from the query.
 - `copy_prop`: a copy of a copy is a copy (S6 composed); correct without condition.
 - `dead_temps`: removing a cell nothing reads changes no observable; correct without
   condition.
-- Load-chain composition is no longer a pass because R3 lets a front end emit the composed
-  form directly. A front end that prefers chains may keep them; nothing recomposes them.
+- Load-chain composition stays where it is, in codegen (`cap_path`), for the reason in R3.
+  A front end may emit composed paths or chains; either way the composed paths reach the
+  admissible set. Moving composition into an IR pass is later work.
 
 ### 3.7 Front ends
 
@@ -407,8 +411,9 @@ Per front end, what changes; everything else stays.
 - `call_target_assign` and `const_str_assign` stay as the seeds of target and string labels.
 - `formal_param` loses its type column. `actual_param` stays; it is now the premise of the
   call-site copies only, never of a reverse edge.
-- `cap_path` is deleted (R3). The per-block pre-pass that composed load chains was the one
-  place codegen had its own path semantics.
+- `cap_path` stays (R3), rewritten over `Assign` operands. It is the one place codegen has
+  path logic of its own, and it determines which composed paths are program paths, so a
+  change to it is a change to the admissible set and is tested as such (plan, stage 3).
 - The admissible path set is computed as today (`compute_paths`), from normal-form paths, and
   `with_value_paths` adds `p.#value` for every member (R29). `deref_paths` stays a config.
 - Facts are written with the bumped index format version.

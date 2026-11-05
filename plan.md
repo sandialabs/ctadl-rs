@@ -74,7 +74,8 @@ Tests:
 - `grep -rn Update\|update_sans_path\|FrameWrites` over `*.rs` is empty.
 - Nightly `cargo xtask regression` on the C and firmware cases; the PR records the delta
   against `--frame store` on the current tree (expected: identical, since that mode already
-  produced stores).
+  produced stores). The path set is unchanged by this stage (the field write already appeared
+  as an assign; the sans-path copy carried empty paths); `--compare-paths` confirms it.
 
 ## Stage 3: assignments over full access paths (R3–R6, R8, R23)
 
@@ -94,8 +95,9 @@ Files:
 - Front ends, all seven (`frontends/*/src/lib.rs`, `ctadl-cil/src/{effects,ptr,method,calls}.rs`,
   `ctadl-flowy/src/lib.rs`): callers of `load_access_path`/`store_access_path`; parameter
   types removed.
-- `ctadl-ascent/src/codegen/mod.rs`: `trans_exp` over `AccessPath`; `cap_path` deleted;
-  `Load`/`Store` arms become one `Assign` arm; `formal_param` without type.
+- `ctadl-ascent/src/codegen/mod.rs`: `trans_exp` over `AccessPath`; `cap_path` kept and
+  rewritten over `Assign` operands (R3); `Load`/`Store` arms become one `Assign` arm;
+  `formal_param` without type.
   `codegen/flowy.rs`, `ctadl-ascent/src/graphviz.rs` and the IR dump in `cli/` follow.
 - `ctadl-import/src/project.rs`: bump `IMPORT_FORMAT_VERSION`.
 
@@ -108,8 +110,12 @@ Tests:
   `ctadl-ascent/tests/c/*.json`; the `xtask` golden suites (`jvm_opcodes`, `dex_opcodes`,
   `asm_flow`, `cil` parity), regenerated and reviewed: the only diffs are load chains
   collapsed into paths and the `f.[8]` fix.
-- Nightly regression: no changed answers expected (the labeling is unchanged by R24's
-  composition argument); any change is a bug.
+- Path-set invariant: for every nightly artifact and every `tests/tnt` program,
+  `paths.parquet` after this stage equals `paths.parquet` before it, modulo stage 1's
+  normalization. New, `xtask/src/regression.rs`: `--compare-paths <baseline-index>` diffs the
+  two files. The labeling is invariant under composition (R24) but the admissible set (R29)
+  is not, so this is what makes the next line a real check.
+- Nightly regression: with the path sets equal, no changed answers; any change is a bug.
 
 ## Stage 4: reference implementation and corpus (R10–R12, R42, R24)
 
@@ -166,7 +172,9 @@ Files:
 Tests:
 
 - `ctadl-ascent/src/index_engine_tests.rs`: existing cases re-baselined with each change
-  named; new cases: backward through a store, two-store merge, function pointer through an
+  named; a case whose answer depends on a path being admissible names that path in its
+  program (a statement that mentions it, or a `// paths:` line), so a re-baseline can tell a
+  rule change from a path-set change; new cases: backward through a store, two-store merge, function pointer through an
   alias (`t = s; t.fp = &f; call s.fp`), summary `out` under scope (a formal's empty path
   never flows out; `p.deref.#value` does), guard discharged at one site only.
 - `ctadl-ascent/tests/integration/{bridging_models,bridging_end_to_end,absorbing_functions,port_semantics}.rs`.
@@ -196,7 +204,8 @@ Tests:
 - New, `ctadl-ascent/tests/integration/reference_parity.rs`: for every corpus program and
   every `tests/tnt` program, the search's (source, sink) pairs equal the reference's (R36).
 - `ctadl-ascent/tests/tnt/*.tnt` and `tests/tnt-aspirational` reviewed: any aspirational
-  case the new rules now satisfy moves to `tnt`.
+  case the new rules now satisfy moves to `tnt`; cases sensitive to the admissible set name
+  their paths, as in stage 5.
 - Nightly regression attributed.
 
 ## Stage 7: models and ports (R38, R39)
@@ -259,5 +268,6 @@ Tests: `cargo doc --no-deps` clean; the `ctadl inspect` and `--dump-ir` paths in
 - Reference parity (stage 6) green on the corpus and `tests/tnt`.
 - Index time and peak memory on the firmware set and one large APK within parity of the
   tree before stage 5.
-- `grep` finds no `DEREF_FIELD`, `VALUE_FIELD`, `Update`, `update_sans_path`, `FormalType`,
-  `isout`, `alias_of_formal`, `CTADL_QUERY_DATALOG`, `cap_path`.
+- `grep` finds no `DEREF_FIELD`, `VALUE_FIELD`, `Load`, `Store`, `Address`, `FieldRef`,
+  `Update`, `update_sans_path`, `FormalType`, `isout`, `alias_of_formal`,
+  `CTADL_QUERY_DATALOG`.
