@@ -71,6 +71,11 @@ Propagation:
 A call `r = f(a_1, …, a_n)` is the copies `p_i = a_i` and `r = ret`, with `p_i` and `ret`
 the formals and return of `f`. Their labels have scope `Fixed`, like any copy's.
 
+A function reference is a label: `x = &f` puts the target label `f` at `x`. An indirect call
+`r = (*e)(a_1, …, a_n)` is the call of `f` for every target label `f` at `e` and `e.#value`; a
+virtual call is the same with the receiver's class labels resolved through the class
+hierarchy. So labels create assignments, and the call graph is part of the same fixpoint.
+
 Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
 other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through
 `v` becomes reachable through `t`.
