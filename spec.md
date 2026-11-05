@@ -228,9 +228,9 @@ them.
 - R35. Call/return matching is a property of witness extraction (S17), applied as today by
   the `TaintState` discipline, and is not a propagation rule.
 - R36. The search engine is tested differentially against the reference implementation
-  (R10) on the flowy corpus, and the Datalog query engine (`CTADL_QUERY_DATALOG`) is either
-  retired or kept as the engine the search is checked against; two propagation semantics do
-  not survive.
+  (R10) on the flowy corpus. The Datalog query engine (`CTADL_QUERY_DATALOG`,
+  `query_engine/mod.rs:232`) is deleted: the search is the one query engine, and the
+  reference is what it is checked against.
 - R37. C0002 (tainted instructions) and C0007 (absorbing functions) are debugging and
   agent views and need only the labels at call-argument vertices, as today.
 
@@ -469,9 +469,10 @@ rules that carry semantics:
   `saturating_read` and `sink_ext_by_var` steps are deleted.
 - `#value`: a source at `p` also seeds `p.#value`; a sink at `p` also matches `p.#value`
   (S17), as today.
-- The Datalog query engine is kept as the checked-against engine for R36 or deleted; the
-  design prefers keeping it, since it is the rule text run with source labels and is the
-  shortest path to "the query is the same rules".
+- The Datalog query engine (`taint_analysis_datalog`, with its `copy_alias` union-find and
+  `alias_of_field` rules) is deleted (R36). The search engine is the only query engine; its
+  agreement with the semantics is established against the reference implementation, not
+  against a second engine.
 - Witness extraction, `TaintState`, SARIF formatting, C0001–C0007: unchanged in shape.
 
 ### 3.11 Models (`ctadl-ascent/src/models`, Portcullis)
@@ -541,5 +542,5 @@ Anything not in this table that differs from the reference implementation is a b
 
 ## 5. Decisions required before planning
 
-1. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
-   (preferred) or delete and check the search only against the reference.
+None. Every decision raised while writing this document has been taken and is recorded in the
+rules and requirements above.
