@@ -15,8 +15,7 @@ Line references are to the tree at the time of writing and will drift.
 ## 1. The semantics
 
 `intent.md` is normative. This section restates it as numbered rules so requirements can cite
-them, and adds one amendment (S11) that the survey of the code showed to be necessary. It
-needs ratifying in `intent.md` (§5).
+them. One rule (S8) differs from the intent's wording; see §5.
 
 **Paths.**
 
@@ -55,9 +54,9 @@ needs ratifying in `intent.md` (§5).
   label `C`. An indirect call is the call of every target labelled at `e ∪ e.#value`; a
   virtual call resolves the receiver's class labels through the class hierarchy. Labels create
   assignments; the call graph is in the same fixpoint, per call-site instance.
-- S12 (amendment). A constant string is a label of a third kind. It propagates like any label
-  and is consumed only by bridges that resolve a target from it (Android intents). Other
-  constants (`Int`, `Bytes`) carry nothing.
+- S12. A constant string is a label of a third kind. It propagates like any label and is
+  consumed only by bridges that resolve a target from it (Android intents). Other constants
+  (`Int`, `Bytes`) carry nothing.
 
 **Globals, summaries, models, program.**
 
@@ -543,18 +542,16 @@ Anything not in this table that differs from the reference implementation is a b
 
 ## 5. Decisions required before planning
 
-1. **Ratify S12 (string labels) in `intent.md`.** Android intent resolution already
-   depends on constant strings flowing as data; the intent is silent on it.
-2. **Amend S8's `#value` clause.** `intent.md` excludes every suffix *ending* in `#value`
+1. **Amend S8's `#value` clause.** `intent.md` excludes every suffix *ending* in `#value`
    from backward propagation. That blocks `*p = x + 1` in a callee from reaching the caller
    (`p.deref.#value` would not flow back), which is the common case for computed values
    stored through pointers. This document excludes only the suffix that *is* `#value` (the
    variable's own value); a value stored in memory (`p.deref.#value`, `p.f.#value`) is shared
    like the memory is. If the intent's wording was deliberate, R27 and §3.9 change.
-3. **C field access through `deref` (R15).** It is what S19 says and it unifies `*p` with
+2. **C field access through `deref` (R15).** It is what S19 says and it unifies `*p` with
    `p->f`, at the cost of every C path gaining a segment and the C golden tests changing.
    Confirm, or record C as an exception with its reason.
-4. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
+3. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
    `throwval`; confirm it is wanted now rather than later.
-5. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
+4. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
    (preferred) or delete and check the search only against the reference.
