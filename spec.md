@@ -403,9 +403,11 @@ Per front end, what changes; everything else stays.
   aliasing (docs/limitations.md).
 - **Lua.** Arithmetic becomes value-only. Table keys stay symbolic fields (`[3]` is a field,
   not an offset), which S1 permits; `err` results stay empty.
-- **flowy.** Gains nothing new in syntax except that `.deref` and `.#value` parse to the
-  variants and `.*` is a parse error. It is the language of the R42 corpus and of every
-  example in the docs.
+- **flowy.** `.deref` and `.#value` parse to the variants and `.*` is a parse error. An
+  address destination `p.[k] = e`, rejected today with "spell it as `x.[k].deref`"
+  (`ctadl-flowy/src/lib.rs:1169`), is accepted and lowered by the S5 rewrite to
+  `p = e.[-k]`, so the rewrite and its verifier check have a test program. It is the
+  language of the R42 corpus and of every example in the docs.
 
 ### 3.8 Codegen and facts (`ctadl-ascent/src/codegen`, `ctadl-index/src/facts`)
 

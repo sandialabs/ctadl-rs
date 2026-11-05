@@ -93,8 +93,8 @@ Files:
 - Passes: `ctadl-ir/src/ssa/mod.rs` (a store defines nothing; `Exp::Value(path)` reads its
   base), `ssa/{dead_temps,coalesce,copy_prop,mem2reg}/mod.rs` (slot patterns on `AccessPath`).
 - Front ends, all seven (`frontends/*/src/lib.rs`, `ctadl-cil/src/{effects,ptr,method,calls}.rs`,
-  `ctadl-flowy/src/lib.rs`): callers of `load_access_path`/`store_access_path`; parameter
-  types removed.
+  `ctadl-flowy/src/lib.rs`): callers of `load_access_path`/`store_access_path`. flowy
+  accepts an address destination `p.[k] = e` and lowers it by the S5 rewrite.
 - `ctadl-ascent/src/codegen/mod.rs`: `trans_exp` over `AccessPath`; `cap_path` kept and
   rewritten over `Assign` operands (R3); `Load`/`Store` arms become one `Assign` arm;
   `formal_param` without type.
@@ -105,7 +105,10 @@ Tests:
 
 - New, `ctadl-ir/src/mir/verify.rs`: one test per R6 check (normal form, `value` placement,
   void operands, store defining its base, empty-path write to `globals`).
-- New, `ctadl-ir/src/mir/tests.rs`: `x.f.[8] = v` lowers to destination path `f.[8]`.
+- New, `ctadl-ir/src/mir/tests.rs`: `x.f.[8] = v` lowers to destination path `f.[8]`;
+  `p.[8] = e` builds `p = e.[-8]`, and `p.[8] = e.[8]` builds `p = e`.
+- New, `frontends/ctadl-flowy` parse and lowering tests: `p.[8] = e` is accepted and lowers
+  to the rewritten copy; a sink on `p` sees a source on `e`.
 - Existing: every pass test; every front-end `tests.rs`; `ctadl-ascent/src/codegen/tests.rs`;
   `ctadl-ascent/tests/c/*.json`; the `xtask` golden suites (`jvm_opcodes`, `dex_opcodes`,
   `asm_flow`, `cil` parity), regenerated and reviewed: the only diffs are load chains
@@ -134,7 +137,8 @@ Tests (the corpus, one program per rule):
 
 - S2: offsets add, `[0]`, `#value` absorbs offsets both sides.
 - S3: void propagates nothing; an address carries its base's labels (`p = q.[8]`).
-- S5/S6: store vs copy; suffix carriage through a copy (`y = x` with `x.f` tainted).
+- S5/S6: store vs copy; suffix carriage through a copy (`y = x` with `x.f` tainted); an
+  address destination `p.[8] = e` carries `e`'s labels to `p` and `e.f`'s to `p.[-8].f`.
 - S7/S8: `l = y; l.f = x` reaches `y.f.g`; phi does not merge (`y = x1; y = x2`); the suffix
   `#value` stays forward-only; `p.f.#value` and `p.deref.#value` move backward.
 - S9: the two-store merge, as an expected flow.
