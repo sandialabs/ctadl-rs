@@ -78,9 +78,6 @@ mod tests;
 /// Name of the frame-base local the pcode frontend addresses stack slots through.
 pub const STACK_TOP: &str = "__stack_top";
 
-/// The field a stack slot's memory is read and written through.
-const DEREF: &str = "deref";
-
 /// How far an escaped frame address `__stack_top.[j]` is assumed to reach. Slots it reaches stay
 /// in memory; the rest are promoted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +337,7 @@ fn frame_update_slot(kind: &StatementKind, st: Variable) -> Option<i64> {
             source,
             field,
             ..
-        } if dest.base.variable == st && source.variable == st && &*field.field == DEREF => {
+        } if dest.base.variable == st && source.variable == st && field.field.is_deref() => {
             Some(slot(dest))
         }
         _ => None,
@@ -371,7 +368,7 @@ fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
             }
         }
         StatementKind::Load { source, field, .. } if is_st(&source.base) => {
-            out.push(if &*field.field == DEREF {
+            out.push(if field.field.is_deref() {
                 Use::Direct(slot(source), false)
             } else {
                 Use::Escape(slot(source), EscapeKind::FieldAccess)
@@ -379,7 +376,7 @@ fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
         }
         StatementKind::Store { dest, field, value } => {
             if is_st(&dest.base) {
-                out.push(if &*field.field == DEREF {
+                out.push(if field.field.is_deref() {
                     Use::Direct(slot(dest), true)
                 } else {
                     Use::Escape(slot(dest), EscapeKind::FieldAccess)
@@ -583,7 +580,7 @@ pub fn promote_function(
     // Pass 3: rewrite direct accesses of promoted slots into copies, and reload the escaped
     // ones after each call that reaches them.
     let st_ref = VariableRef::new_local_idx(st_idx);
-    let deref = FieldRef::symbol(DEREF);
+    let deref = FieldRef::deref();
     let blocks = function.blocks.blocks_mut_preserves_cfg();
     for bb in blocks.indices() {
         let old = std::mem::take(&mut blocks[bb].statements);
@@ -594,7 +591,7 @@ pub fn promote_function(
                     dest,
                     source,
                     field,
-                } if source.base.variable == st && &*field.field == DEREF => {
+                } if source.base.variable == st && field.field.is_deref() => {
                     match promotable.get(&slot(source)) {
                         Some(local) => {
                             s.kind =
@@ -605,7 +602,7 @@ pub fn promote_function(
                     }
                 }
                 StatementKind::Store { dest, field, value }
-                    if dest.base.variable == st && &*field.field == DEREF =>
+                    if dest.base.variable == st && field.field.is_deref() =>
                 {
                     match promotable.get(&slot(dest)) {
                         Some(local) => {

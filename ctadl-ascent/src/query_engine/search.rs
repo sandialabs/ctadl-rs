@@ -172,7 +172,7 @@ pub struct TaintSearchGraph {
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
     /// A source on `v.p` also taints `v.p.#value`, what `v.p`'s value is computed into: each
     /// source vertex, keyed to its `#value` vertex. Empty when the program has no `#value`
-    /// paths (see [`ctadl_ir::mir::VALUE_FIELD`]).
+    /// paths (see [`ctadl_ir::mir::PathSegment::Value`]).
     value_of_source: HashMap<TaintVertex, Path>,
     /// A sink on `v.p` also matches `v.p.#value`: each such `#value` vertex, keyed to the sink
     /// path `p` it steps to. The step reaches the sink at the vertex its endpoint names, so a
@@ -195,8 +195,8 @@ fn value_path(p: &Path, paths: &HashSet<Path>) -> Option<Path> {
 /// exactly `.deref`, i.e. it yields a pointer whose whole pointee is saturated. Any other
 /// parent read (a struct with one saturated field) is left to the path-precise load rule.
 fn saturating_read(q: &Path, p: &Path) -> bool {
-    let mut p = p.iter().filter(|s| s.is_symbol());
-    let mut q = q.iter().filter(|s| s.is_symbol());
+    let mut p = p.iter().filter(|s| !s.is_offset());
+    let mut q = q.iter().filter(|s| !s.is_offset());
     loop {
         match (p.next(), q.next()) {
             (None, _) => return true,
@@ -897,7 +897,7 @@ mod tests {
 
     /// A single-field path `.field`.
     fn field_path(field: &str) -> Path {
-        Path::from_accesses([ctadl_ir::mir::PathSegment::Symbol(
+        Path::from_accesses([ctadl_ir::mir::PathSegment::Field(
             internment::ArcIntern::from(field),
         )])
     }

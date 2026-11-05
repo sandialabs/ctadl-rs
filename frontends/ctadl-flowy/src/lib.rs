@@ -755,22 +755,20 @@ impl FlowyCtx {
                 // An `Update` writes exactly one symbolic field, so the source names exactly one.
                 // A nested update would have to rebuild every enclosing aggregate, which is a
                 // chain of updates rather than the single instruction this syntax denotes.
-                let Some(i) = source.segments.iter().position(PathSegment::is_symbol) else {
+                let Some(i) = source.segments.iter().position(|s| !s.is_offset()) else {
                     return Err(compile_error(
                         stmt.pos,
                         "an update must write a field: write `x = [y.f := v]`",
                     ));
                 };
-                if source.segments[i + 1..].iter().any(PathSegment::is_symbol) {
+                if source.segments[i + 1..].iter().any(|s| !s.is_offset()) {
                     return Err(compile_error(
                         stmt.pos,
                         "an update writes a single field, so its source names one: write \
                          `x = [y.f := v]`",
                     ));
                 }
-                let PathSegment::Symbol(field) = source.segments.remove(i) else {
-                    unreachable!()
-                };
+                let field = source.segments.remove(i);
                 let value = {
                     let r = parse_ref(locals, local_table, value, defined_functions)?;
                     lower_ref(&mut self.counter, data, local_table, source_info, r)
@@ -988,7 +986,7 @@ fn parse_summary_ap(env: &Env, ap: &parse::AccessPath<'_>) -> Result<Port, Flowy
             fields: field_accesses,
         })
     } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
+        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
         global_field_accesses.extend(field_accesses);
         Ok(Port {
             base: PortBase::Var(VariableRef::new_global()),
@@ -1007,7 +1005,9 @@ fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>
     segments
         .iter()
         .map(|s| match s {
-            parse::Segment::Field(name) => Ok(PathSegment::symbol(*name)),
+            parse::Segment::Field(name) => Ok(PathSegment::field(*name)),
+            parse::Segment::Deref => Ok(PathSegment::Deref),
+            parse::Segment::Value => Ok(PathSegment::Value),
             parse::Segment::Offset(offset) => Ok(PathSegment::offset(*offset)),
             parse::Segment::Star(pos) => Err(compile_error(
                 *pos,
@@ -1198,7 +1198,7 @@ fn parse_access_path(
     Ok(if let Some(v) = env.parameters.get(name) {
         AccessPath::new(v.clone(), field_accesses)
     } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
+        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
         global_field_accesses.extend(field_accesses);
         AccessPath::new(VariableRef::new_global(), global_field_accesses)
     } else {

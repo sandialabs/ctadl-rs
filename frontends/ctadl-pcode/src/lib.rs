@@ -208,7 +208,8 @@ impl Context {
         }
         if let Variable::Local(base) = dest.base.variable
             && locals.name(base) == ssa::STACK_TOP
-            && let Some((PathSegment::Symbol(field), offsets)) = dest.segments.split_last()
+            && let Some((field, offsets)) = dest.segments.split_last()
+            && !field.is_offset()
             && offsets.iter().all(PathSegment::is_offset)
         {
             let field = FieldRef::new(field.clone());

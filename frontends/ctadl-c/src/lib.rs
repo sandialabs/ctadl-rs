@@ -13,7 +13,7 @@
 //!
 //! ## Non-constant subscript indices
 //!
-//! `a[n]` lowers to the bare dereference `a[0]` also produces (see [`DEREF_FIELD`]), so a
+//! `a[n]` lowers to the bare dereference `a[0]` also produces (see [`PathSegment::Deref`]), so a
 //! write through `a[n]` is observed at `a[0]` but not at a nonzero constant index like
 //! `a[2]`.
 //!
@@ -513,7 +513,7 @@ const UNION_FIELD: &str = "$union";
 fn literal_address_path(constant: &str) -> AccessPath {
     AccessPath::new(
         VariableRef::new_global(),
-        [PathSegment::symbol(format!("<address {constant}>"))],
+        [PathSegment::field(format!("<address {constant}>"))],
     )
 }
 
@@ -561,7 +561,7 @@ fn deref_of_pointee(pointee: &Address) -> Option<AccessPath> {
 
 /// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a
 /// constant index (elided at zero -- `a[0]` *is* `*a`) followed by the dereference performed
-/// there. See [`DEREF_FIELD`]. A non-constant index has no offset to name and lowers to the
+/// there. See [`PathSegment::Deref`]. A non-constant index has no offset to name and lowers to the
 /// bare dereference -- deliberately the same path `a[0]` produces, so the two may-alias with
 /// no help from the path matcher; see the module-level note for what that still misses.
 fn push_element(path: &mut ThinVec<PathSegment>, index: Option<i64>) {
@@ -581,7 +581,7 @@ fn cell_local_name(param: &str) -> String {
 
 /// An address-taken scalar's path: its value is at `deref`.
 fn in_cell(mut path: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
-    path.insert(0, PathSegment::symbol(DEREF_FIELD));
+    path.insert(0, PathSegment::Deref);
     path
 }
 
@@ -2128,7 +2128,7 @@ impl<'a> Context<'a> {
                 if let Some(member) = dtext.strip_prefix('.') {
                     // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
                     let member = member.trim();
-                    path.push(PathSegment::symbol(member));
+                    path.push(PathSegment::field(member));
                     let nested = self.member_layout(members, |m| m.name == member);
                     (path, value, nested)
                 } else {
@@ -2148,7 +2148,7 @@ impl<'a> Context<'a> {
                     // Positional element of a record whose layout is known -> the member that
                     // position names.
                     Some(slot) => {
-                        path.push(PathSegment::symbol(slot.name.as_str()));
+                        path.push(PathSegment::field(slot.name.as_str()));
                         slot.type_tag
                             .as_deref()
                             .and_then(|tag| self.struct_layouts.get(tag).cloned())
@@ -3267,7 +3267,7 @@ impl<'a> Context<'a> {
             // A global `name` is a symbolic field of the globals object: `$globals.name.<path>`.
             VarKind::Global => {
                 let mut segments = ThinVec::with_capacity(path.len() + 1);
-                segments.push(PathSegment::symbol(name.as_str()));
+                segments.push(PathSegment::field(name.as_str()));
                 segments.append(&mut path);
                 AccessPath::new(VariableRef::new_global(), segments)
             }
@@ -4745,9 +4745,9 @@ impl<'a> Context<'a> {
                 // base being the bare union variable -- so a struct field nested inside a union
                 // member (`u.a.b`) keeps its own name.
                 let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
-                    PathSegment::symbol(UNION_FIELD)
+                    PathSegment::field(UNION_FIELD)
                 } else {
-                    PathSegment::symbol(to_str(&field, source))
+                    PathSegment::field(to_str(&field, source))
                 };
                 base.segments.push(seg);
                 Ok(base)
@@ -4766,7 +4766,7 @@ impl<'a> Context<'a> {
                     scope_view,
                 )?;
                 // `a[N]` is `*(a + N)`: the index is pointer arithmetic on the address and the
-                // element itself is the memory read/written there (see `DEREF_FIELD`). A
+                // element itself is the memory read/written there (see `PathSegment::Deref`). A
                 // non-constant `N` reads as 0 (see `push_element`).
                 let mut ap = base;
                 let index = match constant_index(&index) {

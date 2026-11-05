@@ -770,10 +770,9 @@ fn address_of_struct_member_keeps_value_model() {
     // program; a call site always has at least two, so scan `f`'s statements directly.)
     let f = function_named(&prog, "f").expect("f is defined");
     assert!(
-        f.blocks
-            .iter()
-            .flat_map(|b| b.statements.iter())
-            .any(|s| matches!(&s.kind, StatementKind::Load { field, .. } if field.as_str() == "f")),
+        f.blocks.iter().flat_map(|b| b.statements.iter()).any(
+            |s| matches!(&s.kind, StatementKind::Load { field, .. } if field.name() == Some("f"))
+        ),
         "expected a load of the member `f`\n{prog}"
     );
 }
@@ -3207,7 +3206,7 @@ fn compound_literal_argument_carries_value() {
     let object = statements_of(&prog)
         .find_map(|stmt| match &stmt.kind {
             StatementKind::Store { dest, field, value }
-                if field.as_str() == "start" && *value == param =>
+                if field.name() == Some("start") && *value == param =>
             {
                 Some(dest.base.clone())
             }

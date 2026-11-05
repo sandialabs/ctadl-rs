@@ -1,5 +1,5 @@
 //! Managed pointers. A pointer lowers to the place it points at whenever that can be traced,
-//! and to the dereference field `DEREF_FIELD` (`D` below) when it cannot.
+//! and to the dereference field `PathSegment::Deref` (`D` below) when it cannot.
 //!
 //! | Effect on pointer `v`      | Resolved to `P`                    | Unresolved                       |
 //! | -------------------------- | ---------------------------------- | -------------------------------- |
@@ -63,7 +63,7 @@ use cil_reader::MetadataToken;
 use cil_reader::flow::{
     BoundIns, Control, Effect, InsId, MethodFlow, Place, StackKind, Transfer, Var,
 };
-use ctadl_ir::mir::{DEREF_FIELD, FieldRef};
+use ctadl_ir::mir::FieldRef;
 use ctadl_ir::*;
 use hashbrown::{HashMap, HashSet};
 
@@ -72,7 +72,7 @@ use crate::names::ELEMENT;
 
 /// `D`: the dereference field shared with C, pcode, the index and the query.
 pub fn deref() -> FieldRef {
-    FieldRef::symbol(DEREF_FIELD)
+    FieldRef::deref()
 }
 
 /// What a traced address's place starts from.

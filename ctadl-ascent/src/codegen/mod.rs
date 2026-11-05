@@ -933,9 +933,7 @@ impl Visitor for CodegenVisitor<'_> {
                             .iter()
                             .cloned()
                             .chain(source.accesses.iter().cloned().map(PathSegment::from))
-                            .chain(std::iter::once(PathSegment::Symbol(
-                                field.symbol_ref().clone(),
-                            ))),
+                            .chain(std::iter::once(field.field.clone())),
                     );
                     self.paths_dedup.insert((path,));
                     self.cap_path.insert(dest.clone(), (root, path));
@@ -954,9 +952,7 @@ impl Visitor for CodegenVisitor<'_> {
                             .iter()
                             .cloned()
                             .chain(dest.accesses.iter().cloned().map(PathSegment::from))
-                            .chain(std::iter::once(PathSegment::Symbol(
-                                field.symbol_ref().clone(),
-                            ))),
+                            .chain(std::iter::once(field.field.clone())),
                     );
                     self.paths_dedup.insert((path,));
                 }
@@ -1023,7 +1019,7 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     // `dest = value(v)` lowers to `dest.#value <- v`; `dest` itself gets nothing.
                     // `v.#value` comes along since `#value` absorbs itself
-                    // (`ctadl_ir::mir::VALUE_FIELD`).
+                    // (`ctadl_ir::mir::PathSegment::Value`).
                     if let Exp::Value(v) = src {
                         let value = fx::Path::from_accesses([PathSegment::value()]);
                         self.paths_dedup.insert((value,));
@@ -1320,9 +1316,7 @@ impl Visitor for CodegenVisitor<'_> {
                         .iter()
                         .cloned()
                         .chain(source.accesses.iter().cloned().map(PathSegment::from))
-                        .chain(std::iter::once(PathSegment::Symbol(
-                            field.symbol_ref().clone(),
-                        ))),
+                        .chain(std::iter::once(field.field.clone())),
                 );
                 self.paths_dedup.insert((path,));
                 // dest <- root.<composed path>
@@ -1353,9 +1347,7 @@ impl Visitor for CodegenVisitor<'_> {
                         .iter()
                         .cloned()
                         .chain(dest.accesses.iter().cloned().map(PathSegment::from))
-                        .chain(std::iter::once(PathSegment::Symbol(
-                            field.symbol_ref().clone(),
-                        ))),
+                        .chain(std::iter::once(field.field.clone())),
                 );
                 self.paths_dedup.insert((path,));
                 // dest.field <- value
@@ -1400,12 +1392,13 @@ impl Visitor for CodegenVisitor<'_> {
                 let dest_var = self.trans_variable_ref(&dest.base);
                 let source_var = self.trans_variable_ref(source);
                 // The written path is the dest's (offset) address arithmetic, then the field.
-                let path =
-                    fx::Path::from_accesses(
-                        dest.accesses.iter().cloned().map(PathSegment::from).chain(
-                            std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())),
-                        ),
-                    );
+                let path = fx::Path::from_accesses(
+                    dest.accesses
+                        .iter()
+                        .cloned()
+                        .map(PathSegment::from)
+                        .chain(std::iter::once(field.field.clone())),
+                );
                 self.paths_dedup.insert((path,));
                 let dest_vertex = FlowVertex::new(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the

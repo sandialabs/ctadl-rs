@@ -26,7 +26,7 @@ impl F {
         let v = self.local(v);
         Statement::new_kind(StatementKind::store(
             dest,
-            FieldRef::symbol(DEREF),
+            FieldRef::deref(),
             Exp::Variable(v),
         ))
     }
@@ -38,7 +38,7 @@ impl F {
         Statement::new_kind(StatementKind::update(
             dest,
             st,
-            FieldRef::symbol(DEREF),
+            FieldRef::deref(),
             Exp::Variable(v),
         ))
     }
@@ -46,7 +46,7 @@ impl F {
     fn load(&mut self, d: &str, k: i64) -> Statement {
         let source = self.st(k);
         let d = self.local(d);
-        Statement::new_kind(StatementKind::load(d, source, FieldRef::symbol(DEREF)))
+        Statement::new_kind(StatementKind::load(d, source, FieldRef::deref()))
     }
     /// `f(__stack_top.[k])`: the address of slot `k` escapes into a call.
     fn escape_call(&mut self, k: i64) -> Statement {
@@ -240,7 +240,7 @@ fn update_copying_the_frame_skips_function() {
     let copy = Statement::new_kind(StatementKind::update(
         Address::new(x, [OffsetAccess::Offset(Offset(-8))]),
         st,
-        FieldRef::symbol(DEREF),
+        FieldRef::deref(),
         Exp::Variable(a),
     ));
     let u = f.update(-16, "a");
@@ -443,7 +443,7 @@ fn full_notes_copied_and_stored_addresses() {
     let g = f.local("g");
     let st = Statement::new_kind(StatementKind::store(
         Address::without_offsets(g),
-        FieldRef::symbol(DEREF),
+        FieldRef::deref(),
         addr,
     ));
     let l1 = f.load("a", -16);

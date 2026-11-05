@@ -180,9 +180,9 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 /// runs: sort with [`Path::content_cmp`] wherever the order is printed. serde, `Display` and
 /// [`Path::parse`] go through the content.
 ///
-/// Paths are composed of field and offset accesses. Contiguous runs of offset accesses are
-/// summed, so there is never more than one offset access in a row. In effect, the offsets are
-/// "addresses of" the containing field.
+/// A `Path` is always in the normal form of [`mir::path`]: contiguous runs of offset accesses are
+/// summed, so there is never more than one offset access in a row, and `#value` absorbs itself and
+/// adjacent offsets. In effect, the offsets are "addresses of" the containing field.
 ///
 /// A zero offset is dropped: it denotes the address of the field it is applied to, so `.x.[0]` and
 /// `.x` are the same address and must be the same path. Keeping them distinct would let the two
@@ -259,23 +259,14 @@ impl Path {
     }
 
     /// Creates a path from a sequence of accesses
+    /// The segments are put in normal form ([`mir::path::normalize`]), so every `Path` is normal.
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
-        let mut items = Vec::new();
-        for item in iter {
+        let items = mir::path::normalize(iter.into_iter().inspect(|item| {
             debug_assert!(
-                !matches!(&item, mir::PathSegment::Symbol(s) if s.is_empty()),
-                "Symbol(\"\") is not a representable path segment"
+                !matches!(item, mir::PathSegment::Field(s) if s.is_empty()),
+                "Field(\"\") is not a representable path segment"
             );
-            match (items.last_mut(), &item) {
-                (Some(mir::PathSegment::Offset(last_off)), mir::PathSegment::Offset(new_off)) => {
-                    last_off.0 += new_off.0;
-                }
-                _ => items.push(item),
-            }
-        }
-        // A zero offset is the identity on addresses. Runs are already summed, so each survivor is
-        // isolated between non-offsets and dropping it cannot make two offsets adjacent.
-        items.retain(|item| !matches!(item, mir::PathSegment::Offset(Offset(0))));
+        }));
         items
             .into_iter()
             .rev()
@@ -340,7 +331,7 @@ impl Path {
     }
 
     /// Creates a path from a sequence of *field names*, every one of which becomes a
-    /// [`mir::PathSegment::Symbol`].
+    /// [`mir::PathSegment::Field`].
     ///
     /// This is deliberately named rather than a `FromIterator<S: AsRef<str>>` impl: an iterator
     /// of strings is exactly as plausible a spelling for "parse these as path segments",
@@ -349,7 +340,7 @@ impl Path {
     pub fn from_symbol_names(iter: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         Self::from_accesses(
             iter.into_iter()
-                .map(|name| mir::PathSegment::Symbol(ArcIntern::from(name.as_ref()))),
+                .map(|name| mir::PathSegment::Field(ArcIntern::from(name.as_ref()))),
         )
     }
 
@@ -442,22 +433,39 @@ impl Path {
     /// The splits of this path at an offset component, as `(key, rest)` where `rest` begins
     /// with that offset, `[n]`: a prefix `key.[m]` matches for **any** `m != n`, yielding the
     /// suffix `[n - m] · tail` where `rest = [n] · tail` — the offset arithmetic
-    /// [`match_prefix`] performs on its last component. A rule that joins on the wild key reads
-    /// `n` off `rest` with [`Path::head_offset`] and forms the adjustment itself; the case
-    /// `m == n` is the exact key `key.[n]` of [`Path::prefix_keys`], so a wild match excludes it.
+    /// [`match_prefix`] performs on its last component. A rule that joins on the wild key
+    /// matches it with [`Path::wild_rest`]; the case `m == n` is the exact key `key.[n]` of
+    /// [`Path::prefix_keys`], so a wild match excludes it. A `#value` component splits the same
+    /// way, `rest` beginning with `#value`, and matches every `key.[m]`.
     pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
         let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::new();
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
         for k in 0..comps.len() {
-            if matches!(comps[k], mir::PathSegment::Offset(_)) {
+            if matches!(
+                comps[k],
+                mir::PathSegment::Offset(_) | mir::PathSegment::Value
+            ) {
                 let key = Path::from_accesses(comps[..k].iter().cloned());
                 out.push((key, rest));
             }
             rest = rest.tail();
         }
         out
+    }
+
+    /// The match of a wild split's `rest` (see [`Path::prefix_keys_wild`]) against a prefix
+    /// `key.[m]`: the offset adjustment and the suffix after it. `[n]·tail` matches when
+    /// `n != m` (the case `n == m` is an exact key) and gives `(n - m, tail)`; `#value·tail`
+    /// matches any `m` and gives `(0, #value·tail)`, since `[m].#value = #value`.
+    #[inline]
+    pub fn wild_rest(&self, m: i64) -> Option<(i64, Path)> {
+        match self.head()? {
+            mir::PathSegment::Offset(Offset(n)) if *n != m => Some((n - m, self.tail())),
+            mir::PathSegment::Value => Some((0, *self)),
+            _ => None,
+        }
     }
 
     /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
@@ -1670,17 +1678,12 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
-    // `#value` absorbs itself (see `ctadl_ir::mir::VALUE_FIELD`).
-    if comps.last().is_some_and(PathSegment::is_value)
-        && let Some((head, tail)) = suffix.uncons()
-        && head.is_value()
-        && tail.is_empty()
-    {
-        return *new_prefix;
-    }
-    // Junction merge: if `new_prefix`'s last component and `suffix`'s head are both offsets, sum
-    // them (matching `from_accesses`) into `suffix`'s head and drop `new_prefix`'s last component.
-    // A sum of zero drops the component entirely, as `from_accesses` would.
+    // Junction rewriting, the equations of `ctadl_ir::mir::path` applied where the two meet.
+    // Both sides are normal, so only the last component of `new_prefix` and the head of `suffix`
+    // can combine, and at most once:
+    // - two offsets sum, and a zero sum vanishes;
+    // - `[k].#value` is `#value`, so an offset before a `#value` head is dropped;
+    // - `#value.[k]` and `#value.#value` are `#value`, so after a `#value` the head is dropped.
     let (mut acc, upto) = match (comps.last(), suffix.head()) {
         (Some(PathSegment::Offset(Offset(a))), Some(PathSegment::Offset(Offset(b)))) => {
             let sum = a + b;
@@ -1690,6 +1693,10 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
                 suffix.with_head(PathSegment::Offset(Offset(sum)))
             };
             (rest, comps.len() - 1)
+        }
+        (Some(PathSegment::Offset(_)), Some(PathSegment::Value)) => (suffix, comps.len() - 1),
+        (Some(PathSegment::Value), Some(PathSegment::Offset(_) | PathSegment::Value)) => {
+            (suffix.tail(), comps.len())
         }
         _ => (suffix, comps.len()),
     };
@@ -1750,6 +1757,9 @@ pub fn match_prefix_split(path: &Path, prefix: &Path) -> Option<(Option<i64>, Pa
         (PathSegment::Offset(Offset(an)), PathSegment::Offset(Offset(pn))) if an != pn => {
             Some((Some(an - pn), path_seq.tail()))
         }
+        // `[m].#value = #value`: an offset prefix is absorbed by a `#value` in the path, and
+        // the suffix keeps the `#value`.
+        (PathSegment::Value, PathSegment::Offset(_)) => Some((None, path_seq)),
         (a, p) if a == p => {
             // Exact match for the last prefix component
             Some((None, path_seq.tail()))
@@ -1839,6 +1849,53 @@ impl IdMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `mir::path` on random
+    /// segment lists: offset sums, `[0]`, and `#value` absorbing offsets on both sides.
+    #[test]
+    fn agrees_with_mir_path() {
+        use mir::{PathSegment as S, path as mp};
+        let mut state = 0x9e37_79b9u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state >> 33
+        };
+        let seg = |n: u64| match n % 7 {
+            0 => S::field("a"),
+            1 => S::field("b"),
+            2 => S::Deref,
+            3 => S::Value,
+            k => S::offset((k as i64 - 5) * 4),
+        };
+        for _ in 0..20_000 {
+            let a: Vec<S> = (0..next() % 5).map(|_| seg(next())).collect();
+            let b: Vec<S> = (0..next() % 5).map(|_| seg(next())).collect();
+            let (pa, pb) = (
+                Path::from_accesses(a.clone()),
+                Path::from_accesses(b.clone()),
+            );
+            let na = mp::normalize(a.clone());
+            let nb = mp::normalize(b.clone());
+            assert_eq!(pa.iter().cloned().collect::<Vec<_>>(), na, "{a:?}");
+            let joined = prepend_onto(&pa, pb);
+            assert_eq!(
+                joined.iter().cloned().collect::<Vec<_>>(),
+                mp::concat(&na, &nb),
+                "{a:?} · {b:?}"
+            );
+            assert_eq!(joined, pa.concat(&pb));
+            // `match_prefix` is a restriction of `strip_prefix`: when it answers, they agree.
+            if let Some(t) = match_prefix(&pb, &pa) {
+                assert_eq!(
+                    Some(t.iter().cloned().collect::<Vec<_>>()),
+                    mp::strip_prefix(&nb, &na),
+                    "{nb:?} / {na:?}"
+                );
+            }
+        }
+    }
 
     /// Terse `Path` literal for tests. Named `parse_path` rather than `p` because these tests
     /// bind `p`, `q`, `r` as paths and a `let p` would shadow the helper.
@@ -1930,7 +1987,7 @@ mod tests {
             .chain([
                 Path::from_symbol_names(["path_cmp/x", "path_cmp/y"]),
                 Path::from_accesses([
-                    mir::PathSegment::symbol("path_cmp/x"),
+                    mir::PathSegment::field("path_cmp/x"),
                     mir::PathSegment::offset(3),
                 ]),
                 Path::EMPTY,
@@ -1961,7 +2018,7 @@ mod tests {
         let json = serde_json::to_string(&path).unwrap();
         assert_eq!(
             json,
-            r#"{"head":{"Symbol":"foo"},"tail":{"head":{"Offset":8},"tail":"Nil"}}"#
+            r#"{"head":{"Field":"foo"},"tail":{"head":{"Offset":8},"tail":"Nil"}}"#
         );
         assert_eq!(serde_json::from_str::<Path>(&json).unwrap(), path);
         assert_eq!(serde_json::to_string(&Path::EMPTY).unwrap(), r#""Nil""#);
@@ -1991,7 +2048,7 @@ mod tests {
         // say) must spell them the same path -- that choice belongs to the frontend, not here.
         // Offsets, which the IR does give arithmetic meaning, are covered by the tests below.
         use ctadl_ir::mir::PathSegment;
-        let sym = |s: &str| Path::from_accesses([PathSegment::symbol(s)]);
+        let sym = |s: &str| Path::from_accesses([PathSegment::field(s)]);
         let elem = sym("[_elem_]"); // the lua frontend's non-constant key
         let c0 = sym("[0]");
         let c1 = sym("[1]");
@@ -2095,7 +2152,7 @@ mod tests {
         let suffix = match_prefix(&path, &prefix).unwrap();
         assert_eq!(
             suffix.iter().cloned().collect::<Vec<_>>(),
-            vec![PathSegment::Symbol(ArcIntern::from("f"))]
+            vec![PathSegment::Field(ArcIntern::from("f"))]
         );
         assert_eq!(
             path.substitute_prefix(&prefix, &new_prefix),
@@ -2293,9 +2350,9 @@ mod tests {
         // Create a path manually with mixed PathSegment types
         use ctadl_ir::mir::{Offset, PathSegment};
         let path = Path::from_accesses([
-            PathSegment::Symbol(ArcIntern::from("foo")),
+            PathSegment::Field(ArcIntern::from("foo")),
             PathSegment::Offset(Offset(42)),
-            PathSegment::Symbol(ArcIntern::from("bar")),
+            PathSegment::Field(ArcIntern::from("bar")),
         ]);
 
         let serialized = path.to_dot_string();
@@ -2311,7 +2368,7 @@ mod tests {
     #[test]
     fn test_path_round_trip_corpus() {
         use ctadl_ir::mir::{Offset, PathSegment};
-        let sym = |s: &str| PathSegment::symbol(s);
+        let sym = |s: &str| PathSegment::field(s);
         let off = |n: i64| PathSegment::Offset(Offset(n));
 
         for segs in [
@@ -2365,11 +2422,11 @@ mod tests {
         // `Symbol("[3]")` (a lua/C array field) and `Offset(3)` stay distinct: the symbol's
         // leading `[` is escaped.
         assert_ne!(
-            Path::from_accesses([PathSegment::symbol("[3]")]),
+            Path::from_accesses([PathSegment::field("[3]")]),
             Path::from_accesses([PathSegment::Offset(Offset(3))])
         );
         assert_eq!(
-            Path::from_accesses([PathSegment::symbol("[3]")]).to_dot_string(),
+            Path::from_accesses([PathSegment::field("[3]")]).to_dot_string(),
             r".\[3]"
         );
         assert_eq!(
@@ -2434,6 +2491,9 @@ mod prefix_key_tests {
             ".deref",
             ".deref.[8]",
             ".deref.[8].x",
+            ".#value",
+            ".x.#value",
+            ".[4].x.#value",
         ]
         .iter()
         .map(|s| p(s))
@@ -2452,14 +2512,14 @@ mod prefix_key_tests {
                     }
                 }
                 for (key, rest) in &wild_keys {
-                    if let Some((pk, m)) = prefix.split_trailing_offset() {
-                        let n = rest.head_offset().unwrap();
-                        if pk == *key && m != n {
-                            found.push(Path::from_accesses(
-                                std::iter::once(mir::PathSegment::Offset(mir::Offset(n - m)))
-                                    .chain(rest.tail().iter().cloned()),
-                            ));
-                        }
+                    if let Some((pk, m)) = prefix.split_trailing_offset()
+                        && pk == *key
+                        && let Some((adj, tail)) = rest.wild_rest(m)
+                    {
+                        found.push(Path::from_accesses(
+                            std::iter::once(mir::PathSegment::Offset(mir::Offset(adj)))
+                                .chain(tail.iter().cloned()),
+                        ));
                     }
                 }
                 found.sort();

@@ -155,6 +155,10 @@ pub struct AccessPath<'s> {
 pub enum Segment<'s> {
     /// `.foo`
     Field(&'s str),
+    /// `.deref`
+    Deref,
+    /// `.#value`
+    Value,
     /// `.[8]`
     Offset(i64),
     /// `.*`, which parses but is not a path segment, so lowering rejects it. The position
@@ -255,8 +259,8 @@ peg::parser! {
 
         rule segment() -> Segment<'input>
             = p:position!() "." _ "*" { Segment::Star(lines.pos(p)) }
-            / "." _ "#value" { Segment::Field(ctadl_ir::mir::VALUE_FIELD) }
-            / "." _ f:ident() { Segment::Field(f.name) }
+            / "." _ "#value" { Segment::Value }
+            / "." _ f:ident() { if f.name == "deref" { Segment::Deref } else { Segment::Field(f.name) } }
             / "." _ "[" _ n:int() _ "]" { Segment::Offset(n) }
 
         // A keyword is a whole word, so it cannot run into an identifier: `returnx;` is a parse

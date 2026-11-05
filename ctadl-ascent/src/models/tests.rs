@@ -94,8 +94,8 @@ fn a_function_anchored_port_fills_its_fields() {
             // A `Return` port carries no formal index; Stage 2 supplies `RETURN_INDEX`.
             index: None,
             path: facts::Path::from_accesses([
-                PathSegment::symbol("field1"),
-                PathSegment::symbol("sub"),
+                PathSegment::field("field1"),
+                PathSegment::field("sub"),
             ]),
             label: facts::Str::from("lbl1"),
             direction: TaintDirection::Forward,
@@ -148,9 +148,9 @@ fn bracketed_segment_spellings_stay_distinct() {
 
     for seg in [
         PathSegment::Offset(Offset(8)),
-        PathSegment::symbol("[8]"),
-        PathSegment::symbol("[]"),
-        PathSegment::symbol("plain"),
+        PathSegment::field("[8]"),
+        PathSegment::field("[]"),
+        PathSegment::field("plain"),
     ] {
         let spelled = mir::segment_to_string(&seg);
         assert_eq!(
@@ -161,7 +161,7 @@ fn bracketed_segment_spellings_stay_distinct() {
     }
     assert_ne!(
         mir::segment_to_string(&PathSegment::Offset(Offset(8))),
-        mir::segment_to_string(&PathSegment::symbol("[8]"))
+        mir::segment_to_string(&PathSegment::field("[8]"))
     );
 }
 

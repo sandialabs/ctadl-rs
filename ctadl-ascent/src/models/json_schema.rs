@@ -798,7 +798,7 @@ mod parse_port_tests {
     fn parses_variable_selector_with_path() {
         let p = parse_port("Variable(buf).headers", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
-        assert_eq!(p.path, vec![PathSegment::symbol("headers")]);
+        assert_eq!(p.path, vec![PathSegment::field("headers")]);
     }
 
     #[test]
@@ -818,10 +818,7 @@ mod parse_port_tests {
         let p = parse_port("Argument(1).[8].deref", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Index);
         assert_eq!(p.index, Some(1));
-        assert_eq!(
-            p.path,
-            vec![PathSegment::offset(8), PathSegment::symbol("deref")]
-        );
+        assert_eq!(p.path, vec![PathSegment::offset(8), PathSegment::Deref]);
     }
 
     /// ... and a field name that begins with `[` is still reachable, written `\[`. This is how a
@@ -829,21 +826,21 @@ mod parse_port_tests {
     #[test]
     fn port_can_name_a_bracketed_field() {
         let p = parse_port(r"Argument(0).\[]", 0).expect("parse");
-        assert_eq!(p.path, vec![PathSegment::symbol("[]")]);
+        assert_eq!(p.path, vec![PathSegment::field("[]")]);
 
         let p = parse_port(r"Argument(0).\[_elem_]", 0).expect("parse");
-        assert_eq!(p.path, vec![PathSegment::symbol("[_elem_]")]);
+        assert_eq!(p.path, vec![PathSegment::field("[_elem_]")]);
     }
 
     /// `.*` is `Symbol("*")`, a literal field, as it is everywhere else in the tree.
     #[test]
     fn trailing_star_is_a_literal_field() {
         let p = parse_port("Argument(0).*", 0).expect("parse");
-        assert_eq!(p.path, vec![PathSegment::symbol("*")]);
+        assert_eq!(p.path, vec![PathSegment::field("*")]);
 
         let r = parse_port("Return.*", 0).expect("parse");
         assert_eq!(r.tag, FormalIndexTypeTag::Return);
-        assert_eq!(r.path, vec![PathSegment::symbol("*")]);
+        assert_eq!(r.path, vec![PathSegment::field("*")]);
     }
 
     #[test]

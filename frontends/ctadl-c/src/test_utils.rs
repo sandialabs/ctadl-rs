@@ -396,14 +396,14 @@ pub(crate) fn check_assign_or_update<I>(
         // `f.[4].deref` is the address `f.[4]` and the field `deref`. A destination with more
         // than one symbol would need intermediate loads and is not a single statement.
         let mut path = dst_ap.segments;
-        let Some(PathSegment::Symbol(sym)) = path.pop() else {
+        let Some(sym) = path.pop().filter(|s| !s.is_offset()) else {
             panic!("update destination must end in a (symbolic) field: {dst}")
         };
         let offsets: Vec<OffsetAccess> = path
             .into_iter()
             .map(|seg| match seg {
                 PathSegment::Offset(off) => OffsetAccess::Offset(off),
-                PathSegment::Symbol(_) => panic!(
+                _ => panic!(
                     "update destination may only have offsets before its field (an interior \
                      symbol is a load, not part of one store): {dst}"
                 ),
@@ -453,9 +453,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
             .iter()
             .cloned()
             .map(PathSegment::from)
-            .chain(std::iter::once(PathSegment::Symbol(
-                field.symbol_ref().clone(),
-            )))
+            .chain(std::iter::once(field.field.clone()))
             .collect();
         source.base == ap.base && full == ap.segments
     });
@@ -485,9 +483,7 @@ fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
                 .iter()
                 .cloned()
                 .map(PathSegment::from)
-                .chain(std::iter::once(PathSegment::Symbol(
-                    field.symbol_ref().clone(),
-                )))
+                .chain(std::iter::once(field.field.clone()))
                 .collect();
             !dst.is_pathless() && dest.base == dst.base && full == dst.segments
         }
@@ -538,9 +534,7 @@ pub(crate) fn field_symbols(prog: &Program) -> Vec<&str> {
         .flat_map(|f| f.blocks.iter())
         .flat_map(|b| b.statements.iter())
         .filter_map(|s| match &s.kind {
-            StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => {
-                Some(field.as_str())
-            }
+            StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => field.name(),
             _ => None,
         })
         .collect()
@@ -936,7 +930,7 @@ mod ap_tests {
             access_path_from_str("@p1.f2", &Locals::default()),
             AccessPath::new(
                 VariableRef::new_parameter(1u32.into()),
-                [PathSegment::symbol("f2")]
+                [PathSegment::field("f2")]
             ),
         );
     }
@@ -945,7 +939,7 @@ mod ap_tests {
     fn global_with_field() {
         assert_eq!(
             access_path_from_str("$globals.a", &Locals::default()),
-            AccessPath::new(VariableRef::new_global(), [PathSegment::symbol("a")]),
+            AccessPath::new(VariableRef::new_global(), [PathSegment::field("a")]),
         );
     }
 
@@ -957,7 +951,7 @@ mod ap_tests {
             access_path_from_str("v.f1.f2", &locals),
             AccessPath::new(
                 VariableRef::new_local_idx(v),
-                [PathSegment::symbol("f1"), PathSegment::symbol("f2")]
+                [PathSegment::field("f1"), PathSegment::field("f2")]
             ),
         );
     }
@@ -979,7 +973,7 @@ mod ap_tests {
         let f = locals.get_or_intern("f");
         assert_eq!(
             access_path_from_str(r"f.\[3]", &locals),
-            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::symbol("[3]")]),
+            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::field("[3]")]),
         );
     }
 

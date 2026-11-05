@@ -1,7 +1,7 @@
 //! The one path grammar: parser and printer for [`PathSegment`] sequences.
 //!
-//! A path is a sequence of [`PathSegment`]s, each a symbolic field name or a numeric offset; an
-//! access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This
+//! A path is a sequence of [`PathSegment`]s, each a field name, a numeric offset, `deref` or
+//! `#value`; an access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This
 //! module owns the *only* textual encoding of that sequence. The fact store's on-disk columns,
 //! model-generator ports, the IR's `Display` impls, and the test DSLs all go through here, so
 //! printing and parsing are exact inverses and a malformed path fails loudly instead of silently
@@ -9,15 +9,20 @@
 //!
 //! ```text
 //! path    := segment*                      -- "" is the empty path
-//! segment := '.' ( offset | symbol )       -- a leading '.' is required before every segment
+//! segment := '.' ( offset | 'deref' | '#value' | symbol )
+//!                                          -- a leading '.' is required before every segment
 //! offset  := '[' ('+'|'-')? DIGIT+ ']'     -- decimal i64, nothing else
 //! symbol  := one or more chars, up to the next UNESCAPED '.',
 //!            and NOT beginning with an unescaped '['
-//! escape  := '\' ANY  ->  the literal char   ( '\.' '\[' '\\' )
+//! escape  := '\' ANY  ->  the literal char   ( '\.' '\[' '\\' '\d' '\#' )
 //! ```
 //!
+//! The unescaped words `deref` and `#value` are the [`PathSegment::Deref`] and
+//! [`PathSegment::Value`] segments. A *field* with one of those names is written with its first
+//! character escaped, `\deref` or `\#value`, so the four segment kinds never collide.
+//!
 //! Printing puts a `.` before each segment, writes offsets in decimal, and escapes `\`, `.`, and
-//! a **leading** `[` in a symbol. So `Symbol("[]")` prints as `.\[]` and `Symbol("[_elem_]")` as
+//! a **leading** `[` in a symbol, and the first character of a field named `deref` or `#value`. So `Symbol("[]")` prints as `.\[]` and `Symbol("[_elem_]")` as
 //! `.\[_elem_]` -- the frontends' synthetic array-element fields keep their bracketed names and
 //! survive the round trip as symbols rather than being reinterpreted as offsets.
 //!
@@ -29,6 +34,11 @@ use std::fmt;
 use internment::ArcIntern;
 
 use crate::mir::{Offset, PathSegment};
+
+/// The spelling of [`PathSegment::Deref`].
+pub const DEREF: &str = "deref";
+/// The spelling of [`PathSegment::Value`].
+pub const VALUE: &str = "#value";
 
 /// Where and why a string is not a path. `at` is a byte offset into the string that
 /// was parsed.
@@ -100,9 +110,7 @@ pub fn parse_segment(s: &str) -> Result<PathSegment, PathSyntaxError> {
 
 /// Parse a whole path into segments, in order.
 ///
-/// Does no normalization: adjacent offsets are returned as written and a zero offset is kept.
-/// Callers that want the analysis-level semantics (offset-run merging, `Offset(0)` dropping)
-/// pass the result to `facts::Path::from_accesses`.
+/// Does no normalization: the segments are returned as written. [`parse_path`] normalizes.
 pub fn parse_segments(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
     let mut segments = Vec::new();
     let mut at = 0usize;
@@ -120,6 +128,12 @@ pub fn parse_segments(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
         at = next;
     }
     Ok(segments)
+}
+
+/// Parse a whole path and put it in normal form ([`crate::mir::path::normalize`]). This is what
+/// every consumer of textual paths should call: paths are compared only in normal form.
+pub fn parse_path(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
+    parse_segments(s).map(crate::mir::path::normalize)
 }
 
 /// Parses the segment beginning at byte `at` (the leading `.` already consumed) and returns it
@@ -162,8 +176,10 @@ fn parse_segment_at(s: &str, at: usize) -> Result<(PathSegment, usize), PathSynt
         return Ok((PathSegment::Offset(Offset(value)), end));
     }
 
-    // A symbol runs to the next unescaped '.'.
+    // A symbol runs to the next unescaped '.'. `escaped_any` records whether any character was
+    // escaped, so `\deref` is a field while `deref` is the segment.
     let mut name = String::new();
+    let mut escaped_any = false;
     let mut i = at;
     while i < bytes.len() {
         match bytes[i] {
@@ -177,6 +193,7 @@ fn parse_segment_at(s: &str, at: usize) -> Result<(PathSegment, usize), PathSynt
                     });
                 }
                 // `\` escapes whatever follows, which may be multi-byte.
+                escaped_any = true;
                 let ch = s[next..].chars().next().expect("non-empty remainder");
                 name.push(ch);
                 i = next + ch.len_utf8();
@@ -188,7 +205,12 @@ fn parse_segment_at(s: &str, at: usize) -> Result<(PathSegment, usize), PathSynt
             }
         }
     }
-    Ok((PathSegment::Symbol(ArcIntern::from(name.as_str())), i))
+    let seg = match name.as_str() {
+        DEREF if !escaped_any => PathSegment::Deref,
+        VALUE if !escaped_any => PathSegment::Value,
+        _ => PathSegment::Field(ArcIntern::from(name.as_str())),
+    };
+    Ok((seg, i))
 }
 
 /// Decimal `i64` with an optional sign, and nothing else -- no hex, no whitespace, no `_`.
@@ -207,14 +229,22 @@ pub fn write_segment(out: &mut String, seg: &PathSegment) {
             use fmt::Write as _;
             let _ = write!(out, "[{value}]");
         }
-        PathSegment::Symbol(symbol) => {
+        PathSegment::Deref => out.push_str(DEREF),
+        PathSegment::Value => out.push_str(VALUE),
+        PathSegment::Field(symbol) => {
             let name: &str = symbol.as_ref();
             debug_assert!(
                 !name.is_empty(),
-                "Symbol(\"\") has no spelling in the path grammar"
+                "Field(\"\") has no spelling in the path grammar"
             );
+            // A field spelled like a segment keyword escapes its first character.
+            let keyword = name == DEREF || name == VALUE;
             for (i, ch) in name.char_indices() {
                 match ch {
+                    _ if i == 0 && keyword => {
+                        out.push('\\');
+                        out.push(ch);
+                    }
                     '\\' | '.' => {
                         out.push('\\');
                         out.push(ch);
@@ -258,7 +288,7 @@ mod tests {
     use super::*;
 
     fn sym(name: &str) -> PathSegment {
-        PathSegment::symbol(name)
+        PathSegment::field(name)
     }
 
     fn off(value: i64) -> PathSegment {
@@ -372,6 +402,27 @@ mod tests {
     }
 
     #[test]
+    fn keywords() {
+        assert_eq!(parse_ok(".deref"), vec![PathSegment::Deref]);
+        assert_eq!(parse_ok(".#value"), vec![PathSegment::Value]);
+        assert_eq!(parse_ok(r".\deref"), vec![sym("deref")]);
+        assert_eq!(parse_ok(r".\#value"), vec![sym("#value")]);
+        assert_eq!(parse_ok(".derefx"), vec![sym("derefx")]);
+        assert_eq!(segment_to_string(&sym("deref")), r"\deref");
+        assert_eq!(segment_to_string(&sym("#value")), r"\#value");
+        assert_eq!(segment_to_string(&PathSegment::Deref), "deref");
+        assert_eq!(segment_to_string(&PathSegment::Value), "#value");
+    }
+
+    #[test]
+    fn parse_path_normalizes() {
+        assert_eq!(
+            parse_path(".[1].[2].f.[0].[8].#value.[4]").unwrap(),
+            vec![off(3), sym("f"), PathSegment::Value]
+        );
+    }
+
+    #[test]
     fn printing_escapes() {
         assert_eq!(segment_to_string(&sym("[]")), r"\[]");
         assert_eq!(segment_to_string(&sym("[_elem_]")), r"\[_elem_]");
@@ -400,6 +451,10 @@ mod tests {
             vec![sym(r"a\b")],
             vec![sym("a[3]")],
             vec![sym("foo"), off(8), sym("deref")],
+            vec![sym("foo"), off(8), PathSegment::Deref],
+            vec![sym("#value")],
+            vec![PathSegment::Value],
+            vec![PathSegment::Deref, sym("deref"), PathSegment::Value],
             vec![sym("*")],
         ];
         for segs in corpus {

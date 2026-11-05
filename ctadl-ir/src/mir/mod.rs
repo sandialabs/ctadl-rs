@@ -134,6 +134,7 @@ mod basic_blocks;
 pub mod builder;
 pub mod call;
 pub mod encode;
+pub mod path;
 pub mod path_syntax;
 pub mod pos;
 mod terminator;
@@ -141,8 +142,8 @@ mod verify;
 pub mod visit;
 
 pub use crate::mir::path_syntax::{
-    PathSyntaxError, PathSyntaxErrorKind, parse_segment, parse_segments, path_to_string,
-    segment_to_string, write_path, write_segment,
+    PathSyntaxError, PathSyntaxErrorKind, parse_path, parse_segment, parse_segments,
+    path_to_string, segment_to_string, write_path, write_segment,
 };
 
 // Index into basic blocks in `BasicBlocks`
@@ -157,27 +158,6 @@ impl BasicBlockIdx {
 }
 
 pub type Symbol = ArcIntern<str>;
-
-/// Field name for the *memory* an address names -- the dereference itself. Front ends with
-/// pointers (C, pcode) spell every memory access as an address followed by this symbol, so C's
-/// `a[3]` is the path `a.[3].deref` and `*p` is `p.deref`. An [`Offset`] in a path only moves
-/// an address; this field is what touches memory.
-///
-/// Keeping the offset apart from the dereference is what makes element addresses composable:
-/// offsets are summed when paths meet, so a callee's write at `.[1].deref` through `&a[1]`
-/// (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]` reads. The analysis
-/// gives this field meaning, so a front end that needs a pointer-like field should use this one
-/// rather than minting its own.
-pub const DEREF_FIELD: &str = "deref";
-
-/// Field name under which a variable records what its *value* was computed from, as opposed to
-/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`.
-///
-/// The field is terminal: the analysis admits `p.#value` for every path `p` it admits, and no
-/// path with a segment after `#value`. It also absorbs itself, `p.#value · #value = p.#value`, so
-/// `t.#value <- v` carries what `v`'s own value was computed from. The `#` keeps it apart from
-/// every front end's field names.
-pub const VALUE_FIELD: &str = "#value";
 
 /// A newtype wrapper for u64 representing a numeric offset in field access
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -207,26 +187,38 @@ impl OffsetAccess {
     }
 }
 
-/// A single segment used only as *input* to path lowering ([`load_access_path`] /
-/// [`store_access_path`]) and as the element of the analysis-level path (`facts::Path`). Unlike
-/// [`OffsetAccess`] (offset-only) and [`FieldRef`] (a single symbol), a segment sequence may
-/// freely mix pointer-arithmetic offsets and symbolic field accesses in any order (e.g.
-/// `__stack_top.[8].deref.f`). Lowering turns each symbolic access into a
-/// [`StatementKind::Load`]/[`StatementKind::Store`], yielding type-correct [`Address`]es and
-/// single-symbol field paths.
+/// One segment of an access path (S1 of `docs/ir.md`).
+///
+/// The four kinds are distinct variants: [`PathSegment::Deref`] and [`PathSegment::Value`] are
+/// not field names, so a source-language field named `deref` or `#value` is an ordinary
+/// [`PathSegment::Field`] and cannot be mistaken for them. Paths are compared only in normal
+/// form; [`path`] owns the equations.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PathSegment {
-    /// A symbolic field name (e.g., `deref`, or a C field `f`)
-    Symbol(Symbol),
-    /// A numeric offset (pointer arithmetic)
+    /// A symbolic field name, with no layout (e.g. a C field `f`, a Java field).
+    Field(Symbol),
+    /// A constant offset: address arithmetic, not a memory access.
     Offset(Offset),
+    /// The step from an address to the memory there. Front ends with pointers spell every
+    /// memory access as an address followed by this segment, so C's `a[3]` is `a.[3].deref` and
+    /// `*p` is `p.deref`.
+    ///
+    /// Keeping the offset apart from the dereference is what makes element addresses
+    /// composable: offsets are summed when paths meet, so a callee's write at `.[1].deref`
+    /// through `&a[1]` (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]`
+    /// reads.
+    Deref,
+    /// What a variable's value was computed from, as opposed to what it holds. [`Exp::Value`]
+    /// lowers `t = value(v)` to `t.#value <- v`. Terminal: a field or `deref` after it is void,
+    /// and it absorbs itself and adjacent offsets.
+    Value,
 }
 
 impl PathSegment {
     #[inline]
-    pub fn is_symbol(&self) -> bool {
-        matches!(self, PathSegment::Symbol(_))
+    pub fn is_field(&self) -> bool {
+        matches!(self, PathSegment::Field(_))
     }
 
     #[inline]
@@ -234,9 +226,10 @@ impl PathSegment {
         matches!(self, PathSegment::Offset(_))
     }
 
+    /// A field segment named `name`. A name such as `deref` is a field like any other.
     #[inline]
-    pub fn symbol<S: AsRef<str>>(name: S) -> Self {
-        PathSegment::Symbol(ArcIntern::from(name.as_ref()))
+    pub fn field<S: AsRef<str>>(name: S) -> Self {
+        PathSegment::Field(ArcIntern::from(name.as_ref()))
     }
 
     #[inline]
@@ -244,29 +237,26 @@ impl PathSegment {
         PathSegment::Offset(Offset(offset))
     }
 
-    /// The dereference segment, [`DEREF_FIELD`].
+    /// The dereference segment.
     #[inline]
     pub fn deref() -> Self {
-        PathSegment::symbol(DEREF_FIELD)
+        PathSegment::Deref
     }
 
-    /// True for the dereference segment ([`DEREF_FIELD`]) -- the memory at an address, as
-    /// opposed to a struct member.
     #[inline]
     pub fn is_deref(&self) -> bool {
-        matches!(self, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
+        matches!(self, PathSegment::Deref)
     }
 
-    /// The value segment, [`VALUE_FIELD`].
+    /// The value segment.
     #[inline]
     pub fn value() -> Self {
-        PathSegment::symbol(VALUE_FIELD)
+        PathSegment::Value
     }
 
-    /// True for the value segment ([`VALUE_FIELD`]).
     #[inline]
     pub fn is_value(&self) -> bool {
-        matches!(self, PathSegment::Symbol(s) if &**s == VALUE_FIELD)
+        matches!(self, PathSegment::Value)
     }
 }
 
@@ -489,10 +479,12 @@ pub struct OffsetAccesses {
 /// [`StatementKind::Load`] or written by a [`StatementKind::Store`] (e.g. the `.deref` in
 /// `Load(dest, x.[50], .deref)`). This is the counterpart to [`Address`]: offsets live in an
 /// address, symbolic fields live in a field path, and the two meet only at a load/store.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FieldRef {
-    pub field: Symbol,
+    /// A [`PathSegment::Field`], [`PathSegment::Deref`] or [`PathSegment::Value`]; never an
+    /// offset.
+    pub field: PathSegment,
 }
 
 /// Expressions. The IR is flat, so expressions are either constants, variables or addresses
@@ -514,7 +506,7 @@ pub enum Exp {
     /// The value of `v`, not its identity: the destination's value depends on `v`'s, but nothing
     /// reachable through the destination is reachable through `v`. Integer arithmetic uses it
     /// for operands that only supply a number, so `t = a + i` relates `t` to the memory behind
-    /// `a`, the base, and not to the memory behind `i`. See [`VALUE_FIELD`].
+    /// `a`, the base, and not to the memory behind `i`. See [`PathSegment::Value`].
     ///
     /// Last, so that the other variants keep their encoding.
     ///
@@ -937,13 +929,20 @@ impl VariableRef {
 }
 
 impl AccessPath {
-    /// Creates an access path from a base variable and its path.
+    /// Creates an access path from a base variable and its path, in normal form
+    /// ([`path::normalize`]).
     #[inline]
     pub fn new(base: VariableRef, segments: impl IntoIterator<Item = PathSegment>) -> Self {
         Self {
             base,
-            segments: segments.into_iter().collect(),
+            segments: path::normalize(segments).into_iter().collect(),
         }
+    }
+
+    /// The classification of this access path's path ([`path::classify`]).
+    #[inline]
+    pub fn class(&self) -> path::PathClass {
+        path::classify(&self.segments)
     }
 
     /// True when the access path names its base variable itself (its path is empty).
@@ -1080,39 +1079,54 @@ impl FieldRef {
     #[inline]
     pub fn symbol<S: AsRef<str>>(name: S) -> Self {
         Self {
-            field: ArcIntern::from(name.as_ref()),
+            field: PathSegment::field(name),
         }
     }
 
-    /// The dereference field, [`DEREF_FIELD`].
+    /// The dereference.
     #[inline]
     pub fn deref() -> Self {
-        Self::symbol(DEREF_FIELD)
+        Self {
+            field: PathSegment::Deref,
+        }
     }
 
-    /// A field path from an already-interned symbol.
+    /// A field path from a non-offset segment.
     #[inline]
-    pub fn new(field: Symbol) -> Self {
+    pub fn new(field: PathSegment) -> Self {
+        assert!(!field.is_offset(), "a field reference is never an offset");
         Self { field }
     }
 
-    /// The symbolic field name.
+    /// The segment.
     #[inline]
-    pub fn as_str(&self) -> &str {
-        self.field.as_ref()
+    pub fn segment(&self) -> &PathSegment {
+        &self.field
     }
 
-    /// The interned symbol.
+    /// The field name, if this is a [`PathSegment::Field`].
     #[inline]
-    pub fn symbol_ref(&self) -> &Symbol {
-        &self.field
+    pub fn name(&self) -> Option<&str> {
+        match &self.field {
+            PathSegment::Field(s) => Some(s.as_ref()),
+            _ => None,
+        }
     }
 }
 
 impl From<Symbol> for FieldRef {
     #[inline]
     fn from(field: Symbol) -> Self {
-        Self { field }
+        Self {
+            field: PathSegment::Field(field),
+        }
+    }
+}
+
+impl From<PathSegment> for FieldRef {
+    #[inline]
+    fn from(field: PathSegment) -> Self {
+        Self::new(field)
     }
 }
 
@@ -1126,7 +1140,7 @@ impl From<&str> for FieldRef {
 impl Display for FieldRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = String::from(".");
-        path_syntax::write_segment(&mut out, &PathSegment::Symbol(self.field.clone()));
+        path_syntax::write_segment(&mut out, &self.field);
         f.write_str(&out)
     }
 }
@@ -1644,7 +1658,7 @@ impl StatementKind {
 /// - A [`PathSegment::Offset`] is pointer arithmetic (address computation), *not* a memory access.
 ///   It emits no load; it accumulates into the current address, and consecutive offsets merge into
 ///   a single offset (`x.[10].[40]` ⟶ `x.[50]`).
-/// - A [`PathSegment::Symbol`] (e.g. `deref`, or a C field `f`) is a memory read. It emits one
+/// - A [`PathSegment::Field`] (e.g. `deref`, or a C field `f`) is a memory read. It emits one
 ///   [`StatementKind::Load`] whose `source` is the current address (base variable + accumulated
 ///   offset) and whose loaded `field` is that single symbol. The load's destination — a fresh
 ///   temporary minted by `fresh` — becomes the new base, and offset accumulation restarts from it.
@@ -1667,7 +1681,7 @@ pub fn load_access_path(
                 Some(OffsetAccess::Offset(prev)) => prev.0 = prev.0.wrapping_add(offset.0),
                 _ => cur.accesses.offsets.push(OffsetAccess::Offset(offset)),
             },
-            PathSegment::Symbol(symbol) => {
+            symbol @ (PathSegment::Field(_) | PathSegment::Deref | PathSegment::Value) => {
                 // A symbolic field is a memory read: load it from the current address and continue
                 // from the loaded value.
                 let dest = fresh();
@@ -1704,12 +1718,9 @@ pub fn store_access_path(
     // Split off a trailing symbol (the store field), if any. Everything before it is an address
     // computation (offsets + loads for interior derefs). Any trailing offsets after the last
     // symbol stay on the store address (a field-less offset write).
-    let field = match segments.iter().rposition(PathSegment::is_symbol) {
+    let field = match segments.iter().rposition(|s| !s.is_offset()) {
         Some(i) if segments[i + 1..].iter().all(PathSegment::is_offset) => {
-            let PathSegment::Symbol(symbol) = segments.remove(i) else {
-                unreachable!()
-            };
-            Some(FieldRef::new(symbol))
+            Some(FieldRef::new(segments.remove(i)))
         }
         _ => None,
     };

@@ -1897,7 +1897,7 @@ impl<'a> Lowerer<'a> {
                     .map(|t| self.eval_lvalue(t, blk))
                     .unwrap_or_else(|| self.build_var("_"));
                 if let Some(field) = field {
-                    ap.segments.push(PathSegment::symbol(self.node_text(field)));
+                    ap.segments.push(PathSegment::field(self.node_text(field)));
                 }
                 ap
             }
@@ -1940,11 +1940,11 @@ impl<'a> Lowerer<'a> {
     /// side effects and collapses to a generic element field.
     fn key_segment(&mut self, key: Node<'a>, blk: BasicBlockIdx) -> PathSegment {
         match key.kind() {
-            "string" => PathSegment::symbol(self.string_content(key)),
-            "number" => PathSegment::symbol(format!("[{}]", self.node_text(key))),
+            "string" => PathSegment::field(self.string_content(key)),
+            "number" => PathSegment::field(format!("[{}]", self.node_text(key))),
             _ => {
                 let _ = self.eval_expr(key, blk);
-                PathSegment::symbol("[_elem_]")
+                PathSegment::field("[_elem_]")
             }
         }
     }
@@ -1966,17 +1966,17 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or_else(nil_exp);
             let seg = if let Some(name) = field.child_by_field_name("name") {
                 match name.kind() {
-                    "identifier" | "global" => PathSegment::symbol(self.node_text(name)),
-                    "string" => PathSegment::symbol(self.string_content(name)),
-                    "number" => PathSegment::symbol(format!("[{}]", self.node_text(name))),
+                    "identifier" | "global" => PathSegment::field(self.node_text(name)),
+                    "string" => PathSegment::field(self.string_content(name)),
+                    "number" => PathSegment::field(format!("[{}]", self.node_text(name))),
                     _ => {
                         let _ = self.eval_expr(name, blk);
-                        PathSegment::symbol("[_elem_]")
+                        PathSegment::field("[_elem_]")
                     }
                 }
             } else {
                 // Positional array entry.
-                PathSegment::symbol("[_elem_]")
+                PathSegment::field("[_elem_]")
             };
             let target = AccessPath::new(table.clone(), [seg]);
             self.assign_to(blk, target, value);
@@ -2039,7 +2039,7 @@ impl<'a> Lowerer<'a> {
                 let ap = self.build_var(u);
                 Exp::from(self.emit_loads(blk, ap))
             };
-            let target = AccessPath::new(closure.clone(), [PathSegment::symbol(u)]);
+            let target = AccessPath::new(closure.clone(), [PathSegment::field(u)]);
             self.assign_to(blk, target, value);
         }
         self.closure_upvalues.insert(fidx, upvalues);
@@ -2207,7 +2207,7 @@ impl<'a> Lowerer<'a> {
             if base == Some("table") && field == Some("insert") && arg_nodes.len() >= 2 {
                 let mut target = self.eval_lvalue(arg_nodes[0], blk);
                 let value = self.eval_expr(*arg_nodes.last().unwrap(), blk);
-                target.segments.push(PathSegment::symbol("[_elem_]"));
+                target.segments.push(PathSegment::field("[_elem_]"));
                 self.assign_to(blk, target, value);
                 return Some(nil_exp());
             }
@@ -2224,7 +2224,7 @@ impl<'a> Lowerer<'a> {
             // variables (see `lower_for`).
             "ipairs" | "pairs" if !arg_nodes.is_empty() => {
                 let mut ap = self.eval_lvalue(arg_nodes[0], blk);
-                ap.segments.push(PathSegment::symbol("[_elem_]"));
+                ap.segments.push(PathSegment::field("[_elem_]"));
                 Some(Exp::from(self.emit_loads(blk, ap)))
             }
             // `select(k, ...)`: returns the selected varargs; over-approximate by flowing every
@@ -2370,12 +2370,12 @@ impl<'a> Lowerer<'a> {
         if self.cur_upvalues.contains(name)
             && let Some(Binding::Param(idx)) = self.lookup("%self")
         {
-            return AccessPath::new(VariableRef::new_parameter(idx), [PathSegment::symbol(name)]);
+            return AccessPath::new(VariableRef::new_parameter(idx), [PathSegment::field(name)]);
         }
         match self.lookup(name) {
             Some(Binding::Param(idx)) => AccessPath::from(VariableRef::new_parameter(idx)),
             Some(Binding::Local) => AccessPath::from(self.local_ref(name)),
-            None => AccessPath::new(VariableRef::new_global(), [PathSegment::symbol(name)]),
+            None => AccessPath::new(VariableRef::new_global(), [PathSegment::field(name)]),
         }
     }
 

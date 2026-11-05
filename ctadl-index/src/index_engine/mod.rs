@@ -1382,7 +1382,7 @@ pub static TYPE_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_names(
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
 ///
-/// With `deref_paths`, `deref` ([`DEREF_FIELD`](ctadl_ir::mir::DEREF_FIELD)) is also a model
+/// With `deref_paths`, `deref` ([`PathSegment::Deref`](ctadl_ir::mir::PathSegment::Deref)) is also a model
 /// path, so every program path gains its `.deref` extension.
 fn compute_paths(
     program_paths: Vec<(Path,)>,
@@ -1408,11 +1408,14 @@ fn compute_paths(
     with_value_paths(pre.paths)
 }
 
-/// Closes `paths` under the terminal [`VALUE_FIELD`](ctadl_ir::mir::VALUE_FIELD): `p·#value` is
+/// Closes `paths` under the terminal [`PathSegment::Value`](ctadl_ir::mir::PathSegment::Value): `p·#value` is
 /// admissible for every admissible `p` and the empty path, and no path has a segment after
 /// `#value`. A program that never mentions `#value` keeps its paths as they are.
 ///
-/// With [`PathSet::concat`] absorbing `#value · #value`, that is all the index rules need to
+/// Because every [`Path`] is normal, the closure is under the equations of `ctadl_ir::mir::path`
+/// too: `p.[k].#value` is the member `p.#value`, and no member is void.
+///
+/// With [`PathSet::concat`] absorbing `#value` and its adjacent offsets, that is all the index rules need to
 /// treat a value-derived fact as weaker than a copy: a row `t.#value <- a.q` cannot be extended
 /// by a suffix, so a read of `t.deref` never turns it into `t.deref <- a.q.deref`, and the suffix
 /// rules carry `#value` through copies, stores, summaries and call sites as the last segment of
@@ -1442,6 +1445,9 @@ fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
         out.push((p,));
         out.push((p.concat(&value),));
     }
+    // `p.[k]·#value` and `p·#value` are one path.
+    out.sort_unstable();
+    out.dedup();
     out
 }
 
@@ -1579,7 +1585,9 @@ ascent_source! {
     // A prefix may end in an offset that matches any offset (`match_prefix`'s arithmetic on its
     // last component), so each side carries a `wild` key beside its exact keys: the exact key
     // `.x.[4]` and the wild key `(.x, [4]·rest)`, matched by an edge path `.x.[m]` for `m != 4`
-    // with the suffix adjusted by `4 - m`. `Path::prefix_keys` spells out both.
+    // with the suffix adjusted by `4 - m`. A `#value` component is wild too, since
+    // `[m].#value = #value` for every `m`. `Path::prefix_keys` spells out both, and
+    // `Path::wild_rest` matches a wild key.
 
     // The distinct `(f, v, p)` reached under any condition, so the splits below run once per
     // path, not once per row (rows outnumber paths thirty to one on a dense binary).
@@ -1641,10 +1649,9 @@ ascent_source! {
     ext_dst(f, v1, p13, v2, p23, *c) <--
         locals_key_wild(f, v2, key, rest, p23),
         assign_wild(f, v2, key, m, v1, p1, c),
-        if let Some(n) = rest.head_offset(),
-        if n != *m,
+        if let Some((adj, tail)) = rest.wild_rest(*m),
         path_set(ps),
-        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+        if let Some(p13) = ps.concat(p1, Some(adj), &tail);
     // An update's copy carries every path of the source except the written one and those under
     // it, which is what makes the update overwrite. A path above the written one (the whole
     // variable) still carries everything. It needs no formal-side rule: its source path is
@@ -1670,11 +1677,10 @@ ascent_source! {
         if let Some(p43) = ps.concat(p4, None, rest);
     // The wild half: the `locals` path is `key.[m]`, the edge reads `key.[n]·tail`.
     lattice ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path, Cond);
-    ext_fml(f, v1, p1, v2, p2, n - *m, rest.tail(), *c) <--
+    ext_fml(f, v1, p1, v2, p2, adj, tail, *c) <--
         edge_split_wild(f, v2, key, rest, v1, p1, c),
         locals_wild(f, v2, key, m, p2),
-        if let Some(n) = rest.head_offset(),
-        if n != *m;
+        if let Some((adj, tail)) = rest.wild_rest(*m);
     locals(f, v1, p1, a, p43, c) <--
         ext_fml(f, v1, p1, v2, p2, adj, rest, c1),
         locals(f, v2, p2, a, p4, c2),
@@ -2104,10 +2110,9 @@ ascent_source! {
         call_target_key_wild(f, v2, key, rest, p23),
         assign_wild(f, v2, key, m, v1, p1, c),
         if c.is_always(),
-        if let Some(n) = rest.head_offset(),
-        if n != *m,
+        if let Some((adj, tail)) = rest.wild_rest(*m),
         path_set(ps),
-        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+        if let Some(p13) = ps.concat(p1, Some(adj), &tail);
     call_target_assign_like(f, v1.clone(), p13.clone(), tgt) <--
         call_target_edge(f, v1, p13, v2, p23),
         call_target_assign_like(f, v2, p23, tgt);

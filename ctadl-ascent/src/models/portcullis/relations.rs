@@ -655,7 +655,16 @@ fn scan_bodies(
                     | StatementKind::Update { field, .. }
                         if needs.uses_field =>
                     {
-                        fields.push((caller, Str::from(field.field.as_ref())));
+                        fields.push((
+                            caller,
+                            Str::from(match &field.field {
+                                ctadl_ir::mir::PathSegment::Field(name) => &**name,
+                                ctadl_ir::mir::PathSegment::Value => {
+                                    ctadl_ir::mir::path_syntax::VALUE
+                                }
+                                _ => ctadl_ir::mir::path_syntax::DEREF,
+                            }),
+                        ));
                     }
                     StatementKind::CallAssign { style, .. } if needs.callsite => {
                         callsites.extend(callee_strings(style, data).into_iter().map(|callee| {

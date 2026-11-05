@@ -29,7 +29,7 @@ Every lowering choice the IR does not force is a policy, made in one place:
 
 | Policy                         | Choice                                                     | Where         |
 | ------------------------------ | ---------------------------------------------------------- | ------------- |
-| Pointer lowering               | the traced place, else `DEREF_FIELD`; byref arguments copied in and out | `ptr.rs` |
+| Pointer lowering               | the traced place, else `PathSegment::Deref`; byref arguments copied in and out | `ptr.rs` |
 | Array index                    | does not taint the element read (as Dex and JVM)           | `ptr.rs`, `effects.rs` |
 | Branch conditions              | `Test` emits nothing                                       | `effects.rs`  |
 | `box`                          | contents-preserving assign; the boxed type instantiated    | `effects.rs`  |

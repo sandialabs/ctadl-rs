@@ -1,8 +1,8 @@
 //! Effects to statements.
 //!
 //! `F(field)` is the field symbol: `<cls::f>` for a named field, `[]` for an element,
-//! `length`, and `DEREF_FIELD` for `Deref` and `Block`. The dereference is never spelled as a
-//! string literal: `DEREF_FIELD` is the field the index and the query treat as a pointer
+//! `length`, and `PathSegment::Deref` for `Deref` and `Block`. The dereference is never spelled as a
+//! string literal: `PathSegment::Deref` is the field the index and the query treat as a pointer
 //! target.
 //!
 //! | Effect                                        | Statements                                    |

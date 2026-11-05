@@ -390,7 +390,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
-    // `#value` is terminal (`ctadl_ir::mir::VALUE_FIELD`).
+    // `#value` is terminal (`ctadl_ir::mir::PathSegment::Value`).
     for (p,) in &index_result.paths {
         let segments: Vec<_> = p.iter().collect();
         if let Some(i) = segments.iter().position(|s| s.is_value())

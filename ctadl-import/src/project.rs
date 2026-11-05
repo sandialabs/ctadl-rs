@@ -115,7 +115,10 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `11`: `VirtualMethodTable` became a struct of the per-function name table every frontend
 ///   fills and the per-language `Dispatch`, and the CIL frontend writes override bridges where
 ///   it wrote alias rows. A `bitcode` wire-format change to every `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "11";
+/// - `12`: `PathSegment` has four variants, `Field`, `Offset`, `Deref` and `Value`; `deref` and
+///   `#value` are no longer field names (`docs/ir.md`). A `bitcode` wire-format change to every
+///   `ir-program.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "12";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";

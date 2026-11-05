@@ -112,7 +112,9 @@ enum RawArgSel<'s> {
 
 enum RawPathSeg<'s> {
     Offset(&'s str, Span),
-    Symbol(String, Span),
+    /// A name, and whether it was quoted. An unquoted `deref` or `#value` is that segment; a
+    /// quoted one is a field of that name.
+    Symbol(String, bool, Span),
 }
 
 /// `a || b || ...`, each disjunct a conjunction `x && y && ...`.
@@ -241,9 +243,9 @@ peg::parser! {
         rule path_seg() -> RawPathSeg<'input>
             = s:position!() ("." _)? "[" _ i:int() _ "]" e:position!()
               { RawPathSeg::Offset(i, span(s, e)) }
-            / s:position!() "." _ name:(string() / n:$(seg_char()+) { n.to_string() })
+            / s:position!() "." _ name:(n:string() { (n, true) } / n:$(seg_char()+) { (n.to_string(), false) })
               e:position!()
-              { RawPathSeg::Symbol(name, span(s, e)) }
+              { RawPathSeg::Symbol(name.0, name.1, span(s, e)) }
 
         rule seg_char()
             = ['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$' | '-' | '%' | '*' | '#' | '<' | '>']
@@ -813,7 +815,7 @@ impl Builder {
             .into_iter()
             .filter_map(|seg| self.path_seg(seg))
             .collect();
-        // `#value` is the analysis's terminal value field (`ctadl_ir::mir::VALUE_FIELD`): nothing
+        // `#value` is the analysis's terminal value field (`ctadl_ir::mir::PathSegment::Value`): nothing
         // follows it in any admissible path, so a port that names a segment after it matches
         // nothing.
         if let Some(i) = path.iter().position(PathSegment::is_value)
@@ -861,12 +863,16 @@ impl Builder {
                     None
                 }
             },
-            RawPathSeg::Symbol(text, span) => {
+            RawPathSeg::Symbol(text, quoted, span) => {
                 if text.is_empty() {
                     self.error(span, "an access-path segment cannot be empty");
                     return None;
                 }
-                Some(PathSegment::Symbol(Symbol::from(text.as_str())))
+                Some(match text.as_str() {
+                    ctadl_ir::mir::path_syntax::DEREF if !quoted => PathSegment::Deref,
+                    ctadl_ir::mir::path_syntax::VALUE if !quoted => PathSegment::Value,
+                    _ => PathSegment::Field(Symbol::from(text.as_str())),
+                })
             }
         }
     }

@@ -170,7 +170,7 @@ impl Shadow<'_, '_, '_, '_, '_> {
             Value::Ptr(loc) if loc.path.is_empty() => {
                 if let Base::Cell(c) = loc.base {
                     let content = self.interp.cells[c].1.clone();
-                    let p = extend(path, ctadl_ir::mir::DEREF_FIELD.to_string());
+                    let p = extend(path, ctadl_ir::mir::path_syntax::DEREF.to_string());
                     let csh = self.label_value(k, &content, &p, seen);
                     merge(&mut self.interp.scells[c], csh);
                 }
@@ -285,7 +285,7 @@ impl Shadow<'_, '_, '_, '_, '_> {
                 if let Base::Cell(c) = loc.base {
                     let content = self.interp.cells[c].1.clone();
                     let csh = self.interp.scells[c].clone();
-                    let p = extend(&path, ctadl_ir::mir::DEREF_FIELD.to_string());
+                    let p = extend(&path, ctadl_ir::mir::path_syntax::DEREF.to_string());
                     self.collect(&content, &csh, p, true, seen, out);
                 }
             }
@@ -321,8 +321,10 @@ struct Static {
 fn segments(path: &ctadl_ascent::facts::Path) -> Vec<String> {
     path.iter()
         .map(|s| match s {
-            PathSegment::Symbol(sym) => sym.to_string(),
+            PathSegment::Field(sym) => sym.to_string(),
             PathSegment::Offset(o) => format!("[{}]", o.0),
+            PathSegment::Deref => ctadl_ir::mir::path_syntax::DEREF.to_string(),
+            PathSegment::Value => ctadl_ir::mir::path_syntax::VALUE.to_string(),
         })
         .collect()
 }

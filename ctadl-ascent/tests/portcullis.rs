@@ -877,7 +877,7 @@ fn a_quoted_segment_decodes_to_the_symbol_it_names() {
     let path = matches.propagations[0].src.path;
     assert_eq!(
         path.iter().cloned().collect::<Vec<_>>(),
-        vec![ctadl_ir::mir::PathSegment::Symbol(Symbol::from("[]"))]
+        vec![ctadl_ir::mir::PathSegment::Field(Symbol::from("[]"))]
     );
 }
 

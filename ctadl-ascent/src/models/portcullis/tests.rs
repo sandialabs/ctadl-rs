@@ -68,13 +68,13 @@ fn parses_ports_and_paths() {
     assert_eq!(
         path_of(0),
         vec![
-            PathSegment::Symbol(Symbol::from("foo")),
+            PathSegment::Field(Symbol::from("foo")),
             PathSegment::Offset(Offset(2))
         ]
     );
     assert_eq!(
         path_of(1),
-        vec![PathSegment::Symbol(Symbol::from("weird.field[0]"))]
+        vec![PathSegment::Field(Symbol::from("weird.field[0]"))]
     );
     match &heads[2].kind {
         HeadKind::Sink { port, .. } => assert!(matches!(port.port.base, PortBase::AnyArg)),
@@ -1316,7 +1316,7 @@ fn a_java_array_element_segment_survives_the_round_trip() {
         other => panic!("expected a propagation, got {other:?}"),
     };
     use ctadl_ir::mir::{PathSegment, Symbol};
-    assert_eq!(segments, vec![PathSegment::Symbol(Symbol::from("[]"))]);
+    assert_eq!(segments, vec![PathSegment::Field(Symbol::from("[]"))]);
 }
 
 // ---------------------------------------------------------------------------

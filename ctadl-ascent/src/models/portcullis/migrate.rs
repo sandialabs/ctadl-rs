@@ -1497,9 +1497,14 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
 pub fn segment_text(seg: &PathSegment) -> String {
     match seg {
         PathSegment::Offset(off) => format!(".[{}]", off.0),
-        PathSegment::Symbol(sym) => {
+        PathSegment::Deref => ".deref".to_string(),
+        PathSegment::Value => ".#value".to_string(),
+        PathSegment::Field(sym) => {
             let s: &str = sym;
+            // A field spelled like a segment keyword is quoted, so it reads back as a field.
             let plain = !s.is_empty()
+                && s != "deref"
+                && s != "#value"
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || "_$-%*#<>".contains(c));
             if plain {

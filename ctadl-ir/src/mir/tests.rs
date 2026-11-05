@@ -220,7 +220,7 @@ fn test_offset_newtype() {
 
     // Check how an OffsetAccess, which holds only offsets, and a PathSegment, which can hold
     // either, are printed.
-    let symbol_access = PathSegment::symbol("test");
+    let symbol_access = PathSegment::field("test");
     let offset_access = OffsetAccess::Offset(Offset(456));
 
     assert_eq!(format!("{}", symbol_access), "test");
@@ -234,19 +234,19 @@ fn test_offset_newtype() {
 #[test]
 fn test_display_uses_canonical_grammar() {
     // A leading '[' is escaped; a '[' inside a name needs no escape.
-    assert_eq!(PathSegment::symbol("[_elem_]").to_string(), r"\[_elem_]");
-    assert_eq!(PathSegment::symbol("[3]").to_string(), r"\[3]");
-    assert_eq!(PathSegment::symbol("a[3]").to_string(), "a[3]");
+    assert_eq!(PathSegment::field("[_elem_]").to_string(), r"\[_elem_]");
+    assert_eq!(PathSegment::field("[3]").to_string(), r"\[3]");
+    assert_eq!(PathSegment::field("a[3]").to_string(), "a[3]");
     // ... so a bracketed symbol and a real offset are distinguishable.
     assert_ne!(
-        PathSegment::symbol("[3]").to_string(),
+        PathSegment::field("[3]").to_string(),
         PathSegment::offset(3).to_string()
     );
     assert_eq!(PathSegment::offset(3).to_string(), "[3]");
 
     // Dots and backslashes in a field name are escaped.
-    assert_eq!(PathSegment::symbol("a.b").to_string(), r"a\.b");
-    assert_eq!(PathSegment::symbol(r"a\b").to_string(), r"a\\b");
+    assert_eq!(PathSegment::field("a.b").to_string(), r"a\.b");
+    assert_eq!(PathSegment::field(r"a\b").to_string(), r"a\\b");
     assert_eq!(FieldRef::symbol("a.b").to_string(), r".a\.b");
 
     // Offsets are decimal, negatives included.
@@ -257,9 +257,9 @@ fn test_display_uses_canonical_grammar() {
 
     // And everything the IR prints parses back to what it printed.
     for seg in [
-        PathSegment::symbol("[_elem_]"),
-        PathSegment::symbol("a.b"),
-        PathSegment::symbol(r"a\b"),
+        PathSegment::field("[_elem_]"),
+        PathSegment::field("a.b"),
+        PathSegment::field(r"a\b"),
         PathSegment::offset(-40),
     ] {
         assert_eq!(path_syntax::parse_segment(&seg.to_string()).unwrap(), seg);
