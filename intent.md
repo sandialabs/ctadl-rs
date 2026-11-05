@@ -66,6 +66,10 @@ Propagation:
   reach `y.f.g`. That imprecision is accepted.
 - The empty suffix and suffixes ending in #value move forward only.
 
+Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
+other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through
+`v` becomes reachable through `t`.
+
 ## Calls
 
 A call `r = f(a_1, …, a_n)` is the copies `p_i = a_i` and `r = ret`, with `p_i` and `ret`
@@ -74,8 +78,31 @@ the formals and return of `f`. Their labels have scope `Fixed`, like any copy's.
 A function reference is a label: `x = &f` puts the target label `f` at `x`. An indirect call
 `r = (*e)(a_1, …, a_n)` is the call of `f` for every target label `f` at `e` and `e.#value`; a
 virtual call is the same with the receiver's class labels resolved through the class
-hierarchy. So labels create assignments, and the call graph is part of the same fixpoint.
+hierarchy. So labels create assignments, and the call graph is part of the same fixpoint. A
+call with no target label is zero assignments: nothing flows through it, and the analysis
+must report that, never hide it.
 
-Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
-other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through
-`v` becomes reachable through `t`.
+Target labels are ordinary labels: they follow the path rules and scopes, and cross
+functions like any label, so a function pointer stored in a struct in one function resolves
+a call in another.
+
+## Globals
+
+The semantics has one variable `globals`, shared by every function; a global `g` is the
+location `globals.g`. The implementation passes it to every function like a formal, which
+agrees with the semantics: a copy in, and stores inside the callee reach the caller's
+`globals` backward.
+
+## Summaries
+
+The implementation analyzes each function once into a summary: the flows of its body between
+paths rooted at its formals, return and `globals`. A flow that exists only because a target
+label reaches a formal path (`p ∋ g`, `p.vtable.[8].deref ∋ g`, `globals.handler ∋ g`) is
+*guarded* by that requirement; a flow through a direct call is unguarded. Instantiating a
+summary at a call site substitutes actuals for formals and fires a guarded flow only when the
+actuals carry its targets. Summaries and the call graph are therefore one fixpoint: a target
+reaches a formal only through other summaries. "Once" means no per-context copies, not an
+ordering of passes.
+
+Resolving a call by other means (a dispatch model, class hierarchy analysis for a small
+candidate set) only adds targets, so the implementation over-approximates the labeling.
