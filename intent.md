@@ -60,13 +60,15 @@ Propagation:
   labels of its base, so assigning from an address is defined.
 - Scope: a label placed by a store, at `y.d` or at any suffix of it, or introduced by a
   source, has scope `All`. A label arriving by a copy has scope `Fixed`.
-- Backward: for every non-empty suffix `t` not ending in #value, with both locations, labels at
-  `y.d.t` of scope `All` also reach `x.s.t`, keeping scope `All`. This makes a write through
+- Backward: for every non-empty suffix `t` other than `#value` itself, with both locations,
+  labels at `y.d.t` of scope `All` also reach `x.s.t`, keeping scope `All`. This makes a write through
   a copy of a pointer reach the original, while a label copied forward (`Fixed`) never moves
   back, so a phi or multi-source assignment does not merge its sources. Two stores to one destination do merge: `y.f = x; y.f = w` sends `x.g` to
   `w.g`, because the first store's labels at `y.f.g` must be `All` for `l = y; l.f = x` to
   reach `y.f.g`. That imprecision is accepted.
-- The empty suffix and suffixes ending in #value move forward only.
+- The empty suffix and the suffix `#value` move forward only: a variable's own value is not
+  shared with its aliases, but a value held in memory (`p.f.#value`, `p.deref.#value`) is,
+  like the cell that holds it.
 
 Consequence: `t.#value = v` gives `t.#value` the labels of `v` and `v.#value` only, since every
 other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reachable through

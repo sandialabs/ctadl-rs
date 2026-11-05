@@ -15,7 +15,7 @@ Line references are to the tree at the time of writing and will drift.
 ## 1. The semantics
 
 `intent.md` is normative. This section restates it as numbered rules so requirements can cite
-them. One rule (S8) differs from the intent's wording; see §5.
+them.
 
 **Paths.**
 
@@ -542,16 +542,10 @@ Anything not in this table that differs from the reference implementation is a b
 
 ## 5. Decisions required before planning
 
-1. **Amend S8's `#value` clause.** `intent.md` excludes every suffix *ending* in `#value`
-   from backward propagation. That blocks `*p = x + 1` in a callee from reaching the caller
-   (`p.deref.#value` would not flow back), which is the common case for computed values
-   stored through pointers. This document excludes only the suffix that *is* `#value` (the
-   variable's own value); a value stored in memory (`p.deref.#value`, `p.f.#value`) is shared
-   like the memory is. If the intent's wording was deliberate, R27 and §3.9 change.
-2. **C field access through `deref` (R15).** It is what S19 says and it unifies `*p` with
+1. **C field access through `deref` (R15).** It is what S19 says and it unifies `*p` with
    `p->f`, at the cost of every C path gaining a segment and the C golden tests changing.
    Confirm, or record C as an exception with its reason.
-3. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
+2. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
    `throwval`; confirm it is wanted now rather than later.
-4. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
+3. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
    (preferred) or delete and check the search only against the reference.
