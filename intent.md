@@ -37,7 +37,7 @@ Every path in normal form is exactly one of the following, checked in this order
   cell carrying a set of labels.
 
 Each label at a location has a *scope*, `All` or `Fixed`, saying whether it may move backward
-along copies (below). A location holds a set of (label, scope) pairs; `All` subsumes `Fixed`.
+along assignments (below). A location holds a set of (label, scope) pairs; `All` subsumes `Fixed`.
 
 A source or sink on a path `p` labels or observes both `p` and `p.#value`.
 
@@ -60,8 +60,7 @@ Propagation:
 - Backward: for every non-empty suffix `t` not ending in #value, with both locations, labels at
   `y.d.t` of scope `All` also reach `x.s.t`, keeping scope `All`. This makes a write through
   a copy of a pointer reach the original, while a label copied forward (`Fixed`) never moves
-  back, so a phi, a multi-source assignment, or a formal with several callers does not merge
-  its sources. Two stores to one destination do merge: `y.f = x; y.f = w` sends `x.g` to
+  back, so a phi or multi-source assignment does not merge its sources. Two stores to one destination do merge: `y.f = x; y.f = w` sends `x.g` to
   `w.g`, because the first store's labels at `y.f.g` must be `All` for `l = y; l.f = x` to
   reach `y.f.g`. That imprecision is accepted.
 - The empty suffix and suffixes ending in #value move forward only.
@@ -72,15 +71,19 @@ other `t.#value.s` is void. So `value(v)` needs no rule of its own: nothing reac
 
 ## Calls
 
-A call `r = f(a_1, …, a_n)` is the copies `p_i = a_i` and `r = ret`, with `p_i` and `ret`
-the formals and return of `f`. Their labels have scope `Fixed`, like any copy's.
-
-A function reference is a label: `x = &f` puts the target label `f` at `x`. An indirect call
-`r = (*e)(a_1, …, a_n)` is the call of `f` for every target label `f` at `e` and `e.#value`; a
-virtual call is the same with the receiver's class labels resolved through the class
-hierarchy. So labels create assignments, and the call graph is part of the same fixpoint. A
-call with no target label is zero assignments: nothing flows through it, and the analysis
+A call `r = f(a_1, …, a_n)` is the body of `f` with fresh variables, preceded by the copies
+`p_i = a_i` into its formals and followed by the copy `r = ret` from its return. Their labels
+have scope `Fixed`, like any copy's. A program is its infinite unfolding; only `globals` is
+shared between instances, so `r1 = id(a); r2 = id(b)` gives `r2` only `b`. A call to a
+function without a body is zero assignments unless a model supplies them, and the analysis
 must report that, never hide it.
+
+A function reference is a label: `x = &f` puts the target label `f` at `x`, and `x = new C`
+puts the class label `C`. An indirect call `r = (*e)(a_1, …, a_n)` is the call of `f` for
+every target label `f` at `e` and `e.#value`; a virtual call is the same with the receiver's
+class labels resolved through the class hierarchy. So labels create assignments, and the call graph is part of the same fixpoint,
+resolved per call-site instance. A call with no target label is zero assignments, reported
+like a call without a body.
 
 Target labels are ordinary labels: they follow the path rules and scopes, and cross
 functions like any label, so a function pointer stored in a struct in one function resolves
@@ -102,10 +105,33 @@ label reaches a formal path (`p ∋ g`, `p.vtable.[8].deref ∋ g`, `globals.han
 summary at a call site substitutes actuals for formals and fires a guarded flow only when the
 actuals carry its targets. Summaries and the call graph are therefore one fixpoint: a target
 reaches a formal only through other summaries. "Once" means no per-context copies, not an
-ordering of passes.
+ordering of passes. This computes the unfolding exactly for flows between formal paths; cells
+inside a callee see every caller's labels merged, where the unfolding keeps them apart. That
+over-approximation is accepted.
 
 Resolving a call by other means (a dispatch model, class hierarchy analysis for a small
-candidate set) only adds targets, so the implementation over-approximates the labeling.
+candidate set) only adds targets.
+
+## Models
+
+Models desugar to the constructs above: a propagation model is a store or copy between
+ports, a bridge is a call, a dispatch model adds targets, and a source or sink is an initial
+label or an observation. There is no third construct.
+
+## Program
+
+A program is a set of assignments and calls in SSA form, with an initial labeling from
+sources. Its semantics is the least labeling closed under the rules above. SSA is part of the
+definition, not a pass: it is what makes a variable one cell, so `x1 = src; x2 = clean;
+sink(x2)` reports nothing, while memory stays flow-insensitive (`sink(p.f); p.f = src` is
+reported). A phi is the set of its copies.
+
+The observable is the labeling at ports: which sources' labels reach which sinks. A reported
+path is a witness from the derivation, not part of the semantics.
+
+A pass is correct if the SSA form of its output has the same observable labeling as the SSA
+form of its input. A pass that creates or merges cells (`mem2reg`, coalescing) is correct
+only when no other path reaches the memory it promotes or merges.
 
 ## Front ends
 
