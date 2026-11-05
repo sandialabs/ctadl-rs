@@ -109,8 +109,9 @@ needs ratifying in `intent.md` (§5).
   always the last result (R21).
 - R6. `verify` (`mir/verify.rs`) rejects: a path not in normal form; `value(p)` anywhere but
   as an assignment source; a void path as a destination or source; a store (non-empty
-  destination) that defines its base in SSA; a write to `globals` with an empty path; a `deref` or `#value` spelled as a field. The
-  verifier is the executable definition of well-formed IR.
+  destination) that defines its base in SSA; a write to `globals` with an empty path; a
+  `deref` or `#value` spelled as a field. The verifier is the executable definition of
+  well-formed IR.
 - R7. The textual form of the IR (dumps, flowy, Portcullis ports) prints and parses the four
   segment kinds unambiguously, and parsers normalize.
 - R8. The import format version is bumped; an older import is rejected with a message to
