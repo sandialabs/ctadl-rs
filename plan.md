@@ -143,8 +143,10 @@ Tests (the corpus, one program per rule):
   `#value` stays forward-only; `p.f.#value` and `p.deref.#value` move backward.
 - S9: the two-store merge, as an expected flow.
 - S10: `r1 = id(a); r2 = id(b)` gives `r2` only `b`; a bodyless call carries nothing.
-- S11/S12: function pointer through a struct field resolves; class label through `new`;
-  constant string reaching a bridge.
+- S11/S12: function pointer through a struct field resolves. Class label through `new`, a
+  bodyless direct callee, a two-result call and a string label reaching a bridge are not
+  flowy programs (R42): `index_engine_tests.rs` cases over hand-built IR with
+  `models/test_vmt.rs`, and the `java` and `android-icc` nightly cases, pin them.
 - S13/S14: a global written in a callee reaches the caller; a guarded summary fires only at
   the establishing call site.
 - S16: `x1 = src; x2 = clean; sink(x2)` empty; `sink(p.f); p.f = src` reported.

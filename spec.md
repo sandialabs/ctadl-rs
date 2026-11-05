@@ -258,7 +258,12 @@ and measured rather than changed.
   options (`CTADL_EXP_INT_ARITH`, mem2reg policy) when they are not the
   default.
 - R42. The reference implementation (R10), the verifier (R6) and `intent.md` agree; a test
-  corpus of flowy programs, one per rule S1–S19, pins each rule with its expected observable.
+  corpus of flowy programs, one per rule, pins each rule with its expected observable, for
+  every rule flowy can express: all of S1–S19 except the virtual-call and class-label half
+  of S11 and S12, a call with several results (R5), a direct call to a bodyless function
+  (S10), and the bridge that consumes a string label (S12). Those are pinned instead by
+  `ctadl-ascent/src/index_engine_tests.rs` cases over hand-built IR with
+  `models/test_vmt.rs`, and by the `java` and `android-icc` nightly cases.
 - R43. The regression suite (`cargo xtask regression`) passes under the new semantics, with
   every changed answer explained by a rule or a listed approximation.
 - R44. Front-end golden tests are regenerated and reviewed for the convention changes (R15–R21).
