@@ -165,11 +165,10 @@ them.
   update cannot be re-expressed as assignments (`x2 = x1; x2.p = v` is a weak update plus an
   alias), which is why it has no place in the semantics. Dropping a write to a frame
   address (`ctadl-pcode/src/lib.rs:201`) stays, as a documented convention.
-- R21. An exception is the last result of every call and the last value of every return. A
-  front end whose language has exceptions propagates a callee's escaping exception into its
-  own exception result, as ctadl-cil does with `excout` (`ctadl-cil/src/method.rs:450`). JVM
-  and Dex, which today drop uncaught callee exceptions (`ctadl-jvm/src/lib.rs:399`,
-  `ctadl-dex/src/lib.rs:503`), adopt the same convention.
+- R21. An exception is the last result of every call and the last value of every return. How
+  far a front end propagates a callee's escaping exception is its own convention, documented
+  in its crate docs (ctadl-cil accumulates them in `excout`; JVM and Dex drop uncaught callee
+  exceptions, a limitation recorded in docs/limitations.md and outside this work).
 - R22. A direct call to a name with no body stays a call (S10) and is never silently turned
   into nothing; the index reports it (R40).
 
@@ -389,7 +388,7 @@ Per front end, what changes; everything else stays.
   docs/limitations.md. The same-block `addr_alias` must-alias table is a front-end
   precision device and is kept.
 - **JVM / Dex.** Arithmetic becomes value-only; `MethodHandle` constants with a known method
-  become `ptr<F>`; uncaught callee exceptions are propagated into `throwval` (R21). Dex's direct
+  become `ptr<F>`. Dex's direct
   assignments to `Param` variables are fine (SSA versions them; version 0 is the incoming
   value).
 - **CIL.** Arithmetic becomes value-only; `excout` is already R21. Value-type copies remain
@@ -542,7 +541,5 @@ Anything not in this table that differs from the reference implementation is a b
 
 ## 5. Decisions required before planning
 
-1. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
-   `throwval`; confirm it is wanted now rather than later.
-2. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
+1. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
    (preferred) or delete and check the search only against the reference.
