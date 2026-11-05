@@ -227,11 +227,12 @@ One PR per front end; they are independent.
 
 Files:
 
-- `intent.md` → `docs/ir-semantics.md`; `spec.md` → `docs/ir-redesign.md`; this file →
-  `docs/ir-redesign-plan.md`.
+- `docs/ir.md` (new, the only new document): the IR's syntax (paths and segments,
+  statements, calls, labels, the textual form) from spec §1 and §3.2, and its semantics from
+  `intent.md` as ratified. `intent.md`, `spec.md` and this file stay at the root.
 - `docs/spec.md`: §2 access path, §4.1 import/index, §4.2 (field propagation, finite access
   paths, summaries, aliasing, "value taint only moves forward") rewritten to cite
-  `docs/ir-semantics.md`.
+  `docs/ir.md`.
 - `docs/debugging.md`: relation names (`assign`, `summary`, no `update_sans_path`).
 - `ctadl-import/src/project.rs`: the import config records `CTADL_EXP_INT_ARITH` and the
   mem2reg policy when not default.

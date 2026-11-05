@@ -267,17 +267,20 @@ and measured rather than changed.
 - R43. The regression suite (`cargo xtask regression`) passes under the new semantics, with
   every changed answer explained by a rule or a listed approximation.
 - R44. Front-end golden tests are regenerated and reviewed for the convention changes (R15–R21).
-- R45. docs/spec.md §2 (access path), §4.2 (field propagation, finite access paths,
-  aliasing, the "value taint only moves forward" sentence) and docs/portcullis.md (ports) are
-  rewritten to cite §1 rather than restate it; `intent.md` moves to `docs/ir-semantics.md`
-  and becomes the normative semantics.
+- R45. One new document, `docs/ir.md`, defines the IR: its syntax (paths and segments,
+  statements, calls, labels, the textual form of R7) and its semantics (`intent.md`, as
+  ratified). It is the normative reference; `intent.md`, this document and the plan stay at
+  the repository root as the record of the redesign. docs/spec.md §2 (access path), §4.2
+  (field propagation, finite access paths, aliasing, the "value taint only moves forward"
+  sentence) and docs/portcullis.md (ports) are rewritten to cite `docs/ir.md` rather than
+  restate it.
 
 ## 3. Design
 
 ### 3.1 One semantics, three consumers
 
 ```
-                 docs/ir-semantics.md  (S1–S19, normative)
+                   docs/ir.md  (S1–S19, normative)
                            │
             ┌──────────────┼──────────────────┐
             ▼              ▼                  ▼
