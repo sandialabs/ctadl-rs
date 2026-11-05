@@ -58,7 +58,7 @@ use ctadl_ir::mir::{
 struct Body {
     loads: &'static [&'static str],
     stores: &'static [&'static str],
-    /// Written through `Update`, which the JSON `uses_field` counts.
+    /// Written through a store to a local aggregate, which the JSON `uses_field` counts.
     updates: &'static [&'static str],
     calls: Vec<CallStyle>,
 }
@@ -90,7 +90,7 @@ fn function(name: &str, arity: usize, body: Body) -> FunctionData {
     for field in body.updates {
         let agg = b.new_local_var("agg");
         let value = b.new_local_var("value");
-        b.create_update(agg.clone(), agg, *field, Exp::Variable(value));
+        b.create_store(agg, *field, Exp::Variable(value));
     }
     for style in body.calls {
         let ret = b.new_local_var("ret");
@@ -1537,7 +1537,7 @@ faithful! {
 }
 
 faithful! {
-    /// A field written through an `Update` statement was a use to the JSON matcher.
+    /// A field written through a store to a local aggregate is a use to the JSON matcher.
     uses_field_update = methods(json!([{"constraint": "uses_field", "name": "flag"}]));
     java,
 }

@@ -236,10 +236,7 @@ pub struct ProgramModelMatches {
     /// Functions whose winning promotion mode is `mem2reg_full` or `mem2reg_window`. The SSA
     /// pipeline reads this before codegen, to force or forbid full stack-slot promotion.
     pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
-    /// Functions whose winning frame mode is `frame_store` or `frame_update`. The SSA pipeline
-    /// reads this before codegen, to coarsen or keep the function's frame updates.
-    pub frame_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FrameWrites>,
-    /// The highest-priority mode claimed on each function and axis, which the three maps above
+    /// The highest-priority mode claimed on each function and axis, which the two settings above
     /// follow. Kept so a later claim can be compared against it; see [`Self::claim_mode`].
     pub mode_claims: std::collections::BTreeMap<(facts::Str, ModeAxis), ModeClaim>,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
@@ -312,7 +309,7 @@ impl ProgramModelMatches {
 
     /// Makes `mode` the function's setting on its axis.
     fn apply_mode(&mut self, function: facts::Str, mode: FunctionMode) {
-        use ctadl_ir::ssa::{FrameWrites, FullMode};
+        use ctadl_ir::ssa::FullMode;
         match mode {
             FunctionMode::SkipAnalysis => {
                 self.skip_analysis.insert(function);
@@ -325,12 +322,6 @@ impl ProgramModelMatches {
             }
             FunctionMode::Mem2RegWindow => {
                 self.mem2reg_modes.insert(function, FullMode::Forbid);
-            }
-            FunctionMode::FrameStore => {
-                self.frame_modes.insert(function, FrameWrites::Store);
-            }
-            FunctionMode::FrameUpdate => {
-                self.frame_modes.insert(function, FrameWrites::Update);
             }
         }
     }
@@ -380,7 +371,6 @@ impl ProgramModelMatches {
             && self.declared_paths.is_empty()
             && self.skip_analysis.is_empty()
             && self.mem2reg_modes.is_empty()
-            && self.frame_modes.is_empty()
             && self.mode_claims.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()

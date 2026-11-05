@@ -955,7 +955,7 @@ fn what_the_json_format_rejects_does_not_migrate() {
         (
             r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
             &[
-                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined values are 'skip-analysis', 'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'",
+                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined values are 'skip-analysis', 'mem2reg-full' and 'mem2reg-window'",
             ],
         ),
         (
@@ -1774,12 +1774,11 @@ fn migrates_each_mode_to_its_head() {
         );
     }
     let text = migrate_and_load(&generator(
-        r#"["mem2reg-full","frame-update","skip-analysis","mem2reg-window","frame-store"]"#,
+        r#"["mem2reg-full","skip-analysis","mem2reg-window"]"#,
     ));
     assert!(
-        text.contains("mem2reg_window(F),\n  frame_store(F),\n  skip_analysis(F) :-"),
+        text.contains("mem2reg_window(F),\n  skip_analysis(F) :-"),
         "{text}"
     );
     assert!(!text.contains("mem2reg_full"), "{text}");
-    assert!(!text.contains("frame_update"), "{text}");
 }

@@ -30,18 +30,6 @@ impl F {
             Exp::Variable(v),
         ))
     }
-    /// `__stack_top = update (__stack_top.[k].deref := v)`
-    fn update(&mut self, k: i64, v: &str) -> Statement {
-        let dest = self.st(k);
-        let st = self.local(STACK_TOP);
-        let v = self.local(v);
-        Statement::new_kind(StatementKind::update(
-            dest,
-            st,
-            FieldRef::deref(),
-            Exp::Variable(v),
-        ))
-    }
     /// `d = load __stack_top.[k].deref`
     fn load(&mut self, d: &str, k: i64) -> Statement {
         let source = self.st(k);
@@ -185,21 +173,21 @@ fn assigned_frame_base_skips_function() {
     assert_eq!(stmts(&f), before);
 }
 
-fn frame_updates(f: &FunctionData) -> Vec<i64> {
+fn frame_stores(f: &FunctionData) -> Vec<i64> {
     f.blocks
         .iter_enumerated()
         .flat_map(|(_, b)| b.iter())
         .filter_map(|s| match &s.kind {
-            StatementKind::Update { dest, .. } => Some(slot(dest)),
+            StatementKind::Store { dest, .. } => Some(slot(dest)),
             _ => None,
         })
         .collect()
 }
 
 #[test]
-fn frame_update_becomes_a_copy() {
+fn frame_store_becomes_a_copy() {
     let mut f = F::new();
-    let u = f.update(-16, "a");
+    let u = f.store(-16, "a");
     let l = f.load("b", -16);
     let mut f = f.one_block(vec![u, l]);
     let stats = promote_stack_slots_function(&mut f, EscapePolicy::Exact);
@@ -209,13 +197,13 @@ fn frame_update_becomes_a_copy() {
     assert_eq!(stmts(&f), vec!["assign %L3 = %L1", "assign %L2 = %L3"]);
 }
 
-/// A slot an escape reaches keeps its updates, so SSA versions the frame for it alone.
+/// A slot an escape reaches keeps its stores.
 #[test]
-fn kept_slot_keeps_its_updates() {
+fn kept_slots_keep_their_stores() {
     let mut f = F::new();
     let e = f.escape_call(-32);
-    let u1 = f.update(-32, "a");
-    let u2 = f.update(-16, "a");
+    let u1 = f.store(-32, "a");
+    let u2 = f.store(-16, "a");
     let l1 = f.load("b", -32);
     let l2 = f.load("c", -16);
     let mut f = f.one_block(vec![e, u1, u2, l1, l2]);
@@ -223,45 +211,24 @@ fn kept_slot_keeps_its_updates() {
     assert_eq!(stats.promoted_slots, 1);
     assert_eq!(stats.promoted_accesses, 2);
     assert_eq!(stats.kept_accesses, 2);
-    assert_eq!(frame_updates(&f), vec![-32]);
+    assert_eq!(frame_stores(&f), vec![-32]);
     assert_eq!(frame_loads(&f), vec![-32]);
     f.set_name("kept".to_string());
     transform(&mut f, true);
-    assert_eq!(frame_updates(&f), vec![-32], "{f}");
-}
-
-/// An update that copies the frame into another variable is a use this pass does not classify.
-#[test]
-fn update_copying_the_frame_skips_function() {
-    let mut f = F::new();
-    let x = f.local("x");
-    let st = f.local(STACK_TOP);
-    let a = f.local("a");
-    let copy = Statement::new_kind(StatementKind::update(
-        Address::new(x, [OffsetAccess::Offset(Offset(-8))]),
-        st,
-        FieldRef::deref(),
-        Exp::Variable(a),
-    ));
-    let u = f.update(-16, "a");
-    let mut f = f.one_block(vec![copy, u]);
-    let before = stmts(&f);
-    let stats = promote_stack_slots_function(&mut f, EscapePolicy::AllAbove);
-    assert_eq!(stats.skipped_functions, 1);
-    assert_eq!(stmts(&f), before);
+    assert_eq!(frame_stores(&f), vec![-32], "{f}");
 }
 
 #[test]
-fn full_promotes_an_escaped_slot_written_by_update() {
+fn full_promotes_an_escaped_slot_written_by_store() {
     let mut f = F::new();
-    let u = f.update(-32, "a");
+    let u = f.store(-32, "a");
     let e = f.escape_call(-32);
     let l = f.load("b", -32);
     let mut f = f.one_block(vec![u, e, l]);
     let (stats, note) = promote_function(&mut f, full(), None);
     assert_eq!(stats.promoted_accesses, 2);
     assert_eq!(stats.reloads, 1);
-    assert!(frame_updates(&f).is_empty(), "{f}");
+    assert!(frame_stores(&f).is_empty(), "{f}");
     assert!(note.is_some());
 }
 

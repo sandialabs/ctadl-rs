@@ -340,7 +340,6 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
                 &mut std::iter::once(dest)
             }
             StatementKind::Load { source, .. } => &mut std::iter::once(source),
-            StatementKind::Update { dest, .. } => &mut std::iter::once(dest),
             StatementKind::Assign { sources, .. } => &mut sources.iter().filter_map(|e| match e {
                 Exp::Address(p) => Some(p),
                 _ => None,

@@ -147,20 +147,14 @@ pub enum FunctionMode {
     Mem2RegFull,
     /// `mem2reg_window(F)` -- never promote all of `F`'s stack slots, whatever its size.
     Mem2RegWindow,
-    /// `frame_store(F)` -- coarsen `F`'s frame updates to stores.
-    FrameStore,
-    /// `frame_update(F)` -- keep `F`'s frame updates.
-    FrameUpdate,
 }
 
 impl FunctionMode {
-    pub const ALL: [FunctionMode; 6] = [
+    pub const ALL: [FunctionMode; 4] = [
         FunctionMode::SkipAnalysis,
         FunctionMode::Analyze,
         FunctionMode::Mem2RegFull,
         FunctionMode::Mem2RegWindow,
-        FunctionMode::FrameStore,
-        FunctionMode::FrameUpdate,
     ];
 
     /// The head's relation name.
@@ -170,8 +164,6 @@ impl FunctionMode {
             FunctionMode::Analyze => "analyze",
             FunctionMode::Mem2RegFull => "mem2reg_full",
             FunctionMode::Mem2RegWindow => "mem2reg_window",
-            FunctionMode::FrameStore => "frame_store",
-            FunctionMode::FrameUpdate => "frame_update",
         }
     }
 
@@ -182,8 +174,6 @@ impl FunctionMode {
             FunctionMode::Analyze => None,
             FunctionMode::Mem2RegFull => Some("mem2reg-full"),
             FunctionMode::Mem2RegWindow => Some("mem2reg-window"),
-            FunctionMode::FrameStore => Some("frame-store"),
-            FunctionMode::FrameUpdate => Some("frame-update"),
         }
     }
 
@@ -192,7 +182,6 @@ impl FunctionMode {
         match self {
             FunctionMode::SkipAnalysis | FunctionMode::Analyze => ModeAxis::Body,
             FunctionMode::Mem2RegFull | FunctionMode::Mem2RegWindow => ModeAxis::Mem2Reg,
-            FunctionMode::FrameStore | FunctionMode::FrameUpdate => ModeAxis::Frame,
         }
     }
 
@@ -212,8 +201,6 @@ pub enum ModeAxis {
     Body,
     /// Full stack-slot promotion: `mem2reg_full` or `mem2reg_window`.
     Mem2Reg,
-    /// Frame writes: `frame_store` or `frame_update`.
-    Frame,
 }
 
 /// What a `dispatch` head says. Exactly one per head, which is what keeps "forgot the model" and
@@ -506,8 +493,6 @@ pub const OUTPUT_RELATIONS: &[&str] = &[
     "analyze",
     "mem2reg_full",
     "mem2reg_window",
-    "frame_store",
-    "frame_update",
 ];
 
 /// Attribute names each built-in relation honors.

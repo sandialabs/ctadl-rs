@@ -650,9 +650,7 @@ fn scan_bodies(
         for (b, block) in data.blocks.iter().enumerate() {
             for (s, stmt) in block.statements.iter().enumerate() {
                 match &stmt.kind {
-                    StatementKind::Load { field, .. }
-                    | StatementKind::Store { field, .. }
-                    | StatementKind::Update { field, .. }
+                    StatementKind::Load { field, .. } | StatementKind::Store { field, .. }
                         if needs.uses_field =>
                     {
                         fields.push((

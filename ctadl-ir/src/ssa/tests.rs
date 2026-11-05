@@ -199,50 +199,6 @@ fn program_h() -> Program {
     program
 }
 
-// def F(p)
-// {
-//   %global = update(%global, .bar := p);
-// }
-//
-// The functional-update counterpart of `program_h`. A `Store` writes a field without defining a
-// variable; an `Update` copies the `source` aggregate and defines a *new* version of the
-// destination. SSA must therefore version the destination (a fresh version) distinctly from the
-// source (the incoming version) it reads.
-fn program_h_update() -> Program {
-    let mut program = Program::default();
-    program.functions.push(FunctionData::default());
-    let h = &mut program.functions[0.into()];
-    h.set_name("F".to_string());
-    h.params.push(ParameterType::SharedFields);
-    let blocks = h.blocks.blocks_mut();
-    let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
-        TerminatorKind::Goto {
-            targets: vec![BasicBlockIdx::new(1)].into(),
-        },
-    ))));
-    let body = blocks.push(BasicBlockData::new(None));
-    {
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
-        let global_ref = VariableRef::new_global();
-        let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::update(
-                Address::without_offsets(global_ref.clone()),
-                global_ref.clone(),
-                FieldRef::symbol("bar"),
-                Exp::from(p.clone()),
-            )),];
-        let body_block = &mut h[body];
-        body_block.extend(stmts);
-        body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![],
-        }));
-    }
-    program
-}
-
 // Call this after running ssa. Checks some SSA properties and verifies the AST.
 fn check_ssa_func(f: &FunctionData) {
     let mut verify = MirVerify::default();
@@ -290,39 +246,6 @@ fn test_ssa_function_h() {
     log::trace!("{p}");
     transform_program(&mut p, false);
     check_ssa_func(&p.functions[0.into()]);
-}
-
-#[test]
-fn test_ssa_function_h_update() {
-    let mut p = program_h_update();
-    log::trace!("{p}");
-    transform_program(&mut p, false);
-    log::trace!("{p}");
-    let f = &p.functions[0.into()];
-    check_ssa_func(f);
-
-    // A functional update defines a fresh version of the aggregate: SSA must rename the `Update`'s
-    // destination to a version distinct from the `source` it reads (the whole point of naming them
-    // separately). Both are the global heap here, so `%global_1 = update(%global_0, .bar := p_0)`.
-    let (dest, source) = f
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .find_map(|s| match &s.kind {
-            StatementKind::Update { dest, source, .. } => Some((dest.clone(), source.clone())),
-            _ => None,
-        })
-        .expect("expected an Update statement");
-    assert_eq!(
-        dest.base.variable, source.variable,
-        "same aggregate variable"
-    );
-    assert!(dest.base.version.is_some(), "destination is versioned");
-    assert!(source.version.is_some(), "source is versioned");
-    assert_ne!(
-        dest.base.version, source.version,
-        "destination gets a fresh version distinct from the source read"
-    );
 }
 
 #[test]
@@ -422,10 +345,6 @@ fn test_pipeline_tag() {
     assert_eq!(
         Pipeline::index_default().prune(false).tag(),
         "dt+co+m2r(w8)+ssa+cp"
-    );
-    assert_eq!(
-        Pipeline::index_default().frame(FrameWrites::Store).tag(),
-        "fs+dt+co+m2r(w8)+ssa(prune)+cp"
     );
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::ssa_only().prune(false).tag(), "ssa");
@@ -629,7 +548,6 @@ fn all_test_functions() -> Vec<FunctionData> {
         function_loop(),
     ];
     fs.extend(program_h().functions.iter().cloned());
-    fs.extend(program_h_update().functions.iter().cloned());
     fs
 }
 

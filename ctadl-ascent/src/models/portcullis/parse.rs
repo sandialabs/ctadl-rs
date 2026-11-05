@@ -183,8 +183,7 @@ peg::parser! {
         rule out_rel() -> &'input str
             = quiet!{
                 $(("source" / "sink" / "propagation" / "bridge" / "access_paths" / "dispatch"
-                   / "skip_analysis" / "analyze" / "mem2reg_full" / "mem2reg_window"
-                   / "frame_store" / "frame_update")
+                   / "skip_analysis" / "analyze" / "mem2reg_full" / "mem2reg_window")
                   !name_char())
             }
             / expected!("output relation")

@@ -83,7 +83,6 @@ fn canonical(
     let IndexResult {
         mut summary,
         mut assign_like,
-        update_sans_path: _,
         mut call_target_assign_like,
         mut resolved_call,
         const_reaches: _,

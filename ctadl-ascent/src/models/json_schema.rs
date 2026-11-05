@@ -572,15 +572,20 @@ impl Walk {
         }
         for item in items {
             match item.as_str() {
-                Some(
-                    "skip-analysis" | "mem2reg-full" | "mem2reg-window" | "frame-store"
-                    | "frame-update",
-                ) => {}
+                Some("skip-analysis" | "mem2reg-full" | "mem2reg-window") => {}
+                // A frame slot write is a store; there is no functional update to choose.
+                Some(mode @ ("frame-store" | "frame-update")) => self.unexpected_field(
+                    "modes",
+                    format!(
+                        "mode '{mode}' was removed: a frame slot write is always a store, and \
+                         mem2reg is what makes a slot flow-sensitive"
+                    ),
+                ),
                 Some(other) => self.unexpected_field(
                     "modes",
                     format!(
                         "unknown mode '{other}'; the defined values are 'skip-analysis', \
-                         'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'"
+                         'mem2reg-full' and 'mem2reg-window'"
                     ),
                 ),
                 None => self.not_string("modes"),

@@ -182,10 +182,8 @@ impl Context {
     /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
     /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
     ///
-    /// A write into the frame itself, `__stack_top.[k].deref := src`, is a functional update,
-    /// `__stack_top = update (__stack_top.[k].deref := src)`, so that SSA can version the frame.
-    /// The pipeline keeps it, or coarsens it into a store under `--frame store` (see
-    /// `ctadl_ir::ssa::FrameWrites`).
+    /// A write into the frame itself, `__stack_top.[k].deref := src`, is a store like any other.
+    /// The frame is memory, so `mem2reg` is what makes a slot flow-sensitive.
     ///
     /// A `dest` that is a frame address, `__stack_top.[k]`, writes nothing. It comes from a
     /// register or temporary that holds the address (the stack pointer, or `&local` that constant
@@ -205,23 +203,6 @@ impl Context {
                 return;
             }
             dest.segments.push(PathSegment::deref());
-        }
-        if let Variable::Local(base) = dest.base.variable
-            && locals.name(base) == ssa::STACK_TOP
-            && let Some((field, offsets)) = dest.segments.split_last()
-            && !field.is_offset()
-            && offsets.iter().all(PathSegment::is_offset)
-        {
-            let field = FieldRef::new(field.clone());
-            let addr = mir::load_access_path(
-                AccessPath::new(dest.base.clone(), offsets.iter().cloned()),
-                stmts,
-                || unreachable!("an offset-only address loads nothing"),
-            );
-            stmts.push(Statement::new_kind(StatementKind::update(
-                addr, dest.base, field, src,
-            )));
-            return;
         }
         mir::store_access_path(dest, src, stmts, || self.create_temp(locals));
     }

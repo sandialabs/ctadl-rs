@@ -93,8 +93,6 @@ pub struct IndexOptions {
     pub storage: Storage,
     /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
     pub mem2reg: Option<ssa::Mem2Reg>,
-    /// How native code's frame writes reach SSA; see [`ssa::FrameWrites`].
-    pub frame: ssa::FrameWrites,
 }
 
 impl Default for IndexOptions {
@@ -111,7 +109,6 @@ impl Default for IndexOptions {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
-            frame: ssa::Pipeline::index_default().frame,
         }
     }
 }
@@ -334,7 +331,6 @@ pub fn index(
         parallelism,
         storage,
         mem2reg,
-        frame,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -497,18 +493,12 @@ pub fn index(
                 .iter()
                 .map(|(f, mode)| (f.to_string(), *mode))
                 .collect(),
-            frame: model_matches
-                .frame_modes
-                .iter()
-                .map(|(f, mode)| (f.to_string(), *mode))
-                .collect(),
         };
         if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
             ssa::Pipeline::index_default()
                 .prune(prune_unreachable_cfg_nodes)
-                .mem2reg(mem2reg)
-                .frame(frame),
+                .mem2reg(mem2reg),
             match parallelism {
                 Parallelism::Serial => 1,
                 Parallelism::Threads(n) => n.get(),
@@ -1049,7 +1039,6 @@ pub fn query(
             .actual_param(index_facts.actual_param.clone())
             .call(final_call.clone())
             .assign(index_result.assign_like)
-            .update_sans_path(index_result.update_sans_path)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
         builder.build().unwrap()

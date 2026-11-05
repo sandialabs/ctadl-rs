@@ -187,11 +187,6 @@ macro_rules! make_ast_visitor {
                         self.visit_address(dest);
                         self.visit_exp(value);
                     }
-                    Update { dest, source, field: _, value } => {
-                        self.visit_address(dest);
-                        self.visit_variable_ref(source);
-                        self.visit_exp(value);
-                    }
                     Nop => (),
                 }
             }

@@ -1379,59 +1379,6 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.assign.push((site, dest, value));
                 }
             }
-            Update {
-                dest,
-                source,
-                field,
-                value,
-            } => {
-                // A functional update `dest = update(source, dest.field := value)` lowers to two
-                // flows: the copy of `source` into `dest` except at the written path, then the
-                // field write `dest.field <- value`. Leaving the written path out of the copy is
-                // what makes the update overwrite the field's old value.
-                let dest_var = self.trans_variable_ref(&dest.base);
-                let source_var = self.trans_variable_ref(source);
-                // The written path is the dest's (offset) address arithmetic, then the field.
-                let path = fx::Path::from_accesses(
-                    dest.accesses
-                        .iter()
-                        .cloned()
-                        .map(PathSegment::from)
-                        .chain(std::iter::once(field.field.clone())),
-                );
-                self.paths_dedup.insert((path,));
-                let dest_vertex = FlowVertex::new(dest_var, path);
-                // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
-                // `Store` arm.
-                if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
-                    let target = fx::Function(name.clone().into());
-                    let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest_vertex,
-                        fx::CallTargetObjectKind::FunctionId(target).into(),
-                    ));
-                    self.funcptr_targets.insert(target);
-                }
-                if let Some(object) = call_target_object(value) {
-                    self.facts
-                        .call_target_assign
-                        .push((site, dest_vertex, object));
-                }
-                if let Exp::Str(value) = value {
-                    self.facts
-                        .const_str_assign
-                        .push((site, dest_vertex, Str::from(value.clone())));
-                }
-                // copy: dest <- source, except at the written path
-                self.facts
-                    .update_sans_path
-                    .push((site, dest_var, source_var, dest_vertex.1));
-                // field write: dest.field <- value
-                if let Some(value) = self.trans_exp(value) {
-                    self.facts.assign.push((site, dest_vertex, value));
-                }
-            }
             Nop => (),
         }
     }

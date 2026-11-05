@@ -91,12 +91,6 @@ pub struct Stmt<'s> {
 
 #[derive(Debug)]
 pub enum StmtKind<'s> {
-    /// `dest = [source := value];`
-    Update {
-        dest: AccessPath<'s>,
-        source: AccessPath<'s>,
-        value: Operand<'s>,
-    },
     /// `dest = a, b, ...;`
     Assign {
         dest: AccessPath<'s>,
@@ -222,12 +216,8 @@ peg::parser! {
             = start:position!() kind:stmt_kind() end:position!()
             { Stmt { kind, span: start..end, pos: lines.pos(start) } }
 
-        // `x2 = [x1.foo := val];` is a functional update; see the crate docs.
         rule stmt_kind() -> StmtKind<'input>
-            = dest:access_path() _ "=" _
-              "[" _ source:access_path() _ ":=" _ value:operand() _ "]" _ ";"
-              { StmtKind::Update { dest, source, value } }
-            / dest:access_path() _ "=" _ sources:(operand() ++ (_ "," _)) _ ";"
+            = dest:access_path() _ "=" _ sources:(operand() ++ (_ "," _)) _ ";"
               { StmtKind::Assign { dest, sources } }
             / dest:access_path() _ "=" _ callee:access_path() _ args:actuals() _ ";"
               { StmtKind::AssignCall { dest, callee, args } }

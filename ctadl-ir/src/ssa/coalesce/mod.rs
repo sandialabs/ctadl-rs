@@ -124,9 +124,6 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                 StatementKind::Store { value, .. } => {
                     try_subst_exp(value, false, &mut pending, &mut dead);
                 }
-                StatementKind::Update { value, .. } => {
-                    try_subst_exp(value, false, &mut pending, &mut dead);
-                }
                 StatementKind::Load { .. } => {}
                 StatementKind::CallAssign { args, style, .. } => {
                     for a in args.iter_mut() {

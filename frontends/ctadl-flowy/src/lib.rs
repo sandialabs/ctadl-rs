@@ -38,25 +38,6 @@ be used on the right hand side. To express multiple flows into a field, first as
 then update the field: `tmp = a, b; c.foo = tmp;`. The comma operator is used on the right-hand
 side to merge multiple flows into a variable.
 
-A field can also be set *functionally*, with the bracket form:
-
-```text
-x = [y.foo := v]; // x is y, but with .foo set to v
-x = [x.foo := v]; // a fresh version of x
-```
-
-This reads "x is y with .foo replaced by v", and it differs from the assignment `x.foo = v` in
-what happens to the rest of the aggregate. An assignment writes through `x` and says nothing about
-where `x` came from; the bracket form names the source aggregate `y` separately from the
-destination `x` it defines, so everything in `y` that the update did not overwrite flows into `x`
-as well. Naming the two apart is also what lets SSA give the destination a fresh version of the
-variable the source reads, which is why `x = [x.foo := v]` is meaningful rather than circular.
-
-The source's path may carry offsets (`x = [y.[8].foo := v]`), which are address arithmetic, but it names
-exactly one field: the form denotes a single update instruction, and a nested update would instead
-have to rebuild each enclosing aggregate. Globals cannot be updated, since a global is itself a
-field of the global heap.
-
 The function `F` is required to have a summary that returns its first
 argument. `F` satisfies this requirement.
 
@@ -725,78 +706,6 @@ impl FlowyCtx {
                     }
                 }
             }
-            parse::StmtKind::Update {
-                dest,
-                source,
-                value,
-            } => {
-                // A global is modeled as a symbolic field of the global heap, so `g` already
-                // spends the one field an `Update` carries and `g.f` would need two.
-                if names_global(locals, dest) || names_global(locals, source) {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "a global cannot be updated: a global is a field of the global heap, so \
-                         an update of one would have to write two fields; use the assignment \
-                         form `g.f = v`",
-                    ));
-                }
-                let dest = parse_access_path(locals, local_table, dest)?;
-                let mut source = parse_access_path(locals, local_table, source)?;
-                // The destination is the variable the update *defines* — the fresh version of the
-                // aggregate — so it is a bare name. The path being written belongs to the source,
-                // which is where it reads.
-                if !dest.is_pathless() {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update's destination is the variable it defines, so it takes no \
-                         field path: write `x = [y.f := v]`",
-                    ));
-                }
-                // An `Update` writes exactly one symbolic field, so the source names exactly one.
-                // A nested update would have to rebuild every enclosing aggregate, which is a
-                // chain of updates rather than the single instruction this syntax denotes.
-                let Some(i) = source.segments.iter().position(|s| !s.is_offset()) else {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update must write a field: write `x = [y.f := v]`",
-                    ));
-                };
-                if source.segments[i + 1..].iter().any(|s| !s.is_offset()) {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update writes a single field, so its source names one: write \
-                         `x = [y.f := v]`",
-                    ));
-                }
-                let field = source.segments.remove(i);
-                let value = {
-                    let r = parse_ref(locals, local_table, value, defined_functions)?;
-                    lower_ref(&mut self.counter, data, local_table, source_info, r)
-                };
-                // What is left of the source path is pure offsets: address arithmetic, which lives
-                // on the update's destination address exactly as it lives on a store's. Lowering
-                // it through `load_access_path` merges consecutive offsets and emits nothing.
-                let mut offsets = Vec::new();
-                let counter = &mut self.counter;
-                let addr = ctadl_ir::mir::load_access_path(source, &mut offsets, || {
-                    VariableRef::new_local_idx(
-                        local_table.get_or_intern(&format!("t{}?", counter.next())),
-                    )
-                });
-                debug_assert!(offsets.is_empty(), "an offset-only path emits no loads");
-                data.push_back(Statement::new(
-                    StatementKind::update(
-                        Address {
-                            base: dest.base,
-                            accesses: addr.accesses,
-                        },
-                        addr.base,
-                        field,
-                        value,
-                    ),
-                    source_info,
-                ));
-            }
             parse::StmtKind::AssignCall { dest, callee, args } => {
                 let dest = parse_access_path(locals, local_table, dest)?;
                 let callee = parse_access_path(locals, local_table, callee)?;
@@ -1175,14 +1084,6 @@ fn check_store_target(segments: &[PathSegment], pos: Pos) -> Result<(), FlowyErr
         ));
     }
     Ok(())
-}
-
-/// Whether an access path's variable is a global. A global is modeled as a symbolic field of the
-/// global heap, so its name contributes a leading path segment that belongs to the variable itself
-/// rather than to any path spelled after it.
-fn names_global(env: &Env, ap: &parse::AccessPath<'_>) -> bool {
-    let name = ap.base.name;
-    !env.parameters.contains_key(name) && env.globals.contains(name)
 }
 
 /// Resolves a syntactic access path in a function body (as opposed to a summary access path, see

@@ -1563,14 +1563,13 @@ fn groundings_are_projected_onto_head_variables() {
 /// disagree on a function the one with the higher priority wins.
 #[test]
 fn mode_heads_mark_their_functions() {
-    use ctadl_ir::ssa::{FrameWrites, FullMode};
+    use ctadl_ir::ssa::FullMode;
     let program_info = native_program(&["big", "small", "unwind"]);
     let m = run(
         &program_info,
         r#"
-        mem2reg_full(F), frame_store(F) :- fun(F, name = "big");
+        mem2reg_full(F) :- fun(F, name = "big");
         mem2reg_window(F) :- fun(F, name = "small");
-        frame_update(F) :- fun(F, name = "small");
         mem2reg_full(F, priority = 1) :- fun(F, name = "small");
         skip_analysis(F) :- fun(F, name = "unwind");
         "#,
@@ -1591,13 +1590,6 @@ fn mode_heads_mark_their_functions() {
         [
             (full("big"), FullMode::Force),
             (full("small"), FullMode::Force)
-        ]
-    );
-    assert_eq!(
-        named(&m.frame_modes),
-        [
-            (full("big"), FrameWrites::Store),
-            (full("small"), FrameWrites::Update)
         ]
     );
     let skipped: Vec<String> = m.skip_analysis.iter().map(|f| f.to_string()).collect();
@@ -1686,12 +1678,11 @@ fn modes_on_different_axes_are_independent() {
     let program_info = native_program(&["f"]);
     let m = run(
         &program_info,
-        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F); frame_store(F) :- fun(F);"#,
+        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F);"#,
     );
     m.check_mode_conflicts().unwrap();
     assert_eq!(skipped(&m), ["f"]);
     assert_eq!(m.mem2reg_modes.len(), 1);
-    assert_eq!(m.frame_modes.len(), 1);
 }
 
 /// A user's `analyze` outranks the native defaults' allocator skip without naming a priority.
