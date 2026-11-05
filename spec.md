@@ -542,10 +542,7 @@ Anything not in this table that differs from the reference implementation is a b
 
 ## 5. Decisions required before planning
 
-1. **C field access through `deref` (R15).** It is what S19 says and it unifies `*p` with
-   `p->f`, at the cost of every C path gaining a segment and the C golden tests changing.
-   Confirm, or record C as an exception with its reason.
-2. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
+1. **Exception propagation in JVM/Dex (R21).** A soundness gain with a cost in flows through
    `throwval`; confirm it is wanted now rather than later.
-3. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
+2. **Fate of the Datalog query engine (R36, §3.10).** Keep as the checked-against engine
    (preferred) or delete and check the search only against the reference.
