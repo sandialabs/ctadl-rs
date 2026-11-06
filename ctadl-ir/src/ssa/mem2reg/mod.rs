@@ -1,18 +1,34 @@
 /*!
 Promotes stack slots to locals before SSA conversion, as LLVM's mem2reg does.
 
+# Correctness (S18 of `spec.md`)
+
+Promoting slot `k` replaces the location `__stack_top.[k].deref` (and what is under it) by a
+fresh local, which SSA makes flow-sensitive. That merges cells, so it is correct only when no
+other path reaches the slot's memory: when every label that can reach `__stack_top.[k].deref`
+does so through the frame variable's own direct accesses. The [`EscapePolicy`] is the check of
+that side condition. `AllAbove` assumes an escaped address reaches every slot above it, and is
+correct. `Window(n)` assumes it reaches `n` bytes, and `Exact` only its own slot; both can be
+wrong, and lose the flow of a callee that writes past what they assume (the `mem2reg window:N`
+row of the approximations register; `tests/semantics/m01_mem2reg_window_loss.flowy`). Full
+promotion ([`Mem2Reg::full_above`]) promotes reached slots too, which is not correct and names
+the function in an [`EscapeNote`] (the `mem2reg full` row;
+`tests/semantics/m02_mem2reg_full_loss.flowy`).
+
 The pcode frontend addresses every stack slot through one variable, the frame base
-[`STACK_TOP`]: a slot at frame offset `k` is read by `d = load __stack_top.[k].deref` and written
-by `store __stack_top.[k].deref := v`. The analysis treats memory flow-insensitively, so every
+[`STACK_TOP`]: a slot at frame offset `k` is read by `d = __stack_top.[k].deref` and written by
+`__stack_top.[k].deref = v`. The analysis treats memory flow-insensitively, so every
 load of slot `k` sees every value ever stored to it anywhere in the function. On a large native
 function the stack becomes one pool that mixes every value with every other.
 
 This pass gives each promotable slot its own local and rewrites its loads and stores into copies:
 
 ```text
-d = load __stack_top.[-16].deref         d = __stack_m16
-store __stack_top.[-16].deref := v   =>  __stack_m16 = v
+d = __stack_top.[-16].deref          d = __stack_m16
+__stack_top.[-16].deref = v      =>  __stack_m16 = v
 ```
+
+A direct access with a longer path, `__stack_top.[k].deref.f`, becomes `__stack_m{k}.f`.
 
 SSA conversion then versions the new locals like any other, so a load sees only the stores that
 reach it.
@@ -39,7 +55,7 @@ a slot (under the escape policy), the local is reloaded from the slot:
 
 ```text
 f(__stack_top.[-16])                     f(__stack_top.[-16])
-                                     =>  __stack_m16 = load __stack_top.[-16].deref
+                                     =>  __stack_m16 = __stack_top.[-16].deref
 ```
 
 The reload keeps the out-parameter case: a callee writing through the address it was given. What

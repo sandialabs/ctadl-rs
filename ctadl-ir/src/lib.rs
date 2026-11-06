@@ -1,6 +1,7 @@
 pub mod graph;
 pub mod index;
 pub mod mir;
+pub mod semantics;
 pub mod ssa;
 
 // trait that is used everywhere

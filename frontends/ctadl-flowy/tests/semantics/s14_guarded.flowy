@@ -1,0 +1,30 @@
+// S14: a flow that exists only because a target label reaches a formal fires only where the
+// actual carries the target.
+def Id(p): 1 {
+s:
+  return p;
+}
+
+def Drop(p): 1 {
+s:
+  return 0;
+}
+
+def Apply(f, x): 1 {
+s:
+  r = f(x);
+  return r;
+}
+
+def Main() {
+s:
+  a = source(S);
+  r1 = Apply(ptr<Id>, a);
+  sink(r1, S);
+  r2 = Apply(ptr<Drop>, a);
+  errsink(r2, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S

@@ -34,7 +34,7 @@ pub enum PathClass {
 /// Appends `seg` to the normal-form path `out`, keeping it in normal form.
 ///
 /// This is the single step every normalizing operation is built from: [`normalize`] folds it
-/// over a sequence, and [`concat`] folds it over the suffix starting from the prefix.
+/// over a sequence, and [`concat()`] folds it over the suffix starting from the prefix.
 pub fn push_normalized(out: &mut Vec<PathSegment>, seg: PathSegment) {
     match seg {
         PathSegment::Offset(Offset(k)) => match out.last_mut() {

@@ -1,0 +1,21 @@
+// S13: one variable `globals`, shared by every function: a global written in a callee reaches
+// the caller.
+var g;
+
+def Set(p) {
+s:
+  g = p;
+  return;
+}
+
+def Main() {
+s:
+  a = source(S);
+  Set(a);
+  r = g;
+  sink(r, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S

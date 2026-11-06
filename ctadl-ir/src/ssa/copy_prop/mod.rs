@@ -1,6 +1,18 @@
 /*!
 Copy propagation and trivial-phi elimination for post-SSA IR.
 
+# Correctness (S18 of `spec.md`)
+
+A read of an alias reads what its representative holds: in SSA `t = v` is `t`'s only
+definition, so `t.p` holds `v.p`'s labels for every path `p`, and rewriting a read of `t` to a
+read of `v` changes nothing. A *store* through `t` is different. Its labels at `t.p` reach `v.p`
+only for a `p` the backward rule moves (S8), and a label already at `v.p` reaches `t.p` only as
+`Fixed`, so rewriting `t.f = x` to `v.f = x` can add flows: a store at `t.#value` lands on
+`v.#value`, and stores to `v.f` and `t.f` merge as two stores to one destination do (S9). This
+is the `copy_prop` row of the approximations register, a deviation that adds flows; the
+differential test (`frontends/ctadl-flowy/tests/passes.rs`) pins it on
+`tests/semantics/s07_scope.flowy`.
+
 SSA conversion introduces administrative noise. A pre-SSA copy that survived
 [`coalesce_copies`](super::coalesce_copies) because it had several uses becomes
 a versioned copy `x_2 = x_1`; forwarding returns through a single exit block
@@ -19,7 +31,7 @@ normalization by computing, for every SSA name, a *representative* and rewriting
 all uses to it, then deleting the now-useless defs:
 
 - **Copy propagation.** A pure copy `dest = src` (an [`StatementKind::Assign`]
-  with a single [`Exp::Variable`] source, both versioned) makes `dest` an alias
+  with a single whole-variable source, both versioned) makes `dest` an alias
   of `src`.
 - **Trivial-phi elimination.** A [`StatementKind::Phi`] whose operands, once
   resolved to their own representatives and with self-references dropped, name a

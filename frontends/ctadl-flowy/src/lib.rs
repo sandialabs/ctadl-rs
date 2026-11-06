@@ -358,6 +358,15 @@ pub fn compile_program<P: AsRef<std::path::Path>>(file: P) -> Result<FlowyProgra
     compile_program_contents(file.to_string_lossy().as_ref(), contents.as_str())
 }
 
+/// Compiles a flowy program to the IR it lowers to, before SSA conversion and before any pass.
+/// This is the input of the IR pass pipeline; [`compile_program_contents`] is the analysis's.
+pub fn compile_ir(artifact_name: &str, contents: &str) -> Result<Program, FlowyError> {
+    let mut ctx = FlowyCtx::new(artifact_name);
+    ctx.parse(contents)?;
+    ctx.program.verify()?;
+    Ok(ctx.program)
+}
+
 pub fn compile_program_contents(
     artifact_name: &str,
     contents: &str,

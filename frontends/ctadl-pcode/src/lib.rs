@@ -1196,8 +1196,7 @@ impl Context {
                 // propagation happily hands back a huge index (a folded pointer, a
                 // sentinel like -1), and `*` panics on overflow in a debug build --
                 // which is a crashed import, not a wrong offset.
-                ap.segments
-                    .push(PathSegment::offset(idx_c.wrapping_mul(s_val)));
+                ap.push(PathSegment::offset(idx_c.wrapping_mul(s_val)));
                 let mut stmts = Vec::new();
                 let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);

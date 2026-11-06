@@ -179,8 +179,9 @@ them.
 
 - R23. SSA construction versions a variable at an assignment whose destination path
   is empty, and never at a store. It is part of the semantics (S16), not a pass to be checked.
-- R24. `copy_prop`, `dead_temps` and load-chain composition are correct under S18 with no
-  side condition; `coalesce` and `mem2reg` are correct under their side conditions (S18,
+- R24. `dead_temps` and load-chain composition are correct under S18 with no side condition;
+  `copy_prop` is correct for reads but adds flows when it rewrites a store's base, a row of §4
+  found by the differential test of R12; `coalesce` and `mem2reg` are correct under their side conditions (S18,
   second sentence). `mem2reg`'s escape policy (`window:N`, `exact`, `above`) is the check of
   that side condition; a policy that can be wrong (`window`) is listed in §4.
 - R25. No pass depends on `#value` or `deref` being spelled as a field name, and no pass
@@ -514,8 +515,9 @@ may be absent; "adds" means a flow the semantics does not derive may be present.
 | index | `Copied` formals: no field write-back through a parameter | loses | no (R26 doc comment) |
 | query | Object hop at the empty path (`search.rs:477`) | adds | no |
 | query | Saturating sources read below the port; wildcard sinks match below the port | adds (model opt-in) | model text |
-| passes | `mem2reg window:N`: an escape reaching past the window | loses | no; `exact`/`above` avoid it |
+| passes | `mem2reg window:N` (and `exact`, a window of one slot): an escape reaching past the window | loses | no; `above` avoids it |
 | passes | `mem2reg full` | loses | per function |
+| passes | `copy_prop` rewrites a store through a copy `t = v` onto `v`: a store at `t.#value` lands on `v.#value`, and stores through `t` and `v` merge as S9's do | adds | no |
 | query | Call/return matching by one bit, not a site stack (R35) | adds (witness only) | no |
 | front ends | S19 conventions; C `&s.f`; CIL value types; Lua `err` never filled | both | docs/limitations.md |
 | front ends | pcode `merge` arithmetic | adds | config recorded |

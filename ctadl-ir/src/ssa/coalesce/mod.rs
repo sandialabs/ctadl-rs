@@ -1,6 +1,14 @@
 /*!
 Copy coalescing for pre-SSA IR.
 
+# Correctness (S18 of `spec.md`)
+
+Correct under its side condition, which the pass checks: the temporary it merges away is
+defined once and read once, in the same block, so its cell is reachable by no other path.
+Fusing `t = e; use t` into `use e` then removes the one copy the cell took part in: the labels
+`use` saw at `t` were exactly `e`'s, and nothing else could see `t`. The pass asserts the single
+use before it deletes a def.
+
 Frontends (the pcode frontend especially) linearize expressions through
 single-use temporaries: a binop becomes `t = a, b; x = t`, and copy chains
 like `u = t; x = u` are common. Every such temporary costs a statement, an
@@ -204,7 +212,18 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             }
         }
 
-        // Delete fused defs.
+        // Delete fused defs. Each defines a temporary with exactly one use, the one it was
+        // fused into: the side condition that makes the fusion correct.
+        for &pos in &dead {
+            let def = &block.statements[crate::mir::StatementIdx::new(pos)];
+            for v in def.iter_dst_var() {
+                assert_eq!(
+                    uses.get(&v.variable),
+                    Some(&1),
+                    "coalesce fused a def of {v} that has other uses"
+                );
+            }
+        }
         if !dead.is_empty() {
             removed += dead.len();
             dead.sort_unstable();
