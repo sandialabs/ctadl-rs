@@ -14,11 +14,10 @@ the block, so no phi is placed that no later use can observe.
 
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
-- Right before each `return`, there is a `param-flow` instruction that indicates, for each formal
-  parameter to the function, which version of that parameter is written back to the caller. This
-  is always the entry version, version 0: rebinding a parameter does not change the caller's
-  argument (see [`ParameterType`]). This helps generate code that tracks flows on formal
-  parameters.
+- There is exactly one `return`. The version of a parameter, and of the global heap, that reaches
+  the caller is always the entry version, version 0: rebinding a parameter does not change the
+  caller's argument (see [`ParameterType`]), and nothing rebinds the global heap (the verifier
+  rejects it). Codegen writes version 0 back to the formals at the `return`.
 
 */
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -391,8 +390,7 @@ pub fn transform_program(program: &mut Program, prune: bool) {
 /// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
 /// has exactly one `return`, and that `return` is the terminator of the single exit block this
 /// pass adds. Every variable use names a version, and version 0 is the incoming version. The
-/// form is pruned: every phi is reached by some non-phi use (see the module documentation). The
-/// exit param-flow writes back every parameter at its entry version.
+/// form is pruned: every phi is reached by some non-phi use (see the module documentation).
 #[inline]
 pub fn transform(function: &mut FunctionData, prune: bool) {
     transform_with(function, prune, PhiMode::Pruned);
@@ -511,7 +509,7 @@ pub fn prune_unreachable_nodes(function: &mut FunctionData) {
 /// ```text
 /// block_0: ... _$ret = a; goto 2;
 /// block_1: ... _$ret = b; goto 2;
-/// block_2: param-flow <params+globals>; return _$ret;
+/// block_2: return _$ret;
 /// ```
 ///
 /// At the end, the function will have exactly one return and it'll be the terminator of the
@@ -531,25 +529,12 @@ fn complete(function: &mut FunctionData) {
         })
         .collect();
 
-    // Exit block observes parameters and returns retvars. Every parameter is written back at its
-    // entry version, because rebinding a parameter does not reach the caller. It goes in already
-    // versioned, so that renaming neither gives it its exit version nor places phis to merge
-    // that version.
-    let params = function
-        .params
-        .iter_enumerated()
-        .map(|(i, _)| VariableRef::new_parameter(i).with_version(0))
-        .collect();
-    let param_flow = StatementKind::ParamFlow {
-        params,
-        global: VariableRef::new_global(),
-    };
-    let exit_block_contents = BasicBlockData::new_stmts(
-        [Statement::new_kind(param_flow)].into_iter().collect(),
-        Some(Terminator::new_kind(TerminatorKind::Return {
+    // The exit block returns retvars.
+    let exit_block_contents = BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Return {
             args: retvars.iter().map(|v| Exp::variable(v.clone())).collect(),
-        })),
-    );
+        },
+    )));
 
     // Rewrite blocks to target single exit block
     let exit = function.blocks.next_index();
@@ -774,7 +759,7 @@ impl SsaRename {
         use StatementKind::*;
 
         for (_z, stmt) in blocks[x].iter_enumerated_mut() {
-            // Ensure to rewrite assignment-uses and param-flow-uses
+            // Rewrite every use but a phi's, whose operands are renamed from the predecessors
             if !matches!(stmt.kind, Phi { .. }) {
                 // A use that already names a version is left as it is (see `complete`).
                 for v in stmt.iter_src_var_mut().filter(|v| v.version.is_none()) {

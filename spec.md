@@ -316,8 +316,11 @@ work (§6).
   ```rust
   Assign  { dest: AccessPath, sources: SmallVec<[Exp; 2]> }   // store if dest.segments non-empty
   CallAssign { style: CallStyle, rets, args }                  // unchanged
-  Phi, ParamFlow, Nop                                           // unchanged
+  Phi, Nop                                                      // unchanged
   ```
+
+  `ParamFlow` is deleted. Its operands were always the entry versions of the parameters and of
+  `globals`, so codegen writes those back to the formals at the `return` without an IR statement.
 
   `Load`, `Store` and `Update` are `Assign` (an update is a store, R20). The classification
   store/copy is a method, not a variant, so no pass can disagree with S5.

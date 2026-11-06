@@ -143,9 +143,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         try_subst_address(callee, &mut pending, &mut dead);
                     }
                 }
-                StatementKind::Phi { .. }
-                | StatementKind::ParamFlow { .. }
-                | StatementKind::Nop => {}
+                StatementKind::Phi { .. } | StatementKind::Nop => {}
             }
 
             // (b) Invalidate pending defs whose sources are (possibly)

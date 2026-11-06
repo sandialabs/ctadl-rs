@@ -84,7 +84,6 @@ An operand is one of:
 | assignment | `y.d = e_1, ..., e_n` | one destination; several sources are several assignments |
 | call | `r_1, ..., r_m = f(a_1, ..., a_n)` | direct by name, indirect through an access path, or virtual by receiver and method |
 | phi | `y = phi(x_1, ..., x_n)` | inserted by SSA conversion |
-| param-flow | | SSA's anchor for the parameters' and globals' final versions; no meaning here |
 | nop | | |
 
 An assignment is a **store** when its destination path `d` is non-empty and a **copy** when it

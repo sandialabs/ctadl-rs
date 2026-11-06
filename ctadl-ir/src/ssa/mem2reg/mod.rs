@@ -74,7 +74,7 @@ one call would reach every read of the slot, which mixes the slot again.
 [`FullMode`] forces or forbids full promotion for one function, whatever its size.
 
 The pass leaves a function alone when `__stack_top` is assigned at all, or is used in a way this
-pass does not classify (a phi, a param-flow).
+pass does not classify (a phi).
 */
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 

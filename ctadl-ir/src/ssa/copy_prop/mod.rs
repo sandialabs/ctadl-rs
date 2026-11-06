@@ -51,9 +51,8 @@ The pass is conservative and SSA-only:
 - Only versioned refs are aliased, so it is a no-op on non-SSA IR. In particular
   the version-0 anchor assigns that [`transform`](super::transform) seeds for
   parameters and the global heap (`p_0 = p`, `$globals_0 = $globals`) read an
-  *unversioned* source and are never treated as copies, so those anchors — and
-  the [`StatementKind::ParamFlow`] round-trip that depends on them — are
-  preserved.
+  *unversioned* source and are never treated as copies, so those anchors, which
+  codegen writes back to the formals at the return, are preserved.
 - Only bare variable copies propagate. Multi-source assigns, address-arithmetic
   ([`Exp::Address`]), constants, loads, and call results are never aliased:
   a phi operand and a copy target must both be plain variables for the rename to

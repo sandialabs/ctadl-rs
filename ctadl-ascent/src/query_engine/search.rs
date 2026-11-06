@@ -153,7 +153,7 @@ pub struct TaintSearchGraph {
     /// the backward direction of the copy graph, consulted only by the object
     /// hop of an `All`-scoped node on a non-empty path (the forward direction
     /// is already in `assign_by_src`). Copies that *write a formal* are left
-    /// out: codegen's `ParamFlow` emits `formal_i = v_k` to hand the parameter's
+    /// out: codegen emits `formal_i = v_k` at the return to hand the parameter's
     /// final version back to the caller, and since a formal is one node rather
     /// than an SSA chain, hopping back across that edge would fuse the values
     /// entering and leaving the function -- the same cycle the index's
@@ -543,7 +543,7 @@ impl LazySuccessors for TaintSearchGraph {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
                     // A formal has no incoming copies the hop would follow (its
-                    // `ParamFlow` write-backs are excluded), so `All` is inert here
+                    // write-backs at the return are excluded), so `All` is inert here
                     // and merely keeps the node canonical.
                     out.push((
                         (*callee, formal_var, p, level, ObjectScope::All),

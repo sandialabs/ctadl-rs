@@ -462,6 +462,8 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// Number of parameters of the function under translation, written back at its `return`.
+    num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
     /// anywhere in this codegen unit. Each gets an identity `callee_resolvents(FunctionId(f),
     /// C, f)` fact emitted in [`Self::finish`] — the function-pointer analogue of the CHA
@@ -543,6 +545,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
+            num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
             matches,
@@ -832,6 +835,7 @@ impl Visitor for CodegenVisitor<'_> {
             .sites
             .get_or_add_function(fx::Function(name));
         self.function = Some(func_id);
+        self.num_params = function.params.parameters.len();
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
         }
@@ -1014,28 +1018,6 @@ impl Visitor for CodegenVisitor<'_> {
                     if seen_phi.insert(src) {
                         self.facts.assign.push((site, dst, src));
                     }
-                }
-            }
-            ParamFlow { params, global } => {
-                let mut seen_param = BTreeSet::new();
-                for (i, op) in params.iter().enumerate() {
-                    // assign current version of formal back to the formal itself so we can track
-                    // data flow
-                    let dst = FlowVariable::formal_index(i.try_into().unwrap());
-                    let src = self.trans_variable_ref(op);
-                    if seen_param.insert((dst, src)) {
-                        let dst = FlowVertex::new(dst, fx::Path::empty());
-                        let src = FlowVertex::new(src, fx::Path::empty());
-                        self.facts.assign.push((site, dst, src));
-                    }
-                }
-                // assign current version of global back to the auxparam global
-                let dst = FlowVariable::formal_index(GLOBALS_INDEX.into());
-                let src = self.trans_variable_ref(global);
-                if seen_param.insert((dst, src)) {
-                    let dst = FlowVertex::new(dst, fx::Path::empty());
-                    let src = FlowVertex::new(src, fx::Path::empty());
-                    self.facts.assign.push((site, dst, src));
                 }
             }
             CallAssign { rets, args, style } => {
@@ -1274,6 +1256,27 @@ impl Visitor for CodegenVisitor<'_> {
             insn_site_id.try_into().unwrap()
         };
         if let TerminatorKind::Return { args } = terminator {
+            // Write each parameter, and the global heap, back to its formal at its entry version,
+            // so a store through it inside the function reaches the formal path the summary
+            // reads. The entry version is the one that reaches the return: rebinding a parameter
+            // does not reach the caller, and nothing rebinds the global heap (see `ctadl_ir::ssa`).
+            let formals = (0..self.num_params)
+                .map(|i| {
+                    let p = VariableRef::new_parameter(ParameterIdx::new(i));
+                    (FlowVariable::formal_index(i.try_into().unwrap()), p)
+                })
+                .chain(std::iter::once((
+                    FlowVariable::formal_index(GLOBALS_INDEX.into()),
+                    VariableRef::new_global(),
+                )));
+            for (dst, v) in formals {
+                let src = self.trans_variable_ref(&v.with_version(0));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex::new(dst, fx::Path::empty()),
+                    FlowVertex::new(src, fx::Path::empty()),
+                ));
+            }
             // assigns for return values. This will be bad if there are more than 32K return values
             for (i, arg) in args.iter().enumerate().map(|(i, arg)| (i + 1, arg)) {
                 let i: i16 = i.try_into().unwrap();

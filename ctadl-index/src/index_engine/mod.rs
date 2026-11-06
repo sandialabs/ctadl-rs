@@ -1523,7 +1523,7 @@ ascent_source! {
     relation prog_store(FunctionId, FlowVariable, Path);
     // A variable that whole-aliases a formal through original program copies, precomputed by
     // `compute_alias_of_formal`. Unlike `locals(v, empty, formal, empty)`, it leaves out
-    // inter-procedural / summary-derived copies and the `ParamFlow` write-backs onto the formal.
+    // inter-procedural / summary-derived copies and the write-backs onto the formal at the return.
     // Feeds the aliasing summary rule.
     relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
     // Call targets propagated across `assign_like` to the receiver vertices of critical calls.

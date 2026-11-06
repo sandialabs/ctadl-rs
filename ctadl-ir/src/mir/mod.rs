@@ -268,8 +268,8 @@ impl Display for Offset {
 
 /// IR Statements. They capture assignments and function calls.
 ///
-/// Frontends typically generate assign, load, store, and call instructions. The phi and param-flow
-/// instructions are generated during SSA conversion.
+/// Frontends typically generate assign, load, store, and call instructions. The phi instruction is
+/// generated during SSA conversion.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StatementKind {
@@ -304,14 +304,6 @@ pub enum StatementKind {
     Phi {
         dest: VariableRef,
         operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
-    },
-
-    /// Function parameter SSA variables & global heap. This is an anchor for uses of a variable.
-    /// It helps when generating code from SSA. Return instructions are instrumented with this
-    /// instruction.
-    ParamFlow {
-        params: IndexVec<ParameterIdx, VariableRef>,
-        global: VariableRef,
     },
 
     /// No operation
@@ -1143,17 +1135,6 @@ impl Statement {
 }
 
 impl StatementKind {
-    /// Generates a [`StatementKind::ParamFlow`] instruction for the given arity.
-    pub fn param_flow(arity: usize) -> Self {
-        let params = (0..arity)
-            .map(|i| VariableRef::new(Variable::new_parameter(ParameterIdx::new(i))))
-            .collect();
-        Self::ParamFlow {
-            params,
-            global: VariableRef::new_global(),
-        }
-    }
-
     /// Generates an assign from a destination and sources. Use this to flow multiple sources into
     /// a single destination, i.e., when modeling a statement like "x = y + z" where you want "y"
     /// and "z" to flow into "x."
@@ -1220,7 +1201,6 @@ impl StatementKind {
                 Box::new(a.chain(b))
             }
             Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
-            ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1247,9 +1227,6 @@ impl StatementKind {
                 Box::new(a.chain(b))
             }
             Phi { operands, .. } => Box::new(operands.iter_mut().map(|(_, v)| v)),
-            ParamFlow { params, global } => {
-                Box::new(params.iter_mut().chain(std::iter::once(global)))
-            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1263,7 +1240,6 @@ impl StatementKind {
             Assign { .. } => Box::new(std::iter::empty()),
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
-            ParamFlow { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1276,7 +1252,6 @@ impl StatementKind {
             Assign { .. } => Box::new(std::iter::empty()),
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
-            ParamFlow { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1708,17 +1683,6 @@ impl Display for StatementKind {
                     write!(f, "[block_{}, {op}]", block.index())?;
                 }
                 write!(f, ")")
-            }
-            ParamFlow { params, global } => {
-                write!(f, "param-flow ")?;
-                for (i, op) in params.iter().enumerate() {
-                    if i != 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{op}")?;
-                }
-                write!(f, "; {global}")?;
-                Ok(())
             }
             Nop => write!(f, "nop"),
         }

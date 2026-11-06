@@ -39,9 +39,7 @@ either bound was reached, so a test can tell "not derived" from "not explored".
 # Input
 
 The program must be in SSA form (S16): SSA is what makes a variable one cell. [`ssa_form`]
-puts a program in it. Phi nodes are the copies of their operands; `param-flow` is SSA's
-instrumentation for codegen and has no meaning here, since a write through a parameter reaches
-the caller by the backward rule.
+puts a program in it. Phi nodes are the copies of their operands.
 */
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -441,7 +439,7 @@ impl<'a> Eval<'a> {
                     StatementKind::CallAssign { style, rets, args } => {
                         self.call(inst, bb, i, stmt.source_info, style, rets, args);
                     }
-                    StatementKind::ParamFlow { .. } | StatementKind::Nop => {}
+                    StatementKind::Nop => {}
                 }
             }
         }

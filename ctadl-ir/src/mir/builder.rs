@@ -205,14 +205,6 @@ impl<'a> BasicBlockBuilder<'a> {
         })
     }
 
-    /// Create and insert a param-flow statement
-    ///
-    /// # Arguments
-    /// * `arity` - Number of parameters
-    pub fn create_param_flow(&mut self, arity: usize) -> StatementIdx {
-        self.insert_kind(StatementKind::param_flow(arity))
-    }
-
     /// Create and insert a nop statement
     pub fn create_nop(&mut self) -> StatementIdx {
         self.insert_kind(StatementKind::Nop)

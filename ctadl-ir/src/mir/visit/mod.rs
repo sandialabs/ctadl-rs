@@ -169,12 +169,6 @@ macro_rules! make_ast_visitor {
                             self.visit_variable_ref(op);
                         }
                     }
-                    ParamFlow { params, global } => {
-                        for op in params {
-                            self.visit_variable_ref(op);
-                        }
-                        self.visit_variable_ref(global);
-                    }
                     Nop => (),
                 }
             }

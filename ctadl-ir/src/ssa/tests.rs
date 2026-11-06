@@ -389,8 +389,8 @@ fn assign(dest: &VariableRef, sources: impl IntoIterator<Item = Exp>) -> Stateme
 //   return x;
 // }
 //
-// `x` is returned and `p` reaches the exit's param-flow, so both need a phi at the join. `t` is
-// never read, so it gets none.
+// `x` is returned, so it needs a phi at the join. `p` is rebound but its rebinding never reaches
+// the caller, and `t` is never read, so neither gets one.
 fn function_diamond() -> FunctionData {
     let mut f = FunctionData {
         name: "Diamond".to_string(),
@@ -556,38 +556,29 @@ fn test_pruned_diamond() {
     let p = VariableRef::new_parameter(ParameterIdx::new(0)).variable;
     assert!(
         !pruned.iter().any(|(_, v)| *v == p),
-        "`p` is rebound but never read: the param-flow reads `p_0`"
+        "`p` is rebound but never read"
     );
-}
-
-/// The exit param-flow's parameters, in the one param-flow SSA leaves, in the exit block.
-fn exit_param_flow(f: &FunctionData) -> IndexVec<ParameterIdx, VariableRef> {
-    let flows: Vec<_> = f
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .filter_map(|st| match &st.kind {
-            StatementKind::ParamFlow { params, .. } => Some(params.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(flows.len(), 1, "one param-flow, in the exit block");
-    flows.into_iter().next().unwrap()
 }
 
 #[test]
 fn test_entry_write_back() {
-    // `p` is reassigned on one branch of the diamond. Whatever its type, the param-flow reads
-    // `p_0`, the caller's argument, and nothing merges `p` at the join.
+    // `p` is reassigned on one branch of the diamond. Whatever its type, SSA keeps the entry
+    // binding `p_0 = p` that codegen writes back at the return, and nothing merges `p` at the
+    // join.
     for ty in [ParameterType::SharedFields, ParameterType::Shared] {
         let mut f = function_diamond();
         f.params.parameters[ParameterIdx::new(0)] = ty;
         transform(&mut f, true);
         check_ssa_func(&f);
         let p = VariableRef::new_parameter(ParameterIdx::new(0));
-        let params = exit_param_flow(&f);
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[ParameterIdx::new(0)], p.with_version(0), "{ty}");
+        let entry_binding = StatementKind::assign(p.with_version(0), [Exp::variable(p.clone())]);
+        assert!(
+            f.blocks[BasicBlockIdx::START_BLOCK]
+                .statements
+                .iter()
+                .any(|st| st.kind == entry_binding),
+            "{ty}: the entry binding of `p_0`"
+        );
         assert!(
             !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
             "{ty}: no phi merges `p`"
