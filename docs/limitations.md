@@ -7,3 +7,6 @@
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
   `&s` and `&a[1]` are nameable and not affected.
+- **A write through the address of a C global is lost.** A global `g` is `$globals.g` in every
+  unit and is not moved behind `deref` when its address is taken, so `&g` is a copy of it and a
+  callee's `p->f = v` through `init(&g)` is not observed at `g.f`, a false negative.

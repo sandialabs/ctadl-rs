@@ -58,9 +58,10 @@
 //!
 //! ## Address-taken globals
 //!
-//! A global lives at `$globals.g` in every unit and is not moved behind `deref` when its
-//! address is taken, so outside the same-block alias table `p = &g; *p` is `$globals.g.deref`,
-//! not `$globals.g`.
+//! A global lives at `$globals.g` in every unit, and is not moved behind `deref` when one
+//! unit takes its address (another unit, which cannot know, must name the same storage). So
+//! `&g` is a copy of `$globals.g`, and a write through it -- `*p` or `p->f`, which are
+//! `$globals.g.deref` and `$globals.g.deref.f` -- is not observed at `g` or `g.f`.
 //!
 //! ## Pointers and values look the same
 //!

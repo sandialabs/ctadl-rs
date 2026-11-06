@@ -2988,6 +2988,20 @@ fn addr_of_a_record_is_a_cell() {
 }
 
 #[test_log::test]
+fn addr_of_a_global_record_is_a_copy() {
+    // Limitation pin (module docs, "Address-taken globals"): a global is not a cell, so `&g`
+    // is a copy of `$globals.g` and the callee's `p->f = v` lands on `$globals.g.deref.f`,
+    // which `g.f` (`$globals.g.f`) does not name.
+    let src = r"
+        struct S { int f; };
+        struct S g;
+        void init(struct S *p, int v) { p->f = v; }
+        int f(int v) { init(&g, v); return g.f; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
 fn addr_of_a_union_is_a_cell_and_its_members_still_collapse() {
     // An address-taken union's storage is `u.deref`, and its members still share `$union`.
     let src = r"
