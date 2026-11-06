@@ -167,10 +167,12 @@ naming and storage convention in its crate docs. The conventions:
 - R16. A flow between two global paths found in any function, under no condition, is a
   program-level edge, and program-level reachability between global paths is closed under the
   same field rules (S6, S8 as restricted by the register) as a function's.
-- R17. A target label (S11) or string label (S12) at a global path is visible at that path in
-  every function that mentions the global, and crosses program-level edges, so an indirect
-  call through a global resolves without a decision (G6). Hybrid inlining's critical summaries,
-  resolvents and decisions are over formal roots only.
+- R17. A target label (S11) or string label (S12) at a global path crosses program-level
+  edges and is visible, in every function, at every global path that function reads (the
+  source of one of its edges, or the callee of one of its call sites) and at every extension
+  of it, so an indirect call through a global resolves without a decision (G6). A label at a
+  path no function reads is held at the program level only. Hybrid inlining's critical
+  summaries, resolvents and decisions are over formal roots only.
 - R18. A flow between two global paths that holds only under a decision is a conditional
   summary row, applied by the existing rule 3.2 at the callers whose route establishes the
   decision, where it becomes a program-level edge (R16). This is G6 under S14: the flow exists
@@ -269,7 +271,9 @@ naming and storage convention in its crate docs. The conventions:
   replacement by `$ram`-rooted ones.
 - R40. The summary-size bound (R15) is measured: on the nightly binaries and one real APK,
   the number of `summary` rows with two global roots is zero, and the total summary row
-  count and index time are recorded against the pre-change numbers in the PR.
+  count, the number of `call_target_assign_like` and `const_reaches` rows at `GLOBAL_FRAME`
+  and at every other function (the exchange's cost, R17), and index time are recorded
+  against the pre-change numbers in the PR.
 
 ## 3. Design
 
@@ -424,17 +428,27 @@ label exchange.
   `edge_split` and `ext_fml` rules into `locals(GLOBAL_FRAME, $g, p, Global(h), q)`, the
   program-level reachability of R16. The frame has no formals, no call sites and no
   `prog_store`, so no rule produces a summary for it.
-- **Label exchange** (R17), the same two rules for `call_target_assign_like` and
-  `const_reaches`:
+- **Label exchange** (R17), the same rules for `call_target_assign_like` and
+  `const_reaches`. Labels go up by path and come down by path: a function receives the
+  frame's labels only at the global paths it reads, and their extensions, never at every path
+  of every global it mentions.
 
   ```
-  call_target_assign_like(GLOBAL_FRAME, $g, p, t) <-- call_target_assign_like(f, $g, p, t) ;
-  call_target_assign_like(f, $g, p, t)            <-- call_target_assign_like(GLOBAL_FRAME, $g, p, t), global_mention(f, g) ;
+  global_read(f, g, p) <-- assign_like(f, _, _, v, p, _), if let Some(g) = v.as_global() ;
+  global_read(f, g, p) <-- callee_info(f, _, v, p, _),    if let Some(g) = v.as_global() ;
+
+  call_target_assign_like(GLOBAL_FRAME, $g, p, t) <-- call_target_assign_like(f, $g, p, t), if f != GLOBAL_FRAME ;
+  call_target_assign_like(f, $g, p13, t)          <-- global_read(f, g, p), call_target_assign_like(GLOBAL_FRAME, $g, p13, t), if p13 extends p ;
   ```
 
-  Inside `f` the existing propagation (`:2136-2138`) and the local-dispatch bypass
-  (`:2066-2069`) then resolve a call through the global, with `Cond::Always`. The frame is an
-  `intent_frame` whenever any function is, so string labels cross it too.
+  The second rule is a keyed prefix join in the style of `call_target_key_wild`, not a scan
+  with an `if`. Inside `f` the existing propagation (`:2136-2138`) and the local-dispatch
+  bypass (`:2066-2069`) then resolve a call through the global, with `Cond::Always`. The frame
+  is an `intent_frame` whenever any function is, so string labels cross it too. The by-mention
+  form (`global_mention(f, g)` in place of `global_read(f, g, p)`) is rejected: on a binary
+  every function mentions the one memory global (R9), so it would copy every label in memory
+  into every function, a relation of size functions × labels that today's rules never build
+  (§5).
 - **Hybrid inlining.** Rule 1.1 (`:1806-1809`) derives `critical_summary` for formal roots
   only; 1.2, 2.1, 2.2 and 3.2 are unchanged in text and never see a global root. The
   return-direction tag rules (`:2155-2179`) and `tag_closure_func` are unchanged and no longer
@@ -560,6 +574,11 @@ Recorded so they are read as choices, not accidents.
 - The root columns become a `Root` type rather than encoding globals as negative formal
   indices: `i16` cannot hold a large app's class count, `PackedCallArg` packs the index, and
   "formal index" should keep meaning one.
+- Labels at global paths are pulled into a function by the paths it reads, not by the globals
+  it mentions. The two are observably the same (a label matters only where it is read), and
+  only the first is bounded by the program's reads: with one memory global per binary (R9),
+  by-mention is functions × labels, while by-path is bounded by the call sites and loads
+  through memory, which is less than the decision machinery derives for the same sites today.
 - The port spelling is `G::self.path`, a `::` port like `F::return`; the name is the
   engineering team's to change if the parser prefers another, provided it stays a port.
 - No index knob: there is no precision/cost trade-off to expose.
