@@ -508,7 +508,7 @@ impl Context {
                             .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
                         if succs.is_empty() {
-                            let throw_exp = Exp::from(Address::without_offsets(reg_to_var(
+                            let throw_exp = Exp::from(AccessPath::from(reg_to_var(
                                 code,
                                 f.a,
                                 &mut fdat.locals,
@@ -525,11 +525,8 @@ impl Context {
                     Instruction::Return(reg)
                     | Instruction::ReturnWide(reg)
                     | Instruction::ReturnObject(reg) => {
-                        let ret_exp = Exp::from(Address::without_offsets(reg_to_var(
-                            code,
-                            reg.a,
-                            &mut fdat.locals,
-                        )));
+                        let ret_exp =
+                            Exp::from(AccessPath::from(reg_to_var(code, reg.a, &mut fdat.locals)));
                         let empty_exp = Exp::new_bytes(Vec::new());
                         TerminatorKind::Return {
                             args: smallvec![ret_exp, empty_exp],
@@ -720,7 +717,7 @@ impl Context {
         ) {
             let args = args_regs
                 .iter()
-                .map(|reg| Address::without_offsets(reg_to_var(code, *reg, locals)).into())
+                .map(|reg| AccessPath::from(reg_to_var(code, *reg, locals)).into())
                 .collect();
             return Some(self.call_assign(CallStyle::Unknown, args, locals));
         }
@@ -757,7 +754,7 @@ impl Context {
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
             .iter()
-            .map(|reg| Address::without_offsets(reg_to_var(code, *reg, locals)).into())
+            .map(|reg| AccessPath::from(reg_to_var(code, *reg, locals)).into())
             .collect();
         let style = match dispatch {
             None => CallStyle::DirectCall {
@@ -908,7 +905,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::load(
                     dest,
                     source,
-                    ctadl_ir::mir::FieldRef::symbol("length"),
+                    ctadl_ir::mir::PathSegment::field("length"),
                 )));
                 return Ok(stmts);
             }
@@ -931,8 +928,8 @@ impl Context {
                 )));
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(VariableRef::new_global()),
-                    ctadl_ir::mir::FieldRef::symbol(name),
+                    AccessPath::from(VariableRef::new_global()),
+                    ctadl_ir::mir::PathSegment::field(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -954,7 +951,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         VariableRef::new_global(),
-                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
+                        ctadl_ir::mir::PathSegment::field(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -981,8 +978,8 @@ impl Context {
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(object),
-                    ctadl_ir::mir::FieldRef::symbol(name),
+                    AccessPath::from(object),
+                    ctadl_ir::mir::PathSegment::field(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1005,7 +1002,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
+                        ctadl_ir::mir::PathSegment::field(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -1023,7 +1020,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
                         array_var.clone(),
-                        ctadl_ir::mir::FieldRef::symbol("[]"),
+                        ctadl_ir::mir::PathSegment::field("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -1047,8 +1044,8 @@ impl Context {
                 )));
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(array_var),
-                    ctadl_ir::mir::FieldRef::symbol("[]"),
+                    AccessPath::from(array_var),
+                    ctadl_ir::mir::PathSegment::field("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

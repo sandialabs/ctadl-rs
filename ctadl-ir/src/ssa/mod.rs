@@ -420,8 +420,8 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
         let variable = VariableRef::new_parameter(idx);
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
-            dest: variable.with_version(0),
-            sources: smallvec![Exp::Variable(variable)],
+            dest: variable.with_version(0).into(),
+            sources: smallvec![Exp::variable(variable)],
         }));
     }
     // Set version 0 of global heap to global
@@ -429,8 +429,8 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
         let variable = VariableRef::new_global();
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
-            dest: variable.with_version(0),
-            sources: smallvec![Exp::Variable(variable)],
+            dest: variable.with_version(0).into(),
+            sources: smallvec![Exp::variable(variable)],
         }));
     }
     log::trace!("assume that version 0 is initial version");
@@ -539,7 +539,7 @@ fn complete(function: &mut FunctionData) {
     let exit_block_contents = BasicBlockData::new_stmts(
         [Statement::new_kind(param_flow)].into_iter().collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
-            args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
+            args: retvars.iter().map(|v| Exp::variable(v.clone())).collect(),
         })),
     );
 

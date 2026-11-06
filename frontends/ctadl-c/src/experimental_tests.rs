@@ -208,7 +208,7 @@ fn params_and_simple_assign_in_example_2() {
     );
     assert!(
         // Reading the global `d` lowers to a load of `$globals.d` (into a temp that flows to a).
-        check_match(&dump, "load $globals.d"),
+        check_match(&dump, "= $globals.d\n"),
         "has 2nd simple a=d"
     );
 }

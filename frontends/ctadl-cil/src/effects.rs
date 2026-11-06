@@ -43,7 +43,7 @@ use cil_reader::flow::{
 };
 use cil_reader::model::TypeSig;
 use ctadl_ir::call::{CallObject, CilClass};
-use ctadl_ir::mir::FieldRef;
+use ctadl_ir::mir::PathSegment;
 use ctadl_ir::*;
 
 use crate::method::{Emitter, Lower, parameters};
@@ -156,7 +156,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                     let cell = em.fresh("cell");
                     self.materialize(em, &p, cell.clone());
                     let d = em.var(*dst);
-                    em.assign(d, [Exp::Variable(cell)]);
+                    em.assign(d, [Exp::variable(cell)]);
                 }
             }
             Effect::New {
@@ -241,11 +241,11 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// `F(field)`, for a field that is not a dereference.
-    fn field_symbol(&self, field: &Field<Var>) -> FieldRef {
+    fn field_symbol(&self, field: &Field<Var>) -> PathSegment {
         match field {
             Field::Named(op) => self.field_ref(op.token),
-            Field::Element { .. } => FieldRef::symbol(ELEMENT),
-            Field::Length => FieldRef::symbol(LENGTH),
+            Field::Element { .. } => PathSegment::field(ELEMENT),
+            Field::Length => PathSegment::field(LENGTH),
             Field::Deref | Field::Block { .. } => deref(),
         }
     }

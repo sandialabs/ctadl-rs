@@ -111,8 +111,12 @@ pub fn propagate_copies_function(function: &mut FunctionData) -> usize {
     for (_, block) in function.blocks.iter_enumerated() {
         for stmt in block.statements.iter() {
             match &stmt.kind {
-                StatementKind::Assign { dest, sources } if dest.version.is_some() => {
-                    if let [Exp::Variable(src)] = sources.as_slice()
+                StatementKind::Assign { dest, sources }
+                    if dest.is_pathless() && dest.base.version.is_some() =>
+                {
+                    let dest = &dest.base;
+                    if let [src] = sources.as_slice()
+                        && let Some(src) = src.variable_ref()
                         && src.version.is_some()
                         && *src != *dest
                     {
@@ -218,9 +222,10 @@ pub fn propagate_copies_function(function: &mut FunctionData) -> usize {
 /// def this pass has made dead.
 fn is_aliased_def(stmt: &Statement, aliases: &Aliases) -> bool {
     match &stmt.kind {
-        StatementKind::Assign { dest, .. } | StatementKind::Phi { dest, .. } => {
-            aliases.parent.contains_key(dest)
+        StatementKind::Assign { dest, .. } => {
+            dest.is_pathless() && aliases.parent.contains_key(&dest.base)
         }
+        StatementKind::Phi { dest, .. } => aliases.parent.contains_key(dest),
         _ => false,
     }
 }

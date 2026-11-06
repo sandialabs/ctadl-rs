@@ -27,18 +27,9 @@ fn function_f() -> FunctionData {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let a = Address {
-            base: VariableRef::new_local_idx(a_idx),
-            accesses: Default::default(),
-        };
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
-        let q = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(1)),
-            accesses: Default::default(),
-        };
+        let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+        let q = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(1)));
         let stmts: IndexVec<StatementIdx, _> = indexvec![
             Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
@@ -69,18 +60,9 @@ fn function_g() -> FunctionData {
     g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let c = Address {
-        base: VariableRef::new_local_idx(c_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let c = AccessPath::from(VariableRef::new_local_idx(c_idx));
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -121,22 +103,10 @@ fn function_g1() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let _c = Address {
-        base: VariableRef::new_local_idx(c_idx),
-        accesses: Default::default(),
-    };
-    let c1 = Address {
-        base: VariableRef::new_local_idx(c1_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let _c = AccessPath::from(VariableRef::new_local_idx(c_idx));
+    let c1 = AccessPath::from(VariableRef::new_local_idx(c1_idx));
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -179,15 +149,12 @@ fn program_h() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
-                Address::without_offsets(global_ref.clone()),
-                FieldRef::symbol("bar"),
+                AccessPath::from(global_ref.clone()),
+                PathSegment::field("bar"),
                 Exp::from(p.clone()),
             )),];
         let body_block = &mut h[body];
@@ -448,7 +415,7 @@ fn function_diamond() -> FunctionData {
     blocks.push(b2);
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(x)],
+            args: smallvec![Exp::variable(x)],
         },
     ))));
     f
@@ -477,13 +444,13 @@ fn function_loop() -> FunctionData {
     blocks.push(BasicBlockData::new(goto(&[2, 3])));
     let mut b2 = BasicBlockData::new(goto(&[1]));
     b2.extend([
-        assign(&i, [Exp::Variable(i.clone()), konst(1)]),
-        assign(&d, [Exp::Variable(i.clone())]),
+        assign(&i, [Exp::variable(i.clone()), konst(1)]),
+        assign(&d, [Exp::variable(i.clone())]),
     ]);
     blocks.push(b2);
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(i)],
+            args: smallvec![Exp::variable(i)],
         },
     ))));
     f
@@ -669,9 +636,9 @@ fn test_phi_order_deterministic() {
         b2.extend(xs.iter().map(|x| assign(x, [konst(2)])));
         blocks.push(b2);
         let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![Exp::Variable(y.clone())],
+            args: smallvec![Exp::variable(y.clone())],
         })));
-        b3.extend([assign(&y, xs.iter().map(|x| Exp::Variable(x.clone())))]);
+        b3.extend([assign(&y, xs.iter().map(|x| Exp::variable(x.clone())))]);
         blocks.push(b3);
         f
     };

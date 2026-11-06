@@ -402,8 +402,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -438,7 +438,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -507,8 +507,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -588,15 +588,15 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f.blocks[true_branch], &mut f.locals);
-    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
+    true_builder.create_assign(x.clone(), [Exp::variable(a)]);
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f.blocks[false_branch], &mut f.locals);
-    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
+    false_builder.create_assign(x.clone(), [Exp::variable(b)]);
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f.blocks[merge], &mut f.locals);
-    merge_builder.create_ret(vec![Exp::Variable(x)]);
+    merge_builder.create_ret(vec![Exp::variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -637,12 +637,12 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(new_value.clone()),
+        ctadl_ir::mir::PathSegment::field("field"),
+        Exp::variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::Variable(s_var)]);
+    builder.create_ret(vec![Exp::variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -678,8 +678,8 @@ fn function_with_param_to_global_field() -> FunctionData {
     // This is the key assignment: globals.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(local_var.clone()),
+        ctadl_ir::mir::PathSegment::field("field"),
+        Exp::variable(local_var.clone()),
     );
 
     // Return globals
@@ -719,7 +719,7 @@ fn test_cap_algorithm() {
     let t3 = builder.new_local_var("t3");
     builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::Variable(t3)]);
+    builder.create_ret(vec![Exp::variable(t3)]);
 
     f.verify().expect("doesn't verify");
 

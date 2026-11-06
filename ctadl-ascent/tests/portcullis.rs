@@ -19,8 +19,8 @@ use ctadl_ir::mir::call::{
     VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    Address, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program, Statement,
-    StatementKind, VariableRef,
+    AccessPath, BasicBlockData, FunctionData, Functions, ParameterType, PathSegment, Program,
+    Statement, StatementKind, VariableRef,
 };
 use ctadl_ir::mir::{LocalIdx, Symbol};
 
@@ -56,13 +56,13 @@ fn call(callee: &str) -> Statement {
     })
 }
 
-/// A `Load` of `field`, which is what `uses_field` reads.
+/// A load of `field`, which is what `uses_field` reads.
 fn load(field: &str) -> Statement {
-    Statement::new_kind(StatementKind::Load {
-        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: Address::without_offsets(VariableRef::new_local_idx(LocalIdx::new(1))),
-        field: FieldRef::symbol(field),
-    })
+    Statement::new_kind(StatementKind::load(
+        VariableRef::new_local_idx(LocalIdx::new(0)),
+        VariableRef::new_local_idx(LocalIdx::new(1)),
+        PathSegment::field(field),
+    ))
 }
 
 /// A Java program: `Lc/App;->handle()V` calls `Lc/Log;->emit(…)V`, `Lc/Sub;` extends `Lc/Base;`.
@@ -1767,32 +1767,30 @@ fn allocator_is_native_only() {
 /// word but writes nothing, `FUN_stats` writes the heap state but has no allocator signature,
 /// and `FUN_lonely` is shaped like `malloc` but has a single caller. `main` calls them.
 fn stripped_allocator() -> ProgramInfo {
-    use ctadl_ir::mir::{Exp, OffsetAccess, ParameterIdx, ReturnType};
+    use ctadl_ir::mir::{Exp, ParameterIdx, ReturnType};
     const HEAP: [i64; 4] = [0x10003010, 0x10003014, 0x10003040, 0x10003044];
     let heap_stores = |n: usize| -> Vec<Statement> {
         (0..n)
             .map(|i| {
-                Statement::new_kind(StatementKind::Store {
-                    dest: Address::new(
+                Statement::new_kind(StatementKind::store(
+                    AccessPath::new(
                         VariableRef::new_global(),
-                        [OffsetAccess::Offset(ctadl_ir::mir::Offset(
-                            HEAP[i % HEAP.len()],
-                        ))],
+                        [PathSegment::offset(HEAP[i % HEAP.len()])],
                     ),
-                    field: FieldRef::symbol("deref"),
-                    value: Exp::Int(i as i64),
-                })
+                    PathSegment::Deref,
+                    Exp::Int(i as i64),
+                ))
             })
             .collect()
     };
-    let header_load = Statement::new_kind(StatementKind::Load {
-        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: Address::new(
+    let header_load = Statement::new_kind(StatementKind::load(
+        VariableRef::new_local_idx(LocalIdx::new(0)),
+        AccessPath::new(
             VariableRef::new_parameter(ParameterIdx::new(0)),
-            [OffsetAccess::Offset(ctadl_ir::mir::Offset(0xffff_fffc))],
+            [PathSegment::offset(0xffff_fffc)],
         ),
-        field: FieldRef::symbol("deref"),
-    });
+        PathSegment::Deref,
+    ));
     let with = |name: &str, params: usize, returns: bool, body: Vec<Statement>| {
         let mut f = function(name, params, body);
         f.return_type = ReturnType {

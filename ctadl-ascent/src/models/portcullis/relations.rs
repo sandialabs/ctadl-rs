@@ -650,19 +650,29 @@ fn scan_bodies(
         for (b, block) in data.blocks.iter().enumerate() {
             for (s, stmt) in block.statements.iter().enumerate() {
                 match &stmt.kind {
-                    StatementKind::Load { field, .. } | StatementKind::Store { field, .. }
-                        if needs.uses_field =>
-                    {
-                        fields.push((
-                            caller,
-                            Str::from(match &field.field {
-                                ctadl_ir::mir::PathSegment::Field(name) => &**name,
-                                ctadl_ir::mir::PathSegment::Value => {
-                                    ctadl_ir::mir::path_syntax::VALUE
-                                }
-                                _ => ctadl_ir::mir::path_syntax::DEREF,
-                            }),
-                        ));
+                    // Every field (and `deref`, `#value`) an assignment reads or writes through:
+                    // what one load or store per step read and wrote when paths were chains.
+                    StatementKind::Assign { dest, sources } if needs.uses_field => {
+                        let store = (!dest.is_pathless()).then_some(dest);
+                        let reads = sources.iter().filter_map(|e| match e {
+                            ctadl_ir::mir::Exp::Path(ap) => Some(ap),
+                            _ => None,
+                        });
+                        for ap in store.into_iter().chain(reads) {
+                            for seg in &ap.segments {
+                                let name: &str = match seg {
+                                    ctadl_ir::mir::PathSegment::Field(name) => name,
+                                    ctadl_ir::mir::PathSegment::Value => {
+                                        ctadl_ir::mir::path_syntax::VALUE
+                                    }
+                                    ctadl_ir::mir::PathSegment::Deref => {
+                                        ctadl_ir::mir::path_syntax::DEREF
+                                    }
+                                    ctadl_ir::mir::PathSegment::Offset(_) => continue,
+                                };
+                                fields.push((caller, Str::from(name)));
+                            }
+                        }
                     }
                     StatementKind::CallAssign { style, .. } if needs.callsite => {
                         callsites.extend(callee_strings(style, data).into_iter().map(|callee| {

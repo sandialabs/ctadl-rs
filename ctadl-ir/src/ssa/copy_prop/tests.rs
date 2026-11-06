@@ -25,7 +25,7 @@ fn bare(name: &str) -> VariableRef {
 }
 
 fn read(var: VariableRef) -> Exp {
-    Exp::Variable(var)
+    Exp::variable(var)
 }
 
 /// A pure copy `dest = src`.
@@ -270,7 +270,7 @@ fn load_is_not_a_copy() {
         vec![Statement::new_kind(StatementKind::load(
             v("x", 2),
             v("y", 1),
-            FieldRef::symbol("f"),
+            PathSegment::field("f"),
         ))],
         vec![read(v("x", 2))],
     );

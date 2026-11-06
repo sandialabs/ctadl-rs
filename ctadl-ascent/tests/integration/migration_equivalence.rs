@@ -85,16 +85,16 @@ fn function(name: &str, arity: usize, body: Body) -> FunctionData {
     }
     for field in body.stores {
         let value = b.new_local_var("stored");
-        b.create_store(base.clone(), *field, Exp::Variable(value));
+        b.create_store(base.clone(), *field, Exp::variable(value));
     }
     for field in body.updates {
         let agg = b.new_local_var("agg");
         let value = b.new_local_var("value");
-        b.create_store(agg, *field, Exp::Variable(value));
+        b.create_store(agg, *field, Exp::variable(value));
     }
     for style in body.calls {
         let ret = b.new_local_var("ret");
-        b.create_call(style, vec![ret], vec![Exp::Variable(base.clone())]);
+        b.create_call(style, vec![ret], vec![Exp::variable(base.clone())]);
     }
     b.create_nop();
     f

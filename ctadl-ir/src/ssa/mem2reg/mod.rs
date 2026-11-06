@@ -308,24 +308,36 @@ pub(super) fn log_escape_note(note: &EscapeNote) {
     );
 }
 
-/// The sum of an address's offsets: the slot it names.
-fn slot(addr: &Address) -> i64 {
-    addr.accesses.offsets.iter().map(|a| a.offset().0).sum()
+/// The slot an access path on the frame base names, and the rest of its path: `st.[k]·rest`
+/// gives `(k, rest)`, and `st·rest` gives `(0, rest)` when `rest` does not begin with an offset.
+/// `None` for an access path on another variable.
+fn frame_access(ap: &AccessPath, st: Variable) -> Option<(i64, &[PathSegment])> {
+    if ap.base.variable != st {
+        return None;
+    }
+    Some(match ap.segments.split_first() {
+        Some((PathSegment::Offset(Offset(k)), rest)) => (*k, rest),
+        _ => (0, &ap.segments[..]),
+    })
 }
 
-/// If `e` is an address on the frame base, its offset.
-fn exp_slot(e: &Exp, st: Variable) -> Option<i64> {
-    match e {
-        // A value use of the frame base escapes it as a copy does, so `value` changes nothing.
-        Exp::Variable(v) | Exp::Value(v) if v.variable == st => Some(0),
-        Exp::Address(addr) if addr.base.variable == st => Some(slot(addr)),
-        _ => None,
-    }
+/// How a read of the frame base at `ap` uses it, when the read is neither a direct access nor a
+/// field access: `how`.
+fn read_use(ap: &AccessPath, st: Variable, how: EscapeKind) -> Option<Use> {
+    let (k, rest) = frame_access(ap, st)?;
+    Some(match rest.first() {
+        // `st.[k].deref·t`: the slot's memory.
+        Some(PathSegment::Deref) => Use::Direct(k, false),
+        // `st.[k]`: the address itself.
+        None => Use::Escape(k, how),
+        // Anything else reads at the address without going through the slot's memory.
+        Some(_) => Use::Escape(k, EscapeKind::FieldAccess),
+    })
 }
 
 /// A use of the frame base.
 enum Use {
-    /// A `.deref` load (`false`) or store (`true`) of this slot.
+    /// A `.deref` read (`false`) or write (`true`) of this slot.
     Direct(i64, bool),
     /// The address of this slot escapes.
     Escape(i64, EscapeKind),
@@ -333,39 +345,46 @@ enum Use {
 
 /// Classifies every use of `st` in `kind`, pushing each onto `out`. The caller checks the number
 /// pushed against the number of `st` reads the statement makes, so a use this misses is caught.
+///
+/// In terms of S3 of `docs/ir.md`: slot `k`'s memory is the location `st.[k].deref` and what is
+/// under it. A direct use names it through the frame variable itself; any other use of the
+/// address `st.[k]` lets another path reach that memory, so it escapes.
 fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
-    let is_st = |v: &VariableRef| v.variable == st;
-    let esc = |e: &Exp, how: EscapeKind, out: &mut Vec<Use>| {
-        if let Some(k) = exp_slot(e, st) {
-            out.push(Use::Escape(k, how));
-        }
-    };
     match kind {
-        StatementKind::Assign { sources, .. } => {
-            for e in sources {
-                esc(e, EscapeKind::Copied, out);
-            }
-        }
-        StatementKind::Load { source, field, .. } if is_st(&source.base) => {
-            out.push(if field.field.is_deref() {
-                Use::Direct(slot(source), false)
+        StatementKind::Assign { dest, sources } => {
+            let how = if dest.is_pathless() {
+                EscapeKind::Copied
             } else {
-                Use::Escape(slot(source), EscapeKind::FieldAccess)
-            });
-        }
-        StatementKind::Store { dest, field, value } => {
-            if is_st(&dest.base) {
-                out.push(if field.field.is_deref() {
-                    Use::Direct(slot(dest), true)
-                } else {
-                    Use::Escape(slot(dest), EscapeKind::FieldAccess)
+                EscapeKind::Stored
+            };
+            if let Some((k, rest)) = frame_access(dest, st).filter(|_| !dest.is_pathless()) {
+                out.push(match rest.first() {
+                    Some(PathSegment::Deref) => Use::Direct(k, true),
+                    _ => Use::Escape(k, EscapeKind::FieldAccess),
                 });
             }
-            esc(value, EscapeKind::Stored, out);
+            for e in sources {
+                // A value use of the frame base escapes it as a copy does.
+                if let Some(u) = e.access_path().and_then(|ap| read_use(ap, st, how)) {
+                    out.push(u);
+                }
+            }
         }
-        StatementKind::CallAssign { .. } => call_escapes(kind, st, |k| {
-            out.push(Use::Escape(k, EscapeKind::CallInput))
-        }),
+        StatementKind::CallAssign { style, args, .. } => {
+            for e in args {
+                if let Some(u) = e
+                    .access_path()
+                    .and_then(|ap| read_use(ap, st, EscapeKind::CallInput))
+                {
+                    out.push(u);
+                }
+            }
+            if let CallStyle::FuncPtrCall { callee, .. } = style
+                && let Some(u) = read_use(callee, st, EscapeKind::CallInput)
+            {
+                out.push(u);
+            }
+        }
         _ => {}
     }
 }
@@ -373,17 +392,34 @@ fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
 /// Calls `f` with each frame address a call is passed or calls through.
 fn call_escapes(kind: &StatementKind, st: Variable, mut f: impl FnMut(i64)) {
     if let StatementKind::CallAssign { style, args, .. } = kind {
-        for e in args {
-            if let Some(k) = exp_slot(e, st) {
+        let callee = match style {
+            CallStyle::FuncPtrCall { callee, .. } => Some(callee),
+            _ => None,
+        };
+        for ap in args.iter().filter_map(Exp::access_path).chain(callee) {
+            if let Some((k, [])) = frame_access(ap, st) {
                 f(k);
             }
         }
-        if let CallStyle::FuncPtrCall { callee, .. } = style
-            && callee.base.variable == st
-        {
-            f(slot(callee));
-        }
     }
+}
+
+/// Rewrites a direct access `st.[k].deref·t` of a promoted slot into `local·t`. Returns whether
+/// `ap` was a direct access, and whether it was promoted.
+fn promote_access(
+    ap: &mut AccessPath,
+    st: Variable,
+    promotable: &HashMap<i64, VariableRef>,
+) -> Option<bool> {
+    let (k, rest) = frame_access(ap, st)?;
+    let Some((PathSegment::Deref, t)) = rest.split_first() else {
+        return None;
+    };
+    let Some(local) = promotable.get(&k) else {
+        return Some(false);
+    };
+    *ap = AccessPath::new(local.clone(), t.iter().cloned());
+    Some(true)
 }
 
 /// The local a promoted slot is given.
@@ -448,8 +484,10 @@ pub fn promote_function(
             let reads = t.iter_src_var().filter(|v| v.variable == st).count();
             let mut n = 0;
             if let TerminatorKind::Return { args } = &t.kind {
+                // A returned address escapes. So does a returned read of a slot: returns are
+                // not rewritten, so the slot stays in memory.
                 for e in args {
-                    if let Some(k) = exp_slot(e, st) {
+                    if let Some((k, _)) = e.access_path().and_then(|ap| frame_access(ap, st)) {
                         escapes.push((k, EscapeKind::Returned, bb, data.statements.len()));
                         n += 1;
                     }
@@ -551,55 +589,50 @@ pub fn promote_function(
     // Pass 3: rewrite direct accesses of promoted slots into copies, and reload the escaped
     // ones after each call that reaches them.
     let st_ref = VariableRef::new_local_idx(st_idx);
-    let deref = FieldRef::deref();
     let blocks = function.blocks.blocks_mut_preserves_cfg();
     for bb in blocks.indices() {
         let old = std::mem::take(&mut blocks[bb].statements);
         for mut s in old.into_iter_inner() {
             let mut reload: BTreeSet<i64> = BTreeSet::new();
-            match &s.kind {
-                StatementKind::Load {
-                    dest,
-                    source,
-                    field,
-                } if source.base.variable == st && field.field.is_deref() => {
-                    match promotable.get(&slot(source)) {
-                        Some(local) => {
-                            s.kind =
-                                StatementKind::assign(dest.clone(), [Exp::Variable(local.clone())]);
-                            stats.promoted_accesses += 1;
-                        }
-                        None => stats.kept_accesses += 1,
+            if let StatementKind::CallAssign { .. } = &s.kind
+                && !escaped.is_empty()
+            {
+                call_escapes(&s.kind, st, |j| {
+                    reload.extend(escaped.keys().filter(|&&k| policy.reaches(j, k)));
+                });
+            }
+            let mut count = |r: Option<bool>| match r {
+                Some(true) => stats.promoted_accesses += 1,
+                Some(false) => stats.kept_accesses += 1,
+                None => {}
+            };
+            match &mut s.kind {
+                StatementKind::Assign { dest, sources } => {
+                    if !dest.is_pathless() {
+                        count(promote_access(dest, st, &promotable));
+                    }
+                    for ap in sources.iter_mut().filter_map(Exp::access_path_mut) {
+                        count(promote_access(ap, st, &promotable));
                     }
                 }
-                StatementKind::Store { dest, field, value }
-                    if dest.base.variable == st && field.field.is_deref() =>
-                {
-                    match promotable.get(&slot(dest)) {
-                        Some(local) => {
-                            s.kind = StatementKind::assign(local.clone(), [value.clone()]);
-                            stats.promoted_accesses += 1;
-                        }
-                        None => stats.kept_accesses += 1,
+                StatementKind::CallAssign { args, style, .. } => {
+                    for ap in args.iter_mut().filter_map(Exp::access_path_mut) {
+                        count(promote_access(ap, st, &promotable));
                     }
-                }
-                StatementKind::CallAssign { .. } if !escaped.is_empty() => {
-                    call_escapes(&s.kind, st, |j| {
-                        reload.extend(escaped.keys().filter(|&&k| policy.reaches(j, k)));
-                    });
+                    if let CallStyle::FuncPtrCall { callee, .. } = style {
+                        count(promote_access(callee, st, &promotable));
+                    }
                 }
                 _ => {}
             }
             let source_info = s.source_info;
             blocks[bb].statements.push_back(s);
             for k in reload {
-                let addr = Address::new(
-                    st_ref.clone(),
-                    (k != 0).then_some(OffsetAccess::Offset(Offset(k))),
-                );
+                let slot =
+                    AccessPath::new(st_ref.clone(), [PathSegment::offset(k), PathSegment::Deref]);
                 blocks[bb].statements.push_back(Statement {
                     source_info,
-                    kind: StatementKind::load(escaped[&k].clone(), addr, deref.clone()),
+                    kind: StatementKind::assign(escaped[&k].clone(), [Exp::Path(slot)]),
                 });
                 stats.reloads += 1;
             }

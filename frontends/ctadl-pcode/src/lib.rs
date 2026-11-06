@@ -204,7 +204,7 @@ impl Context {
             }
             dest.segments.push(PathSegment::deref());
         }
-        mir::store_access_path(dest, src, stmts, || self.create_temp(locals));
+        stmts.push(Statement::new_kind(StatementKind::assign(dest, [src])));
     }
 
     fn process(
@@ -548,8 +548,8 @@ impl Context {
                     let stack_top_var =
                         VariableRef::new_local_idx(func.locals.get_or_intern("__stack_top"));
                     let stmt = Statement::new_kind(StatementKind::Assign {
-                        dest: sp_var,
-                        sources: smallvec![Exp::Variable(stack_top_var)],
+                        dest: sp_var.into(),
+                        sources: smallvec![Exp::variable(stack_top_var)],
                     });
                     func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                 }
@@ -985,10 +985,10 @@ impl Context {
         for (i, vn) in pcode.inputs.iter().enumerate() {
             let exp = self.get_exp(&mut stmts, vn, vnode_facts, locals)?;
             let exp = match (flows.get(i), exp) {
-                (Some(OperandFlow::Value), Exp::Variable(v)) => Exp::value(v),
+                (Some(OperandFlow::Value), Exp::Path(ap)) if ap.is_pathless() => Exp::Value(ap),
                 // `x.[k]`, an address computed from `x`: copy it to a temp, whose value is
                 // then the source.
-                (Some(OperandFlow::Value), exp @ Exp::Address(_)) => {
+                (Some(OperandFlow::Value), exp @ Exp::Path(_)) => {
                     let t = self.create_temp(locals);
                     stmts.push(Statement::new_kind(StatementKind::assign(t.clone(), [exp])));
                     Exp::value(t)
@@ -1006,7 +1006,7 @@ impl Context {
             temp.clone(),
             inputs,
         )));
-        self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp), locals);
+        self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::variable(temp), locals);
         Ok(stmts)
     }
 
@@ -1116,7 +1116,7 @@ impl Context {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts, locals)?;
                 ap.segments.push(PathSegment::offset(c));
                 let mut stmts = Vec::new();
-                let src = Exp::address(self.load_ap(&mut stmts, ap, locals));
+                let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
                 Ok(stmts)
             }
@@ -1124,7 +1124,7 @@ impl Context {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts, locals)?;
                 ap.segments.push(PathSegment::offset(c));
                 let mut stmts = Vec::new();
-                let src = Exp::address(self.load_ap(&mut stmts, ap, locals));
+                let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
                 Ok(stmts)
             }
@@ -1140,7 +1140,7 @@ impl Context {
                 self.push_assign_or_store(
                     &mut stmts,
                     outputs[0].clone(),
-                    Exp::Variable(temp),
+                    Exp::variable(temp),
                     locals,
                 );
                 Ok(stmts)
@@ -1199,7 +1199,7 @@ impl Context {
                 ap.segments
                     .push(PathSegment::offset(idx_c.wrapping_mul(s_val)));
                 let mut stmts = Vec::new();
-                let src = Exp::address(self.load_ap(&mut stmts, ap, locals));
+                let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
                 Ok(stmts)
             }
@@ -1207,7 +1207,7 @@ impl Context {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts, locals)?;
                 ap.segments.push(PathSegment::offset(base_c));
                 let mut stmts = Vec::new();
-                let src = Exp::address(self.load_ap(&mut stmts, ap, locals));
+                let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
                 Ok(stmts)
             }
@@ -1229,7 +1229,7 @@ impl Context {
                 self.push_assign_or_store(
                     &mut stmts,
                     outputs[0].clone(),
-                    Exp::Variable(temp),
+                    Exp::variable(temp),
                     locals,
                 );
                 Ok(stmts)
@@ -1279,10 +1279,10 @@ impl Context {
             stmts.push(Statement::new_kind(StatementKind::load(
                 dest.clone(),
                 addr,
-                FieldRef::deref(),
+                PathSegment::Deref,
             )));
             if !output_var.is_pathless() {
-                self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest), locals);
+                self.push_assign_or_store(&mut stmts, output_var, Exp::variable(dest), locals);
             }
             return Ok(stmts);
         }
@@ -1508,7 +1508,7 @@ impl Context {
                 };
                 self.load_ap(&mut stmts, ap, locals)
             } else {
-                Address::without_offsets(VariableRef::new_local_idx(
+                AccessPath::from(VariableRef::new_local_idx(
                     locals.get_or_intern("unknown_callee"),
                 ))
             };
@@ -1534,7 +1534,7 @@ impl Context {
         stmts.push(Statement::new_kind(kind));
         // store temps into outputs
         for (o, t) in outputs.iter().zip(temps) {
-            self.push_assign_or_store(&mut stmts, o.clone(), Exp::Variable(t), locals);
+            self.push_assign_or_store(&mut stmts, o.clone(), Exp::variable(t), locals);
         }
 
         Ok(stmts)
@@ -1600,31 +1600,31 @@ impl Context {
         let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts, locals);
         let exp = match rep {
             VnodeRep::Const(value) => self.exp_from_const_value(vnode_id, vnode_facts, value),
-            VnodeRep::Var(var) => Exp::Variable(var),
+            VnodeRep::Var(var) => Exp::variable(var),
             VnodeRep::Offset(var, offset) => {
                 let ap = AccessPath::new(var, [PathSegment::offset(offset)]);
-                Exp::address(self.load_ap(stmts, ap, locals))
+                Exp::path(self.load_ap(stmts, ap, locals))
             }
             VnodeRep::StackSlot(offset) => {
                 let ap = Self::stack_slot_path(offset, locals);
-                Exp::address(self.load_ap(stmts, ap, locals))
+                Exp::path(self.load_ap(stmts, ap, locals))
             }
             VnodeRep::Global(address) => {
-                Exp::address(self.load_ap(stmts, Self::global_path(address), locals))
+                Exp::path(self.load_ap(stmts, Self::global_path(address), locals))
             }
         };
         Ok(exp)
     }
 
-    /// Lowers `ap` with [`mir::load_access_path`], appending the loads to `stmts` and returning
-    /// the residual [`Address`].
+    /// Reads the memory part of `ap` into a temporary with [`mir::read_into_temp`], appending
+    /// the copy to `stmts`, and returns the temporary plus `ap`'s trailing offsets.
     fn load_ap(
         &mut self,
         stmts: &mut Vec<Statement>,
         ap: AccessPath,
         locals: &mut Locals,
-    ) -> Address {
-        mir::load_access_path(ap, stmts, || self.create_temp(locals))
+    ) -> AccessPath {
+        mir::read_into_temp(ap, stmts, || self.create_temp(locals))
     }
 
     fn get_lvalue(
@@ -1835,19 +1835,19 @@ fn base_operand(shapes: &[OperandShape]) -> Option<usize> {
 /// The number of each kind of source of arithmetic and comparisons in [`Context::handle_binop`].
 #[derive(Clone, Copy, Debug, Default)]
 struct BinopSources {
-    /// [`Exp::Variable`] sources.
+    /// Whole-variable sources.
     variable: usize,
     /// [`Exp::Value`] sources.
     value: usize,
-    /// Every other source: constants, and address computations ([`Exp::Address`]) that
-    /// merge.
+    /// Every other source: constants, and address computations (an [`Exp::Path`] with
+    /// offsets) that merge.
     other: usize,
 }
 
 impl BinopSources {
     fn count(&mut self, exp: &Exp) {
         match exp {
-            Exp::Variable(_) => self.variable += 1,
+            Exp::Path(ap) if ap.is_pathless() => self.variable += 1,
             Exp::Value(_) => self.value += 1,
             _ => self.other += 1,
         }

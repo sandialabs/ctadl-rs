@@ -57,8 +57,7 @@ pub fn eliminate_dead_temps(program: &mut Program) {
 /// of statement this pass may delete — returns that local; otherwise `None`.
 fn removable_dest(kind: &StatementKind) -> Option<&Variable> {
     let dest = match kind {
-        StatementKind::Assign { dest, .. } => dest,
-        StatementKind::Load { dest, .. } => dest,
+        StatementKind::Assign { dest, .. } if dest.is_pathless() => &dest.base,
         _ => return None,
     };
     (dest.version.is_none() && matches!(&dest.variable, Variable::Local(_)))

@@ -14,7 +14,7 @@ fn local(name: &str) -> VariableRef {
 }
 
 fn read(name: &str) -> Exp {
-    Exp::Variable(local(name))
+    Exp::variable(local(name))
 }
 
 fn assign(dest: &str, sources: Vec<Exp>) -> Statement {
@@ -56,7 +56,7 @@ fn fuses_binop_temp_into_whole_var_copy() {
     let StatementKind::Assign { dest, sources } = kinds[0] else {
         panic!("expected assign");
     };
-    assert_eq!(dest, &local("x"));
+    assert_eq!(dest, &AccessPath::from(local("x")));
     assert_eq!(sources.as_slice(), &[read("a"), read("b")]);
 }
 
@@ -74,7 +74,7 @@ fn collapses_copy_chains() {
     let StatementKind::Assign { dest, sources } = kinds[0] else {
         panic!("expected assign");
     };
-    assert_eq!(dest, &local("x"));
+    assert_eq!(dest, &AccessPath::from(local("x")));
     assert_eq!(sources.as_slice(), &[read("a"), read("b")]);
 }
 
@@ -165,12 +165,12 @@ fn versioned_variables_are_untouched() {
     let x = local("x").with_version(1);
     let mut f = one_block_function(vec![
         Statement::new_kind(StatementKind::Assign {
-            dest: t.clone(),
-            sources: smallvec![Exp::Variable(local("a").with_version(0))],
+            dest: t.clone().into(),
+            sources: smallvec![Exp::variable(local("a").with_version(0))],
         }),
         Statement::new_kind(StatementKind::Assign {
-            dest: x,
-            sources: smallvec![Exp::Variable(t)],
+            dest: x.into(),
+            sources: smallvec![Exp::variable(t)],
         }),
     ]);
     coalesce_function(&mut f);
@@ -234,7 +234,10 @@ fn value_use_takes_a_copied_variable() {
 #[test]
 fn value_use_of_an_address_is_kept() {
     // t = a.[8]; x = value(t)  =>  unchanged: `value(a.[8])` has no spelling
-    let addr = Exp::address(Address::new(local("a"), [OffsetAccess::Offset(Offset(8))]));
+    let addr = Exp::path(AccessPath::new(
+        local("a"),
+        [PathSegment::Offset(Offset(8))],
+    ));
     let mut f = one_block_function(vec![assign("t", vec![addr]), assign("x", vec![value("t")])]);
     coalesce_function(&mut f);
     assert_eq!(block_kinds(&f).len(), 2);

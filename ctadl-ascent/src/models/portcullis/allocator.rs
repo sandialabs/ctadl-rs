@@ -37,7 +37,7 @@ Every by-shape pick is reported as CTADL0109 (see `cli::index`).
 use hashbrown::{HashMap, HashSet};
 
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{Address, Exp, FunctionData, OffsetAccess, StatementKind, Variable};
+use ctadl_ir::mir::{AccessPath, Exp, FunctionData, PathSegment, StatementKind, Variable};
 
 use crate::facts::Str;
 
@@ -300,7 +300,8 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
         let before = derived.len();
         for stmt in statements() {
             if let StatementKind::Assign { dest, sources } = &stmt.kind
-                && let Variable::Local(l) = dest.variable
+                && dest.is_pathless()
+                && let Variable::Local(l) = dest.base.variable
                 && !derived.contains(&u32::from(l))
                 && sources
                     .iter()
@@ -315,9 +316,12 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
         }
     }
 
-    let is_header = |path: &Address| {
+    let is_header = |path: &AccessPath| {
         from_param(&path.base.variable, &derived)
-            && path.accesses.offsets.iter().any(|OffsetAccess::Offset(o)| {
+            && path.segments.iter().any(|s| {
+                let PathSegment::Offset(o) = s else {
+                    return false;
+                };
                 // Some lowerings carry the borrow into the high word (`.[17179869176]` is -8);
                 // the low 32 bits are the offset either way.
                 matches!(
@@ -329,21 +333,23 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
     let mut header_accesses = 0;
     let mut own_stores: HashMap<i64, u32> = HashMap::new();
     for stmt in statements() {
-        let paths: &mut dyn Iterator<Item = &Address> = match &stmt.kind {
-            StatementKind::Store { dest, .. } => {
-                if dest.base.variable == Variable::GlobalHeap
+        let paths: &mut dyn Iterator<Item = &AccessPath> = match &stmt.kind {
+            StatementKind::Assign { dest, sources } => {
+                let store = (!dest.is_pathless()).then_some(dest);
+                if let Some(dest) = store
+                    && dest.base.variable == Variable::GlobalHeap
                     && !call_spans.contains(&stmt.source_info.span_id)
-                    && let Some(OffsetAccess::Offset(addr)) = dest.accesses.offsets.first()
+                    && let Some(PathSegment::Offset(addr)) = dest.segments.first()
                 {
                     *own_stores.entry(addr.0).or_default() += 1;
                 }
-                &mut std::iter::once(dest)
+                &mut store
+                    .into_iter()
+                    .chain(sources.iter().filter_map(|e| match e {
+                        Exp::Path(p) => Some(p),
+                        _ => None,
+                    }))
             }
-            StatementKind::Load { source, .. } => &mut std::iter::once(source),
-            StatementKind::Assign { sources, .. } => &mut sources.iter().filter_map(|e| match e {
-                Exp::Address(p) => Some(p),
-                _ => None,
-            }),
             _ => &mut std::iter::empty(),
         };
         header_accesses += paths.filter(|p| is_header(p)).count() as u32;

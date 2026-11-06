@@ -1623,10 +1623,10 @@ impl<'a> Lowerer<'a> {
             let v = self.eval_expr(e, blk);
             // Snapshot a bare-variable RHS into a temp for parallel (multi-target) assignment,
             // so `a, b = b, a` behaves like a swap rather than reading the just-written value.
-            if multi && matches!(v, Exp::Variable(_)) {
+            if multi && v.variable_ref().is_some() {
                 let t = self.fresh_temp();
                 self.push_stmt(blk, StatementKind::assign(t.clone(), [v]));
-                values.push(Exp::Variable(t));
+                values.push(Exp::variable(t));
             } else {
                 values.push(v);
             }
@@ -1871,7 +1871,7 @@ impl<'a> Lowerer<'a> {
                 // Both operands flow into the result (covers `..` concatenation and arithmetic).
                 let t = self.fresh_temp();
                 self.push_stmt(blk, StatementKind::assign(t.clone(), [left, right]));
-                Exp::Variable(t)
+                Exp::variable(t)
             }
             "unary_expression" => node
                 .child_by_field_name("operand")
@@ -1924,7 +1924,7 @@ impl<'a> Lowerer<'a> {
                 // Not a syntactic lvalue (e.g. a call result being indexed): evaluate it and use
                 // the resulting variable as the base.
                 match self.eval_expr(node, blk) {
-                    Exp::Variable(v) => AccessPath::from(v),
+                    Exp::Path(ap) if ap.is_pathless() => ap,
                     other => {
                         let t = self.fresh_temp();
                         self.push_stmt(blk, StatementKind::assign(t.clone(), [other]));
@@ -1981,7 +1981,7 @@ impl<'a> Lowerer<'a> {
             let target = AccessPath::new(table.clone(), [seg]);
             self.assign_to(blk, target, value);
         }
-        Exp::Variable(table)
+        Exp::variable(table)
     }
 
     /// Lowers an anonymous `function ... end` value into a first-class closure object. The object
@@ -2043,14 +2043,18 @@ impl<'a> Lowerer<'a> {
             self.assign_to(blk, target, value);
         }
         self.closure_upvalues.insert(fidx, upvalues);
-        Exp::Variable(closure)
+        Exp::variable(closure)
     }
 
     /// If `name_node` names a first-class function value (a local/parameter that is not a defined
     /// function), returns the callee's address for an indirect call; otherwise `None` (the call
     /// resolves by name). A `local function f`/global function is a defined name, so it stays a
     /// direct call.
-    fn indirect_call_target(&mut self, name_node: Node<'a>, blk: BasicBlockIdx) -> Option<Address> {
+    fn indirect_call_target(
+        &mut self,
+        name_node: Node<'a>,
+        blk: BasicBlockIdx,
+    ) -> Option<AccessPath> {
         if !matches!(name_node.kind(), "identifier" | "global") {
             return None;
         }
@@ -2105,14 +2109,14 @@ impl<'a> Lowerer<'a> {
                     // Materialize the receiver into a variable so it can be both actual arg 0 and
                     // the `LuaCall` receiver.
                     let recv_var = match recv {
-                        Exp::Variable(v) => v,
+                        Exp::Path(ap) if ap.is_pathless() => ap.base,
                         other => {
                             let t = self.fresh_temp();
                             self.push_stmt(blk, StatementKind::assign(t.clone(), [other]));
                             t
                         }
                     };
-                    args.push(Exp::Variable(recv_var.clone()));
+                    args.push(Exp::variable(recv_var.clone()));
                     if self.method_names.contains(&method) && !self.method_is_opaque(&method) {
                         lua_method = Some((recv_var, method.clone()));
                     }
@@ -2178,7 +2182,7 @@ impl<'a> Lowerer<'a> {
         self.cur_span = self.span(node);
         self.push_stmt(blk, StatementKind::CallAssign { style, rets, args });
         self.cur_span = saved;
-        Exp::Variable(result)
+        Exp::variable(result)
     }
 
     /// Recognizes standard-library calls that only move taint around (no callee definition and no
@@ -2236,7 +2240,7 @@ impl<'a> Lowerer<'a> {
                     .collect();
                 let t = self.fresh_temp();
                 self.push_stmt(blk, StatementKind::assign(t.clone(), srcs));
-                Some(Exp::Variable(t))
+                Some(Exp::variable(t))
             }
             _ => None,
         }
@@ -2286,7 +2290,7 @@ impl<'a> Lowerer<'a> {
             self.opaque_alloc_count += 1;
         }
         self.push_stmt(blk, StatementKind::assign(obj.clone(), sources));
-        Some(Exp::Variable(obj))
+        Some(Exp::variable(obj))
     }
 
     /// Whether a method name must take the name-based fallback because every class defining it has
@@ -2379,14 +2383,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lowers the symbolic-field reads of `ap` into a sequence of loads appended to `blk`, and
-    /// returns the residual address (the base plus any trailing offsets).
-    fn emit_loads(&mut self, blk: BasicBlockIdx, ap: AccessPath) -> Address {
+    /// Reads the memory part of `ap` into a temporary appended to `blk`
+    /// ([`ctadl_ir::mir::read_into_temp`]), and returns the temporary plus any trailing offsets.
+    fn emit_loads(&mut self, blk: BasicBlockIdx, ap: AccessPath) -> AccessPath {
         let mut stmts = Vec::new();
         let mut counter = self.temp_counter;
         let fidx = self.fidx;
         let locals = &mut self.program[fidx].locals;
-        let addr = load_access_path(ap, &mut stmts, || {
+        let addr = ctadl_ir::mir::read_into_temp(ap, &mut stmts, || {
             let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
             counter += 1;
             v
@@ -2396,24 +2400,10 @@ impl<'a> Lowerer<'a> {
         addr
     }
 
-    /// Assigns `value` into `target`: a bare variable becomes an [`StatementKind::Assign`]; any
-    /// longer access path becomes a store (with loads for intermediate dereferences).
+    /// Assigns `value` into `target`: a copy to a bare variable, a store to any longer access
+    /// path.
     fn assign_to(&mut self, blk: BasicBlockIdx, target: AccessPath, value: Exp) {
-        if target.is_pathless() {
-            self.push_stmt(blk, StatementKind::assign(target.base, [value]));
-        } else {
-            let mut stmts = Vec::new();
-            let mut counter = self.temp_counter;
-            let fidx = self.fidx;
-            let locals = &mut self.program[fidx].locals;
-            store_access_path(target, value, &mut stmts, || {
-                let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
-                counter += 1;
-                v
-            });
-            self.temp_counter = counter;
-            self.push_stmts_stamped(blk, stmts);
-        }
+        self.push_stmt(blk, StatementKind::assign(target, [value]));
     }
 
     /// Assigns multiple source values into `target` (a bare variable), flowing all of them in.

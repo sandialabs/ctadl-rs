@@ -55,7 +55,10 @@ fn assign_from(inst: Instruction) -> (Vec<(VariableRef, Exp)>, Locals) {
             Statement {
                 kind: StatementKind::Assign { dest, sources },
                 ..
-            } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+            } => sources
+                .into_iter()
+                .map(|s| (dest.base.clone(), s))
+                .collect(),
             _ => Vec::new(),
         })
         .collect();
@@ -222,7 +225,10 @@ fn new_instance_assign() {
                 Statement {
                     kind: StatementKind::Assign { dest, sources },
                     ..
-                } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+                } => sources
+                    .into_iter()
+                    .map(|s| (dest.base.clone(), s))
+                    .collect(),
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>()
@@ -286,14 +292,20 @@ fn store_parts(parser: &DexParser<'_>, inst: Instruction) -> (Vec<String>, Strin
     else {
         panic!("expected an assign, got {assign:?}");
     };
-    let StatementKind::Store { dest, value, .. } = &store.kind else {
+    let StatementKind::Assign {
+        dest,
+        sources: stored,
+    } = &store.kind
+    else {
         panic!("expected a store, got {store:?}");
     };
+    assert!(!dest.is_pathless(), "expected a store, got {store:?}");
+    let value = &stored[0];
     assert_eq!(value, &Exp::from(temp.clone()), "store must write the temp");
     let values = sources
         .iter()
         .map(|s| match s {
-            Exp::Variable(v) => local_name(&locals, v),
+            Exp::Path(ap) if ap.is_pathless() => local_name(&locals, &ap.base),
             other => panic!("expected a variable source, got {other:?}"),
         })
         .collect();
@@ -402,7 +414,7 @@ fn shl_long_reads_one_shift_register() {
     let flows: Vec<(String, String)> = assigns
         .iter()
         .map(|(var, exp)| {
-            let Exp::Variable(src) = exp else {
+            let Some(src) = exp.variable_ref() else {
                 panic!("expected a variable source, got {exp:?}");
             };
             (local_name(&locals, var), local_name(&locals, src))

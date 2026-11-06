@@ -617,13 +617,6 @@ impl Display for Path {
     }
 }
 
-impl From<&mir::OffsetAccesses> for Path {
-    #[inline]
-    fn from(path: &mir::OffsetAccesses) -> Self {
-        Self::from_accesses(path.iter().cloned().map(mir::PathSegment::from))
-    }
-}
-
 impl FromStr for Path {
     type Err = mir::PathSyntaxError;
 

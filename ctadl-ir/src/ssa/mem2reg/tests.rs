@@ -16,9 +16,9 @@ impl F {
     fn local(&mut self, name: &str) -> VariableRef {
         VariableRef::new_local_idx(self.0.intern_local(name))
     }
-    fn st(&mut self, k: i64) -> Address {
+    fn st(&mut self, k: i64) -> AccessPath {
         let st = self.local(STACK_TOP);
-        Address::new(st, [OffsetAccess::Offset(Offset(k))])
+        AccessPath::new(st, [PathSegment::Offset(Offset(k))])
     }
     /// `store __stack_top.[k].deref := v`
     fn store(&mut self, k: i64, v: &str) -> Statement {
@@ -26,19 +26,19 @@ impl F {
         let v = self.local(v);
         Statement::new_kind(StatementKind::store(
             dest,
-            FieldRef::deref(),
-            Exp::Variable(v),
+            PathSegment::Deref,
+            Exp::variable(v),
         ))
     }
     /// `d = load __stack_top.[k].deref`
     fn load(&mut self, d: &str, k: i64) -> Statement {
         let source = self.st(k);
         let d = self.local(d);
-        Statement::new_kind(StatementKind::load(d, source, FieldRef::deref()))
+        Statement::new_kind(StatementKind::load(d, source, PathSegment::Deref))
     }
     /// `f(__stack_top.[k])`: the address of slot `k` escapes into a call.
     fn escape_call(&mut self, k: i64) -> Statement {
-        let arg = Exp::Address(self.st(k));
+        let arg = Exp::Path(self.st(k));
         Statement::new_kind(StatementKind::CallAssign {
             style: CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit(thin_vec::thin_vec!["f".to_string()]),
@@ -70,13 +70,31 @@ fn has_local(f: &FunctionData, name: &str) -> bool {
     f.locals.iter_enumerated().any(|(_, d)| d.name == name)
 }
 
+/// The slot an access path on the frame names.
+fn slot(ap: &AccessPath) -> i64 {
+    ap.segments
+        .iter()
+        .map(|s| match s {
+            PathSegment::Offset(Offset(k)) => *k,
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Loads left reading the frame, as `(dest, slot)`.
 fn frame_loads(f: &FunctionData) -> Vec<i64> {
     f.blocks
         .iter_enumerated()
         .flat_map(|(_, b)| b.iter())
         .filter_map(|s| match &s.kind {
-            StatementKind::Load { source, .. } => Some(slot(source)),
+            StatementKind::Assign { dest, sources } if dest.is_pathless() => sources
+                .iter()
+                .filter_map(Exp::access_path)
+                .find(|ap| {
+                    ap.base.variable.local().map(|l| f.locals.name(l)) == Some(STACK_TOP)
+                        && ap.segments.last().is_some_and(PathSegment::is_deref)
+                })
+                .map(slot),
             _ => None,
         })
         .collect()
@@ -142,7 +160,7 @@ fn kept_slot_keeps_its_stores() {
     assert_eq!(stats.promoted_accesses, 0);
     assert!(matches!(
         f.blocks[BasicBlockIdx::START_BLOCK].statements[StatementIdx::new(1)].kind,
-        StatementKind::Store { .. }
+        StatementKind::Assign { ref dest, .. } if !dest.is_pathless()
     ));
 }
 
@@ -151,7 +169,7 @@ fn non_deref_load_is_an_escape() {
     let mut f = F::new();
     let src = f.st(-8);
     let d = f.local("d");
-    let odd = Statement::new_kind(StatementKind::load(d, src, FieldRef::symbol("f")));
+    let odd = Statement::new_kind(StatementKind::load(d, src, PathSegment::field("f")));
     let s = f.store(-8, "a");
     let mut f = f.one_block(vec![odd, s]);
     let stats = promote_stack_slots_function(&mut f, EscapePolicy::Exact);
@@ -164,7 +182,7 @@ fn assigned_frame_base_skips_function() {
     let mut f = F::new();
     let st = f.local(STACK_TOP);
     let x = f.local("x");
-    let redef = Statement::new_kind(StatementKind::assign(st, [Exp::Variable(x)]));
+    let redef = Statement::new_kind(StatementKind::assign(st, [Exp::variable(x)]));
     let s = f.store(-8, "a");
     let mut f = f.one_block(vec![redef, s]);
     let before = stmts(&f);
@@ -178,7 +196,7 @@ fn frame_stores(f: &FunctionData) -> Vec<i64> {
         .iter_enumerated()
         .flat_map(|(_, b)| b.iter())
         .filter_map(|s| match &s.kind {
-            StatementKind::Store { dest, .. } => Some(slot(dest)),
+            StatementKind::Assign { dest, .. } if !dest.is_pathless() => Some(slot(dest)),
             _ => None,
         })
         .collect()
@@ -237,7 +255,7 @@ fn function_without_frame_is_unchanged() {
     let mut f = F::new();
     let a = f.local("a");
     let b = f.local("b");
-    let s = Statement::new_kind(StatementKind::assign(a, [Exp::Variable(b)]));
+    let s = Statement::new_kind(StatementKind::assign(a, [Exp::variable(b)]));
     let mut f = f.one_block(vec![s]);
     let before = stmts(&f);
     assert_eq!(
@@ -293,7 +311,7 @@ fn diamond_gets_a_phi_after_ssa() {
     b2.statements.push_back(s2);
     f.blocks.push(b2);
     let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
-        args: smallvec![Exp::Variable(c)],
+        args: smallvec![Exp::variable(c)],
     })));
     b3.statements.push_back(l);
     f.blocks.push(b3);
@@ -332,7 +350,7 @@ fn full() -> Mem2Reg {
 /// `x = __stack_top.[k]`: the address of slot `k` is copied.
 fn copy_addr(f: &mut F, x: &str, k: i64) -> Statement {
     let x = f.local(x);
-    let a = Exp::Address(f.st(k));
+    let a = Exp::Path(f.st(k));
     Statement::new_kind(StatementKind::assign(x, [a]))
 }
 
@@ -356,7 +374,7 @@ fn full_reloads_after_a_call_that_reaches_the_slot() {
         stmts(&f),
         vec![
             "direct-call f(%L0.[-32])",
-            "%L2 = load %L0.[-28].deref",
+            "assign %L2 = %L0.[-28].deref",
             "assign %L1 = %L2"
         ]
     );
@@ -406,11 +424,11 @@ fn full_skips_calls_that_do_not_reach_the_slot() {
 fn full_notes_copied_and_stored_addresses() {
     let mut f = F::new();
     let c = copy_addr(&mut f, "p", -16);
-    let addr = Exp::Address(f.st(-8));
+    let addr = Exp::Path(f.st(-8));
     let g = f.local("g");
     let st = Statement::new_kind(StatementKind::store(
-        Address::without_offsets(g),
-        FieldRef::deref(),
+        AccessPath::from(g),
+        PathSegment::Deref,
         addr,
     ));
     let l1 = f.load("a", -16);
@@ -489,7 +507,7 @@ fn parse_configs() {
 fn full_keeps_a_returned_slot() {
     let mut f = F::new();
     let s = f.store(4, "a");
-    let ret = Exp::Address(f.st(4));
+    let ret = Exp::Path(f.st(4));
     let mut f = f.0;
     let mut block = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
         args: smallvec![ret],

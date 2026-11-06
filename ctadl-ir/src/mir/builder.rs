@@ -2,9 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    Address, BasicBlockData, BasicBlockIdx, Exp, FieldRef, FunctionData, LocalIdx, Locals,
-    OffsetAccesses, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
-    VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FunctionData, LocalIdx, Locals, ParameterIdx,
+    ParameterType, PathSegment, Statement, StatementIdx, StatementKind, VariableRef,
 };
 
 /// A builder for creating functions.
@@ -115,67 +114,38 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assignment statement
+    /// Create and insert an assignment statement: a copy when `dest` is a variable, a store
+    /// when it has a path.
     ///
     /// # Arguments
-    /// * `dest` - Destination variable
+    /// * `dest` - Destination access path
     /// * `sources` - Source expressions
     pub fn create_assign(
         &mut self,
-        dest: VariableRef,
+        dest: impl Into<AccessPath>,
         sources: impl IntoIterator<Item = Exp>,
     ) -> StatementIdx {
         self.insert_kind(StatementKind::assign(dest, sources))
     }
 
-    /// Create and insert a load statement `dest = source.field`.
-    ///
-    /// # Arguments
-    /// * `dest` - Destination variable
-    /// * `source` - Source address
-    /// * `field` - Symbolic field to load
+    /// Create and insert a load `dest = source.segment`, a copy.
     pub fn create_load(
         &mut self,
         dest: VariableRef,
-        source: impl Into<Address>,
-        field: impl Into<FieldRef>,
+        source: impl Into<AccessPath>,
+        segment: impl Into<PathSegment>,
     ) -> StatementIdx {
-        self.insert_kind(StatementKind::load(dest, source, field))
+        self.insert_kind(StatementKind::load(dest, source, segment))
     }
 
-    /// Create and insert a store statement `store dest.field := source`.
-    ///
-    /// # Arguments
-    /// * `dest` - Destination address
-    /// * `field` - Symbolic field written
-    /// * `source` - Source expression
+    /// Create and insert a store `dest.segment = source`.
     pub fn create_store(
         &mut self,
-        dest: impl Into<Address>,
-        field: impl Into<FieldRef>,
+        dest: impl Into<AccessPath>,
+        segment: impl Into<PathSegment>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        self.insert_kind(StatementKind::store(dest.into(), field, source.into()))
-    }
-
-    /// Create and insert an assign (`field` is `None`) or a store of `field` into `dest` (see
-    /// [`StatementKind::assign_or_store`]). Storing to an offset address with no field is an error.
-    ///
-    /// # Arguments
-    /// * `dest` - Destination address
-    /// * `field` - Symbolic field written, or `None` for a plain assign to a bare variable
-    /// * `source` - Source expression
-    pub fn create_assign_or_store(
-        &mut self,
-        dest: impl Into<Address>,
-        field: Option<FieldRef>,
-        source: impl Into<Exp>,
-    ) -> StatementIdx {
-        self.insert_kind(StatementKind::assign_or_store(
-            dest.into(),
-            field,
-            source.into(),
-        ))
+        self.insert_kind(StatementKind::store(dest, segment, source.into()))
     }
 
     /// Create and insert a call statement
@@ -274,28 +244,17 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_global()
     }
 
-    /// Create a new address
+    /// Create an access path from a variable and its segments.
     ///
     /// # Arguments
     /// * `variable_ref` - Variable reference
-    /// * `offsets` - Offset (pointer-arithmetic) field accesses
-    pub fn new_address(
+    /// * `segments` - The path
+    pub fn new_access_path(
         &self,
         variable_ref: VariableRef,
-        offsets: impl IntoIterator<Item = i64>,
-    ) -> Address {
-        Address {
-            base: variable_ref,
-            accesses: OffsetAccesses::with_offsets(offsets),
-        }
-    }
-
-    /// Create offset accesses holding a single offset
-    ///
-    /// # Arguments
-    /// * `offset` - Numeric offset
-    pub fn new_offset_path(&self, offset: i64) -> OffsetAccesses {
-        OffsetAccesses::with_offset(offset)
+        segments: impl IntoIterator<Item = PathSegment>,
+    ) -> AccessPath {
+        AccessPath::new(variable_ref, segments)
     }
 
     /// Create a string expression

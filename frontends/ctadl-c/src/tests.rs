@@ -5,7 +5,7 @@ Unit tests for the tree-sitter C frontend.
 
 An `Offset` segment is pointer arithmetic and only that; every access that reads or writes
 memory ends in the symbolic field `deref`. A subscript is both: `a[N]` is `*(a + N)`, so it
-lowers to two segments -- a `PathSegment::Offset(N)` on the *address*, written `.[N]` in the
+lowers to two segments -- a `ctadl_ir::PathSegment::Offset(N)` on the *address*, written `.[N]` in the
 test DSL, and the `deref` performed there. So `a[3]` is `a.[3].deref`, and index 0 carries no
 offset segment at all: `a[0]` is `*a`, and `Offset(0)` is the identity on addresses. This is
 the pcode frontend's spelling, so both C frontends name a memory access the same way.
@@ -207,7 +207,7 @@ fn unique_temps() {
         .iter()
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
-            StatementKind::Assign { dest, .. } => match &dest.variable {
+            StatementKind::Assign { dest, .. } if dest.is_pathless() => match &dest.base.variable {
                 Variable::Local(idx) => {
                     let name = fun.locals.name(*idx);
                     name.starts_with("<t").then(|| name.to_string())
@@ -669,14 +669,18 @@ fn address_of_element_forms_an_address() {
         }";
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "transfer");
-    let Exp::Address(addr) = &args[0] else {
+    let Exp::Path(addr) = &args[0] else {
         panic!("`&x[1]` should be an address, got {:?}\n{prog}", args[0])
     };
     assert_eq!(addr.base, local_ref(&prog, "f", "x"));
-    let offsets: Vec<i64> = addr.accesses.iter().map(|f| f.offset().0).collect();
-    assert_eq!(offsets, vec![1], "`&x[1]` is `x` at offset 1\n{prog}");
+    assert_eq!(
+        addr.segments.as_slice(),
+        [ctadl_ir::PathSegment::offset(1)],
+        "`&x[1]` is `x` at offset 1\n{prog}"
+    );
     assert!(
-        !statements_of(&prog).any(|s| matches!(s.kind, StatementKind::Load { .. })),
+        !statements_of(&prog).any(|s| matches!(&s.kind, StatementKind::Assign { sources, .. }
+            if sources.iter().filter_map(Exp::access_path).any(|ap| ap.segments.iter().any(ctadl_ir::PathSegment::is_deref)))),
         "taking an element's address must not load the element\n{prog}"
     );
 }
@@ -697,7 +701,7 @@ fn address_of_element_zero_is_the_base_address() {
     let args = call_args(&prog, "f", "take");
     assert_eq!(
         args[0],
-        Exp::Variable(local_ref(&prog, "f", "a")),
+        Exp::variable(local_ref(&prog, "f", "a")),
         "`&a[0]` is the base address, with no offset\n{prog}"
     );
 }
@@ -762,7 +766,7 @@ fn address_of_struct_member_keeps_value_model() {
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "take");
     assert!(
-        matches!(&args[0], Exp::Variable(_)),
+        args[0].variable_ref().is_some(),
         "`&s.f` has no address spelling, so it must stay a loaded value, got {:?}\n{prog}",
         args[0]
     );
@@ -771,7 +775,9 @@ fn address_of_struct_member_keeps_value_model() {
     let f = function_named(&prog, "f").expect("f is defined");
     assert!(
         f.blocks.iter().flat_map(|b| b.statements.iter()).any(
-            |s| matches!(&s.kind, StatementKind::Load { field, .. } if field.name() == Some("f"))
+            |s| matches!(&s.kind, StatementKind::Assign { dest, sources } if dest.is_pathless()
+                && sources.iter().filter_map(Exp::access_path)
+                    .any(|ap| ap.segments.last() == Some(&ctadl_ir::PathSegment::field("f"))))
         ),
         "expected a load of the member `f`\n{prog}"
     );
@@ -1381,10 +1387,9 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
 
 #[test_log::test]
 fn nested_aggregate_initializer_lowers_recursively() {
-    // A nested aggregate recurses, extending the base path by the outer index. A load/store
-    // field is a single symbol, so a two-element write decomposes through an intermediate
-    // load (`t = load m.deref`, then `store t.deref := s`); both halves are asserted, and
-    // index 0 contributes no offset segment.
+    // A nested aggregate recurses, extending the base path by the outer index: the element
+    // write is one store to the composed path `m.deref.deref`, and index 0 contributes no
+    // offset segment.
     let src = r"
         int f() {
             int s = source();
@@ -1393,7 +1398,7 @@ fn nested_aggregate_initializer_lowers_recursively() {
         }";
     let prog = program_from_string(src).0;
     let dump = format!("{prog}");
-    check_loads(&prog, "m.deref"); // the outer element is loaded to address the inner one
+    check_writes_to(&prog, "m.deref.deref", 1);
     // The dump renders locals as `%L{idx}`, so resolve `s` to its interned rendering.
     let s = local_render(&prog, "f", "s");
     assert!(
@@ -2820,7 +2825,7 @@ fn addr_of_a_local_array_is_not_a_cell() {
         int f(int v) { int a[4]; put((int *)&a, v); return a[0]; }";
     let (prog, dump) = program_from_string(src);
     let a = local_render(&prog, "f", "a");
-    assert!(check_match(&dump, &format!("load {a}.deref")), "{dump}");
+    assert!(check_match(&dump, &format!("= {a}.deref\n")), "{dump}");
     assert!(check_no_match(&dump, &format!("{a}.deref.deref")), "{dump}");
     let (s, si) = get_summary(prog).unwrap();
     check_returns_param_in(&s, &si, "f", 0, "");
@@ -3205,8 +3210,9 @@ fn compound_literal_argument_carries_value() {
     let param = exp_from_str("@p0", &ctadl_ir::Locals::default());
     let object = statements_of(&prog)
         .find_map(|stmt| match &stmt.kind {
-            StatementKind::Store { dest, field, value }
-                if field.name() == Some("start") && *value == param =>
+            StatementKind::Assign { dest, sources }
+                if dest.segments.last() == Some(&ctadl_ir::PathSegment::field("start"))
+                    && sources.as_slice() == [param.clone()] =>
             {
                 Some(dest.base.clone())
             }
@@ -3220,7 +3226,7 @@ fn compound_literal_argument_carries_value() {
         .expect("checked above that the call exists");
     assert_eq!(
         args.as_slice(),
-        [Exp::Variable(object)],
+        [Exp::variable(object)],
         "expected the call's argument to be the literal's own object\n{prog}"
     );
 }
@@ -3249,7 +3255,7 @@ fn compound_literal_array_elements_flow() {
         int f(int a) { return use((int[]){ a, 0 }); }";
     let prog = program_from_string(src).0;
     let object = match call_args(&prog, "f", "use").as_slice() {
-        [Exp::Variable(v)] => v.clone(),
+        [Exp::Path(ap)] if ap.is_pathless() => ap.base.clone(),
         args => panic!("expected `use` to take just the literal's object, got {args:?}\n{prog}"),
     };
     // Recover the object's name so the element stores can be spelled in the path DSL. It is the
@@ -4389,15 +4395,14 @@ fn a_function_pointer_reference_resolves_within_its_own_file() {
 #[test_log::test]
 fn store_through_cast_of_a_constant_writes_through() {
     // The store lands on a location the rest of the program can name, instead of on a dead
-    // temp. `<t0>` is the address `$globals.<address 0x1000>` loaded out of the globals object
-    // -- the same two-statement shape `((struct S *)t->q)->f = x` lowers to, which is the point:
-    // a constant address is just another way of spelling the pointer.
+    // temp: the field of the object at `$globals.<address 0x1000>`, the same shape
+    // `((struct S *)t->q)->f = x` lowers to, which is the point: a constant address is just
+    // another way of spelling the pointer.
     let src = r"
         struct S { int f; };
         void e(int x) { ((struct S *)0x1000)->f = x; }";
     let (prog, _dump) = program_from_string(src);
-    check_loads(&prog, "$globals.<address 0x1000>");
-    check_assign_or_update(&prog, "<t0>.f", ["@p0"], None);
+    check_assign_or_update(&prog, "$globals.<address 0x1000>.f", ["@p0"], None);
 }
 
 #[test_log::test]
@@ -5379,10 +5384,26 @@ fn a_prototype_makes_a_parenthesized_call_a_call() {
 // the object `hook` and names it; `$globals.cfg.handler` is a location *inside* `cfg`,
 // reached by a load, exactly like the local `s.f`.
 
+/// The rendering of the variable a copy from `source` (an access-path DSL string) defines.
+fn loaded_from(prog: &ctadl_ir::Program, source: &str) -> String {
+    let locals = &get_only_function(prog).expect("one function").locals;
+    let ap = crate::test_utils::access_path_from_str(source, locals);
+    statements_of(prog)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign { dest, sources }
+                if dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&ap)) =>
+            {
+                Some(dest.to_string())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no load of {source}\n{prog}"))
+}
+
 #[test_log::test]
 fn a_call_through_a_field_of_a_global_is_indirect() {
-    // `.field` on a file-scope object. The field is loaded out of the global and called
-    // through.
+    // `.field` on a file-scope object. The field is read out of the global, as one composed
+    // access path, and called through.
     let src = r"
         struct ops { void (*f)(int); };
         struct ops g;
@@ -5396,9 +5417,8 @@ fn a_call_through_a_field_of_a_global_is_indirect() {
         function_named(&prog, "g.f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.g");
-    check_loads(&prog, "<t1>.f");
-    let callee = local_render(&prog, "fire", "<t2>");
+    check_loads(&prog, "$globals.g.f");
+    let callee = loaded_from(&prog, "$globals.g.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5407,7 +5427,7 @@ fn a_call_through_a_field_of_a_global_is_indirect() {
 
 #[test_log::test]
 fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
-    // `->field` on a file-scope pointer. Same two loads: `->` is a field access here.
+    // `->field` on a file-scope pointer. Same read: `->` is a field access here.
     let src = r"
         struct ops { void (*f)(int); };
         struct ops *gp;
@@ -5421,9 +5441,8 @@ fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
         function_named(&prog, "gp->f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.gp");
-    check_loads(&prog, "<t1>.f");
-    let callee = local_render(&prog, "fire", "<t2>");
+    check_loads(&prog, "$globals.gp.f");
+    let callee = loaded_from(&prog, "$globals.gp.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5449,10 +5468,8 @@ fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
         function_named(&prog, "ga[i].f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.ga");
-    check_loads(&prog, "<t1>.deref");
-    check_loads(&prog, "<t2>.f");
-    let callee = local_render(&prog, "fire", "<t3>");
+    check_loads(&prog, "$globals.ga.deref.f");
+    let callee = loaded_from(&prog, "$globals.ga.deref.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"

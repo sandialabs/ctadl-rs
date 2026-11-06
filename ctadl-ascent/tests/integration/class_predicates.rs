@@ -92,7 +92,7 @@ fn dispatch_caller(classes: &[&str]) -> FunctionData {
                 super_start: None,
             },
             vec![result],
-            vec![Exp::Variable(
+            vec![Exp::variable(
                 b.new_param_var(ctadl_ir::mir::ParameterIdx::new(0)),
             )],
         );

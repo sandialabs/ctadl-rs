@@ -118,7 +118,10 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `12`: `PathSegment` has four variants, `Field`, `Offset`, `Deref` and `Value`; `deref` and
 ///   `#value` are no longer field names (`docs/ir.md`). A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "12";
+/// - `13`: assignments take full access paths as destination and sources, and the `Load`,
+///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
+///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "13";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
