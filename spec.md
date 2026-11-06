@@ -56,16 +56,16 @@ passed at every call site (`:1236-1245`). Four things follow, and the intent is 
 These rules replace S13 and the globals clauses of S10 and S14 of the IR redesign; everything
 else in [docs/ir.md](docs/ir.md) stands.
 
-- G1. **Declaration.** A program declares its global variables. Each has a name, a *linkage*
-  (`External` or `Internal`), and optionally a source location. A global is a variable: an
-  access path may have it as its base, and its textual form is `$name`.
+- G1. **Declaration.** A program declares its global variables. Each has a name and optionally
+  a source location. A global is a variable: an access path may have it as its base, and its
+  textual form is `$name`.
 - G2. **Sharing.** A global has one set of cells in the whole project, not one per instance of
   the unfolding. S10 becomes: the program is its infinite unfolding; every variable is fresh
   per instance except globals, which every instance shares.
-- G3. **Identity.** An `External` global is identified by its name across every program of a
-  project: two programs that declare `External` `g` declare one variable. An `Internal` global
-  is identified by its program and its name. A front end chooses the linkage and the name, and
-  documents the rule.
+- G3. **Identity.** A global is its name: two programs of a project that declare `g` declare
+  one variable. A front end chooses the name and documents the rule; a global that must not be
+  shared with another program carries that program's name in its own (`libA.so::ram`), the
+  way a C `static` function is already qualified by its unit.
 - G4. **Never rebound.** A global is never the destination of a copy or of a call result, and
   is never versioned by SSA. Its storage is the locations below it (`$g.deref`, `$C.f`); where
   a language puts a global's storage is a front-end convention (S19), stated per front end.
@@ -86,7 +86,7 @@ else in [docs/ir.md](docs/ir.md) stands.
 ### 2.1 The IR
 
 - R1. `Variable` has a `Global(GlobalIdx)` variant indexing a per-program table of global
-  declarations (name, linkage, optional span) on `Program`; `Variable::GlobalHeap` is deleted.
+  declarations (name, optional span) on `Program`; `Variable::GlobalHeap` is deleted.
   The table is interned by name within a program.
 - R2. `verify` (`ctadl-ir/src/mir/verify.rs`) rejects: a global index out of range; a
   `VariableRef` to a global with a version; a copy (empty destination path) into a global, at
@@ -103,44 +103,46 @@ else in [docs/ir.md](docs/ir.md) stands.
   `mir::path_syntax` (a C static qualified by its unit is `$g$util\.c`), and the parser accepts
   it; `$globals` is not special.
 - R6. The reference implementation (`ctadl-ir/src/semantics`) implements G2 and G3 directly:
-  every global is `Owner::Shared`, keyed by its identity (G3) so that two programs' `External`
-  globals of one name are one cell; nothing is passed for globals at `instantiate`.
+  every global is `Owner::Shared`, keyed by its name (G3) so that two programs' globals of one
+  name are one cell; nothing is passed for globals at `instantiate`.
 - R7. `IMPORT_FORMAT_VERSION` (`ctadl-import/src/project.rs:124`) is bumped; an older import
   is rejected with the re-import message (docs/spec.md F3). Nothing is migrated in place.
 
 ### 2.2 Front ends
 
 Each front end declares its globals (R1), obeys G4 (its output passes R2), and documents its
-naming, linkage and storage convention in its crate docs. The conventions:
+naming and storage convention in its crate docs. The conventions:
 
 - R8. **C** (`frontends/ctadl-c`). A C global `g` is the global `$g`; its storage is the cell
   `$g.deref`, the convention already used for address-taken locals (`lib.rs:3376`, `in_cell`),
   for every global, since another unit may take its address. `&g` is the copy `$g`; `g = v` is
-  the store `$g.deref = v`; `g.f` is `$g.deref.f`. A global with external linkage is
-  `External` under its own name; a file-scope `static` is `Internal`, qualified by its unit
-  as static functions already are (`plan_definitions`, `lib.rs:1252-1264`). A constant
-  address `(T*)K` (`literal_address_path`, `lib.rs:547-557`) is the `Internal` global
-  `$<address K>`, whose storage is `$<address K>.deref`. The limitation "a write through the
+  the store `$g.deref = v`; `g.f` is `$g.deref.f`. A global with external linkage is named
+  by its symbol, as the linker would share it; a file-scope `static` is qualified by its unit
+  as static functions already are (`plan_definitions`, `lib.rs:1252-1264`), with the same
+  residual (two imports with a same-named unit merge). A constant address `(T*)K`
+  (`literal_address_path`, `lib.rs:547-557`) is the global `$<address K>`, whose storage is
+  `$<address K>.deref`. The limitation "a write through the
   address of a C global is lost" is removed, and `addr_of_a_global_record_is_a_copy`
   (`tests.rs:2991-3002`) becomes a positive expectation. What else a C name that resolves to
   no scope becomes (enumerators, unexpanded macros; `lib.rs:3370`) is unchanged and
   out of scope.
-- R9. **pcode** (`frontends/ctadl-pcode`). One `Internal` global per import, the image's
-  memory, named for Ghidra's address space (`ram`); a global at address `A` is
-  `$ram.[A].deref`. A pointer-typed constant stays an inert constant (`lib.rs:1735-1751`), as
-  today, and is a row of the register (§4). Addresses of two imports are distinct cells.
-- R10. **JVM, Dex, CIL** (`frontends/ctadl-jvm`, `ctadl-dex`, `ctadl-cil`). One `External`
-  global per class that owns a static field, named by the class (`Lcom/C;`,
+- R9. **pcode** (`frontends/ctadl-pcode`). One global per import, the image's memory, named by
+  the import and Ghidra's address space (`libA.so::ram`), so that two images' addresses are
+  distinct cells (G3); a global at address `A` is `$libA.so::ram.[A].deref`, written `$ram`
+  below for short. A pointer-typed constant stays an inert constant (`lib.rs:1735-1751`), as
+  today, and is a row of the register (§4).
+- R10. **JVM, Dex, CIL** (`frontends/ctadl-jvm`, `ctadl-dex`, `ctadl-cil`). One global per
+  class that owns a static field, named by the class (`Lcom/C;`,
   `Namespace.Type`); a static field is that global's field, so `putstatic` is the store
   `$Lcom/C;.f = v` and `getstatic` the load `x = $Lcom/C;.f`. A class referenced from several
   imports (an XAPK's splits, a `.jar` and a `.dex`) is one variable (G3). The owner is the
   declared one from the constant pool, as today (`ctadl-jvm/src/lib.rs:735-738`). CIL's
   managed pointers to statics (`ptr.rs:311-313, 450`) resolve to the same paths.
-- R11. **Lua** (`frontends/ctadl-lua`). One `External` global, `$_ENV`; a free name `n` is
+- R11. **Lua** (`frontends/ctadl-lua`). One global, `$_ENV`; a free name `n` is
   `$_ENV.n`, so `kong.request.x` is `$_ENV.kong.request.x`. One VM, one environment across the
   imports of a project, which is what today's one namespace already assumes
   (`lib.rs:73-78`).
-- R12. **flowy** (`frontends/ctadl-flowy`). `var g;` declares the `Internal` global `$g`, and
+- R12. **flowy** (`frontends/ctadl-flowy`). `var g;` declares the global `$g`, and
   `g` in a body is that variable, transparently: `g.deref = p` and `g.f = p` are stores, and a
   whole-variable write `g = p` is a parse error that says to write a location below it (G4).
   A source, sink or summary port on a global names it the same way. The S13 corpus program is
@@ -180,11 +182,11 @@ naming, linkage and storage convention in its crate docs. The conventions:
   found in the consuming project, as it is today. Conditional rows do not cross, as today.
 - R21. The three engines (serial, par, lsm) share one rule text and differ only in execution
   and storage, as today (docs/spec.md §4.2).
-- R22. The index saves its project-level table of globals (identity, name, linkage, declaring
-  program, declaration span) beside the other facts, and `INDEX_FORMAT_VERSION` is bumped; an
-  index or summary project built by an older build is rejected.
-- R23. `ctadl index` reports, at `info`, the number of globals per program and the `External`
-  globals shared by more than one program, so an unintended merge across programs is visible
+- R22. The index saves its project-level table of globals (id, name, declaring programs,
+  declaration span) beside the other facts, and `INDEX_FORMAT_VERSION` is bumped; an index or
+  summary project built by an older build is rejected.
+- R23. `ctadl index` reports, at `info`, the number of globals per program and the names
+  declared by more than one program, so an unintended merge across programs is visible
   (docs/spec.md N3).
 
 ### 2.4 Query
@@ -206,8 +208,8 @@ naming, linkage and storage convention in its crate docs. The conventions:
 
 ### 2.5 Models
 
-- R28. Portcullis gains an input relation `global(G)` with attributes `name`, `linkage` and
-  `import` (the declaring import; for an `External` global, any that declares it), and a port
+- R28. Portcullis gains an input relation `global(G)` with attributes `name` and `import` (an
+  import that declares it; a shared global matches each of them), and a port
   on it, `G::self.path`, usable in `source`, `sink` and `propagation`, with the path in normal
   form (R39 of the redesign). `global(G)` matching nothing is reported like `local` is
   (`CTADL0004`). A C global's port is `G::self.deref`, a Java static field's `G::self.f`.
@@ -243,8 +245,8 @@ naming, linkage and storage convention in its crate docs. The conventions:
 - R35. The flowy semantics corpus pins: a store in one function read in another with no
   common caller (G2); a flow formal → global → return across two calls in one caller (G6);
   a target label stored to a global in one function resolving an indirect call in another
-  (G6, R17), and the same through a program-level edge (R16, R17); two programs' `External`
-  globals of one name being one cell, and `Internal` ones not (G3); a whole-variable write
+  (G6, R17), and the same through a program-level edge (R16, R17); two programs declaring
+  one name sharing one cell, and two names not (G3); a whole-variable write
   rejected (G4, R12); the backward rule through an alias of a global (R19); a hop through a
   global after a call (R25).
 - R36. `ctadl-ascent/tests/integration/reference_parity.rs` passes on the corpus with every
@@ -274,9 +276,9 @@ naming, linkage and storage convention in its crate docs. The conventions:
 ```
    program A              program B                        index
    ┌───────────┐          ┌───────────┐          ┌─────────────────────────────┐
-   │ $Lcom/C;  │ External │ $Lcom/C;  │ ───────▶ │ Global(id 7)  "Lcom/C;"     │ one vertex
-   │ $g$a.c    │ Internal │ $ram      │ Internal │ Global(id 8)  A::"g$a.c"    │
-   └───────────┘          └───────────┘          │ Global(id 9)  B::"ram"      │
+   │ $Lcom/C;  │          │ $Lcom/C;  │ ───────▶ │ Global(id 7)  "Lcom/C;"     │ one vertex
+   │ $g$a.c    │          │ $B::ram   │          │ Global(id 8)  "g$a.c"       │
+   └───────────┘          └───────────┘          │ Global(id 9)  "B::ram"      │
                                                  └─────────────────────────────┘
                                                                ▲
             f: $7.f = p          h: x = $7.f ; (*x)()          │
@@ -285,8 +287,8 @@ naming, linkage and storage convention in its crate docs. The conventions:
                                                      GLOBAL_FRAME
 ```
 
-A global is declared by its program (R1), interned to one project-level identity by codegen
-(G3), and is a vertex kind of its own in the facts. Within a function it is a root: the rules
+A global is declared by its program (R1), interned by name to one project-level identity by
+codegen (G3), and is a vertex kind of its own in the facts. Within a function it is a root: the rules
 that compute reachability from formals compute it from globals too, unchanged. What differs
 is what the rows become: formal↔global rows are summaries, global↔global rows are edges of
 one distinguished frame, `GLOBAL_FRAME`, where the same rules close them and where target and
@@ -300,13 +302,12 @@ treats a global vertex as belonging to every function at once.
   beside `functions`, `mir/mod.rs:691-694`, so it is serialized with the IR) with
 
   ```rust
-  pub struct GlobalData { pub name: Symbol, pub linkage: Linkage, pub span: Option<SpanId> }
-  pub enum Linkage { External, Internal }
+  pub struct GlobalData { pub name: Symbol, pub span: Option<SpanId> }
   ```
 
-  `Program::declare_global(name, linkage, span) -> GlobalIdx` interns by name (a second
-  declaration of one name in one program is one global; linkage must agree, or it is a
-  front-end bug reported by `verify`). `Locals`-style `by_name` is `serde(skip)` and rebuilt.
+  `Program::declare_global(name, span) -> GlobalIdx` interns by name (a second declaration of
+  one name in one program is one global; the first span wins). `Locals`-style `by_name` is
+  `serde(skip)` and rebuilt.
 - `VariableRef::new_global()` becomes `VariableRef::global(idx)`, unversioned;
   `BasicBlockBuilder::new_global_var(idx)` likewise. `Variable::new_global()` goes.
 - Display: `$name` with field escaping (R5); `path_syntax` parses `$name` to a global looked up
@@ -327,8 +328,8 @@ treats a global vertex as belonging to every function at once.
 
 ### 3.4 Reference implementation
 
-`Owner` becomes `Instance(usize) | Global(GlobalKey)` where `GlobalKey` is `External(Symbol) |
-Internal(program index, Symbol)` (G3); `var()` maps a `Variable::Global` to its key. The entry
+`Owner` becomes `Instance(usize) | Global(Symbol)`, the global's name (G3); `var()` maps a
+`Variable::Global` to it through the program's table. The entry
 binding's two-way copy (`semantics/mod.rs:325-380`) is no longer how sharing happens: a store
 `$g.f = v` in any instance writes the shared cell directly, and a load reads it. `instantiate`
 is unchanged except that no globals case exists. Multi-program inputs (R35's G3 case) are
@@ -341,22 +342,23 @@ Per front end, what changes; everything else stays.
 - **C.** `build_access_path` (`lib.rs:3348-3383`): a `VarKind::Global` name declares (or
   looks up) the global and builds `$g` + `in_cell(path)`; the `is_cell` exclusion of globals
   (`:3376`) goes, and the module doc "Address-taken globals" (`:59-64`) is rewritten to R8.
-  `literal_address_path` declares `$<address K>` `Internal`. Linkage: `UnitRegistry` already
-  records file-scope declarations (`:1608-1621`); a `static` one is declared `Internal` under
-  the unit-qualified name `plan_definitions` uses for static functions, an `extern` or
-  tentative one `External`. The callee classification at `:4507-4521` keys on `Global` with a
+  `literal_address_path` declares `$<address K>`. Naming: `UnitRegistry` already records
+  file-scope declarations (`:1608-1621`); a `static` one is declared under the unit-qualified
+  name `plan_definitions` uses for static functions, an `extern` or tentative one under its
+  symbol. The callee classification at `:4507-4521` keys on `Global` with a
   path beyond `deref` meaning an indirect call through the global's storage. File-scope
   initializers stay unlowered (§6).
-- **pcode.** `global_path(addr)` (`lib.rs:1474-1483`) becomes `$ram.[A].deref` on the import's
-  one declared global; the module doc at `:13` drops "threaded through every call". Nothing
-  changes in `readers/pcode-reader`.
+- **pcode.** `global_path(addr)` (`lib.rs:1474-1483`) becomes `$<import>::ram.[A].deref` on
+  the import's one declared global, named from the import name the front end is given; the
+  module doc at `:13` drops "threaded through every call". Nothing changes in
+  `readers/pcode-reader`.
 - **JVM / Dex / CIL.** The static-field cases (`ctadl-jvm/src/lib.rs:923-947`,
   `ctadl-dex/src/lib.rs:976-1020`, `ctadl-cil/src/effects.rs:274-311`, `ptr.rs:450`) declare
-  the owning class `External` and store or load its field; `jvm_field_symbol` and Dex's
+  the owning class and store or load its field; `jvm_field_symbol` and Dex's
   `pretty_name` supply the field spelling without the class. CIL's `<UNKNOWN::?token>` becomes
   the global `UNKNOWN` with the token as its field.
-- **Lua.** `build_var` (`lib.rs:2400-2413`) declares `_ENV` `External` once per program and
-  builds `$_ENV.n`.
+- **Lua.** `build_var` (`lib.rs:2400-2413`) declares `_ENV` once per program and builds
+  `$_ENV.n`.
 - **flowy.** Top-level `var` declares; `parse_access_path` (`:1003-1022`) and
   `parse_summary_ap` (`:858-873`) resolve a global name to its `GlobalIdx`; a parameter or
   local of a global's name is an error; a whole-variable write is an error (R12).
@@ -365,10 +367,11 @@ Per front end, what changes; everything else stays.
 
 - `FlowVariable` (`ctadl-index/src/facts.rs:997-1052`) gains a fifth kind, `Global(GlobalId)`,
   with `as_global()`; `is_globals()`, `GLOBALS_INDEX` and the `"$globals_k"` local naming go.
-  `GlobalId` is a project-level interned id; codegen interns `External` names and
-  `(import, name)` pairs (G3) and records `IndexFacts.globals: Vec<(GlobalId, Str, Linkage,
-  ImportId, Option<FileSpanId>)>` (the span resolved in that import's source-info database,
-  as `facts.rs:975-986` does for instructions), saved as `globals.parquet` (R22).
+  `GlobalId` is a project-level interned id; codegen interns names (G3), so two programs'
+  declarations of one name meet at one id, and records `IndexFacts.globals: Vec<(GlobalId,
+  Str, ImportId, Option<FileSpanId>)>`, one row per declaring import (the span resolved in that
+  import's source-info database, as `facts.rs:975-986` does for instructions), saved as
+  `globals.parquet` (R22).
 - `trans_variable_ref` (`codegen/mod.rs:1370-1380`) maps `Variable::Global(idx)` to
   `FlowVariable::global(id)`. `visit_function_data` emits no globals formal (`:838-843`);
   the `Return` arm (`:1259-1279`) writes back the parameters only; call sites emit no globals
@@ -439,10 +442,9 @@ label exchange.
 ### 3.8 The `--summary` boundary
 
 `load_and_map_summaries` (`ctadl-ascent/src/cli/mod.rs:1621-1680`) maps function names as
-today and global identities by G3: the summary project's `globals.parquet` is read, each
-`External` name and each `(program, name)` pair is interned into the consumer's table
-(creating the global if the consumer has no such program), and `summary` rows with global
-roots are rewritten to the consumer's ids. A new `global_flow.parquet` holds the summary
+today and globals by name (G3): the summary project's `globals.parquet` is read, each name is
+interned into the consumer's table (creating the global if the consumer declares no such
+name), and `summary` rows with global roots are rewritten to the consumer's ids. A new `global_flow.parquet` holds the summary
 project's `locals(GLOBAL_FRAME, …)` rows and is loaded as frame edges (R20). JNI's linking
 against a summary project (`languages/jni.rs`, "Linking against a summary project") needs no
 globals mapping.
@@ -467,7 +469,7 @@ globals mapping.
 ### 3.10 Models (`ctadl-ascent/src/models`, Portcullis)
 
 - Parser: `global(G)` is an input relation over `globals.parquet`-equivalent facts collected at
-  import (name, linkage, import); `G::self.path` parses to `PortBase::Global` with a path in
+  import (name, import); `G::self.path` parses to `PortBase::Global` with a path in
   normal form. `FormalIndexTypeTag::Global` carries the `GlobalId`, `expand_port`
   (`model_matches.rs:208`) yields `Root::Global(id)`, and endpoints resolve as in §3.9. A
   propagation whose port is a global emits a `summary` row with a global root (G7). In a
@@ -476,8 +478,9 @@ globals mapping.
   `emit_bridge` emit the written pairs and the return only.
 - flowy ports: `port_to_index` (`codegen/flowy.rs:620-628`) returns `Root::Global(id)`; the
   "not yet checked" bail goes.
-- `allocator.rs:336-344`: `dest.base.variable` is the import's memory global (looked up by
-  name `ram`) and the first segment an offset; nothing else changes.
+- `allocator.rs:336-344`: `dest.base.variable` is the import's memory global (the one the
+  pcode front end names `<import>::ram`) and the first segment an offset; nothing else
+  changes.
 - `migrate.rs`: the Global tag's error becomes "write `G::self` with `global(G, …)`".
 
 ### 3.11 Reporting, storage, formats
@@ -487,7 +490,7 @@ globals mapping.
 - Import: bumped format; `globals` in the bitcode program. Index: `globals.parquet`,
   `global_flow.parquet`, the `summary` schema's root columns; bumped `INDEX_FORMAT_VERSION`;
   `index_config.json` unchanged (no new knob: there is no precision/cost trade-off here).
-- `ctadl inspect` prints a program's globals with their linkage.
+- `ctadl inspect` prints a program's globals.
 
 ### 3.12 Documentation
 
@@ -501,8 +504,8 @@ docs/ir.md and docs/spec.md cite it. The `native-index.ctadl` comment is rewritt
 - `ctadl-ir::semantics`: the R35 corpus, including a two-program case for G3.
 - Front ends: unit tests per convention (R8–R12), in particular the C test that a write
   through `&g` is observed at `g.f`, and `global_flows_across_functions` on `$g.deref`.
-- Codegen: no globals formal or actual; a `Global` vertex in `assign`; interning of `External`
-  across two programs and of `Internal` within one.
+- Codegen: no globals formal or actual; a `Global` vertex in `assign`; one name declared by
+  two programs interned to one id.
 - Index: `index_engine_tests.rs` cases for R15 (no two-global summary row), R16 (frame edge),
   R17 (indirect call through a global resolved `Always`, in a function with no caller), R18
   (conditional global flow applied by 3.2), R19, and the `--summary` round trip of R20.
@@ -535,6 +538,11 @@ Recorded so they are read as choices, not accidents.
   Keeping S5 (store iff the path is non-empty) intact costs one `deref` in C's paths and
   gives `&g` a spelling for free; the alternative would need a second classification rule and
   still have no `&g`.
+- A global's identity is its name, with no linkage flag. Whether two programs' `X` are one
+  cell has a different answer per global (a Java class across an XAPK's splits: yes; an
+  address in two `.so` files: no), so something must say which; a front end saying it by
+  qualifying the name (`libA.so::ram`), as C statics are already qualified, costs no IR field,
+  no fact column and no model attribute, and leaves one rule to explain.
 - C globals are all cells (`$g.deref`), not only address-taken ones: another unit may take the
   address, and one convention is explainable.
 - pcode declares one memory global per import, not one per symbol: address arithmetic across
