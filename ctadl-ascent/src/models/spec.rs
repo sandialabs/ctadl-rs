@@ -324,7 +324,7 @@ impl BridgePort {
                         .to_string(),
                 });
             }
-            FormalIndexTypeTag::Global => {
+            FormalIndexTypeTag::Global(_) => {
                 return Err(JsonModelError::UnexpectedField {
                     index,
                     field_name: key.to_string(),

@@ -102,6 +102,7 @@ enum RawPortBase<'s> {
     Return,
     Arg(RawArgSel<'s>, Span),
     Local(&'s str),
+    GlobalSelf,
 }
 
 enum RawArgSel<'s> {
@@ -231,6 +232,7 @@ peg::parser! {
               e:position!()
               { RawPortBase::Arg(sel, span(s, e)) }
             / "local" !name_char() _ "(" _ v:var() _ ")" { RawPortBase::Local(v) }
+            / "self" !name_char() { RawPortBase::GlobalSelf }
 
         rule arg_sel() -> RawArgSel<'input>
             = i:int() { RawArgSel::Int(i) }
@@ -853,6 +855,7 @@ impl Builder {
             RawPortBase::Arg(RawArgSel::Wildcard, _) => Some(PortBase::AnyArg),
             RawPortBase::Arg(RawArgSel::Var(v), _) => Some(PortBase::ArgVar(v.to_string())),
             RawPortBase::Local(v) => Some(PortBase::Local(v.to_string())),
+            RawPortBase::GlobalSelf => Some(PortBase::GlobalSelf),
         }
     }
 

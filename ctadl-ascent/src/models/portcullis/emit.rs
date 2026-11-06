@@ -82,6 +82,8 @@ pub struct RuleStats {
     /// The `local` atoms that ran and never matched: the name each asked for (see
     /// [`super::check::Plan::local_probes`]) and how many functions it was asked about.
     pub missed_locals: Vec<(String, usize)>,
+    /// The `global` atoms that ran and never matched: the name each asked for.
+    pub missed_globals: Vec<String>,
     /// Distinct functions the rule's heads anchored at, capped at [`MATCHED_SAMPLE_CAP`].
     /// This is the DSL's answer to "what did this rule select", which `CTADL0011` reports.
     pub matched_functions: BTreeSet<String>,
@@ -122,6 +124,11 @@ impl RuleStats {
         for miss in &other.missed_locals {
             if !self.missed_locals.contains(miss) {
                 self.missed_locals.push(miss.clone());
+            }
+        }
+        for miss in &other.missed_globals {
+            if !self.missed_globals.contains(miss) {
+                self.missed_globals.push(miss.clone());
             }
         }
         for name in &other.matched_functions {
@@ -401,8 +408,26 @@ fn emit_head(
             note_match(tally, site.function);
         }
         HeadKind::Propagation { flow } => {
-            let Some(anchor) = resolve_anchor(head, &flow.left, binding, errors) else {
+            // A propagation is one function's summary; a port of it may instead name a global,
+            // which the summary row is rooted at (G7). The function is the other port's anchor.
+            let (Some(left_anchor), Some(right_anchor)) = (
+                resolve_anchor(head, &flow.left, binding, errors),
+                resolve_anchor(head, &flow.right, binding, errors),
+            ) else {
                 return;
+            };
+            let anchor = match (&left_anchor.global, &right_anchor.global) {
+                (Some(_), Some(_)) => {
+                    errors.push(PortcullisError::Rule {
+                        message: "a flow between two globals holds in every function, so it is \
+                                  the program's, not a function's summary; it needs no model"
+                            .to_string(),
+                        span: flow.span,
+                    });
+                    return;
+                }
+                (Some(_), None) => &right_anchor,
+                _ => &left_anchor,
             };
             if anchor.callsite_scoped {
                 errors.push(PortcullisError::Rule {
@@ -414,8 +439,20 @@ fn emit_head(
                 return;
             }
             let (Some(left), Some(right)) = (
-                model_port(&flow.left.port, binding, flow.span, errors),
-                model_port(&flow.right.port, binding, flow.span, errors),
+                model_port(
+                    &flow.left.port,
+                    left_anchor.global,
+                    binding,
+                    flow.span,
+                    errors,
+                ),
+                model_port(
+                    &flow.right.port,
+                    right_anchor.global,
+                    binding,
+                    flow.span,
+                    errors,
+                ),
             ) else {
                 return;
             };
@@ -530,8 +567,8 @@ fn emit_head(
                         DispatchHead::ClosureShaped => unreachable!("handled above"),
                         DispatchHead::Flow(flow) | DispatchHead::InlineFlow(flow) => {
                             let (Some(left), Some(right)) = (
-                                model_port(&flow.left.port, binding, flow.span, errors),
-                                model_port(&flow.right.port, binding, flow.span, errors),
+                                model_port(&flow.left.port, None, binding, flow.span, errors),
+                                model_port(&flow.right.port, None, binding, flow.span, errors),
                             ) else {
                                 return;
                             };
@@ -657,8 +694,11 @@ fn resolve_callsig(
 /// What a resolved anchor denotes.
 struct Anchor {
     /// The function the port hangs off. For a call-site anchor this is the *callee*, which is
-    /// what a callsite-scoped endpoint names.
+    /// what a callsite-scoped endpoint names. For a global, the global frame, which anchors a
+    /// global's endpoint at no function (R26).
     function: facts::Str,
+    /// The global a `self` port names, when the anchor is one.
+    global: Option<facts::GlobalId>,
     /// The caller a call-site anchor restricts to.
     in_function: Option<facts::Str>,
     callsite_scoped: bool,
@@ -685,18 +725,26 @@ fn resolve_anchor(
     match value {
         Value::Str(f) => Some(Anchor {
             function: f,
+            global: None,
             in_function: None,
             callsite_scoped: false,
         }),
         Value::Site { caller, callee, .. } => Some(Anchor {
             function: callee,
+            global: None,
             in_function: Some(caller),
             callsite_scoped: true,
+        }),
+        Value::Global { name } => Some(Anchor {
+            function: facts::Str::from(facts::GLOBAL_FRAME_NAME),
+            global: Some(facts::GlobalId(name)),
+            in_function: None,
+            callsite_scoped: false,
         }),
         other => {
             errors.push(PortcullisError::Rule {
                 message: format!(
-                    "'{other}' is not a function or call site, so no port hangs off it"
+                    "'{other}' is not a function, call site or global, so no port hangs off it"
                 ),
                 span: port.span,
             });
@@ -716,7 +764,7 @@ fn endpoint_base(
     errors: &mut PortcullisErrors,
 ) -> Option<(FormalIndexTypeTag, Option<i16>, Option<u32>)> {
     let PortBase::Local(v) = &port.port.base else {
-        let (tag, index) = resolve_base(&port.port, binding, port.span, errors)?;
+        let (tag, index) = resolve_base(&port.port, site.global, port.span, binding, errors)?;
         return Some((tag, index, None));
     };
     match binding.get(v) {
@@ -744,13 +792,34 @@ fn endpoint_base(
     }
 }
 
-/// The `(tag, index)` a port names, grounding an `arg(I)` selector if there is one.
+/// The `(tag, index)` a port names, grounding an `arg(I)` selector if there is one. `global` is
+/// the global the port's anchor resolved to, which a `self` port names and no other port may.
 fn resolve_base(
     port: &Port,
-    binding: &Binding<'_>,
+    global: Option<facts::GlobalId>,
     span: Span,
+    binding: &Binding<'_>,
     errors: &mut PortcullisErrors,
 ) -> Option<(FormalIndexTypeTag, Option<i16>)> {
+    match (&port.base, global) {
+        (PortBase::GlobalSelf, Some(g)) => return Some((FormalIndexTypeTag::Global(g), None)),
+        (PortBase::GlobalSelf, None) => {
+            errors.push(PortcullisError::Rule {
+                message: "a 'self' port names a global: anchor it at one bound by 'global(G)'"
+                    .to_string(),
+                span,
+            });
+            return None;
+        }
+        (_, Some(_)) => {
+            errors.push(PortcullisError::Rule {
+                message: "a global has no arguments or return; its port is 'G::self'".to_string(),
+                span,
+            });
+            return None;
+        }
+        (_, None) => {}
+    }
     match &port.base {
         PortBase::Return => Some((FormalIndexTypeTag::Return, None)),
         PortBase::Arg(i) => Some((FormalIndexTypeTag::Index, Some(*i))),
@@ -774,6 +843,7 @@ fn resolve_base(
                 None
             }
         },
+        PortBase::GlobalSelf => unreachable!("matched above"),
         // The checker allows a local port only on a source or sink, which `endpoint_base`
         // resolves.
         PortBase::Local(_) => {
@@ -788,11 +858,12 @@ fn resolve_base(
 
 fn model_port(
     port: &Port,
+    global: Option<facts::GlobalId>,
     binding: &Binding<'_>,
     span: Span,
     errors: &mut PortcullisErrors,
 ) -> Option<ModelPort> {
-    let (tag, index) = resolve_base(port, binding, span, errors)?;
+    let (tag, index) = resolve_base(port, global, span, binding, errors)?;
     Some(ModelPort {
         tag,
         index,
@@ -808,7 +879,14 @@ fn bridge_port(
     span: Span,
     errors: &mut PortcullisErrors,
 ) -> Option<BridgePort> {
-    let (tag, index) = resolve_base(port, binding, span, errors)?;
+    if matches!(port.base, PortBase::GlobalSelf) {
+        errors.push(PortcullisError::Rule {
+            message: "a global is shared and needs no bridge".to_string(),
+            span,
+        });
+        return None;
+    }
+    let (tag, index) = resolve_base(port, None, span, binding, errors)?;
     let formal = match tag {
         FormalIndexTypeTag::Index => FormalIndex::new(index.expect("Index carries one")),
         FormalIndexTypeTag::Return => crate::codegen::RETURN_INDEX.into(),
@@ -821,7 +899,7 @@ fn bridge_port(
             });
             return None;
         }
-        FormalIndexTypeTag::Global | FormalIndexTypeTag::Local => {
+        FormalIndexTypeTag::Global(_) | FormalIndexTypeTag::Local => {
             errors.push(PortcullisError::Rule {
                 message: "this port is not valid in a bridge".to_string(),
                 span,

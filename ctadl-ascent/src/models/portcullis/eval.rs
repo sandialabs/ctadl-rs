@@ -95,6 +95,10 @@ pub enum Value {
         function: Str,
         index: u32,
     },
+    /// A global, bound by `global`'s column: its name, which is its identity (G3).
+    Global {
+        name: Str,
+    },
 }
 
 impl Value {
@@ -103,6 +107,8 @@ impl Value {
             Value::Str(s) => Some(*s),
             // A site's identity is a position, not an interned string; see [`text`].
             Value::CallSig { id, .. } => Some(*id),
+            // The key `global`'s index is looked up by.
+            Value::Global { name } => Some(*name),
             _ => None,
         }
     }
@@ -137,6 +143,7 @@ impl std::fmt::Display for Value {
             ),
             Value::CallSig { id, .. } => write!(f, "{id}"),
             Value::Local { function, index } => write!(f, "{function}::local({index})"),
+            Value::Global { name } => write!(f, "${name}"),
         }
     }
 }
@@ -351,6 +358,7 @@ enum Row {
     /// A function and one of its parameter indices.
     Param(usize, i64),
     Local(usize),
+    Global(usize),
     CallSite(usize),
     /// `(sub, super)`.
     Class(Str, Str),
@@ -525,6 +533,13 @@ impl<'a> Machine<'a> {
                     None => true,
                 },
                 _ => self.each(atom, (0..facts.locals.len()).map(Row::Local), k),
+            },
+            Relation::Global => match &atom.access {
+                Access::Column(i) => match self.column_key(atom, *i) {
+                    Some(g) => self.each(atom, facts.global_of(g).map(Row::Global), k),
+                    None => true,
+                },
+                _ => self.each(atom, (0..facts.globals.len()).map(Row::Global), k),
             },
             Relation::CallSite => self.generate_callsite(atom, k),
             Relation::Subclass { reflexive, deep } => match &atom.access {
@@ -771,6 +786,9 @@ impl<'a> Machine<'a> {
                 function: facts.locals[r].function,
                 index: facts.locals[r].index,
             },
+            (Row::Global(r), _) => Value::Global {
+                name: facts.globals[r].name,
+            },
             (Row::CallSite(r), 0) => Value::Str(facts.callsites[r].caller),
             (Row::CallSite(r), _) => {
                 let row = &facts.callsites[r];
@@ -829,6 +847,11 @@ impl<'a> Machine<'a> {
             },
             Row::Local(r) => match attr {
                 Attr::Name => str_value(Some(facts.locals[r].name)),
+                _ => AttrValues::Missing,
+            },
+            Row::Global(r) => match attr {
+                Attr::Name => str_value(Some(facts.globals[r].name)),
+                Attr::Import => str_value(facts.import),
                 _ => AttrValues::Missing,
             },
             Row::Allocator(r) => {

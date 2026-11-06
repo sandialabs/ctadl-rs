@@ -88,6 +88,15 @@ pub fn build_query_endpoints(
     // `Variable(name)` base index to an existing versioned vertex (see the `Local` arm below).
     let mut local_vars: HashMap<facts::FunctionId, BTreeSet<FlowVariable>> = HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
+        // A global's paths, in whichever function, are the global frame's vertex's.
+        for (v, p) in [(v1, p1), (v2, p2)] {
+            if v.is_global() {
+                vertex_paths
+                    .entry((facts::GLOBAL_FRAME, *v))
+                    .or_default()
+                    .insert(*p);
+            }
+        }
         vertex_paths
             .entry((*func, rep_of(*func, *v1)))
             .or_default()
@@ -158,9 +167,9 @@ pub fn build_query_endpoints(
             FormalIndexTypeTag::Return => {
                 vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
-            FormalIndexTypeTag::Global => {
-                unreachable!("no model format spells a global port yet")
-            }
+            // A global is anchored at no function: `func_name` is the global frame's, and the
+            // endpoint stays there (R26).
+            FormalIndexTypeTag::Global(g) => vec![FlowVariable::global(g)],
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
                 .map(|n| {

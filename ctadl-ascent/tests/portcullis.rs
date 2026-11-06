@@ -782,6 +782,144 @@ fn a_local_that_matches_nothing_is_reported() {
     assert!(rules[2].missed_locals.is_empty());
 }
 
+/// A flowy program that declares two globals.
+fn globals_program() -> ProgramInfo {
+    const PROGRAM: &str = r#"
+var g;
+var h;
+
+def getter():1 {
+s:
+  r = g.deref;
+  return r;
+}
+"#;
+    ctadl_flowy::compile_program_contents("test.tnt", PROGRAM)
+        .expect("compiling flowy program")
+        .program_info
+}
+
+/// R28: `global(G)` ranges over the declared globals, and `G::self.path` is a port rooted at
+/// the global, anchored at no function: a source or sink names the global frame.
+#[test]
+fn global_matches_by_name_and_a_self_port_names_the_global() {
+    let program_info = globals_program();
+    let out = run(
+        &program_info,
+        r#"source(G::self.deref, kind = "S") :- global(G, name = "g");
+           sink(G::self.f, kind = "K") :- global(G);"#,
+    );
+    let global = |name: &str| FormalIndexTypeTag::Global(ctadl_ascent::facts::GlobalId::new(name));
+    let mut got: Vec<_> = out
+        .endpoints
+        .iter()
+        .map(|e| {
+            (
+                e.direction,
+                e.selector_ty,
+                e.path.to_string(),
+                e.function.to_string(),
+            )
+        })
+        .collect();
+    got.sort_by_key(|e| format!("{e:?}"));
+    let frame = ctadl_ascent::facts::GLOBAL_FRAME_NAME.to_string();
+    let mut want = vec![
+        (
+            TaintDirection::Forward,
+            global("g"),
+            ".deref".to_string(),
+            frame.clone(),
+        ),
+        (
+            TaintDirection::Backward,
+            global("g"),
+            ".f".to_string(),
+            frame.clone(),
+        ),
+        (
+            TaintDirection::Backward,
+            global("h"),
+            ".f".to_string(),
+            frame.clone(),
+        ),
+    ];
+    want.sort_by_key(|e| format!("{e:?}"));
+    assert_eq!(got, want);
+}
+
+/// R28, G7: a propagation may name a global on one side; it is the other side's function's
+/// summary, rooted at the global.
+#[test]
+fn a_propagation_names_a_global_port() {
+    let program_info = globals_program();
+    let out = run(
+        &program_info,
+        r#"propagation(F::return <- G::self.deref) :- fun(F, name = "getter"), global(G, name = "h");"#,
+    );
+    assert_eq!(out.propagations.len(), 1);
+    let p = &out.propagations[0];
+    assert_eq!(p.function.to_string(), "getter");
+    assert_eq!(p.dst.tag, FormalIndexTypeTag::Return);
+    assert_eq!(
+        p.src.tag,
+        FormalIndexTypeTag::Global(ctadl_ascent::facts::GlobalId::new("h"))
+    );
+    assert_eq!(p.src.path.to_string(), ".deref");
+}
+
+/// A global is shared, so no bridge maps one (R29); a flow between two globals is no
+/// function's (G6); and `self` hangs off a global only.
+#[test]
+fn a_self_port_is_rejected_where_a_global_cannot_be() {
+    for (rule, want) in [
+        (
+            r#"bridge(F::return <-> G::self) :- fun(F, name = "getter"), global(G);"#,
+            "a global is shared and needs no bridge",
+        ),
+        (
+            r#"propagation(G::self.a <- H::self.b) :- global(G, name = "g"), global(H, name = "h");"#,
+            "it needs no model",
+        ),
+        (
+            r#"source(F::self) :- fun(F, name = "getter");"#,
+            "is not one; bind it with 'global(F)'",
+        ),
+        (
+            r#"source(G::return) :- global(G);"#,
+            "its port is 'G::self'",
+        ),
+    ] {
+        let err = match portcullis::PortcullisFile::from_text("test.ctadl", rule) {
+            Err(e) => format!("{e:#}"),
+            Ok(_) => panic!("{rule}: accepted"),
+        };
+        assert!(err.contains(want), "{rule}: {err}");
+    }
+}
+
+/// A `global` atom that matched nothing is reported as such, like a `local` one (`CTADL0004`).
+#[test]
+fn a_global_that_matches_nothing_is_reported() {
+    let program_info = globals_program();
+    let file = portcullis::PortcullisFile::from_text(
+        "test.ctadl",
+        r#"source(G::self.deref) :- global(G, name = "absent");
+           source(G::self.deref) :- global(G, name = "g");"#,
+    )
+    .expect("loads");
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut out = ProgramModelMatches::default();
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::Query);
+    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    matcher.observe_import(&index, &mut out);
+    let report = matcher.finish(&mut out).expect("finishes");
+    let rules = &report.files[0].rules;
+    assert_eq!(rules[0].missed_globals, vec!["absent".to_string()]);
+    assert!(rules[1].missed_globals.is_empty());
+    assert_eq!(out.endpoints.len(), 1);
+}
+
 #[test]
 fn a_rule_that_matches_nothing_is_reported() {
     let program_info = java_program();
@@ -1136,6 +1274,14 @@ fn needs_are_read_from_every_atom_of_every_rule() {
             callsig: false,
             local: false,
             allocator: false,
+            global: false,
+        }
+    );
+    assert_eq!(
+        needs_of(r#"source(G::self) :- global(G);"#),
+        Needs {
+            global: true,
+            ..Needs::default()
         }
     );
     let mut needs = needs_of(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "n");"#);

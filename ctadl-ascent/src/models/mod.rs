@@ -301,7 +301,13 @@ pub fn portcullis_endpoint_stats(
                 functions_matched: stats.functions,
                 ..Default::default()
             };
-            if rows == 0 && stats.missed_locals.is_empty() {
+            if rows == 0 && !stats.missed_globals.is_empty() {
+                for name in &stats.missed_globals {
+                    entry
+                        .unmatched
+                        .insert(UnmatchedReason::GlobalNotFound(name.clone()));
+                }
+            } else if rows == 0 && stats.missed_locals.is_empty() {
                 entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
             } else if rows == 0 {
                 // The functions the `local` atom was asked about are the ones the rest of the
@@ -324,8 +330,9 @@ pub enum FormalIndexTypeTag {
     Index,
     /// Return value
     Return,
-    /// Global value
-    Global,
+    /// A global, by its name (`G::self`): a port that is a path rooted at the global, anchored at
+    /// no function (G7).
+    Global(crate::facts::GlobalId),
     /// Any parameter (excluding return and global)
     AnyArgument,
     /// A named local variable, selected by source name (`Variable(name)`). The resolved base

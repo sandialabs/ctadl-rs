@@ -24,7 +24,7 @@ use hashbrown::hash_set::HashSet;
 
 use crate::codegen::RETURN_INDEX;
 use crate::facts::{
-    self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
+    self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId, Root,
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
@@ -159,34 +159,29 @@ fn codegen_propagations(
             // may or may not be in this project; that is not an error.
             continue;
         };
-        let dst_index = expand_port(&prop.dst, func_id, arg_arity);
-        let src_index = expand_port(&prop.src, func_id, arg_arity);
-        for dst_index in &dst_index {
-            // Ensure formal_param exists for the indices used in summaries: `locals` is seeded
-            // from formals and the summary rule joins on them, so without these rows a
-            // modelled function is silently lost.
-            facts.formal_param.push((
-                func_id,
-                FlowVariable::formal_index(*dst_index),
-                FormalType::Shared,
-            ));
-            for src_index in &src_index {
+        let dst_roots = expand_port(&prop.dst, func_id, arg_arity);
+        let src_roots = expand_port(&prop.src, func_id, arg_arity);
+        // Ensure formal_param exists for the formals used in summaries: `locals` is seeded
+        // from formals and the summary rule joins on them, so without these rows a modelled
+        // function is silently lost. A global is no formal: it is a root by itself (G7).
+        for root in dst_roots.iter().chain(&src_roots) {
+            if let Some(i) = root.as_formal() {
                 facts.formal_param.push((
                     func_id,
-                    FlowVariable::formal_index(*src_index),
+                    FlowVariable::formal_index(i),
                     FormalType::Shared,
                 ));
+            }
+        }
+        for dst_root in &dst_roots {
+            for src_root in &src_roots {
                 // Only the identity row is a no-op; `arg(0).f <- arg(0).g` is a real flow.
-                if dst_index == src_index && prop.dst.path == prop.src.path {
+                if dst_root == src_root && prop.dst.path == prop.src.path {
                     continue;
                 }
-                facts.summary.push((
-                    func_id,
-                    (*dst_index).into(),
-                    prop.dst.path,
-                    (*src_index).into(),
-                    prop.src.path,
-                ));
+                facts
+                    .summary
+                    .push((func_id, *dst_root, prop.dst.path, *src_root, prop.src.path));
                 emitted += 1;
             }
         }
@@ -194,18 +189,18 @@ fn codegen_propagations(
     emitted
 }
 
-/// The formal indices one model port denotes. `Argument(*)` is the only one that fans out, and
-/// it is why this cannot run before every import is codegen'd.
+/// The roots one model port denotes. `Argument(*)` is the only one that fans out, and it is
+/// why this cannot run before every import is codegen'd.
 fn expand_port(
     port: &ModelPort,
     func_id: FunctionId,
     arg_arity: &HashMap<FunctionId, i16>,
-) -> Vec<FormalIndex> {
+) -> Vec<Root> {
     use FormalIndexTypeTag::*;
     match port.tag {
         Index => vec![port.index.expect("an Index port carries one").into()],
         Return => vec![RETURN_INDEX.into()],
-        Global => unreachable!("no model format spells a global port yet"),
+        Global(g) => vec![g.into()],
         AnyArgument => arg_arity
             .get(&func_id)
             .map(|n| (0..*n).map(|i| i.into()).collect())
