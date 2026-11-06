@@ -219,8 +219,8 @@ pub struct IndexConfig {
     pub engine: Option<EngineRecord>,
 }
 
-/// The index options that change its results recorded with the
-/// index so a result can be traced to the approximations it was computed under.
+/// The index options that change its results, recorded with the index so a result can be traced
+/// to the approximations it was computed under.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EngineRecord {
     /// Whether the alias summary rule ran (the backward rule's restriction to copy chains rooted
@@ -334,8 +334,7 @@ pub struct ArtifactImport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// The front end's convention options this import was lowered under, when they are not the
-    /// default: option name to value. Empty for the
-    /// defaults.
+    /// default: option name to value. Empty for the defaults.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub conventions: BTreeMap<String, String>,
 }

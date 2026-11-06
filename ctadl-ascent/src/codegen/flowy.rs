@@ -475,9 +475,8 @@ pub fn check_with_config<P: AsRef<Path>>(
 /// The observable the index and the query compute for a flowy program, with no models: each sink
 /// its own label reaches, as `function: name <- label`, named as
 /// [`flowy::FlowyProgram::named_sinks`] names it. The reference implementation's observable,
-/// restricted to each sink's own label, is the same set modulo the approximations register (the
-/// approximations register in `docs/limitations.md`); `tests/integration/reference_parity.rs`
-/// measures the difference.
+/// restricted to each sink's own label, is the same set modulo the approximations register in
+/// `docs/limitations.md`; `tests/integration/reference_parity.rs` measures the difference.
 pub fn engine_observable<P: AsRef<Path>>(
     file: P,
     config: IndexConfig,

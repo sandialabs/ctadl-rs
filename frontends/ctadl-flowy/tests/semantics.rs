@@ -1,5 +1,5 @@
-//! The rule-by-rule corpus of the IR's semantics (`docs/ir.md`), run on the
-//! reference implementation, `ctadl_ir::semantics`.
+//! The rule-by-rule corpus of the IR's semantics (`docs/ir.md`), run on the reference
+//! implementation, `ctadl_ir::semantics`.
 //!
 //! Each `tests/semantics/*.flowy` program pins one rule of `docs/ir.md`. Its `sink(x, L)` calls
 //! assert that label `L` reaches `x`, its `errsink(x, L)` calls that it does not, and a trailing

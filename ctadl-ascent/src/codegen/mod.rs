@@ -1342,7 +1342,7 @@ impl CodegenVisitor<'_> {
     /// of one-step loads spelling `ap` would mention: each offset run (the address each step reads
     /// from, or the address left over at the end, relative to the step's base), and each composed
     /// path that ends at a memory step (field, `deref` or `#value`). The admissible set is built
-    /// from program paths (the "admissible path set" row of the approximations register,
+    /// from program paths (the "admissible paths" row of the approximations register,
     /// `docs/limitations.md`), so a path admits the same set whether a front end writes it as one
     /// access path or as a chain.
     fn insert_chain_paths(&mut self, ap: &AccessPath) {

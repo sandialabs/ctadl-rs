@@ -2,9 +2,9 @@
 This module implements Cytron et al's phi placement and SSA renaming, and the IR passes that
 run around it.
 
-SSA conversion is part of the semantics (S16 of `docs/ir.md`), not a pass to be checked: it
-is what makes a variable one cell. It versions a variable at an assignment whose destination path is
-empty, and never at a store, which defines nothing and reads its base. Each pass's module
+SSA conversion is part of the semantics (S16 of `docs/ir.md`), not a pass to be checked: it is
+what makes a variable one cell. It versions a variable at an assignment whose destination path
+is empty, and never at a store, which defines nothing and reads its base. Each pass's module
 documentation opens with its correctness argument under S18, and
 `frontends/ctadl-flowy/tests/passes.rs` checks it against the reference implementation
 ([`crate::semantics`]).
