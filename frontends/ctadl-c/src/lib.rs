@@ -1,5 +1,36 @@
 //! Tree-sitter C front end: lowers preprocessed C source to CTADL IR.
 //!
+//! # Conventions (spec S19)
+//!
+//! The IR has no address-of, no non-constant offset and no width, so C's are lowered by
+//! convention:
+//!
+//! - **No address-of.** A local or parameter whose address is taken (`&x`, scalar or record)
+//!   lives behind `deref`: its storage is `x.deref`, and `&x` is the variable `x` itself (see
+//!   [`addr_taken_locals`]). An address is a base plus constant offsets, so `&a[1]` is
+//!   `a.[1]`. `deref` is the one step from an address to the memory there: `*p` is `p.deref`,
+//!   and `p->f` and `(*p).f` are both `p.deref.f`, so `*p` and `p->f` share the prefix
+//!   `p.deref`. The same-block must-alias table ([`Context::addr_alias`]) resolves `*p` after
+//!   `p = &x` to `x`'s storage directly; it is a precision device, not part of the convention.
+//! - **A non-constant offset is a copy of the base plus the value of the index.** `q = p + i`
+//!   (and `p - i`, `p += i`, `p++`) is `q = p, value(i)`, which the semantics reads as
+//!   `q = p; q.#value = value(i)`. The base is the operand the front end can tell is a pointer
+//!   from its declaration (a pointer or array local, parameter, global or record member), an
+//!   address-of, a string literal, or a cast to a pointer type; see
+//!   [`Context::pointer_operand`]. When neither operand is known to be a pointer the
+//!   operation is integer arithmetic. A subscript `a[i]` with non-constant `i` is `a.deref`,
+//!   the path `a[0]` has; a constant index or offset (`a[2]`, `*(p + 2)`, `&a[2]`) is the
+//!   offset `.[2]`.
+//! - **Integer arithmetic and comparisons supply values only.** Every operand of an
+//!   arithmetic, bitwise, shift, logical or comparison operator, binary or unary, is
+//!   `value(v)`: the result's value is computed from `v`'s, but nothing reachable through `v`
+//!   is reachable through the result.
+//! - **Offsets have no width.** `p.[0].deref` and `p.[4].deref` are distinct locations, and
+//!   overlap is lost; an offset counts elements, not bytes.
+//! - **`&s.f` is not nameable.** A member has no offset without type layout, so `&s.f` falls
+//!   back to a copy of `s.f`, and a callee's write through that pointer is lost
+//!   (docs/limitations.md).
+//!
 //! # Known limitations
 //!
 //! ## Initializer in `if (int x = 0; x > 7)`
@@ -17,11 +48,19 @@
 //! write through `a[n]` is observed at `a[0]` but not at a nonzero constant index like
 //! `a[2]`.
 //!
-//! ## Addresses of struct members
+//! ## Pointer arithmetic on an operand of unknown type
 //!
-//! An address in the IR is a base variable plus numeric offsets, so `&a[1]` is expressible
-//! but `&s.f` is not (no type information, no byte offsets): `&s.f` falls back to the
-//! value-copy model and a callee's write through that pointer is dropped.
+//! Which operand of `+` or `-` is the pointer is read off declarations. An operand whose type
+//! the front end cannot see (a call's result, a typedef'd pointer type, a member declared in
+//! an unexpanded header) is not known to be a pointer, so `q = f() + i` is integer
+//! arithmetic: `q` gets the operands' values, and the memory behind `f()` is not reachable
+//! through `q`.
+//!
+//! ## Address-taken globals
+//!
+//! A global lives at `$globals.g` in every unit and is not moved behind `deref` when its
+//! address is taken, so outside the same-block alias table `p = &g; *p` is `$globals.g.deref`,
+//! not `$globals.g`.
 //!
 //! ## Pointers and values look the same
 //!
@@ -529,6 +568,22 @@ fn constant_index(exp: &Exp) -> Option<i64> {
     integer_literal(text)
 }
 
+/// An operand that supplies its value only: `value(p)` for an access path. A constant carries
+/// nothing either way, and a function reference is a label, so both stay as they are.
+fn value_of(e: Exp) -> Exp {
+    match e {
+        Exp::Path(ap) => Exp::Value(ap),
+        e => e,
+    }
+}
+
+/// The operand of a `+` or `-` that is the pointer of pointer arithmetic
+/// ([`Context::pointer_base`]).
+enum PointerBase {
+    Left,
+    Right,
+}
+
 /// The value of an integer literal's source text, as [`constant_index`] reads it.
 fn integer_literal(text: &str) -> Option<i64> {
     let text = text.trim();
@@ -615,16 +670,17 @@ fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     }
 }
 
-/// Scalar locals and parameters whose address is taken (`&x`, `(T) &x`).
+/// Locals and parameters whose address is taken (`&x`, `(T) &x`), scalars and records alike.
 ///
-/// Each one's value lives in a cell at `x.deref` ([`in_cell`]), so a write through `&x` reaches
-/// later reads of `x`; records and arrays already name their own storage. The walk is by name,
-/// not scope: `taken` finds the names, and `declared` keeps the ones that are scalar.
-fn addr_taken_scalars(
+/// Each one's storage lives in a cell at `x.deref` ([`in_cell`]), so `&x` is the variable `x`
+/// and a write through `&x` -- `p->f`, which is `p.deref.f` -- reaches later reads of `x` and
+/// `x.f`. A local array already names its storage behind `deref` (`a[0]` is `a.deref`), so it
+/// is left alone. The walk is by name, not scope: `taken` finds the names, and `declared`
+/// keeps the ones no declaration makes a local array or a function.
+fn addr_taken_locals(
     params: Node<'_>,
     body: Node<'_>,
     source: &str,
-    struct_layouts: &HashMap<String, Vec<MemberSlot>>,
     type_names: &HashSet<String>,
 ) -> HashSet<String> {
     fn taken<'s>(
@@ -667,46 +723,36 @@ fn addr_taken_scalars(
             }
         }
     }
-    // Every declaration of every name in `names`: is it scalar? A pointer, a non-record type,
-    // or an array parameter (it decays to a pointer) is; a local array, a record or a function
-    // is not. Keyed by name, so one non-scalar declaration anywhere in the function excludes it.
+    // Every declaration of every name in `names`: may it live in a cell? A local array or a
+    // function may not; anything else may, an array parameter included (it decays to a
+    // pointer). Keyed by name, so one local-array declaration anywhere in the function
+    // excludes it.
     fn declared<'s>(
         node: Node<'_>,
         source: &'s str,
         names: &HashSet<&'s str>,
-        layouts: &HashMap<String, Vec<MemberSlot>>,
         out: &mut HashMap<&'s str, bool>,
     ) {
         if matches!(node.kind(), "declaration" | "parameter_declaration") {
-            let record = node
-                .child_by_field_name("type")
-                .is_some_and(|t| match t.kind() {
-                    "struct_specifier" | "union_specifier" => true,
-                    "type_identifier" => layouts.contains_key(to_str(&t, source)),
-                    _ => false,
-                });
             let mut cursor = node.walk();
             for declarator in node.children_by_field_name("declarator", &mut cursor) {
                 let (name, nearest) = declarator_shape(declarator);
                 if let Some(name) = name
                     && let Some(name) = names.get(to_str(&name, source))
                 {
-                    let scalar = match nearest {
-                        "pointer_declarator" => true,
-                        // A parameter declared as an array is a pointer.
+                    let cell = match nearest {
                         "array_declarator" => node.kind() == "parameter_declaration",
                         "function_declarator" => false,
-                        _ => !record,
+                        _ => true,
                     };
-                    let entry = out.entry(name).or_insert(true);
-                    *entry &= scalar;
+                    *out.entry(name).or_insert(true) &= cell;
                 }
             }
         }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() != "function_definition" {
-                declared(child, source, names, layouts, out);
+                declared(child, source, names, out);
             }
         }
     }
@@ -715,14 +761,51 @@ fn addr_taken_scalars(
     if names.is_empty() {
         return HashSet::new();
     }
-    let mut scalar = HashMap::new();
-    declared(params, source, &names, struct_layouts, &mut scalar);
-    declared(body, source, &names, struct_layouts, &mut scalar);
-    scalar
-        .into_iter()
-        .filter(|(_, s)| *s)
+    let mut cell = HashMap::new();
+    declared(params, source, &names, &mut cell);
+    declared(body, source, &names, &mut cell);
+    cell.into_iter()
+        .filter(|(_, c)| *c)
         .map(|(n, _)| n.to_string())
         .collect()
+}
+
+/// The name a declarator declares and whether it is a pointer (or an array, which decays to
+/// one): `*p`, `a[3]` and `(*fp)(int)` are, a plain `x` is not. `None` for a function or a
+/// shape that names nothing.
+fn declares_pointer(declarator: Node<'_>) -> Option<(Node<'_>, bool)> {
+    let (name, nearest) = declarator_shape(declarator);
+    let pointer = match nearest {
+        "pointer_declarator" | "array_declarator" => true,
+        "function_declarator" => return None,
+        _ => false,
+    };
+    Some((name?, pointer))
+}
+
+/// A function's locals and parameters by name, each mapped to whether every declaration of
+/// that name in the function declares a pointer or an array (see [`Context::pointer_operand`]).
+fn pointer_locals(params: Node<'_>, body: Node<'_>, source: &str) -> HashMap<String, bool> {
+    fn walk(node: Node<'_>, source: &str, out: &mut HashMap<String, bool>) {
+        if matches!(node.kind(), "declaration" | "parameter_declaration") {
+            let mut cursor = node.walk();
+            for declarator in node.children_by_field_name("declarator", &mut cursor) {
+                if let Some((name, pointer)) = declares_pointer(declarator) {
+                    *out.entry(to_str(&name, source).to_string()).or_insert(true) &= pointer;
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() != "function_definition" {
+                walk(child, source, out);
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    walk(params, source, &mut out);
+    walk(body, source, &mut out);
+    out
 }
 
 #[derive(Debug, Default)]
@@ -757,8 +840,11 @@ struct Context<'a> {
     /// making all members one access path. Populated from `union_specifier`-typed local
     /// declarations; reset per function.
     union_vars: HashSet<VariableRef>,
-    /// Address-taken scalars of the current function; each one's value is at `.deref`.
+    /// Address-taken locals of the current function; each one's storage is at `.deref`.
     cells: HashSet<String>,
+    /// The current function's locals and parameters by name: is every declaration of the name
+    /// a pointer or an array? See [`Context::pointer_operand`].
+    pointer_locals: HashMap<String, bool>,
     /// Cell variables `&x` produced in the current function.
     cell_vars: HashSet<VariableRef>,
     /// Builder that interns source spans, or `None` when spans are not being recorded (the
@@ -792,6 +878,10 @@ struct Context<'a> {
     declared_functions: HashSet<String>,
     /// This unit's file-scope variables, `extern` included; `hook(v)` calls through one.
     global_variables: HashSet<String>,
+    /// This unit's file-scope variables, and separately its record members, by name: is
+    /// every declaration of the name a pointer or an array? See [`Context::pointer_operand`].
+    pointer_globals: HashMap<String, bool>,
+    pointer_members: HashMap<String, bool>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
@@ -1068,6 +1158,8 @@ fn lower_units(
             type_names: type_names.clone(),
             declared_functions: declared_functions.clone(),
             global_variables: std::mem::take(&mut registries[index].global_variables),
+            pointer_globals: std::mem::take(&mut registries[index].pointer_globals),
+            pointer_members: std::mem::take(&mut registries[index].pointer_members),
             unit_key: if record_spans {
                 unit.artifact_key().map(|key| (key, unit.source.len()))
             } else {
@@ -1481,6 +1573,8 @@ struct UnitRegistry {
     type_names: HashSet<String>,
     declared_functions: HashSet<String>,
     global_variables: HashSet<String>,
+    pointer_globals: HashMap<String, bool>,
+    pointer_members: HashMap<String, bool>,
 }
 
 /// Is this node outside every function body?
@@ -1520,13 +1614,26 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
                 registry
                     .declared_functions
                     .insert(to_str(&head.name, source).to_string());
-            } else if file_scope
-                && let (Some(name), nearest) = declarator_shape(declarator)
-                && nearest != "function_declarator"
-            {
-                registry
-                    .global_variables
-                    .insert(to_str(&name, source).to_string());
+            } else if file_scope && let Some((name, pointer)) = declares_pointer(declarator) {
+                let name = to_str(&name, source).to_string();
+                *registry.pointer_globals.entry(name.clone()).or_insert(true) &= pointer;
+                registry.global_variables.insert(name);
+            }
+        }
+    }
+    if node.kind() == "field_declaration" {
+        let mut dcursor = node.walk();
+        for declarator in node.children_by_field_name("declarator", &mut dcursor) {
+            // A method (`void set(int);`) has no storage.
+            let method = declarator.kind() == "function_declarator"
+                && declarator
+                    .child_by_field_name("declarator")
+                    .is_some_and(|d| d.kind() == "field_identifier");
+            if !method && let Some((name, plain)) = declarator_member_name(declarator, source) {
+                *registry
+                    .pointer_members
+                    .entry(name.to_string())
+                    .or_insert(true) &= !plain;
             }
         }
     }
@@ -1945,18 +2052,22 @@ impl<'a> Context<'a> {
 
         // A compound assignment (`y += expr`) needs the current value of the target as a second
         // operand; read it (a field target lowers to loads) before the write.
-        let compound = operator_node.is_some_and(|o| o.kind() != "=");
-        let right_op = if compound {
-            Some(Exp::path(self.emit_loads(
-                program,
-                scope_view,
-                target_ap.clone(),
-            )))
-        } else {
-            None
+        // Like a binary operator, both supply values only, except a pointer target of `+=` or
+        // `-=`, which is copied (`p += i` is `p = p, value(i)`).
+        let compound = operator_node.filter(|o| o.kind() != "=");
+        let (rhs_src, right_op) = match compound {
+            Some(op) => {
+                let cur = Exp::path(self.emit_loads(program, scope_view, target_ap.clone()));
+                let pointer = matches!(op.kind(), "+=" | "-=")
+                    && self.pointer_operand(target_node, source, scope_view)
+                    && !self.pointer_operand(expr_node, source, scope_view);
+                let cur = if pointer { cur } else { value_of(cur) };
+                (value_of(rhs_var.clone()), Some(cur))
+            }
+            None => (rhs_var.clone(), None),
         };
 
-        self.add_assign_to_program(program, scope_view, &target_ap, &rhs_var, right_op.as_ref());
+        self.add_assign_to_program(program, scope_view, &target_ap, &rhs_src, right_op.as_ref());
 
         // Maintain the address-of must-points-to map (see `Context::addr_alias`). Only a
         // plain, whole assignment to a variable (`p = &x`, or a declarator initializer)
@@ -3435,11 +3546,13 @@ impl<'a> Context<'a> {
             | "true"
             | "false"
             | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // `-x`, `+x`, `!x`, `~x` supply `x`'s value only.
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")
                     .expect("always has an argument");
-                self.flatten_expr(program, ch, source, scope_view)
+                let operand = self.flatten_expr(program, ch, source, scope_view)?;
+                Ok(self.value_into_temp(program, scope_view, operand))
             }
             // COMPOUND NODES: Flatten children first, then generate a temp.
             "binary_expression" => {
@@ -3449,14 +3562,15 @@ impl<'a> Context<'a> {
                         "*" | "&" => self.flatten_pointer_operator(
                             program, is_deref, operand, source, scope_view,
                         ),
-                        // `-x` and `+x` carry `x`, as the `unary_expression` arm does.
-                        _ => self.flatten_expr(program, operand, source, scope_view),
+                        // `-x` and `+x`, as the `unary_expression` arm.
+                        _ => {
+                            let operand =
+                                self.flatten_expr(program, operand, source, scope_view)?;
+                            Ok(self.value_into_temp(program, scope_view, operand))
+                        }
                     };
                 }
-                let operator = node
-                    .child_by_field_name("operator")
-                    .expect("always has an operator");
-                self.flatten_binary(program, node, operator, source, scope_view)
+                self.flatten_binary(program, node, source, scope_view)
             }
             "update_expression" => {
                 self.flatten_update_expression(program, node, source, scope_view)
@@ -3911,7 +4025,6 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        operator: Node<'_>,
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
@@ -3921,34 +4034,115 @@ impl<'a> Context<'a> {
         // 2. Recurse down! (Bottom-up evaluation)
         let left_val = self.flatten_expr(program, left_node, source, scope_view)?;
         let right_val = self.flatten_expr(program, right_node, source, scope_view)?;
-        // 3. Generate a new temporary for this specific operation
-        let temp_name = self.allocator.next_temp();
-        let target = self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-            &mut program[scope_view.fidx].locals,
-        );
+        // 3. Every operator supplies values only, except the base of pointer arithmetic, which
+        // is copied: `p + i` is `p, value(i)` (see the module docs).
+        let (left_val, right_val) = match self.pointer_base(node, source, scope_view) {
+            Some(PointerBase::Left) => (left_val, value_of(right_val)),
+            Some(PointerBase::Right) => (value_of(left_val), right_val),
+            None => (value_of(left_val), value_of(right_val)),
+        };
+        Ok(self.assign_to_temp(program, scope_view, [left_val, right_val]))
+    }
 
-        match operator.kind() {
-            "==" | "<=" | ">=" => {
-                //todo: what are all of these?
-                log::debug!("Not assigning for comparison operators");
-            }
-            _ => {
-                self.add_assign_to_program(
-                    program,
-                    scope_view,
-                    &target,
-                    &left_val,
-                    Some(&right_val),
-                );
-            }
+    /// `value(e)` in a fresh temporary, for an operand that is an access path; a constant or a
+    /// function reference is returned as it is (a constant carries nothing, and a function
+    /// reference is a label, not a value).
+    fn value_into_temp(&mut self, program: &mut Program, scope_view: &ScopeView, e: Exp) -> Exp {
+        match e {
+            Exp::Path(ap) => self.assign_to_temp(program, scope_view, [Exp::value(ap)]),
+            e => e,
         }
+    }
 
-        Ok(Exp::variable(VariableRef::new_local_idx(
-            program[scope_view.fidx].locals.get_or_intern(&temp_name),
-        )))
+    /// Assigns `sources` to a fresh temporary, one assignment with one flow per source, and
+    /// yields the temporary.
+    fn assign_to_temp(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        sources: impl IntoIterator<Item = Exp>,
+    ) -> Exp {
+        let temp_name = self.allocator.next_temp();
+        let temp =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+            StatementKind::assign(temp.clone(), sources),
+            self.cur_span,
+        ));
+        Exp::variable(temp)
+    }
+
+    /// Which operand of `node`, a `+` or `-`, is the pointer of pointer arithmetic, if either
+    /// is known to be ([`Self::pointer_operand`]). `p - q` of two pointers is an integer.
+    fn pointer_base(
+        &self,
+        node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Option<PointerBase> {
+        let op = to_str(&node.child_by_field_name("operator")?, source);
+        let left = self.pointer_operand(node.child_by_field_name("left")?, source, scope_view);
+        let right = self.pointer_operand(node.child_by_field_name("right")?, source, scope_view);
+        match op {
+            "+" if left => Some(PointerBase::Left),
+            "+" if right => Some(PointerBase::Right),
+            "-" if left && !right => Some(PointerBase::Left),
+            _ => None,
+        }
+    }
+
+    /// Is `node` known to evaluate to a pointer? Read off what the front end can see without a
+    /// type checker: a local, parameter or global every declaration of which is a pointer or an
+    /// array, a record member every declaration of which is ([`collect_registry`]), an
+    /// address-of, a string literal, a cast to a pointer type, and pointer arithmetic,
+    /// assignment, update, ternary or comma over one of those. Anything else (a call, a
+    /// dereference, a subscript, a typedef'd pointer type) is not known to be one.
+    fn pointer_operand(&self, node: Node<'_>, source: &str, scope_view: &ScopeView) -> bool {
+        match node.kind() {
+            "parenthesized_expression" => first_named_child(node)
+                .is_some_and(|inner| self.pointer_operand(inner, source, scope_view)),
+            "identifier" => {
+                let name = to_str(&node, source);
+                match self.pointer_locals.get(name) {
+                    Some(pointer) => *pointer,
+                    None => self.pointer_globals.get(name).copied().unwrap_or(false),
+                }
+            }
+            "field_expression" => node.child_by_field_name("field").is_some_and(|field| {
+                self.pointer_members
+                    .get(to_str(&field, source))
+                    .copied()
+                    .unwrap_or(false)
+            }),
+            "pointer_expression" => node
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == "&"),
+            "string_literal" | "concatenated_string" => true,
+            "cast_expression" => node
+                .child_by_field_name("type")
+                .and_then(|ty| ty.child_by_field_name("declarator"))
+                .is_some_and(|d| {
+                    matches!(
+                        d.kind(),
+                        "abstract_pointer_declarator" | "abstract_array_declarator"
+                    )
+                }),
+            "binary_expression" => self.pointer_base(node, source, scope_view).is_some(),
+            "update_expression" => node
+                .child_by_field_name("argument")
+                .is_some_and(|arg| self.pointer_operand(arg, source, scope_view)),
+            "assignment_expression" => node
+                .child_by_field_name("left")
+                .is_some_and(|left| self.pointer_operand(left, source, scope_view)),
+            "conditional_expression" => ["consequence", "alternative"].iter().any(|arm| {
+                node.child_by_field_name(arm)
+                    .is_some_and(|arm| self.pointer_operand(arm, source, scope_view))
+            }),
+            "comma_expression" => node
+                .child_by_field_name("right")
+                .is_some_and(|right| self.pointer_operand(right, source, scope_view)),
+            _ => false,
+        }
     }
 
     /// `*e` reads as `e[0]` (`deref_location`); `&e` is a cell, an element address, or `e`.
@@ -4005,17 +4199,14 @@ impl<'a> Context<'a> {
         // Its current value (a field location lowers to loads).
         let cur = Exp::path(self.emit_loads(program, scope_view, loc.clone()));
         let one = Exp::Str(ArcIntern::<str>::from("1"));
-        // temp = cur + 1
-        let temp_name = self.allocator.next_temp();
-        let target = self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-            &mut program[scope_view.fidx].locals,
-        );
-        self.add_assign_to_program(program, scope_view, &target, &cur, Some(&one));
+        // temp = cur + 1: a pointer is copied, an integer supplies its value.
+        let cur = if self.pointer_operand(argument, source, scope_view) {
+            cur
+        } else {
+            value_of(cur)
+        };
+        let new_val = self.assign_to_temp(program, scope_view, [cur, one]);
         // loc = temp
-        let new_val = Exp::variable(target.base.clone());
         self.add_assign_to_program(program, scope_view, &loc, &new_val, None);
         // The value of the update expression is the updated location's value.
         Ok(new_val)
@@ -4182,8 +4373,8 @@ impl<'a> Context<'a> {
     /// element offset (`-K` for `e - K`).
     ///
     /// Only for a node known to be an address (the operand of `*`, a subscript's base).
-    /// Elsewhere `x + 2` may be integer arithmetic and lowers as a merge
-    /// ([`Self::flatten_binary`]).
+    /// Elsewhere `x + 2` is a copy of a known pointer `x` or else integer arithmetic
+    /// ([`Self::flatten_binary`]), and names no offset.
     fn constant_pointer_offset<'t>(
         &self,
         node: Node<'t>,
@@ -4485,13 +4676,8 @@ impl<'a> Context<'a> {
         // Union-typed locals are function-scoped.
         self.union_vars.clear();
         // Address-taken scalars live in memory; copy each such parameter into its cell.
-        self.cells = addr_taken_scalars(
-            head.params,
-            body_node,
-            source,
-            &self.struct_layouts,
-            &self.type_names,
-        );
+        self.cells = addr_taken_locals(head.params, body_node, source, &self.type_names);
+        self.pointer_locals = pointer_locals(head.params, body_node, source);
         self.cell_vars.clear();
         let cell_params: Vec<(ParameterIdx, String)> = self
             .param_names
@@ -4625,8 +4811,10 @@ impl<'a> Context<'a> {
     /// addresses are exactly the element accesses: `&a[1]` is `a.[1]`. Forming the address
     /// -- rather than loading the element -- preserves pointer identity across a call:
     /// offsets are summed where paths meet, while a loaded copy loses the callee's write.
-    /// Not nameable: `&x` (a whole variable is its own address here) and `&s.f` (a member's
-    /// byte offset needs type information this frontend does not have).
+    /// Not handled here: `&x` (an address-taken local is a cell, so `&x` is the variable `x`;
+    /// see [`addr_taken_locals`]) and `&s.f`, which is not nameable at all (a member's byte
+    /// offset needs type information this frontend does not have) and falls back to a copy
+    /// of `s.f`.
     fn flatten_address_of(
         &mut self,
         program: &mut Program,
@@ -4705,22 +4893,16 @@ impl<'a> Context<'a> {
                 let field = node
                     .child_by_field_name("field")
                     .expect("field_expression always has a field");
-                // `(*p).f` is `p->f`.
-                let object = unparenthesized_callee(argument);
-                let argument = if node
+                // `p->f` is `(*p).f`: the object is the memory `*p` names, so both are
+                // `p.deref.f` and share the prefix `p.deref` with `*p`.
+                let arrow = node
                     .child_by_field_name("operator")
-                    .is_some_and(|op| to_str(&op, source) == ".")
-                    && object.kind() == "pointer_expression"
-                    && object
-                        .child_by_field_name("operator")
-                        .is_some_and(|op| to_str(&op, source) == "*")
-                    && let Some(pointer) = object.child_by_field_name("argument")
-                {
-                    pointer
+                    .is_some_and(|op| to_str(&op, source) == "->");
+                let mut base = if arrow {
+                    self.deref_location(program, argument, source, scope_view)?
                 } else {
-                    argument
+                    self.flatten_lvalue(program, argument, source, scope_view)?
                 };
-                let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
                 // `p->` with the member name missing: tree-sitter inserted the
                 // `field_identifier`, so it quotes to the empty string and cannot be a path
                 // segment. Appending nothing would silently alias the whole access to `p`, so
@@ -4734,7 +4916,11 @@ impl<'a> Context<'a> {
                 // access *on the union variable itself* collapses -- detected by the resolved
                 // base being the bare union variable -- so a struct field nested inside a union
                 // member (`u.a.b`) keeps its own name.
-                let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
+                // An address-taken union's storage is its cell, `u.deref`.
+                let union_object = self.union_vars.contains(&base.base)
+                    && (base.is_pathless()
+                        || (base.segments.len() == 1 && base.segments[0].is_deref()));
+                let seg = if union_object {
                     PathSegment::field(UNION_FIELD)
                 } else {
                     PathSegment::field(to_str(&field, source))
@@ -4876,12 +5062,23 @@ impl<'a> Context<'a> {
                     .unwrap_or_else(|| AccessPath::new(pointee.base.clone(), whole)));
             }
         }
-        let mut ap = match self.flatten_expr(program, operand, source, scope_view)? {
+        // A pointer read from a member or an element (`s.p`, `a[i]`, `p->q`) is dereferenced
+        // in place, so `p->q->f` is the one path `p.deref.q.deref.f`.
+        let value = if matches!(operand.kind(), "field_expression" | "subscript_expression") {
+            Exp::path(self.flatten_lvalue(program, operand, source, scope_view)?)
+        } else {
+            self.flatten_expr(program, operand, source, scope_view)?
+        };
+        let mut ap = match value {
             Exp::Path(addr) => addr,
             Exp::Str(constant) if operand.kind() == "cast_expression" && !constant.is_empty() => {
                 literal_address_path(&constant)
             }
-            // A constant, a string or a function: no memory this program writes.
+            // A constant, a string or a function: no memory this program writes. Unless the
+            // parse recovery made it, as `__alignof__(h->ctx)` does: then the body is reported.
+            _ if recovery_region(operand).is_some() => {
+                return self.not_a_location(program, operand, scope_view);
+            }
             _ => return Ok(self.dead_temp_path(program, scope_view)),
         };
         push_element(&mut ap.segments, Some(0));

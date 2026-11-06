@@ -344,8 +344,12 @@ pub(crate) fn access_path_from_str(s: &str, locals: &Locals) -> AccessPath {
 
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
-anything else is an access path (variable / param / global / field). */
+`value(p)` is `Exp::Value` of the access path `p`; anything else is an access path (variable /
+param / global / field). */
 pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
+    if let Some(inner) = s.strip_prefix("value(").and_then(|r| r.strip_suffix(')')) {
+        return Exp::value(access_path_from_str(inner, locals));
+    }
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => {
@@ -682,6 +686,18 @@ pub(crate) fn check_returns_param(summary: &[FunctionSummary], param_num: i16, p
     check_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Asserts the given param reaches the return's value only (`return.#value`), as an operand of
+arithmetic or a comparison does, and not the return itself. */
+#[track_caller]
+pub(crate) fn check_returns_param_value(
+    summary: &[FunctionSummary],
+    param_num: i16,
+    param_path: &str,
+) {
+    check_flow(summary, param_num, param_path, RETURN_INDEX, ".#value");
+    check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
+}
+
 /* Asserts the given param does NOT reach the return -- the negative complement of
 `check_returns_param` (Flowy's `</-` for a return endpoint). Use it to pin that a value is *not*
 returned, e.g. a block-scoped shadow that must not escape. Prints the actual summary on failure. */
@@ -800,6 +816,20 @@ pub(crate) fn check_returns_param_in(
         RETURN_INDEX,
         "",
     );
+}
+
+/* `check_returns_param_value` for a named function in a multi-function fixture. */
+#[track_caller]
+pub(crate) fn check_returns_param_value_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    let (from, to) = (param_num, RETURN_INDEX);
+    check_flow_in(summary, source_info, name, from, param_path, to, ".#value");
+    check_no_flow_in(summary, source_info, name, from, param_path, to, "");
 }
 
 /* `check_does_not_return_param` for a named function in a multi-function fixture: asserts param
