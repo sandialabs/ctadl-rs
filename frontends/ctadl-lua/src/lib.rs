@@ -46,9 +46,9 @@
 //!
 //! ## Data flow
 //!
-//! Assignments lower to [`StatementKind::Assign`]; field and index writes/reads lower to
-//! [`StatementKind::Store`]/[`StatementKind::Load`] via
-//! [`load_access_path`]/[`store_access_path`], so Lua tables are field-sensitive. Function
+//! Assignments, and field and index writes and reads, lower to [`StatementKind::Assign`] over
+//! access paths (a store has a non-empty destination path, a load a non-empty source path), so
+//! Lua tables are field-sensitive. Function
 //! calls lower to [`StatementKind::CallAssign`]. Most calls are staged as a
 //! [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the resolved qualified
 //! callee name; the analysis joins the call to a definition or model by that name. A call whose
@@ -58,6 +58,17 @@
 //! recovered metatable hierarchy (a Lua receiver has no static type). A handful of standard-library
 //! calls (`table.insert`, `ipairs`/`pairs`, `select`) are recognized syntactically and lowered
 //! directly to data flow rather than a call, since they carry taint but have no definition or model.
+//!
+//! ## Conventions (S19)
+//!
+//! A table key is a symbolic field, never an offset: `t.name` and `t["name"]` are the field
+//! `name`, `t[3]` the field `[3]`, and a key not known at import time (`t[k]`, a positional
+//! constructor entry, `table.insert`) the field `[_elem_]`. Lua has no address-of, so `deref`
+//! never appears. Arithmetic (`+ - * / // % ^`, unary `-`), bitwise operations (`& | ~ << >>`,
+//! unary `~`), comparisons (`== ~= < <= > >=`), `not` and the length `#` supply values only
+//! (R17): each operand is `value(v)`. Concatenation `..` builds a string from its operands'
+//! contents and `and`/`or` evaluate to one of their operands, so their operands flow whole.
+//! The `err` result of a call is never filled (see Errors below).
 //!
 //! ## Globals
 //!
@@ -1868,15 +1879,33 @@ impl<'a> Lowerer<'a> {
                     .child_by_field_name("right")
                     .map(|n| self.eval_expr(n, blk))
                     .unwrap_or_else(nil_exp);
-                // Both operands flow into the result (covers `..` concatenation and arithmetic).
+                let op = node
+                    .child_by_field_name("operator")
+                    .map(|n| self.node_text(n))
+                    .unwrap_or("");
+                // `and`/`or` evaluate to one of their operands, and `..` builds a string from
+                // its operands' contents: both operands flow into the result. Arithmetic,
+                // bitwise operations and comparisons compute a number or a boolean, so their
+                // operands supply values only (R17).
+                let sources = match op {
+                    "and" | "or" | ".." => [left, right],
+                    _ => [value_of(left), value_of(right)],
+                };
                 let t = self.fresh_temp();
-                self.push_stmt(blk, StatementKind::assign(t.clone(), [left, right]));
+                self.push_stmt(blk, StatementKind::assign(t.clone(), sources));
                 Exp::variable(t)
             }
-            "unary_expression" => node
-                .child_by_field_name("operand")
-                .map(|n| self.eval_expr(n, blk))
-                .unwrap_or_else(nil_exp),
+            "unary_expression" => {
+                // `-`, `~`, `not` and `#` compute a number or a boolean: the operand supplies
+                // its value only (R17).
+                let operand = node
+                    .child_by_field_name("operand")
+                    .map(|n| self.eval_expr(n, blk))
+                    .unwrap_or_else(nil_exp);
+                let t = self.fresh_temp();
+                self.push_stmt(blk, StatementKind::assign(t.clone(), [value_of(operand)]));
+                Exp::variable(t)
+            }
             "function_call" => self.eval_call(node, blk),
             "table_constructor" => self.eval_table(node, blk),
             "function_definition" => self.eval_closure(node, blk),
@@ -2459,6 +2488,14 @@ fn nil_exp() -> Exp {
     Exp::new_str("nil")
 }
 
+/// `value(e)` for an operand that supplies only its value (R17); a constant stays as it is.
+fn value_of(e: Exp) -> Exp {
+    match e {
+        Exp::Path(ap) => Exp::Value(ap),
+        other => other,
+    }
+}
+
 /// Qualifies `name` under `module`. A module with an empty name (a single file imported as the
 /// root itself) contributes no prefix.
 fn qualify(module: &str, name: &str) -> String {
@@ -3015,6 +3052,73 @@ mod tests {
         "#;
         let info = import_modules(&[("m", src)]);
         assert_eq!(direct_calls(&info, "m.run"), Vec::<String>::new());
+    }
+
+    /// The sources of every assignment to a temporary in function `name`, in order, each source
+    /// spelled `value` for `Exp::Value`, `path` for `Exp::Path` and `const` otherwise.
+    fn temp_assign_kinds(info: &ProgramInfo, name: &str) -> Vec<Vec<&'static str>> {
+        let f = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .expect("function");
+        let mut out = Vec::new();
+        for bb in f.blocks.iter() {
+            for st in &bb.statements {
+                if let StatementKind::Assign { dest, sources } = &st.kind
+                    && dest.is_pathless()
+                    && let Some(l) = dest.base.variable.local()
+                    && f.locals.name(l).starts_with("%t")
+                    && !matches!(sources.as_slice(), [Exp::Str(_)])
+                {
+                    out.push(
+                        sources
+                            .iter()
+                            .map(|e| match e {
+                                Exp::Value(_) => "value",
+                                Exp::Path(_) => "path",
+                                _ => "const",
+                            })
+                            .collect(),
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn arithmetic_and_comparisons_supply_values_only() {
+        // R17: arithmetic, bitwise operations, comparisons, unary minus, `not` and `#` take their
+        // operands' values only. `and`/`or` evaluate to an operand, and `..` builds a string from
+        // its operands' contents, so both of theirs flow whole.
+        let src = r#"
+            local function f(a, b)
+              local x = a + b
+              local y = a < b
+              local z = a & b
+              local w = -a
+              local n = #a
+              local s = a .. b
+              local o = a or b
+              return x, y, z, w, n, s, o
+            end
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            temp_assign_kinds(&info, "m.f"),
+            vec![
+                vec!["value", "value"],
+                vec!["value", "value"],
+                vec!["value", "value"],
+                vec!["value"],
+                vec!["value"],
+                vec!["path", "path"],
+                vec!["path", "path"],
+            ]
+        );
     }
 
     #[test]

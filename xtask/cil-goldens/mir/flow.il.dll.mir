@@ -121,7 +121,7 @@ begin block_0 [start]:
 assign %excout = <const: []> [17]
 assign %s0 = @p1 [17]
 assign %s1 = <const: 2> [18]
-assign %s0 = %s0, %s1 [19]
+assign %s0 = value(%s0), value(%s1) [19]
 return %s0, %excout
 end block_0
 
@@ -142,7 +142,7 @@ begin block_0 [start]:
 assign %excout = <const: []> [22]
 assign %s0 = @p0 [22]
 assign %s1 = <const: 2> [23]
-assign %s0 = %s0, %s1 [24]
+assign %s0 = value(%s0), value(%s1) [24]
 return %s0, %excout
 end block_0
 
@@ -170,7 +170,7 @@ assign %s0 = @p0 [32]
 assign %s1 = @p0 [33]
 assign %s1 = %s1.deref [34]
 assign %s2 = <const: 1> [35]
-assign %s1 = %s1, %s2 [36]
+assign %s1 = value(%s1), value(%s2) [36]
 store %s0.deref := %s1 [37]
 return <const: []>, %excout
 end block_0
@@ -326,7 +326,7 @@ assign %caught0 = %throwval [110]
 assign %s0 = %caught0 [110]
 assign %s0 = %s0 [111]
 assign %s1 = <const: 0> [112]
-assign %s0 = %s0, %s1 [113]
+assign %s0 = value(%s0), value(%s1) [113]
 goto 3
 end block_2
 begin block_3:
@@ -460,7 +460,7 @@ assign %s1 = <const: 6> [160]
 assign %loc0 = %s1 [161]
 assign %s0 = %loc0 [162]
 assign %s1 = %loc1 [163]
-assign %s0 = %s0, %s1 [164]
+assign %s0 = value(%s0), value(%s1) [164]
 return %s0, %excout
 end block_6
 
@@ -554,11 +554,11 @@ assign %s2 = @p1 [211]
 store %s0.\[] := %s2 [212]
 assign %s0 = %loc0 [213]
 assign %s0 = %s0.length [214]
-assign %s0 = %s0 [215]
+assign %s0 = value(%s0) [215]
 assign %s1 = %loc0 [216]
 assign %s2 = <const: 0> [217]
 assign %s1 = %s1.\[] [218]
-assign %s0 = %s0, %s1 [219]
+assign %s0 = value(%s0), value(%s1) [219]
 assign %s0 = %s0, cil<[System.Private.CoreLib]System.Int32> [220]
 assign %s0 = %s0 [221]
 assign %s0 = @p0 [223]
@@ -567,7 +567,7 @@ assign %s0 = %s0 [225]
 assign %s0 = %s0 [226]
 assign %s0 = @p2 [228]
 assign %s0 = %s0 [229]
-assign %s0 = %s0 [230]
+assign %s0 = value(%s0) [230]
 assign %c_1 = %loc1 [233]
 store %cell_0.deref := %c_1 [233]
 assign %s0 = %cell_0 [233]
@@ -575,7 +575,7 @@ assign %loc2 = %s0 [234]
 assign %s0 = %loc2 [235]
 assign %s0 = %s0 [236]
 assign %s0 = %loc2 [238]
-assign %s0 = %s0 [239]
+assign %s0 = value(%s0) [239]
 assign %s0 = <const: "[flow]Point"> [241]
 assign %s0 = <const: 0> [243]
 goto 2

@@ -81,8 +81,8 @@ assign %s2 = <const: 3> [14]
 goto 3
 end block_2
 begin block_3:
-assign %s1 = %s1, %s2 [15]
-assign %s0 = %s0, %s1 [16]
+assign %s1 = value(%s1), value(%s2) [15]
+assign %s0 = value(%s0), value(%s1) [16]
 return %s0, %excout
 end block_3
 
@@ -92,17 +92,17 @@ begin block_0 [start]:
 assign %excout = <const: []> [18]
 assign %s0 = @p0 [18]
 assign %s1 = <const: 7> [19]
-assign %s0 = %s0, %s1 [20]
+assign %s0 = value(%s0), value(%s1) [20]
 assign %s1 = <const: 0> [21]
 goto 1
 end block_0
 begin block_1:
 assign %s2 = @p0 [22]
 assign %s3 = <const: 15> [23]
-assign %s2 = %s2, %s3 [24]
+assign %s2 = value(%s2), value(%s3) [24]
 assign %s3 = <const: 2> [25]
-assign %s2 = %s2, %s3 [26]
-assign %s1 = %s1, %s2 [27]
+assign %s2 = value(%s2), value(%s3) [26]
+assign %s1 = value(%s1), value(%s2) [27]
 assign %s1 = %s1 [28]
 assign %s2 = %s1 [28]
 assign %s3 = <const: 100> [29]
@@ -110,11 +110,11 @@ goto 3, 2
 end block_1
 begin block_2:
 assign %s2 = <const: 1> [31]
-assign %s1 = %s1, %s2 [32]
+assign %s1 = value(%s1), value(%s2) [32]
 goto 1
 end block_2
 begin block_3:
-assign %s0 = %s0, %s1 [34]
+assign %s0 = value(%s0), value(%s1) [34]
 return %s0, %excout
 end block_3
 
@@ -144,7 +144,7 @@ assign %s1 = <const: 7> [48]
 goto 5
 end block_4
 begin block_5:
-assign %s0 = %s0, %s1 [49]
+assign %s0 = value(%s0), value(%s1) [49]
 return %s0, %excout
 end block_5
 
@@ -182,8 +182,8 @@ assign %u_2 = %cell_0.deref [61]
 assign %t0 = %u_2 [61]
 assign %s1 = %t0 [61]
 assign %s1 = %s1.<[exec]Cell2::Y> [62]
-assign %s1 = %s1 [63]
-assign %s0 = %s0, %s1 [64]
+assign %s1 = value(%s1) [63]
+assign %s0 = value(%s0), value(%s1) [64]
 return %s0, %excout
 end block_0
 
@@ -193,14 +193,14 @@ begin block_0 [start]:
 assign %excout = <const: []> [66]
 assign %s0 = <const: 10> [67]
 assign %s1 = @p0 [68]
-assign %s0 = %s0, %s1 [69]
+assign %s0 = value(%s0), value(%s1) [69]
 assign %loc0 = %s0 [70]
 goto 2, 1, 3
 end block_0
 begin block_1:
 assign %s0 = $globals.<[exec]Holder::Count> [72]
 assign %s1 = <const: 1> [73]
-assign %s0 = %s0, %s1 [74]
+assign %s0 = value(%s0), value(%s1) [74]
 store $globals.<[exec]Holder::Count> := %s0 [75]
 goto 3
 end block_1
@@ -255,21 +255,21 @@ end block_4
 begin block_5:
 assign %s0 = %loc0 [95]
 assign %s1 = <const: 2> [96]
-assign %s0 = %s0, %s1 [97]
+assign %s0 = value(%s0), value(%s1) [97]
 assign %loc0 = %s0 [98]
 goto 8, 6, 7
 end block_5
 begin block_6:
 assign %s0 = %loc0 [100]
 assign %s1 = <const: 10> [101]
-assign %s0 = %s0, %s1 [102]
+assign %s0 = value(%s0), value(%s1) [102]
 assign %loc0 = %s0 [103]
 goto 7
 end block_6
 begin block_7:
 assign %s0 = %loc0 [105]
 assign %s1 = <const: 100> [106]
-assign %s0 = %s0, %s1 [107]
+assign %s0 = value(%s0), value(%s1) [107]
 assign %loc0 = %s0 [108]
 goto 8
 end block_7
@@ -307,9 +307,9 @@ end block_3
 begin block_4:
 assign %s0 = %s0.<[exec]Err::Code> [122]
 assign %s1 = <const: 3> [123]
-assign %s0 = %s0, %s1 [124]
+assign %s0 = value(%s0), value(%s1) [124]
 assign %s1 = <const: 0> [125]
-assign %s0 = %s0, %s1 [126]
+assign %s0 = value(%s0), value(%s1) [126]
 goto 5
 end block_4
 begin block_5:
@@ -347,7 +347,7 @@ assign %s0 = %s0 [144]
 assign %s1 = %s0 [144]
 assign %s1 = %s1.deref [145]
 assign %s2 = <const: 7> [146]
-assign %s1 = %s1, %s2 [147]
+assign %s1 = value(%s1), value(%s2) [147]
 store %s0.deref := %s1 [148]
 assign %s0 = %loc0 [149]
 assign %s0 = %s0 [150]
@@ -362,15 +362,15 @@ assign %s1 = <const: 1000> [154]
 assign @p0 = %s1 [155]
 assign %s1 = @p1 [157]
 assign %s2 = <const: 300> [158]
-assign %s1 = %s1, %s2 [159]
+assign %s1 = value(%s1), value(%s2) [159]
 assign @p1 = %s1 [160]
 assign %s1 = <const: 70000> [162]
 assign @p2 = %s1 [163]
 assign %s0 = @p0 [164]
 assign %s1 = @p1 [165]
-assign %s0 = %s0, %s1 [166]
+assign %s0 = value(%s0), value(%s1) [166]
 assign %s1 = @p2 [167]
-assign %s0 = %s0, %s1 [168]
+assign %s0 = value(%s0), value(%s1) [168]
 assign @p0 = %s0 [169]
 assign %s0 = @p0 [170]
 return %s0, %excout
@@ -405,11 +405,11 @@ assign %s2 = %s2.\[] [201]
 assign %loc0 = %s2 [202]
 assign %s2 = %loc0 [203]
 assign %s2 = %s2.<[exec]Cell::A> [204]
-assign %s2 = %s2 [205]
-assign %s1 = %s1, %s2 [206]
+assign %s2 = value(%s2) [205]
+assign %s1 = value(%s1), value(%s2) [206]
 assign %s2 = %loc0.<[exec]Cell::B> [208]
-assign %s1 = %s1, %s2 [209]
-assign %s0 = %s0, %s1 [210]
+assign %s1 = value(%s1), value(%s2) [209]
+assign %s0 = value(%s0), value(%s1) [210]
 return %s0, %excout
 end block_0
 
@@ -423,14 +423,14 @@ assign %s1 = %s0 [214]
 assign %pt_0 = @p0.<[exec]Holder::C> [215]
 assign %s1 = %pt_0.<[exec]Cell::B> [215]
 assign %s2 = @p1 [216]
-assign %s1 = %s1, %s2 [217]
+assign %s1 = value(%s1), value(%s2) [217]
 assign %pt_1 = @p0.<[exec]Holder::C> [218]
 store %pt_1.<[exec]Cell::B> := %s1 [218]
 assign %s0 = %s0 [220]
 assign %s1 = %s0 [220]
 assign %s1 = $globals.<[exec]Holder::Count> [221]
 assign %s2 = <const: 1> [222]
-assign %s1 = %s1, %s2 [223]
+assign %s1 = value(%s1), value(%s2) [223]
 store $globals.<[exec]Holder::Count> := %s1 [224]
 assign %s0 = @p0 [225]
 assign %s0 = %s0.<[exec]Holder::C> [226]
@@ -446,7 +446,7 @@ assign %excout = <const: []> [231]
 assign %s0 = @p0 [231]
 assign %s0 = %s0 [232]
 assign %s1 = <const: 4611686018427387904> [233]
-assign %s0 = %s0, %s1 [234]
+assign %s0 = value(%s0), value(%s1) [234]
 assign @p0 = %s0 [235]
 goto 2, 1
 end block_0
@@ -468,16 +468,16 @@ begin block_0 [start]:
 assign %excout = <const: []> [243]
 assign %s0 = @p0 [243]
 assign %s1 = @p1 [244]
-assign %s0 = %s0, %s1 [245]
+assign %s0 = %s0, value(%s1) [245]
 assign %s1 = @p0 [246]
-assign %s0 = %s0, %s1 [247]
-assign %s0 = %s0 [248]
+assign %s0 = value(%s0), value(%s1) [247]
+assign %s0 = value(%s0) [248]
 assign %s1 = @p2 [249]
-assign %s1 = %s1 [250]
+assign %s1 = value(%s1) [250]
 assign %s2 = @p1 [251]
-assign %s1 = %s1, %s2 [252]
-assign %s1 = %s1 [253]
-assign %s0 = %s0, %s1 [254]
+assign %s1 = %s1, value(%s2) [252]
+assign %s1 = value(%s1) [253]
+assign %s0 = value(%s0), value(%s1) [254]
 assign %loc0 = %s0 [255]
 goto 2, 1
 end block_0
@@ -498,16 +498,16 @@ define [exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double(@p0[shared
 begin block_0 [start]:
 assign %excout = <const: []> [263]
 assign %s0 = @p0 [263]
-assign %s0 = %s0 [264]
+assign %s0 = value(%s0) [264]
 assign %s1 = @p1 [265]
-assign %s1 = %s1 [266]
-assign %s0 = %s0, %s1 [267]
+assign %s1 = value(%s1) [266]
+assign %s0 = value(%s0), value(%s1) [267]
 assign %s1 = @p0 [268]
 assign %s2 = @p1 [269]
-assign %s2 = %s2 [270]
-assign %s1 = %s1, %s2 [271]
-assign %s1 = %s1 [272]
-assign %s0 = %s0, %s1 [273]
+assign %s2 = value(%s2) [270]
+assign %s1 = value(%s1), value(%s2) [271]
+assign %s1 = value(%s1) [272]
+assign %s0 = value(%s0), value(%s1) [273]
 return %s0, %excout
 end block_0
 
@@ -517,19 +517,19 @@ begin block_0 [start]:
 assign %excout = <const: []> [275]
 assign %s0 = @p0 [275]
 assign %s1 = <const: 0> [276]
-assign %s0 = %s0, %s1 [277]
+assign %s0 = value(%s0), value(%s1) [277]
 assign %s1 = @p0 [278]
 assign %s2 = @p1 [279]
-assign %s1 = %s1, %s2 [280]
+assign %s1 = value(%s1), value(%s2) [280]
 assign %s2 = <const: 2> [281]
-assign %s1 = %s1, %s2 [282]
-assign %s0 = %s0, %s1 [283]
+assign %s1 = value(%s1), value(%s2) [282]
+assign %s0 = value(%s0), value(%s1) [283]
 assign %s1 = @p1 [284]
 goto 2, 1
 end block_0
 begin block_1:
 assign %s1 = <const: 4> [286]
-assign %s0 = %s0, %s1 [287]
+assign %s0 = value(%s0), value(%s1) [287]
 goto 2
 end block_1
 begin block_2:
@@ -542,7 +542,7 @@ begin block_0 [start]:
 assign %excout = <const: []> [289]
 assign %s0 = <const: 1> [289]
 assign %s1 = @p0 [290]
-assign %s0 = %s0, %s1 [291]
+assign %s0 = value(%s0), value(%s1) [291]
 assign %loc0 = %s0 [292]
 goto 4, 1
 end block_0
@@ -559,7 +559,7 @@ end block_2
 begin block_3:
 assign %s0 = %loc0 [298]
 assign %s1 = <const: 3> [299]
-assign %s0 = %s0, %s1 [300]
+assign %s0 = value(%s0), value(%s1) [300]
 assign %loc0 = %s0 [301]
 goto 4
 end block_3
@@ -622,7 +622,7 @@ assign %caught2 = %throwval [320]
 assign %s0 = %caught2 [320]
 assign %s0 = %s0.<[exec]Err::Code> [321]
 assign %s1 = %loc0 [322]
-assign %s0 = %s0, %s1 [323]
+assign %s0 = value(%s0), value(%s1) [323]
 assign %loc0 = %s0 [324]
 goto 9
 end block_8
@@ -642,7 +642,7 @@ store %pt_0.<[exec]Cell2::X> := %s1 [330]
 assign %s0 = @p0 [331]
 assign %s1 = @p2 [332]
 assign %s2 = @p1 [333]
-assign %s1 = %s1, %s2 [334]
+assign %s1 = value(%s1), value(%s2) [334]
 assign %pt_1 = %s0.deref [335]
 store %pt_1.<[exec]Cell2::Y> := %s1 [335]
 return <const: []>, %excout

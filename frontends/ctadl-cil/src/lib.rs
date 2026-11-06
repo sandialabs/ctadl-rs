@@ -38,6 +38,17 @@ Every lowering choice the IR does not force is a policy, made in one place:
 | Generic instantiation          | erased: a class is its open definition                     | `names.rs`    |
 | Assembly selection             | framework and BCL not imported by default ([`is_framework_assembly`]); their metadata always read | `lib.rs` |
 
+Conventions (S19, R14). A field is the symbol `<cls::name>` and an array element the field
+`[]`, whatever the index; `length` is the array length. The step from a `ref`, `out`, `in`, a
+managed or an unmanaged pointer to the memory there is `PathSegment::Deref`, and only that.
+A byref argument whose place is traced is copied into a cell (`cell.deref`) before the call
+and copied back out after it. Arithmetic, bitwise operations, shifts, conversions and
+comparisons supply values only (`value(v)`); the pointer base of `add`, `sub` and
+`conv.i`/`conv.u` is a copy (`effects.rs`). An exception is the last result of every call and
+the last value of every return: exceptions that may leave a method accumulate in its local
+`excout`. Value types are lowered like objects, so two copies of a struct alias
+(docs/limitations.md).
+
 Like the Dex front end, a [`Context`] is made once, given each assembly with
 [`Context::process`], and turned into one [`ProgramInfo`] by [`Context::finish`]: a
 multi-assembly application has one hierarchy. Referenced assemblies that are not imported
