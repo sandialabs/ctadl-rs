@@ -5,6 +5,17 @@ Turns a dex file or an APK into CTADL IR. It takes an artifact and returns a
 end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` entries is
 `dex_reader::apk`'s job. An APK's native libraries belong to a different front end, and are
 handled one level up, in `ctadl-frontends`.
+
+Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout; a static
+field is that field of `globals`. An array's elements are the one field `[]`, and its length the
+field `length`. Arithmetic, bitwise operations, numeric conversions, comparisons and
+`instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
+invokes a known method is a function reference to that method (`Context::method_handle_exp`
+says which kinds do). An exception is the last result of every call and of every return;
+`move-exception` reads it, and an exception a callee throws that no handler in the caller
+catches is dropped rather than returned. An instruction may write a parameter register
+directly: that assigns its `Param` variable, which SSA versions; version 0 is the incoming
+value.
 */
 
 use std::path::Path;
@@ -23,7 +34,7 @@ use ctadl_ir::mir::call::{
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
 use dex_reader::error::DexError;
-use dex_reader::instructions::{DataFlow, Instruction, Reg, TypeIdx};
+use dex_reader::instructions::{DataFlow, Instruction, MethodHandleIdx, Reg, TypeIdx};
 use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
 use dex_reader::{APKParser, DexParser};
@@ -813,6 +824,36 @@ impl Context {
         ))))
     }
 
+    /// The method handle `idx`, when it invokes a known method, as a function reference to that
+    /// method (R18), named as the method's `FunctionData` is. The method joins the callees, so
+    /// it gets a declaration if this program does not define it.
+    ///
+    /// `invoke-static` and `invoke-direct` handles name the method that runs. For
+    /// `invoke-instance` and `invoke-interface` the handle names the declared method, which is
+    /// the target; an override in a subclass is not. `invoke-constructor` is left out:
+    /// invoking it allocates the object `<init>` takes as `this`, so the handle's arguments do
+    /// not line up with `<init>`'s formals. Field handles name no method. Those, and a handle
+    /// that cannot be read, are `None`.
+    fn method_handle_exp(&mut self, parser: &DexParser<'_>, idx: MethodHandleIdx) -> Option<Exp> {
+        const INVOKE_STATIC: u16 = 0x04;
+        const INVOKE_INSTANCE: u16 = 0x05;
+        const INVOKE_DIRECT: u16 = 0x07;
+        const INVOKE_INTERFACE: u16 = 0x08;
+        let handle = parser.constant_pool().method_handles.get(idx.0 as usize)?;
+        if !matches!(
+            handle.method_handle_type,
+            INVOKE_STATIC | INVOKE_INSTANCE | INVOKE_DIRECT | INVOKE_INTERFACE
+        ) {
+            return None;
+        }
+        let mi = parser.get_method(handle.field_or_method_id.into())?;
+        let name = parser.method_signature(mi).ok()?;
+        self.call_to.insert(*mi);
+        Some(Exp::new_object_ref(CallObject::FunctionPtr(
+            name.as_str().into(),
+        )))
+    }
+
     fn dataflow_to_assign(
         &mut self,
         parser: &DexParser<'_>,
@@ -880,10 +921,15 @@ impl Context {
             // one size register a copy of that register, so taint in one would reach the
             // others.
             Instruction::NewArray(f) => Self::allocation_exp(parser, f.idx),
-            // A method handle or method type constant is an object of that class
-            Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
-                JavaClass("Ljava/lang/invoke/MethodHandle;".into()),
-            ))),
+            // A method handle that invokes a known method is a function reference to it; any
+            // other method handle, and a method type constant, is an object of that class.
+            Instruction::ConstMethodHandle(f) => {
+                Some(self.method_handle_exp(parser, f.idx).unwrap_or_else(|| {
+                    Exp::new_object_ref(CallObject::JavaObject(JavaClass(
+                        "Ljava/lang/invoke/MethodHandle;".into(),
+                    )))
+                }))
+            }
             Instruction::ConstMethodType(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
                 JavaClass("Ljava/lang/invoke/MethodType;".into()),
             ))),
@@ -1059,15 +1105,21 @@ impl Context {
                 return Ok(stmts);
             }
             _ => {
-                // Flows all the sources to each dest
+                // Flows all the sources to each dest; only their values, for arithmetic.
+                let value_only = is_value_only(inst);
                 if !source.is_empty() {
                     for dest in dest.iter() {
                         let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            source
-                                .iter()
-                                .map(|s| reg_to_var(code_item, *s, locals).into()),
+                            source.iter().map(|s| {
+                                let var = reg_to_var(code_item, *s, locals);
+                                if value_only {
+                                    Exp::value(var)
+                                } else {
+                                    var.into()
+                                }
+                            }),
                         )));
                     }
                 }
@@ -1116,6 +1168,15 @@ impl Context {
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
     }
+}
+
+/// Whether `inst` computes its result from its operands' values and shares no memory with them
+/// (R17): comparisons (`cmpl-float`..`cmp-long`, 0x2d..=0x31), negation, `not`, numeric
+/// conversions and binary arithmetic, bitwise and shift operations (`neg-int`..`ushr-int/lit8`,
+/// 0x7b..=0xe2), and `instance-of` (0x20), whose boolean is a test of the reference, a
+/// comparison.
+fn is_value_only(inst: &Instruction) -> bool {
+    matches!(inst.discriminant(), 0x20 | 0x2d..=0x31 | 0x7b..=0xe2)
 }
 
 /// The registers holding the value a store writes: `a`, or the pair `a, a+1` when `wide`.

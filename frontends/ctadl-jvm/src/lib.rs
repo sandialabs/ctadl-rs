@@ -3,6 +3,15 @@
 Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
 `jvm-reader`'s job. What lives here is the lowering to MIR.
+
+Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
+field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
+bitwise operations, numeric conversions, comparisons and `instanceof` supply values only: each
+operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
+reference to that method (`Context::method_handle_exp` says which kinds do). An exception is the last result
+of every call and of every return; a handler reads it, and an exception a callee throws that no
+handler in the caller catches is dropped rather than returned. A store to a parameter's local
+slot assigns its `Param` variable, which SSA versions; version 0 is the incoming value.
 */
 
 use std::path::Path;
@@ -805,7 +814,7 @@ impl Context {
     /// the outputs land on the input slots (`dup_x1` puts `v1` where `v2` was), so
     /// a source slot that an output overwrites is first copied to a temporary.
     fn stack_shuffle_statements(
-        &self,
+        &mut self,
         dataflow: &[DataflowInfo],
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 8]> {
@@ -984,9 +993,14 @@ impl Context {
                 ))]
             }
             _ => {
+                let value_only = Self::is_value_only_opcode(opcode);
                 let mut sources = SmallVec::new();
                 for source_loc in data.sources.iter() {
-                    sources.push(self.convert_location_to_exp(source_loc, locals));
+                    let source = self.convert_location_to_exp(source_loc, locals);
+                    sources.push(match source {
+                        Exp::Path(ap) if value_only => Exp::Value(ap),
+                        source => source,
+                    });
                 }
                 smallvec![Statement::new_kind(StatementKind::Assign {
                     dest: self
@@ -998,7 +1012,53 @@ impl Context {
         }
     }
 
-    fn convert_location_to_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
+    /// Opcodes whose result is computed from its operands' values and shares no memory with
+    /// them (R17): arithmetic, bitwise, shift and negation (`iadd`..`lxor`, 0x60..=0x83),
+    /// `iinc` (0x84), numeric conversions (`i2l`..`i2s`, 0x85..=0x93), comparisons
+    /// (`lcmp`..`dcmpg`, 0x94..=0x98) and `instanceof` (0xc1), whose `int` is a test of the
+    /// reference, a comparison.
+    fn is_value_only_opcode(opcode: u8) -> bool {
+        matches!(opcode, 0x60..=0x98 | 0xc1)
+    }
+
+    /// A `CONSTANT_MethodHandle` that invokes a known method, as a function reference to that
+    /// method (R18), named as the method's `FunctionData` is (`Lcls;->name(desc)`).
+    ///
+    /// `REF_invokeStatic` and `REF_invokeSpecial` name the method that runs. For
+    /// `REF_invokeVirtual` and `REF_invokeInterface` the handle names the declared method,
+    /// which is the target; an override in a subclass is not. `REF_newInvokeSpecial` is left
+    /// out: invoking it allocates the object `<init>` takes as `this`, so the handle's
+    /// arguments do not line up with `<init>`'s formals. Field handles name no method. Those
+    /// are `None` and stay an opaque `MethodHandle` object.
+    fn method_handle_exp(&mut self, handle: &ConstantValue) -> Option<Exp> {
+        const REF_INVOKE_VIRTUAL: u8 = 5;
+        const REF_INVOKE_STATIC: u8 = 6;
+        const REF_INVOKE_SPECIAL: u8 = 7;
+        const REF_INVOKE_INTERFACE: u8 = 9;
+        let ConstantValue::MethodHandle {
+            reference_kind,
+            class_name,
+            name,
+            descriptor,
+        } = handle
+        else {
+            return None;
+        };
+        let is_instance = match *reference_kind {
+            REF_INVOKE_STATIC => false,
+            REF_INVOKE_VIRTUAL | REF_INVOKE_SPECIAL | REF_INVOKE_INTERFACE => true,
+            _ => return None,
+        };
+        // As `decode_call` names a call's target.
+        let class_name = format!("L{class_name};");
+        let java_sig = format!("{class_name}->{name}{descriptor}");
+        self.declare_extern(&java_sig, &class_name, name, descriptor, is_instance);
+        Some(Exp::new_object_ref(CallObject::FunctionPtr(
+            java_sig.as_str().into(),
+        )))
+    }
+
+    fn convert_location_to_exp(&mut self, loc: &Location, locals: &mut Locals) -> Exp {
         match loc {
             Location::StackSlot(_) | Location::StackInput(_) => Exp::from(AccessPath::from(
                 self.convert_location_to_var_ref(loc, locals),
@@ -1007,9 +1067,9 @@ impl Context {
             Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
             // As ctadl-dex models const-method-handle and const-method-type.
-            Location::Constant(ConstantValue::MethodHandle { .. }) => {
-                Self::allocation_exp("java/lang/invoke/MethodHandle")
-            }
+            Location::Constant(handle @ ConstantValue::MethodHandle { .. }) => self
+                .method_handle_exp(handle)
+                .unwrap_or_else(|| Self::allocation_exp("java/lang/invoke/MethodHandle")),
             Location::Constant(ConstantValue::MethodType(_)) => {
                 Self::allocation_exp("java/lang/invoke/MethodType")
             }

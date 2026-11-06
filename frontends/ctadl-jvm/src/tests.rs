@@ -183,3 +183,141 @@ fn receiverless_invokedynamic_extern_class_matches_its_signature() {
         "L?unknown;->makeConcatWithConstants()Ljava/lang/String;"
     );
 }
+
+/// The copies in the function whose name contains `name`, as `(dest, sources)` with a
+/// variable printed by name and `value(v)` for a value-only source.
+fn copies(info: &ctadl_ir::ProgramInfo, name: &str) -> Vec<(String, Vec<String>)> {
+    use ctadl_ir::{Exp, VariableRef, mir::StatementKind};
+    let f = info
+        .program
+        .functions
+        .functions
+        .iter()
+        .find(|f| f.name.contains(name))
+        .unwrap_or_else(|| panic!("no function {name}"));
+    let var = |v: &VariableRef| match v.variable.local() {
+        Some(l) => f.locals.name(l).to_string(),
+        None => format!("{v}"),
+    };
+    let exp = |e: &Exp| match e {
+        Exp::Path(ap) if ap.is_pathless() => var(&ap.base),
+        Exp::Value(ap) if ap.is_pathless() => format!("value({})", var(&ap.base)),
+        e => format!("{e}"),
+    };
+    f.blocks
+        .iter()
+        .flat_map(|bb| bb.statements.iter())
+        .filter_map(|s| match &s.kind {
+            StatementKind::Assign { dest, sources } if dest.is_pathless() => {
+                Some((var(&dest.base), sources.iter().map(exp).collect()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Arithmetic, `iinc` and comparisons supply values only (R17); a load from a local stays a
+/// copy.
+#[test]
+fn arithmetic_and_comparisons_supply_values_only() {
+    // iload_0; iload_1; iadd; ireturn
+    let add = [0x1a, 0x1b, 0x60, 0xac];
+    // iinc 0, 1; iload_0; ireturn
+    let inc = [0x84, 0x00, 0x01, 0x1a, 0xac];
+    // lload_0; lload_2; lcmp; ireturn
+    let cmp = [0x1e, 0x20, 0x94, 0xac];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("Demo.class");
+    std::fs::write(
+        &path,
+        class_with_methods(&[
+            ("add", "(II)I", &add),
+            ("inc", "(I)I", &inc),
+            ("cmp", "(JJ)I", &cmp),
+        ]),
+    )
+    .expect("write class");
+
+    let info = import_class(&path).expect("the class imports");
+    let is_value = |s: &String| s.starts_with("value(");
+
+    let add = copies(&info, "->add(II)I");
+    assert_eq!(add.len(), 3, "{add:?}");
+    assert!(
+        add[..2].iter().all(|(_, s)| !s.iter().any(is_value)),
+        "the loads are copies: {add:?}"
+    );
+    assert_eq!(
+        add[2],
+        (
+            "stack0".to_string(),
+            vec!["value(stack1)".to_string(), "value(stack0)".to_string()]
+        )
+    );
+
+    let inc = copies(&info, "->inc(I)I");
+    assert!(
+        matches!(&inc[0], (_, s) if s.len() == 1 && is_value(&s[0])),
+        "iinc reads its local's value: {inc:?}"
+    );
+
+    let cmp = copies(&info, "->cmp(JJ)I");
+    let (_, sources) = cmp.last().expect("lcmp assigns");
+    assert_eq!(sources.len(), 4, "{cmp:?}");
+    assert!(sources.iter().all(is_value), "{cmp:?}");
+}
+
+/// `ldc` of a `CONSTANT_MethodHandle` that invokes a method is a function reference to it,
+/// named as its `FunctionData` is (R18). A `REF_newInvokeSpecial` handle stays an object.
+#[test]
+fn method_handle_constant_is_a_function_reference() {
+    fn utf8(s: &str) -> Vec<u8> {
+        let mut out = vec![1];
+        out.extend((s.len() as u16).to_be_bytes());
+        out.extend(s.as_bytes());
+        out
+    }
+    let name = utf8("target"); // 8
+    let descriptor = utf8("(I)V"); // 9
+    let name_and_type = [12, 0, 8, 0, 9]; // 10
+    let methodref = [10, 0, 2, 0, 10]; // 11: Demo.target(I)V
+    let target = "ptr<LDemo;->target(I)V>";
+    // (reference kind, expected source)
+    let cases = [
+        (5, target),                                  // REF_invokeVirtual
+        (6, target),                                  // REF_invokeStatic
+        (7, target),                                  // REF_invokeSpecial
+        (9, target),                                  // REF_invokeInterface
+        (8, "java<Ljava/lang/invoke/MethodHandle;>"), // REF_newInvokeSpecial
+    ];
+    for (kind, expected) in cases {
+        let handle = [15, kind, 0, 11]; // 12
+        // ldc #12; astore_0; return
+        let code = [0x12, 0x0c, 0x4b, 0xb1];
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Demo.class");
+        std::fs::write(
+            &path,
+            class_with_pool(
+                &[&name, &descriptor, &name_and_type, &methodref, &handle],
+                &[("mh", "()V", &code)],
+            ),
+        )
+        .expect("write class");
+
+        let info = import_class(&path).expect("the class imports");
+        let flows = copies(&info, "->mh()V");
+        assert_eq!(flows[0].1, [expected], "kind {kind}: {flows:?}");
+        let declared = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .any(|f| f.name == "LDemo;->target(I)V");
+        assert_eq!(
+            declared,
+            expected == target,
+            "kind {kind}: the target is a function"
+        );
+    }
+}
