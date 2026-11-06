@@ -75,7 +75,9 @@ else in [docs/ir.md](docs/ir.md) stands.
   return and the globals it reaches, **excluding** flows between two global paths. A flow
   between two global paths holds in every instance (G2) and is a fact of the program, not of
   any function. Guards (S14) arise only from target labels at formal paths; a target label at
-  a global path holds in every instance and guards nothing.
+  a global path holds in every instance and guards nothing. Instantiating a summary (S14)
+  substitutes actuals for formals and leaves a global path as it is: it already names the
+  shared variable, so no copy of a global is made at a call (G5).
 - G7. **Models.** A global path is a port: a source, sink or propagation may name it (S15, S17
   unchanged). A bridge is a call (S15), so it maps formals and returns and nothing for globals.
 - G8. **Observable.** Unchanged (S17). A witness may pass through a global between any two
