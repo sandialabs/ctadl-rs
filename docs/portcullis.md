@@ -198,8 +198,10 @@ Paths are always literal, never bound to a variable.
 - **Quoted names** take a segment out of the grammar, so a field literally named `a.b` is
   `."a.b"`.
 
-There is no wildcard segment. `.*` is a field literally named `*`. Use a sink's `wildcard` or a
-source's `saturating` instead.
+There is no wildcard segment, and `.*` is an error: a port names exactly the paths it spells
+(S17 of [ir.md](ir.md)). Use a sink's `wildcard` or a source's `saturating` instead, or `."*"`
+for a field literally named `*`. A port path is put in normal form, so `arg(0)[0].f` is
+`arg(0).f` and `arg(0)[8].#value` is `arg(0).#value`.
 
 Frontends spell an array element differently, and the port must match:
 

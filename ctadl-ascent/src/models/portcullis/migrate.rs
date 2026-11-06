@@ -1502,6 +1502,7 @@ pub fn segment_text(seg: &PathSegment) -> String {
             let plain = !s.is_empty()
                 && s != "deref"
                 && s != "#value"
+                && s != "*"
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || "_$-%*#<>".contains(c));
             if plain {

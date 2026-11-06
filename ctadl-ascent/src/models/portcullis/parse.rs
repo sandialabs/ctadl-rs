@@ -826,6 +826,9 @@ impl Builder {
             );
             return None;
         }
+        // Paths are compared only in normal form (`docs/ir.md`), so `arg(0).[0].f` is
+        // `arg(0).f` and `arg(0).[4].[4]` is `arg(0).[8]`.
+        let path = ctadl_ir::mir::path::normalize(path);
         Some(PortExpr {
             anchor: raw.anchor,
             port: Port { base: base?, path },
@@ -865,6 +868,14 @@ impl Builder {
             RawPathSeg::Symbol(text, quoted, span) => {
                 if text.is_empty() {
                     self.error(span, "an access-path segment cannot be empty");
+                    return None;
+                }
+                if text == "*" && !quoted {
+                    self.error(
+                        span,
+                        "`.*` is not a path segment: a port names exact paths. Use a sink's \
+                         `wildcard` or a source's `saturating`, or `.\"*\"` for a field named `*`",
+                    );
                     return None;
                 }
                 Some(match text.as_str() {

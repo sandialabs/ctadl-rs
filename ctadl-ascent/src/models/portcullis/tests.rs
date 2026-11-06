@@ -167,6 +167,36 @@ fn a_segment_after_the_value_field_is_an_error() {
     assert!(messages[0].contains("#value"), "{messages:?}");
 }
 
+/// `.*` is not a segment (R39): a port names exact paths. A quoted `"*"` is a field so named.
+#[test]
+fn a_star_segment_is_an_error() {
+    let errors = match parse::parse_program(r#"sink(F::arg(0).*) :- fun(F);"#) {
+        Ok(_) => panic!("expected an error"),
+        Err(e) => e,
+    };
+    let messages: Vec<&str> = errors.iter().map(|e| e.message()).collect();
+    assert!(messages[0].contains("`.*`"), "{messages:?}");
+    check_ok(r#"sink(F::arg(0)."*") :- fun(F);"#);
+}
+
+/// A port path is put in normal form: `x.[0].f` is `x.f`, offsets sum, and `#value` absorbs an
+/// offset before it.
+#[test]
+fn port_paths_are_normalized() {
+    use ctadl_ir::mir::PathSegment;
+    let program = parse(
+        r#"sink(F::arg(0).[0].f), sink(F::arg(0)[4][4].deref), sink(F::arg(0)[8].#value) :- fun(F);"#,
+    );
+    let heads = &program.rules[0].heads;
+    let path_of = |i: usize| match &heads[i].kind {
+        HeadKind::Sink { port, .. } => port.port.path.clone(),
+        other => panic!("expected a sink, got {other:?}"),
+    };
+    assert_eq!(path_of(0), vec![PathSegment::field("f")]);
+    assert_eq!(path_of(1), vec![PathSegment::offset(8), PathSegment::Deref]);
+    assert_eq!(path_of(2), vec![PathSegment::Value]);
+}
+
 // ---------------------------------------------------------------------------
 // Checking
 // ---------------------------------------------------------------------------
