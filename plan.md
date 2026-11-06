@@ -18,7 +18,10 @@ rows, so it is checked by identity of the fact base; 2b is the behavior. Stage 0
 stage 3 needs 2b's `Root::Global`; docs close. (Stage 1b, C storage, was folded into stage 1:
 see the note there.)
 
-Status: every stage is implemented (0, 1 with 1b folded in, 2a, 2b, 3, 4). Each stage below that is done ends with an "As built"
+Status: every stage is implemented (0, 1 with 1b folded in, 2a, 2b, 3, 4). Rebased onto upstream `main` after the IR redesign
+landed there (#187): upstream put the approximations register in `docs/limitations.md`
+("Approximations register", with a `Name` column the `// parity:` lines use), so stage 0's
+`docs/approximations.md` is dropped and every register edit below was made there instead. Each stage below that is done ends with an "As built"
 paragraph recording where the implementation departs from the text above it and why; the text
 itself is left as it was planned.
 
