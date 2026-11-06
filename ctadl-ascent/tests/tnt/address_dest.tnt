@@ -1,0 +1,19 @@
+// An address destination `p.[k] = e` is the copy `p = e.[-k]` (S5 of docs/ir.md): `p` is the
+// address `k` before `e`, and an address's labels are its base's, so a sink on `p` sees a
+// source on `e`.
+def AddressDestination() {
+s:
+  e = source(S);
+  p.[8] = e;
+  sink(p, S);
+  return;
+}
+
+// `p.[8] = e.[8]` is `p = e`.
+def AddressDestinationCancels() {
+s:
+  e = source(S);
+  p.[8] = e.[8];
+  sink(p, S);
+  return;
+}

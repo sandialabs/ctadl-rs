@@ -48,7 +48,7 @@ use cil_reader::flow::{
 };
 use cil_reader::model::{MethodBody, MethodDef, MethodSig, TypeSig};
 use cil_reader::token::TokenType;
-use ctadl_ir::mir::{FieldRef, LocalIdx};
+use ctadl_ir::mir::{LocalIdx, PathSegment};
 use ctadl_ir::*;
 use smallvec::{SmallVec, smallvec};
 use source_info::SourceInfoBuilder;
@@ -101,7 +101,7 @@ impl<'f> Emitter<'f> {
     }
 
     pub fn exp(&mut self, v: Var) -> Exp {
-        Exp::Variable(self.var(v))
+        Exp::variable(self.var(v))
     }
 
     pub fn local(&mut self, name: &str) -> VariableRef {
@@ -138,20 +138,12 @@ impl<'f> Emitter<'f> {
         self.push(StatementKind::assign(dst, srcs));
     }
 
-    pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: FieldRef) {
-        self.push(StatementKind::load(
-            dst,
-            Address::without_offsets(base),
-            field,
-        ));
+    pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: PathSegment) {
+        self.push(StatementKind::load(dst, AccessPath::from(base), field));
     }
 
-    pub fn store(&mut self, base: VariableRef, field: FieldRef, value: Exp) {
-        self.push(StatementKind::store(
-            Address::without_offsets(base),
-            field,
-            value,
-        ));
+    pub fn store(&mut self, base: VariableRef, field: PathSegment, value: Exp) {
+        self.push(StatementKind::store(AccessPath::from(base), field, value));
     }
 }
 
@@ -327,7 +319,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
                 em.source_info = lines.span(spans, block.start, 1);
                 let caught = em.var(Var::Caught(h));
                 let thrown = em.throwval();
-                em.assign(caught, [Exp::Variable(thrown)]);
+                em.assign(caught, [Exp::variable(thrown)]);
             }
         }
         for (index, ins) in block.instrs.iter().enumerate() {
@@ -358,7 +350,7 @@ fn forward_body(fdat: &mut FunctionData, target: &str, params: impl Iterator<Ite
     fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     let mut em = Emitter::new(fdat);
     let args: ThinVec<Exp> = params
-        .map(|n| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(n))))
+        .map(|n| Exp::variable(VariableRef::new_parameter(ParameterIdx::new(n))))
         .collect();
     let retval = em.retval();
     let thrown = em.throwval();
@@ -370,7 +362,7 @@ fn forward_body(fdat: &mut FunctionData, target: &str, params: impl Iterator<Ite
         args,
     });
     em.fdat.blocks[em.block].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-        args: smallvec![Exp::Variable(retval), Exp::Variable(thrown)],
+        args: smallvec![Exp::variable(retval), Exp::variable(thrown)],
     }));
 }
 
@@ -392,7 +384,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 targets.push(t);
             }
         };
-        let out = Exp::Variable(em.excout());
+        let out = Exp::variable(em.excout());
         match control {
             Control::Return => {
                 let value = last
@@ -453,7 +445,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             return;
         }
         let (out, thrown) = (em.excout(), em.throwval());
-        em.assign(out.clone(), [Exp::Variable(out), Exp::Variable(thrown)]);
+        em.assign(out.clone(), [Exp::variable(out), Exp::variable(thrown)]);
     }
 
     /// Whether every exception raised in block `b` is caught in this method: some handler it
@@ -491,7 +483,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             };
         };
         let args: ThinVec<Exp> = (0..em.fdat.params.parameters.len())
-            .map(|n| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(n))))
+            .map(|n| Exp::variable(VariableRef::new_parameter(ParameterIdx::new(n))))
             .collect();
         let retval = em.retval();
         if let Some(key) = self.names.method_key(method.token) {
@@ -507,7 +499,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             self.raise_out(em);
         }
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(retval), Exp::Variable(em.excout())],
+            args: smallvec![Exp::variable(retval), Exp::variable(em.excout())],
         }
     }
 }

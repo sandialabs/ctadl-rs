@@ -1239,7 +1239,7 @@ fn index_version_gate_accepts_what_this_build_wrote() {
         let project =
             AnalysisProject::try_create("gate_ok", &["nonexistent_import"], SubImports::All)
                 .unwrap();
-        project.write_index_config(None).unwrap();
+        project.write_index_config(None, None).unwrap();
         assert!(
             project.check_index_config().is_ok(),
             "an index this build just stamped must be readable"
@@ -1643,7 +1643,7 @@ fn inspect_project_lists_the_tables_of_a_readable_index() {
         .unwrap();
         let index = project.index_path().unwrap();
         external_function::try_save(&index, vec![(FunctionId::new(7),)]).unwrap();
-        project.write_index_config(None).unwrap();
+        project.write_index_config(None, None).unwrap();
 
         match cli::summarize_project(&project).unwrap().index {
             cli::IndexStatus::Ready { tables } => {

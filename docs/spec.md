@@ -45,7 +45,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Project** | A named set of imports indexed together. |
 | **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
 | **Summary** | How data flows between a function's formals (and return), as pairs of access paths. |
-| **Access path** | A variable followed by fields or offsets (`x.f.g`, `p.[8].deref`); the unit of taint. |
+| **Access path** | A variable followed by a path of fields, offsets, `deref` and `#value` (`x.f.g`, `p.[8].deref`); the unit of taint. Defined, with the IR's semantics, in [ir.md](ir.md). |
 | **Port** | The part of a matched program element that a model attaches to: an argument, the return, or an access path through one. |
 | **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [portcullis.md](portcullis.md), a guide to the current model language, not part of this spec. |
 
@@ -127,11 +127,13 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 Each stage reads only what the previous one saved, so stages can be rerun and debugged
 separately.
 
-1. **Import.** A front end lowers the artifact to CTADL IR (`ctadl-ir`), a control-flow graph
-   of statements over access paths, and writes it to the store with a virtual method table
-   (class hierarchy, symbols) and a source-info database.
-2. **Index.** A fixed pass pipeline (dead temporaries, copy coalescing, SSA, copy
-   propagation) runs over the project's imports. Codegen turns IR, call-resolution policy and
+1. **Import.** A front end lowers the artifact to CTADL IR (`ctadl-ir`, defined in
+   [ir.md](ir.md)), a control-flow graph of assignments and calls over access paths, checks it
+   with the IR verifier, and writes it to the store with a virtual method table (class
+   hierarchy, symbols) and a source-info database.
+2. **Index.** A fixed pass pipeline (dead temporaries, copy coalescing, stack-slot promotion,
+   SSA, copy propagation) runs over the project's imports; each pass is correct, or an
+   approximation, with respect to [ir.md](ir.md)'s semantics. Codegen turns IR, call-resolution policy and
    propagation models into Datalog facts; the index engine runs them to fixpoint, producing
    the call graph and summaries, saved as parquet.
 3. **Query.** Source and sink models are matched by name and signature against the programs,
@@ -145,12 +147,16 @@ separately.
   [Ascent](https://s-arash.github.io/ascent/) and compiled into engines that differ only in
   execution and storage: serial, parallel (rayon), and serial with large relations in
   memory-mapped LSM stores.
-- **Local flow** is the transitive closure of assignments between access paths: flow- and
-  path-insensitive, with order kept only as far as SSA keeps it.
-- **Field propagation.** `x = y` with an access `y.f` implies `x.f = y.f`, and with `x.f`
-  implies the same backward, making implied field flows explicit.
+- **Semantics.** What the analysis computes is [ir.md](ir.md)'s least labeling: local flow is
+  its assignment rules, flow- and path-insensitive, with order kept only as far as SSA keeps
+  it. The engines approximate it, and every deviation is a row of the
+  [approximations register](limitations.md#approximations-register), measured by
+  `tests/integration/reference_parity.rs`.
+- **Field propagation** is the forward and backward rules of [ir.md](ir.md#assignment) applied
+  to a path's suffixes.
 - **Finite access paths.** Propagation builds only paths from the program text, from models,
-  and one-level concatenations of the two. This makes the fixpoint terminate (`x = x.next`
+  and one-level concatenations of the two, closed under [ir.md](ir.md#normal-form)'s normal form
+  and with `p.#value` for every member. This makes the fixpoint terminate (`x = x.next`
   would otherwise build `x.next.next...` forever) and is the main source of unsoundness.
 - **Summaries.** Local flow between paths rooted at two formals (the return included) becomes
   a summary, instantiated at each call site as assignments between the actuals by prefix
@@ -166,10 +172,11 @@ separately.
   parameter is kept in the summary, conditional on that target (a *decision*), and applied at
   callers that establish it. The summary is still computed once, without knowing the callers,
   and context sensitivity appears only where needed.
-- **Aliasing.** A local Andersen-style analysis finds each formal's copy aliases, so a store
-  through an alias still yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`). In queries,
-  field taint may also move backward along whole-variable copies (they share an object);
-  value taint only moves forward.
+- **Aliasing** is [ir.md](ir.md#assignment)'s backward rule. The index implements it as a local
+  Andersen-style analysis of each formal's copy aliases, so a store through an alias still
+  yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`), and the query as a backward hop
+  along whole-variable copies; both are restrictions or widenings of the rule recorded in the
+  register.
 - **Queries** meet forward from sources and backward from sinks. A reported path leaves
   functions through returns before entering them through calls, so it respects call/return
   matching.

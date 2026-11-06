@@ -115,7 +115,13 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `11`: `VirtualMethodTable` became a struct of the per-function name table every frontend
 ///   fills and the per-language `Dispatch`, and the CIL frontend writes override bridges where
 ///   it wrote alias rows. A `bitcode` wire-format change to every `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "11";
+/// - `12`: `PathSegment` has four variants, `Field`, `Offset`, `Deref` and `Value`; `deref` and
+///   `#value` are no longer field names (`docs/ir.md`). A `bitcode` wire-format change to every
+///   `ir-program.bitcode`.
+/// - `13`: assignments take full access paths as destination and sources, and the `Load`,
+///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
+///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "13";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -165,7 +171,24 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
 /// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
 ///   which loading an index result now requires.
-pub const INDEX_FORMAT_VERSION: &str = "6";
+/// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
+///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::mir::path`, with
+///   `deref` and `#value` segments distinct from fields.
+pub const INDEX_FORMAT_VERSION: &str = "7";
+
+/// The front-end convention options set in the environment to something other than their
+/// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by
+/// default, `merge` as a comparison knob) is the one there is.
+fn non_default_conventions(language: ArtifactLanguage) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if language == ArtifactLanguage::Pcode
+        && let Ok(v) = std::env::var("CTADL_EXP_INT_ARITH")
+        && v != "value"
+    {
+        out.insert("CTADL_EXP_INT_ARITH".to_string(), v);
+    }
+    out
+}
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";
@@ -190,6 +213,25 @@ pub struct IndexConfig {
     /// [`INDEX_FORMAT_VERSION`] did not change for it.
     #[serde(default)]
     pub import_hashes: BTreeMap<String, String>,
+    /// The engine options that change results, which the approximations register of
+    /// `docs/limitations.md` names: `None` for an index written before this field existed.
+    #[serde(default)]
+    pub engine: Option<EngineRecord>,
+}
+
+/// The index options that change its results, recorded with the index so a result can be traced
+/// to the approximations it was computed under.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EngineRecord {
+    /// Whether the alias summary rule ran (the backward rule's restriction to copy chains rooted
+    /// at a formal).
+    pub alias_rule: bool,
+    /// The hybrid-inlining context widening, as `--hybrid-context` spells it.
+    pub hybrid_context: String,
+    /// Whether every program path gained its `.deref` extension.
+    pub deref_paths: bool,
+    /// The `--mem2reg` policy the IR passes ran with, `off` for none.
+    pub mem2reg: String,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -291,6 +333,10 @@ pub struct ArtifactImport {
     /// [`IMPORT_STATUS_DONE`] once the import has finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// The front end's convention options this import was lowered under, when they are not the
+    /// default: option name to value. Empty for the defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conventions: BTreeMap<String, String>,
 }
 
 impl ArtifactImport {
@@ -330,6 +376,7 @@ impl ArtifactImport {
             hash: None,
             sub_imports: Vec::new(),
             status: None,
+            conventions: BTreeMap::new(),
         };
         result.save()?;
         Ok(result)
@@ -477,6 +524,7 @@ impl ArtifactImport {
     pub fn mark_complete(name: &str) -> Result<(), Error> {
         let mut import = Self::load_by_name(name)?;
         import.status = Some(IMPORT_STATUS_DONE.to_string());
+        import.conventions = non_default_conventions(import.language);
         import.save()
     }
 
@@ -842,7 +890,11 @@ impl AnalysisProject {
     ///
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
-    pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+    pub fn write_index_config(
+        &self,
+        call_policy: Option<CallPolicyRecord>,
+        engine: Option<EngineRecord>,
+    ) -> Result<(), Error> {
         // An import that cannot be loaded, or never recorded a hash, is left out: there is
         // nothing to compare it against later.
         let import_hashes: BTreeMap<String, String> = self
@@ -859,6 +911,7 @@ impl AnalysisProject {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
                 import_hashes,
+                engine,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;

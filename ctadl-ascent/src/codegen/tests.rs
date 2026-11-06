@@ -179,7 +179,6 @@ fn test_basic2_source_sink() {
         actual_param: facts.actual_param,
         call: facts.call,
         assign: index_result.assign_like,
-        update_sans_path: index_result.update_sans_path,
         paths: facts.paths,
         external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]
@@ -261,68 +260,20 @@ fn test_phi_instruction() {
     assert!(!result.summary.is_empty());
 }
 
-// Test Update instruction with field access
+// A field store `s.field = new_value` through a parameter.
 #[test]
 fn test_update_instruction() {
     let f = function_with_update();
     let mut f_ssa = f.clone();
-    log::trace!("Update function before transform: {f}");
+    log::trace!("store function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
-    log::trace!("Update function after transform: {f_ssa}");
+    log::trace!("store function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     codegen_function(&f_ssa, &mut facts, &mut source_info);
     let result = taint_index(facts);
-    log::trace!("Update result: {:#?}", result);
+    log::trace!("store result: {:#?}", result);
     assert!(!result.summary.is_empty());
-}
-
-// Exercises `Update` codegen end-to-end: `q = update(p0, .field := p1); return q`. Unlike a
-// `Store`, an `Update` copies the whole `source` aggregate into `dest` in addition to writing the
-// field, so the summary must contain BOTH the field write (p1 -> ret.field) and the
-// whole-aggregate copy (p0 -> ret), the latter being unique to `Update`.
-#[test]
-fn test_real_update_instruction() {
-    let f = function_with_real_update();
-    let mut f_ssa = f.clone();
-    log::trace!("Real update before transform: {f}");
-    ssa::transform(&mut f_ssa, false);
-    log::trace!("Real update after transform: {f_ssa}");
-    let mut facts = IndexFacts::default();
-    let mut source_info = IndexSourceInfo::default();
-    codegen_function(&f_ssa, &mut facts, &mut source_info);
-    let result = taint_index(facts);
-    log::trace!("Real update summary: {:#?}", result.summary);
-
-    let f_id = source_info
-        .sites
-        .get_function_id(fx::Function("real_update".into()))
-        .unwrap();
-
-    // The field write p1 -> q.field, returned in q: (ret, .field) <- (formal 1, empty).
-    let has_field_flow = result
-        .summary
-        .iter()
-        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
-            *fid == f_id && **dst_i == -1 && !dst_p.is_empty() && **src_i == 1 && src_p.is_empty()
-        });
-    assert!(
-        has_field_flow,
-        "expected p1 to flow to the returned aggregate's field"
-    );
-
-    // The whole-aggregate copy p0 -> q, returned in q: (ret, empty) <- (formal 0, empty). This flow
-    // exists only because `Update` copies the entire source aggregate; a `Store` would not.
-    let has_whole_copy = result
-        .summary
-        .iter()
-        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
-            *fid == f_id && **dst_i == -1 && dst_p.is_empty() && **src_i == 0 && src_p.is_empty()
-        });
-    assert!(
-        has_whole_copy,
-        "expected the whole source aggregate p0 to flow to the returned aggregate (Update-specific)"
-    );
 }
 
 // Test that local variables flow into fields of globals, not globals index itself
@@ -451,8 +402,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -487,7 +438,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -556,8 +507,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -637,15 +588,15 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f.blocks[true_branch], &mut f.locals);
-    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
+    true_builder.create_assign(x.clone(), [Exp::variable(a)]);
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f.blocks[false_branch], &mut f.locals);
-    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
+    false_builder.create_assign(x.clone(), [Exp::variable(b)]);
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f.blocks[merge], &mut f.locals);
-    merge_builder.create_ret(vec![Exp::Variable(x)]);
+    merge_builder.create_ret(vec![Exp::variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -686,57 +637,12 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(new_value.clone()),
+        ctadl_ir::mir::PathSegment::field("field"),
+        Exp::variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::Variable(s_var)]);
-
-    f.verify().expect("doesn't verify");
-    f
-}
-
-// def real_update(p0, p1) {
-//   q = update(p0, .field := p1);   // q is p0 with q.field set to p1
-//   return q;
-// }
-//
-// Exercises the `Update` instruction (a functional update: `dest` is a fresh copy of
-// `source` with one field overwritten), as opposed to `function_with_update`'s in-place `Store`.
-fn function_with_real_update() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
-
-    let mut f = FunctionData {
-        name: "real_update".to_string(),
-        return_type: ReturnType { arity: 1 },
-        ..Default::default()
-    };
-    f.params.push(ParameterType::SharedFields);
-    f.params.push(ParameterType::SharedFields);
-
-    let blocks = f.blocks.blocks_mut();
-    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
-        TerminatorKind::Goto {
-            targets: vec![BasicBlockIdx::new(1)].into(),
-        },
-    ))));
-
-    let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
-
-    let p0 = builder.new_param_var(ParameterIdx::new(0));
-    let p1 = builder.new_param_var(ParameterIdx::new(1));
-    let q = builder.new_local_var("q");
-
-    // q = update(p0, .field := p1)
-    builder.create_update(
-        q.clone(),
-        p0,
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(p1),
-    );
-    builder.create_ret(vec![Exp::Variable(q)]);
+    builder.create_ret(vec![Exp::variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -772,8 +678,8 @@ fn function_with_param_to_global_field() -> FunctionData {
     // This is the key assignment: globals.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(local_var.clone()),
+        ctadl_ir::mir::PathSegment::field("field"),
+        Exp::variable(local_var.clone()),
     );
 
     // Return globals
@@ -813,7 +719,7 @@ fn test_cap_algorithm() {
     let t3 = builder.new_local_var("t3");
     builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::Variable(t3)]);
+    builder.create_ret(vec![Exp::variable(t3)]);
 
     f.verify().expect("doesn't verify");
 

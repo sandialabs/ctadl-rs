@@ -94,8 +94,8 @@ fn a_function_anchored_port_fills_its_fields() {
             // A `Return` port carries no formal index; Stage 2 supplies `RETURN_INDEX`.
             index: None,
             path: facts::Path::from_accesses([
-                PathSegment::symbol("field1"),
-                PathSegment::symbol("sub"),
+                PathSegment::field("field1"),
+                PathSegment::field("sub"),
             ]),
             label: facts::Str::from("lbl1"),
             direction: TaintDirection::Forward,
@@ -148,9 +148,9 @@ fn bracketed_segment_spellings_stay_distinct() {
 
     for seg in [
         PathSegment::Offset(Offset(8)),
-        PathSegment::symbol("[8]"),
-        PathSegment::symbol("[]"),
-        PathSegment::symbol("plain"),
+        PathSegment::field("[8]"),
+        PathSegment::field("[]"),
+        PathSegment::field("plain"),
     ] {
         let spelled = mir::segment_to_string(&seg);
         assert_eq!(
@@ -161,7 +161,7 @@ fn bracketed_segment_spellings_stay_distinct() {
     }
     assert_ne!(
         mir::segment_to_string(&PathSegment::Offset(Offset(8))),
-        mir::segment_to_string(&PathSegment::symbol("[8]"))
+        mir::segment_to_string(&PathSegment::field("[8]"))
     );
 }
 
@@ -291,34 +291,29 @@ mod modes {
         assert!(matches.skip_analysis.is_empty());
     }
 
-    /// The frame modes go to their own map, and without `skip-analysis` the body stays.
+    /// The removed frame modes are an error that says why, not an unknown mode.
     #[test]
-    fn frame_modes_record_the_matched_functions() {
-        let generator = |name: &str, mode: &str| {
-            serde_json::json!({
+    fn frame_modes_are_rejected() {
+        let program_info = native_program(&["f"]);
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let err = load(
+            &match_index,
+            vec![serde_json::json!({
                 "find": "methods",
-                "where": [{"constraint": "signature_match", "name": name}],
-                "model": {"modes": [mode]},
-            })
-        };
-        let matches = matches_of(
-            &["f", "g"],
-            vec![
-                generator("f", "frame-update"),
-                generator("g", "frame-store"),
-            ],
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["frame-store"]},
+            })],
+            &mut out,
+        )
+        .expect_err("a removed mode is rejected");
+        let errors = json_model_errors(err);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            format!("{}", errors[0]).contains("removed"),
+            "the error should say the mode was removed: {}",
+            errors[0]
         );
-        assert_eq!(
-            matches.frame_modes,
-            [
-                (facts::Str::from("f"), ctadl_ir::ssa::FrameWrites::Update),
-                (facts::Str::from("g"), ctadl_ir::ssa::FrameWrites::Store),
-            ]
-            .into_iter()
-            .collect()
-        );
-        assert!(matches.mem2reg_modes.is_empty());
-        assert!(matches.skip_analysis.is_empty());
     }
 
     /// An unknown mode errors. Ignoring it would produce a model file that loads clean and

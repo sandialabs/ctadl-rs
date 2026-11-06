@@ -198,8 +198,10 @@ Paths are always literal, never bound to a variable.
 - **Quoted names** take a segment out of the grammar, so a field literally named `a.b` is
   `."a.b"`.
 
-There is no wildcard segment. `.*` is a field literally named `*`. Use a sink's `wildcard` or a
-source's `saturating` instead.
+There is no wildcard segment, and `.*` is an error: a port names exactly the paths it spells
+(S17 of [ir.md](ir.md)). Use a sink's `wildcard` or a source's `saturating` instead, or `."*"`
+for a field literally named `*`. A port path is put in normal form, so `arg(0)[0].f` is
+`arg(0).f` and `arg(0)[8].#value` is `arg(0).#value`.
 
 Frontends spell an array element differently, and the port must match:
 
@@ -509,7 +511,9 @@ level shift. Take `u = id(t)`, with taint stored at `t.f`:
 | `F::return.f <- F::arg(0).f` | `u.f.X ← t.f.X` | `u.f`: consumed and re-added |
 
 A longer input path **unwraps** and a longer output path **wraps**; neither narrows what the
-model matches. When testing a model, probe at the level the port predicts. The worked matrix is
+model matches. A propagation is an assignment between its ports, and this is the IR's forward
+rule: every suffix of the source carries to the destination ([ir.md](ir.md#assignment)). Whether
+it is a store or a copy follows from the output path, as for any assignment. When testing a model, probe at the level the port predicts. The worked matrix is
 `ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and `ctadl-ascent/tests/integration/port_semantics.rs`
 (Lua).
 

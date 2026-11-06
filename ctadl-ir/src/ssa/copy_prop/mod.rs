@@ -1,6 +1,18 @@
 /*!
 Copy propagation and trivial-phi elimination for post-SSA IR.
 
+# Correctness (S18 of `docs/ir.md`)
+
+A read of an alias reads what its representative holds: in SSA `t = v` is `t`'s only
+definition, so `t.p` holds `v.p`'s labels for every path `p`, and rewriting a read of `t` to a
+read of `v` changes nothing. A *store* through `t` is different. Its labels at `t.p` reach `v.p`
+only for a `p` the backward rule moves (S8), and a label already at `v.p` reaches `t.p` only as
+`Fixed`, so rewriting `t.f = x` to `v.f = x` can add flows: a store at `t.#value` lands on
+`v.#value`, and stores to `v.f` and `t.f` merge as two stores to one destination do (S9). This
+is the `copy_prop` row of the approximations register, a deviation that adds flows; the
+differential test (`frontends/ctadl-flowy/tests/passes.rs`) pins it on
+`tests/semantics/s07_scope.flowy`.
+
 SSA conversion introduces administrative noise. A pre-SSA copy that survived
 [`coalesce_copies`](super::coalesce_copies) because it had several uses becomes
 a versioned copy `x_2 = x_1`; forwarding returns through a single exit block
@@ -19,7 +31,7 @@ normalization by computing, for every SSA name, a *representative* and rewriting
 all uses to it, then deleting the now-useless defs:
 
 - **Copy propagation.** A pure copy `dest = src` (an [`StatementKind::Assign`]
-  with a single [`Exp::Variable`] source, both versioned) makes `dest` an alias
+  with a single whole-variable source, both versioned) makes `dest` an alias
   of `src`.
 - **Trivial-phi elimination.** A [`StatementKind::Phi`] whose operands, once
   resolved to their own representatives and with self-references dropped, name a
@@ -39,9 +51,8 @@ The pass is conservative and SSA-only:
 - Only versioned refs are aliased, so it is a no-op on non-SSA IR. In particular
   the version-0 anchor assigns that [`transform`](super::transform) seeds for
   parameters and the global heap (`p_0 = p`, `$globals_0 = $globals`) read an
-  *unversioned* source and are never treated as copies, so those anchors — and
-  the [`StatementKind::ParamFlow`] round-trip that depends on them — are
-  preserved.
+  *unversioned* source and are never treated as copies, so those anchors, which
+  codegen writes back to the formals at the return, are preserved.
 - Only bare variable copies propagate. Multi-source assigns, address-arithmetic
   ([`Exp::Address`]), constants, loads, and call results are never aliased:
   a phi operand and a copy target must both be plain variables for the rename to
@@ -111,8 +122,12 @@ pub fn propagate_copies_function(function: &mut FunctionData) -> usize {
     for (_, block) in function.blocks.iter_enumerated() {
         for stmt in block.statements.iter() {
             match &stmt.kind {
-                StatementKind::Assign { dest, sources } if dest.version.is_some() => {
-                    if let [Exp::Variable(src)] = sources.as_slice()
+                StatementKind::Assign { dest, sources }
+                    if dest.is_pathless() && dest.base.version.is_some() =>
+                {
+                    let dest = &dest.base;
+                    if let [src] = sources.as_slice()
+                        && let Some(src) = src.variable_ref()
                         && src.version.is_some()
                         && *src != *dest
                     {
@@ -218,9 +233,10 @@ pub fn propagate_copies_function(function: &mut FunctionData) -> usize {
 /// def this pass has made dead.
 fn is_aliased_def(stmt: &Statement, aliases: &Aliases) -> bool {
     match &stmt.kind {
-        StatementKind::Assign { dest, .. } | StatementKind::Phi { dest, .. } => {
-            aliases.parent.contains_key(dest)
+        StatementKind::Assign { dest, .. } => {
+            dest.is_pathless() && aliases.parent.contains_key(&dest.base)
         }
+        StatementKind::Phi { dest, .. } => aliases.parent.contains_key(dest),
         _ => false,
     }
 }

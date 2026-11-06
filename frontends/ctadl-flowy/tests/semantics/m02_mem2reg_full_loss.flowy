@@ -1,0 +1,24 @@
+// The `mem2reg full` row of the approximations register (docs/limitations.md): full promotion
+// promotes a slot an escaped address reaches, so a callee that reads what the function stored there
+// before the call reads memory nothing writes any more. The pass names such a function in its
+// notification.
+//
+// passes: loses mem2reg full
+
+def Read(p): 1 {
+s:
+  r = p.deref;
+  return r;
+}
+
+def FullLoss() {
+s:
+  a = source(S);
+  __stack_top.[-16].deref = a;
+  r = Read(__stack_top.[-16]);
+  sink(r, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: FullLoss: sink(%S)#0 <- %S

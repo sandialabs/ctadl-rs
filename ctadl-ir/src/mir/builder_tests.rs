@@ -2,7 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
 use crate::mir::{
-    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx, VariableRef,
+    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, PathSegment, StatementIdx,
+    VariableRef, path_to_string,
 };
 
 /// The source name of a local variable ref, via the locals table.
@@ -78,7 +79,7 @@ fn test_builder_insertion_at_positions() {
 
     match &block_data.statements[StatementIdx::new(1)].kind {
         crate::mir::StatementKind::Assign { dest, sources } => {
-            assert_eq!(local_name(&locals, dest), "a");
+            assert_eq!(local_name(&locals, &dest.base), "a");
             assert_eq!(sources.len(), 1);
         }
         _ => panic!("Expected Assign at position 1"),
@@ -150,8 +151,15 @@ fn test_builder_convenience_methods() {
     let local_var = builder.new_local_var("test");
     let param_var = builder.new_param_var(ParameterIdx::new(0));
     let global_var = builder.new_global_var();
-    // Address creation (offset-only)
-    let addr = builder.new_address(local_var.clone(), [1, 2]);
+    // Access path creation; the path is normalized.
+    let addr = builder.new_access_path(
+        local_var.clone(),
+        [
+            PathSegment::offset(1),
+            PathSegment::offset(2),
+            PathSegment::Deref,
+        ],
+    );
     // Expression creation
     let str_exp = builder.new_str_exp("hello");
     let bytes_exp = builder.new_bytes_exp(vec![1, 2, 3]);
@@ -161,9 +169,9 @@ fn test_builder_convenience_methods() {
     assert_eq!(param_var.to_string(), "@p0");
     assert_eq!(global_var.to_string(), "$globals");
 
-    // Address base is the local `test`, followed by the two offsets.
+    // The base is the local `test`, followed by the summed offset and the deref.
     assert_eq!(local_name(&locals, &addr.base), "test");
-    assert_eq!(addr.accesses.to_string(), ".[1].[2]");
+    assert_eq!(path_to_string(&addr.segments), ".[3].deref");
 
     match str_exp {
         Exp::Str(s) => assert_eq!(format!("{}", s), "hello"),

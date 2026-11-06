@@ -27,18 +27,9 @@ fn function_f() -> FunctionData {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let a = Address {
-            base: VariableRef::new_local_idx(a_idx),
-            accesses: Default::default(),
-        };
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
-        let q = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(1)),
-            accesses: Default::default(),
-        };
+        let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+        let q = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(1)));
         let stmts: IndexVec<StatementIdx, _> = indexvec![
             Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
@@ -69,18 +60,9 @@ fn function_g() -> FunctionData {
     g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let c = Address {
-        base: VariableRef::new_local_idx(c_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let c = AccessPath::from(VariableRef::new_local_idx(c_idx));
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -121,22 +103,10 @@ fn function_g1() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let _c = Address {
-        base: VariableRef::new_local_idx(c_idx),
-        accesses: Default::default(),
-    };
-    let c1 = Address {
-        base: VariableRef::new_local_idx(c1_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let _c = AccessPath::from(VariableRef::new_local_idx(c_idx));
+    let c1 = AccessPath::from(VariableRef::new_local_idx(c1_idx));
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -179,59 +149,12 @@ fn program_h() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
-                Address::without_offsets(global_ref.clone()),
-                FieldRef::symbol("bar"),
-                Exp::from(p.clone()),
-            )),];
-        let body_block = &mut h[body];
-        body_block.extend(stmts);
-        body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![],
-        }));
-    }
-    program
-}
-
-// def F(p)
-// {
-//   %global = update(%global, .bar := p);
-// }
-//
-// The functional-update counterpart of `program_h`. A `Store` writes a field without defining a
-// variable; an `Update` copies the `source` aggregate and defines a *new* version of the
-// destination. SSA must therefore version the destination (a fresh version) distinctly from the
-// source (the incoming version) it reads.
-fn program_h_update() -> Program {
-    let mut program = Program::default();
-    program.functions.push(FunctionData::default());
-    let h = &mut program.functions[0.into()];
-    h.set_name("F".to_string());
-    h.params.push(ParameterType::SharedFields);
-    let blocks = h.blocks.blocks_mut();
-    let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
-        TerminatorKind::Goto {
-            targets: vec![BasicBlockIdx::new(1)].into(),
-        },
-    ))));
-    let body = blocks.push(BasicBlockData::new(None));
-    {
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
-        let global_ref = VariableRef::new_global();
-        let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::update(
-                Address::without_offsets(global_ref.clone()),
-                global_ref.clone(),
-                FieldRef::symbol("bar"),
+                AccessPath::from(global_ref.clone()),
+                PathSegment::field("bar"),
                 Exp::from(p.clone()),
             )),];
         let body_block = &mut h[body];
@@ -290,39 +213,6 @@ fn test_ssa_function_h() {
     log::trace!("{p}");
     transform_program(&mut p, false);
     check_ssa_func(&p.functions[0.into()]);
-}
-
-#[test]
-fn test_ssa_function_h_update() {
-    let mut p = program_h_update();
-    log::trace!("{p}");
-    transform_program(&mut p, false);
-    log::trace!("{p}");
-    let f = &p.functions[0.into()];
-    check_ssa_func(f);
-
-    // A functional update defines a fresh version of the aggregate: SSA must rename the `Update`'s
-    // destination to a version distinct from the `source` it reads (the whole point of naming them
-    // separately). Both are the global heap here, so `%global_1 = update(%global_0, .bar := p_0)`.
-    let (dest, source) = f
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .find_map(|s| match &s.kind {
-            StatementKind::Update { dest, source, .. } => Some((dest.clone(), source.clone())),
-            _ => None,
-        })
-        .expect("expected an Update statement");
-    assert_eq!(
-        dest.base.variable, source.variable,
-        "same aggregate variable"
-    );
-    assert!(dest.base.version.is_some(), "destination is versioned");
-    assert!(source.version.is_some(), "source is versioned");
-    assert_ne!(
-        dest.base.version, source.version,
-        "destination gets a fresh version distinct from the source read"
-    );
 }
 
 #[test]
@@ -423,10 +313,6 @@ fn test_pipeline_tag() {
         Pipeline::index_default().prune(false).tag(),
         "dt+co+m2r(w8)+ssa+cp"
     );
-    assert_eq!(
-        Pipeline::index_default().frame(FrameWrites::Store).tag(),
-        "fs+dt+co+m2r(w8)+ssa(prune)+cp"
-    );
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::ssa_only().prune(false).tag(), "ssa");
     assert_eq!(Pipeline::none().tag(), "none");
@@ -503,8 +389,8 @@ fn assign(dest: &VariableRef, sources: impl IntoIterator<Item = Exp>) -> Stateme
 //   return x;
 // }
 //
-// `x` is returned and `p` reaches the exit's param-flow, so both need a phi at the join. `t` is
-// never read, so it gets none.
+// `x` is returned, so it needs a phi at the join. `p` is rebound but its rebinding never reaches
+// the caller, and `t` is never read, so neither gets one.
 fn function_diamond() -> FunctionData {
     let mut f = FunctionData {
         name: "Diamond".to_string(),
@@ -529,7 +415,7 @@ fn function_diamond() -> FunctionData {
     blocks.push(b2);
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(x)],
+            args: smallvec![Exp::variable(x)],
         },
     ))));
     f
@@ -558,13 +444,13 @@ fn function_loop() -> FunctionData {
     blocks.push(BasicBlockData::new(goto(&[2, 3])));
     let mut b2 = BasicBlockData::new(goto(&[1]));
     b2.extend([
-        assign(&i, [Exp::Variable(i.clone()), konst(1)]),
-        assign(&d, [Exp::Variable(i.clone())]),
+        assign(&i, [Exp::variable(i.clone()), konst(1)]),
+        assign(&d, [Exp::variable(i.clone())]),
     ]);
     blocks.push(b2);
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(i)],
+            args: smallvec![Exp::variable(i)],
         },
     ))));
     f
@@ -629,7 +515,6 @@ fn all_test_functions() -> Vec<FunctionData> {
         function_loop(),
     ];
     fs.extend(program_h().functions.iter().cloned());
-    fs.extend(program_h_update().functions.iter().cloned());
     fs
 }
 
@@ -671,38 +556,29 @@ fn test_pruned_diamond() {
     let p = VariableRef::new_parameter(ParameterIdx::new(0)).variable;
     assert!(
         !pruned.iter().any(|(_, v)| *v == p),
-        "`p` is rebound but never read: the param-flow reads `p_0`"
+        "`p` is rebound but never read"
     );
-}
-
-/// The exit param-flow's parameters, in the one param-flow SSA leaves, in the exit block.
-fn exit_param_flow(f: &FunctionData) -> IndexVec<ParameterIdx, VariableRef> {
-    let flows: Vec<_> = f
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .filter_map(|st| match &st.kind {
-            StatementKind::ParamFlow { params, .. } => Some(params.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(flows.len(), 1, "one param-flow, in the exit block");
-    flows.into_iter().next().unwrap()
 }
 
 #[test]
 fn test_entry_write_back() {
-    // `p` is reassigned on one branch of the diamond. Whatever its type, the param-flow reads
-    // `p_0`, the caller's argument, and nothing merges `p` at the join.
+    // `p` is reassigned on one branch of the diamond. Whatever its type, SSA keeps the entry
+    // binding `p_0 = p` that codegen writes back at the return, and nothing merges `p` at the
+    // join.
     for ty in [ParameterType::SharedFields, ParameterType::Shared] {
         let mut f = function_diamond();
         f.params.parameters[ParameterIdx::new(0)] = ty;
         transform(&mut f, true);
         check_ssa_func(&f);
         let p = VariableRef::new_parameter(ParameterIdx::new(0));
-        let params = exit_param_flow(&f);
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[ParameterIdx::new(0)], p.with_version(0), "{ty}");
+        let entry_binding = StatementKind::assign(p.with_version(0), [Exp::variable(p.clone())]);
+        assert!(
+            f.blocks[BasicBlockIdx::START_BLOCK]
+                .statements
+                .iter()
+                .any(|st| st.kind == entry_binding),
+            "{ty}: the entry binding of `p_0`"
+        );
         assert!(
             !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
             "{ty}: no phi merges `p`"
@@ -751,9 +627,9 @@ fn test_phi_order_deterministic() {
         b2.extend(xs.iter().map(|x| assign(x, [konst(2)])));
         blocks.push(b2);
         let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![Exp::Variable(y.clone())],
+            args: smallvec![Exp::variable(y.clone())],
         })));
-        b3.extend([assign(&y, xs.iter().map(|x| Exp::Variable(x.clone())))]);
+        b3.extend([assign(&y, xs.iter().map(|x| Exp::variable(x.clone())))]);
         blocks.push(b3);
         f
     };

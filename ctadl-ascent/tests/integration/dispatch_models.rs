@@ -47,7 +47,7 @@ fn implementation(cls: &str) -> FunctionData {
     let mut b = fb.at_block(body);
     let nothing = b.new_local_var("nothing");
     b.create_assign(nothing.clone(), Vec::<Exp>::new());
-    b.create_ret(vec![Exp::Variable(nothing)]);
+    b.create_ret(vec![Exp::variable(nothing)]);
     f
 }
 
@@ -82,9 +82,9 @@ fn caller() -> FunctionData {
             super_start: None,
         },
         vec![result.clone()],
-        vec![Exp::Variable(arg)],
+        vec![Exp::variable(arg)],
     );
-    b.create_ret(vec![Exp::Variable(result)]);
+    b.create_ret(vec![Exp::variable(result)]);
     f
 }
 

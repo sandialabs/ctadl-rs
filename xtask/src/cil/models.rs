@@ -599,7 +599,7 @@ fn expand(port: &ModelPort, arity: usize) -> Vec<Loc> {
         .path
         .iter()
         .map(|seg| match seg {
-            PathSegment::Symbol(s) => {
+            PathSegment::Field(s) => {
                 let s: &str = s.as_ref();
                 s.to_string()
             }
@@ -633,9 +633,14 @@ fn show(l: &Loc) -> String {
     };
     for seg in &l.1 {
         s.push('.');
-        s.push_str(&ctadl_ir::mir::path_syntax::segment_to_string(
-            &PathSegment::symbol(seg.as_str()),
-        ));
+        // A `Loc` spells `deref` as the string `deref`; CIL field names are `<cls::name>`,
+        // so no field collides with it.
+        let seg = match seg.as_str() {
+            ctadl_ir::mir::path_syntax::DEREF => PathSegment::Deref,
+            ctadl_ir::mir::path_syntax::VALUE => PathSegment::Value,
+            name => PathSegment::field(name),
+        };
+        s.push_str(&ctadl_ir::mir::path_syntax::segment_to_string(&seg));
     }
     s
 }

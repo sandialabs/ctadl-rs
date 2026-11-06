@@ -390,7 +390,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
-    // `#value` is terminal (`ctadl_ir::mir::VALUE_FIELD`).
+    // `#value` is terminal (`ctadl_ir::mir::PathSegment::Value`).
     for (p,) in &index_result.paths {
         let segments: Vec<_> = p.iter().collect();
         if let Some(i) = segments.iter().position(|s| s.is_value())
@@ -425,7 +425,6 @@ pub fn check_with_config<P: AsRef<Path>>(
         // endpoints to their call-site-anchored forms during the query check.
         call: final_call.clone(),
         assign: index_result.assign_like,
-        update_sans_path: index_result.update_sans_path,
         paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,
@@ -473,12 +472,84 @@ pub fn check_with_config<P: AsRef<Path>>(
     Ok(())
 }
 
+/// The observable the index and the query compute for a flowy program, with no models: each sink
+/// its own label reaches, as `function: name <- label`, named as
+/// [`flowy::FlowyProgram::named_sinks`] names it. The reference implementation's observable,
+/// restricted to each sink's own label, is the same set modulo the approximations register in
+/// `docs/limitations.md`; `tests/integration/reference_parity.rs` measures the difference.
+pub fn engine_observable<P: AsRef<Path>>(
+    file: P,
+    config: IndexConfig,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let program = flowy::compile_program(file.as_ref())?;
+    let sinks: Vec<(String, String, flowy::Endpoint)> = program
+        .named_sinks()
+        .into_iter()
+        .map(|s| (s.function, s.name, s.endpoint.clone()))
+        .collect();
+    let mut index_facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    let model_matches = crate::models::ProgramModelMatches::default();
+    let requirements = program.requirements;
+    codegen_program(
+        program.program_info,
+        &mut index_facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+        crate::codegen::CallPolicy::default(),
+        &model_matches,
+    );
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_result.final_call(&index_facts.call);
+    let endpoints = requirements
+        .endpoint_requires
+        .requires
+        .iter()
+        .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
+        .flat_map(|e| {
+            from_flowy_endpoint(&source_info.sites, &final_call, e)
+                .into_iter()
+                .map(|ep| (ep,))
+        })
+        .collect();
+    let query_facts = QueryFacts {
+        formal_param: index_facts.formal_param,
+        actual_param: index_facts.actual_param,
+        call: final_call.clone(),
+        assign: index_result.assign_like,
+        paths: index_result.paths,
+        external_function: index_result.external_function,
+        endpoints,
+    };
+    let query_result = taint_analysis(query_facts, Some(&source_info.sites));
+    let mut out = std::collections::BTreeSet::new();
+    for (function, name, endpoint) in sinks {
+        let label = fx::Label(endpoint.label.clone().into());
+        let qes = from_flowy_endpoint(&source_info.sites, &final_call, &endpoint);
+        let reached = query_result.taint.iter().any(|r| {
+            r.4.label == label
+                && r.4.direction == fx::TaintDirection::Forward
+                && qes
+                    .iter()
+                    .any(|qe| r.0 == qe.infunc && r.2 == qe.vertex.0 && r.3 == qe.vertex.1)
+        });
+        if reached {
+            out.insert(format!("{function}: {name} <- {}", endpoint.label));
+        }
+    }
+    Ok(out)
+}
+
 fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
     use flowy::*;
     use fx::*;
     let vertex = {
-        let (var, fields) = &e.port;
-        FlowVertex::new(var.try_into().unwrap(), fields.into())
+        let port = &e.port;
+        FlowVertex::new(
+            (&port.base).try_into().unwrap(),
+            Path::from_accesses(port.segments.iter().cloned()),
+        )
     };
     TaintEndpoint {
         infunc: Function(e.infunc.clone().into()),
@@ -500,8 +571,11 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
         .get_function_id(endpoint.infunc.clone().into())
         .unwrap();
     let vertex = {
-        let (var, fields) = &endpoint.port;
-        FlowVertex::new(var.try_into().unwrap(), fields.into())
+        let port = &endpoint.port;
+        FlowVertex::new(
+            (&port.base).try_into().unwrap(),
+            Path::from_accesses(port.segments.iter().cloned()),
+        )
     };
     QueryEndpoint {
         infunc,

@@ -1,5 +1,5 @@
 //! Managed pointers. A pointer lowers to the place it points at whenever that can be traced,
-//! and to the dereference field `DEREF_FIELD` (`D` below) when it cannot.
+//! and to the dereference segment `PathSegment::Deref` (`D` below) when it cannot.
 //!
 //! | Effect on pointer `v`      | Resolved to `P`                    | Unresolved                       |
 //! | -------------------------- | ---------------------------------- | -------------------------------- |
@@ -63,7 +63,7 @@ use cil_reader::MetadataToken;
 use cil_reader::flow::{
     BoundIns, Control, Effect, InsId, MethodFlow, Place, StackKind, Transfer, Var,
 };
-use ctadl_ir::mir::{DEREF_FIELD, FieldRef};
+use ctadl_ir::mir::PathSegment;
 use ctadl_ir::*;
 use hashbrown::{HashMap, HashSet};
 
@@ -71,8 +71,8 @@ use crate::method::{Emitter, Lower};
 use crate::names::ELEMENT;
 
 /// `D`: the dereference field shared with C, pcode, the index and the query.
-pub fn deref() -> FieldRef {
-    FieldRef::symbol(DEREF_FIELD)
+pub fn deref() -> PathSegment {
+    PathSegment::Deref
 }
 
 /// What a traced address's place starts from.
@@ -395,11 +395,11 @@ fn ends_stack(flow: &MethodFlow, b: usize) -> bool {
 #[derive(Debug, Clone)]
 pub struct PlacePath {
     pub root: VariableRef,
-    pub fields: Vec<FieldRef>,
+    pub fields: Vec<PathSegment>,
 }
 
 impl PlacePath {
-    pub fn with(&self, f: FieldRef) -> PlacePath {
+    pub fn with(&self, f: PathSegment) -> PlacePath {
         let mut fields = self.fields.clone();
         fields.push(f);
         PlacePath {
@@ -455,7 +455,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             .iter()
             .map(|s| match s {
                 Step::Field(t) => self.field_ref(*t),
-                Step::Element => FieldRef::symbol(ELEMENT),
+                Step::Element => PathSegment::field(ELEMENT),
                 Step::Deref => deref(),
             })
             .collect();
@@ -463,8 +463,8 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// The field symbol of a field token, `<cls::name>`.
-    pub fn field_ref(&self, token: MetadataToken) -> FieldRef {
-        FieldRef::symbol(
+    pub fn field_ref(&self, token: MetadataToken) -> PathSegment {
+        PathSegment::field(
             self.names.field_symbol(token).unwrap_or_else(|| {
                 format!("<{}::?{:08x}>", crate::names::UNKNOWN_CLASS, token.raw())
             }),
@@ -486,7 +486,7 @@ impl Lower<'_, '_, '_, '_, '_> {
     /// `x := P`.
     pub fn read(&self, em: &mut Emitter<'_>, p: &PlacePath, x: VariableRef) {
         match p.fields.last() {
-            None => em.assign(x, [Exp::Variable(p.root.clone())]),
+            None => em.assign(x, [Exp::variable(p.root.clone())]),
             Some(last) => {
                 let last = last.clone();
                 let base = self.prefix(em, p);
@@ -511,7 +511,7 @@ impl Lower<'_, '_, '_, '_, '_> {
     pub fn materialize(&self, em: &mut Emitter<'_>, p: &PlacePath, cell: VariableRef) {
         let c = em.fresh("c");
         self.read(em, p, c.clone());
-        em.store(cell, deref(), Exp::Variable(c));
+        em.store(cell, deref(), Exp::variable(c));
     }
 
     /// The value of `v`, an operand of `ins`, used as a value rather than dereferenced: the
@@ -521,7 +521,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             let p = self.place_path(em, &a);
             let cell = em.fresh("cell");
             self.materialize(em, &p, cell.clone());
-            return Exp::Variable(cell);
+            return Exp::variable(cell);
         }
         em.exp(v)
     }
@@ -561,7 +561,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         for (cell, p) in copy_outs {
             let u = em.fresh("u");
             em.load(u.clone(), cell, deref());
-            self.write(em, &p, Exp::Variable(u));
+            self.write(em, &p, Exp::variable(u));
         }
     }
 

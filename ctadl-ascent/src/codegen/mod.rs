@@ -462,6 +462,8 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// Number of parameters of the function under translation, written back at its `return`.
+    num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
     /// anywhere in this codegen unit. Each gets an identity `callee_resolvents(FunctionId(f),
     /// C, f)` fact emitted in [`Self::finish`] — the function-pointer analogue of the CHA
@@ -543,6 +545,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
+            num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
             matches,
@@ -832,6 +835,7 @@ impl Visitor for CodegenVisitor<'_> {
             .sites
             .get_or_add_function(fx::Function(name));
         self.function = Some(func_id);
+        self.num_params = function.params.parameters.len();
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
         }
@@ -877,90 +881,49 @@ impl Visitor for CodegenVisitor<'_> {
         block: BasicBlockIdx,
         data: &BasicBlockData,
     ) {
-        // Pre-pass: capture, for each load-chain temporary, the (root variable, composed field
-        // path) it stands for. Used below to seed the `paths` gate and, in
-        // `visit_statement_kind`, to re-anchor a `Store` through such a temporary onto the formal
-        // path it addresses.
+        // Pre-pass: capture, for each load-chain temporary, the (root variable, composed path)
+        // it stands for. Used below to seed the `paths` gate and, in `visit_statement`, to
+        // re-anchor a read or a store through such a temporary onto the formal path it
+        // addresses.
         self.cap_path.clear();
         for statement in &data.statements {
             match &statement.kind {
-                StatementKind::Assign { dest, sources } if sources.len() == 1 => {
-                    match &sources[0] {
-                        // A whole-variable copy `dest = v` carries the captured (root, path) of `v`
-                        // forward, so a Load chain that flows through a copy still composes.
-                        Exp::Variable(v) => {
-                            if let Some(cap) = self.cap_path.get(v).cloned() {
-                                self.cap_path.insert(dest.clone(), cap);
-                            }
+                StatementKind::Assign { dest, sources } => {
+                    for ap in sources.iter().filter_map(Exp::access_path) {
+                        self.insert_chain_paths(ap);
+                    }
+                    if !dest.is_pathless() {
+                        self.insert_chain_paths(dest);
+                    } else if let [Exp::Path(src)] = sources.as_slice() {
+                        // A copy `dest = v·s` stands for `<captured path of v>·s` rooted at v's
+                        // root: a whole-variable copy carries `v`'s capture forward, an address
+                        // copy `dest = v.[k]` (pointer arithmetic) or a load `dest = v.f`
+                        // composes onto it, so a later read or store through `dest` composes
+                        // too.
+                        let cap = if src.is_pathless() {
+                            self.cap_path.get(&src.base).cloned()
+                        } else {
+                            Some(self.composed(src))
+                        };
+                        if let Some(cap) = cap {
+                            self.cap_path.insert(dest.base.clone(), cap);
                         }
-                        // An address copy `dest = v.[k]` (pointer arithmetic) names the field
-                        // path `<captured path of v> ++ [k]` rooted at v's root; record it so a
-                        // later Load/Store through `dest` composes onto it and the composed path
-                        // enters the `paths` gate.
-                        Exp::Address(addr) => {
-                            let (root, base_path) = self
-                                .cap_path
-                                .get(&addr.base)
-                                .cloned()
-                                .unwrap_or_else(|| (addr.base.clone(), fx::Path::empty()));
-                            let path = fx::Path::from_accesses(
-                                base_path
-                                    .iter()
-                                    .cloned()
-                                    .chain(addr.accesses.iter().cloned().map(PathSegment::from)),
-                            );
-                            self.paths_dedup.insert((path,));
-                            self.cap_path.insert(dest.clone(), (root, path));
-                        }
-                        _ => {}
                     }
                 }
-                StatementKind::Load {
-                    dest,
-                    source,
-                    field,
-                } => {
-                    // The effective field path read is the captured path of the source base
-                    // variable, then the source's own (offset) address arithmetic, then the
-                    // loaded field, all rooted at the source's root variable.
-                    let (root, base_path) = self
-                        .cap_path
-                        .get(&source.base)
-                        .cloned()
-                        .unwrap_or_else(|| (source.base.clone(), fx::Path::empty()));
-                    let path = fx::Path::from_accesses(
-                        base_path
-                            .iter()
-                            .cloned()
-                            .chain(source.accesses.iter().cloned().map(PathSegment::from))
-                            .chain(std::iter::once(PathSegment::Symbol(
-                                field.symbol_ref().clone(),
-                            ))),
-                    );
-                    self.paths_dedup.insert((path,));
-                    self.cap_path.insert(dest.clone(), (root, path));
-                }
-                StatementKind::Store { dest, field, .. } => {
-                    // The full written field path is the captured path of the destination base
-                    // variable, then the dest's own (offset) address arithmetic, then the written
-                    // field.
-                    let base_path = self
-                        .cap_path
-                        .get(&dest.base)
-                        .map(|(_, p)| *p)
-                        .unwrap_or_default();
-                    let path = fx::Path::from_accesses(
-                        base_path
-                            .iter()
-                            .cloned()
-                            .chain(dest.accesses.iter().cloned().map(PathSegment::from))
-                            .chain(std::iter::once(PathSegment::Symbol(
-                                field.symbol_ref().clone(),
-                            ))),
-                    );
-                    self.paths_dedup.insert((path,));
+                StatementKind::CallAssign { args, style, .. } => {
+                    for ap in args.iter().filter_map(Exp::access_path) {
+                        self.insert_chain_paths(ap);
+                    }
+                    if let CallStyle::FuncPtrCall { callee, .. } = style {
+                        self.insert_chain_paths(callee);
+                    }
                 }
                 _ => {}
+            }
+        }
+        if let Some(TerminatorKind::Return { args }) = data.terminator_opt().map(|t| &t.kind) {
+            for ap in args.iter().filter_map(Exp::access_path) {
+                self.insert_chain_paths(ap);
             }
         }
         self.super_basic_block_data(function, block, data);
@@ -993,52 +956,55 @@ impl Visitor for CodegenVisitor<'_> {
             .add_instruction_span(site, statement.source_info.span_id);
         match statement_kind {
             Assign { dest, sources } => {
+                // A copy defines the whole destination variable; a store writes the memory at
+                // its path, re-anchored onto the root a load-chain temporary stands for.
+                let dest = if dest.is_pathless() {
+                    FlowVertex::new(self.trans_variable_ref(&dest.base), fx::Path::empty())
+                } else {
+                    let (root, path) = self.composed(dest);
+                    self.paths_dedup.insert((path,));
+                    FlowVertex::new(self.trans_variable_ref(&root), path)
+                };
                 for src in sources {
+                    // A function pointer or an object stored at the destination: a target label
+                    // (S11). Recorded before `src` is lowered, since `trans_exp` returns `None`
+                    // for an `ObjectRef`.
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = src {
-                        let dest = self.trans_variable_ref(dest);
                         let target = fx::Function(name.clone().into());
                         let target = self.source_info.sites.get_or_add_function(target);
                         self.facts.call_target_assign.push((
                             site,
-                            FlowVertex::new(dest, fx::Path::empty()),
+                            dest,
                             fx::CallTargetObjectKind::FunctionId(target).into(),
                         ));
                         self.funcptr_targets.insert(target);
                     }
                     if let Some(object) = call_target_object(src) {
-                        let dest = self.trans_variable_ref(dest);
-                        self.facts.call_target_assign.push((
-                            site,
-                            FlowVertex::new(dest, fx::Path::empty()),
-                            object,
-                        ));
+                        self.facts.call_target_assign.push((site, dest, object));
                     }
                     if let Exp::Str(value) = src {
-                        let dest = self.trans_variable_ref(dest);
-                        self.facts.const_str_assign.push((
-                            site,
-                            FlowVertex::new(dest, fx::Path::empty()),
-                            Str::from(value.clone()),
-                        ));
+                        self.facts
+                            .const_str_assign
+                            .push((site, dest, Str::from(value.clone())));
                     }
-                    // `dest = value(v)` lowers to `dest.#value <- v`; `dest` itself gets nothing.
-                    // `v.#value` comes along since `#value` absorbs itself
-                    // (`ctadl_ir::mir::VALUE_FIELD`).
-                    if let Exp::Value(v) = src {
-                        let value = fx::Path::from_accesses([PathSegment::value()]);
+                    // `dest = value(p)` lowers to `dest.#value <- p`; `dest` itself gets
+                    // nothing. `p.#value` comes along since `#value` absorbs itself
+                    // (`ctadl_ir::mir::PathSegment::Value`).
+                    if let Exp::Value(ap) = src {
+                        let value = dest
+                            .1
+                            .concat(&fx::Path::from_accesses([PathSegment::Value]));
                         self.paths_dedup.insert((value,));
-                        let dest = FlowVertex::new(self.trans_variable_ref(dest), value);
-                        let v = FlowVertex::new(self.trans_variable_ref(v), fx::Path::empty());
-                        self.facts.assign.push((site, dest, v));
+                        let v = self.read_vertex(ap);
+                        self.facts
+                            .assign
+                            .push((site, FlowVertex::new(dest.0, value), v));
                         continue;
                     }
                     let Some(src) = self.trans_exp(src) else {
                         continue;
                     };
-                    let dest = self.trans_variable_ref(dest);
-                    self.facts
-                        .assign
-                        .push((site, FlowVertex::new(dest, fx::Path::empty()), src));
+                    self.facts.assign.push((site, dest, src));
                 }
             }
             Phi {
@@ -1052,28 +1018,6 @@ impl Visitor for CodegenVisitor<'_> {
                     if seen_phi.insert(src) {
                         self.facts.assign.push((site, dst, src));
                     }
-                }
-            }
-            ParamFlow { params, global } => {
-                let mut seen_param = BTreeSet::new();
-                for (i, op) in params.iter().enumerate() {
-                    // assign current version of formal back to the formal itself so we can track
-                    // data flow
-                    let dst = FlowVariable::formal_index(i.try_into().unwrap());
-                    let src = self.trans_variable_ref(op);
-                    if seen_param.insert((dst, src)) {
-                        let dst = FlowVertex::new(dst, fx::Path::empty());
-                        let src = FlowVertex::new(src, fx::Path::empty());
-                        self.facts.assign.push((site, dst, src));
-                    }
-                }
-                // assign current version of global back to the auxparam global
-                let dst = FlowVariable::formal_index(GLOBALS_INDEX.into());
-                let src = self.trans_variable_ref(global);
-                if seen_param.insert((dst, src)) {
-                    let dst = FlowVertex::new(dst, fx::Path::empty());
-                    let src = FlowVertex::new(src, fx::Path::empty());
-                    self.facts.assign.push((site, dst, src));
                 }
             }
             CallAssign { rets, args, style } => {
@@ -1104,7 +1048,7 @@ impl Visitor for CodegenVisitor<'_> {
                             Str::from(descriptor.clone()),
                         ));
                         // add receiver as actual arg 0
-                        args.insert(0, Exp::Variable(receiver.clone()));
+                        args.insert(0, Exp::variable(receiver.clone()));
                         let key = (cls.clone(), simple_name.clone(), descriptor.clone());
                         let action = self.classify(&key, *dispatch, super_start.as_ref());
                         self.apply(site, recv_var, &key, *dispatch, action);
@@ -1119,7 +1063,7 @@ impl Visitor for CodegenVisitor<'_> {
                         // The ladder's per-kind policy wants to know which sites dispatch
                         // through an interface; `interfaces` says.
                         let recv_var = self.trans_variable_ref(receiver);
-                        args.insert(0, Exp::Variable(receiver.clone()));
+                        args.insert(0, Exp::variable(receiver.clone()));
                         let dispatch = if self.cha.is_interface(cls) {
                             JavaDispatch::Interface
                         } else {
@@ -1207,7 +1151,7 @@ impl Visitor for CodegenVisitor<'_> {
                         }
                     }
                     CallStyle::FuncPtrCall { callee, .. } => {
-                        let vertex = self.trans_address(callee);
+                        let vertex = self.read_vertex(callee);
                         self.facts
                             .callee_info
                             .push((site, vertex, fx::CallDispatchKey::c()));
@@ -1299,146 +1243,6 @@ impl Visitor for CodegenVisitor<'_> {
                     ),
                 ));
             }
-            Load {
-                dest,
-                source,
-                field,
-            } => {
-                let dest = self.trans_variable_ref(dest);
-                // Re-anchor a read through a load-chain temporary onto the root composed path it
-                // addresses, the read-side mirror of the `Store` arm.
-                let (root_var, base_path) = self
-                    .cap_path
-                    .get(&source.base)
-                    .cloned()
-                    .unwrap_or_else(|| (source.base.clone(), fx::Path::empty()));
-                let source_var = self.trans_variable_ref(&root_var);
-                // The read path is the captured chain path, then the source's own (offset) address
-                // arithmetic, then the loaded field.
-                let path = fx::Path::from_accesses(
-                    base_path
-                        .iter()
-                        .cloned()
-                        .chain(source.accesses.iter().cloned().map(PathSegment::from))
-                        .chain(std::iter::once(PathSegment::Symbol(
-                            field.symbol_ref().clone(),
-                        ))),
-                );
-                self.paths_dedup.insert((path,));
-                // dest <- root.<composed path>
-                self.facts.assign.push((
-                    site,
-                    FlowVertex::new(dest, fx::Path::empty()),
-                    FlowVertex::new(source_var, path),
-                ));
-            }
-            Store { dest, field, value } => {
-                // Re-anchor a store through a load-chain temporary onto the formal path it
-                // addresses: `v.f2.nf1.y = rhs` lowers to `t1 = load v.f2; t2 = load t1.nf1;
-                // store t2.y := rhs`, and the write must be recorded at `v.f2.nf1.y`, not at the
-                // temporary `t2.y` (which no summary can name). The pre-pass captured `t2 ↦
-                // (v, .f2.nf1)`; compose that root + captured path with this store's offsets and
-                // field. When the dest base is not a load-chain temporary, the root is the base
-                // itself and the captured path is empty (an ordinary field/offset store).
-                let (root_var, base_path) = self
-                    .cap_path
-                    .get(&dest.base)
-                    .cloned()
-                    .unwrap_or_else(|| (dest.base.clone(), fx::Path::empty()));
-                let dest_var = self.trans_variable_ref(&root_var);
-                // The written path is the captured chain path, then the dest's (offset) address
-                // arithmetic, then the field.
-                let path = fx::Path::from_accesses(
-                    base_path
-                        .iter()
-                        .cloned()
-                        .chain(dest.accesses.iter().cloned().map(PathSegment::from))
-                        .chain(std::iter::once(PathSegment::Symbol(
-                            field.symbol_ref().clone(),
-                        ))),
-                );
-                self.paths_dedup.insert((path,));
-                // dest.field <- value
-                let dest = FlowVertex::new(dest_var, path);
-                // A function pointer / Java object stored INTO A FIELD (`o.op = id`).
-                // This is the field-store form of the `Assign` arm's object-ref handling:
-                // record the store at its field path so indirect-call resolution can follow
-                // it to the call site. Must run before `value` is lowered, since trans_exp()
-                // returns None for an ObjectRef and would otherwise drop the binding.
-                if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
-                    let target = fx::Function(name.clone().into());
-                    let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest,
-                        fx::CallTargetObjectKind::FunctionId(target).into(),
-                    ));
-                    self.funcptr_targets.insert(target);
-                }
-                if let Some(object) = call_target_object(value) {
-                    self.facts.call_target_assign.push((site, dest, object));
-                }
-                if let Exp::Str(value) = value {
-                    self.facts
-                        .const_str_assign
-                        .push((site, dest, Str::from(value.clone())));
-                }
-                if let Some(value) = self.trans_exp(value) {
-                    self.facts.assign.push((site, dest, value));
-                }
-            }
-            Update {
-                dest,
-                source,
-                field,
-                value,
-            } => {
-                // A functional update `dest = update(source, dest.field := value)` lowers to two
-                // flows: the copy of `source` into `dest` except at the written path, then the
-                // field write `dest.field <- value`. Leaving the written path out of the copy is
-                // what makes the update overwrite the field's old value.
-                let dest_var = self.trans_variable_ref(&dest.base);
-                let source_var = self.trans_variable_ref(source);
-                // The written path is the dest's (offset) address arithmetic, then the field.
-                let path =
-                    fx::Path::from_accesses(
-                        dest.accesses.iter().cloned().map(PathSegment::from).chain(
-                            std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())),
-                        ),
-                    );
-                self.paths_dedup.insert((path,));
-                let dest_vertex = FlowVertex::new(dest_var, path);
-                // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
-                // `Store` arm.
-                if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
-                    let target = fx::Function(name.clone().into());
-                    let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest_vertex,
-                        fx::CallTargetObjectKind::FunctionId(target).into(),
-                    ));
-                    self.funcptr_targets.insert(target);
-                }
-                if let Some(object) = call_target_object(value) {
-                    self.facts
-                        .call_target_assign
-                        .push((site, dest_vertex, object));
-                }
-                if let Exp::Str(value) = value {
-                    self.facts
-                        .const_str_assign
-                        .push((site, dest_vertex, Str::from(value.clone())));
-                }
-                // copy: dest <- source, except at the written path
-                self.facts
-                    .update_sans_path
-                    .push((site, dest_var, source_var, dest_vertex.1));
-                // field write: dest.field <- value
-                if let Some(value) = self.trans_exp(value) {
-                    self.facts.assign.push((site, dest_vertex, value));
-                }
-            }
             Nop => (),
         }
     }
@@ -1452,6 +1256,27 @@ impl Visitor for CodegenVisitor<'_> {
             insn_site_id.try_into().unwrap()
         };
         if let TerminatorKind::Return { args } = terminator {
+            // Write each parameter, and the global heap, back to its formal at its entry version,
+            // so a store through it inside the function reaches the formal path the summary
+            // reads. The entry version is the one that reaches the return: rebinding a parameter
+            // does not reach the caller, and nothing rebinds the global heap (see `ctadl_ir::ssa`).
+            let formals = (0..self.num_params)
+                .map(|i| {
+                    let p = VariableRef::new_parameter(ParameterIdx::new(i));
+                    (FlowVariable::formal_index(i.try_into().unwrap()), p)
+                })
+                .chain(std::iter::once((
+                    FlowVariable::formal_index(GLOBALS_INDEX.into()),
+                    VariableRef::new_global(),
+                )));
+            for (dst, v) in formals {
+                let src = self.trans_variable_ref(&v.with_version(0));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex::new(dst, fx::Path::empty()),
+                    FlowVertex::new(src, fx::Path::empty()),
+                ));
+            }
             // assigns for return values. This will be bad if there are more than 32K return values
             for (i, arg) in args.iter().enumerate().map(|(i, arg)| (i + 1, arg)) {
                 let i: i16 = i.try_into().unwrap();
@@ -1467,18 +1292,6 @@ impl Visitor for CodegenVisitor<'_> {
             }
         }
     }
-
-    // Generates paths
-    #[inline]
-    fn visit_field_accesses(&mut self, fields: &OffsetAccesses) {
-        self.super_field_accesses(fields);
-        self.paths_dedup.insert((fields.into(),));
-        if let Some(OffsetAccess::Offset(offset)) = fields.first() {
-            // Insert just the first (offset) field to make sure we catch globals.
-            let first_field = OffsetAccesses::with_offset(offset.0);
-            self.paths_dedup.insert(((&first_field).into(),));
-        }
-    }
 }
 
 impl CodegenVisitor<'_> {
@@ -1487,14 +1300,10 @@ impl CodegenVisitor<'_> {
     #[inline]
     fn trans_exp(&mut self, exp: &Exp) -> Option<FlowVertex> {
         match exp {
+            Exp::Path(ap) => Some(self.read_vertex(ap)),
             // `Value` is an `Assign` source, which the `Assign` arm lowers itself. Anywhere else
-            // the whole variable flows, which loses nothing.
-            Exp::Variable(v) | Exp::Value(v) => Some(FlowVertex::new(
-                self.trans_variable_ref(v),
-                fx::Path::empty(),
-            )),
-            // An address expression `x.[k]` flows structurally from x's offset field.
-            Exp::Address(addr) => Some(self.trans_address(addr)),
+            // the whole access path flows, which loses nothing.
+            Exp::Value(ap) => Some(self.read_vertex(ap)),
             // A constant is not a vertex. The taint index tracks flow between storage
             // locations, and a literal value is not one. These variants are listed out instead
             // of matched with `_`, so that adding an `Exp` variant fails to compile here and
@@ -1503,11 +1312,62 @@ impl CodegenVisitor<'_> {
         }
     }
 
-    #[inline]
-    fn trans_address(&mut self, addr: &Address) -> FlowVertex {
-        let v = self.trans_variable_ref(&addr.base);
-        let fields = &addr.accesses;
-        FlowVertex::new(v, fields.into())
+    /// The vertex a read of `ap` names. A read that goes through memory (a field, `deref` or
+    /// `#value`) is re-anchored onto the root a load-chain temporary stands for, as a store is;
+    /// an address (`v.[k]`) or a whole variable is read where it is.
+    fn read_vertex(&mut self, ap: &AccessPath) -> FlowVertex {
+        if ap.segments.iter().all(PathSegment::is_offset) {
+            let v = self.trans_variable_ref(&ap.base);
+            return FlowVertex::new(v, fx::Path::from_accesses(ap.segments.iter().cloned()));
+        }
+        let (root, path) = self.composed(ap);
+        self.paths_dedup.insert((path,));
+        FlowVertex::new(self.trans_variable_ref(&root), path)
+    }
+
+    /// `ap` composed onto what its base stands for in this block: `(root, <captured path>·s)`
+    /// when the base is a load-chain temporary, else `(base, s)`.
+    fn composed(&self, ap: &AccessPath) -> (VariableRef, fx::Path) {
+        let (root, base_path) = self
+            .cap_path
+            .get(&ap.base)
+            .cloned()
+            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
+        let path =
+            fx::Path::from_accesses(base_path.iter().cloned().chain(ap.segments.iter().cloned()));
+        (root, path)
+    }
+
+    /// Seeds the `paths` gate with what a read or a store of `ap` mentions, which is what a chain
+    /// of one-step loads spelling `ap` would mention: each offset run (the address each step reads
+    /// from, or the address left over at the end, relative to the step's base), and each composed
+    /// path that ends at a memory step (field, `deref` or `#value`). The admissible set is built
+    /// from program paths (the "admissible paths" row of the approximations register,
+    /// `docs/limitations.md`), so a path admits the same set whether a front end writes it as one
+    /// access path or as a chain.
+    fn insert_chain_paths(&mut self, ap: &AccessPath) {
+        let (_, base_path) = self
+            .cap_path
+            .get(&ap.base)
+            .cloned()
+            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
+        let mut run: Vec<PathSegment> = Vec::new();
+        for (i, seg) in ap.segments.iter().enumerate() {
+            if seg.is_offset() {
+                run.push(seg.clone());
+                continue;
+            }
+            self.paths_dedup
+                .insert((fx::Path::from_accesses(std::mem::take(&mut run)),));
+            let prefix = fx::Path::from_accesses(
+                base_path
+                    .iter()
+                    .cloned()
+                    .chain(ap.segments[..=i].iter().cloned()),
+            );
+            self.paths_dedup.insert((prefix,));
+        }
+        self.paths_dedup.insert((fx::Path::from_accesses(run),));
     }
 
     #[inline]

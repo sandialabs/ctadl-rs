@@ -10,7 +10,6 @@ structure field access, to maximize the opportunity for the compiler to throw er
 changes.
 */
 use super::*;
-use OffsetAccess;
 
 macro_rules! basic_blocks {
     ($blocks:ident, mut, true) => {
@@ -81,11 +80,8 @@ macro_rules! make_ast_visitor {
             fn visit_variable_ref(&mut self, variable_ref: &$($mutability)? VariableRef) {
                 self.super_variable_ref(variable_ref);
             }
-            fn visit_address(&mut self, addr: &$($mutability)? Address) {
-                self.super_address(addr);
-            }
-            fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? OffsetAccesses) {
-                self.super_field_accesses(field_accesses);
+            fn visit_access_path(&mut self, ap: &$($mutability)? AccessPath) {
+                self.super_access_path(ap);
             }
             fn visit_call_style(&mut self, call_style: &$($mutability)? CallStyle) {
                 self.super_call_style(call_style);
@@ -156,7 +152,7 @@ macro_rules! make_ast_visitor {
                         for src in sources {
                             self.visit_exp(src);
                         }
-                        self.visit_variable_ref(dest);
+                        self.visit_access_path(dest);
                     }
                     CallAssign { rets, args, style } => {
                         self.visit_call_style(style);
@@ -173,25 +169,6 @@ macro_rules! make_ast_visitor {
                             self.visit_variable_ref(op);
                         }
                     }
-                    ParamFlow { params, global } => {
-                        for op in params {
-                            self.visit_variable_ref(op);
-                        }
-                        self.visit_variable_ref(global);
-                    }
-                    Load { dest, source, field: _ } => {
-                        self.visit_variable_ref(dest);
-                        self.visit_address(source);
-                    }
-                    Store { dest, field: _, value } => {
-                        self.visit_address(dest);
-                        self.visit_exp(value);
-                    }
-                    Update { dest, source, field: _, value } => {
-                        self.visit_address(dest);
-                        self.visit_variable_ref(source);
-                        self.visit_exp(value);
-                    }
                     Nop => (),
                 }
             }
@@ -200,7 +177,7 @@ macro_rules! make_ast_visitor {
                 match call_style {
                     CallStyle::DirectCall { call_edges } => self.visit_call_edges(call_edges),
                     CallStyle::FuncPtrCall { callee, signature: _ } => {
-                        self.visit_address(callee);
+                        self.visit_access_path(callee);
                     }
                     CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _, dispatch: _, super_start: _ } => {
                         self.visit_variable_ref(receiver)
@@ -236,11 +213,8 @@ macro_rules! make_ast_visitor {
 
             fn super_exp(&mut self, exp: &$($mutability)? Exp) {
                 match exp {
-                    Exp::Variable(variable_ref) | Exp::Value(variable_ref) => {
-                        self.visit_variable_ref(variable_ref);
-                    }
-                    Exp::Address(addr) => {
-                        self.visit_address(addr);
+                    Exp::Path(ap) | Exp::Value(ap) => {
+                        self.visit_access_path(ap);
                     }
                     Exp::Bytes(_) => {}
                     Exp::Int(_) => {}
@@ -253,21 +227,9 @@ macro_rules! make_ast_visitor {
                 // Can't mut visit variable, so don't
             }
 
-            fn super_address(&mut self, addr: &$($mutability)? Address) {
-                let Address { base, accesses } = addr;
+            fn super_access_path(&mut self, ap: &$($mutability)? AccessPath) {
+                let AccessPath { base, segments: _ } = ap;
                 self.visit_variable_ref(base);
-                self.visit_field_accesses(accesses);
-            }
-
-            fn super_field_accesses(&mut self, field_accesses: &$($mutability)? OffsetAccesses) {
-                // Traverse each field access in the sequence (offset-only)
-                for field_access in &field_accesses.offsets {
-                    match field_access {
-                        OffsetAccess::Offset(_) => {
-                            // No additional traversal needed for Offset
-                        }
-                    }
-                }
             }
 
             fn super_call_edges(&mut self, _call_edges: &$($mutability)? CallEdges) {

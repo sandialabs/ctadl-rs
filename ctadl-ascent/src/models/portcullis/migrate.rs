@@ -1135,11 +1135,10 @@ fn migrate_model(
     }
     if let Some(modes) = model.get("modes") {
         use super::ast::FunctionMode;
-        // Within one generator the last of `mem2reg-full` / `mem2reg-window` wins, and likewise
-        // the last of `frame-store` / `frame-update`; a repeat says nothing new.
+        // Within one generator the last of `mem2reg-full` / `mem2reg-window` wins; a repeat
+        // says nothing new.
         let mut skip = false;
         let mut mem2reg = None;
-        let mut frame = None;
         for mode in modes
             .as_array()
             .into_iter()
@@ -1151,14 +1150,12 @@ fn migrate_model(
                 // No JSON `modes` value names it, so `from_json_name` never returns it.
                 FunctionMode::Analyze => {}
                 FunctionMode::Mem2RegFull | FunctionMode::Mem2RegWindow => mem2reg = Some(mode),
-                FunctionMode::FrameStore | FunctionMode::FrameUpdate => frame = Some(mode),
             }
         }
-        let chosen: Vec<FunctionMode> =
-            [mem2reg, frame, skip.then_some(FunctionMode::SkipAnalysis)]
-                .into_iter()
-                .flatten()
-                .collect();
+        let chosen: Vec<FunctionMode> = [mem2reg, skip.then_some(FunctionMode::SkipAnalysis)]
+            .into_iter()
+            .flatten()
+            .collect();
         if chosen.is_empty() {
             report.warn(
                 index,
@@ -1497,9 +1494,15 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
 pub fn segment_text(seg: &PathSegment) -> String {
     match seg {
         PathSegment::Offset(off) => format!(".[{}]", off.0),
-        PathSegment::Symbol(sym) => {
+        PathSegment::Deref => ".deref".to_string(),
+        PathSegment::Value => ".#value".to_string(),
+        PathSegment::Field(sym) => {
             let s: &str = sym;
+            // A field spelled like a segment keyword is quoted, so it reads back as a field.
             let plain = !s.is_empty()
+                && s != "deref"
+                && s != "#value"
+                && s != "*"
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || "_$-%*#<>".contains(c));
             if plain {

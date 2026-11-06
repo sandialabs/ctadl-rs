@@ -1,0 +1,87 @@
+// S7/S8: `l = y; l.f = x` reaches `y.f.g`: a write through a copy of a pointer reaches the
+// original, because a store's labels have scope `All` and move backward.
+def WriteThroughAlias(y) {
+s:
+  x.g = source(S);
+  l = y;
+  l.f = x;
+  r = y.f.g;
+  sink(r, S);
+  return;
+}
+
+// A label copied forward is `Fixed` and never moves back, so a phi does not merge its sources:
+// `x1.f` reaches `y.f` through the phi, but not `x2.f`.
+//
+// The query's object hop treats the index's derived edge `y.f <- x1.f` as a fresh derivation
+// and hops back through the phi to `x2.f`:
+// parity: object hop adds: PhiDoesNotMerge: errsink(%S)#0 <- %S
+def PhiDoesNotMerge(x2) {
+s:
+  x1.f = source(S);
+  goto a, b;
+a:
+  y = x1;
+  goto j;
+b:
+  y = x2;
+  goto j;
+j:
+  z = y.f;
+  sink(z, S);
+  r2 = x2.f;
+  errsink(r2, S);
+  return;
+}
+
+// A write through the phi, by contrast, is a store, and reaches every source.
+def WriteThroughPhi(x1, x2) {
+s:
+  goto a, b;
+a:
+  y = x1;
+  goto j;
+b:
+  y = x2;
+  goto j;
+j:
+  y.f = source(S);
+  r1 = x1.f;
+  sink(r1, S);
+  r2 = x2.f;
+  sink(r2, S);
+  return;
+}
+
+// The suffix `#value` moves forward only: a variable's own value is not shared with its
+// aliases, while a value held in memory is, like the cell that holds it.
+//
+// `copy_prop` replaces `t` by `v`, which moves the store `t.#value = a` onto `v` itself: the
+// `copy_prop` row of the approximations register (docs/limitations.md).
+// passes: adds copy_prop, pipeline
+//
+// The query's object hop moves the store at `t.#value` back to `v`, which S8 does not:
+// parity: object hop adds: ValueForwardOnly: errsink(%S)#0 <- %S
+def ValueForwardOnly(v, p) {
+s:
+  a = source(S);
+  t = v;
+  t.#value = a;
+  errsink(v, S);
+  u = p;
+  u.f.#value = a;
+  r = p.f;
+  sink(r, S);
+  u.deref.#value = a;
+  d = p.deref;
+  sink(d, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: PhiDoesNotMerge: sink(%S)#0 <- %S
+// expect: ValueForwardOnly: sink(%S)#0 <- %S
+// expect: ValueForwardOnly: sink(%S)#1 <- %S
+// expect: WriteThroughAlias: sink(%S)#0 <- %S
+// expect: WriteThroughPhi: sink(%S)#0 <- %S
+// expect: WriteThroughPhi: sink(%S)#1 <- %S

@@ -1,6 +1,12 @@
 /*!
 Dead-temporary elimination for pre-SSA IR.
 
+# Correctness (S18 of `docs/ir.md`)
+
+Correct without condition. A deleted statement is a copy into a local that nothing reads: the
+cell it defines reaches no port, so no observable labeling changes. A store is never deleted,
+since it defines nothing and writes memory other paths may reach.
+
 Frontends emit temporaries that are assigned but never read: a computed value
 that a later rewrite orphaned, a call result nobody consumes, or the tail of a
 copy chain whose only reader was itself dead. Each such temporary costs a
@@ -13,7 +19,7 @@ zero uses across its function, provided the statement's only effect is that
 definition:
 
 - `t = a, b;`   with `t` unread   is deleted
-- `t = y.f;`    (a [`StatementKind::Load`]) with `t` unread is deleted
+- `t = y.f;`    (a load, which is a copy) with `t` unread is deleted
 
 Deletion is a fixpoint: removing `x = a, b` drops the reads of `a` and `b`, so
 a temp whose sole reader was `x` becomes dead in turn and is removed on the same
@@ -24,11 +30,9 @@ The pass is conservative:
 - Only unversioned [`Variable::Local`]s are candidates, so running it on a
   program already in SSA form (every ref versioned) is a no-op. Intended to run
   before SSA conversion, ahead of [`coalesce_copies`](super::coalesce_copies).
-- Only side-effect-free defs are removed. A [`StatementKind::Assign`] or
-  [`StatementKind::Load`] merely names a value, so dropping an unread one is
-  safe. A [`StatementKind::CallAssign`] with unread `rets` is *kept*: the call
-  itself may have effects. [`StatementKind::Store`] defines no variable and is
-  never a candidate.
+- Only side-effect-free defs are removed. A copy merely names a value, so
+  dropping an unread one is safe. A [`StatementKind::CallAssign`] with unread `rets` is *kept*: the call
+  itself may have effects. A store defines no variable and is never a candidate.
 
 Taint-flow semantics are preserved: a variable read by nothing induces no
 dataflow edge, so deleting its def removes only edges that had no sink.
@@ -57,8 +61,7 @@ pub fn eliminate_dead_temps(program: &mut Program) {
 /// of statement this pass may delete — returns that local; otherwise `None`.
 fn removable_dest(kind: &StatementKind) -> Option<&Variable> {
     let dest = match kind {
-        StatementKind::Assign { dest, .. } => dest,
-        StatementKind::Load { dest, .. } => dest,
+        StatementKind::Assign { dest, .. } if dest.is_pathless() => &dest.base,
         _ => return None,
     };
     (dest.version.is_none() && matches!(&dest.variable, Variable::Local(_)))

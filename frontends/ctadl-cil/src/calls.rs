@@ -51,7 +51,7 @@ use cil_reader::flow::{BoundIns, CallKind, CallSite, InsId, MethodOp, TypeOp, Va
 use cil_reader::model::{ResolvedMember, TypeSig};
 use cil_reader::token::TokenType;
 use ctadl_ir::call::CallObject;
-use ctadl_ir::mir::FieldRef;
+use ctadl_ir::mir::PathSegment;
 use ctadl_ir::*;
 
 use crate::hierarchy::resolve_type;
@@ -96,7 +96,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                         }
                         None => em.exp(fnptr),
                     };
-                    em.store(r, FieldRef::symbol(DELEGATE_METHOD), f);
+                    em.store(r, PathSegment::field(DELEGATE_METHOD), f);
                 }
             }
             None => {}
@@ -120,7 +120,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         let mut args: ThinVec<Exp> = site
             .args
             .iter()
-            .map(|a| Exp::Variable(self.copy_in(em, ins, *a, &mut copy_outs)))
+            .map(|a| Exp::variable(self.copy_in(em, ins, *a, &mut copy_outs)))
             .collect();
         let target = site.method.as_ref().and_then(|m| self.target(m));
         let started = match (site.method.as_ref(), &target) {
@@ -143,7 +143,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             },
             CallKind::Instance | CallKind::Ctor => {
                 if let Some(r) = recv.clone() {
-                    args.insert(0, Exp::Variable(r));
+                    args.insert(0, Exp::variable(r));
                 }
                 match &target {
                     Some(t) => direct(self, &t.key, t.params.clone()),
@@ -156,14 +156,14 @@ impl Lower<'_, '_, '_, '_, '_> {
                         match self.virtual_style(m, t, *constrained, r.clone()) {
                             Virtual::Dispatch(style) => style,
                             Virtual::Direct(key, params) => {
-                                args.insert(0, Exp::Variable(r));
+                                args.insert(0, Exp::variable(r));
                                 direct(self, &key, params)
                             }
                         }
                     }
                     (_, _, r) => {
                         if let Some(r) = r {
-                            args.insert(0, Exp::Variable(r));
+                            args.insert(0, Exp::variable(r));
                         }
                         none()
                     }
@@ -171,10 +171,10 @@ impl Lower<'_, '_, '_, '_, '_> {
             }
             CallKind::Indirect { callee } => {
                 if let Some(r) = recv.clone() {
-                    args.insert(0, Exp::Variable(r));
+                    args.insert(0, Exp::variable(r));
                 }
                 CallStyle::FuncPtrCall {
-                    callee: Address::without_offsets(em.var(*callee)),
+                    callee: AccessPath::from(em.var(*callee)),
                     signature: Some(self.names.descriptor(&site.sig, None)),
                 }
             }
@@ -219,7 +219,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         self.raise_out(em);
         if let Some(r) = result {
             let d = em.var(r);
-            em.assign(d, [Exp::Variable(retval.clone())]);
+            em.assign(d, [Exp::variable(retval.clone())]);
         }
         if let Some((style, args)) = then {
             em.push(StatementKind::CallAssign {
@@ -412,14 +412,14 @@ impl Lower<'_, '_, '_, '_, '_> {
         };
         let r = em.var(recv);
         let m = em.fresh("dm");
-        em.load(m.clone(), r.clone(), FieldRef::symbol(DELEGATE_METHOD));
+        em.load(m.clone(), r.clone(), PathSegment::field(DELEGATE_METHOD));
         let mut copy_outs = Vec::new();
-        let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(r)];
+        let mut args: ThinVec<Exp> = thin_vec![Exp::variable(r)];
         for a in &site.args {
-            args.push(Exp::Variable(self.copy_in(em, ins, *a, &mut copy_outs)));
+            args.push(Exp::variable(self.copy_in(em, ins, *a, &mut copy_outs)));
         }
         let style = CallStyle::FuncPtrCall {
-            callee: Address::without_offsets(m),
+            callee: AccessPath::from(m),
             signature: Some(self.names.descriptor(&site.sig, None)),
         };
         self.emit_call(em, style, args, site.result, copy_outs);

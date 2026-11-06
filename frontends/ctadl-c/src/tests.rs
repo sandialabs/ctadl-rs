@@ -5,7 +5,7 @@ Unit tests for the tree-sitter C frontend.
 
 An `Offset` segment is pointer arithmetic and only that; every access that reads or writes
 memory ends in the symbolic field `deref`. A subscript is both: `a[N]` is `*(a + N)`, so it
-lowers to two segments -- a `PathSegment::Offset(N)` on the *address*, written `.[N]` in the
+lowers to two segments -- a `ctadl_ir::PathSegment::Offset(N)` on the *address*, written `.[N]` in the
 test DSL, and the `deref` performed there. So `a[3]` is `a.[3].deref`, and index 0 carries no
 offset segment at all: `a[0]` is `*a`, and `Offset(0)` is the identity on addresses. This is
 the pcode frontend's spelling, so both C frontends name a memory access the same way.
@@ -20,11 +20,16 @@ offset at all -- the very path `a[0]` produces, which is how the two may-alias.
 See `nonconstant_subscript_may_alias_constant`.
 
 A sum with a literal is the same offset where C says it is an address: `*(a + 2)` is `a[2]`
-and `(a + 1)[1]` is `a[2]` (`constant_pointer_offset_deref_is_a_subscript`). Elsewhere the
-untyped parse cannot tell `p + 2` from integer arithmetic, so `q = p + 2` and `p += 2` still
-lower as a merge of the operands and lose the offset.
+and `(a + 1)[1]` is `a[2]` (`constant_pointer_offset_deref_is_a_subscript`). Elsewhere
+`q = p + 2` and `p += 2` lose the offset: with `p` declared a pointer they are a copy of `p`
+(plus the value of a non-constant index, `pointer_plus_index_is_a_copy_of_the_base_plus_the_index_value`),
+and otherwise integer arithmetic, which supplies values only.
+
+A member access through a pointer steps through `deref` first: `p->f` and `(*p).f` are both
+`p.deref.f` (`arrow_and_deref_share_the_deref_prefix`).
 */
 
+use ctadl_ascent::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use ctadl_ir::ParameterType::SharedFields;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
@@ -59,7 +64,8 @@ fn simple_assign() {
 #[test_log::test]
 fn simple_assign_expr() {
     // A binary operator inside a declarator (`int c = a + b;`). An assign can't hold a compound
-    // expression, so the add spills into a temporary: `<t0> = a, b` then `c = <t0>`.
+    // expression, so the add spills into a temporary: `<t0> = value(a), value(b)` (arithmetic
+    // supplies values only) then `c = <t0>`.
     let src = r"
             int simple_assign_expr() {
                 int a = 5;
@@ -70,7 +76,7 @@ fn simple_assign_expr() {
         ";
     let (prog, _dump) = program_from_string(src);
     check_block_count(&prog, 1);
-    check_assign_or_update(&prog, "<t0>", ["a", "b"], None);
+    check_assign_or_update(&prog, "<t0>", ["value(a)", "value(b)"], None);
     check_assign_or_update(&prog, "c", ["<t0>"], None);
 }
 
@@ -207,7 +213,7 @@ fn unique_temps() {
         .iter()
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
-            StatementKind::Assign { dest, .. } => match &dest.variable {
+            StatementKind::Assign { dest, .. } if dest.is_pathless() => match &dest.base.variable {
                 Variable::Local(idx) => {
                     let name = fun.locals.name(*idx);
                     name.starts_with("<t").then(|| name.to_string())
@@ -355,8 +361,8 @@ fn unbraced_if_branch_flows_to_return() {
 #[test_log::test]
 fn unbraced_if_returns_param_field() {
     // An unbraced `if` whose body is a `return` of a pointer field (`if(...) return fb->unbraced;`).
-    // The summary reports param 0's `.unbraced` field reaching the return. (The fall-through path
-    // returns a global, which is not a param flow.)
+    // The summary reports param 0's `.deref.unbraced` field reaching the return. (The fall-through
+    // path returns a global, which is not a param flow.)
     let src = r"
         int f(Foobar *fb) {
             if(fb->ct == 3)
@@ -364,7 +370,7 @@ fn unbraced_if_returns_param_field() {
             return x;
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, ".unbraced");
+    check_returns_param(&summary, 0, ".deref.unbraced");
 }
 
 #[test_log::test]
@@ -383,14 +389,15 @@ fn field_write_flows() {
             return v.f1;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    // direct + deep-path field writes
+    // direct + deep-path field writes; each `->` steps through `deref`
     check_flow(&s, 2, "", 0, ".f2");
-    check_flow(&s, 1, ".f2.f3.f4", 0, ".f2.nf1.y");
-    // blended RHS feeding a field (temp-free)
-    check_flow(&s, 1, ".fa", 0, ".f5");
-    check_flow(&s, 1, ".fb", 0, ".f5");
-    check_flow(&s, 2, "", 0, ".f3");
-    check_flow(&s, 3, "", 0, ".f3");
+    check_flow(&s, 1, ".deref.f2.f3.deref.f4", 0, ".f2.nf1.y");
+    // arithmetic feeding a field supplies values only (temp-free)
+    check_flow(&s, 1, ".deref.fa", 0, ".f5.#value");
+    check_flow(&s, 1, ".deref.fb", 0, ".f5.#value");
+    check_no_flow(&s, 1, ".deref.fa", 0, ".f5");
+    check_flow(&s, 2, "", 0, ".f3.#value");
+    check_flow(&s, 3, "", 0, ".f3.#value");
     // value-field source + field-write-then-return
     check_flow(&s, 1, ".xyz", 0, ".f1");
     check_returns_param(&s, 0, ".f1"); // formal field returned
@@ -669,14 +676,18 @@ fn address_of_element_forms_an_address() {
         }";
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "transfer");
-    let Exp::Address(addr) = &args[0] else {
+    let Exp::Path(addr) = &args[0] else {
         panic!("`&x[1]` should be an address, got {:?}\n{prog}", args[0])
     };
     assert_eq!(addr.base, local_ref(&prog, "f", "x"));
-    let offsets: Vec<i64> = addr.accesses.iter().map(|f| f.offset().0).collect();
-    assert_eq!(offsets, vec![1], "`&x[1]` is `x` at offset 1\n{prog}");
+    assert_eq!(
+        addr.segments.as_slice(),
+        [ctadl_ir::PathSegment::offset(1)],
+        "`&x[1]` is `x` at offset 1\n{prog}"
+    );
     assert!(
-        !statements_of(&prog).any(|s| matches!(s.kind, StatementKind::Load { .. })),
+        !statements_of(&prog).any(|s| matches!(&s.kind, StatementKind::Assign { sources, .. }
+            if sources.iter().filter_map(Exp::access_path).any(|ap| ap.segments.iter().any(ctadl_ir::PathSegment::is_deref)))),
         "taking an element's address must not load the element\n{prog}"
     );
 }
@@ -697,7 +708,7 @@ fn address_of_element_zero_is_the_base_address() {
     let args = call_args(&prog, "f", "take");
     assert_eq!(
         args[0],
-        Exp::Variable(local_ref(&prog, "f", "a")),
+        Exp::variable(local_ref(&prog, "f", "a")),
         "`&a[0]` is the base address, with no offset\n{prog}"
     );
 }
@@ -762,7 +773,7 @@ fn address_of_struct_member_keeps_value_model() {
     let prog = program_from_string(src).0;
     let args = call_args(&prog, "f", "take");
     assert!(
-        matches!(&args[0], Exp::Variable(_)),
+        args[0].variable_ref().is_some(),
         "`&s.f` has no address spelling, so it must stay a loaded value, got {:?}\n{prog}",
         args[0]
     );
@@ -770,10 +781,11 @@ fn address_of_struct_member_keeps_value_model() {
     // program; a call site always has at least two, so scan `f`'s statements directly.)
     let f = function_named(&prog, "f").expect("f is defined");
     assert!(
-        f.blocks
-            .iter()
-            .flat_map(|b| b.statements.iter())
-            .any(|s| matches!(&s.kind, StatementKind::Load { field, .. } if field.as_str() == "f")),
+        f.blocks.iter().flat_map(|b| b.statements.iter()).any(
+            |s| matches!(&s.kind, StatementKind::Assign { dest, sources } if dest.is_pathless()
+                && sources.iter().filter_map(Exp::access_path)
+                    .any(|ap| ap.segments.last() == Some(&ctadl_ir::PathSegment::field("f"))))
+        ),
         "expected a load of the member `f`\n{prog}"
     );
 }
@@ -834,25 +846,27 @@ fn array_of_struct_field_is_index_and_field_sensitive() {
 #[test_log::test]
 fn field_blend_into_field_update() {
     // A field store whose right-hand side is a sum mixing a direct field load with a value routed
-    // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields flow
-    // into the updated field: f5 directly, f1 and f3 via `b`, all into @p0.f4. `f` is `void`, so it
-    // legitimately has no return -- this test is about the field-update flow, not a return value.
+    // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields'
+    // values flow into the updated field: f5 directly, f1 and f3 via `b`, all into the value of
+    // @p0.deref.f4 (arithmetic supplies values only). `f` is `void`, so it legitimately has no
+    // return -- this test is about the field-update flow, not a return value.
     let src = r"
         void f(Donkey *v) {
             int a = b = v->f1 + v->f3;
             int x = v->f4 = v->f5 + b;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 0, ".f5", 0, ".f4"); // direct
-    check_flow(&s, 0, ".f1", 0, ".f4"); // via b
-    check_flow(&s, 0, ".f3", 0, ".f4"); // via b
+    check_flow(&s, 0, ".deref.f5", 0, ".deref.f4.#value"); // direct
+    check_flow(&s, 0, ".deref.f1", 0, ".deref.f4.#value"); // via b
+    check_flow(&s, 0, ".deref.f3", 0, ".deref.f4.#value"); // via b
+    check_no_flow(&s, 0, ".deref.f5", 0, ".deref.f4");
 }
 
 #[test_log::test]
 fn nested_blend_operands_flow() {
     // A nested/parenthesized sum (`a + b + c + (d + e)`). Every operand survives flattening into
-    // temporaries: all five params flow to the return. (unique_temps only checks the temps are
-    // allocated; this checks none of the operands gets lost on the way.)
+    // temporaries: all five params' values flow to the return's value. (unique_temps only checks
+    // the temps are allocated; this checks none of the operands gets lost on the way.)
     let src = r"
         int f(int a, int b, int c, int d, int e) {
             int x = a + b + c + (d + e);
@@ -860,21 +874,21 @@ fn nested_blend_operands_flow() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     for p in 0..5 {
-        check_returns_param(&s, p, "");
+        check_returns_param_value(&s, p, "");
     }
 }
 
 #[test_log::test]
 fn returned_blend_operands_flow() {
-    // A sum used directly as the return value (`return a + x;`). Both operands flow to the return --
-    // flattening a blended expression in return position keeps every source.
+    // A sum used directly as the return value (`return a + x;`). Both operands' values flow to the
+    // return's value -- flattening a blended expression in return position keeps every source.
     let src = r"
         int g(int a, int x) {
             return a + x;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "");
-    check_returns_param(&s, 1, "");
+    check_returns_param_value(&s, 0, "");
+    check_returns_param_value(&s, 1, "");
 }
 
 #[test_log::test]
@@ -1382,10 +1396,9 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
 
 #[test_log::test]
 fn nested_aggregate_initializer_lowers_recursively() {
-    // A nested aggregate recurses, extending the base path by the outer index. A load/store
-    // field is a single symbol, so a two-element write decomposes through an intermediate
-    // load (`t = load m.deref`, then `store t.deref := s`); both halves are asserted, and
-    // index 0 contributes no offset segment.
+    // A nested aggregate recurses, extending the base path by the outer index: the element
+    // write is one store to the composed path `m.deref.deref`, and index 0 contributes no
+    // offset segment.
     let src = r"
         int f() {
             int s = source();
@@ -1394,7 +1407,7 @@ fn nested_aggregate_initializer_lowers_recursively() {
         }";
     let prog = program_from_string(src).0;
     let dump = format!("{prog}");
-    check_loads(&prog, "m.deref"); // the outer element is loaded to address the inner one
+    check_writes_to(&prog, "m.deref.deref", 1);
     // The dump renders locals as `%L{idx}`, so resolve `s` to its interned rendering.
     let s = local_render(&prog, "f", "s");
     assert!(
@@ -1931,9 +1944,10 @@ fn a_goto_still_resolves_in_a_damaged_body() {
 
 #[test_log::test]
 fn compound_assign_accumulates() {
-    // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
-    // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
-    // `+=` adding param 1, both params reach the return. param 1 is the load-bearing assertion --
+    // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to
+    // `y = value(b), value(y)`, keeping the prior value of `y` *and* mixing in the new one, as
+    // integer arithmetic supplies values only. With `y` seeded from param 0 and `+=` adding
+    // param 1, both params' values reach the return. param 1 is the load-bearing assertion --
     // if `+=` were dropped (or lowered as a plain `y = b`), one of these two flows would vanish.
     let src = r"
         int f(int a, int b) {
@@ -1942,8 +1956,24 @@ fn compound_assign_accumulates() {
             return y;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, ""); // old value of y (param 0) survives the +=
-    check_returns_param(&s, 1, ""); // += mixes param 1 in
+    check_returns_param_value(&s, 0, ""); // old value of y (param 0) survives the +=
+    check_returns_param_value(&s, 1, ""); // += mixes param 1 in
+}
+
+#[test_log::test]
+fn compound_assign_to_a_pointer_copies_it() {
+    // `p += n` on a pointer is pointer arithmetic: `p = value(n), p`, so the memory behind the
+    // incoming `p` is still reachable through the result, and `n` supplies only its value.
+    let src = r"
+        char *f(char *p, int n) {
+            p += n;
+            return p;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "@p0", ["value(@p1)", "@p0"], None);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param_value(&s, 1, "");
 }
 
 #[test_log::test]
@@ -1967,16 +1997,18 @@ fn increment_decrement_reassign_local() {
 fn field_increment_is_update() {
     // Incrementing through a field (`p->x++`) routes through the functional `update` path on the
     // formal, exactly like a field store does (see `field_assignment_is_update`) -- it is not a plain
-    // assign. The new value is a flatten temp (`@p0.x + 1`), so we assert only that an `update` of
-    // `@p0.x` exists, leaving the temp source unpinned.
+    // assign. The new value is a flatten temp (`value(@p0.deref.x), 1`), so we assert only that a
+    // store to `@p0.deref.x` exists, leaving the temp source unpinned.
     let src = r"
         void f(Field *p) {
             p->x++;
         }";
     let prog = program_from_string(src).0;
-    // The field increment routes through an `update` of @p0.x (not a plain assign); the new value is
-    // an unpinnable flatten temp, so we assert only that exactly one such update exists.
-    check_writes_to(&prog, "@p0.x", 1);
+    // The field increment routes through a store to @p0.deref.x (not a plain assign); the new
+    // value is an unpinnable flatten temp, so we assert only that exactly one such store exists.
+    check_writes_to(&prog, "@p0.deref.x", 1);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_flow(&s, 0, ".deref.x", 0, ".deref.x.#value");
 }
 
 // --- taint through MULTIPLE function-pointer stores into one aggregate ---------------
@@ -2071,27 +2103,50 @@ fn field_non_interference() {
 #[test_log::test]
 fn arrow_field_returns_param() {
     // Reading a field through an arrow (`return p->x;`) on a pointer parameter summarizes as the
-    // access path @p0.x reaching the return. (The equivalent `(*p).x` spelling is covered by
+    // access path @p0.deref.x reaching the return: `->` steps through `deref` to the memory
+    // `p` points to. (The equivalent `(*p).x` spelling is covered by
     // `deref_paren_field_equivalent`.)
     let src = r"
         int f(Field *p) {
             return p->x;
         }";
-    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, ".x");
+    let prog = program_from_string(src).0;
+    check_loads(&prog, "@p0.deref.x");
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, ".deref.x");
+    check_does_not_return_param(&s, 0, ".x");
 }
 
 #[test_log::test]
 fn deref_paren_field_equivalent() {
     // `(*p).x` is the same field access as `p->x` (see `arrow_field_returns_param`), yielding
-    // @p0.x -> return. `flatten_lvalue` resolves the field's object (`(*p)`) recursively --
-    // peeling the paren and deref -- so it resolves like `p->x`.
+    // @p0.deref.x -> return. `flatten_lvalue` resolves the field's object (`(*p)`) as the
+    // location `*p` names, `p.deref`, so it resolves like `p->x`.
     let src = r"
         int f(Field *p) {
             return (*p).x;
         }";
-    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, ".x");
+    let prog = program_from_string(src).0;
+    check_loads(&prog, "@p0.deref.x");
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, ".deref.x");
+}
+
+#[test_log::test]
+fn arrow_and_deref_share_the_deref_prefix() {
+    // `*p` and `p->f` name memory behind the same `p.deref`: a store through one is observed
+    // by a read through the other's prefix. `p->next->v` is the one path
+    // `p.deref.next.deref.v`.
+    let src = r"
+        struct N { struct N *next; int v; };
+        void set(struct N *p, int x) { p->v = x; }
+        struct N get(struct N *p) { return *p; }
+        int deep(struct N *p) { return p->next->v; }";
+    let prog = program_from_string(src).0;
+    let (s, si) = get_summary(prog).unwrap();
+    check_flow_in(&s, &si, "set", 1, "", 0, ".deref.v");
+    check_returns_param_in(&s, &si, "get", 0, ".deref");
+    check_returns_param_in(&s, &si, "deep", 0, ".deref.next.deref.v");
 }
 
 #[test_log::test]
@@ -2163,7 +2218,7 @@ fn elvis_ternary_propagates_struct_field() {
             return p->x ?: c;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, ".x");
+    check_returns_param(&s, 0, ".deref.x");
     check_returns_param(&s, 1, "");
 }
 
@@ -2393,14 +2448,17 @@ fn struct_by_value_through_call() {
 
 #[test_log::test]
 fn unary_ops_blend_through() {
-    // Unary operators are value-preserving for taint: negation, bitwise-not, and logical-not all carry
-    // their operand to the result. (`!x` arguably should not -- it yields 0/1 -- but the frontend
-    // treats it as a blend like the others; we pin the actual behavior.) Each is its own parse so a
-    // single operator failing is isolated in the assertion message.
-    for op in ["-", "~", "!"] {
-        let src = format!("int f(int x) {{ return {op}x; }}");
-        let (s, _si) = get_summary(program_from_string(&src).0).unwrap();
-        check_returns_param(&s, 0, "");
+    // Unary operators supply their operand's value only: negation, bitwise-not, and logical-not
+    // all carry `value(x)` to the result, so the result's value is computed from `x`'s but
+    // nothing behind `x` is reachable through it. Each is its own parse so a single operator
+    // failing is isolated in the assertion message.
+    for op in ["-", "~", "!", "+"] {
+        let src = format!("int f(int *x) {{ return {op}x; }}");
+        let prog = program_from_string(&src).0;
+        check_assign_or_update(&prog, "<t0>", ["value(@p0)"], None);
+        let (s, _si) = get_summary(prog).unwrap();
+        check_returns_param_value(&s, 0, "");
+        check_does_not_return_param(&s, 0, ".deref");
     }
 }
 
@@ -2530,15 +2588,22 @@ fn for_update_prefix_decrement_lowers() {
 #[test_log::test]
 fn post_increment_value_is_operand() {
     // `int x = y++;` consumes the *value* of `y++` (post-increment yields the old y, then increments),
-    // so y flows to x and on to the return -- the value-as-subexpression behavior. (The frontend
-    // loses the pre/post distinction, but either way the operand value reaches x.)
+    // so y's value flows to x and on to the return -- the value-as-subexpression behavior. (The
+    // frontend loses the pre/post distinction, but either way the operand value reaches x.) An
+    // integer's increment supplies its value only; a pointer's is a copy, so `q = p++` still
+    // reaches the memory behind `p`.
     let src = r"
         int f(int y) {
             int x = y++;
             return x;
+        }
+        char *g(char *p) {
+            char *q = p++;
+            return q;
         }";
-    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "");
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_value_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
 }
 
 #[test_log::test]
@@ -2701,15 +2766,86 @@ fn comma_operator_yields_rhs() {
 #[test_log::test]
 fn short_circuit_both_operands_flow() {
     // A short-circuit `a && b` yields a 0/1 value derived from both operands (b only when a is truthy).
-    // The frontend treats it as a blend, so both p0 and p1 flow to the return -- the sound over-approx
-    // (it does not try to model that `b` may go unevaluated). Pins the blend behavior.
+    // Like every logical operator it supplies values only, so both p0's and p1's values flow to the
+    // return's value -- the sound over-approx (it does not try to model that `b` may go
+    // unevaluated).
     let src = r"
         int f(int a, int b) {
             return a && b;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "");
-    check_returns_param(&s, 1, "");
+    check_returns_param_value(&s, 0, "");
+    check_returns_param_value(&s, 1, "");
+}
+
+#[test_log::test]
+fn comparisons_supply_values_only() {
+    // Every comparison supplies its operands' values: `x = a < b` is `value(a), value(b)`, with
+    // nothing behind `a` or `b` reachable through `x`.
+    for op in ["<", ">", "!=", "==", "<=", ">="] {
+        let src = format!("int f(int *a, int *b) {{ int x = a {op} b; return x; }}");
+        let prog = program_from_string(&src).0;
+        check_assign_or_update(&prog, "<t0>", ["value(@p0)", "value(@p1)"], None);
+        let (s, _si) = get_summary(prog).unwrap();
+        check_returns_param_value(&s, 0, "");
+        check_returns_param_value(&s, 1, "");
+        check_does_not_return_param(&s, 0, ".deref");
+    }
+}
+
+#[test_log::test]
+fn pointer_plus_index_is_a_copy_of_the_base_plus_the_index_value() {
+    // `q = p + i` with a non-constant `i` is `q = p, value(i)`: `q` is a copy of `p`, so the
+    // memory behind `p` is reachable through `q`, and `i` supplies only its value. The base is
+    // found on either side of `+`, through a cast to a pointer type, and through `&a[k]`; `p - i`
+    // is the same, while `p - q` of two pointers is an integer.
+    let src = r"
+        char *add(char *p, int i) { char *q = p + i; return q; }
+        char *commuted(char *p, int i) { return i + p; }
+        char *sub(char *p, int i) { return p - i; }
+        char *cast(long p, int i) { return (char *)p + i; }
+        long diff(char *p, char *q) { return p - q; }
+        int ints(int a, int i) { return a + i; }";
+    let prog = program_from_string(src).0;
+    let add = function_named(&prog, "add").unwrap();
+    let t0 = access_path_from_str("<t0>", &add.locals);
+    let expected = StatementKind::assign(
+        t0,
+        [
+            Exp::variable(ctadl_ir::VariableRef::new_parameter(0u32.into())),
+            Exp::value(ctadl_ir::VariableRef::new_parameter(1u32.into())),
+        ],
+    );
+    assert!(
+        add.blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .any(|s| s.kind == expected),
+        "expected `{expected}` in\n{prog}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    for f in ["add", "commuted", "sub", "cast"] {
+        check_returns_param_in(&s, &si, f, 0, "");
+        check_returns_param_value_in(&s, &si, f, 1, "");
+    }
+    check_returns_param_value_in(&s, &si, "diff", 0, "");
+    check_returns_param_value_in(&s, &si, "diff", 1, "");
+    check_returns_param_value_in(&s, &si, "ints", 0, "");
+    check_returns_param_value_in(&s, &si, "ints", 1, "");
+}
+
+#[test_log::test]
+fn pointer_member_plus_index_is_a_copy_of_the_member() {
+    // A record member declared as a pointer is a pointer base too: `s->buf + n` copies
+    // `s->buf`, so the bytes behind it stay reachable through the result.
+    let src = r"
+        struct S { char *buf; int len; };
+        char *at(struct S *s, int n) { return s->buf + n; }
+        int end(struct S *s, int n) { return s->len + n; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "at", 0, ".deref.buf");
+    check_returns_param_value_in(&s, &si, "at", 1, "");
+    check_returns_param_value_in(&s, &si, "end", 0, ".deref.len");
 }
 
 #[test_log::test]
@@ -2821,8 +2957,67 @@ fn addr_of_a_local_array_is_not_a_cell() {
         int f(int v) { int a[4]; put((int *)&a, v); return a[0]; }";
     let (prog, dump) = program_from_string(src);
     let a = local_render(&prog, "f", "a");
-    assert!(check_match(&dump, &format!("load {a}.deref")), "{dump}");
+    assert!(check_match(&dump, &format!("= {a}.deref\n")), "{dump}");
     assert!(check_no_match(&dump, &format!("{a}.deref.deref")), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_record_is_a_cell() {
+    // An address-taken record lives behind `deref` like a scalar (S19): `s.f` is `s.deref.f`
+    // and `&s` is `s`, so a callee's `p->f = v` (`@p0.deref.f`) is observed at the caller's
+    // `s.f`. Without the cell, `&s` would be `s` and the callee's write would land on
+    // `s.deref.f`, a path `s.f` never names. In one block, `p = &s; p->f = v` resolves through
+    // the alias table to `s.deref.f` directly. (Across blocks the store is `p.deref.f`, which the
+    // semantics sends back to `s.deref.f`; the index does not, for a local: the backward alias
+    // rule row of `docs/limitations.md`.)
+    let src = r"
+        struct S { int f; int g; };
+        void init(struct S *p, int v) { p->f = v; }
+        int f(int v) { struct S s; init(&s, v); return s.f; }
+        int h(int v) { struct S s; struct S *p = &s; p->f = v; return s.f; }
+        int other(int v) { struct S s; init(&s, v); return s.g; }";
+    let (prog, dump) = program_from_string(src);
+    let s_f = format!("{}.deref.f", local_render(&prog, "f", "s"));
+    assert!(check_match(&dump, &s_f), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "h", 0, "");
+    check_does_not_return_param_in(&s, &si, "other", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_global_record_is_a_copy() {
+    // Limitation pin (module docs, "Address-taken globals"): a global is not a cell, so `&g`
+    // is a copy of `$globals.g` and the callee's `p->f = v` lands on `$globals.g.deref.f`,
+    // which `g.f` (`$globals.g.f`) does not name.
+    let src = r"
+        struct S { int f; };
+        struct S g;
+        void init(struct S *p, int v) { p->f = v; }
+        int f(int v) { init(&g, v); return g.f; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_union_is_a_cell_and_its_members_still_collapse() {
+    // An address-taken union's storage is `u.deref`, and its members still share `$union`.
+    let src = r"
+        union U { int a; int b; };
+        void keep(union U *p);
+        int f(int src) { union U u; keep(&u); u.a = src; return u.b; }";
+    let prog = program_from_string(src).0;
+    let f = function_named(&prog, "f").unwrap();
+    let dest = access_path_from_str("u.deref.$union", &f.locals);
+    assert!(
+        f.blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .any(|s| matches!(&s.kind, StatementKind::Assign { dest: d, .. } if *d == dest)),
+        "expected a store to `u.deref.$union`\n{prog}"
+    );
     let (s, si) = get_summary(prog).unwrap();
     check_returns_param_in(&s, &si, "f", 0, "");
 }
@@ -3206,8 +3401,9 @@ fn compound_literal_argument_carries_value() {
     let param = exp_from_str("@p0", &ctadl_ir::Locals::default());
     let object = statements_of(&prog)
         .find_map(|stmt| match &stmt.kind {
-            StatementKind::Store { dest, field, value }
-                if field.as_str() == "start" && *value == param =>
+            StatementKind::Assign { dest, sources }
+                if dest.segments.last() == Some(&ctadl_ir::PathSegment::field("start"))
+                    && sources.as_slice() == [param.clone()] =>
             {
                 Some(dest.base.clone())
             }
@@ -3221,7 +3417,7 @@ fn compound_literal_argument_carries_value() {
         .expect("checked above that the call exists");
     assert_eq!(
         args.as_slice(),
-        [Exp::Variable(object)],
+        [Exp::variable(object)],
         "expected the call's argument to be the literal's own object\n{prog}"
     );
 }
@@ -3250,7 +3446,7 @@ fn compound_literal_array_elements_flow() {
         int f(int a) { return use((int[]){ a, 0 }); }";
     let prog = program_from_string(src).0;
     let object = match call_args(&prog, "f", "use").as_slice() {
-        [Exp::Variable(v)] => v.clone(),
+        [Exp::Path(ap)] if ap.is_pathless() => ap.base.clone(),
         args => panic!("expected `use` to take just the literal's object, got {args:?}\n{prog}"),
     };
     // Recover the object's name so the element stores can be spelled in the path DSL. It is the
@@ -3317,7 +3513,7 @@ fn asm_multiple_outputs_all_written() {
         check_writes_to(&prog, out, 1);
     }
     let (s, _si) = get_summary(prog).unwrap();
-    check_returns_param(&s, 0, "");
+    check_returns_param_value(&s, 0, "");
 }
 
 #[test_log::test]
@@ -3355,8 +3551,8 @@ fn asm_is_not_a_frontend_gap() {
             return x + y + z + q;
         }"#;
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "");
-    check_returns_param(&s, 1, "");
+    check_returns_param_value(&s, 0, "");
+    check_returns_param_value(&s, 1, "");
 }
 
 #[test_log::test]
@@ -3371,7 +3567,7 @@ fn asm_output_into_struct_field_is_stored() {
             __asm__ ("nop" : "=m"(p->f) : "r"(a) : "memory");
         }"#;
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 0, "", 1, ".f");
+    check_flow(&s, 0, "", 1, ".deref.f");
 }
 
 #[test_log::test]
@@ -3607,7 +3803,7 @@ fn generic_selection_in_store_position_writes_through() {
         struct S { int f; };
         void g(struct S *p, int x) { _Generic(p, struct S *: p, default: p)->f = x; }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, ".f");
+    check_flow(&s, 1, "", 0, ".deref.f");
 }
 
 #[test_log::test]
@@ -4390,15 +4586,14 @@ fn a_function_pointer_reference_resolves_within_its_own_file() {
 #[test_log::test]
 fn store_through_cast_of_a_constant_writes_through() {
     // The store lands on a location the rest of the program can name, instead of on a dead
-    // temp. `<t0>` is the address `$globals.<address 0x1000>` loaded out of the globals object
-    // -- the same two-statement shape `((struct S *)t->q)->f = x` lowers to, which is the point:
-    // a constant address is just another way of spelling the pointer.
+    // temp: the field of the object at `$globals.<address 0x1000>`, the same shape
+    // `((struct S *)t->q)->f = x` lowers to, which is the point: a constant address is just
+    // another way of spelling the pointer.
     let src = r"
         struct S { int f; };
         void e(int x) { ((struct S *)0x1000)->f = x; }";
     let (prog, _dump) = program_from_string(src);
-    check_loads(&prog, "$globals.<address 0x1000>");
-    check_assign_or_update(&prog, "<t0>.f", ["@p0"], None);
+    check_assign_or_update(&prog, "$globals.<address 0x1000>.deref.f", ["@p0"], None);
 }
 
 #[test_log::test]
@@ -4443,20 +4638,20 @@ fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
         struct S { int f; };
         void a(char *p, int x) { ((struct S *)p)->f = x; }";
     let (prog, _) = program_from_string(thru_param);
-    check_assign_or_update(&prog, "@p0.f", ["@p1"], None);
+    check_assign_or_update(&prog, "@p0.deref.f", ["@p1"], None);
 
     let thru_field = r"
         struct S { int f; };  struct T { char *q; };
         void b(struct T *t, int x) { ((struct S *)t->q)->f = x; }";
     let (prog, _) = program_from_string(thru_field);
-    check_loads(&prog, "@p0.q");
-    check_assign_or_update(&prog, "<t0>.f", ["@p1"], None);
+    check_loads(&prog, "@p0.deref.q");
+    check_assign_or_update(&prog, "<t0>.deref.f", ["@p1"], None);
 
     let deref_of_field = r"
         struct T { char *q; };
         void c(struct T *t, int x) { *(int *)(t->q) = x; }";
     let (prog, _) = program_from_string(deref_of_field);
-    check_loads(&prog, "@p0.q");
+    check_loads(&prog, "@p0.deref.q");
     check_assign_or_update(&prog, "<t0>.deref", ["@p1"], None);
 
     let thru_arithmetic = r"
@@ -4464,7 +4659,7 @@ fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
         void d(char *p, int x) { ((struct S *)(p - 8))->f = x; }";
     let (prog, _) = program_from_string(thru_arithmetic);
     check_assign_or_update(&prog, "<t0>", ["@p0", "#8"], None);
-    check_writes_to(&prog, "<t0>.f", 1);
+    check_writes_to(&prog, "<t0>.deref.f", 1);
 
     // and none of the four says anything about the frontend.
     let reports = reports_for(&format!(
@@ -4580,7 +4775,7 @@ fn taint_returns_through_a_double_pointer_return() {
     );
     check_return_arity(&prog, "argv_of", 1);
     let (summary, _) = get_summary(prog).expect("must verify");
-    check_returns_param(&summary, 0, ".argv");
+    check_returns_param(&summary, 0, ".deref.argv");
 }
 
 #[test_log::test]
@@ -5185,9 +5380,10 @@ fn a_cast_of_a_signed_operand_reads_no_type_name() {
         "a type name is not a global\n{dump}"
     );
     let (s, si) = get_summary(prog).unwrap();
-    check_returns_param_in(&s, &si, "neg", 0, "");
-    check_returns_param_in(&s, &si, "pos", 0, "");
-    check_returns_param_in(&s, &si, "pos", 1, "");
+    // A sign is arithmetic: it supplies the operand's value.
+    check_returns_param_value_in(&s, &si, "neg", 0, "");
+    check_returns_param_value_in(&s, &si, "pos", 0, "");
+    check_returns_param_value_in(&s, &si, "pos", 1, "");
 }
 
 #[test_log::test]
@@ -5200,9 +5396,9 @@ fn a_cast_of_a_dereference_reads_the_pointee() {
     assert!(check_no_match(&dump, "$globals"), "{dump}");
     check_loads(&prog, "@p0.deref");
     let s = get_summary(prog).unwrap().0;
-    check_returns_param(&s, 0, ".deref");
+    check_returns_param_value(&s, 0, ".deref");
     check_does_not_return_param(&s, 0, "");
-    check_returns_param(&s, 1, "");
+    check_returns_param_value(&s, 1, "");
 }
 
 #[test_log::test]
@@ -5237,9 +5433,18 @@ fn a_parenthesized_variable_minus_one_is_a_subtraction() {
         long global(void) { return (g) - 1; }
         long shadow(long v) { long T = v; return (T) - 1; }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param_in(&s, &si, "param", 0, "");
-    check_returns_global_in(&s, &si, "global", ".g");
-    check_returns_param_in(&s, &si, "shadow", 0, "");
+    // A subtraction of integers supplies values only.
+    check_returns_param_value_in(&s, &si, "param", 0, "");
+    check_flow_in(
+        &s,
+        &si,
+        "global",
+        GLOBALS_INDEX,
+        ".g",
+        RETURN_INDEX,
+        ".#value",
+    );
+    check_returns_param_value_in(&s, &si, "shadow", 0, "");
 }
 
 #[test_log::test]
@@ -5380,10 +5585,26 @@ fn a_prototype_makes_a_parenthesized_call_a_call() {
 // the object `hook` and names it; `$globals.cfg.handler` is a location *inside* `cfg`,
 // reached by a load, exactly like the local `s.f`.
 
+/// The rendering of the variable a copy from `source` (an access-path DSL string) defines.
+fn loaded_from(prog: &ctadl_ir::Program, source: &str) -> String {
+    let locals = &get_only_function(prog).expect("one function").locals;
+    let ap = crate::test_utils::access_path_from_str(source, locals);
+    statements_of(prog)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign { dest, sources }
+                if dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&ap)) =>
+            {
+                Some(dest.to_string())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no load of {source}\n{prog}"))
+}
+
 #[test_log::test]
 fn a_call_through_a_field_of_a_global_is_indirect() {
-    // `.field` on a file-scope object. The field is loaded out of the global and called
-    // through.
+    // `.field` on a file-scope object. The field is read out of the global, as one composed
+    // access path, and called through.
     let src = r"
         struct ops { void (*f)(int); };
         struct ops g;
@@ -5397,9 +5618,8 @@ fn a_call_through_a_field_of_a_global_is_indirect() {
         function_named(&prog, "g.f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.g");
-    check_loads(&prog, "<t1>.f");
-    let callee = local_render(&prog, "fire", "<t2>");
+    check_loads(&prog, "$globals.g.f");
+    let callee = loaded_from(&prog, "$globals.g.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5408,7 +5628,7 @@ fn a_call_through_a_field_of_a_global_is_indirect() {
 
 #[test_log::test]
 fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
-    // `->field` on a file-scope pointer. Same two loads: `->` is a field access here.
+    // `->field` on a file-scope pointer. Same read: `->` is a field access here.
     let src = r"
         struct ops { void (*f)(int); };
         struct ops *gp;
@@ -5422,9 +5642,12 @@ fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
         function_named(&prog, "gp->f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.gp");
-    check_loads(&prog, "<t1>.f");
-    let callee = local_render(&prog, "fire", "<t2>");
+    // `gp->f` is `gp.deref.f`: the global pointer is read, then its member.
+    let member = format!(" = {}.deref.f", loaded_from(&prog, "$globals.gp"));
+    let callee = dump
+        .lines()
+        .find_map(|l| l.strip_prefix("assign ")?.strip_suffix(member.as_str()))
+        .unwrap_or_else(|| panic!("no load of `gp`'s member `f`\n{dump}"));
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5450,10 +5673,8 @@ fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
         function_named(&prog, "ga[i].f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.ga");
-    check_loads(&prog, "<t1>.deref");
-    check_loads(&prog, "<t2>.f");
-    let callee = local_render(&prog, "fire", "<t3>");
+    check_loads(&prog, "$globals.ga.deref.f");
+    let callee = loaded_from(&prog, "$globals.ga.deref.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"

@@ -1,16 +1,23 @@
 /*!
-This module implements Cytron et al's phi placement and SSA renaming.
+This module implements Cytron et al's phi placement and SSA renaming, and the IR passes that
+run around it.
+
+SSA conversion is part of the semantics (S16 of `docs/ir.md`), not a pass to be checked: it is
+what makes a variable one cell. It versions a variable at an assignment whose destination path
+is empty, and never at a store, which defines nothing and reads its base. Each pass's module
+documentation opens with its correctness argument under S18, and
+`frontends/ctadl-flowy/tests/passes.rs` checks it against the reference implementation
+([`crate::semantics`]).
 
 The SSA form is *pruned*: a phi for a variable goes only where the variable is live on entry to
 the block, so no phi is placed that no later use can observe.
 
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
-- Right before each `return`, there is a `param-flow` instruction that indicates, for each formal
-  parameter to the function, which version of that parameter is written back to the caller. This
-  is always the entry version, version 0: rebinding a parameter does not change the caller's
-  argument (see [`ParameterType`]). This helps generate code that tracks flows on formal
-  parameters.
+- There is exactly one `return`. The version of a parameter, and of the global heap, that reaches
+  the caller is always the entry version, version 0: rebinding a parameter does not change the
+  caller's argument (see [`ParameterType`]), and nothing rebinds the global heap (the verifier
+  rejects it). Codegen writes version 0 back to the formals at the `return`.
 
 */
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -34,9 +41,6 @@ pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
 
 mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
-
-mod frame;
-pub use frame::{FrameWrites, coarsen_frame_updates, coarsen_frame_updates_function};
 
 mod mem2reg;
 use mem2reg::log_escape_note;
@@ -70,9 +74,6 @@ struct SsaRename {
 /// [`run_pipeline_with_threads`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
-    /// How frame writes reach SSA. [`FrameWrites::Store`] runs [`coarsen_frame_updates`] first,
-    /// which turns the frame's functional updates into stores.
-    pub frame: FrameWrites,
     /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
@@ -101,9 +102,6 @@ impl Pipeline {
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
-            // The frame stays versioned for the slots mem2reg keeps in memory, so a write to one
-            // of them overwrites what it held instead of joining every other value stored there.
-            frame: FrameWrites::Update,
             dead_temps: true,
             coalesce: true,
             // An escaped frame address is assumed to reach 8 slots. It loses no flow in the
@@ -124,7 +122,6 @@ impl Pipeline {
     #[inline]
     pub fn none() -> Self {
         Pipeline {
-            frame: FrameWrites::Update,
             dead_temps: false,
             coalesce: false,
             mem2reg: None,
@@ -161,14 +158,6 @@ impl Pipeline {
         self
     }
 
-    /// Sets [`Pipeline::frame`], for the same reason as [`Pipeline::prune`].
-    #[inline]
-    #[must_use]
-    pub fn frame(mut self, frame: FrameWrites) -> Self {
-        self.frame = frame;
-        self
-    }
-
     /// A short name for this pipeline, to record in a log line or a report which passes ran.
     /// For example, `fs+dt+co+ssa(prune)+cp`, or `none`.
     ///
@@ -176,9 +165,6 @@ impl Pipeline {
     /// same string only when they are equal.
     pub fn tag(&self) -> String {
         let mut parts: Vec<String> = Vec::with_capacity(6);
-        if self.frame == FrameWrites::Store {
-            parts.push("fs".into());
-        }
         if self.dead_temps {
             parts.push("dt".into());
         }
@@ -225,7 +211,6 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
 /// What [`run_function_pipeline`] did to one function, summed over a program for the log.
 #[derive(Debug, Default, Clone)]
 struct PipelineStats {
-    coarsened: usize,
     dead_temps: usize,
     coalesced: usize,
     copy_prop: usize,
@@ -236,7 +221,6 @@ struct PipelineStats {
 impl std::ops::Add for PipelineStats {
     type Output = Self;
     fn add(mut self, o: Self) -> Self {
-        self.coarsened += o.coarsened;
         self.dead_temps += o.dead_temps;
         self.coalesced += o.coalesced;
         self.copy_prop += o.copy_prop;
@@ -262,8 +246,6 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
 pub struct FunctionModes {
     /// Forces or forbids full stack-slot promotion (see [`promote_stack_slots_with`]).
     pub mem2reg: HashMap<String, FullMode>,
-    /// Overrides [`Pipeline::frame`].
-    pub frame: HashMap<String, FrameWrites>,
 }
 
 /// [`run_pipeline_with_threads`], with the overrides in `modes` for the functions it names.
@@ -306,11 +288,6 @@ pub fn run_pipeline_with(
                 .reduce(PipelineStats::default, |a, b| a + b)
         })
     };
-    log::debug!(
-        "frame({}): coarsened {} frame update(s) into stores",
-        p.frame.tag(),
-        stats.coarsened
-    );
     if p.dead_temps {
         log::debug!(
             "dead_temps: deleted {} dead temporary def(s)",
@@ -345,9 +322,6 @@ fn run_function_pipeline(
     modes: &FunctionModes,
 ) -> PipelineStats {
     let mut stats = PipelineStats::default();
-    if modes.frame.get(&f.name).copied().unwrap_or(p.frame) == FrameWrites::Store {
-        stats.coarsened = coarsen_frame_updates_function(f);
-    }
     if p.dead_temps {
         stats.dead_temps = eliminate_dead_temps_function(f);
     }
@@ -416,8 +390,7 @@ pub fn transform_program(program: &mut Program, prune: bool) {
 /// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
 /// has exactly one `return`, and that `return` is the terminator of the single exit block this
 /// pass adds. Every variable use names a version, and version 0 is the incoming version. The
-/// form is pruned: every phi is reached by some non-phi use (see the module documentation). The
-/// exit param-flow writes back every parameter at its entry version.
+/// form is pruned: every phi is reached by some non-phi use (see the module documentation).
 #[inline]
 pub fn transform(function: &mut FunctionData, prune: bool) {
     transform_with(function, prune, PhiMode::Pruned);
@@ -453,8 +426,8 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
         let variable = VariableRef::new_parameter(idx);
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
-            dest: variable.with_version(0),
-            sources: smallvec![Exp::Variable(variable)],
+            dest: variable.with_version(0).into(),
+            sources: smallvec![Exp::variable(variable)],
         }));
     }
     // Set version 0 of global heap to global
@@ -462,8 +435,8 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
         let variable = VariableRef::new_global();
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
-            dest: variable.with_version(0),
-            sources: smallvec![Exp::Variable(variable)],
+            dest: variable.with_version(0).into(),
+            sources: smallvec![Exp::variable(variable)],
         }));
     }
     log::trace!("assume that version 0 is initial version");
@@ -536,7 +509,7 @@ pub fn prune_unreachable_nodes(function: &mut FunctionData) {
 /// ```text
 /// block_0: ... _$ret = a; goto 2;
 /// block_1: ... _$ret = b; goto 2;
-/// block_2: param-flow <params+globals>; return _$ret;
+/// block_2: return _$ret;
 /// ```
 ///
 /// At the end, the function will have exactly one return and it'll be the terminator of the
@@ -556,25 +529,11 @@ fn complete(function: &mut FunctionData) {
         })
         .collect();
 
-    // Exit block observes parameters and returns retvars. Every parameter is written back at its
-    // entry version, because rebinding a parameter does not reach the caller. It goes in already
-    // versioned, so that renaming neither gives it its exit version nor places phis to merge
-    // that version.
-    let params = function
-        .params
-        .iter_enumerated()
-        .map(|(i, _)| VariableRef::new_parameter(i).with_version(0))
-        .collect();
-    let param_flow = StatementKind::ParamFlow {
-        params,
-        global: VariableRef::new_global(),
-    };
-    let exit_block_contents = BasicBlockData::new_stmts(
-        [Statement::new_kind(param_flow)].into_iter().collect(),
-        Some(Terminator::new_kind(TerminatorKind::Return {
-            args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
-        })),
-    );
+    // The exit block returns retvars.
+    let exit_block_contents =
+        BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
+            args: retvars.iter().map(|v| Exp::variable(v.clone())).collect(),
+        })));
 
     // Rewrite blocks to target single exit block
     let exit = function.blocks.next_index();
@@ -799,7 +758,7 @@ impl SsaRename {
         use StatementKind::*;
 
         for (_z, stmt) in blocks[x].iter_enumerated_mut() {
-            // Ensure to rewrite assignment-uses and param-flow-uses
+            // Rewrite every use but a phi's, whose operands are renamed from the predecessors
             if !matches!(stmt.kind, Phi { .. }) {
                 // A use that already names a version is left as it is (see `complete`).
                 for v in stmt.iter_src_var_mut().filter(|v| v.version.is_none()) {

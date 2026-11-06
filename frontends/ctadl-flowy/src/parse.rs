@@ -91,12 +91,6 @@ pub struct Stmt<'s> {
 
 #[derive(Debug)]
 pub enum StmtKind<'s> {
-    /// `dest = [source := value];`
-    Update {
-        dest: AccessPath<'s>,
-        source: AccessPath<'s>,
-        value: Operand<'s>,
-    },
     /// `dest = a, b, ...;`
     Assign {
         dest: AccessPath<'s>,
@@ -155,6 +149,10 @@ pub struct AccessPath<'s> {
 pub enum Segment<'s> {
     /// `.foo`
     Field(&'s str),
+    /// `.deref`
+    Deref,
+    /// `.#value`
+    Value,
     /// `.[8]`
     Offset(i64),
     /// `.*`, which parses but is not a path segment, so lowering rejects it. The position
@@ -218,12 +216,8 @@ peg::parser! {
             = start:position!() kind:stmt_kind() end:position!()
             { Stmt { kind, span: start..end, pos: lines.pos(start) } }
 
-        // `x2 = [x1.foo := val];` is a functional update; see the crate docs.
         rule stmt_kind() -> StmtKind<'input>
-            = dest:access_path() _ "=" _
-              "[" _ source:access_path() _ ":=" _ value:operand() _ "]" _ ";"
-              { StmtKind::Update { dest, source, value } }
-            / dest:access_path() _ "=" _ sources:(operand() ++ (_ "," _)) _ ";"
+            = dest:access_path() _ "=" _ sources:(operand() ++ (_ "," _)) _ ";"
               { StmtKind::Assign { dest, sources } }
             / dest:access_path() _ "=" _ callee:access_path() _ args:actuals() _ ";"
               { StmtKind::AssignCall { dest, callee, args } }
@@ -255,8 +249,8 @@ peg::parser! {
 
         rule segment() -> Segment<'input>
             = p:position!() "." _ "*" { Segment::Star(lines.pos(p)) }
-            / "." _ "#value" { Segment::Field(ctadl_ir::mir::VALUE_FIELD) }
-            / "." _ f:ident() { Segment::Field(f.name) }
+            / "." _ "#value" { Segment::Value }
+            / "." _ f:ident() { if f.name == "deref" { Segment::Deref } else { Segment::Field(f.name) } }
             / "." _ "[" _ n:int() _ "]" { Segment::Offset(n) }
 
         // A keyword is a whole word, so it cannot run into an identifier: `returnx;` is a parse

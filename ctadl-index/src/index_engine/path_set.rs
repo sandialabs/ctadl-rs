@@ -122,8 +122,6 @@ pub struct PathSet {
     max_depth: usize,
     /// Calls to [`PathSet::split_trailing_offset`] on a non-member, each a bug.
     split_misses: AtomicUsize,
-    /// The path `#value`, when it is a member: the one `rest` that [`PathSet::concat`] absorbs.
-    value: Option<Path>,
 }
 
 impl PathSet {
@@ -146,7 +144,6 @@ impl PathSet {
             wild: Vec::new(),
             max_depth: 0,
             split_misses: AtomicUsize::new(0),
-            value: None,
         };
         for &p in &members {
             set.bits[p.raw() as usize / 64] |= 1 << (p.raw() % 64);
@@ -164,8 +161,6 @@ impl PathSet {
         }
         set.exact_at.push(set.exact.len() as u32);
         set.wild_at.push(set.wild.len() as u32);
-        let value = Path::from_accesses([PathSegment::value()]);
-        set.value = members.binary_search(&value).is_ok().then_some(value);
         let mut before = 0u32;
         for (rank, word) in set.ranks.iter_mut().zip(&set.bits) {
             *rank = before;
@@ -256,7 +251,8 @@ impl PathSet {
     /// length of `prefix`, not of the result, and neither interns nor allocates nor locks.
     #[inline]
     pub fn concat(&self, prefix: &Path, adjust: Option<i64>, rest: &Path) -> Option<Path> {
-        // Offsets merge only at the junction: `prefix` and `rest` are each normalized.
+        // Offsets merge only at the junction: `prefix` and `rest` are each normalized. The
+        // equations are those of `ctadl_ir::mir::path`.
         let mut len = 0;
         let mut last_off = None;
         let mut last_value = false;
@@ -266,18 +262,37 @@ impl PathSet {
             if tail.is_empty() {
                 last_off = match head {
                     PathSegment::Offset(Offset(o)) => Some(*o),
-                    PathSegment::Symbol(_) => None,
+                    _ => None,
                 };
                 last_value = head.is_value();
             }
             p = tail;
         }
-        // `#value` absorbs itself (see `ctadl_ir::mir::VALUE_FIELD`).
-        if last_value && adjust.is_none() && Some(*rest) == self.value {
-            return self.contains(prefix).then_some(*prefix);
-        }
-        let candidate = if last_off.is_some() || adjust.is_some() {
-            let rest_off = rest.head_offset();
+        let rest_off = rest.head_offset();
+        let rest_value = rest.head().is_some_and(PathSegment::is_value);
+        let candidate = if last_value {
+            // `#value.[k] = #value` and `#value.#value = #value`: the adjustment and a leading
+            // offset or `#value` of `rest` are absorbed. `rest` is normal, so it has at most one
+            // of them.
+            Candidate {
+                body: *prefix,
+                n: len,
+                junction: None,
+                base: if rest_off.is_some() || rest_value {
+                    rest.tail()
+                } else {
+                    *rest
+                },
+            }
+        } else if rest_value {
+            // `[k].#value = #value`: the prefix's trailing offset and the adjustment are absorbed.
+            Candidate {
+                body: *prefix,
+                n: len - last_off.is_some() as usize,
+                junction: None,
+                base: *rest,
+            }
+        } else if last_off.is_some() || adjust.is_some() {
             let sum = last_off.unwrap_or(0) + adjust.unwrap_or(0) + rest_off.unwrap_or(0);
             Candidate {
                 body: *prefix,
@@ -423,6 +438,11 @@ mod tests {
             ".x.y",
             ".[4].x.[2]",
             ".y.[2].x",
+            ".#value",
+            ".x.#value",
+            ".deref",
+            ".[2].deref",
+            ".x.[2].deref.#value",
         ];
         let adjusts = [None, Some(2), Some(-2), Some(4)];
         let build = |a: &str, adj: Option<i64>, b: &str| {
@@ -491,7 +511,7 @@ mod tests {
     /// nothing else follows it.
     #[test]
     fn value_absorbs_itself() {
-        let v = Path::from_accesses([PathSegment::value()]);
+        let v = Path::from_accesses([PathSegment::Value]);
         let x = p(".x");
         let xv = x.concat(&v);
         let set = PathSet::from_paths([Path::EMPTY, x, v, xv, p(".x.deref")]);
@@ -500,6 +520,21 @@ mod tests {
         assert_eq!(set.concat(&x, None, &v), Some(xv));
         assert_eq!(set.concat(&v, None, &p(".deref")), None);
         assert_eq!(xv.substitute_prefix(&x, &xv), Some(xv));
+    }
+
+    /// `#value` absorbs adjacent offsets on both sides (`p.[k].#value = p.#value`,
+    /// `p.#value.[k] = p.#value`), at the junction as everywhere.
+    #[test]
+    fn value_absorbs_offsets() {
+        let x = p(".x");
+        let xv = p(".x.#value");
+        let set = PathSet::from_paths([Path::EMPTY, x, xv, p(".x.[8]")]);
+        assert_eq!(set.concat(&p(".x.[8]"), None, &p(".#value")), Some(xv));
+        assert_eq!(set.concat(&x, Some(8), &p(".#value")), Some(xv));
+        assert_eq!(set.concat(&xv, Some(8), &Path::EMPTY), Some(xv));
+        assert_eq!(set.concat(&xv, None, &p(".[8]")), Some(xv));
+        assert_eq!(set.concat(&xv, Some(-8), &p(".[8]")), Some(xv));
+        assert_eq!(p(".x.[8].#value"), xv);
     }
 
     #[test]

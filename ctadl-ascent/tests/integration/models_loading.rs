@@ -322,7 +322,7 @@ fn offset_port_produces_a_real_offset() {
     let paths = summary_paths_for("Argument(1).[8].deref", "Return");
     let expected = ctadl_ascent::facts::Path::from_accesses([
         PathSegment::Offset(Offset(8)),
-        PathSegment::symbol("deref"),
+        PathSegment::Deref,
     ]);
     assert!(
         paths.contains(&expected),
@@ -331,10 +331,8 @@ fn offset_port_produces_a_real_offset() {
     );
 
     // ... and it is NOT the symbol whose name happens to be "[8]".
-    let as_symbol = ctadl_ascent::facts::Path::from_accesses([
-        PathSegment::symbol("[8]"),
-        PathSegment::symbol("deref"),
-    ]);
+    let as_symbol =
+        ctadl_ascent::facts::Path::from_accesses([PathSegment::field("[8]"), PathSegment::Deref]);
     assert_ne!(expected, as_symbol);
     assert!(!paths.contains(&as_symbol));
 }
@@ -346,7 +344,7 @@ fn escaped_bracketed_port_stays_a_symbol() {
     use ctadl_ir::mir::PathSegment;
 
     let paths = summary_paths_for(r"Argument(1).\[_elem_]", "Return");
-    let expected = ctadl_ascent::facts::Path::from_accesses([PathSegment::symbol("[_elem_]")]);
+    let expected = ctadl_ascent::facts::Path::from_accesses([PathSegment::field("[_elem_]")]);
     assert!(
         paths.contains(&expected),
         "expected Symbol(\"[_elem_]\"), got: {:?}",
@@ -402,7 +400,7 @@ fn accumulated_endpoint_paths(
 
 fn path_of(segments: &[&str]) -> ctadl_ascent::facts::Path {
     use ctadl_ir::mir::PathSegment;
-    ctadl_ascent::facts::Path::from_accesses(segments.iter().map(|s| PathSegment::symbol(*s)))
+    ctadl_ascent::facts::Path::from_accesses(segments.iter().map(|s| PathSegment::field(*s)))
 }
 
 /// Trigger 1: two model files, one program. Each file's ports are numbered from zero, so the

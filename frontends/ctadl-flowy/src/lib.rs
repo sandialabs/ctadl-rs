@@ -38,25 +38,6 @@ be used on the right hand side. To express multiple flows into a field, first as
 then update the field: `tmp = a, b; c.foo = tmp;`. The comma operator is used on the right-hand
 side to merge multiple flows into a variable.
 
-A field can also be set *functionally*, with the bracket form:
-
-```text
-x = [y.foo := v]; // x is y, but with .foo set to v
-x = [x.foo := v]; // a fresh version of x
-```
-
-This reads "x is y with .foo replaced by v", and it differs from the assignment `x.foo = v` in
-what happens to the rest of the aggregate. An assignment writes through `x` and says nothing about
-where `x` came from; the bracket form names the source aggregate `y` separately from the
-destination `x` it defines, so everything in `y` that the update did not overwrite flows into `x`
-as well. Naming the two apart is also what lets SSA give the destination a fresh version of the
-variable the source reads, which is why `x = [x.foo := v]` is meaningful rather than circular.
-
-The source's path may carry offsets (`x = [y.[8].foo := v]`), which are address arithmetic, but it names
-exactly one field: the form denotes a single update instruction, and a nested update would instead
-have to rebuild each enclosing aggregate. Globals cannot be updated, since a global is itself a
-field of the global heap.
-
 The function `F` is required to have a summary that returns its first
 argument. `F` satisfies this requirement.
 
@@ -281,7 +262,7 @@ impl Display for EndpointRequires {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Endpoint {
     pub infunc: ArcIntern<str>,
-    pub port: (VariableRef, OffsetAccesses),
+    pub port: AccessPath,
     /// The taint label
     pub label: String,
     pub direction: EndpointDirection,
@@ -315,8 +296,8 @@ impl Display for Endpoint {
         } = self;
         write!(
             f,
-            "{}@{}: {}{} is a {} label '{}'",
-            infunc, source_info, port.0, port.1, direction, label
+            "{}@{}: {} is a {} label '{}'",
+            infunc, source_info, port, direction, label
         )?;
         if let Some(n) = path_count {
             write!(f, " (expect {n} paths)")?;
@@ -375,6 +356,76 @@ pub fn compile_program<P: AsRef<std::path::Path>>(file: P) -> Result<FlowyProgra
     let file = file.as_ref();
     let contents = source_info::read_source(file)?;
     compile_program_contents(file.to_string_lossy().as_ref(), contents.as_str())
+}
+
+/// A sink of a flowy program, named as the semantics corpus names it.
+#[derive(Debug, Clone)]
+pub struct NamedSink<'p> {
+    pub function: String,
+    pub endpoint: &'p Endpoint,
+    /// `sink(<label>)#<n>` or `errsink(<label>)#<n>`, `n` numbering the function's sinks of
+    /// that kind in source order.
+    pub name: String,
+    /// Whether the flow is required (`sink`) or forbidden (`errsink`).
+    pub present: bool,
+}
+
+impl FlowyProgram {
+    /// Every source endpoint, with its function.
+    pub fn sources(&self) -> Vec<(String, &Endpoint)> {
+        let mut out: Vec<(String, &Endpoint)> = self
+            .requirements
+            .endpoint_requires
+            .requires
+            .iter()
+            .flat_map(|(f, eps)| eps.iter().map(move |(e, _)| (f.to_string(), e)))
+            .filter(|(_, e)| matches!(e.direction, EndpointDirection::Source))
+            .collect();
+        out.sort_by_key(|(f, e)| (f.clone(), e.source_info));
+        out
+    }
+
+    /// Every sink endpoint, named as [`NamedSink::name`] says, in function then source order.
+    pub fn named_sinks(&self) -> Vec<NamedSink<'_>> {
+        let mut functions: Vec<_> = self
+            .requirements
+            .endpoint_requires
+            .requires
+            .iter()
+            .collect();
+        functions.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = Vec::new();
+        for (function, endpoints) in functions {
+            let mut endpoints: Vec<_> = endpoints
+                .iter()
+                .filter(|(e, _)| matches!(e.direction, EndpointDirection::Sink))
+                .collect();
+            endpoints.sort_by_key(|(e, _)| e.source_info);
+            let mut n: HashMap<&str, usize> = HashMap::new();
+            for (endpoint, spec) in endpoints {
+                let present = matches!(spec, FlowSpec::FlowPresent);
+                let kind = if present { "sink" } else { "errsink" };
+                let k = n.entry(kind).or_default();
+                out.push(NamedSink {
+                    function: function.to_string(),
+                    endpoint,
+                    name: format!("{kind}({})#{k}", endpoint.label),
+                    present,
+                });
+                *k += 1;
+            }
+        }
+        out
+    }
+}
+
+/// Compiles a flowy program to the IR it lowers to, before SSA conversion and before any pass.
+/// This is the input of the IR pass pipeline; [`compile_program_contents`] is the analysis's.
+pub fn compile_ir(artifact_name: &str, contents: &str) -> Result<Program, FlowyError> {
+    let mut ctx = FlowyCtx::new(artifact_name);
+    ctx.parse(contents)?;
+    ctx.program.verify()?;
+    Ok(ctx.program)
 }
 
 pub fn compile_program_contents(
@@ -611,13 +662,7 @@ impl FlowyCtx {
                 let args = match value {
                     Some(value) => {
                         let r = parse_ref(locals, local_table, value, defined_functions)?;
-                        vec![lower_ref(
-                            &mut self.counter,
-                            data,
-                            local_table,
-                            source_info,
-                            r,
-                        )]
+                        vec![lower_ref(r)]
                     }
                     None => vec![],
                 };
@@ -649,153 +694,19 @@ impl FlowyCtx {
         match &stmt.kind {
             parse::StmtKind::Assign { dest, sources } => {
                 let dest = parse_access_path(locals, local_table, dest)?;
-                // src is comma-separated; a field read on the RHS lowers to loads.
-                let src = {
-                    let mut result = Vec::new();
-                    for p in sources {
-                        // `value(x.f)`: read the access path into a variable, then take its value.
-                        let (r, value) = match p {
-                            Operand::Value(ap, _) => {
-                                let ap = parse_access_path(locals, local_table, ap)?;
-                                (ParsedRef::AccessPath(ap), true)
-                            }
-                            p => (parse_ref(locals, local_table, p, defined_functions)?, false),
-                        };
-                        let mut e = lower_ref(&mut self.counter, data, local_table, source_info, r);
-                        if value {
-                            let v = match e {
-                                Exp::Variable(v) => v,
-                                e => {
-                                    let t = VariableRef::new_local_idx(
-                                        local_table
-                                            .get_or_intern(&format!("t{}?", self.counter.next())),
-                                    );
-                                    data.push_back(Statement::new(
-                                        StatementKind::assign(t.clone(), [e]),
-                                        source_info,
-                                    ));
-                                    t
-                                }
-                            };
-                            e = Exp::Value(v);
+                // src is comma-separated; each source is an access path, a `value(..)` of one,
+                // or a constant.
+                let mut src = Vec::new();
+                for p in sources {
+                    src.push(match p {
+                        Operand::Value(ap, _) => {
+                            Exp::Value(parse_access_path(locals, local_table, ap)?)
                         }
-                        result.push(e);
-                    }
-                    result
-                };
-                // A store takes a variable: `x.f = value(y)` is `t = value(y); x.f = t`.
-                let src = if !dest.is_pathless()
-                    && let [e @ Exp::Value(_)] = src.as_slice()
-                {
-                    let t = VariableRef::new_local_idx(
-                        local_table.get_or_intern(&format!("t{}?", self.counter.next())),
-                    );
-                    data.push_back(Statement::new(
-                        StatementKind::assign(t.clone(), [e.clone()]),
-                        source_info,
-                    ));
-                    vec![Exp::Variable(t)]
-                } else {
-                    src
-                };
-                if dest.is_pathless() {
-                    data.push_back(Statement::new(
-                        StatementKind::assign(dest.base, src),
-                        source_info,
-                    ));
-                } else if src.len() > 1 {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "cannot update a field with multiple sources",
-                    ));
-                } else {
-                    // A field/offset write. An access path with intermediate symbolic dereferences
-                    // needs loads before the store, so lower it with `store_access_path`.
-                    check_store_target(&dest.segments, stmt.pos)?;
-                    let mut stmts = Vec::new();
-                    let counter = &mut self.counter;
-                    ctadl_ir::mir::store_access_path(dest, src[0].clone(), &mut stmts, || {
-                        VariableRef::new_local_idx(
-                            local_table.get_or_intern(&format!("t{}?", counter.next())),
-                        )
+                        p => lower_ref(parse_ref(locals, local_table, p, defined_functions)?),
                     });
-                    for mut s in stmts {
-                        s.source_info = source_info;
-                        data.push_back(s);
-                    }
                 }
-            }
-            parse::StmtKind::Update {
-                dest,
-                source,
-                value,
-            } => {
-                // A global is modeled as a symbolic field of the global heap, so `g` already
-                // spends the one field an `Update` carries and `g.f` would need two.
-                if names_global(locals, dest) || names_global(locals, source) {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "a global cannot be updated: a global is a field of the global heap, so \
-                         an update of one would have to write two fields; use the assignment \
-                         form `g.f = v`",
-                    ));
-                }
-                let dest = parse_access_path(locals, local_table, dest)?;
-                let mut source = parse_access_path(locals, local_table, source)?;
-                // The destination is the variable the update *defines* — the fresh version of the
-                // aggregate — so it is a bare name. The path being written belongs to the source,
-                // which is where it reads.
-                if !dest.is_pathless() {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update's destination is the variable it defines, so it takes no \
-                         field path: write `x = [y.f := v]`",
-                    ));
-                }
-                // An `Update` writes exactly one symbolic field, so the source names exactly one.
-                // A nested update would have to rebuild every enclosing aggregate, which is a
-                // chain of updates rather than the single instruction this syntax denotes.
-                let Some(i) = source.segments.iter().position(PathSegment::is_symbol) else {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update must write a field: write `x = [y.f := v]`",
-                    ));
-                };
-                if source.segments[i + 1..].iter().any(PathSegment::is_symbol) {
-                    return Err(compile_error(
-                        stmt.pos,
-                        "an update writes a single field, so its source names one: write \
-                         `x = [y.f := v]`",
-                    ));
-                }
-                let PathSegment::Symbol(field) = source.segments.remove(i) else {
-                    unreachable!()
-                };
-                let value = {
-                    let r = parse_ref(locals, local_table, value, defined_functions)?;
-                    lower_ref(&mut self.counter, data, local_table, source_info, r)
-                };
-                // What is left of the source path is pure offsets: address arithmetic, which lives
-                // on the update's destination address exactly as it lives on a store's. Lowering
-                // it through `load_access_path` merges consecutive offsets and emits nothing.
-                let mut offsets = Vec::new();
-                let counter = &mut self.counter;
-                let addr = ctadl_ir::mir::load_access_path(source, &mut offsets, || {
-                    VariableRef::new_local_idx(
-                        local_table.get_or_intern(&format!("t{}?", counter.next())),
-                    )
-                });
-                debug_assert!(offsets.is_empty(), "an offset-only path emits no loads");
                 data.push_back(Statement::new(
-                    StatementKind::update(
-                        Address {
-                            base: dest.base,
-                            accesses: addr.accesses,
-                        },
-                        addr.base,
-                        field,
-                        value,
-                    ),
+                    StatementKind::assign(dest, src),
                     source_info,
                 ));
             }
@@ -804,10 +715,7 @@ impl FlowyCtx {
                 let callee = parse_access_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
                 let style = lower_call_style(
-                    &mut self.counter,
-                    data,
                     local_table,
-                    source_info,
                     callee,
                     &["source", "errsource"],
                     defined_functions,
@@ -827,13 +735,7 @@ impl FlowyCtx {
                         // any field reads, so they reach `ExtractSpec` as-is.
                         args.push(Exp::Str(label_string(local_table, &x).into()));
                     } else {
-                        args.push(lower_ref(
-                            &mut self.counter,
-                            data,
-                            local_table,
-                            source_info,
-                            x,
-                        ));
+                        args.push(lower_ref(x));
                     }
                 }
 
@@ -848,34 +750,18 @@ impl FlowyCtx {
                 };
                 data.push_back(Statement::new(call, source_info));
 
-                // assign the temporary to the field (if applicable), lowering any intermediate
-                // dereferences into loads plus a store.
-                check_store_target(&dest.segments, stmt.pos)?;
-                let mut stmts = Vec::new();
-                let counter = &mut self.counter;
-                ctadl_ir::mir::store_access_path(dest, Exp::Variable(tmp), &mut stmts, || {
-                    VariableRef::new_local_idx(
-                        local_table.get_or_intern(&format!("t{}?", counter.next())),
-                    )
-                });
-                for mut s in stmts {
-                    s.source_info = source_info;
-                    data.push_back(s);
-                }
+                // assign the temporary to the destination: a copy, or a store to a path.
+                data.push_back(Statement::new(
+                    StatementKind::assign(dest, [Exp::variable(tmp)]),
+                    source_info,
+                ));
             }
             parse::StmtKind::Call { callee, args } => {
                 let callee = parse_access_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
 
-                let style = lower_call_style(
-                    &mut self.counter,
-                    data,
-                    local_table,
-                    source_info,
-                    callee,
-                    &["sink", "errsink"],
-                    defined_functions,
-                );
+                let style =
+                    lower_call_style(local_table, callee, &["sink", "errsink"], defined_functions);
 
                 let is_sink = matches!(
                     &style,
@@ -894,24 +780,17 @@ impl FlowyCtx {
                     for (i, x) in actuals.into_iter().enumerate() {
                         if i == 0 {
                             // use a temporary for the sink argument
-                            args.push(Exp::Variable(tmp.clone()));
+                            args.push(Exp::variable(tmp.clone()));
                             port_ref = Some(x);
                         } else if i == 1 {
                             args.push(Exp::Str(label_string(local_table, &x).into()));
                         } else {
-                            args.push(lower_ref(
-                                &mut self.counter,
-                                data,
-                                local_table,
-                                source_info,
-                                x,
-                            ));
+                            args.push(lower_ref(x));
                         }
                     }
-                    // `t0 = x.y.z`, loading through the port's path if it has fields.
+                    // `t0 = x.y.z`, the port read into a temporary.
                     if let Some(port) = port_ref {
-                        let port_val =
-                            lower_ref(&mut self.counter, data, local_table, source_info, port);
+                        let port_val = lower_ref(port);
                         let assign_tmp = StatementKind::assign(tmp.clone(), [port_val]);
                         data.push_back(Statement::new(assign_tmp, source_info));
                     }
@@ -919,13 +798,7 @@ impl FlowyCtx {
                 } else {
                     let mut args = ThinVec::with_capacity(actuals.len());
                     for x in actuals {
-                        args.push(lower_ref(
-                            &mut self.counter,
-                            data,
-                            local_table,
-                            source_info,
-                            x,
-                        ));
+                        args.push(lower_ref(x));
                     }
                     args
                 };
@@ -988,7 +861,7 @@ fn parse_summary_ap(env: &Env, ap: &parse::AccessPath<'_>) -> Result<Port, Flowy
             fields: field_accesses,
         })
     } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
+        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
         global_field_accesses.extend(field_accesses);
         Ok(Port {
             base: PortBase::Var(VariableRef::new_global()),
@@ -1007,7 +880,9 @@ fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>
     segments
         .iter()
         .map(|s| match s {
-            parse::Segment::Field(name) => Ok(PathSegment::symbol(*name)),
+            parse::Segment::Field(name) => Ok(PathSegment::field(*name)),
+            parse::Segment::Deref => Ok(PathSegment::Deref),
+            parse::Segment::Value => Ok(PathSegment::Value),
             parse::Segment::Offset(offset) => Ok(PathSegment::offset(*offset)),
             parse::Segment::Star(pos) => Err(compile_error(
                 *pos,
@@ -1081,68 +956,24 @@ fn label_string(local_table: &Locals, r: &ParsedRef) -> String {
     }
 }
 
-/// Lowers a parsed operand into an rvalue [`Exp`]. A value passes through; an access path is
-/// lowered into a sequence of loads (appended to `data`, tagged with `source_info`) and the
-/// loaded variable is returned. Fresh temporaries come from `counter`.
-fn lower_ref(
-    counter: &mut Counter,
-    data: &mut BasicBlockData,
-    local_table: &mut Locals,
-    source_info: SourceInfo,
-    r: ParsedRef,
-) -> Exp {
+/// Lowers a parsed operand into an rvalue [`Exp`]: a value passes through, and an access path is
+/// the operand itself.
+fn lower_ref(r: ParsedRef) -> Exp {
     match r {
         ParsedRef::Value(e) => e,
-        ParsedRef::AccessPath(ap) => {
-            let mut loads = Vec::new();
-            let addr = ctadl_ir::mir::load_access_path(ap, &mut loads, || {
-                VariableRef::new_local_idx(
-                    local_table.get_or_intern(&format!("t{}?", counter.next())),
-                )
-            });
-            for mut s in loads {
-                s.source_info = source_info;
-                data.push_back(s);
-            }
-            Exp::address(addr)
-        }
+        ParsedRef::AccessPath(ap) => Exp::Path(ap),
     }
-}
-
-/// Lowers a parsed callee access path into a callee [`Address`], emitting loads (appended to
-/// `data`) for any symbolic dereferences (a function pointer read from a field).
-fn lower_callee_addr(
-    counter: &mut Counter,
-    data: &mut BasicBlockData,
-    local_table: &mut Locals,
-    source_info: SourceInfo,
-    callee: AccessPath,
-) -> Address {
-    let mut loads = Vec::new();
-    let addr = ctadl_ir::mir::load_access_path(callee, &mut loads, || {
-        VariableRef::new_local_idx(local_table.get_or_intern(&format!("t{}?", counter.next())))
-    });
-    for mut s in loads {
-        s.source_info = source_info;
-        data.push_back(s);
-    }
-    addr
 }
 
 /// Chooses how to call `callee`: directly when it names one of `builtins` or a function defined in
-/// this program, otherwise through a function pointer, lowering any symbolic derefs in the callee's
-/// path to loads that leave a callee [`Address`].
+/// this program, otherwise through a function pointer read at the callee's access path.
 fn lower_call_style(
-    counter: &mut Counter,
-    data: &mut BasicBlockData,
     local_table: &mut Locals,
-    source_info: SourceInfo,
     callee: AccessPath,
     builtins: &[&str],
     defined_functions: &HashSet<String>,
 ) -> CallStyle {
     if !callee.is_pathless() {
-        let callee = lower_callee_addr(counter, data, local_table, source_info, callee);
         return CallStyle::FuncPtrCall {
             callee,
             signature: None,
@@ -1158,31 +989,9 @@ fn lower_call_style(
         }
     }
     CallStyle::FuncPtrCall {
-        callee: Address::without_offsets(variable),
+        callee: AccessPath::from(variable),
         signature: None,
     }
-}
-
-/// Rejects a store whose target path is offset-only, with no symbolic field (e.g. `x.[10]`).
-/// A store always writes a symbolic field; a write to a bare offset address is a memory write that
-/// must spell its dereference explicitly (e.g. `x.[10].deref = ..`).
-fn check_store_target(segments: &[PathSegment], pos: Pos) -> Result<(), FlowyError> {
-    if !segments.is_empty() && segments.iter().all(PathSegment::is_offset) {
-        return Err(compile_error(
-            pos,
-            "cannot store to an offset-only address without a field; a store writes a symbolic \
-             field, so spell the dereference explicitly (e.g. `x.[10].deref = ..`)",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether an access path's variable is a global. A global is modeled as a symbolic field of the
-/// global heap, so its name contributes a leading path segment that belongs to the variable itself
-/// rather than to any path spelled after it.
-fn names_global(env: &Env, ap: &parse::AccessPath<'_>) -> bool {
-    let name = ap.base.name;
-    !env.parameters.contains_key(name) && env.globals.contains(name)
 }
 
 /// Resolves a syntactic access path in a function body (as opposed to a summary access path, see
@@ -1198,7 +1007,7 @@ fn parse_access_path(
     Ok(if let Some(v) = env.parameters.get(name) {
         AccessPath::new(v.clone(), field_accesses)
     } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
+        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
         global_field_accesses.extend(field_accesses);
         AccessPath::new(VariableRef::new_global(), global_field_accesses)
     } else {
@@ -1292,11 +1101,12 @@ impl MutVisitor for ExtractSpec {
         // recover the parameter index (see `param_of`). Only single-source, field-free
         // copies of a parameter (or of an already-tracked variable) carry the index.
         if let Assign { dest, sources } = stmt
+            && dest.is_pathless()
             && sources.len() == 1
-            && let Exp::Variable(v) = &sources[0]
+            && let Some(v) = sources[0].variable_ref()
             && let Some(formal) = self.formal_of(v)
         {
-            self.param_of.insert(dest.clone(), formal);
+            self.param_of.insert(dest.base.clone(), formal);
         }
         if let CallAssign {
             style:
@@ -1312,7 +1122,7 @@ impl MutVisitor for ExtractSpec {
             match endpoint_name {
                 "source" | "errsource" => {
                     let infunc = &self.function;
-                    let port = (rets[0].clone(), OffsetAccesses::empty());
+                    let port = AccessPath::from(rets[0].clone());
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,
@@ -1339,11 +1149,8 @@ impl MutVisitor for ExtractSpec {
                 }
                 "sink" | "errsink" => {
                     let infunc = &self.function;
-                    let port = (
-                        args[0].variable_ref().unwrap().clone(),
-                        OffsetAccesses::empty(),
-                    );
-                    let formal = self.formal_of(&port.0);
+                    let port = AccessPath::from(args[0].variable_ref().unwrap().clone());
+                    let formal = self.formal_of(&port.base);
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,
@@ -1448,6 +1255,64 @@ s:
         // And the whole path, not just each segment.
         let printed = path_syntax::path_to_string(&segs);
         assert_eq!(path_syntax::parse_segments(&printed).unwrap(), segs);
+    }
+
+    /// An address destination `p.[8] = e` is accepted and lowered by the S5 rewrite into the
+    /// copy `p = e.[-8]`, and `p.[8] = e.[8]` into `p = e`.
+    #[test]
+    fn address_destination_is_rewritten() {
+        let src = "def F(e): 1\n{\ns:\n    p.[8] = e;\n    q.[8] = e.[8];\n    return p;\n}\n";
+        let prog = compile(src).expect("flowy accepts an address destination");
+        let stmts: Vec<String> = prog
+            .program_info
+            .program
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter().flat_map(|b| b.statements.iter()))
+            .map(|s| s.kind.to_string())
+            .collect();
+        assert!(
+            stmts
+                .iter()
+                .any(|s: &String| s.ends_with(" = @p0_0.[-8]") && s.starts_with("assign ")),
+            "{stmts:?}"
+        );
+        assert!(
+            stmts
+                .iter()
+                .any(|s: &String| s.ends_with(" = @p0_0") && s.starts_with("assign %")),
+            "{stmts:?}"
+        );
+        prog.program_info
+            .program
+            .verify()
+            .expect("the rewritten program verifies");
+    }
+
+    /// `.deref` and `.#value` are the segments, not fields, and `.*` is a compile error.
+    #[test]
+    fn deref_and_value_are_segments() {
+        let src = "def F(a, b): 1\n{\ns:\n    a.deref = b;\n    c = a.#value;\n    return c;\n}\n";
+        let prog = compile(src).expect("flowy accepts .deref and .#value");
+        let segs: Vec<PathSegment> = prog
+            .program_info
+            .program
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter().flat_map(|b| b.statements.iter()))
+            .flat_map(|s| match &s.kind {
+                StatementKind::Assign { dest, sources } => std::iter::once(dest)
+                    .chain(sources.iter().filter_map(Exp::access_path))
+                    .flat_map(|ap| ap.segments.iter().cloned())
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(segs.contains(&PathSegment::Deref), "{segs:?}");
+        assert!(segs.contains(&PathSegment::Value), "{segs:?}");
+        assert!(!segs.contains(&PathSegment::field("deref")), "{segs:?}");
+        let bad = "def F(a, b): 1\n{\ns:\n    a.* = b;\n    return a;\n}\n";
+        assert!(compile(bad).is_err(), "`.*` is not a segment");
     }
 
     /// Every offset spelling flowy's `offset_p` accepts is a valid canonical offset, and both

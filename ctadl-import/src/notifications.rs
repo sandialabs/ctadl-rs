@@ -163,6 +163,34 @@ pub const ALLOCATOR_BY_SHAPE: Descriptor = Descriptor {
     ],
 };
 
+/// An indirect call whose callee path no target label reached. It is zero assignments (S10 of
+/// `docs/ir.md`): flows through it are missing. One per function, with the count of such calls
+/// and one callee path as an example.
+pub const UNRESOLVED_INDIRECT_CALL: Descriptor = Descriptor {
+    id: "CTADL0110.unresolved-indirect-call",
+    name: "Unresolved indirect call",
+    description: "An indirect call has no target, so it is analyzed as doing nothing and flows \
+                  through it are missing.",
+    messages: &[(
+        DEFAULT_MESSAGE,
+        "{0}: {1} indirect call(s) with no target, such as the call through {2}; each does nothing",
+    )],
+};
+
+/// A call to a function with no body and no model. It is zero assignments (S10 of
+/// `docs/ir.md`): flows through it are missing. One per callee, with the count of call sites
+/// and one caller as an example.
+pub const CALL_WITHOUT_BODY: Descriptor = Descriptor {
+    id: "CTADL0111.call-without-body",
+    name: "Call to a function without a body",
+    description: "A called function has neither a body nor a model, so its calls are analyzed as \
+                  doing nothing and flows through them are missing.",
+    messages: &[(
+        DEFAULT_MESSAGE,
+        "{0} has no body and no model; {1} call(s) to it do nothing, such as the one in {2}",
+    )],
+};
+
 /// A notification's SARIF `level`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {

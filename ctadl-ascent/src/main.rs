@@ -513,21 +513,6 @@ pub struct IndexArgs {
         value_parser = parse_mem2reg
     )]
     pub mem2reg: Mem2RegFlag,
-
-    /// How native code's writes to its stack frame reach SSA.
-    ///
-    /// The pcode frontend writes a stack slot as a functional update of the frame, which SSA can
-    /// version. `update` (the default) keeps them, so SSA versions the frame for the slots
-    /// `--mem2reg` leaves in memory, and a write to a slot overwrites what it held. `store`
-    /// coarsens every such update into a store, so every load of a slot sees every store to it.
-    /// A model's `modes: ["frame-store"]` or `["frame-update"]` picks one for one function.
-    #[arg(
-        long,
-        value_name = "WRITES",
-        default_value = "update",
-        value_parser = parse_frame
-    )]
-    pub frame: ctadl_ir::ssa::FrameWrites,
 }
 
 /// The value of `--mem2reg`: `None` is `off`.
@@ -543,11 +528,6 @@ fn parse_mem2reg(s: &str) -> Result<Mem2RegFlag, String> {
         .ok_or_else(|| {
             format!("`{s}` is not a policy; use window:N, exact, above, full, full:N or off")
         })
-}
-
-fn parse_frame(s: &str) -> Result<ctadl_ir::ssa::FrameWrites, String> {
-    ctadl_ir::ssa::FrameWrites::parse(s)
-        .ok_or_else(|| format!("`{s}` is not a frame write; use store or update"))
 }
 
 /// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
@@ -781,7 +761,6 @@ fn main() -> anyhow::Result<()> {
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
                 mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
-                frame: ctadl_ir::ssa::Pipeline::index_default().frame,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -1007,7 +986,6 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
                 Storage::Memory
             },
             mem2reg: args.mem2reg.0,
-            frame: args.frame,
         },
     )?;
     Ok(())

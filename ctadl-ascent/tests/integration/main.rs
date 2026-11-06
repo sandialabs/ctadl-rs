@@ -20,6 +20,7 @@ mod model_check;
 mod models_loading;
 mod multi_import_sarif;
 mod port_semantics;
+mod reference_parity;
 mod sarif_uris;
 mod store_relocation;
 mod xapk_bundle;

@@ -19,8 +19,8 @@ use ctadl_ir::mir::call::{
     VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    Address, BasicBlockData, FieldRef, FunctionData, Functions, ParameterType, Program, Statement,
-    StatementKind, VariableRef,
+    AccessPath, BasicBlockData, FunctionData, Functions, ParameterType, PathSegment, Program,
+    Statement, StatementKind, VariableRef,
 };
 use ctadl_ir::mir::{LocalIdx, Symbol};
 
@@ -56,13 +56,13 @@ fn call(callee: &str) -> Statement {
     })
 }
 
-/// A `Load` of `field`, which is what `uses_field` reads.
+/// A load of `field`, which is what `uses_field` reads.
 fn load(field: &str) -> Statement {
-    Statement::new_kind(StatementKind::Load {
-        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: Address::without_offsets(VariableRef::new_local_idx(LocalIdx::new(1))),
-        field: FieldRef::symbol(field),
-    })
+    Statement::new_kind(StatementKind::load(
+        VariableRef::new_local_idx(LocalIdx::new(0)),
+        VariableRef::new_local_idx(LocalIdx::new(1)),
+        PathSegment::field(field),
+    ))
 }
 
 /// A Java program: `Lc/App;->handle()V` calls `Lc/Log;->emit(…)V`, `Lc/Sub;` extends `Lc/Base;`.
@@ -877,7 +877,7 @@ fn a_quoted_segment_decodes_to_the_symbol_it_names() {
     let path = matches.propagations[0].src.path;
     assert_eq!(
         path.iter().cloned().collect::<Vec<_>>(),
-        vec![ctadl_ir::mir::PathSegment::Symbol(Symbol::from("[]"))]
+        vec![ctadl_ir::mir::PathSegment::Field(Symbol::from("[]"))]
     );
 }
 
@@ -1563,14 +1563,13 @@ fn groundings_are_projected_onto_head_variables() {
 /// disagree on a function the one with the higher priority wins.
 #[test]
 fn mode_heads_mark_their_functions() {
-    use ctadl_ir::ssa::{FrameWrites, FullMode};
+    use ctadl_ir::ssa::FullMode;
     let program_info = native_program(&["big", "small", "unwind"]);
     let m = run(
         &program_info,
         r#"
-        mem2reg_full(F), frame_store(F) :- fun(F, name = "big");
+        mem2reg_full(F) :- fun(F, name = "big");
         mem2reg_window(F) :- fun(F, name = "small");
-        frame_update(F) :- fun(F, name = "small");
         mem2reg_full(F, priority = 1) :- fun(F, name = "small");
         skip_analysis(F) :- fun(F, name = "unwind");
         "#,
@@ -1591,13 +1590,6 @@ fn mode_heads_mark_their_functions() {
         [
             (full("big"), FullMode::Force),
             (full("small"), FullMode::Force)
-        ]
-    );
-    assert_eq!(
-        named(&m.frame_modes),
-        [
-            (full("big"), FrameWrites::Store),
-            (full("small"), FrameWrites::Update)
         ]
     );
     let skipped: Vec<String> = m.skip_analysis.iter().map(|f| f.to_string()).collect();
@@ -1686,12 +1678,11 @@ fn modes_on_different_axes_are_independent() {
     let program_info = native_program(&["f"]);
     let m = run(
         &program_info,
-        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F); frame_store(F) :- fun(F);"#,
+        r#"skip_analysis(F) :- fun(F); mem2reg_full(F) :- fun(F);"#,
     );
     m.check_mode_conflicts().unwrap();
     assert_eq!(skipped(&m), ["f"]);
     assert_eq!(m.mem2reg_modes.len(), 1);
-    assert_eq!(m.frame_modes.len(), 1);
 }
 
 /// A user's `analyze` outranks the native defaults' allocator skip without naming a priority.
@@ -1776,32 +1767,30 @@ fn allocator_is_native_only() {
 /// word but writes nothing, `FUN_stats` writes the heap state but has no allocator signature,
 /// and `FUN_lonely` is shaped like `malloc` but has a single caller. `main` calls them.
 fn stripped_allocator() -> ProgramInfo {
-    use ctadl_ir::mir::{Exp, OffsetAccess, ParameterIdx, ReturnType};
+    use ctadl_ir::mir::{Exp, ParameterIdx, ReturnType};
     const HEAP: [i64; 4] = [0x10003010, 0x10003014, 0x10003040, 0x10003044];
     let heap_stores = |n: usize| -> Vec<Statement> {
         (0..n)
             .map(|i| {
-                Statement::new_kind(StatementKind::Store {
-                    dest: Address::new(
+                Statement::new_kind(StatementKind::store(
+                    AccessPath::new(
                         VariableRef::new_global(),
-                        [OffsetAccess::Offset(ctadl_ir::mir::Offset(
-                            HEAP[i % HEAP.len()],
-                        ))],
+                        [PathSegment::offset(HEAP[i % HEAP.len()])],
                     ),
-                    field: FieldRef::symbol("deref"),
-                    value: Exp::Int(i as i64),
-                })
+                    PathSegment::Deref,
+                    Exp::Int(i as i64),
+                ))
             })
             .collect()
     };
-    let header_load = Statement::new_kind(StatementKind::Load {
-        dest: VariableRef::new_local_idx(LocalIdx::new(0)),
-        source: Address::new(
+    let header_load = Statement::new_kind(StatementKind::load(
+        VariableRef::new_local_idx(LocalIdx::new(0)),
+        AccessPath::new(
             VariableRef::new_parameter(ParameterIdx::new(0)),
-            [OffsetAccess::Offset(ctadl_ir::mir::Offset(0xffff_fffc))],
+            [PathSegment::offset(0xffff_fffc)],
         ),
-        field: FieldRef::symbol("deref"),
-    });
+        PathSegment::Deref,
+    ));
     let with = |name: &str, params: usize, returns: bool, body: Vec<Statement>| {
         let mut f = function(name, params, body);
         f.return_type = ReturnType {

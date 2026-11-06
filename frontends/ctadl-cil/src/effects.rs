@@ -1,13 +1,15 @@
 //! Effects to statements.
 //!
 //! `F(field)` is the field symbol: `<cls::f>` for a named field, `[]` for an element,
-//! `length`, and `DEREF_FIELD` for `Deref` and `Block`. The dereference is never spelled as a
-//! string literal: `DEREF_FIELD` is the field the index and the query treat as a pointer
+//! `length`, and `PathSegment::Deref` for `Deref` and `Block`. The dereference is never spelled as a
+//! string literal: `PathSegment::Deref` is the segment the index and the query treat as a pointer
 //! target.
 //!
 //! | Effect                                        | Statements                                    |
 //! | --------------------------------------------- | --------------------------------------------- |
-//! | `Assign { Copy \| Cast \| Unbox \| Derived }` | `dst := srcs`                                 |
+//! | `Assign { Copy \| Cast \| Unbox }`            | `dst := srcs`                                 |
+//! | `Assign { Derived(arith, cmp) }`              | `dst := value(srcs)`; an address base a copy  |
+//! | `Assign { Derived(conv, mkrefany, refanyval) }` | `dst := srcs`                               |
 //! | `Assign { Box(T) }`                           | `dst := srcs, cil<T>` (T instantiated)        |
 //! | `Const { I4 \| I8 }`                          | `dst := v`                                    |
 //! | `Const { R4 \| R8 }`                          | `dst := bits`                                 |
@@ -30,6 +32,13 @@
 //! | `Test`                                        | nothing: a branch taints nothing              |
 //! | `Opaque { srcs, dsts }`                       | each `d := srcs`; counted                     |
 //!
+//! Arithmetic, bitwise operations, shifts and comparisons supply values only (S19): each operand
+//! is `value(v)`, so `t = a + b` gives `t` the values of `a` and `b` and nothing reachable through
+//! either. A conversion is a cast, the same value at another width, and stays a copy. The other
+//! exception is an address computation (S19): the pointer operand of `add` and the left operand
+//! of `sub`, when it is a pointer, are copies, so the result shares the memory behind them
+//! (`address_base` says how a pointer is recognized).
+//!
 //! A struct is lowered like an object: `ldloc` of a struct local is an assign and `ldfld` on
 //! it a load, so a copy carries its fields' taint, and two copies of one struct alias.
 //!
@@ -39,11 +48,12 @@
 //! has something to read.
 
 use cil_reader::flow::{
-    BoundIns, Const, Effect, Field, InsId, NewKind, Path, Place, Root, Transfer, Var,
+    BoundIns, Const, ConvTarget, ConvType, Effect, Field, InsId, NewKind, Op, Path, Place, Root,
+    StackKind, Transfer, Var,
 };
 use cil_reader::model::TypeSig;
 use ctadl_ir::call::{CallObject, CilClass};
-use ctadl_ir::mir::FieldRef;
+use ctadl_ir::mir::PathSegment;
 use ctadl_ir::*;
 
 use crate::method::{Emitter, Lower, parameters};
@@ -83,12 +93,19 @@ impl Lower<'_, '_, '_, '_, '_> {
                 srcs,
                 transfer,
             } => {
+                let base = match transfer {
+                    Transfer::Derived(op) => self.address_base(ins, op, srcs),
+                    _ => None,
+                };
                 let mut sources: Vec<Exp> = Vec::with_capacity(srcs.len() + 1);
-                for s in srcs {
+                for (i, s) in srcs.iter().enumerate() {
                     sources.push(match transfer {
                         // A copy of an address is still the address: the flow layer moves
                         // the fact, and a use of the copy resolves on its own.
                         Transfer::Copy => em.exp(*s),
+                        Transfer::Derived(op) if value_only(op) && base != Some(i) => {
+                            Exp::value(em.var(*s))
+                        }
                         Transfer::Cast(_)
                         | Transfer::Box(_)
                         | Transfer::Unbox(_)
@@ -156,7 +173,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                     let cell = em.fresh("cell");
                     self.materialize(em, &p, cell.clone());
                     let d = em.var(*dst);
-                    em.assign(d, [Exp::Variable(cell)]);
+                    em.assign(d, [Exp::variable(cell)]);
                 }
             }
             Effect::New {
@@ -241,11 +258,11 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// `F(field)`, for a field that is not a dereference.
-    fn field_symbol(&self, field: &Field<Var>) -> FieldRef {
+    fn field_symbol(&self, field: &Field<Var>) -> PathSegment {
         match field {
             Field::Named(op) => self.field_ref(op.token),
-            Field::Element { .. } => FieldRef::symbol(ELEMENT),
-            Field::Length => FieldRef::symbol(LENGTH),
+            Field::Element { .. } => PathSegment::field(ELEMENT),
+            Field::Length => PathSegment::field(LENGTH),
             Field::Deref | Field::Block { .. } => deref(),
         }
     }
@@ -334,6 +351,35 @@ impl Lower<'_, '_, '_, '_, '_> {
         })
     }
 
+    /// The operand of a `Derived` operation that is the base of an address computation, and
+    /// so a copy rather than a value (S19): the pointer operand of `add`, the left operand of
+    /// `sub` when it is a pointer, and the operand of `conv.i`/`conv.u` of a pointer. An
+    /// operand is a pointer when it holds a traced address or has kind `&`; failing that,
+    /// one of kind `native int`, which is what an unmanaged pointer is on the stack. `native
+    /// int` arithmetic that is not on a pointer (`nint`, `IntPtr`) is indistinguishable from
+    /// it, so `a + b` over two `native int`s copies `a`, an over-approximation.
+    fn address_base(&self, ins: &BoundIns, op: &Op, srcs: &[Var]) -> Option<usize> {
+        let strong = |v: Var| {
+            self.resolved(ins, v).is_some()
+                || Self::input_index(ins, v)
+                    .and_then(|i| ins.input_kinds.get(i))
+                    .is_some_and(|k| matches!(k, StackKind::ManagedPtr))
+        };
+        let pointer = |v: Var| self.input_is_pointer(ins, v);
+        match op {
+            Op::Add(_) => srcs
+                .iter()
+                .position(|v| strong(*v))
+                .or_else(|| srcs.iter().position(|v| pointer(*v))),
+            Op::Sub(_)
+            | Op::Conv(ConvTarget {
+                ty: ConvType::I | ConvType::U,
+                ..
+            }) => srcs.first().filter(|v| pointer(**v)).map(|_| 0),
+            _ => None,
+        }
+    }
+
     /// The class `newarr` or a multi-dimensional array constructor allocates: the array type
     /// itself when the token names one, else an array of the element type it names.
     fn array_cls(&self, token: cil_reader::MetadataToken) -> String {
@@ -351,5 +397,31 @@ impl Lower<'_, '_, '_, '_, '_> {
             is_value_type: false,
         };
         format!("{}[]", self.names.spell(&elem, None))
+    }
+}
+
+/// Whether the operands of `op` supply only their values (S19): integer and float arithmetic,
+/// bitwise operations, shifts and comparisons, and `refanytype`. The result is a number
+/// computed from the operands; nothing reachable through an operand is reachable through it. A
+/// conversion is a cast, the same value at another width, and stays a copy, as in the JVM and
+/// Dex front ends. `mkrefany` and `refanyval` carry an address and stay copies, and `Opaque` is
+/// unknown, so it relates everything.
+pub(crate) fn value_only(op: &Op) -> bool {
+    match op {
+        Op::Add(_)
+        | Op::Sub(_)
+        | Op::Mul(_)
+        | Op::Div(_)
+        | Op::Rem(_)
+        | Op::And
+        | Op::Or
+        | Op::Xor
+        | Op::Shl
+        | Op::Shr(_)
+        | Op::Neg
+        | Op::Not
+        | Op::Cmp(_, _)
+        | Op::RefAnyType => true,
+        Op::Conv(_) | Op::MkRefAny(_) | Op::RefAnyVal(_) | Op::Opaque => false,
     }
 }

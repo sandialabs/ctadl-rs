@@ -3,6 +3,17 @@
 Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
 `jvm-reader`'s job. What lives here is the lowering to MIR.
+
+Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
+field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
+bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
+operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
+reference to that method (`Context::method_handle_exp` says which kinds do), and
+`MethodHandle.invoke` or `invokeExact` is an indirect call through the handle, so the reference
+resolves it. An exception is the last result
+of every call and of every return; a handler reads it, and an exception a callee throws that no
+handler in the caller catches is dropped rather than returned. A store to a parameter's local
+slot assigns its `Param` variable, which SSA versions; version 0 is the incoming value.
 */
 
 use std::path::Path;
@@ -15,7 +26,7 @@ use source_info::{ArtifactKey, SpanLen};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
-    JavaSimpleName, VirtualMethodTable,
+    JavaSimpleName, VirtualMethodTable, is_method_handle_invoke,
 };
 use ctadl_ir::*;
 
@@ -309,10 +320,8 @@ impl Context {
                                     VariableRef::new_local_idx(fdat.locals.get_or_intern("stack0"));
                                 let except = Self::except(&mut fdat.locals);
                                 bb_data.push_back(Statement::new_kind(StatementKind::Assign {
-                                    dest,
-                                    sources: smallvec![
-                                        Exp::from(Address::without_offsets(except),)
-                                    ],
+                                    dest: dest.into(),
+                                    sources: smallvec![Exp::from(AccessPath::from(except),)],
                                 }));
                             }
 
@@ -344,9 +353,9 @@ impl Context {
                                             let ret = Self::ret(&mut fdat.locals);
                                             let mut assign =
                                                 Statement::new_kind(StatementKind::Assign {
-                                                    dest,
+                                                    dest: dest.into(),
                                                     sources: smallvec![Exp::from(
-                                                        Address::without_offsets(ret),
+                                                        AccessPath::from(ret),
                                                     )],
                                                 });
                                             assign.source_info = source_info;
@@ -407,7 +416,7 @@ impl Context {
                                             TerminatorKind::Return {
                                                 args: smallvec![
                                                     empty_exp(),
-                                                    Exp::from(Address::without_offsets(except)),
+                                                    Exp::from(AccessPath::from(except)),
                                                 ],
                                             }
                                         } else {
@@ -616,6 +625,23 @@ impl Context {
                             "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
+                        // Invoking a method handle calls whatever the handle refers to: an
+                        // indirect call through the handle, whose function reference resolves
+                        // it (S11), with the arguments passed straight through.
+                        if matches!(call.call_kind, CallKind::Virtual)
+                            && is_method_handle_invoke(&class_name, method_name)
+                        {
+                            return Some(self.call_statement(
+                                CallStyle::FuncPtrCall {
+                                    callee: AccessPath::from(
+                                        self.convert_location_to_var_ref(recv, locals),
+                                    ),
+                                    signature: None,
+                                },
+                                call,
+                                locals,
+                            ));
+                        }
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
@@ -644,7 +670,17 @@ impl Context {
                 }
             }
         };
+        Some(self.call_statement(style, call, locals))
+    }
 
+    /// The call `style` with `call`'s arguments, returning into the result and exception
+    /// temporaries.
+    fn call_statement(
+        &mut self,
+        style: CallStyle,
+        call: &CallInfo,
+        locals: &mut Locals,
+    ) -> Statement {
         let args: ctadl_ir::ThinVec<Exp> = call
             .arguments
             .iter()
@@ -656,11 +692,11 @@ impl Context {
         self.call_result = call.return_value.as_ref().map(|_| retval.clone());
         self.catch_result = Some(throwval.clone());
 
-        Some(Statement::new_kind(StatementKind::CallAssign {
+        Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: ctadl_ir::thin_vec![retval, throwval],
             args,
-        }))
+        })
     }
 
     fn ret(locals: &mut Locals) -> VariableRef {
@@ -696,13 +732,13 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldRef {
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::PathSegment {
         let class = format!("L{};", f.class_name);
-        mir::FieldRef::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
+        mir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
-        Exp::from(Address::without_offsets(
+        Exp::from(AccessPath::from(
             self.convert_location_to_var_ref(loc, locals),
         ))
     }
@@ -733,8 +769,8 @@ impl Context {
 
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
         Statement::new_kind(StatementKind::Assign {
-            dest,
-            sources: smallvec![Exp::from(Address::without_offsets(src))],
+            dest: dest.into(),
+            sources: smallvec![Exp::from(AccessPath::from(src))],
         })
     }
 
@@ -807,7 +843,7 @@ impl Context {
     /// the outputs land on the input slots (`dup_x1` puts `v1` where `v2` was), so
     /// a source slot that an output overwrites is first copied to a temporary.
     fn stack_shuffle_statements(
-        &self,
+        &mut self,
         dataflow: &[DataflowInfo],
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 8]> {
@@ -838,13 +874,15 @@ impl Context {
                 .iter()
                 .map(|loc| match Self::stack_slot_index(loc) {
                     Some(n) if saved.contains(&n) => {
-                        Exp::from(Address::without_offsets(Self::shuffle_temp(n, locals)))
+                        Exp::from(AccessPath::from(Self::shuffle_temp(n, locals)))
                     }
                     _ => self.convert_location_to_exp(loc, locals),
                 })
                 .collect();
             stmts.push(Statement::new_kind(StatementKind::Assign {
-                dest: self.convert_location_to_var_ref(&df.destination, locals),
+                dest: self
+                    .convert_location_to_var_ref(&df.destination, locals)
+                    .into(),
                 sources,
             }));
         }
@@ -876,7 +914,9 @@ impl Context {
                     })
                     .expect("allocation type");
                 smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: self.convert_location_to_var_ref(&data.destination, locals),
+                    dest: self
+                        .convert_location_to_var_ref(&data.destination, locals)
+                        .into(),
                     sources: smallvec![Self::allocation_exp(class_name)],
                 })]
             }
@@ -902,7 +942,7 @@ impl Context {
                     locals,
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(VariableRef::new_global()),
+                    AccessPath::from(VariableRef::new_global()),
                     Self::jvm_field_symbol(field),
                     value,
                 ))]
@@ -934,7 +974,7 @@ impl Context {
                 let object_slot = stacks.last().expect("putfield object");
                 let object = self.convert_location_to_var_ref(object_slot, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(object),
+                    AccessPath::from(object),
                     Self::jvm_field_symbol(field),
                     value,
                 ))]
@@ -949,7 +989,7 @@ impl Context {
                 );
                 let except = Self::except(locals);
                 smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: except,
+                    dest: except.into(),
                     sources: smallvec![thrown],
                 })]
             }
@@ -960,7 +1000,7 @@ impl Context {
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
-                    mir::FieldRef::symbol("[]"),
+                    mir::PathSegment::field("[]"),
                 ))]
             }
             // *astore
@@ -976,36 +1016,91 @@ impl Context {
                 );
                 let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(object),
-                    mir::FieldRef::symbol("[]"),
+                    AccessPath::from(object),
+                    mir::PathSegment::field("[]"),
                     value,
                 ))]
             }
             _ => {
+                let value_only = Self::is_value_only_opcode(opcode);
                 let mut sources = SmallVec::new();
                 for source_loc in data.sources.iter() {
-                    sources.push(self.convert_location_to_exp(source_loc, locals));
+                    let source = self.convert_location_to_exp(source_loc, locals);
+                    sources.push(match source {
+                        Exp::Path(ap) if value_only => Exp::Value(ap),
+                        source => source,
+                    });
                 }
                 smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: self.convert_location_to_var_ref(&data.destination, locals),
+                    dest: self
+                        .convert_location_to_var_ref(&data.destination, locals)
+                        .into(),
                     sources,
                 })]
             }
         }
     }
 
-    fn convert_location_to_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
+    /// Opcodes whose result is computed from its operands' values and shares no memory with
+    /// them (S19): arithmetic, bitwise, shift and negation (`iadd`..`lxor`, 0x60..=0x83),
+    /// `iinc` (0x84), comparisons (`lcmp`..`dcmpg`, 0x94..=0x98) and `instanceof` (0xc1), whose
+    /// `int` is a test of the reference, a comparison. A numeric conversion (`i2l`..`i2s`,
+    /// 0x85..=0x93) is a cast, the same value at another width, and stays a copy: a value a
+    /// bridged native returned in memory (`ret.deref.#value`) must survive `int out = f(); long
+    /// v = out`.
+    fn is_value_only_opcode(opcode: u8) -> bool {
+        matches!(opcode, 0x60..=0x84 | 0x94..=0x98 | 0xc1)
+    }
+
+    /// A `CONSTANT_MethodHandle` that invokes a known method, as a function reference to that
+    /// method (S11), named as the method's `FunctionData` is (`Lcls;->name(desc)`).
+    ///
+    /// `REF_invokeStatic` and `REF_invokeSpecial` name the method that runs. For
+    /// `REF_invokeVirtual` and `REF_invokeInterface` the handle names the declared method,
+    /// which is the target; an override in a subclass is not. `REF_newInvokeSpecial` is left
+    /// out: invoking it allocates the object `<init>` takes as `this`, so the handle's
+    /// arguments do not line up with `<init>`'s formals. Field handles name no method. Those
+    /// are `None` and stay an opaque `MethodHandle` object.
+    fn method_handle_exp(&mut self, handle: &ConstantValue) -> Option<Exp> {
+        const REF_INVOKE_VIRTUAL: u8 = 5;
+        const REF_INVOKE_STATIC: u8 = 6;
+        const REF_INVOKE_SPECIAL: u8 = 7;
+        const REF_INVOKE_INTERFACE: u8 = 9;
+        let ConstantValue::MethodHandle {
+            reference_kind,
+            class_name,
+            name,
+            descriptor,
+        } = handle
+        else {
+            return None;
+        };
+        let is_instance = match *reference_kind {
+            REF_INVOKE_STATIC => false,
+            REF_INVOKE_VIRTUAL | REF_INVOKE_SPECIAL | REF_INVOKE_INTERFACE => true,
+            _ => return None,
+        };
+        // As `decode_call` names a call's target.
+        let class_name = format!("L{class_name};");
+        let java_sig = format!("{class_name}->{name}{descriptor}");
+        self.declare_extern(&java_sig, &class_name, name, descriptor, is_instance);
+        Some(Exp::new_object_ref(CallObject::FunctionPtr(
+            java_sig.as_str().into(),
+        )))
+    }
+
+    fn convert_location_to_exp(&mut self, loc: &Location, locals: &mut Locals) -> Exp {
         match loc {
-            Location::StackSlot(_) | Location::StackInput(_) => Exp::from(
-                Address::without_offsets(self.convert_location_to_var_ref(loc, locals)),
-            ),
+            Location::StackSlot(_) | Location::StackInput(_) => Exp::from(AccessPath::from(
+                self.convert_location_to_var_ref(loc, locals),
+            )),
             Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
             Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
             // As ctadl-dex models const-method-handle and const-method-type.
-            Location::Constant(ConstantValue::MethodHandle { .. }) => {
-                Self::allocation_exp("java/lang/invoke/MethodHandle")
-            }
+            Location::Constant(handle @ ConstantValue::MethodHandle { .. }) => self
+                .method_handle_exp(handle)
+                .unwrap_or_else(|| Self::allocation_exp("java/lang/invoke/MethodHandle")),
             Location::Constant(ConstantValue::MethodType(_)) => {
                 Self::allocation_exp("java/lang/invoke/MethodType")
             }
@@ -1019,10 +1114,10 @@ impl Context {
             // Load instructions in the getfield/getstatic/aload opcode arms. This &self helper
             // cannot emit a load, so a FieldRef reaching here (a rare generic-source fallback)
             // degrades to its base variable.
-            Location::FieldRef(_) => Exp::from(Address::without_offsets(
+            Location::FieldRef(_) => Exp::from(AccessPath::from(
                 self.convert_location_to_var_ref(loc, locals),
             )),
-            _ => Exp::from(Address::without_offsets(
+            _ => Exp::from(AccessPath::from(
                 self.convert_location_to_var_ref(loc, locals),
             )),
         }

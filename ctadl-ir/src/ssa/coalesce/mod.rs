@@ -1,6 +1,14 @@
 /*!
 Copy coalescing for pre-SSA IR.
 
+# Correctness (S18 of `docs/ir.md`)
+
+Correct under its side condition, which the pass checks: the temporary it merges away is
+defined once and read once, in the same block, so its cell is reachable by no other path.
+Fusing `t = e; use t` into `use e` then removes the one copy the cell took part in: the labels
+`use` saw at `t` were exactly `e`'s, and nothing else could see `t`. The pass asserts the single
+use before it deletes a def.
+
 Frontends (the pcode frontend especially) linearize expressions through
 single-use temporaries: a binop becomes `t = a, b; x = t`, and copy chains
 like `u = t; x = u` are common. Every such temporary costs a statement, an
@@ -99,11 +107,17 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 
             // (a) Try to fuse pending defs into this statement's reads.
             match &mut stmt.kind {
+                // A store `y.f = t`: only pure copies substitute, and a value def does not.
+                StatementKind::Assign { dest, sources } if !dest.is_pathless() => {
+                    for src in sources.iter_mut() {
+                        try_subst_exp(src, false, &mut pending, &mut dead);
+                    }
+                }
                 StatementKind::Assign { dest: _, sources } => {
                     // Whole-statement fuse of a whole-variable copy `x = t`:
                     // accepts multi-source defs.
                     let whole_var_copy_of = if sources.len() == 1
-                        && let Exp::Variable(v) = &sources[0]
+                        && let Some(v) = sources[0].variable_ref()
                         && v.version.is_none()
                         && pending.contains_key(&v.variable)
                     {
@@ -121,13 +135,6 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         }
                     }
                 }
-                StatementKind::Store { value, .. } => {
-                    try_subst_exp(value, false, &mut pending, &mut dead);
-                }
-                StatementKind::Update { value, .. } => {
-                    try_subst_exp(value, false, &mut pending, &mut dead);
-                }
-                StatementKind::Load { .. } => {}
                 StatementKind::CallAssign { args, style, .. } => {
                     for a in args.iter_mut() {
                         try_subst_exp(a, false, &mut pending, &mut dead);
@@ -136,9 +143,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         try_subst_address(callee, &mut pending, &mut dead);
                     }
                 }
-                StatementKind::Phi { .. }
-                | StatementKind::ParamFlow { .. }
-                | StatementKind::Nop => {}
+                StatementKind::Phi { .. } | StatementKind::Nop => {}
             }
 
             // (b) Invalidate pending defs whose sources are (possibly)
@@ -157,9 +162,17 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 
             // (c) Register this statement as a pending def if it qualifies.
             if let StatementKind::Assign { dest, sources } = &stmt.kind
+                && dest.is_pathless()
+                && let dest = &dest.base
                 && dest.version.is_none()
                 && is_candidate_var(&dest.variable)
                 && !sources.is_empty()
+                // A load (a source with a field or `deref`) is left for codegen's load-chain
+                // composition, which needs the temporary it defines.
+                && sources.iter().all(|e| {
+                    e.access_path()
+                        .is_none_or(|ap| ap.segments.iter().all(PathSegment::is_offset))
+                })
             {
                 let mut src_vars: SmallVec<[Variable; 2]> = SmallVec::new();
                 let mut ok = true;
@@ -197,7 +210,18 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             }
         }
 
-        // Delete fused defs.
+        // Delete fused defs. Each defines a temporary with exactly one use, the one it was
+        // fused into: the side condition that makes the fusion correct.
+        for &pos in &dead {
+            let def = &block.statements[crate::mir::StatementIdx::new(pos)];
+            for v in def.iter_dst_var() {
+                assert_eq!(
+                    uses.get(&v.variable),
+                    Some(&1),
+                    "coalesce fused a def of {v} that has other uses"
+                );
+            }
+        }
         if !dead.is_empty() {
             removed += dead.len();
             dead.sort_unstable();
@@ -216,10 +240,9 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 }
 
 /// If `exp` is the (single) read of a pending pure-copy def, substitute the
-/// def's source into it and mark the def dead. A field read is not an [`Exp`]
-/// (field reads are [`StatementKind::Load`]s, which this pass leaves
-/// untouched), so substitution is a plain variable/const copy:
-/// `t = y; use t` becomes `use y`.
+/// def's source into it and mark the def dead. Only a whole-variable read
+/// substitutes (a read of `t.f` keeps `t`), so substitution is a plain
+/// variable/const copy: `t = y; use t` becomes `use y`.
 ///
 /// [`Exp::Value`] is valid only as an `Assign` source (`in_assign`), so a `t = value(y)` def
 /// substitutes only there, and a `value(t)` read takes only a variable: `value(t)` with `t = y`
@@ -230,9 +253,13 @@ fn try_subst_exp(
     pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
-    let (Exp::Variable(vref) | Exp::Value(vref)) = &*exp else {
+    let (Exp::Path(ap) | Exp::Value(ap)) = &*exp else {
         return;
     };
+    if !ap.is_pathless() {
+        return;
+    }
+    let vref = &ap.base;
     let is_value = matches!(exp, Exp::Value(_));
     if vref.version.is_some() {
         return;
@@ -245,7 +272,8 @@ fn try_subst_exp(
         return;
     }
     let new_exp = match (is_value, &p.sources[0]) {
-        (true, Exp::Variable(y) | Exp::Value(y)) => Exp::Value(y.clone()),
+        (true, Exp::Value(y)) => Exp::Value(y.clone()),
+        (true, Exp::Path(y)) if y.is_pathless() => Exp::Value(y.clone()),
         (true, _) => return,
         (false, Exp::Value(_)) if !in_assign => return,
         (false, src) => src.clone(),
@@ -255,11 +283,11 @@ fn try_subst_exp(
     *exp = new_exp;
 }
 
-/// [`try_subst_exp`] for a bare [`Address`] read position (indirect-call
-/// callee). Only a variable-copy source substitutes here; the callee's own
-/// offsets are preserved, with its base variable rewritten to the def's source.
+/// [`try_subst_exp`] for an indirect-call callee. Only a variable-copy source
+/// substitutes here; the callee's own path is preserved, with its base variable
+/// rewritten to the def's source.
 fn try_subst_address(
-    addr: &mut Address,
+    addr: &mut AccessPath,
     pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
@@ -272,7 +300,7 @@ fn try_subst_address(
     if p.sources.len() != 1 {
         return;
     }
-    let Exp::Variable(def_var) = &p.sources[0] else {
+    let Some(def_var) = p.sources[0].variable_ref() else {
         return;
     };
     let def_var = def_var.clone();

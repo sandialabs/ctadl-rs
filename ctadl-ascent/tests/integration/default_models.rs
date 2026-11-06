@@ -89,7 +89,7 @@ fn dispatch_caller() -> FunctionData {
                 super_start: None,
             },
             vec![result],
-            vec![Exp::Variable(
+            vec![Exp::variable(
                 b.new_param_var(ctadl_ir::mir::ParameterIdx::new(0)),
             )],
         );
@@ -374,13 +374,13 @@ fn cil_ports_name_the_pointee_and_the_tuple_field() {
             .map(|p| p.dst.path.iter().cloned().collect())
             .collect()
     };
-    let deref = PathSegment::symbol(ctadl_ir::mir::DEREF_FIELD);
+    let deref = PathSegment::Deref;
     assert!(
-        src_of(CIL_CURRENT).contains(&vec![deref.clone(), PathSegment::symbol("[]")]),
+        src_of(CIL_CURRENT).contains(&vec![deref.clone(), PathSegment::field("[]")]),
         "get_Current does not read deref.[]: {:?}",
         src_of(CIL_CURRENT)
     );
-    let item1 = PathSegment::symbol("<[System.Private.CoreLib]System.ValueTuple`2::Item1>");
+    let item1 = PathSegment::field("<[System.Private.CoreLib]System.ValueTuple`2::Item1>");
     assert!(
         dst_of(CIL_TUPLE).contains(&vec![deref, item1]),
         "the ValueTuple constructor does not write deref.Item1: {:?}",
@@ -429,7 +429,7 @@ fn every_shipped_default_file_parses() {
 }
 
 /// The Java collection rules must name the array element the dex/jvm frontends actually emit --
-/// `PathSegment::Symbol("[]")`, spelled `."[]"` in a port.
+/// `PathSegment::Field("[]")`, spelled `."[]"` in a port.
 ///
 /// Getting this wrong fails silently: a synthetic field such as `.rep` parses fine and simply
 /// matches nothing any frontend writes, so `List.add` / `List.get` chains would compose only
@@ -447,7 +447,7 @@ fn java_collection_generators_name_the_real_array_element() {
         .iter()
         .flat_map(|p| [p.dst.path, p.src.path])
         .collect();
-    let element = PathSegment::symbol("[]");
+    let element = PathSegment::field("[]");
     assert!(
         paths.iter().any(|p| p.iter().any(|s| *s == element)),
         "no port in the Java defaults decodes to Symbol(\"[]\"); got {:?}",
@@ -457,7 +457,7 @@ fn java_collection_generators_name_the_real_array_element() {
             .collect::<BTreeSet<_>>()
     );
     // And nothing names the synthetic `.rep` field.
-    let rep = PathSegment::symbol("rep");
+    let rep = PathSegment::field("rep");
     assert!(
         !paths.iter().any(|p| p.iter().any(|s| *s == rep)),
         "a `.rep` port is back; no frontend emits that field"

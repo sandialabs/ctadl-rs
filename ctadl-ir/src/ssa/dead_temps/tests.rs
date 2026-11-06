@@ -19,7 +19,7 @@ fn param(idx: usize) -> VariableRef {
 }
 
 fn read(name: &str) -> Exp {
-    Exp::Variable(local(name))
+    Exp::variable(local(name))
 }
 
 fn assign(dest: VariableRef, sources: Vec<Exp>) -> Statement {
@@ -31,7 +31,7 @@ fn load(dest: &str, source: &str, field: &str) -> Statement {
     Statement::new_kind(StatementKind::load(
         local(dest),
         local(source),
-        FieldRef::symbol(field),
+        PathSegment::field(field),
     ))
 }
 
@@ -116,7 +116,7 @@ fn keeps_temp_read_by_terminator() {
 /// A bare variable read expressed as an offset-less [`Exp::Address`] rather than
 /// an [`Exp::Variable`]. Frontends can emit either for the same read.
 fn read_bare_address(name: &str) -> Exp {
-    Exp::Address(Address::without_offsets(local(name)))
+    Exp::Path(AccessPath::from(local(name)))
 }
 
 #[test]
@@ -220,8 +220,8 @@ fn call_arg_keeps_feeding_temp_alive() {
 fn keeps_store() {
     // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
-        Address::without_offsets(VariableRef::new_global()),
-        FieldRef::symbol("f"),
+        AccessPath::from(VariableRef::new_global()),
+        PathSegment::field("f"),
         read("v"),
     ))]);
     eliminate_dead_temps_function(&mut f);
@@ -240,8 +240,8 @@ fn keeps_unread_non_local_def() {
 fn versioned_locals_are_untouched() {
     // Already-SSA form: t_1 = a_0, t_1 unread. A no-op — the pass runs before SSA.
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::Assign {
-        dest: local("t").with_version(1),
-        sources: smallvec![Exp::Variable(local("a").with_version(0))],
+        dest: local("t").with_version(1).into(),
+        sources: smallvec![Exp::variable(local("a").with_version(0))],
     })]);
     eliminate_dead_temps_function(&mut f);
     assert_eq!(block_kinds(&f, 0).len(), 1);

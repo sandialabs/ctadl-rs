@@ -234,8 +234,8 @@ use ctadl_ir::mir::call::{
     Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    Address, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx, ParameterType,
-    Program, Statement, StatementKind, VariableRef,
+    AccessPath, BasicBlockData, Exp, FunctionData, Functions, ParameterIdx, ParameterType,
+    PathSegment, Program, Statement, StatementKind, VariableRef,
 };
 use std::collections::BTreeSet;
 
@@ -255,9 +255,9 @@ fn make_function(name: &str, num_params: usize, force_body: bool, fields: &[&str
             .iter()
             .map(|field| {
                 Statement::new_kind(StatementKind::store(
-                    Address::without_offsets(p.clone()),
-                    FieldRef::symbol(*field),
-                    Exp::from(Address::without_offsets(p.clone())),
+                    AccessPath::from(p.clone()),
+                    PathSegment::field(*field),
+                    Exp::from(AccessPath::from(p.clone())),
                 ))
             })
             .collect();

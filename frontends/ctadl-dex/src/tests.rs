@@ -44,18 +44,28 @@ fn dummy_code_item() -> CodeItem {
 }
 
 fn assign_from(inst: Instruction) -> (Vec<(VariableRef, Exp)>, Locals) {
-    let parser = dummy_parser();
-    let mut ctx = Context::new();
+    assign_from_in(&dummy_parser(), &mut Context::new(), inst)
+}
+
+/// [`assign_from`], against `parser` and in `ctx`.
+fn assign_from_in(
+    parser: &DexParser<'_>,
+    ctx: &mut Context,
+    inst: Instruction,
+) -> (Vec<(VariableRef, Exp)>, Locals) {
     let mut locals = Locals::default();
     let assigns = ctx
-        .dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
+        .dataflow_to_assign(parser, &dummy_code_item(), &inst, &mut locals)
         .unwrap()
         .into_iter()
         .flat_map(|s| match s {
             Statement {
                 kind: StatementKind::Assign { dest, sources },
                 ..
-            } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+            } => sources
+                .into_iter()
+                .map(|s| (dest.base.clone(), s))
+                .collect(),
             _ => Vec::new(),
         })
         .collect();
@@ -222,7 +232,10 @@ fn new_instance_assign() {
                 Statement {
                     kind: StatementKind::Assign { dest, sources },
                     ..
-                } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+                } => sources
+                    .into_iter()
+                    .map(|s| (dest.base.clone(), s))
+                    .collect(),
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>()
@@ -286,14 +299,20 @@ fn store_parts(parser: &DexParser<'_>, inst: Instruction) -> (Vec<String>, Strin
     else {
         panic!("expected an assign, got {assign:?}");
     };
-    let StatementKind::Store { dest, value, .. } = &store.kind else {
+    let StatementKind::Assign {
+        dest,
+        sources: stored,
+    } = &store.kind
+    else {
         panic!("expected a store, got {store:?}");
     };
+    assert!(!dest.is_pathless(), "expected a store, got {store:?}");
+    let value = &stored[0];
     assert_eq!(value, &Exp::from(temp.clone()), "store must write the temp");
     let values = sources
         .iter()
         .map(|s| match s {
-            Exp::Variable(v) => local_name(&locals, v),
+            Exp::Path(ap) if ap.is_pathless() => local_name(&locals, &ap.base),
             other => panic!("expected a variable source, got {other:?}"),
         })
         .collect();
@@ -388,26 +407,32 @@ fn aput_wide_stores_value_pair() {
     );
 }
 
+/// The flows of `inst` as `(dest, source)` names, where every source must be the value of a
+/// register (S19).
+fn value_flows(inst: Instruction) -> Vec<(String, String)> {
+    let (assigns, locals) = assign_from(inst);
+    assigns
+        .iter()
+        .map(|(var, exp)| {
+            let Exp::Value(src) = exp else {
+                panic!("expected the value of a register, got {exp:?}");
+            };
+            assert!(src.is_pathless(), "{src:?}");
+            (local_name(&locals, var), local_name(&locals, &src.base))
+        })
+        .collect()
+}
+
 /// `shl-long v0, v2, v4` computes `v0:v1 = v2:v3 << v4`. The shift amount is the int in `v4`, so
 /// `v5` must not flow into the result.
 #[test]
 fn shl_long_reads_one_shift_register() {
     use dex_reader::instructions::Format23x;
-    let inst = Instruction::ShlLong(Format23x {
+    let flows = value_flows(Instruction::ShlLong(Format23x {
         a: Reg(0),
         b: Reg(2),
         c: Reg(4),
-    });
-    let (assigns, locals) = assign_from(inst);
-    let flows: Vec<(String, String)> = assigns
-        .iter()
-        .map(|(var, exp)| {
-            let Exp::Variable(src) = exp else {
-                panic!("expected a variable source, got {exp:?}");
-            };
-            (local_name(&locals, var), local_name(&locals, src))
-        })
-        .collect();
+    }));
     let expected: Vec<(String, String)> = ["v0", "v1"]
         .iter()
         .flat_map(|d| ["v2", "v3", "v4"].map(|s| (d.to_string(), s.to_string())))
@@ -473,10 +498,10 @@ fn arg_names(locals: &Locals, args: &[Exp]) -> Vec<String> {
         .collect()
 }
 
-/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls `invoke` on the handle
-/// in `v0`, passing `v1` and `v2`, like invoke-virtual.
+/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls whatever the handle in
+/// `v0` refers to: an indirect call through `v0`, passing `v1` and `v2` (S11).
 #[test]
-fn invoke_polymorphic_is_a_virtual_call() {
+fn invoke_polymorphic_is_an_indirect_call_through_the_handle() {
     use dex_reader::instructions::{Format45cc, MethodIdx, ProtoIdx};
     let parser = parser_with_method_handle_invoke();
     let inst = Instruction::InvokePolymorphic(Format45cc {
@@ -492,20 +517,11 @@ fn invoke_polymorphic_is_a_virtual_call() {
     let StatementKind::CallAssign { style, args, rets } = &stmt.kind else {
         panic!("expected a call, got {stmt:?}");
     };
-    let CallStyle::JavaCall {
-        receiver,
-        cls,
-        simple_name,
-        dispatch,
-        ..
-    } = style
-    else {
-        panic!("expected a Java call, got {style:?}");
+    let CallStyle::FuncPtrCall { callee, .. } = style else {
+        panic!("expected an indirect call, got {style:?}");
     };
-    assert_eq!(local_name(&locals, receiver), "v0");
-    assert_eq!(&**cls, "Ljava/lang/invoke/MethodHandle;");
-    assert_eq!(&**simple_name, "invoke");
-    assert_eq!(*dispatch, JavaDispatch::Virtual);
+    assert!(callee.segments.is_empty(), "{callee}");
+    assert_eq!(local_name(&locals, &callee.base), "v0");
     assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
     assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
 }
@@ -560,5 +576,147 @@ fn const_method_handle_and_type_assign_an_object() {
             panic!("expected a JavaObject, got {exp:?}");
         };
         assert_eq!(&**got, cls);
+    }
+}
+
+/// Arithmetic, conversions, comparisons and `instance-of` supply values only (S19).
+#[test]
+fn arithmetic_and_comparisons_supply_values_only() {
+    use dex_reader::instructions::{Format12x, Format22b, Format22c, Format23x};
+    let pair = |d: &str, s: &str| (d.to_string(), s.to_string());
+    assert_eq!(
+        value_flows(Instruction::AddInt(Format23x {
+            a: Reg(0),
+            b: Reg(1),
+            c: Reg(2),
+        })),
+        [pair("v0", "v1"), pair("v0", "v2")]
+    );
+    assert_eq!(
+        value_flows(Instruction::AddInt2Addr(Format12x {
+            a: Reg(0),
+            b: Reg(1),
+        })),
+        [pair("v0", "v0"), pair("v0", "v1")]
+    );
+    assert_eq!(
+        value_flows(Instruction::AddIntLit8(Format22b {
+            a: Reg(0),
+            b: Reg(1),
+            c: 3,
+        })),
+        [pair("v0", "v1")]
+    );
+    assert_eq!(
+        value_flows(Instruction::NegInt(Format12x {
+            a: Reg(0),
+            b: Reg(1),
+        })),
+        [pair("v0", "v1")]
+    );
+    // A conversion is a cast: a copy, into both halves of the wide destination.
+    let (assigns, locals) = assign_from(Instruction::IntToLong(Format12x {
+        a: Reg(0),
+        b: Reg(2),
+    }));
+    let copies: Vec<(String, String)> = assigns
+        .iter()
+        .map(|(var, exp)| {
+            let src = exp
+                .variable_ref()
+                .expect("a conversion copies its register");
+            (local_name(&locals, var), local_name(&locals, src))
+        })
+        .collect();
+    assert_eq!(copies, [pair("v0", "v2"), pair("v1", "v2")]);
+    assert_eq!(
+        value_flows(Instruction::CmpLong(Format23x {
+            a: Reg(0),
+            b: Reg(2),
+            c: Reg(4),
+        })),
+        [
+            pair("v0", "v2"),
+            pair("v0", "v3"),
+            pair("v0", "v4"),
+            pair("v0", "v5")
+        ]
+    );
+    assert_eq!(
+        value_flows(Instruction::InstanceOf(Format22c {
+            a: Reg(0),
+            b: Reg(1),
+            idx: TypeIdx(0),
+        })),
+        [pair("v0", "v1")]
+    );
+}
+
+/// A move is a copy, not a value.
+#[test]
+fn move_is_a_copy() {
+    use dex_reader::instructions::Format12x;
+    let (assigns, locals) = assign_from(Instruction::MoveObject(Format12x {
+        a: Reg(0),
+        b: Reg(1),
+    }));
+    assert_eq!(assigns.len(), 1);
+    let (var, exp) = &assigns[0];
+    assert_eq!(local_name(&locals, var), "v0");
+    let src = exp.variable_ref().expect("a copy of a register");
+    assert_eq!(local_name(&locals, src), "v1");
+}
+
+/// A `const-method-handle` that invokes a method is a function reference to it, named as its
+/// `FunctionData` is, and the method becomes a callee so that it gets a declaration (S11). A
+/// constructor or field handle stays a `MethodHandle` object.
+#[test]
+fn const_method_handle_with_a_method_is_a_function_reference() {
+    use dex_reader::instructions::{Format21c, MethodHandleIdx};
+    use dex_reader::types::MethodHandle;
+
+    let mut parser = parser_with_method_handle_invoke();
+    // (method_handle_type, function reference?)
+    let kinds = [
+        (0x04, true),  // invoke-static
+        (0x05, true),  // invoke-instance
+        (0x07, true),  // invoke-direct
+        (0x08, true),  // invoke-interface
+        (0x06, false), // invoke-constructor
+        (0x03, false), // instance-get
+    ];
+    parser.method_handles = Some(
+        kinds
+            .iter()
+            .map(|&(method_handle_type, _)| MethodHandle {
+                method_handle_type,
+                field_or_method_id: 0,
+            })
+            .collect(),
+    );
+    let method = parser.method_ids[0];
+    let name = parser.method_signature(&method).unwrap();
+    for (i, (kind, is_ref)) in kinds.into_iter().enumerate() {
+        let mut ctx = Context::new();
+        let (assigns, _) = assign_from_in(
+            &parser,
+            &mut ctx,
+            Instruction::ConstMethodHandle(Format21c {
+                a: Reg(0),
+                idx: MethodHandleIdx(i as u32),
+            }),
+        );
+        assert_eq!(assigns.len(), 1);
+        let expected = if is_ref {
+            CallObject::FunctionPtr(name.as_str().into())
+        } else {
+            CallObject::JavaObject(JavaClass("Ljava/lang/invoke/MethodHandle;".into()))
+        };
+        assert_eq!(
+            assigns[0].1,
+            Exp::new_object_ref(expected),
+            "kind {kind:#x}"
+        );
+        assert_eq!(ctx.call_to.contains(&method), is_ref, "kind {kind:#x}");
     }
 }

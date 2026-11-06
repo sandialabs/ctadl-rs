@@ -1,0 +1,22 @@
+// `#value` absorbs adjacent offsets (`p.[k].#value = p.#value`): an address computed from `x`
+// has `x`'s value, so the value of `x.[8]` is the value of `x`.
+
+def ValueThroughOffset() {
+s:
+  y = source(S);
+  x.#value = y;
+  t = x.[8];
+  s.#value = t;
+  sink(s, S);
+  return;
+}
+
+// The offset after `#value` is absorbed too: `x.#value.[8]` is `x.#value`.
+def ValueThenOffset() {
+s:
+  y = source(S);
+  x.#value = y;
+  t = x.#value.[8];
+  sink(t, S);
+  return;
+}

@@ -8,7 +8,7 @@ use crate::index_engine::*;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::mir::call::{CallEdges, CallObject, CallStyle};
-use ctadl_ir::mir::{Address, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
+use ctadl_ir::mir::{AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
 use std::num::NonZeroUsize;
 
 /// Lowers one C translation unit. This function and [`index_program`] are test helpers
@@ -83,7 +83,6 @@ fn canonical(
     let IndexResult {
         mut summary,
         mut assign_like,
-        update_sans_path: _,
         mut call_target_assign_like,
         mut resolved_call,
         const_reaches: _,
@@ -384,7 +383,7 @@ fn calls_stored_target(name: &str, target: &str) -> FunctionData {
     );
     b.create_call(
         CallStyle::FuncPtrCall {
-            callee: Address::from(fp),
+            callee: AccessPath::from(fp),
             signature: None,
         },
         vec![r.clone()],
@@ -417,7 +416,7 @@ fn calls_formal_target(name: &str) -> FunctionData {
     );
     b.create_call(
         CallStyle::FuncPtrCall {
-            callee: Address::from(callee),
+            callee: AccessPath::from(callee),
             signature: None,
         },
         vec![r.clone()],

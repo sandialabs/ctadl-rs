@@ -68,13 +68,13 @@ fn parses_ports_and_paths() {
     assert_eq!(
         path_of(0),
         vec![
-            PathSegment::Symbol(Symbol::from("foo")),
+            PathSegment::Field(Symbol::from("foo")),
             PathSegment::Offset(Offset(2))
         ]
     );
     assert_eq!(
         path_of(1),
-        vec![PathSegment::Symbol(Symbol::from("weird.field[0]"))]
+        vec![PathSegment::Field(Symbol::from("weird.field[0]"))]
     );
     match &heads[2].kind {
         HeadKind::Sink { port, .. } => assert!(matches!(port.port.base, PortBase::AnyArg)),
@@ -165,6 +165,37 @@ fn a_segment_after_the_value_field_is_an_error() {
     let messages: Vec<&str> = errors.iter().map(|e| e.message()).collect();
     // The rejected port then leaves its head atom without one, which is reported after it.
     assert!(messages[0].contains("#value"), "{messages:?}");
+}
+
+/// `.*` is not a segment (S17 of `docs/ir.md`): a port names exact paths. A quoted `"*"` is a field
+/// so named.
+#[test]
+fn a_star_segment_is_an_error() {
+    let errors = match parse::parse_program(r#"sink(F::arg(0).*) :- fun(F);"#) {
+        Ok(_) => panic!("expected an error"),
+        Err(e) => e,
+    };
+    let messages: Vec<&str> = errors.iter().map(|e| e.message()).collect();
+    assert!(messages[0].contains("`.*`"), "{messages:?}");
+    check_ok(r#"sink(F::arg(0)."*") :- fun(F);"#);
+}
+
+/// A port path is put in normal form: `x.[0].f` is `x.f`, offsets sum, and `#value` absorbs an
+/// offset before it.
+#[test]
+fn port_paths_are_normalized() {
+    use ctadl_ir::mir::PathSegment;
+    let program = parse(
+        r#"sink(F::arg(0).[0].f), sink(F::arg(0)[4][4].deref), sink(F::arg(0)[8].#value) :- fun(F);"#,
+    );
+    let heads = &program.rules[0].heads;
+    let path_of = |i: usize| match &heads[i].kind {
+        HeadKind::Sink { port, .. } => port.port.path.clone(),
+        other => panic!("expected a sink, got {other:?}"),
+    };
+    assert_eq!(path_of(0), vec![PathSegment::field("f")]);
+    assert_eq!(path_of(1), vec![PathSegment::offset(8), PathSegment::Deref]);
+    assert_eq!(path_of(2), vec![PathSegment::Value]);
 }
 
 // ---------------------------------------------------------------------------
@@ -955,7 +986,7 @@ fn what_the_json_format_rejects_does_not_migrate() {
         (
             r#"{"find":"methods","model":{"modes":["skip_analysis"]}}"#,
             &[
-                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined values are 'skip-analysis', 'mem2reg-full', 'mem2reg-window', 'frame-store' and 'frame-update'",
+                "unexpected field 'modes' in model generator at index 0: unknown mode 'skip_analysis'; the defined values are 'skip-analysis', 'mem2reg-full' and 'mem2reg-window'",
             ],
         ),
         (
@@ -1316,7 +1347,7 @@ fn a_java_array_element_segment_survives_the_round_trip() {
         other => panic!("expected a propagation, got {other:?}"),
     };
     use ctadl_ir::mir::{PathSegment, Symbol};
-    assert_eq!(segments, vec![PathSegment::Symbol(Symbol::from("[]"))]);
+    assert_eq!(segments, vec![PathSegment::Field(Symbol::from("[]"))]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1774,12 +1805,11 @@ fn migrates_each_mode_to_its_head() {
         );
     }
     let text = migrate_and_load(&generator(
-        r#"["mem2reg-full","frame-update","skip-analysis","mem2reg-window","frame-store"]"#,
+        r#"["mem2reg-full","skip-analysis","mem2reg-window"]"#,
     ));
     assert!(
-        text.contains("mem2reg_window(F),\n  frame_store(F),\n  skip_analysis(F) :-"),
+        text.contains("mem2reg_window(F),\n  skip_analysis(F) :-"),
         "{text}"
     );
     assert!(!text.contains("mem2reg_full"), "{text}");
-    assert!(!text.contains("frame_update"), "{text}");
 }

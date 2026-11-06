@@ -8,17 +8,14 @@ typical basic block and statement representation. Successors are expressed as "g
 blocks. These gotos are unconditional; the IR abstracts conditional jumps and just the possible
 targets of control flow. Terminator instructions are returns and gotos with multiple successors.
 
-- Expressions are all values, which are constants, variables, and addresses.
+The semantics of the IR is in `docs/ir.md`; [`path`] owns the path equations.
 
-- [`StatementKind::Assign`] represent assignments. Assignments set a variable and allow expressions
-  on the right-hand side. Multiple assignments can be done in parallel in one statement. Assignments
-  such as `a, b = b, a` are expressed in vec form as `[(a,b),(b,a)]` and implement a swap.
+- Expressions are access paths ([`Exp::Path`]), the value of an access path ([`Exp::Value`]),
+  target labels (function and class references), string labels and inert constants.
 
-- Setting of fields is done through the [`StatementKind::Store`] instruction; reading fields can
-  additionally be done through the [`StatementKind::Load`] instruction. A frontend that models a
-  field write as a *functional* update — producing a fresh version of the whole aggregate — may
-  instead use the [`StatementKind::Update`] instruction, which is a `Store` that additionally names
-  the `source` aggregate separately from the (defined) destination.
+- [`StatementKind::Assign`] represents assignments. Its destination and sources are full access
+  paths. With an empty destination path it is a *copy* and defines the destination variable (a
+  load `x = y.f` is a copy); with a non-empty one it is a *store* and defines nothing.
 
 - Calls come in two flavors: direct and indirect. Direct calls are tagged with call edges. Indirect
   calls are tagged with an indirect call style. Calls can be internal or external to a program. Call
@@ -65,16 +62,15 @@ before conversion. For instance, a frontend language expression like `x = a + (b
 linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t2`.
 
 Stores into objects and structures often look like `obj.x.y = w` in frontend languages. These are
-modeled as [`StatementKind::Store`] instructions whose destination is `obj`.
+modeled as [`StatementKind::Assign`] instructions whose destination is the access path `obj.x.y`.
 Statements like `obj.x = F(y.z)` have to be split into two CIR instructions: first, call the
 function and return into a temporary like `t1 = F(y.z)`; next, store the temporary to the
 destination object.
 
 Globals variables in frontend languages can be modeled using [`Variable::GlobalHeap`] and fields.
-Say you have a global variable `speed`. Loading a global is done with a [`StatementKind::Load`] whose
-source is the global heap and whose field is `speed`. Storing to speed is done with an
-[`StatementKind::Store`] instruction to the `speed` field, using the global heap as the
-destination.
+Say you have a global variable `speed`. Loading a global is an assignment whose source is the
+global heap's field `$globals.speed`; storing to it is an assignment whose destination is that
+access path.
 
 Extern functions (functions that are called, for example, but not defined) are modeled with a
 [`FunctionData`] and empty basic blocks.
@@ -110,7 +106,7 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::{fmt, fmt::Display};
 
 use internment::ArcIntern;
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
 use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
@@ -134,6 +130,7 @@ mod basic_blocks;
 pub mod builder;
 pub mod call;
 pub mod encode;
+pub mod path;
 pub mod path_syntax;
 pub mod pos;
 mod terminator;
@@ -141,8 +138,8 @@ mod verify;
 pub mod visit;
 
 pub use crate::mir::path_syntax::{
-    PathSyntaxError, PathSyntaxErrorKind, parse_segment, parse_segments, path_to_string,
-    segment_to_string, write_path, write_segment,
+    PathSyntaxError, PathSyntaxErrorKind, parse_path, parse_segment, parse_segments,
+    path_to_string, segment_to_string, write_path, write_segment,
 };
 
 // Index into basic blocks in `BasicBlocks`
@@ -158,75 +155,43 @@ impl BasicBlockIdx {
 
 pub type Symbol = ArcIntern<str>;
 
-/// Field name for the *memory* an address names -- the dereference itself. Front ends with
-/// pointers (C, pcode) spell every memory access as an address followed by this symbol, so C's
-/// `a[3]` is the path `a.[3].deref` and `*p` is `p.deref`. An [`Offset`] in a path only moves
-/// an address; this field is what touches memory.
-///
-/// Keeping the offset apart from the dereference is what makes element addresses composable:
-/// offsets are summed when paths meet, so a callee's write at `.[1].deref` through `&a[1]`
-/// (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]` reads. The analysis
-/// gives this field meaning, so a front end that needs a pointer-like field should use this one
-/// rather than minting its own.
-pub const DEREF_FIELD: &str = "deref";
-
-/// Field name under which a variable records what its *value* was computed from, as opposed to
-/// what it holds. [`Exp::Value`] lowers `t = value(v)` to `t.#value <- v`.
-///
-/// The field is terminal: the analysis admits `p.#value` for every path `p` it admits, and no
-/// path with a segment after `#value`. It also absorbs itself, `p.#value · #value = p.#value`, so
-/// `t.#value <- v` carries what `v`'s own value was computed from. The `#` keeps it apart from
-/// every front end's field names.
-pub const VALUE_FIELD: &str = "#value";
-
 /// A newtype wrapper for u64 representing a numeric offset in field access
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Offset(pub i64);
 
-/// A single access in an [`Address`]: always a numeric offset. Symbolic fields are a
-/// [`FieldRef`].
-#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum OffsetAccess {
-    /// A numeric offset (e.g., 42)
-    Offset(Offset),
-}
-
-impl OffsetAccess {
-    #[inline]
-    pub fn is_offset(&self) -> bool {
-        matches!(self, OffsetAccess::Offset(_))
-    }
-
-    /// The numeric offset (an address's accesses are offset-only).
-    #[inline]
-    pub fn offset(&self) -> Offset {
-        let OffsetAccess::Offset(offset) = self;
-        offset.clone()
-    }
-}
-
-/// A single segment used only as *input* to path lowering ([`load_access_path`] /
-/// [`store_access_path`]) and as the element of the analysis-level path (`facts::Path`). Unlike
-/// [`OffsetAccess`] (offset-only) and [`FieldRef`] (a single symbol), a segment sequence may
-/// freely mix pointer-arithmetic offsets and symbolic field accesses in any order (e.g.
-/// `__stack_top.[8].deref.f`). Lowering turns each symbolic access into a
-/// [`StatementKind::Load`]/[`StatementKind::Store`], yielding type-correct [`Address`]es and
-/// single-symbol field paths.
+/// One segment of an access path (S1 of `docs/ir.md`).
+///
+/// The four kinds are distinct variants: [`PathSegment::Deref`] and [`PathSegment::Value`] are
+/// not field names, so a source-language field named `deref` or `#value` is an ordinary
+/// [`PathSegment::Field`] and cannot be mistaken for them. Paths are compared only in normal
+/// form; [`path`] owns the equations.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PathSegment {
-    /// A symbolic field name (e.g., `deref`, or a C field `f`)
-    Symbol(Symbol),
-    /// A numeric offset (pointer arithmetic)
+    /// A symbolic field name, with no layout (e.g. a C field `f`, a Java field).
+    Field(Symbol),
+    /// A constant offset: address arithmetic, not a memory access.
     Offset(Offset),
+    /// The step from an address to the memory there. Front ends with pointers spell every
+    /// memory access as an address followed by this segment, so C's `a[3]` is `a.[3].deref` and
+    /// `*p` is `p.deref`.
+    ///
+    /// Keeping the offset apart from the dereference is what makes element addresses
+    /// composable: offsets are summed when paths meet, so a callee's write at `.[1].deref`
+    /// through `&a[1]` (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]`
+    /// reads.
+    Deref,
+    /// What a variable's value was computed from, as opposed to what it holds. [`Exp::Value`]
+    /// lowers `t = value(v)` to `t.#value <- v`. Terminal: a field or `deref` after it is void,
+    /// and it absorbs itself and adjacent offsets.
+    Value,
 }
 
 impl PathSegment {
     #[inline]
-    pub fn is_symbol(&self) -> bool {
-        matches!(self, PathSegment::Symbol(_))
+    pub fn is_field(&self) -> bool {
+        matches!(self, PathSegment::Field(_))
     }
 
     #[inline]
@@ -234,9 +199,10 @@ impl PathSegment {
         matches!(self, PathSegment::Offset(_))
     }
 
+    /// A field segment named `name`. A name such as `deref` is a field like any other.
     #[inline]
-    pub fn symbol<S: AsRef<str>>(name: S) -> Self {
-        PathSegment::Symbol(ArcIntern::from(name.as_ref()))
+    pub fn field<S: AsRef<str>>(name: S) -> Self {
+        PathSegment::Field(ArcIntern::from(name.as_ref()))
     }
 
     #[inline]
@@ -244,37 +210,30 @@ impl PathSegment {
         PathSegment::Offset(Offset(offset))
     }
 
-    /// The dereference segment, [`DEREF_FIELD`].
-    #[inline]
-    pub fn deref() -> Self {
-        PathSegment::symbol(DEREF_FIELD)
-    }
-
-    /// True for the dereference segment ([`DEREF_FIELD`]) -- the memory at an address, as
-    /// opposed to a struct member.
     #[inline]
     pub fn is_deref(&self) -> bool {
-        matches!(self, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
+        matches!(self, PathSegment::Deref)
     }
 
-    /// The value segment, [`VALUE_FIELD`].
-    #[inline]
-    pub fn value() -> Self {
-        PathSegment::symbol(VALUE_FIELD)
-    }
-
-    /// True for the value segment ([`VALUE_FIELD`]).
     #[inline]
     pub fn is_value(&self) -> bool {
-        matches!(self, PathSegment::Symbol(s) if &**s == VALUE_FIELD)
+        matches!(self, PathSegment::Value)
     }
 }
 
-impl From<OffsetAccess> for PathSegment {
+impl From<&str> for PathSegment {
+    /// A [`PathSegment::Field`] named `name`.
     #[inline]
-    fn from(fa: OffsetAccess) -> Self {
-        let OffsetAccess::Offset(offset) = fa;
-        PathSegment::Offset(offset)
+    fn from(name: &str) -> Self {
+        PathSegment::field(name)
+    }
+}
+
+impl From<Symbol> for PathSegment {
+    /// A [`PathSegment::Field`] named `name`.
+    #[inline]
+    fn from(name: Symbol) -> Self {
+        PathSegment::Field(name)
     }
 }
 
@@ -295,91 +254,27 @@ impl Display for Offset {
     }
 }
 
-impl Display for OffsetAccess {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&path_syntax::segment_to_string(&PathSegment::from(
-            self.clone(),
-        )))
-    }
-}
-
 /// IR Statements. They capture assignments and function calls.
 ///
-/// Frontends typically generate assign, load, store, and call instructions. The phi and param-flow
-/// instructions are generated during SSA conversion.
+/// Frontends typically generate assign, load, store, and call instructions. The phi instruction is
+/// generated during SSA conversion.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StatementKind {
-    /// Assignment of constants and variables. The first element of the tuple is the destination;
-    /// the second element of the tuple is a list of sources. Assignments only set variables, to
-    /// set fields, use the `Store` instruction.
+    /// An assignment `dest = s_1, ..., s_n` (S5 of `docs/ir.md`): each source flows into `dest`,
+    /// so several sources are sugar for several assignments.
     ///
-    /// The destinations should not overlap. If they do, the right-most destination overwrites the
-    /// previous updates, which is probably not what you want.
+    /// The destination is a full access path. With an empty path the assignment is a *copy*: it
+    /// defines `dest.base`, so SSA versions it (a load `x = y.f` is a copy, and so is pointer
+    /// arithmetic `x = y.[8]`). With a non-empty path it is a *store*: it defines no variable,
+    /// writes the memory at `dest`, and reads `dest.base`. [`StatementKind::is_store`] says which;
+    /// no pass decides it any other way.
+    ///
+    /// The destination is never an address: [`StatementKind::assign`] rewrites `p.[k] = e` into
+    /// `p = e.[-k]` (S5), and [`MirVerify`] rejects an address destination.
     Assign {
-        dest: VariableRef,
+        dest: AccessPath,
         sources: SmallVec<[Exp; 2]>,
-    },
-
-    /// Load a value from a source address's field into a destination variable:
-    ///
-    /// ```text
-    /// dest = load source.field;
-    /// ```
-    ///
-    /// The destination is defined; the source address is only read. `source` is an [`Address`]
-    /// (e.g. `x.[50]`); `field` is the symbolic [`FieldRef`] read at that address (e.g. `.deref`),
-    /// so a full load reads `source.base` at `source.accesses ++ field`. The loaded `field` must be
-    /// non-empty (a pathless load is just an assign). See [`load_access_path`], which is the one
-    /// place that lowers a chain of field accesses into loads: offsets accumulate into `source`,
-    /// and each symbolic field emits one `Load`.
-    Load {
-        dest: VariableRef,
-        source: Address,
-        field: FieldRef,
-    },
-
-    /// Store a value into a destination address's field:
-    ///
-    /// ```text
-    /// store dest.field := value;
-    /// ```
-    Store {
-        dest: Address,
-        field: FieldRef,
-        /// Value to store
-        value: Exp,
-    },
-
-    /// Functionally update one field of a structure, producing a new version of the destination
-    /// aggregate:
-    ///
-    /// ```text
-    /// x = update (y.f := v)
-    /// ```
-    ///
-    /// Here `x` is `dest.base`, `y` is `source`, `.f` is `dest.accesses` followed by `field`, and
-    /// `v` is `value`.
-    ///
-    /// An `Update` is exactly a [`StatementKind::Store`] — it writes a single symbolic `field` at
-    /// the offset-only `dest` address — except that it names the `source` aggregate *separately*
-    /// from the destination. The result `dest` is `source` with `dest.accesses ++ field` set to
-    /// `value`.
-    ///
-    /// Unlike `Store`, which defines no variable and reads its `dest` only as a location, an
-    /// `Update` DEFINES `dest.base`: the new version of the aggregate. Specifying the
-    /// `source` and destination separately is what lets SSA conversion rename `dest` to a fresh
-    /// version while still reading the previous `source` (e.g. `s = update (s.foo := new_value)`
-    /// becomes `s_2 = update (s_1.foo := new_value)`). This is the functional-update counterpart
-    /// of `Store`; a frontend may emit whichever fits its memory model.
-    Update {
-        dest: Address,
-        /// The aggregate copied into `dest` before the field is written.
-        source: VariableRef,
-        /// Symbolic field written at `dest` (a single symbol, like `Store`).
-        field: FieldRef,
-        /// Value to store
-        value: Exp,
     },
 
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
@@ -397,14 +292,6 @@ pub enum StatementKind {
     Phi {
         dest: VariableRef,
         operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
-    },
-
-    /// Function parameter SSA variables & global heap. This is an anchor for uses of a variable.
-    /// It helps when generating code from SSA. Return instructions are instrumented with this
-    /// instruction.
-    ParamFlow {
-        params: IndexVec<ParameterIdx, VariableRef>,
-        global: VariableRef,
     },
 
     /// No operation
@@ -433,7 +320,7 @@ pub struct SourceInfo {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
-    /// in a [`StatementKind::Store`] instruction.
+    /// by a store, an assignment with a non-empty destination path.
     GlobalHeap,
     /// A local variable, identified by its index into the enclosing function's [`Locals`] table.
     Local(LocalIdx),
@@ -455,10 +342,10 @@ pub struct VariableRef {
 /// itself.
 ///
 /// This type defines the term: everywhere else in ctadl, "access path" means a variable plus a
-/// [`PathSegment`] sequence, and a "path" is the sequence alone. The IR does not carry access
-/// paths as operands. Offsets are address arithmetic and symbolic fields are memory accesses, so
-/// [`load_access_path`] and [`store_access_path`] lower an access path into
-/// [`StatementKind::Load`]s and [`StatementKind::Store`]s over [`Address`]es and [`FieldRef`]s.
+/// [`PathSegment`] sequence, and a "path" is the sequence alone. Access paths are the IR's
+/// operands: an assignment's destination and sources, call arguments, an indirect call's callee.
+/// [`AccessPath::new`] puts the path in normal form ([`path::normalize`]); [`MirVerify`] checks
+/// it, since a deserialized program bypasses the constructor.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccessPath {
@@ -466,60 +353,28 @@ pub struct AccessPath {
     pub segments: ThinVec<PathSegment>,
 }
 
-/// An **address**: a variable and an **offset-only** sequence of accesses (pointer arithmetic,
-/// e.g. `x.[50].[4]`). It is the offset-only special case of an [`AccessPath`], and the form the
-/// IR's operands take. Symbolic fields never appear in an address: a field is reachable only
-/// through a [`StatementKind::Load`] (read) or [`StatementKind::Store`] (write), whose field
-/// operand is a [`FieldRef`]. The types enforce this: [`OffsetAccess`] is offset-only.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Address {
-    pub base: VariableRef,
-    pub accesses: OffsetAccesses,
-}
-
-/// A sequence of offset accesses. The first or innermost offset is index 0.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OffsetAccesses {
-    pub offsets: ThinVec<OffsetAccess>,
-}
-
-/// A **field path**: the single *symbolic* field read by a
-/// [`StatementKind::Load`] or written by a [`StatementKind::Store`] (e.g. the `.deref` in
-/// `Load(dest, x.[50], .deref)`). This is the counterpart to [`Address`]: offsets live in an
-/// address, symbolic fields live in a field path, and the two meet only at a load/store.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FieldRef {
-    pub field: Symbol,
-}
-
-/// Expressions. The IR is flat, so expressions are either constants, variables or addresses
+/// Expressions: an operand of an assignment, a call or a return.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Exp {
-    /// A bare variable reference.
-    Variable(VariableRef),
-    /// An [`Address`] with at least one offset, such as `x.[50]`. An address is pointer
-    /// arithmetic, not a memory read, so it is expressible directly as an [`Exp`] with no
-    /// [`StatementKind::Load`].
-    Address(Address),
-    Str(ArcIntern<str>),
-    /// A block of bytes. It has no value as a number.
-    Bytes(Vec<u8>),
-    ObjectRef(CallObject),
-    /// An integer constant, sign-extended to `i64`.
-    Int(i64),
-    /// The value of `v`, not its identity: the destination's value depends on `v`'s, but nothing
-    /// reachable through the destination is reachable through `v`. Integer arithmetic uses it
-    /// for operands that only supply a number, so `t = a + i` relates `t` to the memory behind
-    /// `a`, the base, and not to the memory behind `i`. See [`VALUE_FIELD`].
-    ///
-    /// Last, so that the other variants keep their encoding.
+    /// An access path, read as a whole. An empty path names the variable, and prints as it.
+    Path(AccessPath),
+    /// The value of an access path, not its identity: `t = value(p)` lowers to `t.#value <- p`.
+    /// The destination's value depends on `p`'s, but nothing reachable through the destination
+    /// is reachable through `p`. Integer arithmetic uses it for operands that only supply a
+    /// number, so `t = a + i` relates `t` to the memory behind `a`, the base, and not to the
+    /// memory behind `i`. See [`PathSegment::Value`].
     ///
     /// Valid only as a source of [`StatementKind::Assign`].
-    Value(VariableRef),
+    Value(AccessPath),
+    /// A function or class reference: a target label (S11).
+    ObjectRef(CallObject),
+    /// A constant string: a string label (S12).
+    Str(ArcIntern<str>),
+    /// An integer constant, sign-extended to `i64`. Carries nothing.
+    Int(i64),
+    /// A block of bytes. It has no value as a number, and carries nothing.
+    Bytes(Vec<u8>),
 }
 
 /// A sequence of statements ending with a terminator.
@@ -937,19 +792,41 @@ impl VariableRef {
 }
 
 impl AccessPath {
-    /// Creates an access path from a base variable and its path.
+    /// Creates an access path from a base variable and its path, in normal form
+    /// ([`path::normalize`]).
     #[inline]
     pub fn new(base: VariableRef, segments: impl IntoIterator<Item = PathSegment>) -> Self {
         Self {
             base,
-            segments: segments.into_iter().collect(),
+            segments: path::normalize(segments).into_iter().collect(),
         }
+    }
+
+    /// The classification of this access path's path ([`path::classify`]).
+    #[inline]
+    pub fn class(&self) -> path::PathClass {
+        path::classify(&self.segments)
     }
 
     /// True when the access path names its base variable itself (its path is empty).
     #[inline]
     pub fn is_pathless(&self) -> bool {
         self.segments.is_empty()
+    }
+
+    /// Appends `seg`, keeping the path in normal form. A front end that builds a path a segment
+    /// at a time uses this rather than pushing onto `segments`, which would not normalize.
+    pub fn push(&mut self, seg: PathSegment) {
+        self.extend([seg]);
+    }
+
+    /// Appends `segs`, keeping the path in normal form.
+    pub fn extend(&mut self, segs: impl IntoIterator<Item = PathSegment>) {
+        let mut out: Vec<PathSegment> = std::mem::take(&mut self.segments).into_iter().collect();
+        for seg in segs {
+            path::push_normalized(&mut out, seg);
+        }
+        self.segments = out.into_iter().collect();
     }
 }
 
@@ -960,174 +837,10 @@ impl From<VariableRef> for AccessPath {
     }
 }
 
-impl From<Address> for AccessPath {
-    #[inline]
-    fn from(addr: Address) -> Self {
-        AccessPath::new(
-            addr.base,
-            addr.accesses.offsets.into_iter().map(PathSegment::from),
-        )
-    }
-}
-
 /// Renders the base variable followed by its path in the canonical grammar ([`path_syntax`]).
 impl Display for AccessPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.base, path_to_string(&self.segments))
-    }
-}
-
-impl Address {
-    /// Creates a new address from a variable and offset iterator
-    #[inline]
-    pub fn new(variable: VariableRef, path: impl IntoIterator<Item = OffsetAccess>) -> Self {
-        Self {
-            base: variable,
-            accesses: path.into_iter().collect(),
-        }
-    }
-
-    #[inline]
-    pub fn without_offsets(variable: VariableRef) -> Self {
-        Self {
-            base: variable,
-            accesses: OffsetAccesses::new(std::iter::empty::<OffsetAccess>()),
-        }
-    }
-}
-
-impl From<Variable> for Address {
-    #[inline]
-    fn from(v: Variable) -> Self {
-        Address::without_offsets(VariableRef::new(v))
-    }
-}
-
-impl From<VariableRef> for Address {
-    #[inline]
-    fn from(v: VariableRef) -> Self {
-        Address::without_offsets(v)
-    }
-}
-
-impl Display for Address {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Address {
-            base: variable,
-            accesses: path,
-        } = self;
-        write!(f, "{variable}{path}")
-    }
-}
-
-impl OffsetAccesses {
-    #[inline]
-    pub fn new(path: impl IntoIterator<Item = OffsetAccess>) -> Self {
-        Self {
-            offsets: path.into_iter().collect(),
-        }
-    }
-
-    #[inline]
-    pub fn empty() -> Self {
-        Self {
-            offsets: ThinVec::new(),
-        }
-    }
-
-    /// Creates an `OffsetAccesses` holding one offset.
-    #[inline]
-    pub fn with_offset(offset: i64) -> Self {
-        Self {
-            offsets: thin_vec::thin_vec![OffsetAccess::Offset(Offset(offset))],
-        }
-    }
-
-    /// Creates an `OffsetAccesses` from a sequence of offsets.
-    #[inline]
-    pub fn with_offsets(offsets: impl IntoIterator<Item = i64>) -> Self {
-        Self {
-            offsets: offsets
-                .into_iter()
-                .map(|o| OffsetAccess::Offset(Offset(o)))
-                .collect(),
-        }
-    }
-}
-
-impl FromIterator<OffsetAccess> for OffsetAccesses {
-    #[inline]
-    fn from_iter<I: IntoIterator<Item = OffsetAccess>>(data: I) -> Self {
-        Self {
-            offsets: data.into_iter().collect(),
-        }
-    }
-}
-
-impl Display for OffsetAccesses {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = String::new();
-        for field in &self.offsets {
-            out.push('.');
-            path_syntax::write_segment(&mut out, &PathSegment::from(field.clone()));
-        }
-        f.write_str(&out)
-    }
-}
-
-impl FieldRef {
-    /// A field path holding a single symbolic field.
-    #[inline]
-    pub fn symbol<S: AsRef<str>>(name: S) -> Self {
-        Self {
-            field: ArcIntern::from(name.as_ref()),
-        }
-    }
-
-    /// The dereference field, [`DEREF_FIELD`].
-    #[inline]
-    pub fn deref() -> Self {
-        Self::symbol(DEREF_FIELD)
-    }
-
-    /// A field path from an already-interned symbol.
-    #[inline]
-    pub fn new(field: Symbol) -> Self {
-        Self { field }
-    }
-
-    /// The symbolic field name.
-    #[inline]
-    pub fn as_str(&self) -> &str {
-        self.field.as_ref()
-    }
-
-    /// The interned symbol.
-    #[inline]
-    pub fn symbol_ref(&self) -> &Symbol {
-        &self.field
-    }
-}
-
-impl From<Symbol> for FieldRef {
-    #[inline]
-    fn from(field: Symbol) -> Self {
-        Self { field }
-    }
-}
-
-impl From<&str> for FieldRef {
-    #[inline]
-    fn from(name: &str) -> Self {
-        Self::symbol(name)
-    }
-}
-
-impl Display for FieldRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = String::from(".");
-        path_syntax::write_segment(&mut out, &PathSegment::Symbol(self.field.clone()));
-        f.write_str(&out)
     }
 }
 
@@ -1163,61 +876,54 @@ impl Display for VariableRef {
     }
 }
 
-impl Deref for OffsetAccesses {
-    type Target = [OffsetAccess];
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.offsets[..]
-    }
-}
-
 impl Exp {
+    /// The whole variable `v`, an access path with the empty path.
     #[inline]
     pub fn variable(v: VariableRef) -> Self {
-        Self::Variable(v)
+        Self::Path(AccessPath::from(v))
     }
 
-    /// [`Exp::Value`] of `v`.
+    /// The access path `ap`.
     #[inline]
-    pub fn value(v: VariableRef) -> Self {
-        Self::Value(v)
+    pub fn path(ap: impl Into<AccessPath>) -> Self {
+        Self::Path(ap.into())
     }
 
-    /// Builds an expression from an address. An address with no offsets is a bare
-    /// [`Exp::Variable`]; otherwise it is an [`Exp::Address`] (pointer arithmetic).
+    /// [`Exp::Value`] of `ap`.
     #[inline]
-    pub fn address(addr: Address) -> Self {
-        if addr.accesses.is_empty() {
-            Self::Variable(addr.base)
-        } else {
-            assert!(
-                addr.accesses.iter().all(OffsetAccess::is_offset),
-                "an address expression must be offset-only; use a Load for field reads: {addr}"
-            );
-            Self::Address(addr)
-        }
+    pub fn value(ap: impl Into<AccessPath>) -> Self {
+        Self::Value(ap.into())
     }
 
-    /// Returns the base variable read by this expression, if it reads a variable or an address
-    /// derived from one (`Exp::Variable`, `Exp::Value` or `Exp::Address`). Constants return
-    /// `None`.
+    /// The access path this expression reads, for [`Exp::Path`] and [`Exp::Value`].
     #[inline]
-    pub fn base_variable(&self) -> Option<&VariableRef> {
+    pub fn access_path(&self) -> Option<&AccessPath> {
         match self {
-            Exp::Variable(v) | Exp::Value(v) => Some(v),
-            Exp::Address(addr) => Some(&addr.base),
+            Exp::Path(ap) | Exp::Value(ap) => Some(ap),
             _ => None,
         }
+    }
+
+    /// Mutable counterpart of [`Exp::access_path`].
+    #[inline]
+    pub fn access_path_mut(&mut self) -> Option<&mut AccessPath> {
+        match self {
+            Exp::Path(ap) | Exp::Value(ap) => Some(ap),
+            _ => None,
+        }
+    }
+
+    /// Returns the base variable read by this expression, if it reads one ([`Exp::Path`] or
+    /// [`Exp::Value`]). Constants return `None`.
+    #[inline]
+    pub fn base_variable(&self) -> Option<&VariableRef> {
+        self.access_path().map(|ap| &ap.base)
     }
 
     /// Mutable counterpart of [`Exp::base_variable`].
     #[inline]
     pub fn base_variable_mut(&mut self) -> Option<&mut VariableRef> {
-        match self {
-            Exp::Variable(v) | Exp::Value(v) => Some(v),
-            Exp::Address(addr) => Some(&mut addr.base),
-            _ => None,
-        }
+        self.access_path_mut().map(|ap| &mut ap.base)
     }
 
     #[inline]
@@ -1248,11 +954,12 @@ impl Exp {
         Self::Str(ArcIntern::from(s))
     }
 
-    /// Returns the variable this expression reads, if it is a variable reference.
+    /// Returns the variable this expression reads, if it is a whole variable: an
+    /// [`Exp::Path`] with the empty path.
     #[inline]
     pub fn variable_ref(&self) -> Option<&VariableRef> {
         match self {
-            Exp::Variable(v) => Some(v),
+            Exp::Path(ap) if ap.is_pathless() => Some(&ap.base),
             _ => None,
         }
     }
@@ -1416,94 +1123,63 @@ impl Statement {
 }
 
 impl StatementKind {
-    /// Generates a [`StatementKind::ParamFlow`] instruction for the given arity.
-    pub fn param_flow(arity: usize) -> Self {
-        let params = (0..arity)
-            .map(|i| VariableRef::new(Variable::new_parameter(ParameterIdx::new(i))))
-            .collect();
-        Self::ParamFlow {
-            params,
-            global: VariableRef::new_global(),
-        }
-    }
-
     /// Generates an assign from a destination and sources. Use this to flow multiple sources into
     /// a single destination, i.e., when modeling a statement like "x = y + z" where you want "y"
     /// and "z" to flow into "x."
+    ///
+    /// An address destination `p.[k] = e` is rewritten to `p = e.[-k]` (S5): the result's
+    /// destination is never an address.
     #[inline]
-    pub fn assign<I>(dest: VariableRef, srcs: I) -> Self
+    pub fn assign<I>(dest: impl Into<AccessPath>, srcs: I) -> Self
     where
         I: IntoIterator<Item = Exp>,
     {
-        StatementKind::Assign {
-            dest,
-            sources: srcs.into_iter().collect(),
-        }
+        let dest = dest.into();
+        let sources: SmallVec<[Exp; 2]> = srcs.into_iter().collect();
+        let (dest, sources) = rewrite_address_dest(dest, sources);
+        StatementKind::Assign { dest, sources }
     }
 
-    /// Constructs a load `dest = source.field` (see [`StatementKind::Load`]).
-    pub fn load(dest: VariableRef, source: impl Into<Address>, field: impl Into<FieldRef>) -> Self {
-        StatementKind::Load {
-            dest,
-            source: source.into(),
-            field: field.into(),
-        }
-    }
-
-    /// Constructs a store `store dest.field := value` to an offset-only `dest` address and a
-    /// single symbolic `field`. For a location that includes intermediate symbolic
-    /// dereferences, use [`store_access_path`], which emits the needed loads.
-    pub fn store(dest: Address, field: impl Into<FieldRef>, value: Exp) -> Self {
-        let field = field.into();
-        StatementKind::Store { dest, field, value }
-    }
-
-    /// Constructs a functional update `dest = update (source.field := value)`: `dest` becomes
-    /// `source` with the single symbolic `field` at the offset-only `dest` address set to `value`.
-    /// Unlike [`Self::store`], the resulting `dest` variable is defined (a new version of the
-    /// aggregate), so the `source` and destination are given separately (see
-    /// [`StatementKind::Update`]).
-    pub fn update(
-        dest: Address,
-        source: VariableRef,
-        field: impl Into<FieldRef>,
-        value: Exp,
+    /// The copy `dest = source.segment`, a load.
+    pub fn load(
+        dest: VariableRef,
+        source: impl Into<AccessPath>,
+        segment: impl Into<PathSegment>,
     ) -> Self {
-        let field = field.into();
-        StatementKind::Update {
-            dest,
-            source,
-            field,
-            value,
-        }
+        let mut source = source.into();
+        let segments = path::concat(&source.segments, &[segment.into()]);
+        source.segments = segments.into_iter().collect();
+        Self::assign(dest, [Exp::Path(source)])
     }
 
-    /// Emits an [`StatementKind::Assign`] when `field` is `None` (a write with no symbolic field),
-    /// or a [`Self::store`] of `field` into `dest` otherwise. When `field` is `None` the `dest` must
-    /// be a bare variable: storing to an offset address with no field is an error, since a store
-    /// always writes a symbolic field.
+    /// The store `dest.segment = value`.
+    pub fn store(dest: impl Into<AccessPath>, segment: impl Into<PathSegment>, value: Exp) -> Self {
+        let mut dest = dest.into();
+        let segments = path::concat(&dest.segments, &[segment.into()]);
+        dest.segments = segments.into_iter().collect();
+        Self::assign(dest, [value])
+    }
+
+    /// True for an assignment whose destination path is non-empty: it writes memory and defines
+    /// no variable (S5). False for every other statement.
     #[inline]
-    pub fn assign_or_store(dest: Address, field: Option<FieldRef>, src: Exp) -> Self {
-        match field {
-            Some(field) => Self::store(dest, field, src),
-            None => {
-                assert!(
-                    dest.accesses.is_empty(),
-                    "storing to an offset address with no field is an error"
-                );
-                StatementKind::Assign {
-                    dest: dest.base,
-                    sources: smallvec![src],
-                }
-            }
-        }
+    pub fn is_store(&self) -> bool {
+        matches!(self, StatementKind::Assign { dest, .. } if !dest.is_pathless())
     }
 
-    /// Returns an iterator over variables read by this statement.
+    /// Returns an iterator over variables read by this statement. A store reads its
+    /// destination's base.
     pub fn iter_src_var<'s>(&'s self) -> VarIter<'s> {
         use StatementKind::*;
         match self {
-            Assign { dest: _, sources } => Box::new(sources.iter().filter_map(Exp::base_variable)),
+            Assign { dest, sources } => {
+                let a: VarIter<'s> = if dest.is_pathless() {
+                    Box::new(std::iter::empty())
+                } else {
+                    Box::new(std::iter::once(&dest.base))
+                };
+                Box::new(a.chain(sources.iter().filter_map(Exp::base_variable)))
+            }
             CallAssign { args, style, .. } => {
                 let a: VarIter<'s> = Box::new(args.iter().filter_map(Exp::base_variable));
                 let b: VarIter<'s> = match style.receiver() {
@@ -1513,37 +1189,6 @@ impl StatementKind {
                 Box::new(a.chain(b))
             }
             Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
-            ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
-            Load {
-                dest: _,
-                source,
-                field: _,
-            } => Box::new(std::iter::once(&source.base)),
-            Store {
-                dest,
-                field: _,
-                value,
-            } => {
-                let a: VarIter<'s> = Box::new(std::iter::once(&dest.base));
-                let b: VarIter<'s> = match Exp::base_variable(value) {
-                    Some(v) => Box::new(std::iter::once(v)),
-                    None => Box::new(std::iter::empty()),
-                };
-                Box::new(a.chain(b))
-            }
-            Update {
-                dest: _,
-                source,
-                field: _,
-                value,
-            } => {
-                let a: VarIter<'s> = Box::new(std::iter::once(source));
-                let b: VarIter<'s> = match Exp::base_variable(value) {
-                    Some(v) => Box::new(std::iter::once(v)),
-                    None => Box::new(std::iter::empty()),
-                };
-                Box::new(a.chain(b))
-            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1552,8 +1197,13 @@ impl StatementKind {
     pub fn iter_src_var_mut<'s>(&'s mut self) -> VarIterMut<'s> {
         use StatementKind::*;
         match self {
-            Assign { dest: _, sources } => {
-                Box::new(sources.iter_mut().filter_map(Exp::base_variable_mut))
+            Assign { dest, sources } => {
+                let a: VarIterMut<'s> = if dest.is_pathless() {
+                    Box::new(std::iter::empty())
+                } else {
+                    Box::new(std::iter::once(&mut dest.base))
+                };
+                Box::new(a.chain(sources.iter_mut().filter_map(Exp::base_variable_mut)))
             }
             CallAssign { args, style, .. } => {
                 let a: VarIterMut<'s> =
@@ -1565,56 +1215,19 @@ impl StatementKind {
                 Box::new(a.chain(b))
             }
             Phi { operands, .. } => Box::new(operands.iter_mut().map(|(_, v)| v)),
-            ParamFlow { params, global } => {
-                Box::new(params.iter_mut().chain(std::iter::once(global)))
-            }
-            Load {
-                dest: _,
-                source,
-                field: _,
-            } => Box::new(std::iter::once(&mut source.base)),
-            Store {
-                dest,
-                field: _,
-                value,
-            } => {
-                let a: VarIterMut<'s> = Box::new(std::iter::once(&mut dest.base));
-                let b: VarIterMut<'s> = if let Some(v) = Exp::base_variable_mut(value) {
-                    Box::new(std::iter::once(v))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
-            }
-            Update {
-                dest: _,
-                source,
-                field: _,
-                value,
-            } => {
-                let a: VarIterMut<'s> = Box::new(std::iter::once(source));
-                let b: VarIterMut<'s> = if let Some(v) = Exp::base_variable_mut(value) {
-                    Box::new(std::iter::once(v))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
-            }
             Nop => Box::new(std::iter::empty()),
         }
     }
 
-    /// Returns an iterator over variables set by this statement.
+    /// Returns an iterator over variables set by this statement. A copy defines its
+    /// destination's base; a store defines nothing.
     pub fn iter_dst_var<'s>(&'s self) -> VarIter<'s> {
         use StatementKind::*;
         match self {
-            Assign { dest, .. } => Box::new(std::iter::once(dest)),
-            Load { dest, .. } => Box::new(std::iter::once(dest)),
+            Assign { dest, .. } if dest.is_pathless() => Box::new(std::iter::once(&dest.base)),
+            Assign { .. } => Box::new(std::iter::empty()),
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
-            ParamFlow { .. } => Box::new(std::iter::empty()),
-            Store { .. } => Box::new(std::iter::empty()),
-            Update { dest, .. } => Box::new(std::iter::once(&dest.base)),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1623,100 +1236,75 @@ impl StatementKind {
     pub fn iter_dst_var_mut<'s>(&'s mut self) -> VarIterMut<'s> {
         use StatementKind::*;
         match self {
-            Assign { dest, sources: _ } => Box::new(std::iter::once(dest)),
-            Load { dest, .. } => Box::new(std::iter::once(dest)),
+            Assign { dest, .. } if dest.is_pathless() => Box::new(std::iter::once(&mut dest.base)),
+            Assign { .. } => Box::new(std::iter::empty()),
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
-            ParamFlow { .. } => Box::new(std::iter::empty()),
-            Store { .. } => Box::new(std::iter::empty()),
-            Update { dest, .. } => Box::new(std::iter::once(&mut dest.base)),
             Nop => Box::new(std::iter::empty()),
         }
     }
 }
 
-/// Lowers a *read* of the access path `ap` into a sequence of [`StatementKind::Load`]
-/// instructions, appending them to `out` and returning the residual [`Address`] — the base
-/// variable plus any trailing accumulated offset.
+/// Reads the memory part of `ap` into a fresh temporary and returns the temporary followed by
+/// `ap`'s trailing offsets: `a.f.g.[8]` appends `t = a.f.g` to `out` and returns `t.[8]`. An
+/// address with no memory part (`a.[8]`, or `a` itself) is returned unchanged and appends
+/// nothing.
 ///
-/// Offsets and symbolic fields are treated differently, matching the two things they mean:
-///
-/// - A [`PathSegment::Offset`] is pointer arithmetic (address computation), *not* a memory access.
-///   It emits no load; it accumulates into the current address, and consecutive offsets merge into
-///   a single offset (`x.[10].[40]` ⟶ `x.[50]`).
-/// - A [`PathSegment::Symbol`] (e.g. `deref`, or a C field `f`) is a memory read. It emits one
-///   [`StatementKind::Load`] whose `source` is the current address (base variable + accumulated
-///   offset) and whose loaded `field` is that single symbol. The load's destination — a fresh
-///   temporary minted by `fresh` — becomes the new base, and offset accumulation restarts from it.
-///
-/// So `a.f.g` lowers to `t1 = load a.f; t2 = load t1.g` and returns `t2`;
-/// `x.[10].deref.[20].deref` lowers to `t1 = load x.[10].deref; t2 = load t1.[20].deref` and
-/// returns `t2`; a pure address `x.[50]` emits nothing and returns `x.[50]`; a pathless access
-/// path returns its base unchanged.
-pub fn load_access_path(
+/// This is for a front end that wants an operand that is a variable plus offsets, such as a
+/// pointer it goes on to offset. Nothing in the IR requires it: an operand may be any access
+/// path.
+pub fn read_into_temp(
     ap: AccessPath,
     out: &mut Vec<Statement>,
-    mut fresh: impl FnMut() -> VariableRef,
-) -> Address {
-    // `cur` is the current address: the base variable plus a merged trailing offset.
-    let mut cur = Address::without_offsets(ap.base);
-    for segment in ap.segments {
-        match segment {
-            PathSegment::Offset(offset) => match cur.accesses.offsets.last_mut() {
-                // Merge consecutive offsets (address arithmetic composes).
-                Some(OffsetAccess::Offset(prev)) => prev.0 = prev.0.wrapping_add(offset.0),
-                _ => cur.accesses.offsets.push(OffsetAccess::Offset(offset)),
-            },
-            PathSegment::Symbol(symbol) => {
-                // A symbolic field is a memory read: load it from the current address and continue
-                // from the loaded value.
-                let dest = fresh();
-                let source = std::mem::replace(&mut cur, Address::without_offsets(dest.clone()));
-                out.push(Statement::new_kind(StatementKind::load(
-                    dest,
-                    source,
-                    FieldRef::new(symbol),
-                )));
-            }
-        }
-    }
-    cur
+    fresh: impl FnOnce() -> VariableRef,
+) -> AccessPath {
+    let Some(i) = ap.segments.iter().rposition(|s| !s.is_offset()) else {
+        return ap;
+    };
+    let t = fresh();
+    let AccessPath { base, segments } = ap;
+    out.push(Statement::new_kind(StatementKind::assign(
+        t.clone(),
+        [Exp::Path(AccessPath::new(
+            base,
+            segments[..=i].iter().cloned(),
+        ))],
+    )));
+    AccessPath::new(t, segments[i + 1..].iter().cloned())
 }
 
-/// Lowers a *write* of `value` to the access path `dest` into loads for the intermediate
-/// dereferences plus a single [`StatementKind::Store`] (or [`StatementKind::Assign`] for a
-/// pathless `dest`), appending them to `out`.
-///
-/// This is the write-side counterpart of [`load_access_path`]: offsets are pointer arithmetic and
-/// stay on the address; every symbolic field *except the last* is a load (you materialize the
-/// intermediate pointer); the *final* symbolic field is the store's field. So `store *(x.[8].deref).f
-/// := v` (segments `x.[8].deref.f`) lowers to `t = load x.[8].deref; store t.f := v`. A sequence with
-/// no fields or offsets at all is an assign to `base`. An offset-terminated sequence (offsets but no
-/// trailing symbolic field) is an error: a store always writes a symbolic field, so the caller must
-/// terminate a memory write with one (e.g. a frontend synthesizing a `.deref`).
-pub fn store_access_path(
+/// The S5 rewrite of an address destination: `p.[k] = e` is `p = e.[-k]`. A source access path
+/// gains the offset `[-k]`; a value source and a constant are unchanged, since
+/// `p.[k].#value = p.#value` and an address's labels are its base's (S3).
+fn rewrite_address_dest(
     dest: AccessPath,
-    value: Exp,
-    out: &mut Vec<Statement>,
-    mut fresh: impl FnMut() -> VariableRef,
-) {
-    let AccessPath { base, mut segments } = dest;
-    // Split off a trailing symbol (the store field), if any. Everything before it is an address
-    // computation (offsets + loads for interior derefs). Any trailing offsets after the last
-    // symbol stay on the store address (a field-less offset write).
-    let field = match segments.iter().rposition(PathSegment::is_symbol) {
-        Some(i) if segments[i + 1..].iter().all(PathSegment::is_offset) => {
-            let PathSegment::Symbol(symbol) = segments.remove(i) else {
-                unreachable!()
-            };
-            Some(FieldRef::new(symbol))
-        }
-        _ => None,
+    mut sources: SmallVec<[Exp; 2]>,
+) -> (AccessPath, SmallVec<[Exp; 2]>) {
+    let AccessPath { base, segments } = dest;
+    let segments = path::normalize(segments);
+    let Some(PathSegment::Offset(_)) = segments.last() else {
+        return (
+            AccessPath {
+                base,
+                segments: segments.into_iter().collect(),
+            },
+            sources,
+        );
     };
-    let addr = load_access_path(AccessPath { base, segments }, out, &mut fresh);
-    out.push(Statement::new_kind(StatementKind::assign_or_store(
-        addr, field, value,
-    )));
+    let (dest_segments, _) = path::rewrite_address_dest(&segments, &[]);
+    for src in &mut sources {
+        if let Exp::Path(ap) = src {
+            let (_, src_segments) = path::rewrite_address_dest(&segments, &ap.segments);
+            ap.segments = src_segments.into_iter().collect();
+        }
+    }
+    (
+        AccessPath {
+            base,
+            segments: dest_segments.into_iter().collect(),
+        },
+        sources,
+    )
 }
 
 impl Params {
@@ -1973,16 +1561,15 @@ impl Display for ReturnType {
     }
 }
 
-impl From<Address> for Exp {
-    /// Same as [`Exp::address`].
-    fn from(addr: Address) -> Self {
-        Exp::address(addr)
+impl From<AccessPath> for Exp {
+    fn from(ap: AccessPath) -> Self {
+        Exp::Path(ap)
     }
 }
 
 impl From<VariableRef> for Exp {
     fn from(v: VariableRef) -> Self {
-        Exp::Variable(v)
+        Exp::variable(v)
     }
 }
 
@@ -1998,9 +1585,8 @@ impl Display for Exp {
             Exp::Bytes(bytes) => write!(f, "<const: {:?}>", bytes),
             Exp::Int(value) => write!(f, "<const: {value}>"),
             Exp::Str(s) => write!(f, "<const: {s:#?}>"),
-            Exp::Variable(v) => write!(f, "{}", v),
-            Exp::Value(v) => write!(f, "value({v})"),
-            Exp::Address(addr) => write!(f, "{}", addr),
+            Exp::Path(ap) => write!(f, "{ap}"),
+            Exp::Value(ap) => write!(f, "value({ap})"),
             Exp::ObjectRef(obj) => write!(f, "{obj}"),
         }
     }
@@ -2032,9 +1618,12 @@ impl Display for StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, sources } => {
-                write!(f, "assign ")?;
-                write!(f, "{dest}")?;
-                write!(f, " = ")?;
+                // A store prints as one, so a dump shows which assignments define a variable.
+                if dest.is_pathless() {
+                    write!(f, "assign {dest} = ")?;
+                } else {
+                    write!(f, "store {dest} := ")?;
+                }
                 for (i, src) in sources.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
@@ -2082,40 +1671,6 @@ impl Display for StatementKind {
                     write!(f, "[block_{}, {op}]", block.index())?;
                 }
                 write!(f, ")")
-            }
-            ParamFlow { params, global } => {
-                write!(f, "param-flow ")?;
-                for (i, op) in params.iter().enumerate() {
-                    if i != 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{op}")?;
-                }
-                write!(f, "; {global}")?;
-                Ok(())
-            }
-            Load {
-                dest,
-                source,
-                field,
-            } => write!(f, "{dest} = load {source}{field}"),
-            Store { dest, field, value } => {
-                write!(f, "store {dest}{field} := {value}")
-            }
-            Update {
-                dest,
-                source,
-                field,
-                value,
-            } => {
-                // `dest_var = update (source<offsets><field> := value)`, e.g. `x = update (y.f :=
-                // v)`. The offsets live on the destination address; the result is the destination
-                // variable.
-                write!(
-                    f,
-                    "{} = update ({}{}{} := {})",
-                    dest.base, source, dest.accesses, field, value
-                )
             }
             Nop => write!(f, "nop"),
         }

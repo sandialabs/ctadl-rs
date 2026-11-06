@@ -21,7 +21,7 @@ fn write_index_config_records_each_imports_hash() {
 
     let project =
         AnalysisProject::try_create("hashes", &["hashed", "unhashed"], SubImports::All).unwrap();
-    project.write_index_config(None).unwrap();
+    project.write_index_config(None, None).unwrap();
 
     let config = project.index_config().expect("index config");
     assert_eq!(

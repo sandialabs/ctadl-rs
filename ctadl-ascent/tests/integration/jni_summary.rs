@@ -79,7 +79,9 @@ fn fake_import(name: &str, language: ArtifactLanguage, subs: &[&str], contents: 
 /// A summary project over `imports`, stamped as indexed now.
 fn fake_summary_project(name: &str, imports: &[&str]) -> AnalysisProject {
     let project = AnalysisProject::try_create(name, imports, SubImports::All).expect("project");
-    project.write_index_config(None).expect("index config");
+    project
+        .write_index_config(None, None)
+        .expect("index config");
     project
 }
 
@@ -212,9 +214,14 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
         cli::IndexOptions::default(),
     )
     .expect("indexing app");
+    // The notes under test; the index adds its own about calls that do nothing (`print`).
     let texts = |n: &Notifications| -> Vec<String> {
         n.notifications()
             .iter()
+            .filter(|n| {
+                n.descriptor.as_ref().and_then(|d| d.id.as_deref())
+                    != Some(notifications::CALL_WITHOUT_BODY.id)
+            })
             .map(|n| notifications::text(n).to_string())
             .collect()
     };
@@ -281,4 +288,51 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
         texts(&Notifications::load(&app_index).expect("reading app notes")),
         [from_import]
     );
+}
+
+/// The calls that are zero assignments (S10 of `docs/ir.md`): an indirect call no target
+/// reaches and a call to a function with neither a body nor a model are each reported in the
+/// index's `notifications.sarif`, and the query carries both into its SARIF.
+#[test]
+fn zero_assignment_calls_are_reported() {
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+    use ctadl_import::notifications::{self, Notifications};
+
+    import_lua(
+        "zero_calls",
+        "local t = {}\nlocal h = t.k\nh(io.read())\nprint(io.read())\n",
+    );
+    let project = AnalysisProject::try_create("zero_calls", &["zero_calls"], SubImports::All)
+        .expect("project");
+    cli::index(&project, &[], &[], false, cli::IndexOptions::default()).expect("indexing");
+    let notes = Notifications::load(project.index_path().expect("index path")).expect("notes");
+    for descriptor in [
+        &notifications::UNRESOLVED_INDIRECT_CALL,
+        &notifications::CALL_WITHOUT_BODY,
+    ] {
+        assert!(
+            notes.of(descriptor).next().is_some(),
+            "{} in notifications.sarif: {:?}",
+            descriptor.id,
+            notes.notifications()
+        );
+    }
+
+    let sarif = store_dir().join("zero_calls.sarif");
+    cli::query(&project, &[], &sarif, SarifProfile::default(), None).expect("querying");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
+            .expect("parsing sarif");
+    let ids: Vec<&str> = doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .expect("toolExecutionNotifications")
+        .iter()
+        .filter_map(|n| n["descriptor"]["id"].as_str())
+        .collect();
+    for id in [
+        notifications::UNRESOLVED_INDIRECT_CALL.id,
+        notifications::CALL_WITHOUT_BODY.id,
+    ] {
+        assert!(ids.contains(&id), "{id} in the query's SARIF: {ids:?}");
+    }
 }

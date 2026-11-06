@@ -32,18 +32,9 @@ fn function_f() -> FunctionData {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let a = Address {
-            base: VariableRef::new_local_idx(a_idx),
-            accesses: Default::default(),
-        };
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
-        let q = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(1)),
-            accesses: Default::default(),
-        };
+        let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+        let q = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(1)));
         let stmts: IndexVec<StatementIdx, _> = indexvec![
             Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
@@ -74,18 +65,9 @@ fn function_g() -> FunctionData {
     g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let c = Address {
-        base: VariableRef::new_local_idx(c_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let c = AccessPath::from(VariableRef::new_local_idx(c_idx));
     let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -126,18 +108,9 @@ fn function_g1() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
-    let a = Address {
-        base: VariableRef::new_local_idx(a_idx),
-        accesses: Default::default(),
-    };
-    let b = Address {
-        base: VariableRef::new_parameter(ParameterIdx::new(0)),
-        accesses: Default::default(),
-    };
-    let c1 = Address {
-        base: VariableRef::new_local_idx(c1_idx),
-        accesses: Default::default(),
-    };
+    let a = AccessPath::from(VariableRef::new_local_idx(a_idx));
+    let b = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
+    let c1 = AccessPath::from(VariableRef::new_local_idx(c1_idx));
     let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
@@ -180,15 +153,12 @@ fn program_h() -> Program {
     ))));
     let body = blocks.push(BasicBlockData::new(None));
     {
-        let p = Address {
-            base: VariableRef::new_parameter(ParameterIdx::new(0)),
-            accesses: Default::default(),
-        };
+        let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
         let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
-                Address::without_offsets(global_ref.clone()),
-                ctadl_ir::mir::FieldRef::symbol("bar"),
+                AccessPath::from(global_ref.clone()),
+                ctadl_ir::mir::PathSegment::field("bar"),
                 Exp::from(p.clone()),
             ))];
         let body_block = &mut h[body];

@@ -1,0 +1,24 @@
+// The `mem2reg window:N` row of the approximations register (docs/limitations.md): an escaped
+// frame address is assumed to reach N bytes, so a callee that writes past them writes a slot the
+// pass promoted, and the flow is lost. Full promotion, which promotes the slot too, loses it as
+// well. The semantics derives it: the callee's store through `p` moves back to the caller's frame
+// (S8).
+//
+// passes: loses mem2reg window:8, mem2reg full, pipeline
+
+def Write8(p) {
+s:
+  p.[8].deref = source(S);
+  return;
+}
+
+def WindowLoss() {
+s:
+  Write8(__stack_top.[-16]);
+  x = __stack_top.[-8].deref;
+  sink(x, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: WindowLoss: sink(%S)#0 <- %S
