@@ -395,12 +395,20 @@ fn index_fixture(ctadl: &Path, fixture: &Path, dir: &Path) -> Result<Static> {
 }
 
 fn covered(rows: &[Row], (src, dst): &Flow) -> bool {
+    let value = ctadl_ir::mir::path_syntax::VALUE;
     rows.iter().any(|r| {
-        r.src.0 == src.0
+        let suffix_rides = r.src.0 == src.0
             && r.dst.0 == dst.0
             && src.1.starts_with(&r.src.1)
             && dst.1.starts_with(&r.dst.1)
-            && src.1[r.src.1.len()..] == dst.1[r.dst.1.len()..]
+            && src.1[r.src.1.len()..] == dst.1[r.dst.1.len()..];
+        // A row into `q.#value` covers the flow into `q` exactly: observing `q` observes
+        // `q.#value` (S17 of docs/ir.md). `#value` is terminal, so no suffix extends it.
+        let into_value = r.src.0 == src.0
+            && r.dst.0 == dst.0
+            && r.src.1 == src.1
+            && r.dst.1.split_last().is_some_and(|(last, init)| last == value && init == dst.1.as_slice());
+        suffix_rides || into_value
     })
 }
 
