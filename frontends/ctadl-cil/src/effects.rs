@@ -8,8 +8,8 @@
 //! | Effect                                        | Statements                                    |
 //! | --------------------------------------------- | --------------------------------------------- |
 //! | `Assign { Copy \| Cast \| Unbox }`            | `dst := srcs`                                 |
-//! | `Assign { Derived(arith, conv, cmp) }`        | `dst := value(srcs)`; an address base a copy  |
-//! | `Assign { Derived(mkrefany, refanyval) }`     | `dst := srcs`                                 |
+//! | `Assign { Derived(arith, cmp) }`              | `dst := value(srcs)`; an address base a copy  |
+//! | `Assign { Derived(conv, mkrefany, refanyval) }` | `dst := srcs`                               |
 //! | `Assign { Box(T) }`                           | `dst := srcs, cil<T>` (T instantiated)        |
 //! | `Const { I4 \| I8 }`                          | `dst := v`                                    |
 //! | `Const { R4 \| R8 }`                          | `dst := bits`                                 |
@@ -32,11 +32,11 @@
 //! | `Test`                                        | nothing: a branch taints nothing              |
 //! | `Opaque { srcs, dsts }`                       | each `d := srcs`; counted                     |
 //!
-//! Arithmetic, bitwise operations, shifts, conversions and comparisons supply values only
-//! (R17): each operand is `value(v)`, so `t = a + b` gives `t` the values of `a` and `b` and
-//! nothing reachable through either. The exception is an address computation (R16): the
-//! pointer operand of `add`, the left operand of `sub`, and the operand of `conv.i`/`conv.u`,
-//! when it is a pointer, are copies, so the result shares the memory behind them
+//! Arithmetic, bitwise operations, shifts and comparisons supply values only (R17): each operand
+//! is `value(v)`, so `t = a + b` gives `t` the values of `a` and `b` and nothing reachable through
+//! either. A conversion is a cast, the same value at another width, and stays a copy. The other
+//! exception is an address computation (R16): the pointer operand of `add` and the left operand
+//! of `sub`, when it is a pointer, are copies, so the result shares the memory behind them
 //! (`address_base` says how a pointer is recognized).
 //!
 //! A struct is lowered like an object: `ldloc` of a struct local is an assign and `ldfld` on
@@ -401,7 +401,8 @@ impl Lower<'_, '_, '_, '_, '_> {
 }
 
 /// Whether the operands of `op` supply only their values (R17): integer and float arithmetic,
-/// bitwise operations, shifts, conversions and comparisons, and `refanytype`. The result is a
+/// bitwise operations, shifts and comparisons, and `refanytype`. A conversion is a cast and
+/// stays a copy. The result is a
 /// number computed from the operands; nothing reachable through an operand is reachable
 /// through it. `mkrefany` and `refanyval` carry an address and stay copies, and `Opaque` is
 /// unknown, so it relates everything.
@@ -419,9 +420,10 @@ pub(crate) fn value_only(op: &Op) -> bool {
         | Op::Shr(_)
         | Op::Neg
         | Op::Not
-        | Op::Conv(_)
         | Op::Cmp(_, _)
         | Op::RefAnyType => true,
-        Op::MkRefAny(_) | Op::RefAnyVal(_) | Op::Opaque => false,
+        // A conversion is a cast, the same value at another width: a copy, as in the JVM and
+        // Dex front ends.
+        Op::Conv(_) | Op::MkRefAny(_) | Op::RefAnyVal(_) | Op::Opaque => false,
     }
 }

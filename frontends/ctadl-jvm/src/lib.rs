@@ -6,7 +6,7 @@ touch the store, choose a front end, or run the engine. Reading `.class` and `.j
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
 field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
-bitwise operations, numeric conversions, comparisons and `instanceof` supply values only: each
+bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
 operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
 reference to that method (`Context::method_handle_exp` says which kinds do). An exception is the last result
 of every call and of every return; a handler reads it, and an exception a callee throws that no
@@ -1014,11 +1014,13 @@ impl Context {
 
     /// Opcodes whose result is computed from its operands' values and shares no memory with
     /// them (R17): arithmetic, bitwise, shift and negation (`iadd`..`lxor`, 0x60..=0x83),
-    /// `iinc` (0x84), numeric conversions (`i2l`..`i2s`, 0x85..=0x93), comparisons
-    /// (`lcmp`..`dcmpg`, 0x94..=0x98) and `instanceof` (0xc1), whose `int` is a test of the
-    /// reference, a comparison.
+    /// `iinc` (0x84), comparisons (`lcmp`..`dcmpg`, 0x94..=0x98) and `instanceof` (0xc1), whose
+    /// `int` is a test of the reference, a comparison. A numeric conversion (`i2l`..`i2s`,
+    /// 0x85..=0x93) is a cast, the same value at another width, and stays a copy: a value a
+    /// bridged native returned in memory (`ret.deref.#value`) must survive `int out = f(); long
+    /// v = out`.
     fn is_value_only_opcode(opcode: u8) -> bool {
-        matches!(opcode, 0x60..=0x98 | 0xc1)
+        matches!(opcode, 0x60..=0x84 | 0x94..=0x98 | 0xc1)
     }
 
     /// A `CONSTANT_MethodHandle` that invokes a known method, as a function reference to that

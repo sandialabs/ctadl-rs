@@ -121,8 +121,8 @@ fn framework_assemblies() {
     }
 }
 
-/// Arithmetic, bitwise operations, shifts, conversions and comparisons supply values only
-/// (R17); the operations that carry an address, and the unknown one, stay copies.
+/// Arithmetic, bitwise operations, shifts and comparisons supply values only (R17); a
+/// conversion (a cast), the operations that carry an address, and the unknown one stay copies.
 #[test]
 fn value_only_arithmetic() {
     use cil_reader::flow::{CmpOp, ConvTarget, ConvType, Op, OpFlags, TypeOp};
@@ -143,17 +143,17 @@ fn value_only_arithmetic() {
         Op::Shr(f),
         Op::Neg,
         Op::Not,
-        Op::Conv(ConvTarget {
-            ty: ConvType::I4,
-            flags: f,
-        }),
         Op::Cmp(CmpOp::Eq, f),
         Op::Cmp(CmpOp::Lt, f),
         Op::RefAnyType,
     ] {
         assert!(crate::effects::value_only(&op), "{op:?}");
     }
-    for op in [Op::MkRefAny(ty), Op::RefAnyVal(ty), Op::Opaque] {
+    let conv = Op::Conv(ConvTarget {
+        ty: ConvType::I4,
+        flags: f,
+    });
+    for op in [conv, Op::MkRefAny(ty), Op::RefAnyVal(ty), Op::Opaque] {
         assert!(!crate::effects::value_only(&op), "{op:?}");
     }
 }

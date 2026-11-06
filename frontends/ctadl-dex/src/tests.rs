@@ -623,13 +623,21 @@ fn arithmetic_and_comparisons_supply_values_only() {
         })),
         [pair("v0", "v1")]
     );
-    assert_eq!(
-        value_flows(Instruction::IntToLong(Format12x {
-            a: Reg(0),
-            b: Reg(2),
-        })),
-        [pair("v0", "v2"), pair("v1", "v2")]
-    );
+    // A conversion is a cast: a copy, into both halves of the wide destination.
+    let (assigns, locals) = assign_from(Instruction::IntToLong(Format12x {
+        a: Reg(0),
+        b: Reg(2),
+    }));
+    let copies: Vec<(String, String)> = assigns
+        .iter()
+        .map(|(var, exp)| {
+            let src = exp
+                .variable_ref()
+                .expect("a conversion copies its register");
+            (local_name(&locals, var), local_name(&locals, src))
+        })
+        .collect();
+    assert_eq!(copies, [pair("v0", "v2"), pair("v1", "v2")]);
     assert_eq!(
         value_flows(Instruction::CmpLong(Format23x {
             a: Reg(0),

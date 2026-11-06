@@ -8,7 +8,7 @@ handled one level up, in `ctadl-frontends`.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout; a static
 field is that field of `globals`. An array's elements are the one field `[]`, and its length the
-field `length`. Arithmetic, bitwise operations, numeric conversions, comparisons and
+field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
 invokes a known method is a function reference to that method (`Context::method_handle_exp`
 says which kinds do). An exception is the last result of every call and of every return;
@@ -1171,12 +1171,13 @@ impl Context {
 }
 
 /// Whether `inst` computes its result from its operands' values and shares no memory with them
-/// (R17): comparisons (`cmpl-float`..`cmp-long`, 0x2d..=0x31), negation, `not`, numeric
-/// conversions and binary arithmetic, bitwise and shift operations (`neg-int`..`ushr-int/lit8`,
-/// 0x7b..=0xe2), and `instance-of` (0x20), whose boolean is a test of the reference, a
-/// comparison.
+/// (R17): comparisons (`cmpl-float`..`cmp-long`, 0x2d..=0x31), negation and `not`
+/// (0x7b..=0x80), binary arithmetic, bitwise and shift operations (`add-int`..`ushr-int/lit8`,
+/// 0x90..=0xe2), and `instance-of` (0x20), whose boolean is a test of the reference, a
+/// comparison. A numeric conversion (`int-to-long`..`int-to-short`, 0x81..=0x8f) is a cast, the
+/// same value at another width, and stays a copy, as the JVM front end's does.
 fn is_value_only(inst: &Instruction) -> bool {
-    matches!(inst.discriminant(), 0x20 | 0x2d..=0x31 | 0x7b..=0xe2)
+    matches!(inst.discriminant(), 0x20 | 0x2d..=0x31 | 0x7b..=0x80 | 0x90..=0xe2)
 }
 
 /// The registers holding the value a store writes: `a`, or the pair `a, a+1` when `wide`.
