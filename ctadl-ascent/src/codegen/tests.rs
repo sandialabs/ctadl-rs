@@ -276,17 +276,19 @@ fn test_update_instruction() {
     assert!(!result.summary.is_empty());
 }
 
-// Test that local variables flow into fields of globals, not globals index itself
+// Test that local variables flow into the field of a global, not into the globals index itself.
+// Until the index has a vertex for a global (stage 2b of `plan.md`), `$g.field` lowers to the
+// globals pseudo-formal's path `.g.field`, which this pins.
 #[test]
 fn test_local_to_global_field() {
-    let f = function_with_param_to_global_field();
+    let (globals, f) = function_with_param_to_global_field();
     let mut f_ssa = f.clone();
     log::trace!("Local to global field function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
     log::trace!("Local to global field function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
-    codegen_function(&f_ssa, &mut facts, &mut source_info);
+    super::codegen_function_with_globals(&f_ssa, &globals, &mut facts, &mut source_info);
     let result = taint_index(facts);
     log::trace!("Local to global field result: {:#?}", result);
 
@@ -312,6 +314,24 @@ fn test_local_to_global_field() {
     assert!(
         !has_bad_flow,
         "Local variable should flow to a field of globals, not the globals index itself"
+    );
+    let shim_path = fx::Path::from_accesses([
+        ctadl_ir::mir::PathSegment::field("g"),
+        ctadl_ir::mir::PathSegment::field("field"),
+    ]);
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(func_id, dst, dst_path, src, src_path)| {
+                *func_id == f_id
+                    && **dst == GLOBALS_INDEX
+                    && *dst_path == shim_path
+                    && **src == 0
+                    && src_path.is_empty()
+            }),
+        "the store `$g.field = p0` is the summary row `.g.field <- p0`: {:#?}",
+        result.summary
     );
 }
 
@@ -648,11 +668,12 @@ fn function_with_update() -> FunctionData {
     f
 }
 
+// global g;
 // def param_to_global_field(p0) {
-//   globals.field = p0;
+//   g.field = p0;
 //   return;
 //}
-fn function_with_param_to_global_field() -> FunctionData {
+fn function_with_param_to_global_field() -> (Globals, FunctionData) {
     use ctadl_ir::mir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
@@ -672,21 +693,21 @@ fn function_with_param_to_global_field() -> FunctionData {
     // Create local variable and assign it a value
     let local_var = builder.new_param_var(ParameterIdx::new(0));
 
-    // Create globals access and update its field with local_var
-    let globals_var = builder.new_global_var();
+    // Declare the global `g` and update its field with local_var
+    let mut globals = Globals::default();
+    let globals_var = builder.new_global_var(globals.declare("g", None));
 
-    // This is the key assignment: globals.field = local_var
+    // This is the key assignment: g.field = local_var
     builder.create_store(
         globals_var.clone(),
         ctadl_ir::mir::PathSegment::field("field"),
         Exp::variable(local_var.clone()),
     );
 
-    // Return globals
     builder.create_ret(vec![]);
 
     f.verify().expect("doesn't verify");
-    f
+    (globals, f)
 }
 
 #[test]

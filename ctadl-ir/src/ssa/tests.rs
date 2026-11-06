@@ -131,12 +131,16 @@ fn function_g1() -> FunctionData {
     g
 }
 
+// global g;
 // def F(p)
 // {
-//   store %global.bar := p;
+//   store $g.bar := p;
+//   x = $g.bar;
+//   return x;
 // }
 fn program_h() -> Program {
     let mut program = Program::default();
+    let g = program.declare_global("g", None);
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
@@ -150,17 +154,27 @@ fn program_h() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
-        let global_ref = VariableRef::new_global();
-        let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::store(
+        let global_ref = VariableRef::global(g);
+        let x = VariableRef::new_local_idx(h.intern_local("x"));
+        let stmts: IndexVec<StatementIdx, _> = indexvec![
+            Statement::new_kind(StatementKind::store(
                 AccessPath::from(global_ref.clone()),
                 PathSegment::field("bar"),
                 Exp::from(p.clone()),
-            )),];
+            )),
+            Statement::new_kind(StatementKind::assign(
+                x.clone(),
+                [Exp::path(AccessPath::new(
+                    global_ref.clone(),
+                    [PathSegment::field("bar")],
+                ))],
+            )),
+        ];
+        h.return_type = ReturnType { arity: 1 };
         let body_block = &mut h[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![],
+            args: smallvec![Exp::variable(x)],
         }));
     }
     program
@@ -192,7 +206,8 @@ fn test_ssa_function_g() {
     log::trace!("{g}");
     transform(&mut g_ssa, false);
     check_ssa_func(&g_ssa);
-    assert_eq!(g_ssa[0.into()].len(), 5);
+    // The parameter's entry binding and the body; there is no entry binding of a global.
+    assert_eq!(g_ssa[0.into()].len(), 4);
     assert!(g_ssa[0.into()].terminator_opt().is_some());
 }
 
@@ -203,7 +218,8 @@ fn test_ssa_function_g1() {
     log::trace!("{g}");
     transform(&mut g_ssa, false);
     check_ssa_func(&g_ssa);
-    assert_eq!(g_ssa[0.into()].len(), 5);
+    // The parameter's entry binding and the body; there is no entry binding of a global.
+    assert_eq!(g_ssa[0.into()].len(), 4);
     assert!(g_ssa[0.into()].terminator_opt().is_some());
 }
 
@@ -213,6 +229,41 @@ fn test_ssa_function_h() {
     log::trace!("{p}");
     transform_program(&mut p, false);
     check_ssa_func(&p.functions[0.into()]);
+}
+
+/// SSA leaves a global alone (G4, R4): after the whole pipeline, no reference to `$g` is
+/// versioned, no statement binds `$g` at the entry, and no phi mentions it; the program
+/// verifies with its globals table.
+#[test]
+fn test_ssa_never_versions_a_global() {
+    let mut p = program_h();
+    run_pipeline(&mut p, Pipeline::index_default());
+    p.verify().unwrap();
+    let f = &p.functions[0.into()];
+    let mut globals = 0;
+    for (_, block) in f.blocks.iter_enumerated() {
+        for s in block.statements.iter() {
+            if let StatementKind::Phi { dest, operands } = &s.kind {
+                assert!(!dest.variable.is_global(), "{s:?}");
+                assert!(
+                    operands.iter().all(|(_, v)| !v.variable.is_global()),
+                    "{s:?}"
+                );
+            }
+            assert!(
+                s.iter_dst_var().all(|v| !v.variable.is_global()),
+                "a global is defined: {s:?}"
+            );
+            for v in s.iter_src_var().filter(|v| v.variable.is_global()) {
+                assert_eq!(v.version, None, "{s:?}");
+                globals += 1;
+            }
+        }
+    }
+    assert!(globals >= 1, "the global's references were lost:\n{p}");
+    let dump = p.to_string();
+    assert!(dump.contains("$g.bar"), "{dump}");
+    assert!(!dump.contains("$g_"), "{dump}");
 }
 
 #[test]

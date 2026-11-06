@@ -1214,7 +1214,7 @@ impl TryFrom<&mir::Variable> for FlowVariable {
                 Ok(FlowVariableKind::Local(Str::from(name)).into())
             }
             mir::Variable::Param(idx) => (*idx).try_into(),
-            mir::Variable::GlobalHeap => Err(TryFromVariableError::Global),
+            mir::Variable::Global(_) => Err(TryFromVariableError::Global),
         }
     }
 }

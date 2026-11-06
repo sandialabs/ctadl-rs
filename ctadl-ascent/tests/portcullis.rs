@@ -1774,7 +1774,8 @@ fn stripped_allocator() -> ProgramInfo {
             .map(|i| {
                 Statement::new_kind(StatementKind::store(
                     AccessPath::new(
-                        VariableRef::new_global(),
+                        // The image's memory global, `$<import>::ram` (R9), index 0 below.
+                        VariableRef::global(ctadl_ir::mir::GlobalIdx::new(0)),
                         [PathSegment::offset(HEAP[i % HEAP.len()])],
                     ),
                     PathSegment::Deref,
@@ -1841,7 +1842,11 @@ fn stripped_allocator() -> ProgramInfo {
                 .iter()
                 .map(|n| (n.as_str(), "", n.as_str(), n.as_str())),
         ),
-        program: Program::new(Functions::new(functions)),
+        program: {
+            let mut program = Program::new(Functions::new(functions));
+            program.declare_global("stripped::ram", None);
+            program
+        },
         ..Default::default()
     }
 }

@@ -13,7 +13,7 @@ use ctadl_ascent::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{LocalIdx, Locals};
+use ctadl_ir::mir::{GlobalIdx, Globals, LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -223,7 +223,10 @@ where
     let locals = &function_named(prog, name)
         .expect("expected function to exist")
         .locals;
-    let want_args: Vec<Exp> = args.into_iter().map(|s| exp_from_str(s, locals)).collect();
+    let want_args: Vec<Exp> = args
+        .into_iter()
+        .map(|s| exp_from_str(s, locals, &prog.globals))
+        .collect();
     let calls = direct_calls_in(prog, name);
     let found = calls
         .iter()
@@ -327,9 +330,15 @@ fn split_variable_prefix(s: &str) -> (&str, &str) {
     }
 }
 
-pub(crate) fn access_path_from_str(s: &str, locals: &Locals) -> AccessPath {
-    if let Some(rest) = s.strip_prefix("$globals") {
-        return AccessPath::new(VariableRef::new_global(), parse_path(rest));
+/// `$name.p` is the global `name` of `globals`, in the canonical grammar
+/// ([`ctadl_ir::mir::path_syntax::parse_global_access_path`]). A name `globals` does not declare
+/// is a global no program has, so a check for it finds nothing.
+pub(crate) fn access_path_from_str(s: &str, locals: &Locals, globals: &Globals) -> AccessPath {
+    if let Some((name, path)) = ctadl_ir::mir::path_syntax::parse_global_access_path(s)
+        .unwrap_or_else(|e| panic!("bad global access path {s:?}: {e}"))
+    {
+        let idx = globals.lookup(&name).unwrap_or(GlobalIdx::new(0xffff_ff00));
+        return AccessPath::new(VariableRef::global(idx), path);
     }
 
     if let Some(rest) = s.strip_prefix("@p") {
@@ -346,14 +355,14 @@ pub(crate) fn access_path_from_str(s: &str, locals: &Locals) -> AccessPath {
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
 `value(p)` is `Exp::Value` of the access path `p`; anything else is an access path (variable /
 param / global / field). */
-pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
+pub(crate) fn exp_from_str(s: &str, locals: &Locals, globals: &Globals) -> Exp {
     if let Some(inner) = s.strip_prefix("value(").and_then(|r| r.strip_suffix(')')) {
-        return Exp::value(access_path_from_str(inner, locals));
+        return Exp::value(access_path_from_str(inner, locals, globals));
     }
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => {
-            let dsl = access_path_from_str(s, locals);
+            let dsl = access_path_from_str(s, locals, globals);
             assert!(
                 dsl.is_pathless(),
                 "DSL source with a path is not directly expressible; use check_loads: {s}"
@@ -381,10 +390,10 @@ pub(crate) fn check_assign_or_update<I>(
         .locals;
     let srcs: Vec<Exp> = src_strs
         .into_iter()
-        .map(|s| exp_from_str(s, locals))
+        .map(|s| exp_from_str(s, locals, &prog.globals))
         .collect();
 
-    let dst_ap = access_path_from_str(dst, locals);
+    let dst_ap = access_path_from_str(dst, locals, &prog.globals);
 
     if !dst_ap.is_pathless() {
         assert_eq!(
@@ -414,7 +423,7 @@ pub(crate) fn check_assign_or_update<I>(
 }
 
 /* Asserts the (single) function contains a load -- a copy into a variable -- that reads
-`source_str` (an access-path DSL string like `f.[3].deref` or `$globals.a`). Field reads lower to
+`source_str` (an access-path DSL string like `f.[3].deref` or `$a.deref`). Field reads lower to
 loads through a temporary, so this is the load-based complement to `check_assign_or_update`.
 Panics if not found. */
 #[track_caller]
@@ -422,7 +431,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
     let locals = &get_only_function(prog)
         .expect("expected exactly one function")
         .locals;
-    let ap = access_path_from_str(source_str, locals);
+    let ap = access_path_from_str(source_str, locals, &prog.globals);
     let found = statements_of(prog).any(|s| {
         let StatementKind::Assign { dest, sources } = &s.kind else {
             return false;
@@ -455,7 +464,7 @@ pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
     let locals = &get_only_function(prog)
         .expect("expected exactly one function")
         .locals;
-    let dst_ap = access_path_from_str(dst, locals);
+    let dst_ap = access_path_from_str(dst, locals, &prog.globals);
     statements_of(prog)
         .filter(|s| writes_dest(&s.kind, &dst_ap))
         .count()
@@ -475,7 +484,9 @@ pub(crate) fn check_writes_to(prog: &Program, dst: &str, count: usize) {
     );
 }
 
-/* Every field name the program's assignments read or write, across ALL functions.
+/* Every field name the program's assignments read or write, across ALL functions, and every
+global's name: a global's name is a field of the globals pseudo-formal in the fact base until the
+index has a vertex for a global (stage 2b of `plan.md`), and is a name in the path grammar after.
 
 The invariant it exists for is that a field name is non-empty. `facts::Path` serializes an access path as its segments joined by `.` and its parser
 rejects an empty segment, so ONE empty field name anywhere in an import makes the whole index
@@ -483,23 +494,27 @@ unreadable: `ctadl query` panics on the parquet it just wrote, before printing a
 Whole-program rather than one function because only tree-sitter's parse recovery can produce an
 empty name, and an input that provokes the recovery is never a tidy one-function program. */
 pub(crate) fn field_symbols(prog: &Program) -> Vec<&str> {
-    prog.functions
-        .functions
-        .raw
-        .iter()
-        .flat_map(|f| f.blocks.iter())
-        .flat_map(|b| b.statements.iter())
-        .flat_map(|s| match &s.kind {
-            StatementKind::Assign { dest, sources } => std::iter::once(dest)
-                .chain(sources.iter().filter_map(Exp::access_path))
-                .flat_map(|ap| ap.segments.iter())
-                .filter_map(|seg| match seg {
-                    PathSegment::Field(name) => Some(&**name),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
+    let globals = prog.globals.iter_enumerated().map(|(_, g)| &*g.name);
+    globals
+        .chain(
+            prog.functions
+                .functions
+                .raw
+                .iter()
+                .flat_map(|f| f.blocks.iter())
+                .flat_map(|b| b.statements.iter())
+                .flat_map(|s| match &s.kind {
+                    StatementKind::Assign { dest, sources } => std::iter::once(dest)
+                        .chain(sources.iter().filter_map(Exp::access_path))
+                        .flat_map(|ap| ap.segments.iter())
+                        .filter_map(|seg| match seg {
+                            PathSegment::Field(name) => Some(&**name),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                }),
+        )
         .collect()
 }
 
@@ -854,10 +869,12 @@ pub(crate) fn check_does_not_return_param_in(
     );
 }
 
-/* Asserts function `name` writes parameter `param_num` into the global `field` -- the summary flow
-`@pN -> $globals.field` (e.g. `void set(int src){ g = src; }` summarizes `@p0 -> $globals.g`). The
-global heap is the special `GLOBALS_INDEX` summary endpoint; this hides that constant. Pairs with
-`check_returns_global_in` to pin a cross-function flow-through-a-global as two summary halves. */
+/* Asserts function `name` writes parameter `param_num` into the global path `field` -- the summary
+flow `@pN -> $g.deref` for `field` `.g.deref` (e.g. `void set(int src){ g = src; }` summarizes
+`@p0 -> $g.deref`, a C global's storage being its cell). Until the index has a vertex for a global
+(stage 2b of `plan.md`), a global `$g.p` is the `GLOBALS_INDEX` summary endpoint at `.g.p`; this
+hides that constant. Pairs with `check_returns_global_in` to pin a cross-function
+flow-through-a-global as two summary halves. */
 #[track_caller]
 pub(crate) fn check_param_into_global_in(
     summary: &[FunctionSummary],
@@ -877,8 +894,8 @@ pub(crate) fn check_param_into_global_in(
     );
 }
 
-/* Asserts function `name` returns the global `field` -- the summary flow `$globals.field -> return`
-(e.g. `int get(){ return g; }` summarizes `$globals.g -> return`). The other half of a
+/* Asserts function `name` returns the global path `field` -- the summary flow `$g.deref -> return`
+for `field` `.g.deref` (e.g. `int get(){ return g; }`). The other half of a
 flow-through-a-global; see `check_param_into_global_in`. */
 #[track_caller]
 pub(crate) fn check_returns_global_in(
@@ -908,7 +925,7 @@ mod ap_tests {
     fn local_pathless() {
         let mut locals = Locals::default();
         let b = locals.get_or_intern("b");
-        let ap = access_path_from_str("b", &locals);
+        let ap = access_path_from_str("b", &locals, &Globals::default());
         assert_eq!(ap.base, VariableRef::new_local_idx(b));
         assert!(ap.is_pathless());
     }
@@ -916,7 +933,7 @@ mod ap_tests {
     #[test]
     fn param_with_field() {
         assert_eq!(
-            access_path_from_str("@p1.f2", &Locals::default()),
+            access_path_from_str("@p1.f2", &Locals::default(), &Globals::default()),
             AccessPath::new(
                 VariableRef::new_parameter(1u32.into()),
                 [PathSegment::field("f2")]
@@ -926,9 +943,15 @@ mod ap_tests {
 
     #[test]
     fn global_with_field() {
+        let mut globals = Globals::default();
+        globals.declare("x", None);
+        let a = globals.declare("a$util.c", None);
         assert_eq!(
-            access_path_from_str("$globals.a", &Locals::default()),
-            AccessPath::new(VariableRef::new_global(), [PathSegment::field("a")]),
+            access_path_from_str(r"$a$util\.c.deref.f", &Locals::default(), &globals),
+            AccessPath::new(
+                VariableRef::global(a),
+                [PathSegment::Deref, PathSegment::field("f")]
+            ),
         );
     }
 
@@ -937,7 +960,7 @@ mod ap_tests {
         let mut locals = Locals::default();
         let v = locals.get_or_intern("v");
         assert_eq!(
-            access_path_from_str("v.f1.f2", &locals),
+            access_path_from_str("v.f1.f2", &locals, &Globals::default()),
             AccessPath::new(
                 VariableRef::new_local_idx(v),
                 [PathSegment::field("f1"), PathSegment::field("f2")]
@@ -961,7 +984,7 @@ mod ap_tests {
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
-            access_path_from_str(r"f.\[3]", &locals),
+            access_path_from_str(r"f.\[3]", &locals, &Globals::default()),
             AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::field("[3]")]),
         );
     }
@@ -973,7 +996,7 @@ mod ap_tests {
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
-            access_path_from_str("f.[3]", &locals),
+            access_path_from_str("f.[3]", &locals, &Globals::default()),
             AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::offset(3)]),
         );
     }
@@ -983,11 +1006,14 @@ mod ap_tests {
         let mut locals = Locals::default();
         locals.get_or_intern("b");
         // A `#`-prefixed source is a constant literal, not a variable.
-        assert_eq!(exp_from_str("#7", &locals), Exp::new_str("7"));
+        assert_eq!(
+            exp_from_str("#7", &locals, &Globals::default()),
+            Exp::new_str("7")
+        );
         // ...while a bare name is still an access-path variable.
         assert_eq!(
-            exp_from_str("b", &locals),
-            Exp::variable(access_path_from_str("b", &locals).base)
+            exp_from_str("b", &locals, &Globals::default()),
+            Exp::variable(access_path_from_str("b", &locals, &Globals::default()).base)
         );
     }
 }

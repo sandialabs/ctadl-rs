@@ -162,6 +162,22 @@ fn an_import_from_an_older_build_is_refused_by_name() {
     assert!(message.contains("re-import it"), "{message}");
 }
 
+/// An import written before programs declared their globals (format 13, the one global heap
+/// `$globals`) is refused: its bitcode would not decode as a program with a globals table, and
+/// nothing migrates it in place (R7 of the compositional-globals spec).
+#[test]
+fn an_import_from_before_declared_globals_is_refused() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("stale_globals", dir.path());
+    set_config_version(&import, "13");
+
+    let err = open_import("stale_globals", ssa::Pipeline::none()).unwrap_err();
+    let (_, found, expected) = incompatible_cause(&err);
+    assert_eq!((found.as_str(), expected.as_str()), ("13", "14"));
+    assert!(full_message(&err).contains("re-import it"), "{err:?}");
+}
+
 /// The same, opened by directory rather than by name. Both spellings resolve through
 /// [`ArtifactImport::load`], and neither goes around it -- which is what makes the check
 /// unavoidable rather than merely available.

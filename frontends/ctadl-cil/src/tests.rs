@@ -157,3 +157,20 @@ fn value_only_arithmetic() {
         assert!(!crate::effects::value_only(&op), "{op:?}");
     }
 }
+
+/// A static field's class is declared as a global once per program, however many statements
+/// name it (R10): the emitter interns it by name.
+#[test]
+fn an_emitter_declares_a_class_global_once() {
+    use crate::method::Emitter;
+    use ctadl_ir::mir::{FunctionData, Globals};
+    let mut fdat = FunctionData::default();
+    let mut globals = Globals::default();
+    let mut em = Emitter::with_globals(&mut fdat, &mut globals);
+    let a = em.global("NS.C");
+    let b = em.global("NS.D");
+    assert_eq!(em.global("NS.C"), a);
+    assert_ne!(a, b);
+    assert_eq!(globals.len(), 2);
+    assert_eq!(globals.lookup("NS.C"), a.variable.global());
+}

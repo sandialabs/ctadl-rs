@@ -1718,6 +1718,8 @@ fn dump_one(
     header: bool,
 ) -> usize {
     let mut matched = 0usize;
+    // A global prints as its name, which only the program's table knows.
+    let _names = program_info.program.global_names_guard();
     for func in program_info.program.functions.iter() {
         if filter.is_none_or(|pat| func.name.contains(pat)) {
             if header && matched == 0 {

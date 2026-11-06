@@ -6,8 +6,11 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 `dex_reader::apk`'s job. An APK's native libraries belong to a different front end, and are
 handled one level up, in `ctadl-frontends`.
 
-Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout; a static
-field is that field of `globals`. An array's elements are the one field `[]`, and its length the
+Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout. A class
+that owns a static field is a global named by the class, `$Lcls;` (R10 of the
+compositional-globals spec), and a static field is that global's field named by the field's name
+alone: `sput` is the store `$Lcls;.name = v`, `sget` the load `x = $Lcls;.name`. A class
+referenced from several dex files or splits is one global, since a global is its name. An array's elements are the one field `[]`, and its length the
 field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
 invokes a known method is a function reference to that method (`Context::method_handle_exp`
@@ -174,6 +177,9 @@ struct Context {
     pc: usize,
     /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
     clone_statements: usize,
+    /// The globals declared so far: one per class that owns a static field. Moved into the
+    /// program at [`Context::finish`].
+    globals: ctadl_ir::mir::Globals,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -186,6 +192,20 @@ struct EnclosingClass {
 }
 
 impl Context {
+    /// The global that owns the static field `pretty` names (`Lcls;->name:type`), its class
+    /// `Lcls;`, and the field below it: the field's name alone, since the class is the global.
+    fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::mir::PathSegment) {
+        let (class, rest) = pretty
+            .split_once("->")
+            .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
+        let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
+        let global = self.globals.declare(class, None);
+        (
+            VariableRef::global(global),
+            ctadl_ir::mir::PathSegment::field(name),
+        )
+    }
+
     fn new() -> Self {
         Self {
             counter: Default::default(),
@@ -197,6 +217,7 @@ impl Context {
             enclosing: None,
             merged: Default::default(),
             retag: Default::default(),
+            globals: Default::default(),
             pc: 0,
             clone_statements: 0,
         }
@@ -659,7 +680,8 @@ impl Context {
         &mut self,
         mut builders: ProgramInfoBuilder,
     ) -> Result<(ProgramInfo, Notifications), Error> {
-        let program = builders.program;
+        let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
         log::trace!("program: {program}");
         let notifications = self
             .merged
@@ -981,7 +1003,7 @@ impl Context {
             | Instruction::SPutShort(f)
             | Instruction::SPutWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
                 let temp_var = self.counter.temp(locals);
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
@@ -992,8 +1014,8 @@ impl Context {
                 )));
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    AccessPath::from(VariableRef::new_global()),
-                    ctadl_ir::mir::PathSegment::field(name),
+                    AccessPath::from(global),
+                    field,
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1006,7 +1028,7 @@ impl Context {
             | Instruction::SGetShort(f)
             | Instruction::SGetWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
                 for dest in dest
                     .iter()
                     .cloned()
@@ -1014,8 +1036,8 @@ impl Context {
                 {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
-                        VariableRef::new_global(),
-                        ctadl_ir::mir::PathSegment::field(name.clone()),
+                        global.clone(),
+                        field.clone(),
                     )));
                 }
                 return Ok(stmts);

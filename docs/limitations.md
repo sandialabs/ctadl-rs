@@ -7,9 +7,9 @@
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
   `&s` and `&a[1]` are nameable and not affected.
-- **A write through the address of a C global is lost.** A global `g` is `$globals.g` in every
-  unit and is not moved behind `deref` when its address is taken, so `&g` is a copy of it and a
-  callee's `p->f = v` through `init(&g)` is not observed at `g.f`, a false negative.
+- **A C file-scope initializer is not lowered.** `int *p = &x;` or `struct ops o = {.f = h};` at
+  file scope gives the global no value, so a flow or a call target that only the initializer
+  supplies is lost, a false negative.
 - **JVM and Dex drop an exception a callee does not catch.** An exception is the last result of
   every call, but the JVM and Dex front ends do not pass a callee's escaping exception on to the
   caller's handler, so taint carried by an exception thrown in a callee and caught in a caller is
@@ -45,6 +45,9 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | query | Call/return matching by one bit, not a site stack | adds (witness only) | no |
 |  | front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
+|  | front ends | C: a file-scope initializer is not lowered | loses | the list above |
+| `global passed at calls` | index, query | Every global is a field of one pseudo-formal that each function declares and each call site passes, so a flow through a global is found only between instances a call chain connects, and a store in one function is not read in a function with no common caller (G2). Removed by stage 2b of the compositional-globals plan | loses | no |
+| `call target held in a global` | index | A target label at a global path is a hybrid-inlining decision, so an indirect call through it resolves only on a call chain that establishes it (G6, R17). Removed by stage 2b of the compositional-globals plan | loses | no |
 
 Anything not in this table that differs from the reference implementation is a bug. A test
 program that shows a row names it on a `// parity: <name> <adds|loses>: ...` line, which

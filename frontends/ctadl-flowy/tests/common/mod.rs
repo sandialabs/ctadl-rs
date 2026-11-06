@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use ctadl_flowy::FlowyProgram;
 use ctadl_ir::mir::Program;
-use ctadl_ir::semantics::{Config, Observer, Outcome, Ports, Seed, evaluate};
+use ctadl_ir::semantics::{Config, Observer, Outcome, Ports, Seed, evaluate, evaluate_programs};
 
 /// The corpus files, sorted.
 pub fn corpus() -> Vec<PathBuf> {
@@ -93,16 +93,38 @@ impl Run {
     }
 }
 
-/// Compiles `text` and evaluates it on the reference with its own endpoints.
+/// Compiles `text`, every program of it ([`ctadl_flowy::split_programs`]), and evaluates the
+/// programs together on the reference with their own endpoints.
 pub fn evaluate_flowy(file: &Path, text: &str) -> Run {
-    let prog = ctadl_flowy::compile_program_contents(&file.to_string_lossy(), text)
-        .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-    let (ports, requirements) = flowy_ports(&prog);
-    let outcome = evaluate(&prog.program_info.program, &ports, &Config::default());
+    let progs: Vec<FlowyProgram> = ctadl_flowy::split_programs(text)
+        .iter()
+        .map(|text| {
+            ctadl_flowy::compile_program_contents(&file.to_string_lossy(), text)
+                .unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+        })
+        .collect();
+    let mut ports = Ports::default();
+    let mut requirements = Vec::new();
+    for prog in &progs {
+        let (p, r) = flowy_ports(prog);
+        ports.seeds.extend(p.seeds);
+        ports.observers.extend(p.observers);
+        requirements.extend(r);
+    }
+    let programs: Vec<&Program> = progs.iter().map(|p| &p.program_info.program).collect();
+    let outcome = evaluate_programs(&programs, &ports, &Config::default());
     Run {
         outcome,
         requirements,
     }
+}
+
+/// The `// expect-error: <text>` line of a corpus file: the file must not compile, and the
+/// error says `<text>`.
+pub fn expected_error(text: &str) -> Option<&str> {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("// expect-error:"))
+        .map(str::trim)
 }
 
 /// Evaluates `program`, put in SSA form first, with the endpoints of the flowy program it was

@@ -15,7 +15,12 @@ not moved; and stage 2, which moves the index and the query and deletes the shim
 to the G-rules alone. The two kinds of change are never in one diff. Stage 2 is itself split:
 2a introduces every fact type the index and query will need while producing none of the new
 rows, so it is checked by identity of the fact base; 2b is the behavior. Stage 0 is independent;
-stage 1b (C storage) can run beside 2a; stage 3 needs 2b's `Root::Global`; docs close.
+stage 3 needs 2b's `Root::Global`; docs close. (Stage 1b, C storage, was folded into stage 1:
+see the note there.)
+
+Status: stages 0 and 1 are implemented. Each stage below that is done ends with an "As built"
+paragraph recording where the implementation departs from the text above it and why; the text
+itself is left as it was planned.
 
 ## Stage 0: the approximations register moves (R34)
 
@@ -32,6 +37,11 @@ Files:
   `docs/approximations.md`.
 
 Tests: `reference_parity.rs` unchanged in outcome; `cargo doc --no-deps` clean.
+
+As built (commit `00cee6ee`). The register moved with a short header saying where it came from
+and that its R- and S-numbers are the redesign's. Two more citations of "`spec.md` §4" were
+repointed: `ctadl-ascent/src/codegen/flowy.rs` (`engine_observable`'s doc) and
+`ctadl-import/src/project.rs` (`IndexConfig`'s results-changing options).
 
 ## Stage 1: the IR declares globals (R1–R7, R9–R12, R8's naming, R33's `docs/ir.md` part)
 
@@ -151,7 +161,81 @@ Tests:
   the C, flowy and `.tnt` path sets are identical; the Java, Dex, CIL, Lua and pcode sets
   differ only by the renames above. No changed nightly answer.
 
+As built (stage 1, with stage 1b folded in). Where the implementation departs from the above:
+
+- **C storage moved into stage 1.** The stage-1 form "`$g` + today's path" is not a well-formed
+  program: today's `g = v` is `$globals.g = v`, a store, and under R2 it becomes `$g = v`, a copy
+  into a global, which the verifier rejects. So R8's storage convention (every C global is the
+  cell `$g.deref`, `&g` the copy `$g`) is part of stage 1, and stage 1b below has nothing left
+  but what it already listed. The C path-set delta of this stage is therefore R8's `deref`
+  insertion, not identity.
+- **C naming.** A file-scope `static` is qualified by its unit (`count$one.c`) only when another
+  unit of the import also declares a file-scope variable of that name; then every such `static`
+  is qualified (unlike functions, where the first definition keeps the bare name), so the one
+  with external linkage keeps it. A `static` no other unit declares keeps its name, so a
+  single-unit import's names do not change. Two units with the same base name still merge.
+  A direct call `f(x)` is decided before the callee's name is resolved (`names_a_function` in
+  `collect_call`), so a function's name is never declared as a global; the callee
+  classification moved into `Context::callee_style`. A constant address `(T *)K` is the global
+  `$<address K>` itself, a pointer to its storage, so `((T *)K)->f` is `$<address K>.deref.f`,
+  which is the path the shim gives today's `$globals.<address K>.deref.f`.
+- **Display and parsing.** `Variable::Global` prints as `$name` only while a program's names are
+  published: by `Display for Program` (which also lists the globals), `WithGlobalNames`, or
+  `Program::global_names_guard`; elsewhere it prints as `$#<index>`. `ctadl inspect`'s per-function
+  dump and the CIL MIR goldens take the guard. `path_syntax::parse_global_access_path` and
+  `write_symbol` are the parser and printer; the field rules escape `.`, so `libA.so::ram`
+  prints `$libA\.so::ram`, and the unescaped `$libA.so::ram.[4096].deref` parses as the global
+  `libA` (both round trips are in `path_syntax`'s tests).
+- **Reference implementation.** `evaluate(&Program)` stays; `evaluate_programs(&[&Program])` is
+  the multi-program form. A global's cells are keyed by its name. There was no separate
+  two-way entry copy to delete: sharing was SSA's `$globals_0 = $globals` plus `var()`, both gone.
+- **Front ends.** JVM and Dex name a static field by its name alone (no descriptor); Dex splits
+  `pretty_name`'s `Lcls;->name:type` in the front end. CIL's unknown-owner global is
+  `UNKNOWN_CLASS` (`[?]?`), the spelling its symbols already used, with field `?<token>`; the
+  emitter carries the program's `Globals` (`Emitter::with_globals`). pcode declares
+  `<import>::ram` when it starts processing an import, named by `memory_global_name`, so a
+  program with no global access still declares it. The allocator heuristic (R30) matches any
+  global base, since a native program declares only its memory.
+- **flowy.** A requirement names a global port by name, `PortBase::Global`, since requirements
+  are read apart from the program; `port_to_index` lowers it with the shim. A file may hold
+  several programs of one project separated by `// --- program ---`
+  (`ctadl_flowy::split_programs`, `compile_programs`); the corpus harness, the pass differential
+  test and `engine_observable` evaluate them together. A corpus program whose text has
+  `// expect-error: <text>` must fail to compile with that text and is skipped by the other
+  two. The corpus is `g02_shared`, `g03_two_programs`, `g04_whole_write`,
+  `g06_formal_global_return`, `g06_target_via_global` (both cases of R35: a direct read, and
+  a read through a copy to a second global), `g19_alias_backward` (both functions called from
+  one caller, so it tests the backward rule and not the missing caller) and
+  `g25_hop_after_call`.
+- **Codegen.** The shim is `CodegenVisitor::capture_of`: a global's path is composed onto the
+  field of its name, so `$g.p` is the vertex `$globals.g.p` everywhere a path is built, and
+  `trans_variable_ref` maps any global to the pseudo-formal. `codegen_function_with_globals`
+  lowers a lone function that names globals. With no SSA entry binding there is no
+  `$globals_k` local any more: a load or store of a global is on the pseudo-formal directly.
+- **Register.** The engines lose a flow through a global between functions that no call chain
+  connects, whether data (`g02`, `g03`, `g25`) or a call target (`g06_target_via_global`), so
+  stage 1 registers two temporary rows, "global passed at calls" and "call target held in a
+  global", both loses, both removed by stage 2b with their `// parity:` lines. The plan named
+  only the second.
+- **Docs.** `docs/ir.md` states G1–G8 as planned. `docs/limitations.md` and
+  `docs/approximations.md` take stage 1b's C edits (the `&g` limitation goes, the file-scope
+  initializer row is added). The import-version test is
+  `an_import_from_before_declared_globals_is_refused`.
+- **Regression.** `cargo xtask regression` against a baseline run of stage 0's tree: 255 of 259
+  cases pass and the same 4 xfail, with every nightly answer unchanged. `apk:import` failed
+  once, on the version pin in `xtask/src/apk.rs`, which is now 14. `--compare-paths` reports
+  146 of 223 path sets different, because it compares exact strings. Every difference is a
+  rename: 112 are JVM/Dex `<Lcls;->f:desc>` to `Lcls;.f` (R10), 8 are CIL `<[asm]C::f>` to
+  `\[asm]C.f` (R10), 6 are pcode `.[A].deref` to `.<import>::ram.[A].deref` (R9), 17 combine
+  those three (APK, JNI), and 5 C indexes differ by R8's `deref` after a global
+  (`C_globalflow`, `C_globalstruct`, `C_valfieldsum`, `C_valindex`, `C_valstrlen`). The other
+  77 are identical. The classification script is not committed; it rewrites both sides by
+  these rules and compares the sets.
+
 ## Stage 1b: C storage convention (R8, R38's C part)
+
+Folded into stage 1 (see "As built" there); nothing remains to do here. The text is kept as
+the record of what that work is.
 
 One PR, after stage 1, independent of stage 2a.
 
@@ -237,6 +321,10 @@ Files, facts and codegen:
   `call_actual`'s globals case (`:1042-1052`) and `TryFromVariableError::Global` (`:1217`) go.
 - `ctadl-index/src/facts/query_endpoint.rs:96-128, :143`: a `Global` endpoint is returned
   unchanged by `anchored_at_callsites` by kind, not by `GLOBALS_INDEX`.
+- The stage-1 shim goes: `CodegenVisitor::capture_of`'s global case and `global_names`
+  (`codegen/mod.rs`), and `port_to_index`'s `PortBase::Global` arm (`codegen/flowy.rs`), which
+  returns `Root::Global(id)`. The C test helpers `check_param_into_global_in` and
+  `check_returns_global_in` take the shim's `.g.deref` spelling and move to `Root::Global`.
 - `ctadl-ascent/src/codegen/mod.rs`: `trans_variable_ref` (`:1370-1380`) maps
   `Variable::Global(idx)` to `FlowVariable::global(id)` through a project-level interner
   keyed by name (G3), recording a `globals` row per declaring import with the span resolved
@@ -319,8 +407,10 @@ Tests:
   loading function after a call was taken before the store (R25); a source and a sink on a
   global path, anchored to no call site (R26); the SARIF location of a global vertex with and
   without a declaration span (R27).
-- Parity: the `// parity:` lines of stage 1's `g06_target_via_global` and `g03_two_programs`
-  go; `reference_parity.rs` is green on the corpus with every remaining difference a register
+- Parity: the `// parity:` lines of stage 1's `g02_shared`, `g03_two_programs`,
+  `g06_target_via_global` and `g25_hop_after_call` go, with the register's two temporary rows
+  ("global passed at calls", "call target held in a global") and their `ROWS` entries in
+  `reference_parity.rs`; `reference_parity.rs` is green on the corpus with every remaining difference a register
   row (R36). The `.tnt` cases are unchanged in expectation (no program text changes here).
 - Nightly: `cargo xtask regression` passes; the JNI cases `JniFlow` and `Jni:JniFlow+bridge`
   pass with the globals pair gone, by R24; `nightly/tests/jni/jni-flow.bridge.ctadl`'s comment

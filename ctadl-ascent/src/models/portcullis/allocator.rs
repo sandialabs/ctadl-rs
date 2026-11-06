@@ -294,7 +294,7 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
     let from_param = |v: &Variable, derived: &HashSet<u32>| match v {
         Variable::Param(_) => true,
         Variable::Local(l) => derived.contains(&u32::from(*l)),
-        Variable::GlobalHeap => false,
+        Variable::Global(_) => false,
     };
     loop {
         let before = derived.len();
@@ -337,7 +337,10 @@ fn measure(function: Str, data: &FunctionData, call_sites: &mut HashMap<Str, u32
             StatementKind::Assign { dest, sources } => {
                 let store = (!dest.is_pathless()).then_some(dest);
                 if let Some(dest) = store
-                    && dest.base.variable == Variable::GlobalHeap
+                    // A native program declares one global, its memory (`<import>::ram`, R9), so
+                    // a store to a global at a leading offset is a store to the image's memory
+                    // at that address (R30).
+                    && dest.base.variable.is_global()
                     && !call_spans.contains(&stmt.source_info.span_id)
                     && let Some(PathSegment::Offset(addr)) = dest.segments.first()
                 {

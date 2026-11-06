@@ -39,7 +39,11 @@ Every lowering choice the IR does not force is a policy, made in one place:
 | Assembly selection             | framework and BCL not imported by default ([`is_framework_assembly`]); their metadata always read | `lib.rs` |
 
 Conventions (S19). A field is the symbol `<cls::name>` and an array element the field
-`[]`, whatever the index; `length` is the array length. The step from a `ref`, `out`, `in`, a
+`[]`, whatever the index; `length` is the array length. A class that owns a static field is a
+global named by the class (`$[asm]Namespace.Type`; R10 of the compositional-globals spec), and
+a static field is that global's field named by the field's name alone, `$[asm]Namespace.Type.f`;
+a field whose owner does not decode is a field of the global `[?]?` named by its token. A managed
+pointer to a static field resolves to the same path. The step from a `ref`, `out`, `in`, a
 managed or an unmanaged pointer to the memory there is `PathSegment::Deref`, and only that.
 A byref argument whose place is traced is copied into a cell (`cell.deref`) before the call
 and copied back out after it. Arithmetic, bitwise operations, shifts, conversions and
@@ -412,6 +416,9 @@ pub struct Context {
     spans: SourceInfoBuilder,
     defined: HashMap<String, FunctionIdx>,
     out: Collected,
+    /// The program's globals: one per class that owns a static field (R10 of the
+    /// compositional-globals spec). Moved into the program when it is finished.
+    globals: ctadl_ir::mir::Globals,
 }
 
 impl Default for Context {
@@ -428,6 +435,7 @@ impl Context {
             spans: SourceInfoBuilder::new(source_info::ArtifactMetadata::new()),
             defined: HashMap::new(),
             out: Collected::default(),
+            globals: Default::default(),
         }
     }
 
@@ -550,6 +558,7 @@ impl Context {
                     &body,
                     &sig,
                     fdat,
+                    &mut self.globals,
                     &mut lines,
                     &mut self.spans,
                     &mut self.out,
@@ -624,7 +633,8 @@ impl Context {
             method::thunk_body(fdat, &target, target_params.len());
         }
 
-        let program = self.program;
+        let mut program = self.program;
+        program.globals = self.globals;
         program.verify()?;
         let Table {
             names: function_names,

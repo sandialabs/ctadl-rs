@@ -477,36 +477,47 @@ pub fn check_with_config<P: AsRef<Path>>(
 /// [`flowy::FlowyProgram::named_sinks`] names it. The reference implementation's observable,
 /// restricted to each sink's own label, is the same set modulo the approximations register in
 /// `docs/limitations.md`; `tests/integration/reference_parity.rs` measures the difference.
+/// A file of several programs ([`flowy::split_programs`]) is indexed as one project.
 pub fn engine_observable<P: AsRef<Path>>(
     file: P,
     config: IndexConfig,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    let program = flowy::compile_program(file.as_ref())?;
-    let sinks: Vec<(String, String, flowy::Endpoint)> = program
-        .named_sinks()
-        .into_iter()
-        .map(|s| (s.function, s.name, s.endpoint.clone()))
-        .collect();
+    let programs = flowy::compile_programs(file.as_ref())?;
+    let mut sinks: Vec<(String, String, flowy::Endpoint)> = Vec::new();
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     let model_matches = crate::models::ProgramModelMatches::default();
-    let requirements = program.requirements;
-    codegen_program(
-        program.program_info,
-        &mut index_facts,
-        &mut source_info,
-        CallResolutionStrategy::Mixed,
-        crate::codegen::CallPolicy::default(),
-        &model_matches,
-    );
+    let mut endpoint_requires = Vec::new();
+    for program in programs {
+        sinks.extend(
+            program
+                .named_sinks()
+                .into_iter()
+                .map(|s| (s.function, s.name, s.endpoint.clone())),
+        );
+        endpoint_requires.extend(
+            program
+                .requirements
+                .endpoint_requires
+                .requires
+                .into_values()
+                .flatten()
+                .map(|(ep, _)| ep),
+        );
+        codegen_program(
+            program.program_info,
+            &mut index_facts,
+            &mut source_info,
+            CallResolutionStrategy::Mixed,
+            crate::codegen::CallPolicy::default(),
+            &model_matches,
+        );
+    }
     let index_result =
         taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
     let final_call = index_result.final_call(&index_facts.call);
-    let endpoints = requirements
-        .endpoint_requires
-        .requires
+    let endpoints = endpoint_requires
         .iter()
-        .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
         .flat_map(|e| {
             from_flowy_endpoint(&source_info.sites, &final_call, e)
                 .into_iter()
@@ -622,7 +633,18 @@ fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
             }
-            Variable::GlobalHeap => anyhow::bail!("global found in summary, not yet checked"),
+            Variable::Global(_) => {
+                unreachable!("flowy names a global port by name, `PortBase::Global`")
+            }
         },
+        // Until the index has a vertex for a global (stage 2b of `plan.md`), a global `$g`
+        // is the globals pseudo-formal's field `g`, as codegen lowers it.
+        PortBase::Global(name) => Ok((
+            fx::GLOBALS_INDEX.into(),
+            fx::Path::from_accesses(
+                std::iter::once(ctadl_ir::mir::PathSegment::Field(name.clone()))
+                    .chain(fields.iter().cloned()),
+            ),
+        )),
     }
 }

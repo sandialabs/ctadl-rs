@@ -1,0 +1,21 @@
+// G2: a global is one variable shared by every instance. A store in one function is read in
+// another with no call between them and no common caller: both are roots of the unfolding.
+var g;
+
+def Put() {
+s:
+  a = source(S);
+  g.deref = a;
+  return;
+}
+
+def Get() {
+s:
+  r = g.deref;
+  sink(r, S);
+  return;
+}
+
+// parity: global passed at calls loses: Get: sink(%S)#0 <- %S
+// The observable, every sink each label reaches:
+// expect: Get: sink(%S)#0 <- %S

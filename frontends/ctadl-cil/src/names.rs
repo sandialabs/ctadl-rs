@@ -478,19 +478,25 @@ impl<'n, 'm, 'c, 'l> ModNames<'n, 'm, 'c, 'l> {
 
     /// `<{cls}::{name}>` for a field definition or field MemberRef.
     pub fn field_symbol(&self, token: MetadataToken) -> Option<String> {
+        let (cls, name) = self.field_owner(token)?;
+        Some(format!("<{cls}::{name}>"))
+    }
+
+    /// The class that declares the field `token` names, and the field's name.
+    pub fn field_owner(&self, token: MetadataToken) -> Option<(String, String)> {
         match self.module.lookup_token(token).ok()?? {
             Entity::Field(fd) => {
                 let cls = match fd.declaring_type().ok()? {
                     Some(td) => self.typedef_cls(&td),
                     None => format!("[{}]<Module>", self.asm),
                 };
-                Some(format!("<{cls}::{}>", fd.name().ok()?))
+                Some((cls, fd.name().ok()?.to_string()))
             }
             Entity::MemberRef(mr) => {
                 let cls = self
                     .token_cls(mr.class_token().ok()?)
                     .unwrap_or_else(|| UNKNOWN_CLASS.to_string());
-                Some(format!("<{cls}::{}>", mr.name().ok()?))
+                Some((cls, mr.name().ok()?.to_string()))
             }
             _ => None,
         }

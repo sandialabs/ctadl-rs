@@ -121,7 +121,11 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `13`: assignments take full access paths as destination and sources, and the `Load`,
 ///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
 ///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "13";
+/// - `14`: a program declares its globals (`Program::globals`), and `Variable::Global` names one
+///   in place of the one global heap `$globals` (the compositional-globals spec, R1, R7). A
+///   `bitcode` wire-format change to every `ir-program.bitcode`, and every front end's global
+///   lowering changed (R8-R12).
+pub const IMPORT_FORMAT_VERSION: &str = "14";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
