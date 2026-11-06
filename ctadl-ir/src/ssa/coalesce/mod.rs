@@ -1,7 +1,7 @@
 /*!
 Copy coalescing for pre-SSA IR.
 
-# Correctness (S18 of `spec.md`)
+# Correctness (S18 of `docs/ir-redesign.md`)
 
 Correct under its side condition, which the pass checks: the temporary it merges away is
 defined once and read once, in the same block, so its cell is reachable by no other path.

@@ -1,5 +1,5 @@
-// The `mem2reg full` row of the approximations register (spec.md §4): full promotion promotes
-// a slot an escaped address reaches, so a callee that reads what the function stored there
+// The `mem2reg full` row of the approximations register (docs/ir-redesign.md §4): full promotion
+// promotes a slot an escaped address reaches, so a callee that reads what the function stored there
 // before the call reads memory nothing writes any more. The pass names such a function in its
 // notification.
 //

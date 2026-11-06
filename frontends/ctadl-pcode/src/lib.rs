@@ -5,7 +5,7 @@ two need each other.
 
 # Conventions
 
-How pcode follows the front-end conventions of S19 in `spec.md`:
+How pcode follows the front-end conventions of S19 in `docs/ir-redesign.md`:
 
 - There is no address-of. Address-taken storage lives behind `deref`. The frame is memory:
   frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only

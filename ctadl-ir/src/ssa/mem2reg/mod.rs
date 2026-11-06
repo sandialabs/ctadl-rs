@@ -1,7 +1,7 @@
 /*!
 Promotes stack slots to locals before SSA conversion, as LLVM's mem2reg does.
 
-# Correctness (S18 of `spec.md`)
+# Correctness (S18 of `docs/ir-redesign.md`)
 
 Promoting slot `k` replaces the location `__stack_top.[k].deref` (and what is under it) by a
 fresh local, which SSA makes flow-sensitive. That merges cells, so it is correct only when no

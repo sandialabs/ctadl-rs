@@ -1,11 +1,11 @@
 //! The engines measured against the reference implementation of the IR's semantics (R36 of
-//! `spec.md`).
+//! `docs/ir-redesign.md`).
 //!
 //! For every program of the semantics corpus (`frontends/ctadl-flowy/tests/semantics`) and
 //! every `.tnt` program, this computes the observable twice, once with the index and the query
 //! and once with `ctadl_ir::semantics`, each sink restricted to its own label, and diffs them.
-//! Every difference must be a row of the approximations register (`spec.md` §4), and the
-//! program that shows it says so on a line
+//! Every difference must be a row of the approximations register (`docs/ir-redesign.md` §4), and
+//! the program that shows it says so on a line
 //!
 //! ```text
 //! // parity: <row> <adds|loses>: <function>: <sink> <- <label>
@@ -30,7 +30,7 @@ enum Direction {
 }
 
 /// The register's rows that the engines can show on a flowy program, by the name a `// parity:`
-/// line uses, with their direction. `spec.md` §4 is the authority; this mirrors it.
+/// line uses, with their direction. `docs/ir-redesign.md` §4 is the authority; this mirrors it.
 const ROWS: &[(&str, Direction)] = &[
     ("admissible paths", Direction::Loses),
     ("callee cells merge", Direction::Adds),

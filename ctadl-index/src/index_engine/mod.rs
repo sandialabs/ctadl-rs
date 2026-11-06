@@ -1635,9 +1635,9 @@ ascent_source! {
         path_set(ps),
         for (key, rest) in ps.splits(p2).wild;
 
-    // Semantics (`docs/ir.md`; R26 of `spec.md`). `ext_dst` is S6, the forward rule: the suffix
-    // `rest` of an assignment's source carries to its destination. It deviates by computing
-    // suffixes only within the admissible path set (the "admissible paths" row of the
+    // Semantics (`docs/ir.md`; R26 of `docs/ir-redesign.md`). `ext_dst` is S6, the forward rule:
+    // the suffix `rest` of an assignment's source carries to its destination. It deviates by
+    // computing suffixes only within the admissible path set (the "admissible paths" row of the
     // approximations register, loses) and by rebasing an offset prefix only against an offset or
     // `#value` (`Path::wild_rest`), not against a field (S6 gives `x.[8]`'s suffix of `x.f` as
     // `[-8].f`). It does not distinguish store from copy, so it carries no scope (S7).

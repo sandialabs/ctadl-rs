@@ -476,7 +476,7 @@ pub fn check_with_config<P: AsRef<Path>>(
 /// sink its own label reaches, as `function: name <- label`, named as
 /// [`flowy::FlowyProgram::named_sinks`] names it. The reference implementation's observable,
 /// restricted to each sink's own label, is the same set modulo the approximations register
-/// (`spec.md` §4); `tests/integration/reference_parity.rs` measures the difference.
+/// (`docs/ir-redesign.md` §4); `tests/integration/reference_parity.rs` measures the difference.
 pub fn engine_observable<P: AsRef<Path>>(
     file: P,
     config: IndexConfig,

@@ -1,5 +1,5 @@
 /*!
-The reference implementation of the IR's semantics (`docs/ir.md`, S1–S17 of `spec.md`).
+The reference implementation of the IR's semantics (`docs/ir.md`, S1–S17 of `docs/ir-redesign.md`).
 
 This is a direct, unoptimized evaluation of the rules, written to be read beside them. It is the
 oracle the IR passes are checked against (R12) and the engines are measured against (R36). It

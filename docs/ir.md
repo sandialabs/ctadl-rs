@@ -3,7 +3,7 @@
 The CTADL IR is what every front end lowers to and what the index analyzes. This document is its
 definition: the syntax a program is written in, and the semantics that says what a program
 means. The semantics is the reference every consumer of the IR is measured against; how each
-consumer relates to it, and every deviation, is in the IR redesign's [spec.md](../spec.md), whose
+consumer relates to it, and every deviation, is in [ir-redesign.md](ir-redesign.md), whose
 §4 is the approximations register.
 
 The IR is a translation target for real languages, which do things a static analysis cannot
