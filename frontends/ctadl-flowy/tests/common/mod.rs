@@ -3,10 +3,10 @@
 
 #![allow(dead_code)]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ctadl_flowy::{EndpointDirection, FlowSpec, FlowyProgram};
+use ctadl_flowy::FlowyProgram;
 use ctadl_ir::mir::Program;
 use ctadl_ir::semantics::{Config, Observer, Outcome, Ports, Seed, evaluate};
 
@@ -35,48 +35,29 @@ pub fn tnt_programs() -> Vec<PathBuf> {
 }
 
 /// A flowy program's sources and sinks as the reference's ports, and the sinks' requirements:
-/// `(observer name, label, whether the flow must be present)`.
+/// `(function, sink name, label, whether the flow must be present)`.
 pub fn flowy_ports(prog: &FlowyProgram) -> (Ports, Vec<(String, String, String, bool)>) {
     let mut ports = Ports::default();
+    for (function, endpoint) in prog.sources() {
+        ports.seeds.push(Seed {
+            function,
+            path: endpoint.port.clone(),
+            label: endpoint.label.clone(),
+        });
+    }
     let mut requirements = Vec::new();
-    let mut functions: Vec<_> = prog
-        .requirements
-        .endpoint_requires
-        .requires
-        .iter()
-        .collect();
-    functions.sort_by(|a, b| a.0.cmp(b.0));
-    for (function, endpoints) in functions {
-        let mut endpoints: Vec<_> = endpoints.iter().collect();
-        endpoints.sort_by_key(|(e, _)| e.source_info);
-        let mut n: HashMap<&str, usize> = HashMap::new();
-        for (endpoint, spec) in endpoints {
-            match endpoint.direction {
-                EndpointDirection::Source => ports.seeds.push(Seed {
-                    function: function.to_string(),
-                    path: endpoint.port.clone(),
-                    label: endpoint.label.clone(),
-                }),
-                EndpointDirection::Sink => {
-                    let present = matches!(spec, FlowSpec::FlowPresent);
-                    let kind = if present { "sink" } else { "errsink" };
-                    let k = n.entry(kind).or_default();
-                    let name = format!("{kind}({})#{k}", endpoint.label);
-                    *k += 1;
-                    ports.observers.push(Observer {
-                        function: function.to_string(),
-                        path: endpoint.port.clone(),
-                        name: name.clone(),
-                    });
-                    requirements.push((
-                        function.to_string(),
-                        name,
-                        endpoint.label.clone(),
-                        present,
-                    ));
-                }
-            }
-        }
+    for sink in prog.named_sinks() {
+        ports.observers.push(Observer {
+            function: sink.function.clone(),
+            path: sink.endpoint.port.clone(),
+            name: sink.name.clone(),
+        });
+        requirements.push((
+            sink.function,
+            sink.name,
+            sink.endpoint.label.clone(),
+            sink.present,
+        ));
     }
     (ports, requirements)
 }

@@ -274,6 +274,78 @@ fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
     );
 }
 
+/// The calls that are zero assignments (S10 of `docs/ir.md`, R40 of `spec.md`), collected
+/// after the fixpoint: one [`notifications::UNRESOLVED_INDIRECT_CALL`] per function with an
+/// indirect call no target reached, and one [`notifications::CALL_WITHOUT_BODY`] per function
+/// called with neither a body nor a model. A function has no body when it is declared without
+/// one, or not declared at all (`declared` holds the functions with formals); it has no model
+/// when it has no summary.
+fn push_zero_assignment_notes(
+    notes: &mut Notifications,
+    result: &crate::index_engine::IndexResult,
+    static_calls: &[(crate::facts::PackedInsnSiteId, crate::facts::FunctionId)],
+    indirect_calls: &[(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)],
+    declared: &std::collections::BTreeSet<crate::facts::FunctionId>,
+    sites: &crate::facts::IdMap,
+) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let final_call = result.final_call(static_calls);
+    let called: BTreeSet<crate::facts::PackedInsnSiteId> =
+        final_call.iter().map(|(site, _)| *site).collect();
+    let name = |f| crate::index_engine::func_name(Some(sites), f).to_string();
+    let mut unresolved: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for (site, vertex) in indirect_calls {
+        if called.contains(site) {
+            continue;
+        }
+        let caller = crate::facts::InsnSiteId::try_from(*site)
+            .map(|s| name(s.func_id))
+            .unwrap_or_default();
+        let entry = unresolved
+            .entry(caller)
+            .or_insert_with(|| (0, crate::index_engine::vertex_str(&vertex.0, &vertex.1)));
+        entry.0 += 1;
+    }
+    for (caller, (count, example)) in unresolved {
+        notes.push(
+            &notifications::UNRESOLVED_INDIRECT_CALL,
+            notifications::DEFAULT_MESSAGE,
+            Level::Warning,
+            vec![caller, count.to_string(), example],
+            [("calls".to_string(), serde_json::json!(count))]
+                .into_iter()
+                .collect(),
+        );
+    }
+    let external: BTreeSet<crate::facts::FunctionId> =
+        result.external_function.iter().map(|(f,)| *f).collect();
+    let summarized: BTreeSet<crate::facts::FunctionId> =
+        result.summary.iter().map(|(f, ..)| *f).collect();
+    let mut bodyless: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for (site, callee) in &final_call {
+        let no_body = external.contains(callee) || !declared.contains(callee);
+        if !no_body || summarized.contains(callee) {
+            continue;
+        }
+        let caller = crate::facts::InsnSiteId::try_from(*site)
+            .map(|s| name(s.func_id))
+            .unwrap_or_default();
+        let entry = bodyless.entry(name(*callee)).or_insert((0, caller));
+        entry.0 += 1;
+    }
+    for (callee, (count, example)) in bodyless {
+        notes.push(
+            &notifications::CALL_WITHOUT_BODY,
+            notifications::DEFAULT_MESSAGE,
+            Level::Note,
+            vec![callee, count.to_string(), example],
+            [("calls".to_string(), serde_json::json!(count))]
+                .into_iter()
+                .collect(),
+        );
+    }
+}
+
 /// One [`notifications::ALLOCATOR_BY_SHAPE`] per function `facts` found to be an allocator by
 /// its shape, saying whether the models skipped its body, with the measurements as properties.
 fn push_allocator_notes(
@@ -712,7 +784,24 @@ pub fn index(
         deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
+    // Kept for the zero-assignment notifications, which need the calls the fixpoint resolved.
+    let static_calls = facts.call.clone();
+    let indirect_calls: Vec<(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)> = facts
+        .callee_info
+        .iter()
+        .map(|(site, vertex, _)| (*site, *vertex))
+        .collect();
+    let declared: std::collections::BTreeSet<crate::facts::FunctionId> =
+        facts.formal_param.iter().map(|(f, _, _)| *f).collect();
     let result = taint_index_with_config(facts, config, Some(&sites));
+    push_zero_assignment_notes(
+        &mut notes,
+        &result,
+        &static_calls,
+        &indirect_calls,
+        &declared,
+        &sites,
+    );
     if !result.intent_pair.is_empty() {
         let explicit = result
             .intent_pair
@@ -757,11 +846,19 @@ pub fn index(
         .save(&path)
         .err_context(|| format!("saving notifications: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
-    project.write_index_config(Some(call_policy_record(
-        strategy,
-        &call_policy,
-        &files_declaring_endpoints,
-    )?))?;
+    project.write_index_config(
+        Some(call_policy_record(
+            strategy,
+            &call_policy,
+            &files_declaring_endpoints,
+        )?),
+        Some(ctadl_import::project::EngineRecord {
+            alias_rule,
+            hybrid_context: hybrid_context.to_string(),
+            deref_paths,
+            mem2reg: mem2reg.map_or_else(|| "off".to_string(), |m| m.tag()),
+        }),
+    )?;
     log::info!("wrote index to {}", path.display());
     Ok(())
 }

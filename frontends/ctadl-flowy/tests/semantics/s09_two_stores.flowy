@@ -1,6 +1,10 @@
 // S9, an accepted imprecision: two stores to one destination merge, so `y.f = x; y.f = w`
 // sends `x.g` to `w.g`. The first store's labels at `y.f.g` are `All`, as they must be for
 // `l = y; l.f = x` to reach `y.f.g`.
+//
+// The index moves a label backward only along copy chains rooted at a formal and at program
+// stores, and `y.f` is neither, so the engines do not derive this:
+// parity: backward alias rule loses: TwoStoresMerge: sink(%S)#0 <- %S
 def TwoStoresMerge() {
 s:
   x.g = source(S);

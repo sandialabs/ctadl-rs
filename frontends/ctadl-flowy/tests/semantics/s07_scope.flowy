@@ -12,6 +12,10 @@ s:
 
 // A label copied forward is `Fixed` and never moves back, so a phi does not merge its sources:
 // `x1.f` reaches `y.f` through the phi, but not `x2.f`.
+//
+// The query's object hop treats the index's derived edge `y.f <- x1.f` as a fresh derivation
+// and hops back through the phi to `x2.f`:
+// parity: object hop adds: PhiDoesNotMerge: errsink(%S)#0 <- %S
 def PhiDoesNotMerge(x2) {
 s:
   x1.f = source(S);
@@ -55,6 +59,9 @@ j:
 // `copy_prop` replaces `t` by `v`, which moves the store `t.#value = a` onto `v` itself: the
 // `copy_prop` row of the approximations register (spec.md §4).
 // passes: adds copy_prop, pipeline
+//
+// The query's object hop moves the store at `t.#value` back to `v`, which S8 does not:
+// parity: object hop adds: ValueForwardOnly: errsink(%S)#0 <- %S
 def ValueForwardOnly(v, p) {
 s:
   a = source(S);

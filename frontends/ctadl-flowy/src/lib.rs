@@ -358,6 +358,67 @@ pub fn compile_program<P: AsRef<std::path::Path>>(file: P) -> Result<FlowyProgra
     compile_program_contents(file.to_string_lossy().as_ref(), contents.as_str())
 }
 
+/// A sink of a flowy program, named as the semantics corpus names it.
+#[derive(Debug, Clone)]
+pub struct NamedSink<'p> {
+    pub function: String,
+    pub endpoint: &'p Endpoint,
+    /// `sink(<label>)#<n>` or `errsink(<label>)#<n>`, `n` numbering the function's sinks of
+    /// that kind in source order.
+    pub name: String,
+    /// Whether the flow is required (`sink`) or forbidden (`errsink`).
+    pub present: bool,
+}
+
+impl FlowyProgram {
+    /// Every source endpoint, with its function.
+    pub fn sources(&self) -> Vec<(String, &Endpoint)> {
+        let mut out: Vec<(String, &Endpoint)> = self
+            .requirements
+            .endpoint_requires
+            .requires
+            .iter()
+            .flat_map(|(f, eps)| eps.iter().map(move |(e, _)| (f.to_string(), e)))
+            .filter(|(_, e)| matches!(e.direction, EndpointDirection::Source))
+            .collect();
+        out.sort_by_key(|(f, e)| (f.clone(), e.source_info));
+        out
+    }
+
+    /// Every sink endpoint, named as [`NamedSink::name`] says, in function then source order.
+    pub fn named_sinks(&self) -> Vec<NamedSink<'_>> {
+        let mut functions: Vec<_> = self
+            .requirements
+            .endpoint_requires
+            .requires
+            .iter()
+            .collect();
+        functions.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = Vec::new();
+        for (function, endpoints) in functions {
+            let mut endpoints: Vec<_> = endpoints
+                .iter()
+                .filter(|(e, _)| matches!(e.direction, EndpointDirection::Sink))
+                .collect();
+            endpoints.sort_by_key(|(e, _)| e.source_info);
+            let mut n: HashMap<&str, usize> = HashMap::new();
+            for (endpoint, spec) in endpoints {
+                let present = matches!(spec, FlowSpec::FlowPresent);
+                let kind = if present { "sink" } else { "errsink" };
+                let k = n.entry(kind).or_default();
+                out.push(NamedSink {
+                    function: function.to_string(),
+                    endpoint,
+                    name: format!("{kind}({})#{k}", endpoint.label),
+                    present,
+                });
+                *k += 1;
+            }
+        }
+        out
+    }
+}
+
 /// Compiles a flowy program to the IR it lowers to, before SSA conversion and before any pass.
 /// This is the input of the IR pass pipeline; [`compile_program_contents`] is the analysis's.
 pub fn compile_ir(artifact_name: &str, contents: &str) -> Result<Program, FlowyError> {

@@ -446,6 +446,19 @@ pub enum HybridContext {
     None,
 }
 
+/// The spelling [`HybridContext::from_str`](std::str::FromStr) reads.
+impl std::fmt::Display for HybridContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HybridContext::Decision => write!(f, "decision"),
+            HybridContext::Collapse => write!(f, "collapse"),
+            HybridContext::None => write!(f, "none"),
+            HybridContext::Bounded(k) => write!(f, "bounded:{k}"),
+            HybridContext::Spill(k) => write!(f, "spill:{k}"),
+        }
+    }
+}
+
 impl std::str::FromStr for HybridContext {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
@@ -1622,6 +1635,13 @@ ascent_source! {
         path_set(ps),
         for (key, rest) in ps.splits(p2).wild;
 
+    // Semantics (`docs/ir.md`; R26 of `spec.md`). `ext_dst` is S6, the forward rule: the suffix
+    // `rest` of an assignment's source carries to its destination. It deviates by computing
+    // suffixes only within the admissible path set (the "admissible paths" row of the
+    // approximations register, loses) and by rebasing an offset prefix only against an offset or
+    // `#value` (`Path::wild_rest`), not against a field (S6 gives `x.[8]`'s suffix of `x.f` as
+    // `[-8].f`). It does not distinguish store from copy, so it carries no scope (S7).
+    //
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
     // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)
     // rather than once per `locals` row, so the reachability step below is an exact join.
@@ -1644,6 +1664,10 @@ ascent_source! {
         locals(f, v2, p23, a, p4, c2),
         if let Some(c) = c1.and(*c2);
 
+    // Semantics: `edge_split` and `ext_fml` are S6 applied to a label's suffixes, so a label at
+    // `a.p4` on `v2.p2` extends by the `rest` the edge reads beyond `p2`. Same deviations as
+    // `ext_dst`.
+    //
     // Formal side: `v1.p1 = v2.p23` with `p23 = p2·rest` and `v2.p2` reached from `a.p4` give
     // `v1.p1` reached from `a.(p4·rest)`. The split is on the edge's source path, and the
     // `locals` probe is exact.
@@ -1668,6 +1692,13 @@ ascent_source! {
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
     // Compute assignments from call sites
+    //
+    // Semantics: S10's copies `p_i = a_i` and `r = ret`, written as edges in both directions
+    // between the actual and the call-arg vertex. The reverse edge stands for S8's backward rule
+    // through the copy, filtered by `isout` and the formal's `FormalType`: `SharedFields` is S8's
+    // "the empty suffix moves forward only". `Shared` also writes the whole variable back
+    // ("shared formals" row, adds), and `Copied` writes nothing back ("copied formals" row,
+    // loses).
     assign_like(func_id, v.clone(), p, cv.clone(), Path::empty(), Cond::Always),
     assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p, Cond::Always) <--
         actual_param(call_site_slice, n, vx),
@@ -1738,6 +1769,14 @@ ascent_source! {
         if n1 != *n2 || p1 != p2;
 
     // aliasing summary rule (context-free flows only).
+    //
+    // Semantics: S8, the backward rule, restricted. A store's labels move backward to the
+    // formal `v1` copies only when `v1` is a whole-variable copy-chain alias of a formal
+    // (`alias_of_formal`) and `v1.p1` is a program store destination (`prog_store`); S8 moves
+    // them along every assignment. `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a
+    // temporary codegen's load-chain composition anchors on `p`, and `y.f = p; y.f.g = a` never
+    // reaches `p.g` (the "backward alias rule" row of the register, loses). It also moves a
+    // store at `#value`, which S8 keeps forward only.
     // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
     // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
     // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose

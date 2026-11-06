@@ -199,6 +199,25 @@ pub struct IndexConfig {
     /// [`INDEX_FORMAT_VERSION`] did not change for it.
     #[serde(default)]
     pub import_hashes: BTreeMap<String, String>,
+    /// The engine options that change results, which the approximations register of `spec.md`
+    /// names: `None` for an index written before this field existed.
+    #[serde(default)]
+    pub engine: Option<EngineRecord>,
+}
+
+/// The index options that change its results (R30 of `spec.md`), recorded with the index so a
+/// result can be traced to the approximations it was computed under.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EngineRecord {
+    /// Whether the alias summary rule ran (the backward rule's restriction to copy chains rooted
+    /// at a formal).
+    pub alias_rule: bool,
+    /// The hybrid-inlining context widening, as `--hybrid-context` spells it.
+    pub hybrid_context: String,
+    /// Whether every program path gained its `.deref` extension.
+    pub deref_paths: bool,
+    /// The `--mem2reg` policy the IR passes ran with, `off` for none.
+    pub mem2reg: String,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -851,7 +870,11 @@ impl AnalysisProject {
     ///
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
-    pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+    pub fn write_index_config(
+        &self,
+        call_policy: Option<CallPolicyRecord>,
+        engine: Option<EngineRecord>,
+    ) -> Result<(), Error> {
         // An import that cannot be loaded, or never recorded a hash, is left out: there is
         // nothing to compare it against later.
         let import_hashes: BTreeMap<String, String> = self
@@ -868,6 +891,7 @@ impl AnalysisProject {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
                 import_hashes,
+                engine,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;

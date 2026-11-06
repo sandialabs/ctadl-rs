@@ -502,8 +502,7 @@ Source ports carry one extra knob:
 
   Saturation is purely internal to the search: reported flows (SARIF) are
   unchanged in shape — a saturating source just reconstructs flows a precise
-  source would drop. It applies in the default demand-driven search engine; the
-  `CTADL_QUERY_DATALOG=1` closure engine ignores the flag.
+  source would drop.
 
 ### `sinks`
 

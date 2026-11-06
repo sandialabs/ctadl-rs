@@ -1006,35 +1006,16 @@ mod tests {
         (facts, base, dst)
     }
 
-    /// Whether the closure engine's `taint` holds `var` at the empty path, seeded by an endpoint
-    /// of `direction`.
-    fn closure_taints(result: &QueryResult, var: FlowVariable, direction: TaintDirection) -> bool {
-        result
-            .taint
-            .iter()
-            .any(|(_, _, v, p, ep)| *v == var && p.is_empty() && ep.direction == direction)
-    }
-
     /// An assign whose source path ends in an offset, `dst = base.[8]`, computes an address from
     /// the value of `base` -- C's `&base[2]`, pcode's `PTRADD` -- so a taint on that value reaches
     /// `dst`, from a plain source too. Contrast `saturating_source_reaches_offset_read`, whose
-    /// edge reads a field `.field`, where a plain source rightly stops. Both engines agree. The
-    /// end-to-end version is `tests/tnt/offset_address.tnt`.
+    /// edge reads a field `.field`, where a plain source rightly stops. The end-to-end version is `tests/tnt/offset_address.tnt`.
     #[test]
     fn plain_source_value_reaches_offset_address() {
-        let (facts, base, dst) = plain_source_through(".[8]");
+        let (facts, _, _) = plain_source_through(".[8]");
         assert!(
-            !taint_search(facts.clone(), None).taint_edge.is_empty(),
+            !taint_search(facts, None).taint_edge.is_empty(),
             "search: a tainted value must reach an address computed from it"
-        );
-        let closure = super::super::taint_analysis_datalog(facts, None);
-        assert!(
-            closure_taints(&closure, dst, TaintDirection::Forward),
-            "closure: the source's taint must reach the address computed from it"
-        );
-        assert!(
-            closure_taints(&closure, base, TaintDirection::Backward),
-            "closure: the sink's demand must reach the value the address is computed from"
         );
     }
 
@@ -1043,19 +1024,10 @@ mod tests {
     /// memory it points at. Only a saturating source reaches this.
     #[test]
     fn plain_source_value_does_not_reach_offset_pointee() {
-        let (facts, base, dst) = plain_source_through(".[8].deref");
+        let (facts, _, _) = plain_source_through(".[8].deref");
         assert!(
-            taint_search(facts.clone(), None).taint_edge.is_empty(),
+            taint_search(facts, None).taint_edge.is_empty(),
             "search: a tainted pointer value must not taint the memory it points at"
-        );
-        let closure = super::super::taint_analysis_datalog(facts, None);
-        assert!(
-            !closure_taints(&closure, dst, TaintDirection::Forward),
-            "closure: a tainted pointer value must not taint the memory it points at"
-        );
-        assert!(
-            !closure_taints(&closure, base, TaintDirection::Backward),
-            "closure: a demand on the memory must not reach the pointer value"
         );
     }
 
