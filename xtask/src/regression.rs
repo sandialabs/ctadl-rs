@@ -11,7 +11,7 @@
 //! directory and Ghidra's user directories -- are made per-worker or per-case
 //! explicitly; see [`Worker`] and [`scratch_dir`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -104,6 +104,10 @@ pub struct Options {
     /// runs the default. A policy that can lose flows (`full:0` promotes every function fully)
     /// turns a lost flow into a report; see [`explain_lost_flow`].
     pub mem2reg: Option<String>,
+    /// The scratch root of an earlier run (`$TMPDIR/ctadl_xtask_<pid>`). When set, every
+    /// index this run writes has its `paths.parquet` compared with the same case's in that run,
+    /// and a difference fails the run; see [`compare_paths`].
+    pub compare_paths: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -120,6 +124,7 @@ impl Default for Options {
             jobs: None,
             release: false,
             mem2reg: None,
+            compare_paths: None,
         }
     }
 }
@@ -325,7 +330,79 @@ pub fn run(opts: &Options) -> Result<bool> {
         .map(|(label, elapsed)| format!("{label} {:.1}s", elapsed.as_secs_f64()))
         .collect();
     println!("Slowest: {}", slowest.join(", "));
-    Ok(failures == 0)
+    println!("Scratch root: {}", run_root().display());
+    let paths_equal = match &opts.compare_paths {
+        Some(baseline) => compare_paths(baseline, &run_root())?,
+        None => true,
+    };
+    Ok(failures == 0 && paths_equal)
+}
+
+/// Compares the admissible path set of every index under `run` with the same case's under
+/// `baseline`, both scratch roots of a regression run, and prints each difference. Returns
+/// whether they all agree.
+///
+/// Both files are read through the current `facts::Path` parser, so an older run's paths are
+/// compared in today's normal form. This is the check that makes "no changed answers" mean
+/// something across a change to the IR's statements: the labeling does not depend on how a
+/// path is spelled, but the admissible set is built from program paths, so it can.
+pub fn compare_paths(baseline: &Path, run: &Path) -> Result<bool> {
+    use ctadl_ascent::facts::{Path as FactPath, schema};
+    fn indexes(root: &Path) -> Result<BTreeMap<PathBuf, PathBuf>> {
+        let mut out = BTreeMap::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries {
+                let path = entry?.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.file_name() == Some(schema::paths::FILENAME.as_ref()) {
+                    let index = path.parent().expect("a file has a parent").to_path_buf();
+                    let rel = index.strip_prefix(root).unwrap_or(&index).to_path_buf();
+                    out.insert(rel, index);
+                }
+            }
+        }
+        Ok(out)
+    }
+    let load = |dir: &Path| -> Result<BTreeSet<String>> {
+        Ok(schema::paths::try_load(dir)?
+            .into_iter()
+            .map(|(p,): (FactPath,)| p.to_dot_string())
+            .collect())
+    };
+    let base = indexes(baseline)?;
+    let ours = indexes(run)?;
+    let mut equal = true;
+    let mut compared = 0;
+    for (rel, dir) in &ours {
+        let Some(base_dir) = base.get(rel) else {
+            println!("  PATHS new index, no baseline: {}", rel.display());
+            continue;
+        };
+        compared += 1;
+        let (a, b) = (load(base_dir)?, load(dir)?);
+        if a != b {
+            equal = false;
+            let lost: Vec<&String> = a.difference(&b).take(8).collect();
+            let gained: Vec<&String> = b.difference(&a).take(8).collect();
+            println!(
+                "  PATHS differ: {} ({} vs {} paths)\n        lost: {lost:?}\n        gained: {gained:?}",
+                rel.display(),
+                a.len(),
+                b.len()
+            );
+        }
+    }
+    println!(
+        "Compared the path sets of {compared} index(es) against {}: {}",
+        baseline.display(),
+        if equal { "all equal" } else { "DIFFERENT" }
+    );
+    Ok(equal)
 }
 
 /// How many of the slowest tasks the report names, so a slow case is noticed before it is the

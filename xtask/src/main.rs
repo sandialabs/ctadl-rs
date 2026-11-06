@@ -12,6 +12,7 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask regression --frontend pcode,jni --mem2reg full:0
+//!     cargo xtask regression --compare-paths $TMPDIR/ctadl_xtask_<pid-of-an-earlier-run>
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
 //!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint
@@ -126,6 +127,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             }
             "--release" => {
                 opts.release = true;
+            }
+            "--compare-paths" => {
+                let dir = args.next().context("--compare-paths requires a value")?;
+                opts.compare_paths = Some(PathBuf::from(dir));
             }
             "--mem2reg" => {
                 opts.mem2reg = Some(args.next().context("--mem2reg requires a value")?);
@@ -389,6 +394,9 @@ Tasks:
                              its flow is an XFAIL when an index's
                              notifications.sarif names a function it promoted
                              fully, and a FAIL when none does.
+    --compare-paths <root>   After the run, compare every index's paths.parquet
+                             with the same case's under <root>, the scratch root
+                             an earlier run printed; a difference fails the run.
     --release                Build and exercise the release `ctadl` binary
                              (default: debug). Either way the binary is rebuilt
                              from current source before any case runs, so the
