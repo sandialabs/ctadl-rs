@@ -62,7 +62,7 @@ fn index_check_summaries(
                 fail_count += 1;
                 continue;
             };
-            let record = (func_id, dst, dst_path, src, src_path);
+            let record = (func_id, dst.into(), dst_path, src.into(), src_path);
             match flow {
                 FlowSpec::FlowPresent => {
                     if !index_result.summary.contains(&record) {

@@ -754,6 +754,230 @@ impl TryFrom<mir::ParameterIdx> for FormalIndex {
     }
 }
 
+/// A global variable of the project (G1 of `spec.md`). A global *is* its name (G3): two
+/// programs that declare `g` declare one variable, so the id is the interned name and two
+/// imports' declarations meet at one id without a table. Serde writes the name.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct GlobalId(pub Str);
+
+impl GlobalId {
+    pub fn new(name: impl Into<Str>) -> Self {
+        GlobalId(name.into())
+    }
+
+    pub fn name(&self) -> Str {
+        self.0
+    }
+
+    /// Orders by name, not by id.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.content_cmp(&other.0)
+    }
+}
+
+impl Debug for GlobalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Global({})", self.0)
+    }
+}
+
+/// `$name`, the textual form of a global (G1).
+impl Display for GlobalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "${}", self.0)
+    }
+}
+
+/// The root of a reachability or summary row: a formal (the return is
+/// `Formal(RETURN_INDEX)`), or a global (R14). Packed in four bytes, since it is a column of
+/// `locals`: a formal's `i16`, or the top bit and the global's name id.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[repr(transparent)]
+pub struct Root(u32);
+
+const ROOT_GLOBAL: u32 = 1 << 31;
+
+/// What a [`Root`] is.
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum RootKind {
+    Formal(FormalIndex),
+    Global(GlobalId),
+}
+
+impl Root {
+    #[inline]
+    pub fn formal(i: FormalIndex) -> Self {
+        Root((*i as u16) as u32)
+    }
+
+    #[inline]
+    pub fn global(g: GlobalId) -> Self {
+        let raw = g.0.raw();
+        assert!(raw & ROOT_GLOBAL == 0, "a global's name id does not fit a root");
+        Root(raw | ROOT_GLOBAL)
+    }
+
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        self.0 & ROOT_GLOBAL != 0
+    }
+
+    #[inline]
+    pub fn as_formal(&self) -> Option<FormalIndex> {
+        (!self.is_global()).then(|| FormalIndex::new(self.0 as u16 as i16))
+    }
+
+    #[inline]
+    pub fn as_global(&self) -> Option<GlobalId> {
+        self.is_global().then(|| {
+            // SAFETY: the bits are `raw()` of a `Str` `Root::global` was handed.
+            GlobalId(unsafe { Str::from_raw_unchecked(self.0 & !ROOT_GLOBAL) })
+        })
+    }
+
+    pub fn kind(&self) -> RootKind {
+        match self.as_global() {
+            Some(g) => RootKind::Global(g),
+            None => RootKind::Formal(self.as_formal().unwrap()),
+        }
+    }
+
+    /// The bits, for the LSM store.
+    pub fn raw(self) -> u32 {
+        self.0
+    }
+
+    /// Whether a global root's name was handed out, for roots read back from storage that
+    /// bypassed the interner.
+    pub fn is_valid(&self) -> bool {
+        !self.is_global() || Str::from_raw(self.0 & !ROOT_GLOBAL).is_some()
+    }
+
+    /// Whether a flow into `path` of this root reaches the caller: [`isout`] for a formal, and
+    /// always for a global, which every instance shares (G2).
+    #[inline]
+    pub fn isout(&self, formal_type: FormalType, path: &Path) -> bool {
+        match self.as_formal() {
+            Some(i) => isout(&i, formal_type, path),
+            None => true,
+        }
+    }
+
+    /// Orders by what the root denotes, not by its bits.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self.kind(), other.kind()) {
+            (RootKind::Formal(a), RootKind::Formal(b)) => a.cmp(&b),
+            (RootKind::Global(a), RootKind::Global(b)) => a.content_cmp(&b),
+            (RootKind::Formal(_), RootKind::Global(_)) => std::cmp::Ordering::Less,
+            (RootKind::Global(_), RootKind::Formal(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl From<FormalIndex> for Root {
+    fn from(i: FormalIndex) -> Self {
+        Root::formal(i)
+    }
+}
+
+/// The formal of that index.
+impl From<i16> for Root {
+    fn from(i: i16) -> Self {
+        Root::formal(i.into())
+    }
+}
+
+impl From<GlobalId> for Root {
+    fn from(g: GlobalId) -> Self {
+        Root::global(g)
+    }
+}
+
+impl From<RootKind> for Root {
+    fn from(k: RootKind) -> Self {
+        match k {
+            RootKind::Formal(i) => Root::formal(i),
+            RootKind::Global(g) => Root::global(g),
+        }
+    }
+}
+
+impl Debug for Root {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            RootKind::Formal(i) => write!(f, "Formal({i})"),
+            RootKind::Global(g) => write!(f, "{g:?}"),
+        }
+    }
+}
+
+/// A formal prints as its index, as [`FormalIndex`] does; a global as `$name`.
+impl Display for Root {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            RootKind::Formal(i) => write!(f, "{i}"),
+            RootKind::Global(g) => write!(f, "{g}"),
+        }
+    }
+}
+
+impl Serialize for Root {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.kind().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Root {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(RootKind::deserialize(deserializer)?.into())
+    }
+}
+
+impl Serialize for RootKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        enum R<'a> {
+            Formal(i16),
+            Global(&'a str),
+        }
+        match self {
+            RootKind::Formal(i) => R::Formal(**i),
+            RootKind::Global(g) => R::Global(g.0.as_str()),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for RootKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum R {
+            Formal(i16),
+            Global(String),
+        }
+        Ok(match R::deserialize(deserializer)? {
+            R::Formal(i) => RootKind::Formal(i.into()),
+            R::Global(g) => RootKind::Global(GlobalId::new(g)),
+        })
+    }
+}
+
+/// The distinguished frame of program-level facts (`spec.md` §3.7): the flows between two global
+/// paths that hold in every instance (R16), and the call-target and string labels at global
+/// paths (R17). It has no formals and no call sites. Reserved, as [`RETURN_INDEX`] is: the
+/// largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands out, and which every `IdMap`
+/// names [`GLOBAL_FRAME_NAME`].
+pub const GLOBAL_FRAME: FunctionId = FunctionId {
+    id: (1 << 28) - 1,
+};
+
+/// The name of [`GLOBAL_FRAME`].
+pub const GLOBAL_FRAME_NAME: &str = "<globals>";
+
+static GLOBAL_FRAME_FUNCTION: LazyLock<Function> =
+    LazyLock::new(|| Function::from(Str::from(GLOBAL_FRAME_NAME)));
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct PackedInsnSiteId(pub [u8; 8]);
@@ -987,9 +1211,10 @@ pub struct ImportId(pub u32);
 
 /// A variable with metadata that relates it to functions and call sites
 ///
-/// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to
-/// represent. The Local variable is represented with its [`Str`]'s 32-bit id. The Formal is an i16. And the Packed Call Arg similarly only
-/// requires 62 bits.
+/// Flow variables are crafted to be 8 bytes. There are five variants, four of them told apart by
+/// the top 2 bits. The Local variable is represented with its [`Str`]'s 32-bit id, and the Global
+/// shares its tag, with bit 61 set, and is its name's 32-bit id. The Formal is an i16. And the
+/// Packed Call Arg similarly only requires 62 bits.
 #[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Default)]
 pub struct FlowVariable(u64);
 
@@ -999,6 +1224,8 @@ const TAG_FORMAL: u64 = 2 << 62;
 const TAG_CALL_ARG: u64 = 3 << 62;
 const TAG_MASK: u64 = 3 << 62;
 const DATA_MASK: u64 = !TAG_MASK;
+/// Under [`TAG_LOCAL`], marks a global.
+const GLOBAL_BIT: u64 = 1 << 61;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
 pub enum FlowVariableKind {
@@ -1006,6 +1233,7 @@ pub enum FlowVariableKind {
     Local(Str),
     Formal(FormalIndex),
     CallArg(PackedCallArg),
+    Global(GlobalId),
 }
 
 impl From<FlowVariableKind> for FlowVariable {
@@ -1022,6 +1250,7 @@ impl From<FlowVariableKind> for FlowVariable {
                 debug_assert!((val & TAG_MASK) == 0, "CallArg top bits must be 0");
                 FlowVariable(val | TAG_CALL_ARG)
             }
+            FlowVariableKind::Global(g) => FlowVariable(g.0.raw() as u64 | TAG_LOCAL | GLOBAL_BIT),
         }
     }
 }
@@ -1039,6 +1268,36 @@ impl FlowVariable {
         FlowVariableKind::CallArg(c).into()
     }
 
+    pub fn global(g: GlobalId) -> Self {
+        FlowVariableKind::Global(g).into()
+    }
+
+    /// The vertex of root `r` at the call `insn`: the actual of a formal, and a global itself,
+    /// which no call passes (G5).
+    pub fn call_root(insn: InsnId, r: Root) -> Self {
+        match r.kind() {
+            RootKind::Formal(n) => FlowVariable::call_actual(insn, n),
+            RootKind::Global(g) => FlowVariable::global(g),
+        }
+    }
+
+    /// The root this variable is in its own function: a formal or a global.
+    pub fn as_root(&self) -> Option<Root> {
+        match self.kind() {
+            FlowVariableKind::Formal(i) => Some(Root::formal(i)),
+            FlowVariableKind::Global(g) => Some(Root::global(g)),
+            _ => None,
+        }
+    }
+
+    pub fn as_global(&self) -> Option<GlobalId> {
+        self.is_global().then(|| GlobalId(self.local_str()))
+    }
+
+    pub fn is_global(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_LOCAL && (self.0 & GLOBAL_BIT) != 0
+    }
+
     /// The vertex of the actual for parameter `formal` of the call at `insn`. The global heap
     /// already aliases the caller's heap formal at every call site, so its actual is that formal
     /// rather than a per-call copy.
@@ -1054,9 +1313,10 @@ impl FlowVariable {
         self.is_local().then(|| self.local_str())
     }
 
-    /// The `Str` of a `Local`, whose payload is the id `local` put there.
+    /// The `Str` of a `Local` or a `Global`, whose payload is the id `local` or `global` put
+    /// there.
     fn local_str(&self) -> Str {
-        Str::from_raw((self.0 & DATA_MASK) as u32).expect("a Local holds a Str's id")
+        Str::from_raw(self.0 as u32).expect("a Local holds a Str's id")
     }
 
     pub fn as_formal(&self) -> Option<FormalIndex> {
@@ -1075,6 +1335,7 @@ impl FlowVariable {
     pub fn kind(&self) -> FlowVariableKind {
         match self.0 & TAG_MASK {
             TAG_UNINIT => FlowVariableKind::Uninit,
+            TAG_LOCAL if self.is_global() => FlowVariableKind::Global(GlobalId(self.local_str())),
             TAG_LOCAL => FlowVariableKind::Local(self.local_str()),
             TAG_FORMAL => {
                 let val = (self.0 & DATA_MASK) as i16;
@@ -1093,7 +1354,7 @@ impl FlowVariable {
     }
 
     pub fn is_local(&self) -> bool {
-        (self.0 & TAG_MASK) == TAG_LOCAL
+        (self.0 & TAG_MASK) == TAG_LOCAL && (self.0 & GLOBAL_BIT) == 0
     }
 
     pub fn is_formal(&self) -> bool {
@@ -1104,10 +1365,10 @@ impl FlowVariable {
         (self.0 & TAG_MASK) == TAG_CALL_ARG
     }
 
-    /// Whether a `Local`'s [`Str`] was handed out, for variables read back from storage that
-    /// bypassed the interner. True for every other variant.
+    /// Whether a `Local`'s or a `Global`'s [`Str`] was handed out, for variables read back from
+    /// storage that bypassed the interner. True for every other variant.
     pub fn is_valid(&self) -> bool {
-        !self.is_local() || Str::from_raw((self.0 & DATA_MASK) as u32).is_some()
+        (self.0 & TAG_MASK) != TAG_LOCAL || Str::from_raw(self.0 as u32).is_some()
     }
 }
 
@@ -1165,8 +1426,13 @@ impl FlowVariable {
             (Local(a), Local(b)) => a.as_str().cmp(b.as_str()),
             (Formal(a), Formal(b)) => a.cmp(&b),
             (CallArg(a), CallArg(b)) => a.0.cmp(&b.0),
-            // Different variants: order by the tag, which is what the derived `Ord` does too.
-            _ => (self.0 & TAG_MASK).cmp(&(other.0 & TAG_MASK)),
+            (Global(a), Global(b)) => a.content_cmp(&b),
+            // Different variants: order by the tag, which is what the derived `Ord` does too (a
+            // global after a local, as its bit 61 makes it).
+            _ => {
+                let rank = |v: &FlowVariable| (v.0 & TAG_MASK, v.is_global());
+                rank(self).cmp(&rank(other))
+            }
         }
     }
 }
@@ -1177,6 +1443,7 @@ impl Display for FlowVariable {
             FlowVariableKind::Uninit => write!(f, "uninit"),
             FlowVariableKind::Local(name) => write!(f, "local({name})"),
             FlowVariableKind::Formal(index) => write!(f, "formal({index})"),
+            FlowVariableKind::Global(g) => write!(f, "{g}"),
             FlowVariableKind::CallArg(packed) => {
                 let CallArgId { insn_id, formal } = packed.try_into().unwrap();
                 write!(f, "call-arg({}, {formal})", insn_id.id)
@@ -1824,10 +2091,17 @@ impl IdMap {
     }
 
     pub fn get_function_id(&self, f: Function) -> Option<FunctionId> {
+        if f.as_str() == GLOBAL_FRAME_NAME {
+            return Some(GLOBAL_FRAME);
+        }
         self.function_id.get(&f).copied()
     }
 
+    /// The function `func_id` names; [`GLOBAL_FRAME`] is named [`GLOBAL_FRAME_NAME`].
     pub fn get_function(&self, func_id: FunctionId) -> Option<&Function> {
+        if func_id == GLOBAL_FRAME {
+            return Some(&GLOBAL_FRAME_FUNCTION);
+        }
         self.functions.get(func_id.id as usize)
     }
 
@@ -1840,10 +2114,11 @@ impl IdMap {
 
     /// Adds a function or returns the id previously assigned for the function.
     pub fn get_or_add_function(&mut self, f: Function) -> FunctionId {
-        if let Some(id) = self.function_id.get(&f) {
-            return *id;
+        if let Some(id) = self.get_function_id(f.clone()) {
+            return id;
         }
         let i = FunctionId::new(self.functions.len().try_into().unwrap());
+        assert!(i != GLOBAL_FRAME, "too many functions: the next id is the global frame's");
         self.function_id.insert(f.clone(), i);
         self.functions.push(f);
         i
@@ -1853,6 +2128,70 @@ impl IdMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root is a formal or a global, and reads back as what it was, in memory and through
+    /// the `summary` parquet schema.
+    #[test]
+    fn root_round_trips() {
+        let g = GlobalId::new("Lcom/C;");
+        let roots = [
+            Root::formal(0i16.into()),
+            Root::formal(RETURN_INDEX.into()),
+            Root::formal((-3i16).into()),
+            Root::global(g),
+        ];
+        assert_eq!(roots[1].as_formal(), Some(RETURN_INDEX.into()));
+        assert_eq!(roots[3].as_global(), Some(g));
+        assert!(roots[3].is_global() && !roots[0].is_global());
+        assert!(roots[3].isout(FormalType::Copied, &Path::empty()));
+
+        let dir = tempfile::tempdir().unwrap();
+        let f = FunctionId::new(3);
+        let p = Path::parse(".f").unwrap();
+        let rows: Vec<_> = roots
+            .iter()
+            .flat_map(|d| roots.iter().map(move |s| (f, *d, p, *s, Path::empty())))
+            .collect();
+        schema::summary::try_save(dir.path(), rows.clone()).unwrap();
+        assert_eq!(schema::summary::try_load(dir.path()).unwrap(), rows);
+    }
+
+    /// A global is a flow variable of its own kind, distinct from a local of its name, and
+    /// survives the parquet encoding of a vertex.
+    #[test]
+    fn global_flow_variable_round_trips() {
+        let g = FlowVariable::global(GlobalId::new("x"));
+        let l = FlowVariable::local(Str::from("x"));
+        assert_ne!(g, l);
+        assert!(g.is_global() && !g.is_local() && g.is_valid());
+        assert!(l.is_local() && !l.is_global());
+        assert_eq!(g.as_global(), Some(GlobalId::new("x")));
+        assert_eq!(g.as_root(), Some(Root::global(GlobalId::new("x"))));
+        assert_eq!(l.content_cmp(&g), std::cmp::Ordering::Less);
+        assert_eq!(format!("{g}"), "$x");
+
+        let dir = tempfile::tempdir().unwrap();
+        let rows = vec![(FunctionId::new(1), g, Path::empty(), l, Path::empty())];
+        schema::assign::try_save(dir.path(), rows.clone()).unwrap();
+        assert_eq!(schema::assign::try_load(dir.path()).unwrap(), rows);
+    }
+
+    /// The global frame is a function every `IdMap` names, and none hands out.
+    #[test]
+    fn global_frame_is_named_in_every_id_map() {
+        let mut ids = IdMap::new();
+        assert_eq!(
+            ids.get_function(GLOBAL_FRAME).map(|f| f.as_str()),
+            Some(GLOBAL_FRAME_NAME)
+        );
+        assert_eq!(
+            ids.get_function_id(Function::from(Str::from(GLOBAL_FRAME_NAME))),
+            Some(GLOBAL_FRAME)
+        );
+        let f = ids.get_or_add_function(Function::from(Str::from("f")));
+        assert_ne!(f, GLOBAL_FRAME);
+        assert!(ids.functions().all(|(id, _)| id != GLOBAL_FRAME));
+    }
 
     /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `mir::path` on random
     /// segment lists: offset sums, `[0]`, and `#value` absorbing offsets on both sides.

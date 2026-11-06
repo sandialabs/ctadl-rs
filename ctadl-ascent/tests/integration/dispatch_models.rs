@@ -138,9 +138,9 @@ struct Indexed {
     report: ctadl_ascent::codegen::CodegenReport,
     summary: Vec<(
         fx::FunctionId,
-        fx::FormalIndex,
+        fx::Root,
         fx::Path,
-        fx::FormalIndex,
+        fx::Root,
         fx::Path,
     )>,
 }

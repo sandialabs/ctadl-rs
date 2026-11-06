@@ -36,7 +36,7 @@ ascent! {
     #[ds(lsm::ascent_provider::provider: seeded)]
     relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
     #[ds(lsm::ascent_provider::provider: seeded)]
-    relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+    relation alias_of_formal(FunctionId, FlowVariable, Root);
     #[ds(lsm::ascent_provider::provider: seeded)]
     relation prog_store(FunctionId, FlowVariable, Path);
 }

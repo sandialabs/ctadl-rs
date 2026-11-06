@@ -420,7 +420,7 @@ fn any_argument_expands_over_call_sites_from_every_import() {
         .summary
         .iter()
         .filter(|(f, ..)| *f == sprintf)
-        .map(|(_, _, _, src, _)| **src)
+        .map(|(_, _, _, src, _)| *src.as_formal().unwrap())
         .collect();
     // 0..4 from the widest call site, minus `dst == src` (index 0).
     assert_eq!(srcs, vec![1, 2, 3], "got {srcs:?}");
@@ -474,9 +474,9 @@ fn a_propagation_within_one_formal_keeps_rows_whose_paths_differ() {
         facts.summary,
         vec![(
             f,
-            FormalIndex::new(0),
+            FormalIndex::new(0).into(),
             path(".a"),
-            FormalIndex::new(0),
+            FormalIndex::new(0).into(),
             path(".b")
         )]
     );

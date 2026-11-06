@@ -182,9 +182,9 @@ fn codegen_propagations(
                 }
                 facts.summary.push((
                     func_id,
-                    *dst_index,
+                    (*dst_index).into(),
                     prop.dst.path,
-                    *src_index,
+                    (*src_index).into(),
                     prop.src.path,
                 ));
                 emitted += 1;

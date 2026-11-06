@@ -54,8 +54,8 @@ use streaming_iterator::StreamingIterator;
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
     CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVariableKind,
-    FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind,
-    IntentPairKind, PackedInsnSiteId, Path, Str,
+    FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId,
+    IntentKind, IntentPairKind, PackedInsnSiteId, Path, Root, Str,
 };
 pub use crate::index_engine::decision::{Cond, Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
@@ -80,6 +80,7 @@ lsm::lsm_col!(FunctionId, 1, [u32]);
 lsm::lsm_col!(FlowVariable, 1, [u64], valid = FlowVariable::is_valid);
 lsm::lsm_col!(Path, 1, [std::num::NonZeroU32], valid = Path::is_valid);
 lsm::lsm_col!(FormalIndex, 1, [i16]);
+lsm::lsm_col!(Root, 1, [u32], valid = Root::is_valid);
 lsm::lsm_col!(PackedInsnSiteId, 1, [[u8; 8]]);
 lsm::lsm_col!(
     FlowVertex,
@@ -90,7 +91,10 @@ lsm::lsm_col!(
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
-pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
+/// A function's flow from root `src.p2` to root `dst.p1`: `(f, dst, p1, src, p2)`.
+pub type FunctionSummary = (FunctionId, Root, Path, Root, Path);
+/// A program-level flow between two global paths (R16): `(dst, p1, src, p2)`.
+pub type GlobalFlow = (GlobalId, Path, GlobalId, Path);
 
 /// Program facts for indexing.
 #[derive(Default, Debug, Clone, Builder)]
@@ -138,11 +142,19 @@ pub struct IndexFacts {
     pub intent_component: Vec<(Str, IntentKind, FunctionId)>,
     #[builder(default)]
     pub external_function: Vec<(FunctionId,)>,
+    /// The project's globals: one row per declaring import, with the declaration's span in that
+    /// import's source-info database (R22).
+    #[builder(default)]
+    pub globals: Vec<(GlobalId, ImportId, Option<::source_info::FileSpanId>)>,
+    /// Program-level flows between global paths loaded from a `--summary` project (R20), seeded
+    /// as edges of [`crate::facts::GLOBAL_FRAME`].
+    #[builder(default)]
+    pub global_flow: Vec<GlobalFlow>,
 }
 
 impl IndexFacts {
     /// Saves the `formal_param`, `actual_param`, `call`, `call_target_assign`, `callee_info`,
-    /// `callee_resolvents` and `external_function` members. The others aren't saved because
+    /// `callee_resolvents`, `external_function` and `globals` members. The others aren't saved because
     /// they are computed as part of an [`IndexResult`].
     ///
     /// Borrows `self`: only the tuples serialized here are cloned, and the rest of the fact
@@ -201,6 +213,7 @@ impl IndexFacts {
         )?;
         callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
         external_function::try_save(&dir, self.external_function.iter().copied())?;
+        globals::try_save(&dir, self.globals.iter().copied())?;
         Ok(())
     }
 
@@ -267,7 +280,8 @@ impl IndexFacts {
                     .collect(),
             )
             .callee_resolvents(callee_resolvents::try_load(&dir)?)
-            .external_function(external_function::try_load(&dir)?);
+            .external_function(external_function::try_load(&dir)?)
+            .globals(globals::try_load(&dir)?);
         Ok(builder.build().unwrap())
     }
 
@@ -625,6 +639,8 @@ pub struct IndexResult {
     pub intent_pair: Vec<(FunctionId, InsnId, FunctionId, IntentPairKind)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
+    /// The program-level flows between global paths (R16).
+    pub global_flow: Vec<GlobalFlow>,
     pub stats: IndexStats,
 }
 
@@ -663,6 +679,7 @@ impl IndexResult {
             phys_footprint_mb()
         );
         external_function::try_save(&dir, self.external_function)?;
+        global_flow::try_save(&dir, self.global_flow)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         intent_pair::try_save(&dir, self.intent_pair)?;
         // After the tables, so the sizes include anything writing them interned.
@@ -688,6 +705,7 @@ impl IndexResult {
         let external_function = external_function::try_load(&dir)?;
         let resolved_call = resolved_call::try_load(&dir)?;
         let intent_pair = intent_pair::try_load(&dir)?;
+        let global_flow = global_flow::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
@@ -697,6 +715,7 @@ impl IndexResult {
             intent_pair,
             paths,
             external_function,
+            global_flow,
             stats: IndexStats::default(),
         })
     }
@@ -905,8 +924,8 @@ pub type CriticalSummaryRow = (FunctionId, FormalIndex, Path);
 pub type ResolventRow = (FunctionId, FormalIndex, Path, CallTargetObject, DecisionId);
 pub type CallTargetAssignLikeRow = (FunctionId, FlowVariable, Path, CallTargetObject);
 pub type AssignLikeCondRow = (FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
-pub type LocalsCondRow = (FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
-pub type SummaryCondRow = (FunctionId, FormalIndex, Path, FormalIndex, Path, Cond);
+pub type LocalsCondRow = (FunctionId, FlowVariable, Path, Root, Path, Cond);
+pub type SummaryCondRow = (FunctionId, Root, Path, Root, Path, Cond);
 
 /// The `Always` rows of a lattice relation of five columns and a [`Cond`], without the
 /// condition: the facts that hold in every calling context, which is what the output keeps.
@@ -1288,11 +1307,12 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
     }
 }
 
-/// Returns a FlowVariable for the call argument from the instruction site ID and the formal number
+/// The vertex at call `insn` of a root, or of a formal: the actual of a formal, and a global
+/// itself (G5, [`FlowVariable::call_root`]).
 #[macro_export]
 macro_rules! call_arg {
     ($insn:expr, $n:expr) => {
-        $crate::facts::FlowVariable::call_actual($insn, $n)
+        $crate::facts::FlowVariable::call_root($insn, $crate::facts::Root::from($n))
     };
 }
 
@@ -1341,13 +1361,13 @@ pub fn phys_footprint_mb() -> f64 {
 fn compute_alias_of_formal(
     formal_param: &[(FunctionId, FlowVariable, FormalType)],
     mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
-) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
+) -> Vec<(FunctionId, FlowVariable, Root)> {
     // Base case: a formal whole-aliases itself. A `Copied` formal shares nothing with the caller,
     // so a store through it or its aliases is no summary, and it gets no aliases at all.
     let alias_base: Vec<_> = formal_param
         .iter()
         .filter(|(_, _, ty)| *ty != FormalType::Copied)
-        .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
+        .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, Root::formal(i))))
         .collect();
     // Keep only the copies that flow AWAY from a formal.
     let before = copy_edge.len();
@@ -1359,7 +1379,7 @@ fn compute_alias_of_formal(
         before
     );
     let pre = ascent_run! {
-        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex) = alias_base;
+        relation alias_of_formal(FunctionId, FlowVariable, Root) = alias_base;
         relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
         // A destination of an original copy inherits the source's formal-aliases. Recursive
         // relation FIRST so the join drives by the `alias_of_formal` delta and probes `copy_edge`
@@ -1504,7 +1524,7 @@ ascent_source! {
     // A function's flow from formal `n2.p2` to out-formal `n1.p1`, under its condition: `Always`
     // for one that holds in every calling context, or the decisions it holds under (rule 3.4's
     // conditional summaries). The loaded models are `Always`.
-    lattice summary(FunctionId, FormalIndex, Path, FormalIndex, Path, Cond);
+    lattice summary(FunctionId, Root, Path, Root, Path, Cond);
     relation config(IndexConfig);
     relation intent_frame(FunctionId);
 
@@ -1516,7 +1536,7 @@ ascent_source! {
     // not reason about context (call-target propagation, the critical summaries and resolvents,
     // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts.
     #[ds($crate::index_engine::cond_trie::locals)]
-    relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Cond);
+    relation locals(FunctionId, FlowVariable, Path, Root, Path, Cond);
     #[ds($crate::index_engine::cond_trie::assign)]
     relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
@@ -1525,7 +1545,7 @@ ascent_source! {
     // `compute_alias_of_formal`. Unlike `locals(v, empty, formal, empty)`, it leaves out
     // inter-procedural / summary-derived copies and the write-backs onto the formal at the return.
     // Feeds the aliasing summary rule.
-    relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+    relation alias_of_formal(FunctionId, FlowVariable, Root);
     // Call targets propagated across `assign_like` to the receiver vertices of critical calls.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
     relation const_reaches(FunctionId, FlowVariable, Path, Str);
@@ -1563,7 +1583,7 @@ ascent_source! {
     lattice call_site(FunctionId, InsnId, FunctionId, Cond);
 
     // Initialize locals with formals
-    locals(infunc, v1, p1.clone(), i, p1.clone(), Cond::Always) <--
+    locals(infunc, v1, p1.clone(), Root::formal(i), p1.clone(), Cond::Always) <--
         formal_param(infunc, v1, _),
         if let Some(i) = v1.as_formal(),
         let p1 = Path::empty();
@@ -1765,8 +1785,8 @@ ascent_source! {
         // join with formal_param here instead of using if so that we don't have to traverse all of
         // locals
         formal_param(infunc, dst_var, formal_ty),
-        if let Some(n1) = dst_var.as_formal(),
-        if isout(&n1, *formal_ty, p1),
+        if let Some(n1) = dst_var.as_root(),
+        if n1.isout(*formal_ty, p1),
         if n1 != *n2 || p1 != p2;
 
     // aliasing summary rule (context-free flows only).
@@ -1806,8 +1826,9 @@ ascent_source! {
     // 1.1: Base Critical Summary. An indirect / virtual call site found. (context-free)
     critical_summary(func_id, n, p_n) <--
         callee_info(func_id, _, v, p_call, _),
-        locals(func_id, v, p_call, n, p_n, c),
-        if c.is_always();
+        locals(func_id, v, p_call, r, p_n, c),
+        if c.is_always(),
+        if let Some(n) = r.as_formal();
 
     // 1.2: Propagate Critical Summary (context-free) up the stack. The caller may pass only a
     // prefix `key` of the callee's path (`fwd(s) { call(s); }` never touches `s->op`), so the
@@ -1818,8 +1839,9 @@ ascent_source! {
         let arg = call_arg!(*caller_insn_id, *n_tgt),
         path_set(ps),
         for (key, rest) in ps.splits(p_tgt).exact,
-        locals(caller_func_id, arg, key, n, p_n, c),
+        locals(caller_func_id, arg, key, r, p_n, c),
         if c.is_always(),
+        if let Some(n) = r.as_formal(),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
     critical_summary(caller_func_id, n, p_nr) <--
         fnptr_call(caller_func_id, caller_insn_id, tgt),
@@ -1827,8 +1849,9 @@ ascent_source! {
         let arg = call_arg!(*caller_insn_id, *n_tgt),
         path_set(ps),
         for (key, rest) in ps.splits(p_tgt).exact,
-        locals(caller_func_id, arg, key, n, p_n, c),
+        locals(caller_func_id, arg, key, r, p_n, c),
         if c.is_always(),
+        if let Some(n) = r.as_formal(),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
@@ -1879,8 +1902,9 @@ ascent_source! {
         for (key, rest) in ps.splits(p).exact;
     relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
     critical_reach(g, n2, p2r, f, insn, n, p) <--
-        locals(g, arg, key, n2, p2, c),
+        locals(g, arg, key, r2, p2, c),
         if c.is_always(),
+        if let Some(n2) = r2.as_formal(),
         critical_arg(g, arg, key, rest, p, f, insn, n),
         path_set(ps),
         if let Some(p2r) = ps.concat(p2, None, rest);
@@ -1898,8 +1922,9 @@ ascent_source! {
     // site is resolved for every caller that reaches it.
     call_site(caller, call_insn, resolvent_func, sc) <--
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
-        locals(caller, v_rec, p_rec, n, p, lc),
+        locals(caller, v_rec, p_rec, r, p, lc),
         if lc.is_always(),
+        if let Some(n) = r.as_formal(),
         resolvent(caller, n, p, resolvent_obj, d),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
         config(c),
@@ -1911,8 +1936,9 @@ ascent_source! {
     // The resolution the rule above performs, recorded.
     resolved_call(caller, call_insn, resolvent_func) <--
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
-        locals(caller, v_rec, p_rec, n, p, lc),
+        locals(caller, v_rec, p_rec, r, p, lc),
         if lc.is_always(),
+        if let Some(n) = r.as_formal(),
         resolvent(caller, n, p, resolvent_obj, _),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func);
 
@@ -2023,7 +2049,7 @@ ascent_source! {
     // calls on `(f, d)`. Monotone (a set only grows), so a plain relation. ⊤ unfolds to every
     // decision at the function, through `resolvent`, gated by the small `top_summary_func`
     // so a new resolvent never scans the summaries.
-    relation context_summary_d(FunctionId, DecisionId, FormalIndex, Path, FormalIndex, Path);
+    relation context_summary_d(FunctionId, DecisionId, Root, Path, Root, Path);
     context_summary_d(f, d, n1, p1, n2, p2) <--
         config(c),
         if c.context_join == ContextJoin::Unfold,
@@ -2197,7 +2223,7 @@ pub struct EngineInput<'a> {
     pub config: IndexConfig,
     pub assign_like: Vec<AssignLikeRow>,
     pub prog_store: Vec<(FunctionId, FlowVariable, Path)>,
-    pub alias_of_formal: Vec<(FunctionId, FlowVariable, FormalIndex)>,
+    pub alias_of_formal: Vec<(FunctionId, FlowVariable, Root)>,
     pub paths: Vec<(Path,)>,
     pub path_set: PathSetRef,
     pub index_timeout: std::time::Duration,
@@ -2432,8 +2458,8 @@ pub mod rules_prelude {
     pub use crate::call_arg;
     pub use crate::facts::{
         CallDispatchKey, CallTargetObject, FlowVariable, FlowVertex, FormalIndex, FormalType,
-        FunctionId, InsnId, InsnSiteId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
-        isout,
+        FunctionId, GLOBAL_FRAME, GlobalId, InsnId, InsnSiteId, IntentKind, IntentPairKind,
+        PackedInsnSiteId, Path, Root, Str, isout,
     };
     pub use crate::index_engine::path_set::PathSetRef;
     pub use packed_struct::PackedStructSlice;
@@ -2706,6 +2732,7 @@ macro_rules! run_engine {
             intent_pair: prog.intent_pair.into_iter().collect(),
             paths: prog.paths.into_iter().collect(),
             external_function: facts.external_function,
+            global_flow: Vec::new(),
             stats,
         }
     }};

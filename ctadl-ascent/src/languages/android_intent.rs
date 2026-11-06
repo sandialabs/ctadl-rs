@@ -88,7 +88,11 @@ fn emit_api_summaries(facts: &mut IndexFacts, ids: &IdMap) -> AndroidIntentStats
             .into_iter()
             .map(|(func_id, var)| (func_id, var, FormalType::Shared)),
     );
-    facts.summary.extend(summaries);
+    facts.summary.extend(
+        summaries
+            .into_iter()
+            .map(|(f, dst, dp, src, sp)| (f, dst.into(), dp, src.into(), sp)),
+    );
 
     AndroidIntentStats {
         api_functions: api_functions.len(),
@@ -737,9 +741,9 @@ mod tests {
                 .iter()
                 .any(|(func, dst, dst_path, src, src_path)| {
                     *func == set_action
-                        && **dst == 0
+                        && dst.as_formal().map(|i| *i) == Some(0)
                         && *dst_path == Path::from_symbol_names(["<action>"])
-                        && **src == 1
+                        && src.as_formal().map(|i| *i) == Some(1)
                         && src_path.is_empty()
                 })
         );

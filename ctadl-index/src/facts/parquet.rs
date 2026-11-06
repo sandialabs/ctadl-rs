@@ -588,6 +588,7 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
+impl_encode_newtype!(facts::GlobalId, Str, GenericStringArray<i64>);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
 impl_encode_newtype!(facts::ImportId, u32, UInt32Array);
 
@@ -1306,6 +1307,43 @@ type FlowVariableRefEncoding = (
     Option<facts::PackedCallArg>,
 );
 
+/// A [`facts::Root`] is two columns, `<name>_index` (the formal, null for a global) and
+/// `<name>_global` (the global's name, null for a formal).
+impl EncodeColumn<facts::Root> for DefaultEncoder {
+    #[inline]
+    fn encode_column(name: &str, col: Vec<facts::Root>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        let names = [format!("{name}_index"), format!("{name}_global")];
+        let names = names.iter().map(|s| s.as_ref()).collect_vec();
+        <Self as EncodeColumns<(Option<facts::FormalIndex>, Option<Str>)>>::encode_all(
+            &names,
+            col.into_iter()
+                .map(|r| match r.kind() {
+                    facts::RootKind::Formal(i) => (Some(i), None),
+                    facts::RootKind::Global(g) => (None, Some(g.name())),
+                })
+                .collect_vec(),
+        )
+    }
+}
+
+impl DecodeColumn<facts::Root> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(name: &str, batch: &RecordBatch) -> impl IntoIterator<Item = facts::Root> {
+        let names = [format!("{name}_index"), format!("{name}_global")];
+        let names = names.iter().map(|s| s.as_ref()).collect_vec();
+        <Self as DecodeColumns<(Option<facts::FormalIndex>, Option<Str>)>>::decode_tuples(
+            &names, batch,
+        )
+        .into_iter()
+        .map(|cols| match cols {
+            (Some(i), None) => facts::Root::formal(i),
+            (None, Some(g)) => facts::Root::global(facts::GlobalId(g)),
+            _ => panic!("a root is a formal or a global"),
+        })
+        .collect_vec()
+    }
+}
+
 impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -1330,6 +1368,7 @@ impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
                     Formal(_) => 1,
                     CallArg(_) => 2,
                     Uninit => 3,
+                    Global(_) => 4,
                 })
                 .collect_vec(),
         );
@@ -1342,6 +1381,7 @@ impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
                         Formal(ind) => (None, Some(ind), None),
                         CallArg(packed) => (None, None, Some(packed)),
                         Uninit => (None, None, None),
+                        Global(g) => (Some(g.name()), None, None),
                     })
                     .collect_vec(),
             );
@@ -1373,6 +1413,7 @@ impl DecodeColumn<facts::FlowVariable> for DefaultDecoder {
             (1, cols) => facts::FlowVariable::formal_index(cols.1.unwrap()),
             (2, cols) => facts::FlowVariable::call_arg_packed(cols.2.expect("call_arg")),
             (3, _) => facts::FlowVariable::default(),
+            (4, cols) => facts::FlowVariable::global(facts::GlobalId(cols.0.unwrap())),
             _ => panic!("Bad flow variable"),
         })
     }

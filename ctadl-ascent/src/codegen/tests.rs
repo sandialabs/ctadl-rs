@@ -305,9 +305,9 @@ fn test_local_to_global_field() {
             .iter()
             .any(|(func_id, dst_index, dst_path, src_index, src_path)| {
                 *func_id == f_id
-                    && **src_index == 0
+                    && src_index.as_formal().map(|i| *i) == Some(0)
                     && src_path.is_empty()
-                    && **dst_index == GLOBALS_INDEX
+                    && dst_index.as_formal().map(|i| *i) == Some(GLOBALS_INDEX)
                     && dst_path.is_empty()
             });
 
@@ -325,9 +325,9 @@ fn test_local_to_global_field() {
             .iter()
             .any(|(func_id, dst, dst_path, src, src_path)| {
                 *func_id == f_id
-                    && **dst == GLOBALS_INDEX
+                    && dst.as_formal().map(|i| *i) == Some(GLOBALS_INDEX)
                     && *dst_path == shim_path
-                    && **src == 0
+                    && src.as_formal().map(|i| *i) == Some(0)
                     && src_path.is_empty()
             }),
         "the store `$g.field = p0` is the summary row `.g.field <- p0`: {:#?}",

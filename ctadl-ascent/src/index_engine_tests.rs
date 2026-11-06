@@ -89,6 +89,7 @@ fn canonical(
         intent_pair: _,
         mut paths,
         mut external_function,
+        global_flow: _,
         stats: _,
     } = result;
     summary.sort();
@@ -512,7 +513,7 @@ fn exceptional_return_is_summarized() {
     let (thrower, catcher) = (func_id(&si.sites, "thrower"), func_id(&si.sites, "catcher"));
     let has = |f: FunctionId, dst: i16, src: i16| {
         result.summary.iter().any(|(sf, d, dp, s, sp)| {
-            *sf == f && **d == dst && dp.is_empty() && **s == src && sp.is_empty()
+            *sf == f && d.as_formal().map(|i| *i) == Some(dst) && dp.is_empty() && s.as_formal().map(|i| *i) == Some(src) && sp.is_empty()
         })
     };
     assert!(has(thrower, -2, 0), "summary = {:?}", result.summary);

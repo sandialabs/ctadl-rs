@@ -632,9 +632,9 @@ pub(crate) fn summary_search(
     let from_path = parse(from_path);
     let to_path = parse(to_path);
     summary.iter().any(|r| {
-        r.1 == fx::FormalIndex::new(to_index)
+        r.1 == fx::FormalIndex::new(to_index).into()
             && r.2 == to_path
-            && r.3 == fx::FormalIndex::new(from_index)
+            && r.3 == fx::FormalIndex::new(from_index).into()
             && r.4 == from_path
     })
 }
@@ -749,9 +749,9 @@ fn flow_present_in(
     let to_path: Path = to_path.parse().unwrap();
     summary.iter().any(|r| {
         r.0 == func_id
-            && r.1 == fx::FormalIndex::new(to_index)
+            && r.1 == fx::FormalIndex::new(to_index).into()
             && r.2 == to_path
-            && r.3 == fx::FormalIndex::new(from_index)
+            && r.3 == fx::FormalIndex::new(from_index).into()
             && r.4 == from_path
     })
 }

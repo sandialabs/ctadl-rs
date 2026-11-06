@@ -65,6 +65,8 @@ macro_rules! dump_display {
 dump_display!(
     i64,
     FormalIndex,
+    crate::facts::Root,
+    crate::facts::GlobalId,
     FlowVariable,
     FlowVertex,
     Path,

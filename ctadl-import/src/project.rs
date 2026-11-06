@@ -178,7 +178,11 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 /// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
 ///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::mir::path`, with
 ///   `deref` and `#value` segments distinct from fields.
-pub const INDEX_FORMAT_VERSION: &str = "7";
+/// - `8`: globals are variables (`docs/ir.md`, G1). `summary.parquet`'s roots are two columns each,
+///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
+///   gained `globals.parquet`, the project's globals by declaring import, and
+///   `global_flow.parquet`, the program-level flows between globals.
+pub const INDEX_FORMAT_VERSION: &str = "8";
 
 /// The front-end convention options set in the environment to something other than their
 /// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by
