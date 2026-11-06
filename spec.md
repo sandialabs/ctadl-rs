@@ -23,7 +23,7 @@ Line references are to the tree at the time of writing and will drift.
 Today a global `g` is the field `$globals.g` of one variable, `Variable::GlobalHeap`
 (`ctadl-ir/src/mir/mod.rs:339-349`), which codegen turns into a pseudo-formal, `GLOBALS_INDEX =
 i16::MIN`, declared `Shared` on every function (`ctadl-ascent/src/codegen/mod.rs:838-843`) and
-passed at every call site (`:1254-1263`). Four things follow, and the intent is to end all four.
+passed at every call site (`:1236-1245`). Four things follow, and the intent is to end all four.
 
 - **Not compositional in cost.** A flow between two globals inside `f` is a summary row of
   `f` (`G.a <- G.b`), instantiated in every caller, where it becomes a summary row of the
@@ -92,9 +92,11 @@ else in [docs/ir.md](docs/ir.md) stands.
   `VariableRef` to a global with a version; a copy (empty destination path) into a global, at
   any version; a call result bound to a global; a phi over a global. `EmptyGlobalsWrite` and
   its version-0 exemption (`verify.rs:297-307`) go with the entry binding (R4).
-- R3. `ParamFlow` carries parameters only; its `global` field (`mir/mod.rs:312-315`) goes.
+- R3. The write-back of the global heap at the `return`, which codegen emits beside the
+  parameters' from the parameter count (`ctadl-ascent/src/codegen/mod.rs:1259-1279`), goes;
+  the parameters' write-back is untouched.
 - R4. SSA (`ctadl-ir/src/ssa/mod.rs`) leaves globals alone: no entry binding `$globals_0 =
-  $globals` (`:435-442`), no phi, no renaming. A global reference is unversioned before and
+  $globals` (`:433-440`), no phi, no renaming. A global reference is unversioned before and
   after SSA. The passes need no change beyond the removal: a store to a global is a store, and
   `copy_prop`'s anchor rule (`ssa/copy_prop/mod.rs:51-56`) no longer has a globals case.
 - R5. The textual form prints a global as `$name`, with the name escaped by the field rules of
@@ -227,9 +229,9 @@ naming, linkage and storage convention in its crate docs. The conventions:
 
 ### 2.6 Documentation, register, verification
 
-- R33. `docs/ir.md` states G1–G8: the declaration and textual form in Syntax (the `param-flow`
-  row loses "and globals'"; the well-formedness list gains R2's checks and loses "a copy into
-  the whole of `$globals`"), G2 in Calls, G4–G6 in Globals and Summaries, and a "Globals"
+- R33. `docs/ir.md` states G1–G8: the declaration and textual form in Syntax (the
+  well-formedness list gains R2's checks and loses "a copy into the whole of `$globals`"),
+  G2 in Calls, G4–G6 in Globals and Summaries, and a "Globals"
   bullet under Front ends naming R8–R12's conventions. docs/spec.md §2 gains a row for
   *Global*, §4.2's "Globals" bullet is rewritten, §4.3's bridge sentence drops globals, and
   §6 drops the C global limitation. docs/limitations.md drops it too. docs/portcullis.md §3
@@ -307,8 +309,6 @@ treats a global vertex as belonging to every function at once.
   front-end bug reported by `verify`). `Locals`-style `by_name` is `serde(skip)` and rebuilt.
 - `VariableRef::new_global()` becomes `VariableRef::global(idx)`, unversioned;
   `BasicBlockBuilder::new_global_var(idx)` likewise. `Variable::new_global()` goes.
-- `StatementKind::ParamFlow { params }`; `param_flow(arity)` builds params only;
-  `iter_src_var*` and the visitor lose the `global` operand.
 - Display: `$name` with field escaping (R5); `path_syntax` parses `$name` to a global looked up
   by name in the program being parsed (flowy, model ports, test paths).
 - Encoding: `bitcode` of the derived serde (an enum's tag width is unchanged at three
@@ -321,9 +321,9 @@ treats a global vertex as belonging to every function at once.
   rejects a version. `check_store_bases` is unchanged: a store through a global's base is a
   store whose base is defined nowhere and is unversioned, which it already accepts.
 - SSA: `PhiPlace` and `SsaRename` skip `Variable::Global` (it has no defs, so today it only
-  ever reaches version 0; now it reaches none). The entry binding and the exit `global`
-  operand go. The module docs at `ssa/mod.rs:15-21` and `copy_prop/mod.rs:51-56` drop their
-  globals sentences; `dead_temps`, `coalesce`, `mem2reg` are untouched.
+  ever reaches version 0; now it reaches none). The entry binding goes. The module docs at
+  `ssa/mod.rs:15-21` and `copy_prop/mod.rs:51-56` drop their global-heap sentences;
+  `dead_temps`, `coalesce`, `mem2reg` are untouched.
 
 ### 3.4 Reference implementation
 
@@ -371,8 +371,8 @@ Per front end, what changes; everything else stays.
   as `facts.rs:975-986` does for instructions), saved as `globals.parquet` (R22).
 - `trans_variable_ref` (`codegen/mod.rs:1370-1380`) maps `Variable::Global(idx)` to
   `FlowVariable::global(id)`. `visit_function_data` emits no globals formal (`:838-843`);
-  the `ParamFlow` case (`:1019-1040`) emits the parameter write-backs only; call sites emit
-  no globals actual (`:1254-1263`). `compute_arg_arity`'s comment loses "globals".
+  the `Return` arm (`:1259-1279`) writes back the parameters only; call sites emit no globals
+  actual (`:1236-1245`). `compute_arg_arity`'s comment loses "globals".
 - A `Root` type replaces `FormalIndex` in the root columns:
 
   ```rust
