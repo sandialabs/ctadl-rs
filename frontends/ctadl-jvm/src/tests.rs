@@ -216,7 +216,7 @@ fn copies(info: &ctadl_ir::ProgramInfo, name: &str) -> Vec<(String, Vec<String>)
         .collect()
 }
 
-/// Arithmetic, `iinc` and comparisons supply values only (R17); a load from a local stays a
+/// Arithmetic, `iinc` and comparisons supply values only (S19); a load from a local stays a
 /// copy.
 #[test]
 fn arithmetic_and_comparisons_supply_values_only() {
@@ -268,7 +268,7 @@ fn arithmetic_and_comparisons_supply_values_only() {
 }
 
 /// `ldc` of a `CONSTANT_MethodHandle` that invokes a method is a function reference to it,
-/// named as its `FunctionData` is (R18). A `REF_newInvokeSpecial` handle stays an object.
+/// named as its `FunctionData` is (S11). A `REF_newInvokeSpecial` handle stays an object.
 #[test]
 fn method_handle_constant_is_a_function_reference() {
     fn utf8(s: &str) -> Vec<u8> {
@@ -323,7 +323,7 @@ fn method_handle_constant_is_a_function_reference() {
 }
 
 /// `mh.invokeExact(x)` calls whatever the handle `mh` refers to: an indirect call through the
-/// handle, passing `x` (R18), so a handle constant resolves it.
+/// handle, passing `x` (S11), so a handle constant resolves it.
 #[test]
 fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
     use ctadl_ir::mir::StatementKind;

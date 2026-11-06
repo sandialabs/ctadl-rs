@@ -121,7 +121,7 @@ fn framework_assemblies() {
     }
 }
 
-/// Arithmetic, bitwise operations, shifts and comparisons supply values only (R17); a
+/// Arithmetic, bitwise operations, shifts and comparisons supply values only (S19); a
 /// conversion (a cast), the operations that carry an address, and the unknown one stay copies.
 #[test]
 fn value_only_arithmetic() {

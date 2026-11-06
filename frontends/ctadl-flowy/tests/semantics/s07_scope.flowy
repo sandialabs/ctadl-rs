@@ -57,7 +57,7 @@ j:
 // aliases, while a value held in memory is, like the cell that holds it.
 //
 // `copy_prop` replaces `t` by `v`, which moves the store `t.#value = a` onto `v` itself: the
-// `copy_prop` row of the approximations register (docs/ir-redesign.md §4).
+// `copy_prop` row of the approximations register (docs/limitations.md).
 // passes: adds copy_prop, pipeline
 //
 // The query's object hop moves the store at `t.#value` back to `v`, which S8 does not:

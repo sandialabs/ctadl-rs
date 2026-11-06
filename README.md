@@ -166,8 +166,6 @@ cross this way, so a flow in the library that depends on resolving an indirect c
   `deref` and `#value`, assignments that are copies or stores, and calls, with a semantics of
   labels propagating along them. The analysis is measured against that semantics, and every
   place it deviates is listed.
-- [IR redesign](docs/ir-redesign.md) — the record of the IR redesign: numbered rules and
-  requirements, the design, the approximations register, and the implementation plan.
 - [Portcullis](docs/portcullis.md) — the model language: sources, sinks, and propagation
   through code CTADL cannot see. Start here to write models.
 - [Debugging](docs/debugging.md).

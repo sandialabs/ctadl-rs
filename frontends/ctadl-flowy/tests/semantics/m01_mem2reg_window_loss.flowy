@@ -1,4 +1,4 @@
-// The `mem2reg window:N` row of the approximations register (docs/ir-redesign.md §4): an escaped
+// The `mem2reg window:N` row of the approximations register (docs/limitations.md): an escaped
 // frame address is assumed to reach N bytes, so a callee that writes past them writes a slot the
 // pass promoted, and the flow is lost. Full promotion, which promotes the slot too, loses it as
 // well. The semantics derives it: the callee's store through `p` moves back to the caller's frame

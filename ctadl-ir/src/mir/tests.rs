@@ -449,7 +449,7 @@ fn verify_rejects_value_spelled_as_field() {
             .any(|e| matches!(e, VerifyError::ValueSpelledAsField { .. })),
         "{errs:?}"
     );
-    // A source field named `deref` is a field like any other (R1).
+    // A source field named `deref` is a field like any other (S1).
     let prog = program_with(vec![StatementKind::store(
         p0(),
         PathSegment::field("deref"),

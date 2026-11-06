@@ -1635,12 +1635,13 @@ ascent_source! {
         path_set(ps),
         for (key, rest) in ps.splits(p2).wild;
 
-    // Semantics (`docs/ir.md`; R26 of `docs/ir-redesign.md`). `ext_dst` is S6, the forward rule:
-    // the suffix `rest` of an assignment's source carries to its destination. It deviates by
-    // computing suffixes only within the admissible path set (the "admissible paths" row of the
-    // approximations register, loses) and by rebasing an offset prefix only against an offset or
-    // `#value` (`Path::wild_rest`), not against a field (S6 gives `x.[8]`'s suffix of `x.f` as
-    // `[-8].f`). It does not distinguish store from copy, so it carries no scope (S7).
+    // Semantics (`docs/ir.md`; deviations are rows of the approximations register in
+    // `docs/limitations.md`). `ext_dst` is S6, the forward rule: the suffix `rest` of an
+    // assignment's source carries to its destination. It deviates by computing suffixes only within
+    // the admissible path set (the "admissible paths" row of the approximations register, loses)
+    // and by rebasing an offset prefix only against an offset or `#value` (`Path::wild_rest`), not
+    // against a field (S6 gives `x.[8]`'s suffix of `x.f` as `[-8].f`). It does not distinguish
+    // store from copy, so it carries no scope (S7).
     //
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
     // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)

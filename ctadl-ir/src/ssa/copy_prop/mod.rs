@@ -1,7 +1,7 @@
 /*!
 Copy propagation and trivial-phi elimination for post-SSA IR.
 
-# Correctness (S18 of `docs/ir-redesign.md`)
+# Correctness (S18 of `docs/ir.md`)
 
 A read of an alias reads what its representative holds: in SSA `t = v` is `t`'s only
 definition, so `t.p` holds `v.p`'s labels for every path `p`, and rewriting a read of `t` to a

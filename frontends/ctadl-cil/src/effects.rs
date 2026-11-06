@@ -32,10 +32,10 @@
 //! | `Test`                                        | nothing: a branch taints nothing              |
 //! | `Opaque { srcs, dsts }`                       | each `d := srcs`; counted                     |
 //!
-//! Arithmetic, bitwise operations, shifts and comparisons supply values only (R17): each operand
+//! Arithmetic, bitwise operations, shifts and comparisons supply values only (S19): each operand
 //! is `value(v)`, so `t = a + b` gives `t` the values of `a` and `b` and nothing reachable through
 //! either. A conversion is a cast, the same value at another width, and stays a copy. The other
-//! exception is an address computation (R16): the pointer operand of `add` and the left operand
+//! exception is an address computation (S19): the pointer operand of `add` and the left operand
 //! of `sub`, when it is a pointer, are copies, so the result shares the memory behind them
 //! (`address_base` says how a pointer is recognized).
 //!
@@ -352,7 +352,7 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// The operand of a `Derived` operation that is the base of an address computation, and
-    /// so a copy rather than a value (R16): the pointer operand of `add`, the left operand of
+    /// so a copy rather than a value (S19): the pointer operand of `add`, the left operand of
     /// `sub` when it is a pointer, and the operand of `conv.i`/`conv.u` of a pointer. An
     /// operand is a pointer when it holds a traced address or has kind `&`; failing that,
     /// one of kind `native int`, which is what an unmanaged pointer is on the stack. `native
@@ -400,7 +400,7 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 }
 
-/// Whether the operands of `op` supply only their values (R17): integer and float arithmetic,
+/// Whether the operands of `op` supply only their values (S19): integer and float arithmetic,
 /// bitwise operations, shifts and comparisons, and `refanytype`. The result is a number
 /// computed from the operands; nothing reachable through an operand is reachable through it. A
 /// conversion is a cast, the same value at another width, and stays a copy, as in the JVM and

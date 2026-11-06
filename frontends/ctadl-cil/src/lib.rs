@@ -38,7 +38,7 @@ Every lowering choice the IR does not force is a policy, made in one place:
 | Generic instantiation          | erased: a class is its open definition                     | `names.rs`    |
 | Assembly selection             | framework and BCL not imported by default ([`is_framework_assembly`]); their metadata always read | `lib.rs` |
 
-Conventions (S19, R14). A field is the symbol `<cls::name>` and an array element the field
+Conventions (S19). A field is the symbol `<cls::name>` and an array element the field
 `[]`, whatever the index; `length` is the array length. The step from a `ref`, `out`, `in`, a
 managed or an unmanaged pointer to the memory there is `PathSegment::Deref`, and only that.
 A byref argument whose place is traced is copied into a cell (`cell.deref`) before the call

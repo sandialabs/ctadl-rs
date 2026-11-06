@@ -1,5 +1,5 @@
-//! Differential tests of the IR passes against the reference implementation (R12 of
-//! `docs/ir-redesign.md`).
+//! Differential tests of the IR passes against the reference implementation (S18 of
+//! `docs/ir.md`).
 //!
 //! A pass is correct if the SSA form of its output has the same observable labeling as the SSA
 //! form of its input (S18). For every program of the semantics corpus and every `.tnt` program

@@ -167,7 +167,8 @@ fn a_segment_after_the_value_field_is_an_error() {
     assert!(messages[0].contains("#value"), "{messages:?}");
 }
 
-/// `.*` is not a segment (R39): a port names exact paths. A quoted `"*"` is a field so named.
+/// `.*` is not a segment (S17 of `docs/ir.md`): a port names exact paths. A quoted `"*"` is a field
+/// so named.
 #[test]
 fn a_star_segment_is_an_error() {
     let errors = match parse::parse_program(r#"sink(F::arg(0).*) :- fun(F);"#) {

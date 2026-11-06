@@ -843,7 +843,7 @@ impl Context {
     }
 
     /// The method handle `idx`, when it invokes a known method, as a function reference to that
-    /// method (R18), named as the method's `FunctionData` is. The method joins the callees, so
+    /// method (S11), named as the method's `FunctionData` is. The method joins the callees, so
     /// it gets a declaration if this program does not define it.
     ///
     /// `invoke-static` and `invoke-direct` handles name the method that runs. For
@@ -1189,7 +1189,7 @@ impl Context {
 }
 
 /// Whether `inst` computes its result from its operands' values and shares no memory with them
-/// (R17): comparisons (`cmpl-float`..`cmp-long`, 0x2d..=0x31), negation and `not`
+/// (S19): comparisons (`cmpl-float`..`cmp-long`, 0x2d..=0x31), negation and `not`
 /// (0x7b..=0x80), binary arithmetic, bitwise and shift operations (`add-int`..`ushr-int/lit8`,
 /// 0x90..=0xe2), and `instance-of` (0x20), whose boolean is a test of the reference, a
 /// comparison. A numeric conversion (`int-to-long`..`int-to-short`, 0x81..=0x8f) is a cast, the

@@ -214,12 +214,12 @@ pub struct IndexConfig {
     #[serde(default)]
     pub import_hashes: BTreeMap<String, String>,
     /// The engine options that change results, which the approximations register of
-    /// `docs/ir-redesign.md` names: `None` for an index written before this field existed.
+    /// `docs/limitations.md` names: `None` for an index written before this field existed.
     #[serde(default)]
     pub engine: Option<EngineRecord>,
 }
 
-/// The index options that change its results (R30 of `docs/ir-redesign.md`), recorded with the
+/// The index options that change its results recorded with the
 /// index so a result can be traced to the approximations it was computed under.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EngineRecord {
@@ -334,7 +334,7 @@ pub struct ArtifactImport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// The front end's convention options this import was lowered under, when they are not the
-    /// default (R41 of `docs/ir-redesign.md`): option name to value. Empty for the
+    /// default: option name to value. Empty for the
     /// defaults.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub conventions: BTreeMap<String, String>,

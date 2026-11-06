@@ -1,4 +1,4 @@
-//! The rule-by-rule corpus of the IR's semantics (R42 of `docs/ir-redesign.md`), run on the
+//! The rule-by-rule corpus of the IR's semantics (`docs/ir.md`), run on the
 //! reference implementation, `ctadl_ir::semantics`.
 //!
 //! Each `tests/semantics/*.flowy` program pins one rule of `docs/ir.md`. Its `sink(x, L)` calls

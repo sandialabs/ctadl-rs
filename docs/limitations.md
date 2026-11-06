@@ -21,3 +21,30 @@
   `invokeWithArguments` calls nothing, and a virtual handle reaches the method it names, not an
   override. Arguments are passed by position, so a call that relies on `invoke`'s boxing or
   varargs adaptation lines up wrongly. These are false negatives.
+
+## Approximations register
+
+The index and the query deviate from the semantics of [ir.md](ir.md) only here, and the IR
+passes only where a row says so. "Loses" means a flow the semantics derives may be absent;
+"adds" means a flow the semantics does not derive may be present.
+
+| Where | What | Direction | Reported |
+| --- | --- | --- | --- |
+| index, query | Admissible path set: suffixes outside program ∪ model ∪ one-level concatenations are dropped | loses | no (structural) |
+| index | Cells inside a callee merge all callers (S14) | adds | no (structural) |
+| index | Resolution ladder: dispatch model, CHA under threshold | adds | config recorded |
+| index | Hybrid context widening (`collapse`, `bounded`, `spill`) | adds | config recorded |
+| index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary codegen's load-chain composition anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
+| index | `Shared` formals (pcode, endpoints, JNI): whole-variable write-back through a parameter | adds | no (doc comment on the rule) |
+| index | `Copied` formals: no field write-back through a parameter | loses | no (doc comment on the rule) |
+| query | Object hop at the empty path | adds | no |
+| query | Saturating sources read below the port; wildcard sinks match below the port | adds (model opt-in) | model text |
+| passes | `mem2reg window:N` (and `exact`, a window of one slot): an escape reaching past the window | loses | no; `above` avoids it |
+| passes | `mem2reg full` | loses | per function |
+| passes | `copy_prop` rewrites a store through a copy `t = v` onto `v`: a store at `t.#value` lands on `v.#value`, and stores through `t` and `v` merge as S9's do | adds | no |
+| query | Call/return matching by one bit, not a site stack | adds (witness only) | no |
+| front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
+| front ends | pcode `merge` arithmetic | adds | config recorded |
+
+Anything not in this table that differs from the reference implementation is a bug.
+`ctadl-ascent/tests/integration/reference_parity.rs` checks it.

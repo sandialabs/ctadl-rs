@@ -149,8 +149,9 @@ separately.
   memory-mapped LSM stores.
 - **Semantics.** What the analysis computes is [ir.md](ir.md)'s least labeling: local flow is
   its assignment rules, flow- and path-insensitive, with order kept only as far as SSA keeps
-  it. The engines approximate it, and every deviation is a row of the approximations register
-  (the redesign's [spec.md](../spec.md) §4), measured by `tests/integration/reference_parity.rs`.
+  it. The engines approximate it, and every deviation is a row of the
+  [approximations register](limitations.md#approximations-register), measured by
+  `tests/integration/reference_parity.rs`.
 - **Field propagation** is the forward and backward rules of [ir.md](ir.md#assignment) applied
   to a path's suffixes.
 - **Finite access paths.** Propagation builds only paths from the program text, from models,

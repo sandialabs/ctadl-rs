@@ -2970,7 +2970,8 @@ fn addr_of_a_record_is_a_cell() {
     // `s.f`. Without the cell, `&s` would be `s` and the callee's write would land on
     // `s.deref.f`, a path `s.f` never names. In one block, `p = &s; p->f = v` resolves through
     // the alias table to `s.deref.f` directly. (Across blocks the store is `p.deref.f`, which the
-    // semantics sends back to `s.deref.f`; the index does not, for a local -- spec §4.)
+    // semantics sends back to `s.deref.f`; the index does not, for a local: the backward alias
+    // rule row of `docs/limitations.md`.)
     let src = r"
         struct S { int f; int g; };
         void init(struct S *p, int v) { p->f = v; }

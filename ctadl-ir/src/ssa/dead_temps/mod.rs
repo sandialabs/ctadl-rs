@@ -1,7 +1,7 @@
 /*!
 Dead-temporary elimination for pre-SSA IR.
 
-# Correctness (S18 of `docs/ir-redesign.md`)
+# Correctness (S18 of `docs/ir.md`)
 
 Correct without condition. A deleted statement is a copy into a local that nothing reads: the
 cell it defines reaches no port, so no observable labeling changes. A store is never deleted,

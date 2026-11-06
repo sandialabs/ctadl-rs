@@ -5,7 +5,7 @@ two need each other.
 
 # Conventions
 
-How pcode follows the front-end conventions of S19 in `docs/ir-redesign.md`:
+How pcode follows the front-end conventions of S19 in `docs/ir.md`:
 
 - There is no address-of. Address-taken storage lives behind `deref`. The frame is memory:
   frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only
@@ -1037,7 +1037,7 @@ impl Context {
     }
 
     /// Writes `dest = base + index` for a `PTRADD` or `PTRSUB` whose offset is not a
-    /// constant (R16): a copy of the base plus the value of the index, so `dest` reaches the
+    /// constant (S19): a copy of the base plus the value of the index, so `dest` reaches the
     /// memory behind `base` and not the memory behind `index`. Under [`IntArith::Merge`],
     /// `rest` (a `PTRADD`'s element size) is merged in too and `index` is a plain copy, as
     /// for every other arithmetic op in that mode.

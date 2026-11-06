@@ -290,7 +290,7 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
     );
 }
 
-/// The calls that are zero assignments (R40 of `docs/ir-redesign.md`): an indirect call no target
+/// The calls that are zero assignments (S10 of `docs/ir.md`): an indirect call no target
 /// reaches and a call to a function with neither a body nor a model are each reported in the
 /// index's `notifications.sarif`, and the query carries both into its SARIF.
 #[test]

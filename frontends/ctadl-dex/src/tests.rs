@@ -408,7 +408,7 @@ fn aput_wide_stores_value_pair() {
 }
 
 /// The flows of `inst` as `(dest, source)` names, where every source must be the value of a
-/// register (R17).
+/// register (S19).
 fn value_flows(inst: Instruction) -> Vec<(String, String)> {
     let (assigns, locals) = assign_from(inst);
     assigns
@@ -499,7 +499,7 @@ fn arg_names(locals: &Locals, args: &[Exp]) -> Vec<String> {
 }
 
 /// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls whatever the handle in
-/// `v0` refers to: an indirect call through `v0`, passing `v1` and `v2` (R18).
+/// `v0` refers to: an indirect call through `v0`, passing `v1` and `v2` (S11).
 #[test]
 fn invoke_polymorphic_is_an_indirect_call_through_the_handle() {
     use dex_reader::instructions::{Format45cc, MethodIdx, ProtoIdx};
@@ -579,7 +579,7 @@ fn const_method_handle_and_type_assign_an_object() {
     }
 }
 
-/// Arithmetic, conversions, comparisons and `instance-of` supply values only (R17).
+/// Arithmetic, conversions, comparisons and `instance-of` supply values only (S19).
 #[test]
 fn arithmetic_and_comparisons_supply_values_only() {
     use dex_reader::instructions::{Format12x, Format22b, Format22c, Format23x};
@@ -668,7 +668,7 @@ fn move_is_a_copy() {
 }
 
 /// A `const-method-handle` that invokes a method is a function reference to it, named as its
-/// `FunctionData` is, and the method becomes a callee so that it gets a declaration (R18). A
+/// `FunctionData` is, and the method becomes a callee so that it gets a declaration (S11). A
 /// constructor or field handle stays a `MethodHandle` object.
 #[test]
 fn const_method_handle_with_a_method_is_a_function_reference() {

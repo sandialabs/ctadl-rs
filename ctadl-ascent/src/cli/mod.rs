@@ -274,7 +274,7 @@ fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
     );
 }
 
-/// The calls that are zero assignments (S10 of `docs/ir.md`, R40 of `docs/ir-redesign.md`),
+/// The calls that are zero assignments (S10 of `docs/ir.md`),
 /// collected after the fixpoint: one [`notifications::UNRESOLVED_INDIRECT_CALL`] per function with
 /// an indirect call no target reached, and one [`notifications::CALL_WITHOUT_BODY`] per function
 /// called with neither a body nor a model. A function has no body when it is declared without one,

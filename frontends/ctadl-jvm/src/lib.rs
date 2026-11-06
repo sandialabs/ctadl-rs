@@ -1042,7 +1042,7 @@ impl Context {
     }
 
     /// Opcodes whose result is computed from its operands' values and shares no memory with
-    /// them (R17): arithmetic, bitwise, shift and negation (`iadd`..`lxor`, 0x60..=0x83),
+    /// them (S19): arithmetic, bitwise, shift and negation (`iadd`..`lxor`, 0x60..=0x83),
     /// `iinc` (0x84), comparisons (`lcmp`..`dcmpg`, 0x94..=0x98) and `instanceof` (0xc1), whose
     /// `int` is a test of the reference, a comparison. A numeric conversion (`i2l`..`i2s`,
     /// 0x85..=0x93) is a cast, the same value at another width, and stays a copy: a value a
@@ -1053,7 +1053,7 @@ impl Context {
     }
 
     /// A `CONSTANT_MethodHandle` that invokes a known method, as a function reference to that
-    /// method (R18), named as the method's `FunctionData` is (`Lcls;->name(desc)`).
+    /// method (S11), named as the method's `FunctionData` is (`Lcls;->name(desc)`).
     ///
     /// `REF_invokeStatic` and `REF_invokeSpecial` name the method that runs. For
     /// `REF_invokeVirtual` and `REF_invokeInterface` the handle names the declared method,

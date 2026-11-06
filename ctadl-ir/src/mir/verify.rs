@@ -122,7 +122,7 @@ pub enum VerifyError {
     },
 
     /// In SSA form, a store whose base is a version nothing defines: the store was treated as
-    /// defining its base, which a store never does (S5, R23).
+    /// defining its base, which a store never does (S5, S16).
     #[error("in function: {function}: store at {location} defines its base {base}")]
     StoreDefinesBase {
         function: String,

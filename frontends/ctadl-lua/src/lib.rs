@@ -65,7 +65,7 @@
 //! constructor entry, `table.insert`) the field `[_elem_]`. Lua has no address-of, so `deref`
 //! never appears. Arithmetic (`+ - * / // % ^`, unary `-`), bitwise operations (`& | ~ << >>`,
 //! unary `~`), comparisons (`== ~= < <= > >=`), `not` and the length `#` supply values only
-//! (R17): each operand is `value(v)`. Concatenation `..` builds a string from its operands'
+//! (S19): each operand is `value(v)`. Concatenation `..` builds a string from its operands'
 //! contents and `and`/`or` evaluate to one of their operands, so their operands flow whole.
 //! The `err` result of a call is never filled (see Errors below).
 //!
@@ -1885,7 +1885,7 @@ impl<'a> Lowerer<'a> {
                 // `and`/`or` evaluate to one of their operands, and `..` builds a string from
                 // its operands' contents: both operands flow into the result. Arithmetic,
                 // bitwise operations and comparisons compute a number or a boolean, so their
-                // operands supply values only (R17).
+                // operands supply values only (S19).
                 let sources = match op {
                     "and" | "or" | ".." => [left, right],
                     _ => [value_of(left), value_of(right)],
@@ -1896,7 +1896,7 @@ impl<'a> Lowerer<'a> {
             }
             "unary_expression" => {
                 // `-`, `~`, `not` and `#` compute a number or a boolean: the operand supplies
-                // its value only (R17).
+                // its value only (S19).
                 let operand = node
                     .child_by_field_name("operand")
                     .map(|n| self.eval_expr(n, blk))
@@ -2487,7 +2487,7 @@ fn nil_exp() -> Exp {
     Exp::new_str("nil")
 }
 
-/// `value(e)` for an operand that supplies only its value (R17); a constant stays as it is.
+/// `value(e)` for an operand that supplies only its value (S19); a constant stays as it is.
 fn value_of(e: Exp) -> Exp {
     match e {
         Exp::Path(ap) => Exp::Value(ap),
@@ -3090,7 +3090,7 @@ mod tests {
 
     #[test]
     fn arithmetic_and_comparisons_supply_values_only() {
-        // R17: arithmetic, bitwise operations, comparisons, unary minus, `not` and `#` take their
+        // S19: arithmetic, bitwise operations, comparisons, unary minus, `not` and `#` take their
         // operands' values only. `and`/`or` evaluate to an operand, and `..` builds a string from
         // its operands' contents, so both of theirs flow whole.
         let src = r#"

@@ -1,10 +1,10 @@
 /*!
-The reference implementation of the IR's semantics (`docs/ir.md`, S1–S17 of `docs/ir-redesign.md`).
+The reference implementation of the IR's semantics (S1–S17 of `docs/ir.md`).
 
 This is a direct, unoptimized evaluation of the rules, written to be read beside them. It is the
-oracle the IR passes are checked against (R12) and the engines are measured against (R36). It
-is never run on a real artifact: it enumerates instances of every call, and every labeled cell
-of every instance.
+oracle the IR passes are checked against (`frontends/ctadl-flowy/tests/passes.rs`) and the engines
+are measured against (`ctadl-ascent/tests/integration/reference_parity.rs`). It is never run on a
+real artifact: it enumerates instances of every call, and every labeled cell of every instance.
 
 # What it computes
 
@@ -488,7 +488,7 @@ impl<'a> Eval<'a> {
             }
             other => {
                 // Virtual calls resolve through a class hierarchy this evaluator does not
-                // take; they are pinned by the engines' own tests (R42).
+                // take; they are pinned by the engines' own tests.
                 let site = self.site(inst, bb, i);
                 self.outcome
                     .unresolved
