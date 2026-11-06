@@ -1,4 +1,4 @@
-# Implementation plan
+# DO-NOT-MERGE: Implementation plan
 
 The work in [spec.md](spec.md), ordered. Each stage is one or a few PRs onto
 `compositional-globals`, leaves `cargo test` green and the nightly regression attributed (every

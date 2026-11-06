@@ -1,4 +1,4 @@
-# Compositional globals: Requirements and Design
+# DO-NOT-MERGE: Compositional globals: Requirements and Design
 
 How the intent in `intent.md` — replace the single `$globals` model with one that allows programs
 to define arbitrarily many global variables while remaining compositional — becomes part of
