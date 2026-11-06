@@ -3,10 +3,20 @@
 - **C# structs are not copied.** The CIL frontend treats a value type like an object, so a
   struct copy (an assignment or a by-value argument) aliases the original, and taint written
   into the copy shows up in the original as a false positive.
+- **C# lambdas that capture nothing share their call targets.** The CIL frontend models a
+  delegate as its target object holding the method, and the compiler makes the target of every
+  non-capturing lambda of a class one static singleton (`<>c.<>9`), which is a global shared by
+  every function. So calling any such delegate may call any of the class's non-capturing
+  lambdas, and taint passed to one reaches what another does with its argument, a false
+  positive.
 - **The address of a C struct member is not nameable.** The C frontend has no struct layout,
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
   `&s` and `&a[1]` are nameable and not affected.
+- **The address of a binary's global is a constant.** The pcode frontend reads a global at
+  address `A` as the memory `$<import>::ram.[A].deref`, but a pointer-typed constant that is the
+  address of a global stays an inert constant, not `$<import>::ram.[A]`: a write through
+  `p = &g; *p = v` is lost, a false negative.
 - **A C file-scope initializer is not lowered.** `int *p = &x;` or `struct ops o = {.f = h};` at
   file scope gives the global no value, so a flow or a call target that only the initializer
   supplies is lost, a false negative.
@@ -43,9 +53,12 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 | `mem2reg full` | passes | `mem2reg full` | loses | per function |
 | `copy_prop` | passes | `copy_prop` rewrites a store through a copy `t = v` onto `v`: a store at `t.#value` lands on `v.#value`, and stores through `t` and `v` merge as S9's do | adds | no |
 |  | query | Call/return matching by one bit, not a site stack | adds (witness only) | no |
+|  | `--summary` | Only unconditional rows cross: a summary project's `Always` summaries, including rows rooted at a global, and its program-level flows between globals | loses | docs/spec.md §6 |
 |  | front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
 |  | front ends | C: a file-scope initializer is not lowered | loses | the list above |
+|  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
+|  | front ends | CIL: a delegate is its target, so delegates over one target share their method; the compiler's `<>c.<>9` singleton is the one global target of every non-capturing lambda of a class (G2), so their call targets merge program-wide | adds | the list above |
 
 The query resets call/return matching at a hop through a global (R25 of the compositional-globals
 spec). That is exact under G2, since a global is shared by every instance, and is not a row.

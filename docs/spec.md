@@ -44,7 +44,8 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Import** | An artifact lowered to CTADL IR and saved in the store. An APK yields sub-imports for its native libraries. |
 | **Project** | A named set of imports indexed together. |
 | **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
-| **Summary** | How data flows between a function's formals (and return), as pairs of access paths. |
+| **Summary** | How data flows between a function's formals (and return), and between them and the globals it reaches, as pairs of access paths. |
+| **Global** | A variable a program declares outside any function, written `$name` ([ir.md](ir.md#globals)). One variable for the whole project, shared by every function and every program that declares the name. |
 | **Access path** | A variable followed by a path of fields, offsets, `deref` and `#value` (`x.f.g`, `p.[8].deref`); the unit of taint. Defined, with the IR's semantics, in [ir.md](ir.md). |
 | **Port** | The part of a matched program element that a model attaches to: an argument, the return, or an access path through one. |
 | **Model generator** | A declarative rule that finds program elements and attaches sources, sinks, propagations or bridges. See [portcullis.md](portcullis.md), a guide to the current model language, not part of this spec. |
@@ -158,12 +159,19 @@ separately.
   and one-level concatenations of the two, closed under [ir.md](ir.md#normal-form)'s normal form
   and with `p.#value` for every member. This makes the fixpoint terminate (`x = x.next`
   would otherwise build `x.next.next...` forever) and is the main source of unsoundness.
-- **Summaries.** Local flow between paths rooted at two formals (the return included) becomes
-  a summary, instantiated at each call site as assignments between the actuals by prefix
-  substitution. Calls and returns stay matched, and cost grows with the program, not with
+- **Summaries.** Local flow between paths rooted at two formals (the return included), or at a
+  formal and a global, becomes a summary, instantiated at each call site as assignments between
+  the actuals by prefix substitution; a global path is left as it is, since it already names the
+  shared variable. Calls and returns stay matched, and cost grows with the program, not with
   calling contexts.
-- **Globals** live in one global-heap variable passed to every function like a formal, so
-  they flow through summaries like parameters.
+- **Globals** are shared by every instance of every function ([ir.md](ir.md#globals), G2), so
+  nothing is passed for one at a call (G5). A global is a root of local reachability like a
+  formal, in every function that mentions it. A flow between two global paths holds in every
+  instance and is no function's summary (G6): it is an edge of one distinguished frame, the
+  *global frame*, where the same field rules close it, and a call-target or string label at a
+  global path is pooled there and handed to every function at the global paths it reads. A
+  query enters a global from a store in any function and leaves it into a load in any other,
+  with no call between them, and the hop resets call/return matching.
 - **Call resolution.** Call targets (receiver types, function pointers) flow as data, and a
   target reaching an indirect call resolves it, so call graph and data flow share one
   fixpoint. Virtual calls go through a ladder: super calls, dispatch models, class hierarchy
@@ -193,7 +201,8 @@ more of these to a port of each match:
 - a **propagation**: how data flows through a function, standing in for code that is absent
   or too costly to analyze;
 - a **bridge**: a call edge the code does not show (a callback, a framework hook, a call into
-  another import);
+  another import). Like a call, it maps formals and returns and nothing for globals, which both
+  sides already share;
 - a **dispatch**: the targets a virtual call resolves to, replacing call resolution there.
 
 Propagation, bridge and dispatch models are consumed at index time; sources and sinks at query
@@ -240,7 +249,8 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
 
 See [limitations.md](limitations.md). Also:
 
-- Only context-free summaries cross a `--summary` boundary.
+- Only context-free summaries cross a `--summary` boundary, with the summary project's
+  program-level flows between globals.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
 - The formatter does not yet check source hashes (a file edited since import gets wrong lines,
   and a missing one fails the query), and SARIF does not yet carry artifact hashes.

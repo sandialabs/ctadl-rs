@@ -18,7 +18,7 @@ rows, so it is checked by identity of the fact base; 2b is the behavior. Stage 0
 stage 3 needs 2b's `Root::Global`; docs close. (Stage 1b, C storage, was folded into stage 1:
 see the note there.)
 
-Status: stages 0, 1, 2a and 2b are implemented. Each stage below that is done ends with an "As built"
+Status: every stage is implemented (0, 1 with 1b folded in, 2a, 2b, 3, 4). Each stage below that is done ends with an "As built"
 paragraph recording where the implementation departs from the text above it and why; the text
 itself is left as it was planned.
 
@@ -333,7 +333,12 @@ As built (commit `f3dbea30`). Where the implementation departs from the above:
 - **Tests.** `ctadl-index`'s facts tests: `root_round_trips` (memory and the summary schema),
   `global_flow_variable_round_trips`, `global_frame_is_named_in_every_id_map`; the integration
   test `index_version_gate_rejects_an_index_from_before_declared_globals`. 1929 workspace tests
-  pass, the stage-1 count plus these four. The regression comparison is under stage 2b.
+  pass, the stage-1 count plus these four.
+- **Regression.** `cargo xtask regression --release` on stage 1 (`4e55f6fa`) and on 2a, each in
+  its own worktree: both 255 of 259 passed, the same 4 xfail. Every index's `paths.parquet` and
+  `assign.parquet` are identical between the two runs (223 of 223), and so is every
+  `summary.parquet` by content: 3 differ in the ids of synthetic dispatch functions, which are
+  interned in a different order from run to run, not in any row.
 
 ## Stage 2b: the index and the query (R14–R20, R23–R27, R29, R38's index part)
 
@@ -509,6 +514,48 @@ As built (commit `deb6dc4b`). Where the implementation departs from the above:
   line. JNI and bridge tests pin the absence of the globals pair (R38). 1937 workspace tests pass.
 - **End to end.** `ctadl go` on `nightly/tests/c/globalflow.c` with `main` removed (no function
   calls both `produce` and `consume`) reports the flow; the stage-1 binary reports none.
+- **Regression** (R37, R39), `--release`, `--compare-paths` against 2a: 254 of 259 passed, the
+  same 4 xfail, and one failure, `Cil:delegates`, whose expectation is re-baselined: every sink
+  is still reached and the clean one still not, but `Handler`'s source line (55) is no longer on
+  a reported path. The CIL front end makes a delegate its target object (`calls.rs`), and the
+  target of every non-capturing lambda of a class is the compiler's static singleton
+  `<>c.<>9`, so all of them store their method at the one global path
+  `$<>c.<>9.<delegate::method>`. Stage 2a hid that behind the "call target held in a global"
+  deviation; under G6 the label is shared, so `Lambda`'s `f(..)` may call `Handler`'s lambda,
+  and `Sink4` is reached first from `Lambda`'s source (35). That is a false positive of the front
+  end's convention made visible by G6, registered as a new "adds" row (CIL delegates) and in
+  `docs/limitations.md`; the fix is the front end's (a non-capturing lambda's delegate need not
+  be its target), outside this spec. `JniFlow` and `Jni:JniFlow+bridge` pass with the globals
+  pair gone (R29). `--compare-paths`: 77 indexes identical, 146 different, every difference the
+  removal of a global's name segment (`.g.p` on the pseudo-formal to `.p` on `$g`), checked by a
+  script that deletes, from each 2a path, every segment naming a global some project of the case
+  declares (the `+summary` JNI cases' library global is the summary project's) and requires the
+  two sets to correspond; 0 unexplained.
+- **Measurement** (R40), re-indexing each case's imports with the 2a and the 2b release builds and
+  `CTADL_DUMP_RELATIONS`. The nightly binaries (`nightly/tests/c/*.c` through Ghidra, 27
+  relocatable objects) are too small to measure: at most 8 summary rows and 5 label rows, equal
+  before and after, and no two-global row. The real APK (`xtask/tests/dex/com.noto_54.apk`):
+
+  | | 2a | 2b |
+  | --- | --- | --- |
+  | `summary` rows | 140898 | 83088 |
+  | of which with a global root | — | 20298 |
+  | of which with two global roots | — | 0 |
+  | `call_target_assign_like`, outside the frame | 607834 | 798653 |
+  | `call_target_assign_like`, in the frame | — | 4394 |
+  | `const_reaches`, outside / in the frame | 5637 / — | 5642 / 11 |
+  | `tag_closure_func` | 22083 | 24403 |
+  | index wall time (s) | 32.7 | 36.5 |
+
+  Summaries shrink by 41%: no transitive caller carries a global-to-global flow any more (R15).
+  Label rows outside the frame grow by 31%. 55435 of 2a's rows were on the `$globals`
+  pseudo-formal and are gone; of the 246285 new ones, 42727 are on global vertices and the rest
+  are what those labels reach inside the functions that read them, which 2a derived only along
+  a call chain that established a decision (the "call target held in a global" loss). The
+  exchange is by path: `global_label_read` has 26084 rows. R40's bound ("label rows outside the
+  frame not above the pre-change count") holds on the binaries only trivially, since they hold
+  almost no labels; the APK is where the exchange costs, and it costs the lost flows it
+  recovers. A large stripped binary is the measurement still missing.
 
 ## Stage 3: models (R28, R32, R38's model part)
 
@@ -542,6 +589,38 @@ Tests:
 - End to end: a C program with a source on `G::self.deref` of `g` and a sink in another
   function reports the flow with no call between them (R26, R28).
 
+As built (commit `a8ea91f9`). Where the implementation departs from the above:
+
+- **Tag and port.** `FormalIndexTypeTag::Global(GlobalId)`, and the port base is
+  `PortBase::GlobalSelf`, spelled `self` and anchored at a variable bound by `global(G)`
+  (`VarType::Global`, `Value::Global { name }`, `Row::Global`). `global` is indexed by its
+  column (the name), so `global(G, name = "g")` scans one row per global.
+- **Endpoints.** A source or sink on a global names the function `<globals>`
+  (`GLOBAL_FRAME_NAME`), which every `IdMap` resolves to `GLOBAL_FRAME`, so query endpoint
+  building needs only the tag's vertex and `anchored_at_callsites` returns it unchanged (R26).
+  A wildcard sink on a global expands over the paths the global has in any function.
+- **Propagation.** The function is the anchor of the port that is not a global's; two global
+  ports are an error ("a flow between two globals … needs no model"), as are a `self` port on a
+  non-global, a global with a non-`self` port, and `self` in a bridge ("a global is shared and
+  needs no bridge") or another head. A global root adds no `formal_param` row.
+- **CTADL0004.** A `global` atom is probed like a `local` one (`Plan::global_probes` marks which);
+  one that ran and never matched gives `UnmatchedReason::GlobalNotFound`, message id
+  `globalNotFound`.
+- **R27 in the formatter.** No front end records a global's declaration span, so a source or sink
+  on a global is named `global <import>::$name` and located by a logical location of kind
+  `variable` with that name, the imports read from `globals.parquet` (each declaring import,
+  comma-separated). A *flow* into a sink on a global is at no instruction, so no tainted
+  instruction's details name its sink; the path search also pairs every source an instruction
+  names with every sink on a global, and reports the path at that instruction.
+- **Tests.** `ctadl-ascent/tests/portcullis.rs`:
+  `global_matches_by_name_and_a_self_port_names_the_global`, `a_propagation_names_a_global_port`,
+  `a_self_port_is_rejected_where_a_global_cannot_be`, `a_global_that_matches_nothing_is_reported`,
+  and `Needs` for `global`. `tests/integration/global_ports.rs`, end to end on C:
+  `a_source_on_a_global_reaches_a_sink_with_no_call_between` (R26, R28, and R27's logical
+  location), `a_source_on_an_unread_global_reaches_nothing`,
+  `a_sink_on_a_global_is_reached_from_any_store`. 1944 workspace tests pass. The integration
+  tests that pinned the globals pair were already rewritten in 2b (R38).
+
 ## Stage 4: documentation (R33's remainder, R34's edits)
 
 Files:
@@ -559,6 +638,19 @@ Files:
 
 Tests: `cargo doc --no-deps` clean; `reference_parity.rs` still finds every `// parity:` row
 in `docs/approximations.md`.
+
+As built. `docs/spec.md` gains the *Global* concept and a *Summary* that names globals, rewrites
+the Summaries and Globals bullets of §4.2 (the frame, the label exchange, the query's hop), says a
+bridge maps nothing for globals (§4.3), and says what crosses `--summary` (§6); §6 had no C
+global limitation to drop (it lives in `docs/limitations.md`, which stage 1 edited). The register
+gains the pcode "address of a global" row, the `--summary` row of spec §4, and the CIL delegate
+row stage 2b's regression found; checked against spec §4 row by row. `docs/limitations.md` gains
+the pcode and CIL delegate rows. `docs/debugging.md` explains the root columns of
+`summary.parquet`, `GLOBAL_FRAME`, `globals.parquet`, `global_flow.parquet` and the global tag of
+a vertex. `README.md` says a summary project's flows between globals cross `--summary`. Every
+front end's crate doc already stated its convention (stage 1). `cargo doc --no-deps --workspace`
+adds no warning; the ones it prints are older than this work (private and redundant links in
+untouched text). `docs/portcullis.md` and the deprecated JSON doc were edited with stage 3.
 
 ## Acceptance
 
