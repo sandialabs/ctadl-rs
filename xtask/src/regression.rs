@@ -79,7 +79,7 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // `transfer(&x.b, y)` with the callee writing `out->d`: the address of a struct member has
     // no spelling without struct layout, so `&x.b` is a copy of `x.b` and the callee's write to
     // `x.b.deref.d` never reaches the caller's `x.b.d`. The `&s.f` entry of
-    // `docs/limitations.md`; it passed before only because `out->d` was spelled `out.d`.
+    // `docs/limitations.md`.
     "C:example",
 ];
 

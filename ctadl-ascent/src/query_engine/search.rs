@@ -182,7 +182,7 @@ fn value_path(p: &Path, paths: &HashSet<Path>) -> Option<Path> {
     if p.iter().last().is_some_and(|s| s.is_value()) {
         return None;
     }
-    let vp = p.concat(&Path::from_accesses([ctadl_ir::mir::PathSegment::value()]));
+    let vp = p.concat(&Path::from_accesses([ctadl_ir::mir::PathSegment::Value]));
     paths.contains(&vp).then_some(vp)
 }
 

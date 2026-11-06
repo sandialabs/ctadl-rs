@@ -1,5 +1,5 @@
 //! Managed pointers. A pointer lowers to the place it points at whenever that can be traced,
-//! and to the dereference field `PathSegment::Deref` (`D` below) when it cannot.
+//! and to the dereference segment `PathSegment::Deref` (`D` below) when it cannot.
 //!
 //! | Effect on pointer `v`      | Resolved to `P`                    | Unresolved                       |
 //! | -------------------------- | ---------------------------------- | -------------------------------- |

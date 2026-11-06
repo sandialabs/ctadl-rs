@@ -220,7 +220,7 @@ impl Context {
             {
                 return;
             }
-            dest.push(PathSegment::deref());
+            dest.push(PathSegment::Deref);
         }
         stmts.push(Statement::new_kind(StatementKind::assign(dest, [src])));
     }
@@ -1355,7 +1355,7 @@ impl Context {
             // STORE <space>, <offset>, <value>
             let mut dest = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts, locals)?;
             // Store through the address's `deref` field.
-            dest.push(PathSegment::deref());
+            dest.push(PathSegment::Deref);
             let mut stmts = Vec::new();
             let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts, locals)?;
 
@@ -1465,10 +1465,7 @@ impl Context {
     /// Builds the access path for the canonical stack slot `__stack_top.[offset].deref`.
     fn stack_slot_path(offset: i64, locals: &mut Locals) -> AccessPath {
         let stack_top = VariableRef::new_local_idx(locals.get_or_intern("__stack_top"));
-        AccessPath::new(
-            stack_top,
-            [PathSegment::offset(offset), PathSegment::deref()],
-        )
+        AccessPath::new(stack_top, [PathSegment::offset(offset), PathSegment::Deref])
     }
 
     /// Builds the access path for the canonical global `$globals.[address].deref`.
@@ -1478,7 +1475,7 @@ impl Context {
     fn global_path(address: i64) -> AccessPath {
         AccessPath::new(
             VariableRef::new_global(),
-            [PathSegment::offset(address), PathSegment::deref()],
+            [PathSegment::offset(address), PathSegment::Deref],
         )
     }
 

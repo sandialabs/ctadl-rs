@@ -1392,7 +1392,7 @@ fn compute_paths(
     deref_paths: bool,
 ) -> Vec<(Path,)> {
     if deref_paths {
-        let deref = (Path::from_accesses(std::iter::once(PathSegment::deref())),);
+        let deref = (Path::from_accesses(std::iter::once(PathSegment::Deref)),);
         if !model_paths.contains(&deref) {
             model_paths.push(deref);
         }
@@ -1441,7 +1441,7 @@ fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
     }
     base.sort_unstable();
     base.dedup();
-    let value = Path::from_accesses([PathSegment::value()]);
+    let value = Path::from_accesses([PathSegment::Value]);
     let mut out: Vec<(Path,)> = Vec::with_capacity(2 * base.len());
     for p in base {
         out.push((p,));
@@ -2761,7 +2761,7 @@ mod tests {
     #[test]
     fn compute_paths_closes_under_terminal_value() {
         let p = |s: &str| (Path::parse(s).unwrap(),);
-        let value = (Path::from_accesses([PathSegment::value()]),);
+        let value = (Path::from_accesses([PathSegment::Value]),);
         let program = vec![(Path::empty(),), p(".f"), value];
         let paths = compute_paths(program, vec![], true);
         for want in [".f", ".deref", ".f.deref"] {

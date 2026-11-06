@@ -334,7 +334,7 @@ pub struct ArtifactImport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// The front end's convention options this import was lowered under, when they are not the
-    /// default (R41 of the IR redesign's `spec.md`): option name to value. Empty for the
+    /// default (R41 of `spec.md`): option name to value. Empty for the
     /// defaults.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub conventions: BTreeMap<String, String>,

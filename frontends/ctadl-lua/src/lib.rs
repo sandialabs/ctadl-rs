@@ -48,8 +48,7 @@
 //!
 //! Assignments, and field and index writes and reads, lower to [`StatementKind::Assign`] over
 //! access paths (a store has a non-empty destination path, a load a non-empty source path), so
-//! Lua tables are field-sensitive. Function
-//! calls lower to [`StatementKind::CallAssign`]. Most calls are staged as a
+//! Lua tables are field-sensitive. Function calls lower to [`StatementKind::CallAssign`]. Most calls are staged as a
 //! [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the resolved qualified
 //! callee name; the analysis joins the call to a definition or model by that name. A call whose
 //! callee is a bare local/parameter that resolves to no definition (a first-class function value,

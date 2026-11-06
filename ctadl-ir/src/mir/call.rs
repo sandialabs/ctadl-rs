@@ -9,10 +9,9 @@ use thin_vec::ThinVec;
 use super::{Symbol, VariableRef};
 
 /// Whether `cls.name` invokes a method handle: `MethodHandle.invoke` or `invokeExact`, with
-/// `cls` in descriptor form (`Ljava/lang/invoke/MethodHandle;`). The JVM and Dex front ends
-/// lower such a call as a [`CallStyle::FuncPtrCall`] through the handle, which a function
-/// reference resolves (R18). `invokeWithArguments` takes its arguments in an array and is not
-/// one; nor are `VarHandle`'s signature-polymorphic methods, which reach no method.
+/// `cls` in descriptor form (`Ljava/lang/invoke/MethodHandle;`). `invokeWithArguments` takes
+/// its arguments in an array and is not one; nor are `VarHandle`'s signature-polymorphic
+/// methods, which reach no method.
 pub fn is_method_handle_invoke(cls: &str, name: &str) -> bool {
     cls == "Ljava/lang/invoke/MethodHandle;" && matches!(name, "invoke" | "invokeExact")
 }

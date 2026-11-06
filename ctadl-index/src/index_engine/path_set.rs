@@ -511,7 +511,7 @@ mod tests {
     /// nothing else follows it.
     #[test]
     fn value_absorbs_itself() {
-        let v = Path::from_accesses([PathSegment::value()]);
+        let v = Path::from_accesses([PathSegment::Value]);
         let x = p(".x");
         let xv = x.concat(&v);
         let set = PathSet::from_paths([Path::EMPTY, x, v, xv, p(".x.deref")]);

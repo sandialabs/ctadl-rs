@@ -210,21 +210,9 @@ impl PathSegment {
         PathSegment::Offset(Offset(offset))
     }
 
-    /// The dereference segment.
-    #[inline]
-    pub fn deref() -> Self {
-        PathSegment::Deref
-    }
-
     #[inline]
     pub fn is_deref(&self) -> bool {
         matches!(self, PathSegment::Deref)
-    }
-
-    /// The value segment.
-    #[inline]
-    pub fn value() -> Self {
-        PathSegment::Value
     }
 
     #[inline]

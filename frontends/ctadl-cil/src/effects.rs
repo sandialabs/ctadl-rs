@@ -2,7 +2,7 @@
 //!
 //! `F(field)` is the field symbol: `<cls::f>` for a named field, `[]` for an element,
 //! `length`, and `PathSegment::Deref` for `Deref` and `Block`. The dereference is never spelled as a
-//! string literal: `PathSegment::Deref` is the field the index and the query treat as a pointer
+//! string literal: `PathSegment::Deref` is the segment the index and the query treat as a pointer
 //! target.
 //!
 //! | Effect                                        | Statements                                    |
@@ -401,10 +401,10 @@ impl Lower<'_, '_, '_, '_, '_> {
 }
 
 /// Whether the operands of `op` supply only their values (R17): integer and float arithmetic,
-/// bitwise operations, shifts and comparisons, and `refanytype`. A conversion is a cast and
-/// stays a copy. The result is a
-/// number computed from the operands; nothing reachable through an operand is reachable
-/// through it. `mkrefany` and `refanyval` carry an address and stay copies, and `Opaque` is
+/// bitwise operations, shifts and comparisons, and `refanytype`. The result is a number
+/// computed from the operands; nothing reachable through an operand is reachable through it. A
+/// conversion is a cast, the same value at another width, and stays a copy, as in the JVM and
+/// Dex front ends. `mkrefany` and `refanyval` carry an address and stay copies, and `Opaque` is
 /// unknown, so it relates everything.
 pub(crate) fn value_only(op: &Op) -> bool {
     match op {
@@ -422,8 +422,6 @@ pub(crate) fn value_only(op: &Op) -> bool {
         | Op::Not
         | Op::Cmp(_, _)
         | Op::RefAnyType => true,
-        // A conversion is a cast, the same value at another width: a copy, as in the JVM and
-        // Dex front ends.
         Op::Conv(_) | Op::MkRefAny(_) | Op::RefAnyVal(_) | Op::Opaque => false,
     }
 }

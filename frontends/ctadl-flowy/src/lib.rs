@@ -695,8 +695,7 @@ impl FlowyCtx {
             parse::StmtKind::Assign { dest, sources } => {
                 let dest = parse_access_path(locals, local_table, dest)?;
                 // src is comma-separated; each source is an access path, a `value(..)` of one,
-                // or a constant. An address destination `p.[k] = e` is rewritten by
-                // `StatementKind::assign` into `p = e.[-k]`.
+                // or a constant.
                 let mut src = Vec::new();
                 for p in sources {
                     src.push(match p {

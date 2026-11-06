@@ -611,7 +611,7 @@ fn deref_of_pointee(pointee: &AccessPath) -> Option<AccessPath> {
         return None;
     }
     let mut ap = pointee.clone();
-    ap.push(PathSegment::deref());
+    ap.push(PathSegment::Deref);
     Some(ap)
 }
 
@@ -624,9 +624,9 @@ fn push_element(path: &mut ThinVec<PathSegment>, index: Option<i64>) {
     match index {
         Some(n) if n != 0 => {
             path.push(PathSegment::offset(n));
-            path.push(PathSegment::deref());
+            path.push(PathSegment::Deref);
         }
-        Some(_) | None => path.push(PathSegment::deref()),
+        Some(_) | None => path.push(PathSegment::Deref),
     }
 }
 
@@ -4796,7 +4796,7 @@ impl<'a> Context<'a> {
             // is terminated with the dereference, as the pcode frontend does.
             let mut ap = target.clone();
             if ap.segments.iter().all(PathSegment::is_offset) {
-                ap.push(PathSegment::deref());
+                ap.push(PathSegment::Deref);
             }
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
                 StatementKind::assign(ap, [val_exp.clone()]),

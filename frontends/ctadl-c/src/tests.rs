@@ -2781,8 +2781,7 @@ fn short_circuit_both_operands_flow() {
 #[test_log::test]
 fn comparisons_supply_values_only() {
     // Every comparison supplies its operands' values: `x = a < b` is `value(a), value(b)`, with
-    // nothing behind `a` or `b` reachable through `x`. (`==`, `<=` and `>=` used to drop their
-    // operands and `<`, `>` and `!=` to merge them; all six now agree.)
+    // nothing behind `a` or `b` reachable through `x`.
     for op in ["<", ">", "!=", "==", "<=", ">="] {
         let src = format!("int f(int *a, int *b) {{ int x = a {op} b; return x; }}");
         let prog = program_from_string(&src).0;

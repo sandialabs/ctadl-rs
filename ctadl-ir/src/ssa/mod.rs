@@ -530,11 +530,10 @@ fn complete(function: &mut FunctionData) {
         .collect();
 
     // The exit block returns retvars.
-    let exit_block_contents = BasicBlockData::new(Some(Terminator::new_kind(
-        TerminatorKind::Return {
+    let exit_block_contents =
+        BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
             args: retvars.iter().map(|v| Exp::variable(v.clone())).collect(),
-        },
-    )));
+        })));
 
     // Rewrite blocks to target single exit block
     let exit = function.blocks.next_index();

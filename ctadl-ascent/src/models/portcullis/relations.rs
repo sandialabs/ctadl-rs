@@ -650,8 +650,8 @@ fn scan_bodies(
         for (b, block) in data.blocks.iter().enumerate() {
             for (s, stmt) in block.statements.iter().enumerate() {
                 match &stmt.kind {
-                    // Every field (and `deref`, `#value`) an assignment reads or writes through:
-                    // what one load or store per step read and wrote when paths were chains.
+                    // Every field (and `deref`, `#value`) an assignment reads or writes through,
+                    // one per step of its paths.
                     StatementKind::Assign { dest, sources } if needs.uses_field => {
                         let store = (!dest.is_pathless()).then_some(dest);
                         let reads = sources.iter().filter_map(|e| match e {

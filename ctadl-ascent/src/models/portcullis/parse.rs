@@ -814,7 +814,7 @@ impl Builder {
             .into_iter()
             .filter_map(|seg| self.path_seg(seg))
             .collect();
-        // `#value` is the analysis's terminal value field (`ctadl_ir::mir::PathSegment::Value`): nothing
+        // `#value` is the analysis's terminal value segment (`ctadl_ir::mir::PathSegment::Value`): nothing
         // follows it in any admissible path, so a port that names a segment after it matches
         // nothing.
         if let Some(i) = path.iter().position(PathSegment::is_value)
