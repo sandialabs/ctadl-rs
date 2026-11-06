@@ -3,6 +3,24 @@
 Turns Ghidra pcode facts into CTADL IR. It also holds the `RegisterNatives` scanner, because the
 two need each other.
 
+# Conventions
+
+How pcode follows the front-end conventions of S19 in `spec.md`:
+
+- There is no address-of. Address-taken storage lives behind `deref`. The frame is memory:
+  frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only
+  thing that makes a slot flow-sensitive.
+- A global at address `A` is `$globals.[A].deref`, keyed on the address so that every function
+  shares it.
+- A constant offset is an offset segment: `PTRSUB p, 8` is `p.[8]`. A non-constant offset is a
+  copy of the base plus the value of the index: `q = PTRADD p, i, 4` is `q = p, value(i)`.
+  Under `CTADL_EXP_INT_ARITH=merge`, a comparison mode, every operand is merged instead.
+- Offsets have no width. `p.[0].deref` and `p.[4].deref` are distinct cells, and a 4-byte write
+  that overlaps an 8-byte read is lost.
+- A write to a frame address itself, `__stack_top.[k]`, is dropped, because every read of the
+  varnode that holds the address resolves to the address too. See
+  `Context::push_assign_or_store`.
+
 # Why the JNI registry lives here
 
 [`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
@@ -984,16 +1002,9 @@ impl Context {
         let mut inputs: SmallVec<[Exp; 2]> = SmallVec::new();
         for (i, vn) in pcode.inputs.iter().enumerate() {
             let exp = self.get_exp(&mut stmts, vn, vnode_facts, locals)?;
-            let exp = match (flows.get(i), exp) {
-                (Some(OperandFlow::Value), Exp::Path(ap)) if ap.is_pathless() => Exp::Value(ap),
-                // `x.[k]`, an address computed from `x`: copy it to a temp, whose value is
-                // then the source.
-                (Some(OperandFlow::Value), exp @ Exp::Path(_)) => {
-                    let t = self.create_temp(locals);
-                    stmts.push(Statement::new_kind(StatementKind::assign(t.clone(), [exp])));
-                    Exp::value(t)
-                }
-                (_, exp) => exp,
+            let exp = match flows.get(i) {
+                Some(OperandFlow::Value) => self.value_of(&mut stmts, exp, locals),
+                _ => exp,
             };
             if is_compare(&pcode.mnemonic) || is_arith(&pcode.mnemonic) {
                 self.binop_sources.count(&exp);
@@ -1008,6 +1019,51 @@ impl Context {
         )));
         self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::variable(temp), locals);
         Ok(stmts)
+    }
+
+    /// `exp` as a source that supplies only its value: [`Exp::Value`] of a variable. A path
+    /// with offsets, `x.[k]`, an address computed from `x`, is first copied to a temp, whose
+    /// value is then the source. Constants are returned as they are.
+    fn value_of(&mut self, stmts: &mut Vec<Statement>, exp: Exp, locals: &mut Locals) -> Exp {
+        match exp {
+            Exp::Path(ap) if ap.is_pathless() => Exp::Value(ap),
+            exp @ Exp::Path(_) => {
+                let t = self.create_temp(locals);
+                stmts.push(Statement::new_kind(StatementKind::assign(t.clone(), [exp])));
+                Exp::value(t)
+            }
+            exp => exp,
+        }
+    }
+
+    /// Writes `dest = base + index` for a `PTRADD` or `PTRSUB` whose offset is not a
+    /// constant (R16): a copy of the base plus the value of the index, so `dest` reaches the
+    /// memory behind `base` and not the memory behind `index`. Under [`IntArith::Merge`],
+    /// `rest` (a `PTRADD`'s element size) is merged in too and `index` is a plain copy, as
+    /// for every other arithmetic op in that mode.
+    fn push_offset_by_value(
+        &mut self,
+        stmts: &mut Vec<Statement>,
+        dest: AccessPath,
+        base: Exp,
+        index: Exp,
+        rest: Option<Exp>,
+        locals: &mut Locals,
+    ) {
+        let mut sources: SmallVec<[Exp; 2]> = smallvec![base];
+        match self.int_arith {
+            IntArith::Value => sources.push(self.value_of(stmts, index, locals)),
+            IntArith::Merge => {
+                sources.push(index);
+                sources.extend(rest);
+            }
+        }
+        let temp = self.create_temp(locals);
+        stmts.push(Statement::new_kind(StatementKind::assign(
+            temp.clone(),
+            sources,
+        )));
+        self.push_assign_or_store(stmts, dest, Exp::variable(temp), locals);
     }
 
     /// Under [`IntArith::Value`], how each operand of `pcode` flows into its result, by
@@ -1112,6 +1168,7 @@ impl Context {
                 // Handled elsewhere, at use sites of this instruction
                 Ok(Vec::new())
             }
+            // A constant base is a constant offset from the other operand, the address.
             (Some(c), None) => {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts, locals)?;
                 ap.push(PathSegment::offset(c));
@@ -1132,15 +1189,12 @@ impl Context {
                 let mut stmts = Vec::new();
                 let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts, locals)?;
                 let offset_exp = self.get_exp(&mut stmts, offset_vn, vnode_facts, locals)?;
-                let temp = self.create_temp(locals);
-                stmts.push(Statement::new_kind(StatementKind::assign(
-                    temp.clone(),
-                    [base_exp, offset_exp],
-                )));
-                self.push_assign_or_store(
+                self.push_offset_by_value(
                     &mut stmts,
                     outputs[0].clone(),
-                    Exp::variable(temp),
+                    base_exp,
+                    offset_exp,
+                    None,
                     locals,
                 );
                 Ok(stmts)
@@ -1202,6 +1256,8 @@ impl Context {
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
                 Ok(stmts)
             }
+            // A constant base with a unit stride is a constant offset from the index, which
+            // is the address: `i.[base_c]`.
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts, locals)?;
                 ap.push(PathSegment::offset(base_c));
@@ -1214,21 +1270,21 @@ impl Context {
                 let mut stmts = Vec::new();
                 let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts, locals)?;
                 let index_exp = self.get_exp(&mut stmts, index_vn, vnode_facts, locals)?;
-                let size_exp = if let Some(s) = size_const {
-                    self.exp_from_const_value(size_vn, vnode_facts, s)
-                } else {
-                    self.get_exp(&mut stmts, size_vn, vnode_facts, locals)?
+                let size_exp = match (self.int_arith, size_const) {
+                    (IntArith::Value, _) => None,
+                    (IntArith::Merge, Some(s)) => {
+                        Some(self.exp_from_const_value(size_vn, vnode_facts, s))
+                    }
+                    (IntArith::Merge, None) => {
+                        Some(self.get_exp(&mut stmts, size_vn, vnode_facts, locals)?)
+                    }
                 };
-
-                let temp = self.create_temp(locals);
-                stmts.push(Statement::new_kind(StatementKind::assign(
-                    temp.clone(),
-                    [base_exp, index_exp, size_exp],
-                )));
-                self.push_assign_or_store(
+                self.push_offset_by_value(
                     &mut stmts,
                     outputs[0].clone(),
-                    Exp::variable(temp),
+                    base_exp,
+                    index_exp,
+                    size_exp,
                     locals,
                 );
                 Ok(stmts)
@@ -1905,6 +1961,132 @@ mod tests {
         pointer: false,
         scaled: false,
     };
+
+    /// A register varnode `name`, or a constant varnode when `constant` is given.
+    fn vnode(name: &str, constant: Option<i64>) -> pcode_reader::VnodeData {
+        pcode_reader::VnodeData {
+            name: name.to_string(),
+            size: Some(8),
+            is_address: false,
+            space: Some(
+                if constant.is_some() {
+                    "const"
+                } else {
+                    "register"
+                }
+                .to_string(),
+            ),
+            address: None,
+            constant_offset: constant,
+        }
+    }
+
+    /// Lowers one `PTRADD` or `PTRSUB` over the register varnodes `p` (the base) and `i`, and
+    /// the constant varnodes `four` and `eight`, whose output is the register `q`. `index`
+    /// names the second input, and `PTRADD` gets `four` as its element size.
+    fn lower_ptr_op(int_arith: IntArith, mnemonic: &str, index: &str) -> (Vec<Statement>, Locals) {
+        let mut ctx = Context::new();
+        ctx.int_arith = int_arith;
+        let vnode_facts: BTreeMap<_, _> = [
+            ("p", None),
+            ("i", None),
+            ("q", None),
+            ("four", Some(4)),
+            ("eight", Some(8)),
+        ]
+        .into_iter()
+        .map(|(n, c)| (pcode_reader::PcodeVarnode::from(n), vnode(n, c)))
+        .collect();
+        let mut inputs: SmallVec<[pcode_reader::PcodeVarnode; 2]> =
+            smallvec!["p".into(), index.into()];
+        if mnemonic == "PTRADD" {
+            inputs.push("four".into());
+        }
+        let pcode = pcode_reader::PcodeData {
+            mnemonic: mnemonic.into(),
+            opcode: None,
+            inputs,
+            outputs: smallvec!["q".into()],
+            bb_id: None,
+            index: 0,
+            target: None,
+        };
+        let mut locals = Locals::default();
+        let stmts = match mnemonic {
+            "PTRADD" => ctx.handle_ptradd(&pcode, &vnode_facts, &mut locals),
+            "PTRSUB" => ctx.handle_ptrsub(
+                &pcode,
+                &vnode_facts,
+                &Program::default(),
+                &BTreeMap::new(),
+                &mut locals,
+            ),
+            _ => unreachable!(),
+        }
+        .unwrap();
+        (stmts, locals)
+    }
+
+    /// The assignments in `stmts`, as `(dest, sources)`.
+    fn assigns(stmts: &[Statement]) -> Vec<(AccessPath, Vec<Exp>)> {
+        stmts
+            .iter()
+            .map(|st| match &st.kind {
+                StatementKind::Assign { dest, sources } => (dest.clone(), sources.to_vec()),
+                other => panic!("expected an assignment, got {other}"),
+            })
+            .collect()
+    }
+
+    fn var(locals: &mut Locals, name: &str) -> VariableRef {
+        VariableRef::new_local_idx(locals.get_or_intern(name))
+    }
+
+    #[test]
+    fn non_constant_offset_is_a_copy_of_the_base_plus_the_value_of_the_index() {
+        for mnemonic in ["PTRADD", "PTRSUB"] {
+            let (stmts, mut locals) = lower_ptr_op(IntArith::Value, mnemonic, "i");
+            let [(t, t_srcs), (q, q_srcs)] = assigns(&stmts).try_into().unwrap();
+            let (p, i) = (var(&mut locals, "p"), var(&mut locals, "i"));
+            assert!(t.is_pathless(), "{mnemonic}: {t}");
+            // The element size of a `PTRADD` carries nothing and is dropped.
+            assert_eq!(t_srcs, [Exp::variable(p), Exp::value(i)], "{mnemonic}");
+            assert_eq!(q, AccessPath::from(var(&mut locals, "q")), "{mnemonic}");
+            assert_eq!(q_srcs, [Exp::Path(t)], "{mnemonic}");
+        }
+    }
+
+    #[test]
+    fn non_constant_offset_merges_every_operand_under_merge() {
+        let (stmts, mut locals) = lower_ptr_op(IntArith::Merge, "PTRADD", "i");
+        let [(_, t_srcs), _] = assigns(&stmts).try_into().unwrap();
+        let (p, i) = (var(&mut locals, "p"), var(&mut locals, "i"));
+        assert_eq!(t_srcs.len(), 3);
+        assert_eq!(t_srcs[..2], [Exp::variable(p), Exp::variable(i)]);
+
+        let (stmts, mut locals) = lower_ptr_op(IntArith::Merge, "PTRSUB", "i");
+        let [(_, t_srcs), _] = assigns(&stmts).try_into().unwrap();
+        let (p, i) = (var(&mut locals, "p"), var(&mut locals, "i"));
+        assert_eq!(t_srcs, [Exp::variable(p), Exp::variable(i)]);
+    }
+
+    #[test]
+    fn constant_offset_is_an_offset_of_the_base() {
+        // `PTRADD p, 8, 4` is `p.[32]`; `PTRSUB p, 8` is `p.[8]`.
+        for (mnemonic, k) in [("PTRADD", 32), ("PTRSUB", 8)] {
+            for int_arith in [IntArith::Value, IntArith::Merge] {
+                let (stmts, mut locals) = lower_ptr_op(int_arith, mnemonic, "eight");
+                let [(q, q_srcs)] = assigns(&stmts).try_into().unwrap();
+                let p = var(&mut locals, "p");
+                assert_eq!(q, AccessPath::from(var(&mut locals, "q")));
+                assert_eq!(
+                    q_srcs,
+                    [Exp::path(AccessPath::new(p, [PathSegment::offset(k)]))],
+                    "{mnemonic} {int_arith:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn base_is_the_pointer_typed_operand() {
