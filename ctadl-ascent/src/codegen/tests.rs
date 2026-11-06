@@ -2,7 +2,6 @@ use super::*;
 
 use hashbrown::HashSet;
 
-use super::GLOBALS_INDEX;
 use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVertex, TaintEndpoint};
 use crate::index_engine::source_info::IndexSourceInfo;
@@ -133,14 +132,14 @@ fn a_skipped_body_contributes_no_facts() {
         .get_function_id(fx::Function("G".into()))
         .unwrap();
 
-    // The signature survives: one declared parameter plus the globals and return auxiliaries.
+    // The signature survives: one declared parameter plus the return auxiliary.
     assert_eq!(
         facts
             .formal_param
             .iter()
             .filter(|(f, ..)| *f == g_id)
             .count(),
-        3
+        2
     );
     // The body does not. G's call to F was the program's only call site.
     assert!(
@@ -276,61 +275,52 @@ fn test_update_instruction() {
     assert!(!result.summary.is_empty());
 }
 
-// Test that local variables flow into the field of a global, not into the globals index itself.
-// Until the index has a vertex for a global (stage 2b of `plan.md`), `$g.field` lowers to the
-// globals pseudo-formal's path `.g.field`, which this pins.
+// A store of a parameter into a field of a global, `$g.field = p0`, is the summary row
+// `$g.field <- 0`, rooted at the global itself (R14, R15); nothing is a globals formal.
 #[test]
 fn test_local_to_global_field() {
     let (globals, f) = function_with_param_to_global_field();
     let mut f_ssa = f.clone();
-    log::trace!("Local to global field function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
-    log::trace!("Local to global field function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     super::codegen_function_with_globals(&f_ssa, &globals, &mut facts, &mut source_info);
+    let g = fx::GlobalId::new("g");
+    assert_eq!(
+        facts.globals.iter().map(|(id, ..)| *id).collect::<Vec<_>>(),
+        vec![g],
+        "the program's one global is declared for its import"
+    );
+    assert!(
+        facts
+            .formal_param
+            .iter()
+            .all(|(_, v, _)| v.as_formal().is_some_and(|i| *i >= -1)),
+        "no globals formal: {:?}",
+        facts.formal_param
+    );
+    assert!(
+        facts
+            .assign
+            .iter()
+            .any(|(_, dst, _)| dst.0 == FlowVariable::global(g)),
+        "the store is an assign row whose destination is the global's vertex"
+    );
     let result = taint_index(facts);
-    log::trace!("Local to global field result: {:#?}", result);
-
-    // Check that local variable flows to global field, not globals index
     let f_id = source_info
         .sites
         .get_function_id(fx::Function("param_to_global_field".into()))
         .unwrap();
-
-    // The correct behavior is that param flows to global field
-    let has_bad_flow =
-        result
-            .summary
-            .iter()
-            .any(|(func_id, dst_index, dst_path, src_index, src_path)| {
-                *func_id == f_id
-                    && src_index.as_formal().map(|i| *i) == Some(0)
-                    && src_path.is_empty()
-                    && dst_index.as_formal().map(|i| *i) == Some(GLOBALS_INDEX)
-                    && dst_path.is_empty()
-            });
-
+    let field = fx::Path::from_accesses([ctadl_ir::mir::PathSegment::field("field")]);
     assert!(
-        !has_bad_flow,
-        "Local variable should flow to a field of globals, not the globals index itself"
-    );
-    let shim_path = fx::Path::from_accesses([
-        ctadl_ir::mir::PathSegment::field("g"),
-        ctadl_ir::mir::PathSegment::field("field"),
-    ]);
-    assert!(
-        result
-            .summary
-            .iter()
-            .any(|(func_id, dst, dst_path, src, src_path)| {
-                *func_id == f_id
-                    && dst.as_formal().map(|i| *i) == Some(GLOBALS_INDEX)
-                    && *dst_path == shim_path
-                    && src.as_formal().map(|i| *i) == Some(0)
-                    && src_path.is_empty()
-            }),
-        "the store `$g.field = p0` is the summary row `.g.field <- p0`: {:#?}",
+        result.summary.contains(&(
+            f_id,
+            fx::Root::global(g),
+            field,
+            fx::Root::formal(0i16.into()),
+            fx::Path::empty()
+        )),
+        "the store `$g.field = p0` is the summary row `$g.field <- 0`: {:#?}",
         result.summary
     );
 }

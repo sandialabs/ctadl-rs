@@ -468,6 +468,15 @@ mod tests {
                 node(4).1,
                 node(4).2,
             ),
+            (
+                FlowEdge::Global,
+                node(4).0,
+                node(4).1,
+                node(4).2,
+                crate::facts::GLOBAL_FRAME,
+                FlowVariable::global(crate::facts::GlobalId::new("g")),
+                node(4).2,
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -480,7 +489,8 @@ mod tests {
             vec![
                 FlowEdge::Intra,
                 FlowEdge::Call(site),
-                FlowEdge::Return(site)
+                FlowEdge::Return(site),
+                FlowEdge::Global
             ]
         );
         assert_eq!(loaded, records);

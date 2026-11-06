@@ -3,7 +3,7 @@ use ctadl_import::error::Error;
 
 use crate as tree_sitter_c;
 use anyhow::Result;
-use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
+use ctadl_ascent::codegen::{CallResolutionStrategy, RETURN_INDEX, codegen_program};
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
@@ -485,8 +485,8 @@ pub(crate) fn check_writes_to(prog: &Program, dst: &str, count: usize) {
 }
 
 /* Every field name the program's assignments read or write, across ALL functions, and every
-global's name: a global's name is a field of the globals pseudo-formal in the fact base until the
-index has a vertex for a global (stage 2b of `plan.md`), and is a name in the path grammar after.
+global's name, which the index stores as a string beside the paths (a vertex of its own, written
+`$name` in the path grammar).
 
 The invariant it exists for is that a field name is non-empty. `facts::Path` serializes an access path as its segments joined by `.` and its parser
 rejects an empty segment, so ONE empty field name anywhere in an import makes the whole index
@@ -741,19 +741,45 @@ fn flow_present_in(
     to_index: i16,
     to_path: &str,
 ) -> bool {
+    flow_present_in_roots(
+        summary,
+        source_info,
+        name,
+        (from_index.into(), from_path.parse().unwrap()),
+        (to_index.into(), to_path.parse().unwrap()),
+    )
+}
+
+/* `flow_present_in` between two roots, formal or global. */
+#[track_caller]
+fn flow_present_in_roots(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from: (fx::Root, Path),
+    to: (fx::Root, Path),
+) -> bool {
     let func_id = source_info
         .sites
         .get_function_id(fx::Function(fx::Str::from(name)))
         .unwrap_or_else(|| panic!("no function named {name:?} in index summary"));
-    let from_path: Path = from_path.parse().unwrap();
-    let to_path: Path = to_path.parse().unwrap();
-    summary.iter().any(|r| {
-        r.0 == func_id
-            && r.1 == fx::FormalIndex::new(to_index).into()
-            && r.2 == to_path
-            && r.3 == fx::FormalIndex::new(from_index).into()
-            && r.4 == from_path
-    })
+    summary
+        .iter()
+        .any(|r| r.0 == func_id && (r.1, r.2) == to && (r.3, r.4) == from)
+}
+
+/* The global and path a test names as `.g.p`: the first segment is the global's name, the rest
+its path, so `.g.deref` is `$g.deref` (escaped like a field: `.count$one\.c.deref`). */
+#[track_caller]
+fn global_path(field: &str) -> (fx::Root, Path) {
+    let p: Path = field.parse().unwrap();
+    let Some(ctadl_ir::mir::PathSegment::Field(name)) = p.head() else {
+        panic!("a global path {field:?} starts with the global's name");
+    };
+    (
+        fx::Root::global(fx::GlobalId(fx::Str::from(name.clone()))),
+        p.tail(),
+    )
 }
 
 /* Asserting per-function flow (presence), the multi-function analogue of `check_flow`. Resolves
@@ -871,10 +897,9 @@ pub(crate) fn check_does_not_return_param_in(
 
 /* Asserts function `name` writes parameter `param_num` into the global path `field` -- the summary
 flow `@pN -> $g.deref` for `field` `.g.deref` (e.g. `void set(int src){ g = src; }` summarizes
-`@p0 -> $g.deref`, a C global's storage being its cell). Until the index has a vertex for a global
-(stage 2b of `plan.md`), a global `$g.p` is the `GLOBALS_INDEX` summary endpoint at `.g.p`; this
-hides that constant. Pairs with `check_returns_global_in` to pin a cross-function
-flow-through-a-global as two summary halves. */
+`@p0 -> $g.deref`, a C global's storage being its cell), a row rooted at the global (R14). Pairs
+with `check_returns_global_in` to pin a cross-function flow-through-a-global as two summary
+halves. */
 #[track_caller]
 pub(crate) fn check_param_into_global_in(
     summary: &[FunctionSummary],
@@ -883,14 +908,16 @@ pub(crate) fn check_param_into_global_in(
     param_num: i16,
     field: &str,
 ) {
-    check_flow_in(
-        summary,
-        source_info,
-        name,
-        param_num,
-        "",
-        GLOBALS_INDEX,
-        field,
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            (param_num.into(), Path::empty()),
+            global_path(field),
+        ),
+        "expected flow @p{param_num} -> ${} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
     );
 }
 
@@ -904,14 +931,61 @@ pub(crate) fn check_returns_global_in(
     name: &str,
     field: &str,
 ) {
-    check_flow_in(
-        summary,
-        source_info,
-        name,
-        GLOBALS_INDEX,
-        field,
-        RETURN_INDEX,
-        "",
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            global_path(field),
+            (RETURN_INDEX.into(), Path::empty()),
+        ),
+        "expected flow ${} -> return in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
+    );
+}
+
+/* Asserts function `name` does NOT write parameter `param_num` into the global path `field`. */
+#[track_caller]
+pub(crate) fn check_no_param_into_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    field: &str,
+) {
+    assert!(
+        !flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            (param_num.into(), Path::empty()),
+            global_path(field),
+        ),
+        "unexpected flow @p{param_num} -> ${} in {name:?}.\nsummary: {summary:#?}",
+        &field[1..],
+    );
+}
+
+/* Asserts function `name` returns, at `ret_path`, the global path `field`: `check_returns_global_in`
+for a return path other than the whole value (`.#value` for arithmetic on the global). */
+#[track_caller]
+pub(crate) fn check_returns_global_at_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    field: &str,
+    ret_path: &str,
+) {
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            global_path(field),
+            (RETURN_INDEX.into(), ret_path.parse().unwrap()),
+        ),
+        "expected flow ${} -> return{ret_path} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
     );
 }
 

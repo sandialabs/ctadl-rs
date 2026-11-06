@@ -31,7 +31,6 @@ s:
   return;
 }
 
-// parity: global passed at calls loses: Other: sink(%S)#0 <- %S
 // The observable, every sink each label reaches:
 // expect: Main: sink(%S)#0 <- %S
 // expect: Other: sink(%S)#0 <- %S

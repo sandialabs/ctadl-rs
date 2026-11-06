@@ -12,8 +12,9 @@ indexing.
 Some notes about choices made in the design of generating code:
 
 Parameters in IR are mapped to the same indices in the Datalog. Return values are mapped to index
--1, -2, -3, etc. Until the index has a vertex for a global (stage 2b of `plan.md`), every global
-`$g` is mapped to the field `g` of the pseudo-formal [`GLOBALS_INDEX`], which is [`i16::MIN`].
+-1, -2, -3, etc. A global `$g` is the vertex [`FlowVariable::global`] of its name, the same in
+every function and every import of the project (G3 of `docs/ir.md`); nothing is passed for it at a
+call (G5), and each import's declarations are rows of [`IndexFacts::globals`].
 
 # Resolving a Java call
 
@@ -340,12 +341,7 @@ pub fn codegen_program(
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
-    v.global_names = program_info
-        .program
-        .globals
-        .iter_enumerated()
-        .map(|(_, g)| g.name.clone())
-        .collect();
+    v.declare_globals(&program_info.program.globals);
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
@@ -404,15 +400,12 @@ pub fn codegen_function_with_globals(
         CallPolicy::default(),
         &no_matches,
     );
-    v.global_names = globals
-        .iter_enumerated()
-        .map(|(_, g)| g.name.clone())
-        .collect();
+    v.declare_globals(globals);
     v.visit_function_data(FunctionIdx::new(0), function_data);
     v.finish();
 }
 
-pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
+pub use crate::facts::RETURN_INDEX;
 
 /// The `call_target_assign` payload for an *object-valued* expression: the class of an
 /// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
@@ -484,11 +477,8 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
-    /// The names of the program's globals, by [`ctadl_ir::mir::GlobalIdx`]. Until the index
-    /// has a vertex for a global (stage 2b of `plan.md`), a global `$g` lowers to the globals
-    /// pseudo-formal's field `g`, the spelling a front end used to write: see
-    /// [`Self::capture_of`].
-    global_names: Vec<Symbol>,
+    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`]: each is the vertex of its name.
+    globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
@@ -572,7 +562,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
-            global_names: Vec::new(),
+            globals: Vec::new(),
             num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
@@ -867,12 +857,6 @@ impl Visitor for CodegenVisitor<'_> {
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
         }
-        // Gens global param
-        self.facts.formal_param.push((
-            self.function.unwrap(),
-            FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            fx::FormalType::Shared,
-        ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
@@ -1188,9 +1172,8 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 // pass parameters
                 for (i, arg_exp) in args.iter().enumerate() {
-                    // The negative half is reserved for the engine (returns at -1, -2, ...; globals
-                    // at `GLOBALS_INDEX`), which is why this stops at `i16::MAX` rather than
-                    // wrapping into it.
+                    // The negative half is reserved for the engine (returns at -1, -2, ...),
+                    // which is why this stops at `i16::MAX` rather than wrapping into it.
                     let Ok(formal_index) = FormalIndex::try_from(i) else {
                         log::warn!(
                             "found > {} parameters in function call; skipping rest",
@@ -1261,15 +1244,6 @@ impl Visitor for CodegenVisitor<'_> {
                         FlowVertex::new(ret, fx::Path::empty()),
                     ));
                 }
-                // pass globals
-                self.facts.actual_param.push((
-                    site,
-                    GLOBALS_INDEX.into(),
-                    FlowVertex::new(
-                        FlowVariable::formal_index(GLOBALS_INDEX.into()),
-                        fx::Path::empty(),
-                    ),
-                ));
             }
             Nop => (),
         }
@@ -1288,7 +1262,7 @@ impl Visitor for CodegenVisitor<'_> {
             // it inside the function reaches the formal path the summary reads. The entry
             // version is the one that reaches the return: rebinding a parameter does not reach
             // the caller (see `ctadl_ir::ssa`). A global needs no write-back (R3): SSA never
-            // versions it, so a store to it already lands on the globals pseudo-formal.
+            // versions it, so a store to it already lands on its vertex.
             let formals = (0..self.num_params).map(|i| {
                 let p = VariableRef::new_parameter(ParameterIdx::new(i));
                 (FlowVariable::formal_index(i.try_into().unwrap()), p)
@@ -1340,7 +1314,7 @@ impl CodegenVisitor<'_> {
     /// `#value`) is re-anchored onto the root a load-chain temporary stands for, as a store is;
     /// an address (`v.[k]`) or a whole variable is read where it is.
     fn read_vertex(&mut self, ap: &AccessPath) -> FlowVertex {
-        if !ap.base.variable.is_global() && ap.segments.iter().all(PathSegment::is_offset) {
+        if ap.segments.iter().all(PathSegment::is_offset) {
             let v = self.trans_variable_ref(&ap.base);
             return FlowVertex::new(v, fx::Path::from_accesses(ap.segments.iter().cloned()));
         }
@@ -1391,29 +1365,31 @@ impl CodegenVisitor<'_> {
     }
 
     /// What `v` stands for as the base of an access path: a load-chain temporary's capture
-    /// ([`Self::cap_path`]), or, for a global `$g`, the globals pseudo-formal's field `g`. A
-    /// global's path is always composed onto that field, so `$g.p` lowers to the vertex a front
-    /// end wrote as `$globals.g.p` before globals were declared (the shim of stage 1 of
-    /// `plan.md`, removed when the index gets a vertex for a global).
+    /// ([`Self::cap_path`]).
     fn capture_of(&self, v: &VariableRef) -> Option<(VariableRef, fx::Path)> {
-        if let Variable::Global(idx) = v.variable {
-            let name = self.global_names[idx.index()].clone();
-            return Some((
-                v.clone(),
-                fx::Path::from_accesses([PathSegment::Field(name)]),
-            ));
-        }
         self.cap_path.get(v).cloned()
     }
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
         match v.variable {
-            // Every global lowers onto the globals pseudo-formal, at the path
-            // `Self::capture_of` gives it.
-            Variable::Global(_) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
+            Variable::Global(idx) => FlowVariable::global(self.globals[idx.index()]),
             _ => v.try_into().unwrap(),
         }
+    }
+
+    /// Takes the program's globals: each is the vertex of its name (G3), and each declaration is
+    /// a row of [`IndexFacts::globals`] for the import being codegen'd (R22).
+    fn declare_globals(&mut self, globals: &Globals) {
+        let import = self.source_info.current_import();
+        self.globals = globals
+            .iter_enumerated()
+            .map(|(_, g)| {
+                let id = fx::GlobalId(Str::from(g.name.clone()));
+                self.facts.globals.push((id, import, g.span));
+                id
+            })
+            .collect();
     }
 }
 

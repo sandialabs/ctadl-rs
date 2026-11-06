@@ -285,6 +285,28 @@ impl IndexFacts {
         Ok(builder.build().unwrap())
     }
 
+    /// The number of globals each import declares, and the globals more than one import
+    /// declares, which are one variable (G3): the counts `ctadl index` reports (R23).
+    pub fn global_declarations(
+        &self,
+    ) -> (
+        std::collections::BTreeMap<ImportId, usize>,
+        Vec<(GlobalId, Vec<ImportId>)>,
+    ) {
+        let mut per_import: std::collections::BTreeMap<ImportId, usize> = Default::default();
+        let mut by_global: HashMap<GlobalId, Vec<ImportId>> = HashMap::new();
+        for (g, import, _) in &self.globals {
+            let imports = by_global.entry(*g).or_default();
+            if !imports.contains(import) {
+                imports.push(*import);
+                *per_import.entry(*import).or_default() += 1;
+            }
+        }
+        let mut shared: Vec<_> = by_global.into_iter().filter(|(_, i)| i.len() > 1).collect();
+        shared.sort_unstable_by(|a, b| a.0.content_cmp(&b.0));
+        (per_import, shared)
+    }
+
     /// Computes the number of parameters for each function found
     pub fn compute_num_params(&self) -> HashMap<FunctionId, i16> {
         let mut func_num_params: HashMap<FunctionId, i16> = HashMap::new();
@@ -942,6 +964,15 @@ pub fn always_rows<A: Copy, B: Copy, C: Copy, D: Copy, E: Copy>(
     out
 }
 
+/// The edges of the global frame: the program-level flows between global paths (R16).
+pub fn global_flow_rows(assign_like: &[AssignLikeRow]) -> Vec<GlobalFlow> {
+    assign_like
+        .iter()
+        .filter(|(f, ..)| *f == crate::facts::GLOBAL_FRAME)
+        .filter_map(|(_, v1, p1, v2, p2)| Some((v1.as_global()?, *p1, v2.as_global()?, *p2)))
+        .collect()
+}
+
 /// How many rows of a relation of five columns and a [`Cond`] are conditional.
 pub fn conditional_count<A, B, C, D, E>(rows: &dyn Rows<(A, B, C, D, E, Cond)>) -> usize {
     let mut n = 0;
@@ -1363,12 +1394,20 @@ fn compute_alias_of_formal(
     mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
 ) -> Vec<(FunctionId, FlowVariable, Root)> {
     // Base case: a formal whole-aliases itself. A `Copied` formal shares nothing with the caller,
-    // so a store through it or its aliases is no summary, and it gets no aliases at all.
-    let alias_base: Vec<_> = formal_param
+    // so a store through it or its aliases is no summary, and it gets no aliases at all. A
+    // global copied in a function aliases itself there too (R19).
+    let mut alias_base: Vec<_> = formal_param
         .iter()
         .filter(|(_, _, ty)| *ty != FormalType::Copied)
         .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, Root::formal(i))))
         .collect();
+    alias_base.extend(
+        copy_edge
+            .iter()
+            .filter_map(|(f, _, src)| src.as_global().map(|g| (*f, *src, Root::global(g)))),
+    );
+    alias_base.sort_unstable();
+    alias_base.dedup();
     // Keep only the copies that flow AWAY from a formal.
     let before = copy_edge.len();
     copy_edge.retain(|(_, dst, _)| dst.as_formal().is_none());
@@ -1588,6 +1627,25 @@ ascent_source! {
         if let Some(i) = v1.as_formal(),
         let p1 = Path::empty();
 
+    // Semantics: G2 and R14. A global is a root of local reachability like a formal, in every
+    // function that mentions it: in its own text, or in an edge instantiated from a callee's
+    // summary, or in the global frame, which mentions every global. The flows its paths reach
+    // are summaries (with a formal) or program-level edges (with another global), below.
+    relation global_mention(FunctionId, GlobalId);
+    global_mention(f, g) <--
+        assign_like(f, v1, _, v2, _, _),
+        for g in [v1.as_global(), v2.as_global()].into_iter().flatten();
+    global_mention(f, g) <-- callee_info(f, _, v, _, _), if let Some(g) = v.as_global();
+    global_mention(f, g) <--
+        call_target_assign(f, vx, _),
+        let FlowVertex(v, ..) = vx,
+        if let Some(g) = v.as_global();
+    global_mention(f, g) <-- const_str_assign(f, v, _, _), if let Some(g) = v.as_global();
+    global_mention(GLOBAL_FRAME, g) <-- global_mention(_, g);
+    locals(f, v, Path::empty(), Root::global(*g), Path::empty(), Cond::Always) <--
+        global_mention(f, g),
+        let v = FlowVariable::global(*g);
+
     // Forward field propagation (context-free), as exact-key joins.
     //
     // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an edge
@@ -1789,6 +1847,26 @@ ascent_source! {
         if n1.isout(*formal_ty, p1),
         if n1 != *n2 || p1 != p2;
 
+    // Semantics: G6, R15, R16, R18. A flow into a global path is a summary when it comes from a
+    // formal, and from another global path only under a decision (R18: rule 3.2 applies it at
+    // the callers that establish the decision, where it becomes `Always` and lands below). A flow
+    // between two global paths that holds in every calling context holds in every instance
+    // (G2), so it is no function's summary: it is an edge of the global frame (R16), where the
+    // field rules close it.
+    summary(f, Root::global(g), p1, n2, p2, *c) <--
+        locals(f, v, p1, n2, p2, c),
+        if *f != GLOBAL_FRAME,
+        if let Some(g) = v.as_global(),
+        if !(n2.is_global() && c.is_always()),
+        if Root::global(g) != *n2 || p1 != p2;
+    assign_like(GLOBAL_FRAME, v, p1, FlowVariable::global(h), p2, Cond::Always) <--
+        locals(f, v, p1, n2, p2, c),
+        if *f != GLOBAL_FRAME,
+        if c.is_always(),
+        if v.is_global(),
+        if let Some(h) = n2.as_global(),
+        if Root::global(h) != v.as_root().unwrap() || p1 != p2;
+
     // aliasing summary rule (context-free flows only).
     //
     // Semantics: S8, the backward rule, restricted. A store's labels move backward to the
@@ -1802,7 +1880,19 @@ ascent_source! {
     // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
     // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose
     // per-iteration cost is |alias_of_formal|, catastrophic on binaries with many SSA copies).
-    summary(infunc, n1, p1.clone(), n2, bp, Cond::Always) <--
+    //
+    // Semantics, globals: R19. `alias_of_formal` starts from the globals too, so a store
+    // through a copy of a global, `l = $g.x; l.f = v`, reaches `$g.x.f`. Between two globals it
+    // is an edge of the frame rather than a summary, as above.
+    relation alias_flow(FunctionId, Root, Path, Root, Path);
+    summary(f, n1, p1, n2, p2, Cond::Always) <--
+        alias_flow(f, n1, p1, n2, p2),
+        if !(n1.is_global() && n2.is_global());
+    assign_like(GLOBAL_FRAME, FlowVariable::global(g1), p1, FlowVariable::global(g2), p2, Cond::Always) <--
+        alias_flow(_, n1, p1, n2, p2),
+        if let Some(g1) = n1.as_global(),
+        if let Some(g2) = n2.as_global();
+    alias_flow(infunc, n1, p1.clone(), n2, bp) <--
         // v1.p1 <- n2.bp  (delta driver)
         locals(infunc, v1, p1, n2, bp, lc),
         if lc.is_always(),
@@ -2211,6 +2301,62 @@ ascent_source! {
     critical_call(func_id) <--
         critical_summary(tgt, _, _),
         call(func_id, _, tgt);
+
+    // Semantics: G6 and R17, the label exchange. A call-target or string label at a global
+    // path holds in every instance (G2), so it guards nothing: it goes up to the global frame
+    // from any function that holds it, crosses the frame's edges there, and comes down into a
+    // function at the global paths it reads (an edge's source, or an indirect call's callee)
+    // and their extensions, as an `Always` fact. A call through a global then resolves by the
+    // local-dispatch rule, in a function with no caller, without a decision. Labels come down
+    // by the paths a function reads, not by the globals it mentions: on a binary every function
+    // mentions the one memory global, and by mention every label in memory would be copied
+    // into every function.
+    relation global_read(FunctionId, GlobalId, Path);
+    global_read(f, g, p) <--
+        assign_like(f, _, _, v, p, _),
+        if *f != GLOBAL_FRAME,
+        if let Some(g) = v.as_global();
+    global_read(f, g, p) <-- callee_info(f, _, v, p, _), if let Some(g) = v.as_global();
+
+    tag_closure_func(GLOBAL_FRAME);
+    // A function that holds a target and names a global can store the one into the other.
+    tag_closure_func(f) <-- call_target_assign(f, _, _), global_mention(f, _), if *f != GLOBAL_FRAME;
+    call_target_assign_like(GLOBAL_FRAME, v, p, t) <--
+        call_target_assign_like(f, v, p, t),
+        if *f != GLOBAL_FRAME,
+        if v.is_global();
+    intent_frame(GLOBAL_FRAME) <-- intent_frame(f), if *f != GLOBAL_FRAME;
+    const_reaches(GLOBAL_FRAME, v, p, s) <--
+        const_reaches(f, v, p, s),
+        if *f != GLOBAL_FRAME,
+        if v.is_global();
+
+    // The frame's labelled paths, keyed by every prefix a read can name.
+    relation global_label_key(GlobalId, Path, Path);
+    global_label_key(g, key, p) <--
+        call_target_assign_like(&GLOBAL_FRAME, v, p, _),
+        if let Some(g) = v.as_global(),
+        path_set(ps),
+        for (key, _) in tag_splits(ps, p);
+    global_label_key(g, key, p) <--
+        const_reaches(&GLOBAL_FRAME, v, p, _),
+        if let Some(g) = v.as_global(),
+        path_set(ps),
+        for (key, _) in tag_splits(ps, p);
+    relation global_label_read(FunctionId, GlobalId, Path);
+    global_label_read(f, g, p) <--
+        global_label_key(g, key, p),
+        global_read(f, g, key);
+    call_target_assign_like(f, v, p, t),
+    tag_closure_func(f) <--
+        global_label_read(f, g, p),
+        let v = FlowVariable::global(*g),
+        call_target_assign_like(&GLOBAL_FRAME, v, p, t);
+    const_reaches(f, v, p, s) <--
+        global_label_read(f, g, p),
+        intent_frame(f),
+        let v = FlowVariable::global(*g),
+        const_reaches(&GLOBAL_FRAME, v, p, s);
 }
 
 /// What one run of an index engine starts from: the facts, plus what is derived from them before
@@ -2331,13 +2477,25 @@ impl<'a> EngineInput<'a> {
             prog_store.len(),
             phys_footprint_mb()
         );
-        let assign_like: Vec<_> = std::mem::take(&mut facts.assign)
+        let mut assign_like: Vec<_> = std::mem::take(&mut facts.assign)
             .into_iter()
             .map(|(site, dst, src)| {
                 let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site).unwrap();
                 (func_id, dst.0, dst.1, src.0, src.1)
             })
             .collect();
+        // A `--summary` project's program-level flows are edges of the global frame (R20).
+        assign_like.extend(std::mem::take(&mut facts.global_flow).into_iter().map(
+            |(dst, p1, src, p2)| {
+                (
+                    crate::facts::GLOBAL_FRAME,
+                    FlowVariable::global(dst),
+                    p1,
+                    FlowVariable::global(src),
+                    p2,
+                )
+            },
+        ));
         log::debug!(
             "[mem cp] + assign_like ({} rows, facts.assign consumed): {:.1} MB",
             assign_like.len(),
@@ -2693,6 +2851,7 @@ macro_rules! run_engine {
 
         let assign_like_out = prog.take_assign_like();
         let summary_out = $crate::index_engine::always_rows(&prog.summary);
+        let global_flow_out = $crate::index_engine::global_flow_rows(&assign_like_out);
 
         let stats = $crate::index_engine::IndexStats {
             profile,
@@ -2732,7 +2891,7 @@ macro_rules! run_engine {
             intent_pair: prog.intent_pair.into_iter().collect(),
             paths: prog.paths.into_iter().collect(),
             external_function: facts.external_function,
-            global_flow: Vec::new(),
+            global_flow: global_flow_out,
             stats,
         }
     }};

@@ -162,15 +162,10 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
     assert_eq!(unpacked.func_id, stub, "the site lives in the caller");
     assert_ne!(unpacked.insn_id, existing.insn_id, "the site is fresh");
 
-    // Globals ride along unconditionally, and nothing routes through a temporary.
+    // Nothing is passed for globals (G7), and nothing routes through a temporary.
     assert_eq!(
         actual_formals(&facts, site),
-        vec![
-            (GLOBALS_INDEX, GLOBALS_INDEX),
-            (RETURN_INDEX, RETURN_INDEX),
-            (1, 0),
-            (2, 1),
-        ]
+        vec![(RETURN_INDEX, RETURN_INDEX), (1, 0), (2, 1),]
     );
     assert!(actual_temps(&facts, site).is_empty());
     assert!(
@@ -179,14 +174,8 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
     );
 
     // Formals on *both* sides, for every mapped port.
-    assert_eq!(
-        formals_of(&facts, stub),
-        vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1]
-    );
-    assert_eq!(
-        formals_of(&facts, imp),
-        vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1, 2]
-    );
+    assert_eq!(formals_of(&facts, stub), vec![RETURN_INDEX, 0, 1]);
+    assert_eq!(formals_of(&facts, imp), vec![RETURN_INDEX, 0, 1, 2]);
 
     // Registration is the engine's job: `program_paths` is seeded from every assign endpoint
     // and every actual_param vertex.
@@ -219,7 +208,7 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
     );
 
     let site = facts.call[0].0;
-    // One temporary for callee index 0, passed whole; globals still collapse.
+    // One temporary for callee index 0, passed whole.
     let temps = actual_temps(&facts, site);
     assert_eq!(temps.len(), 1, "one temporary per distinct callee index");
     assert_eq!(temps[0].0, 0);
@@ -230,8 +219,8 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
     );
     assert_eq!(
         actual_formals(&facts, site),
-        vec![(GLOBALS_INDEX, GLOBALS_INDEX)],
-        "only the globals pair collapses here"
+        vec![],
+        "nothing collapses here, and no globals pair is emitted"
     );
 
     // The three ports land at their own sub-paths of the one temporary. `direction: in` emits
@@ -332,7 +321,7 @@ fn ports_past_the_callee_arity_are_still_emitted() {
     let b = id_of(&source_info, "b");
     assert_eq!(
         formals_of(&facts, b),
-        vec![GLOBALS_INDEX, 0, 1, 2],
+        vec![0, 1, 2],
         "the model's parameters are asserted whatever the frontend recovered"
     );
 }
@@ -351,8 +340,9 @@ fn a_shared_callee_index_never_half_collapses() {
     let site = facts.call[0].0;
     assert_eq!(
         actual_formals(&facts, site),
-        vec![(GLOBALS_INDEX, GLOBALS_INDEX)],
-        "only globals collapse; callee index 0 routes through its temporary"
+        vec![],
+        "nothing collapses: callee index 0 routes through its temporary, and no globals pair \
+         is emitted"
     );
     assert_eq!(actual_temps(&facts, site).len(), 1);
 }

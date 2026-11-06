@@ -29,7 +29,6 @@ A member access through a pointer steps through `deref` first: `p->f` and `(*p).
 `p.deref.f` (`arrow_and_deref_share_the_deref_prefix`).
 */
 
-use ctadl_ascent::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use ctadl_ir::ParameterType::SharedFields;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
@@ -5506,15 +5505,7 @@ fn a_parenthesized_variable_minus_one_is_a_subtraction() {
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
     // A subtraction of integers supplies values only.
     check_returns_param_value_in(&s, &si, "param", 0, "");
-    check_flow_in(
-        &s,
-        &si,
-        "global",
-        GLOBALS_INDEX,
-        ".g.deref",
-        RETURN_INDEX,
-        ".#value",
-    );
+    check_returns_global_at_in(&s, &si, "global", ".g.deref", ".#value");
     check_returns_param_value_in(&s, &si, "shadow", 0, "");
 }
 
@@ -5905,15 +5896,7 @@ fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
         }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
     check_param_into_global_in(&summary, &si, "wrap", 1, ".taken.deref");
-    check_no_flow_in(
-        &summary,
-        &si,
-        "wrap",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken.deref",
-    );
+    check_no_param_into_global_in(&summary, &si, "wrap", 0, ".taken.deref");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -5998,15 +5981,7 @@ fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
         }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
     check_param_into_global_in(&summary, &si, "wrap", 1, ".taken.deref");
-    check_no_flow_in(
-        &summary,
-        &si,
-        "wrap",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken.deref",
-    );
+    check_no_param_into_global_in(&summary, &si, "wrap", 0, ".taken.deref");
 }
 
 #[test_log::test]
@@ -6021,15 +5996,7 @@ fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
         void __tramp_f(int);
         void fire(int x) { ({ (&__tramp_f); })(x); }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
-    check_no_flow_in(
-        &summary,
-        &si,
-        "fire",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken.deref",
-    );
+    check_no_param_into_global_in(&summary, &si, "fire", 0, ".taken.deref");
 }
 
 #[test_log::test]

@@ -62,7 +62,7 @@ fn index_check_summaries(
                 fail_count += 1;
                 continue;
             };
-            let record = (func_id, dst.into(), dst_path, src.into(), src_path);
+            let record = (func_id, dst, dst_path, src, src_path);
             match flow {
                 FlowSpec::FlowPresent => {
                     if !index_result.summary.contains(&record) {
@@ -623,13 +623,13 @@ fn from_flowy_endpoint(
     }
 }
 
-fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
+fn port_to_index(port: &Port) -> anyhow::Result<(fx::Root, fx::Path)> {
     let Port { base, fields } = port;
     let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
         PortBase::Return => Ok(((-1i16).into(), path)),
         PortBase::Var(v) => match &v.variable {
-            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
+            Variable::Param(idx) => Ok((fx::FormalIndex::try_from(idx.index())?.into(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
             }
@@ -637,14 +637,6 @@ fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
                 unreachable!("flowy names a global port by name, `PortBase::Global`")
             }
         },
-        // Until the index has a vertex for a global (stage 2b of `plan.md`), a global `$g`
-        // is the globals pseudo-formal's field `g`, as codegen lowers it.
-        PortBase::Global(name) => Ok((
-            fx::GLOBALS_INDEX.into(),
-            fx::Path::from_accesses(
-                std::iter::once(ctadl_ir::mir::PathSegment::Field(name.clone()))
-                    .chain(fields.iter().cloned()),
-            ),
-        )),
+        PortBase::Global(name) => Ok((fx::GlobalId(fx::Str::from(name.clone())).into(), path)),
     }
 }

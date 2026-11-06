@@ -390,7 +390,8 @@ macro_rules! dump_relations {
             locals_key_wild, locals_wild, assign_wild, edge_split, edge_split_wild, ext_dst,
             ext_fml, critical_arg, critical_reach, context_summary_set, set_member,
             context_summary_top, set_establishes_direct, set_establishes_via, context_summary_d,
-            top_summary_func, tag_closure_func
+            top_summary_func, tag_closure_func, global_mention, alias_flow, global_read,
+            global_label_key, global_label_read
         ])
     };
     (@each $dump:expr, $prog:expr, [$($rel:ident),* $(,)?]) => {

@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::facts::{self, FlowVariable, FlowVertex, Label, PackedInsnSiteId};
 use crate::index_engine::IndexFacts;
 
@@ -159,7 +159,7 @@ pub fn build_query_endpoints(
                 vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
             FormalIndexTypeTag::Global => {
-                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
+                unreachable!("no model format spells a global port yet")
             }
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)

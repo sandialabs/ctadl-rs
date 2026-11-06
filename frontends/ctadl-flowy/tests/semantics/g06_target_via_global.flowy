@@ -40,8 +40,6 @@ s:
   return;
 }
 
-// parity: call target held in a global loses: Fire: sink(%S)#0 <- %S
-// parity: call target held in a global loses: FireCopied: sink(%T)#0 <- %T
 // The observable, every sink each label reaches:
 // expect: Fire: sink(%S)#0 <- %S
 // expect: FireCopied: sink(%T)#0 <- %T

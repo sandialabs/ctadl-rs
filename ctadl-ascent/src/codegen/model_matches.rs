@@ -22,7 +22,7 @@ instantiation, and no inference rule knows a bridge or a dispatch model was invo
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::facts::{
     self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
 };
@@ -205,7 +205,7 @@ fn expand_port(
     match port.tag {
         Index => vec![port.index.expect("an Index port carries one").into()],
         Return => vec![RETURN_INDEX.into()],
-        Global => vec![GLOBALS_INDEX.into()],
+        Global => unreachable!("no model format spells a global port yet"),
         AnyArgument => arg_arity
             .get(&func_id)
             .map(|n| (0..*n).map(|i| i.into()).collect())
@@ -272,15 +272,13 @@ fn codegen_bridges(
             });
             continue;
         };
-        // The globals pseudo-parameter is mapped unconditionally and is not user-writable:
-        // without it heap flows do not cross the boundary at all.
-        let mut ports = bridge.ports.clone();
-        ports.push(PortPair::globals());
+        // A bridge is a call (S15): it maps the written ports and nothing for globals, which
+        // both sides already share (G5, G7).
         emit_bridge(
             &bridge.provenance,
             a,
             b,
-            &ports,
+            &bridge.ports,
             num_params,
             facts,
             source_info,

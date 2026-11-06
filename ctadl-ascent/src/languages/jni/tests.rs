@@ -119,11 +119,7 @@ fn split_ports(
 fn static_method_shifts_arguments_by_two() {
     assert_eq!(
         ports("(Ljava/lang/String;)V", true, SlotModel::Argument),
-        vec![
-            (0, 2),
-            (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
-        ]
+        vec![(0, 2), (RETURN_INDEX, RETURN_INDEX),]
     );
 }
 
@@ -135,13 +131,7 @@ fn instance_method_maps_this_onto_the_jobject() {
             false,
             SlotModel::Argument
         ),
-        vec![
-            (0, 1),
-            (1, 2),
-            (2, 3),
-            (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
-        ]
+        vec![(0, 1), (1, 2), (2, 3), (RETURN_INDEX, RETURN_INDEX),]
     );
 }
 
@@ -151,24 +141,12 @@ fn register_slots_widen_for_long_and_double() {
     // native side still advances by exactly one.
     assert_eq!(
         ports("(JLjava/lang/String;D)V", true, SlotModel::Register),
-        vec![
-            (0, 2),
-            (2, 3),
-            (3, 4),
-            (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
-        ]
+        vec![(0, 2), (2, 3), (3, 4), (RETURN_INDEX, RETURN_INDEX),]
     );
     // JVM numbers by argument, so the same descriptor is dense.
     assert_eq!(
         ports("(JLjava/lang/String;D)V", true, SlotModel::Argument),
-        vec![
-            (0, 2),
-            (1, 3),
-            (2, 4),
-            (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
-        ]
+        vec![(0, 2), (1, 3), (2, 4), (RETURN_INDEX, RETURN_INDEX),]
     );
 }
 
@@ -176,17 +154,12 @@ fn register_slots_widen_for_long_and_double() {
 fn an_array_of_wides_is_a_reference_and_takes_one_register() {
     assert_eq!(
         ports("([JI)V", true, SlotModel::Register),
-        vec![
-            (0, 2),
-            (1, 3),
-            (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
-        ]
+        vec![(0, 2), (1, 3), (RETURN_INDEX, RETURN_INDEX),]
     );
 }
 
 #[test]
-fn return_and_globals_appear_exactly_once() {
+fn return_appears_exactly_once_and_globals_never() {
     for is_static in [true, false] {
         for slots in [SlotModel::Register, SlotModel::Argument] {
             let p = ports("(JJ)J", is_static, slots);
@@ -196,15 +169,12 @@ fn return_and_globals_appear_exactly_once() {
                     .count(),
                 1
             );
-            assert_eq!(
-                p.iter()
-                    .filter(|(j, n)| *j == GLOBALS_INDEX && *n == GLOBALS_INDEX)
-                    .count(),
-                1
-            );
             // Only `-1` is mapped: a Java function's `-2` (exception return) has no native
-            // counterpart.
-            assert!(!p.iter().any(|(j, _)| *j == -2));
+            // counterpart, and nothing is mapped for globals, which both sides share (G7).
+            assert!(
+                !p.iter()
+                    .any(|(j, n)| *j < RETURN_INDEX || *n < RETURN_INDEX)
+            );
         }
     }
 }
@@ -388,12 +358,7 @@ fn links_an_instance_native_to_its_implementation() {
     // `this` -> jobject, argument 0 -> native 2, return -> return, globals -> globals.
     assert_eq!(
         actuals(&facts, site),
-        vec![
-            (GLOBALS_INDEX, GLOBALS_INDEX),
-            (RETURN_INDEX, RETURN_INDEX),
-            (1, 0),
-            (2, 1),
-        ]
+        vec![(RETURN_INDEX, RETURN_INDEX), (1, 0), (2, 1),]
     );
 
     // The bodyless stub gets the formals the summary rule joins on.
@@ -405,7 +370,7 @@ fn links_an_instance_native_to_its_implementation() {
         .collect();
     declared.sort();
     declared.dedup();
-    assert_eq!(declared, vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1]);
+    assert_eq!(declared, vec![RETURN_INDEX, 0, 1]);
 }
 
 #[test]
@@ -434,7 +399,6 @@ fn links_a_static_native_without_a_this_port() {
     assert_eq!(
         actuals(&facts, site),
         vec![
-            (GLOBALS_INDEX, GLOBALS_INDEX),
             (RETURN_INDEX, RETURN_INDEX),
             // Java argument 0 lands on native index 2: past `JNIEnv *` AND past `jclass`.
             (2, 0),
@@ -1158,11 +1122,7 @@ fn a_summary_target_links_and_is_interned() {
     assert_eq!(facts.call[0].1, native_id);
     assert_eq!(
         actuals(&facts, facts.call[0].0),
-        vec![
-            (GLOBALS_INDEX, GLOBALS_INDEX),
-            (RETURN_INDEX, RETURN_INDEX),
-            (2, 0),
-        ],
+        vec![(RETURN_INDEX, RETURN_INDEX), (2, 0),],
         "the same bridge a co-indexed target gets"
     );
     assert_eq!(
@@ -1261,7 +1221,6 @@ fn a_summary_projects_java_native_is_not_linked() {
 #[test]
 fn split_wide_maps_a_long_to_both_halves() {
     let r = (RETURN_INDEX, RETURN_INDEX);
-    let g = (GLOBALS_INDEX, GLOBALS_INDEX);
     let split = |d, is_static| {
         split_ports(
             d,
@@ -1271,23 +1230,23 @@ fn split_wide_maps_a_long_to_both_halves() {
         )
     };
 
-    assert_eq!(split("(J)V", true), vec![(0, 2), (0, 3), r, g]);
-    assert_eq!(split("(J)V", false), vec![(0, 1), (1, 2), (1, 3), r, g]);
+    assert_eq!(split("(J)V", true), vec![(0, 2), (0, 3), r]);
+    assert_eq!(split("(J)V", false), vec![(0, 1), (1, 2), (1, 3), r]);
 
-    assert_eq!(split("(IJ)V", true), vec![(0, 2), (1, 3), (1, 4), r, g]);
+    assert_eq!(split("(IJ)V", true), vec![(0, 2), (1, 3), (1, 4), r]);
     assert_eq!(
         split("(IJ)V", false),
-        vec![(0, 1), (1, 2), (2, 3), (2, 4), r, g]
+        vec![(0, 1), (1, 2), (2, 3), (2, 4), r]
     );
 
     // Dex register slots: `D` takes Java slots 0-1 and `J` 2-3, so the `int` is at 4.
     assert_eq!(
         split("(DJI)J", true),
-        vec![(0, 2), (0, 3), (2, 4), (2, 5), (4, 6), r, g]
+        vec![(0, 2), (0, 3), (2, 4), (2, 5), (4, 6), r]
     );
     assert_eq!(
         split("(DJI)J", false),
-        vec![(0, 1), (1, 2), (1, 3), (3, 4), (3, 5), (5, 6), r, g]
+        vec![(0, 1), (1, 2), (1, 3), (3, 4), (3, 5), (5, 6), r]
     );
 }
 
@@ -1307,7 +1266,6 @@ fn split_wide_follows_the_jvm_argument_slots_too() {
             (1, 5),
             (2, 6),
             (RETURN_INDEX, RETURN_INDEX),
-            (GLOBALS_INDEX, GLOBALS_INDEX)
         ]
     );
 }
@@ -1495,13 +1453,7 @@ fn a_split_prototype_links_with_split_wide() {
     assert_eq!((stats.linked, stats.prototype_mismatch), (1, 0));
     assert_eq!(
         rows,
-        vec![
-            (GLOBALS_INDEX, GLOBALS_INDEX),
-            (RETURN_INDEX, RETURN_INDEX),
-            (2, 0),
-            (3, 1),
-            (4, 1)
-        ]
+        vec![(RETURN_INDEX, RETURN_INDEX), (2, 0), (3, 1), (4, 1)]
     );
 }
 

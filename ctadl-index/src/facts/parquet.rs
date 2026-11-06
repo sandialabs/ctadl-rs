@@ -860,7 +860,7 @@ impl DecodeColumn<Option<facts::PackedInsnSiteId>> for DefaultDecoder {
 }
 
 // A `FlowEdge` spans two arrow columns: a `<name>_tag` byte (0 = Intra, 1 =
-// Call, 2 = Return) and a nullable `<name>_site` holding the anchoring call
+// Call, 2 = Return, 3 = Global) and a nullable `<name>_site` holding the anchoring call
 // instruction for Call/Return edges (null for Intra).
 impl EncodeColumn<facts::FlowEdge> for DefaultEncoder {
     #[inline]
@@ -875,6 +875,7 @@ impl EncodeColumn<facts::FlowEdge> for DefaultEncoder {
                     Intra => 0u8,
                     Call(_) => 1,
                     Return(_) => 2,
+                    Global => 3,
                 })
                 .collect_vec(),
         );
@@ -908,6 +909,7 @@ impl DecodeColumn<facts::FlowEdge> for DefaultDecoder {
                 0 => Intra,
                 1 => Call(site.expect("call FlowEdge missing anchoring site")),
                 2 => Return(site.expect("return FlowEdge missing anchoring site")),
+                3 => Global,
                 _ => panic!("bad encoding of FlowEdge"),
             })
             .collect_vec()

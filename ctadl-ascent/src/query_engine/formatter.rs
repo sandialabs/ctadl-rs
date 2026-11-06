@@ -1492,6 +1492,7 @@ impl Annotation<LabeledTaintGraph> for TaintState {
                 TaintState::Free => Some(TaintState::Free),
                 TaintState::Restricted => None,
             },
+            FlowEdge::Global => Some(TaintState::Free),
         }
     }
 }

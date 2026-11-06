@@ -2,8 +2,8 @@
 //! `query_engine::QueryEndpoint`; it lives here because the facts schema stores it.
 
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FunctionId, GLOBALS_INDEX, IdMap, InsnSiteId, Label,
-    PackedCallArg, PackedInsnSiteId, TaintDirection, TaintEndpoint,
+    FlowVariable, FlowVertex, FormalIndex, FunctionId, IdMap, InsnSiteId, Label, PackedCallArg,
+    PackedInsnSiteId, TaintDirection, TaintEndpoint,
 };
 use crate::index_engine::func_name;
 
@@ -87,8 +87,8 @@ impl QueryEndpoint {
     /// Fans a function-anchored endpoint into one endpoint per call site of `infunc`,
     /// re-anchoring each at the call-arg vertex (for `formal`) that the call passes. `call`
     /// is the static call graph (`site -> callee`). The endpoint is returned unchanged when
-    /// it can't be re-anchored: `formal` is the globals pseudo-formal, or `infunc` has no
-    /// callers. `formal` is supplied by the caller because the endpoint's own vertex may have
+    /// it can't be re-anchored: it is on a global, which is a project-level endpoint no call
+    /// passes (R26), or `infunc` has no callers. `formal` is supplied by the caller because the endpoint's own vertex may have
     /// been SSA-versioned into a local even when it denotes a parameter; the formal index
     /// names the parameter the call boundary maps it to. This is how query endpoints come to
     /// denote "a vertex at a particular call site," letting the formatter distinguish flows
@@ -98,8 +98,7 @@ impl QueryEndpoint {
         formal: FormalIndex,
         call: &[(PackedInsnSiteId, FunctionId)],
     ) -> Vec<Self> {
-        // The globals pseudo-formal does not cross a call boundary as an argument.
-        if *formal == GLOBALS_INDEX {
+        if self.vertex.0.is_global() {
             return vec![self];
         }
         let mut out = Vec::new();
@@ -130,8 +129,8 @@ impl QueryEndpoint {
     /// matches when it targets that callee and — when `caller_filter` is `Some` — sits inside
     /// that caller function. Unlike [`anchored_at_callsites`], there is no function-anchored
     /// fallback: if no call site matches, the result is empty (a callsite endpoint that names
-    /// no real call site seeds nothing). The globals pseudo-formal cannot be anchored at a
-    /// call site and yields an empty result.
+    /// no real call site seeds nothing). An endpoint on a global is anchored at no call site
+    /// and is returned unchanged (R26).
     ///
     /// [`anchored_at_callsites`]: Self::anchored_at_callsites
     pub fn anchored_at_callsites_filtered(
@@ -140,8 +139,8 @@ impl QueryEndpoint {
         call: &[(PackedInsnSiteId, FunctionId)],
         caller_filter: Option<FunctionId>,
     ) -> Vec<Self> {
-        if *formal == GLOBALS_INDEX {
-            return Vec::new();
+        if self.vertex.0.is_global() {
+            return vec![self];
         }
         let mut out = Vec::new();
         for (site, callee) in call {

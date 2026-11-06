@@ -688,9 +688,6 @@ impl FromStr for Function {
 #[repr(transparent)]
 pub struct FormalIndex(i16);
 
-/// For passing globals reference in parameter list
-pub const GLOBALS_INDEX: i16 = i16::MIN;
-
 /// Start of return values. If there's more than one return value, uses -2, -3, etc
 pub const RETURN_INDEX: i16 = -1i16;
 
@@ -814,7 +811,10 @@ impl Root {
     #[inline]
     pub fn global(g: GlobalId) -> Self {
         let raw = g.0.raw();
-        assert!(raw & ROOT_GLOBAL == 0, "a global's name id does not fit a root");
+        assert!(
+            raw & ROOT_GLOBAL == 0,
+            "a global's name id does not fit a root"
+        );
         Root(raw | ROOT_GLOBAL)
     }
 
@@ -968,9 +968,7 @@ impl<'de> Deserialize<'de> for RootKind {
 /// paths (R17). It has no formals and no call sites. Reserved, as [`RETURN_INDEX`] is: the
 /// largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands out, and which every `IdMap`
 /// names [`GLOBAL_FRAME_NAME`].
-pub const GLOBAL_FRAME: FunctionId = FunctionId {
-    id: (1 << 28) - 1,
-};
+pub const GLOBAL_FRAME: FunctionId = FunctionId { id: (1 << 28) - 1 };
 
 /// The name of [`GLOBAL_FRAME`].
 pub const GLOBAL_FRAME_NAME: &str = "<globals>";
@@ -1298,15 +1296,9 @@ impl FlowVariable {
         (self.0 & TAG_MASK) == TAG_LOCAL && (self.0 & GLOBAL_BIT) != 0
     }
 
-    /// The vertex of the actual for parameter `formal` of the call at `insn`. The global heap
-    /// already aliases the caller's heap formal at every call site, so its actual is that formal
-    /// rather than a per-call copy.
+    /// The vertex of the actual for parameter `formal` of the call at `insn`.
     pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
-        if formal == GLOBALS_INDEX.into() {
-            FlowVariable::formal_index(formal)
-        } else {
-            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
-        }
+        FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
     }
 
     pub fn as_local(&self) -> Option<Str> {
@@ -1407,16 +1399,6 @@ impl FlowVariable {
         }
     }
 
-    pub fn is_globals(&self) -> bool {
-        match self.kind() {
-            FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
-            // This has to be kept in sync with the name `ctadl-ascent`'s `CodegenVisitor` gives
-            // globals.
-            FlowVariableKind::Local(name) => name.starts_with("$globals_"),
-            _ => false,
-        }
-    }
-
     /// Orders two flow variables by what they *denote*, not by their packed bits. This is usable as
     /// a sort comparator over a whole index table.
     pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -1465,7 +1447,7 @@ impl TryFrom<mir::ParameterIdx> for FlowVariable {
 
 #[derive(Error, Debug)]
 pub enum TryFromVariableError {
-    #[error("global variables unsupported in datalog")]
+    #[error("a global is named by its program's table, which codegen holds")]
     Global,
     #[error("parameter doesn't fit")]
     Param,
@@ -1751,6 +1733,10 @@ pub enum FlowEdge {
     Intra,
     Call(PackedInsnSiteId),
     Return(PackedInsnSiteId),
+    /// A step into or out of a global vertex, which every instance shares (G8 of `docs/ir.md`):
+    /// a store in one function to a load in any other, with no call between them. It resets
+    /// call/return matching, since from a global the flow may continue in any instance (R25).
+    Global,
 }
 
 impl FlowEdge {
@@ -1758,7 +1744,7 @@ impl FlowEdge {
     #[inline]
     pub fn site(&self) -> Option<PackedInsnSiteId> {
         match self {
-            FlowEdge::Intra => None,
+            FlowEdge::Intra | FlowEdge::Global => None,
             FlowEdge::Call(s) | FlowEdge::Return(s) => Some(*s),
         }
     }
@@ -1770,6 +1756,7 @@ impl Display for FlowEdge {
             FlowEdge::Intra => write!(f, "intra"),
             FlowEdge::Call(s) => write!(f, "call({s})"),
             FlowEdge::Return(s) => write!(f, "return({s})"),
+            FlowEdge::Global => write!(f, "global"),
         }
     }
 }
@@ -2118,7 +2105,10 @@ impl IdMap {
             return id;
         }
         let i = FunctionId::new(self.functions.len().try_into().unwrap());
-        assert!(i != GLOBAL_FRAME, "too many functions: the next id is the global frame's");
+        assert!(
+            i != GLOBAL_FRAME,
+            "too many functions: the next id is the global frame's"
+        );
         self.function_id.insert(f.clone(), i);
         self.functions.push(f);
         i

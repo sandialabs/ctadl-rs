@@ -43,9 +43,6 @@ const ROWS: &[(&str, Direction)] = &[
     ("copy_prop", Direction::Adds),
     ("mem2reg window", Direction::Loses),
     ("mem2reg full", Direction::Loses),
-    // Until the index has a vertex for a global (stage 2b of `plan.md`), which removes both.
-    ("global passed at calls", Direction::Loses),
-    ("call target held in a global", Direction::Loses),
 ];
 
 fn corpus() -> Vec<PathBuf> {
