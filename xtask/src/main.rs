@@ -12,7 +12,7 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask regression --frontend pcode,jni --mem2reg full:0
-//!     cargo xtask regression --compare-paths $TMPDIR/ctadl_xtask_<pid-of-an-earlier-run>
+//!     cargo xtask regression --compare-paths $TMPDIR/ctadl_xtask_PID   # an earlier run's root
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
 //!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint

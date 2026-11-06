@@ -176,6 +176,20 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   `deref` and `#value` segments distinct from fields.
 pub const INDEX_FORMAT_VERSION: &str = "7";
 
+/// The front-end convention options set in the environment to something other than their
+/// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by
+/// default, `merge` as a comparison knob) is the one there is.
+fn non_default_conventions(language: ArtifactLanguage) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if language == ArtifactLanguage::Pcode
+        && let Ok(v) = std::env::var("CTADL_EXP_INT_ARITH")
+        && v != "value"
+    {
+        out.insert("CTADL_EXP_INT_ARITH".to_string(), v);
+    }
+    out
+}
+
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";
 
@@ -319,6 +333,11 @@ pub struct ArtifactImport {
     /// [`IMPORT_STATUS_DONE`] once the import has finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// The front end's convention options this import was lowered under, when they are not the
+    /// default (R41 of the IR redesign's `spec.md`): option name to value. Empty for the
+    /// defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conventions: BTreeMap<String, String>,
 }
 
 impl ArtifactImport {
@@ -358,6 +377,7 @@ impl ArtifactImport {
             hash: None,
             sub_imports: Vec::new(),
             status: None,
+            conventions: BTreeMap::new(),
         };
         result.save()?;
         Ok(result)
@@ -505,6 +525,7 @@ impl ArtifactImport {
     pub fn mark_complete(name: &str) -> Result<(), Error> {
         let mut import = Self::load_by_name(name)?;
         import.status = Some(IMPORT_STATUS_DONE.to_string());
+        import.conventions = non_default_conventions(import.language);
         import.save()
     }
 

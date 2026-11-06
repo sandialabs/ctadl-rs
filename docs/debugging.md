@@ -63,7 +63,9 @@ ON t.endpoint_infunc = f.id;
 
 # Dumping the index graph
 
-The index graph --- the `assign` relation, drawn --- comes out of a *finished* index:
+`assign` holds one row per flow between two access paths: a copy when the destination path is
+empty, a store otherwise (see [ir.md](ir.md)); there is no separate relation for a load or a
+store. The index graph --- the `assign` relation, drawn --- comes out of a *finished* index:
 
 ```
 ctadl index app

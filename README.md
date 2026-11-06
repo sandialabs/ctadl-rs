@@ -162,6 +162,10 @@ cross this way, so a flow in the library that depends on resolving an indirect c
 ## Documentation
 
 - [Specification](docs/spec.md) — purpose, requirements, and high-level design.
+- [The IR](docs/ir.md) — what every front end lowers to: access paths of fields, offsets,
+  `deref` and `#value`, assignments that are copies or stores, and calls, with a semantics of
+  labels propagating along them. The analysis is measured against that semantics, and every
+  place it deviates is listed.
 - [Portcullis](docs/portcullis.md) — the model language: sources, sinks, and propagation
   through code CTADL cannot see. Start here to write models.
 - [Debugging](docs/debugging.md).

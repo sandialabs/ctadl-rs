@@ -1060,6 +1060,7 @@ fn reads_the_abi_of_an_import() {
         hash: None,
         sub_imports: Vec::new(),
         status: None,
+        conventions: Default::default(),
     };
 
     let so = dir.path().join("libx.so");
