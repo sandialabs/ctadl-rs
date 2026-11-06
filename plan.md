@@ -18,7 +18,7 @@ rows, so it is checked by identity of the fact base; 2b is the behavior. Stage 0
 stage 3 needs 2b's `Root::Global`; docs close. (Stage 1b, C storage, was folded into stage 1:
 see the note there.)
 
-Status: stages 0 and 1 are implemented. Each stage below that is done ends with an "As built"
+Status: stages 0, 1, 2a and 2b are implemented. Each stage below that is done ends with an "As built"
 paragraph recording where the implementation departs from the text above it and why; the text
 itself is left as it was planned.
 
@@ -308,6 +308,33 @@ Tests:
 - `cargo xtask regression` and `--compare-paths` against stage 1b: identical answers and
   identical path sets. Any difference is a bug in the type plumbing.
 
+As built (commit `f3dbea30`). Where the implementation departs from the above:
+
+- **`GlobalId` is the interned name.** `GlobalId(Str)`: a global is its name (G3), so the
+  project-level interner the plan calls for is `Str`'s, two imports' declarations meet at one id
+  with nothing to do, and a `--summary` project's global roots need no mapping (they serialize as
+  names). `IndexFacts.globals` is therefore `(GlobalId, ImportId, Option<FileSpanId>)`, without
+  the separate name column.
+- **`Root` is packed.** `Root(u32)`: a formal's `i16`, or the top bit and the global's name id,
+  with `RootKind` for matching. Four bytes, so the `locals` leaves do not grow. It converts from a
+  `FormalIndex`, an `i16` and a `GlobalId`.
+- **A global `FlowVariable` shares the local tag.** The four 2-bit tags were all taken, and a
+  3-bit tag would cut a call-arg's instruction id; a global is `TAG_LOCAL` with bit 61 set and the
+  name's id below. `is_local` excludes it, and parquet writes it as tag 4 with the name.
+- **The critical relations stay formal.** `critical_summary`, `critical_arg`, `critical_reach`,
+  `resolvent` and `Decision` keep `FormalIndex`: only a formal root can enter them (rule 1.1 and
+  the others filter `Root::as_formal`), which is R17's "over formal roots only" by type.
+- **`GLOBAL_FRAME`** is `FunctionId((1 << 28) - 1)`, the largest an `InsnSiteId` holds, named
+  `<globals>` by every `IdMap` (`get_function`, `get_function_id`) and never handed out, so no
+  existing id shifts. `call_arg!` takes anything that converts to a `Root`.
+- **`summary.parquet`** writes each root as `<root>_index` and `<root>_global`, one of them null;
+  the columns are `dst`/`src` (so `dst_index`, `dst_global`, ...). `global_flow.parquet` is
+  `(dst, dst_path, src, src_path)` over global names.
+- **Tests.** `ctadl-index`'s facts tests: `root_round_trips` (memory and the summary schema),
+  `global_flow_variable_round_trips`, `global_frame_is_named_in_every_id_map`; the integration
+  test `index_version_gate_rejects_an_index_from_before_declared_globals`. 1929 workspace tests
+  pass, the stage-1 count plus these four. The regression comparison is under stage 2b.
+
 ## Stage 2b: the index and the query (R14–R20, R23–R27, R29, R38's index part)
 
 One PR after 2a and 1b. The shim goes, the pseudo-formal goes, the frame arrives, and the
@@ -427,6 +454,61 @@ Tests:
   (an extension of what it reads) and resolves `(*l.a)()`.
 - `grep -rn 'GLOBALS_INDEX\|is_globals\|heap_calls_by_caller\|GlobalHeap\|new_global'
   --include='*.rs'` is empty.
+
+As built (commit `deb6dc4b`). Where the implementation departs from the above:
+
+- **Rules.** No `root_flow` relation: the formal-destination summary rule is unchanged (its root
+  comes from `as_root`), and two rules beside it read `locals` rows whose vertex is a global in a
+  function other than the frame, giving a `summary` row unless both roots are global and the row
+  is `Always`, in which case it is an edge of the frame. The aliasing rule derives `alias_flow`,
+  which splits the same way. `compute_alias_of_formal` seeds a global from every original copy
+  out of it in a function (the "mentioned globals" of the plan, restricted to the ones a copy can
+  alias). `global_mention` is recursive with `assign_like`, so it covers instantiated edges, and
+  the frame mentions every global. The frame's `locals` (R16's closure) are computed but not
+  written out: `global_flow.parquet` holds the frame's *edges*, which a consumer closes again,
+  rather than their closure.
+- **Label exchange.** One key relation for both labels, `global_label_key(g, key, p)` over the
+  exact splits (`tag_splits`) of the frame's labelled paths, joined with `global_read(f, g, key)`
+  into `global_label_read(f, g, p)`, which brings both `call_target_assign_like` and
+  `const_reaches` down. Only exact prefixes: a read at `$g.[8]` does not get a label at
+  `$g.[16].deref` the way `call_target_key_wild` would; no case needs it yet. A function that
+  receives a label is added to `tag_closure_func`, as is one that holds a target and mentions a
+  global. A constant in a body clause is written `&GLOBAL_FRAME` (Ascent compares by reference).
+- **Query.** Every search index is keyed by `home(f, v)`, the frame for a global, and its entries
+  carry the function of the edge, so a global's loads in every function hang off the one frame
+  vertex. Successors are canonicalized at the end of `labeled_successors`: a global vertex moves
+  to the frame, and a step between a function and the frame is `FlowEdge::Global` (tag 3 in
+  parquet), which sets `TaintState::Free` in both the search and the formatter. No separate
+  `reads_of_global` map.
+- **Models.** The `Global` model tag has no spelling until stage 3, so `expand_port` and the
+  endpoint builder treat it as unreachable here; stage 3 gives it a `GlobalId`.
+  `TryFromVariableError::Global` stays (a `mir::Variable::Global` has no name without its
+  program's table), with a message saying so.
+- **R23** is `IndexFacts::global_declarations` plus `report_globals` in `cli`, logged right after
+  the JNI link, before the models. `ctadl inspect` already printed a program's globals (stage 1).
+- **R27** needs nothing in the formatter for a flow through a global: its steps are its store
+  and its load, which are instructions. A source or sink *on* a global arrives with stage 3.
+- **C test helpers.** `check_param_into_global_in` and `check_returns_global_in` keep their
+  `.g.deref` argument and read its first segment as the global's name;
+  `check_no_param_into_global_in` and `check_returns_global_at_in` replace the
+  `GLOBALS_INDEX` calls of `check_no_flow_in` / `check_flow_in`.
+- **Parity.** The engines match the reference on `g02_shared`, `g03_two_programs`,
+  `g06_target_via_global` and `g25_hop_after_call`, so their `// parity:` lines, the two temporary
+  register rows and their `ROWS` entries are gone, and the register's §4 edits for 2b are made.
+- **Tests.** `index_engine_tests.rs` gains a `globals` module, written as C programs:
+  `a_flow_between_two_globals_is_a_frame_edge_not_a_summary` (R15, R16, G5),
+  `a_flow_between_a_formal_and_a_global_is_a_summary_rooted_at_the_global` (R14, R15),
+  `a_target_stored_to_a_global_resolves_a_call_in_a_function_with_no_caller` (R17, directly and
+  through a frame edge), `labels_come_down_at_the_paths_a_function_reads` (R17's shape, including
+  the whole-cell read),
+  `a_conditional_flow_between_globals_lands_in_the_frame_at_its_establishing_caller` (R18),
+  `a_store_through_a_copy_of_a_global_reaches_the_global` (R19),
+  `two_imports_declaring_one_name_share_one_global` (G3, R22, R23's counts) and
+  `a_summary_projects_global_flows_cross_into_its_consumer` (R20, through the query with a
+  `Global` step). The query's R25 case is the corpus's `g25_hop_after_call`, now without a parity
+  line. JNI and bridge tests pin the absence of the globals pair (R38). 1937 workspace tests pass.
+- **End to end.** `ctadl go` on `nightly/tests/c/globalflow.c` with `main` removed (no function
+  calls both `produce` and `consume`) reports the flow; the stage-1 binary reports none.
 
 ## Stage 3: models (R28, R32, R38's model part)
 
