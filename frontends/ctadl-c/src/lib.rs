@@ -555,7 +555,7 @@ fn deref_of_pointee(pointee: &AccessPath) -> Option<AccessPath> {
         return None;
     }
     let mut ap = pointee.clone();
-    ap.segments.push(PathSegment::deref());
+    ap.push(PathSegment::deref());
     Some(ap)
 }
 
@@ -2163,7 +2163,7 @@ impl<'a> Context<'a> {
                 (path, elem, nested)
             };
             let mut elem_ap = base_ap.clone();
-            elem_ap.segments.extend(path);
+            elem_ap.extend(path);
             if value_node.kind() == "initializer_list" {
                 // One array level consumed; the element layout applies when `depth` reaches 0.
                 self.lower_initializer_list(
@@ -4609,7 +4609,7 @@ impl<'a> Context<'a> {
             // is terminated with the dereference, as the pcode frontend does.
             let mut ap = target.clone();
             if ap.segments.iter().all(PathSegment::is_offset) {
-                ap.segments.push(PathSegment::deref());
+                ap.push(PathSegment::deref());
             }
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
                 StatementKind::assign(ap, [val_exp.clone()]),
@@ -4739,7 +4739,7 @@ impl<'a> Context<'a> {
                 } else {
                     PathSegment::field(to_str(&field, source))
                 };
-                base.segments.push(seg);
+                base.push(seg);
                 Ok(base)
             }
             "subscript_expression" => {

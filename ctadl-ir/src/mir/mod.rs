@@ -833,6 +833,21 @@ impl AccessPath {
     pub fn is_pathless(&self) -> bool {
         self.segments.is_empty()
     }
+
+    /// Appends `seg`, keeping the path in normal form. A front end that builds a path a segment
+    /// at a time uses this rather than pushing onto `segments`, which would not normalize.
+    pub fn push(&mut self, seg: PathSegment) {
+        self.extend([seg]);
+    }
+
+    /// Appends `segs`, keeping the path in normal form.
+    pub fn extend(&mut self, segs: impl IntoIterator<Item = PathSegment>) {
+        let mut out: Vec<PathSegment> = std::mem::take(&mut self.segments).into_iter().collect();
+        for seg in segs {
+            path::push_normalized(&mut out, seg);
+        }
+        self.segments = out.into_iter().collect();
+    }
 }
 
 impl From<VariableRef> for AccessPath {

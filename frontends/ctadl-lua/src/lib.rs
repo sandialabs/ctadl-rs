@@ -1897,7 +1897,7 @@ impl<'a> Lowerer<'a> {
                     .map(|t| self.eval_lvalue(t, blk))
                     .unwrap_or_else(|| self.build_var("_"));
                 if let Some(field) = field {
-                    ap.segments.push(PathSegment::field(self.node_text(field)));
+                    ap.push(PathSegment::field(self.node_text(field)));
                 }
                 ap
             }
@@ -1908,7 +1908,7 @@ impl<'a> Lowerer<'a> {
                     .map(|t| self.eval_lvalue(t, blk))
                     .unwrap_or_else(|| self.build_var("_"));
                 if let Some(key) = key {
-                    ap.segments.push(self.key_segment(key, blk));
+                    ap.push(self.key_segment(key, blk));
                 }
                 ap
             }
@@ -2211,7 +2211,7 @@ impl<'a> Lowerer<'a> {
             if base == Some("table") && field == Some("insert") && arg_nodes.len() >= 2 {
                 let mut target = self.eval_lvalue(arg_nodes[0], blk);
                 let value = self.eval_expr(*arg_nodes.last().unwrap(), blk);
-                target.segments.push(PathSegment::field("[_elem_]"));
+                target.push(PathSegment::field("[_elem_]"));
                 self.assign_to(blk, target, value);
                 return Some(nil_exp());
             }
@@ -2228,7 +2228,7 @@ impl<'a> Lowerer<'a> {
             // variables (see `lower_for`).
             "ipairs" | "pairs" if !arg_nodes.is_empty() => {
                 let mut ap = self.eval_lvalue(arg_nodes[0], blk);
-                ap.segments.push(PathSegment::field("[_elem_]"));
+                ap.push(PathSegment::field("[_elem_]"));
                 Some(Exp::from(self.emit_loads(blk, ap)))
             }
             // `select(k, ...)`: returns the selected varargs; over-approximate by flowing every

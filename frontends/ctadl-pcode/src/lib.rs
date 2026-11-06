@@ -202,7 +202,7 @@ impl Context {
             {
                 return;
             }
-            dest.segments.push(PathSegment::deref());
+            dest.push(PathSegment::deref());
         }
         stmts.push(Statement::new_kind(StatementKind::assign(dest, [src])));
     }
@@ -1114,7 +1114,7 @@ impl Context {
             }
             (Some(c), None) => {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts, locals)?;
-                ap.segments.push(PathSegment::offset(c));
+                ap.push(PathSegment::offset(c));
                 let mut stmts = Vec::new();
                 let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
@@ -1122,7 +1122,7 @@ impl Context {
             }
             (None, Some(c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts, locals)?;
-                ap.segments.push(PathSegment::offset(c));
+                ap.push(PathSegment::offset(c));
                 let mut stmts = Vec::new();
                 let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
@@ -1205,7 +1205,7 @@ impl Context {
             }
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts, locals)?;
-                ap.segments.push(PathSegment::offset(base_c));
+                ap.push(PathSegment::offset(base_c));
                 let mut stmts = Vec::new();
                 let src = Exp::path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);
@@ -1300,7 +1300,7 @@ impl Context {
             // STORE <space>, <offset>, <value>
             let mut dest = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts, locals)?;
             // Store through the address's `deref` field.
-            dest.segments.push(PathSegment::deref());
+            dest.push(PathSegment::deref());
             let mut stmts = Vec::new();
             let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts, locals)?;
 
@@ -1446,7 +1446,7 @@ impl Context {
                 return Ok(AccessPath::new(var_ref, [PathSegment::offset(offset)]));
             } else if base_vn != *vnode_id {
                 let mut ap = self.get_lvalue(&base_vn, vnode_facts, locals)?;
-                ap.segments.push(PathSegment::offset(offset));
+                ap.push(PathSegment::offset(offset));
                 return Ok(ap);
             }
         }
