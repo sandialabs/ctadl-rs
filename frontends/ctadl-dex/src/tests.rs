@@ -498,10 +498,10 @@ fn arg_names(locals: &Locals, args: &[Exp]) -> Vec<String> {
         .collect()
 }
 
-/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls `invoke` on the handle
-/// in `v0`, passing `v1` and `v2`, like invoke-virtual.
+/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls whatever the handle in
+/// `v0` refers to: an indirect call through `v0`, passing `v1` and `v2` (R18).
 #[test]
-fn invoke_polymorphic_is_a_virtual_call() {
+fn invoke_polymorphic_is_an_indirect_call_through_the_handle() {
     use dex_reader::instructions::{Format45cc, MethodIdx, ProtoIdx};
     let parser = parser_with_method_handle_invoke();
     let inst = Instruction::InvokePolymorphic(Format45cc {
@@ -517,20 +517,11 @@ fn invoke_polymorphic_is_a_virtual_call() {
     let StatementKind::CallAssign { style, args, rets } = &stmt.kind else {
         panic!("expected a call, got {stmt:?}");
     };
-    let CallStyle::JavaCall {
-        receiver,
-        cls,
-        simple_name,
-        dispatch,
-        ..
-    } = style
-    else {
-        panic!("expected a Java call, got {style:?}");
+    let CallStyle::FuncPtrCall { callee, .. } = style else {
+        panic!("expected an indirect call, got {style:?}");
     };
-    assert_eq!(local_name(&locals, receiver), "v0");
-    assert_eq!(&**cls, "Ljava/lang/invoke/MethodHandle;");
-    assert_eq!(&**simple_name, "invoke");
-    assert_eq!(*dispatch, JavaDispatch::Virtual);
+    assert!(callee.segments.is_empty(), "{callee}");
+    assert_eq!(local_name(&locals, &callee.base), "v0");
     assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
     assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
 }

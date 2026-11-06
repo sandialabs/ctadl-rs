@@ -11,7 +11,8 @@ field is that field of `globals`. An array's elements are the one field `[]`, an
 field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
 invokes a known method is a function reference to that method (`Context::method_handle_exp`
-says which kinds do). An exception is the last result of every call and of every return;
+says which kinds do), and `invoke-polymorphic` of `MethodHandle.invoke` or `invokeExact` is an
+indirect call through the handle, so the reference resolves it. An exception is the last result of every call and of every return;
 `move-exception` reads it, and an exception a callee throws that no handler in the caller
 catches is dropped rather than returned. An instruction may write a parameter register
 directly: that assigns its `Param` variable, which SSA versions; version 0 is the incoming
@@ -746,8 +747,9 @@ impl Context {
             Instruction::InvokeDirectRange(fmt) => (fmt.idx, None),
             Instruction::InvokeStaticRange(fmt) => (fmt.idx, None),
             Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
-            // invoke-polymorphic calls a signature-polymorphic method (`MethodHandle.invoke`,
-            // `invokeExact`, ...) on the handle in its first argument, like invoke-virtual.
+            // invoke-polymorphic calls a signature-polymorphic method on the receiver in its
+            // first argument. `MethodHandle.invoke` and `invokeExact` become an indirect call
+            // below; any other (`VarHandle`'s) is a virtual call.
             Instruction::InvokePolymorphic(fmt) => (fmt.method_id, Some(JavaDispatch::Virtual)),
             Instruction::InvokePolymorphicRange(fmt) => {
                 (fmt.method_id, Some(JavaDispatch::Virtual))
@@ -758,7 +760,6 @@ impl Context {
 
         // Resolve the callee name (human‑readable signature).
         let mi = parser.get_method(method_idx.0 as usize)?;
-        self.call_to.insert(*mi);
         let (cls, simple_name, descriptor) = parser.method_triple(mi).ok()?;
         let method_id = parser.method_signature(mi).ok()?;
 
@@ -767,6 +768,23 @@ impl Context {
             .iter()
             .map(|reg| AccessPath::from(reg_to_var(code, *reg, locals)).into())
             .collect();
+
+        // Invoking a method handle calls whatever the handle refers to: an indirect call
+        // through the handle, whose function reference resolves it (S11), with the remaining
+        // arguments passed straight through.
+        if matches!(
+            inst,
+            Instruction::InvokePolymorphic(_) | Instruction::InvokePolymorphicRange(_)
+        ) && ctadl_ir::mir::call::is_method_handle_invoke(&cls, &simple_name)
+        {
+            let callee = args[0].access_path()?.clone();
+            let style = CallStyle::FuncPtrCall {
+                callee,
+                signature: None,
+            };
+            return Some(self.call_assign(style, args.into_iter().skip(1).collect(), locals));
+        }
+        self.call_to.insert(*mi);
         let style = match dispatch {
             None => CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit([method_id].into_iter().collect()),

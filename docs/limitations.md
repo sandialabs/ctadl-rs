@@ -14,3 +14,10 @@
   every call, but the JVM and Dex front ends do not pass a callee's escaping exception on to the
   caller's handler, so taint carried by an exception thrown in a callee and caught in a caller is
   lost, a false negative. The CIL front end accumulates them (`excout`) and is not affected.
+- **A Java method handle resolves only to the method its constant names.** `mh.invoke(..)` and
+  `mh.invokeExact(..)` call through the handle's function reference, which only a method-handle
+  constant (`ldc`, `const-method-handle`) supplies. A handle built at run time
+  (`lookup.findVirtual(..)`), adapted (`bindTo`, `asType`) or invoked with
+  `invokeWithArguments` calls nothing, and a virtual handle reaches the method it names, not an
+  override. Arguments are passed by position, so a call that relies on `invoke`'s boxing or
+  varargs adaptation lines up wrongly. These are false negatives.

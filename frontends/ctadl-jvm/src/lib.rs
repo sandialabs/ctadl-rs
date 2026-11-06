@@ -8,7 +8,9 @@ Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no l
 field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
 bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
 operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
-reference to that method (`Context::method_handle_exp` says which kinds do). An exception is the last result
+reference to that method (`Context::method_handle_exp` says which kinds do), and
+`MethodHandle.invoke` or `invokeExact` is an indirect call through the handle, so the reference
+resolves it. An exception is the last result
 of every call and of every return; a handler reads it, and an exception a callee throws that no
 handler in the caller catches is dropped rather than returned. A store to a parameter's local
 slot assigns its `Param` variable, which SSA versions; version 0 is the incoming value.
@@ -24,7 +26,7 @@ use source_info::{ArtifactKey, SpanLen};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
-    JavaSimpleName, VirtualMethodTable,
+    JavaSimpleName, VirtualMethodTable, is_method_handle_invoke,
 };
 use ctadl_ir::*;
 
@@ -623,6 +625,23 @@ impl Context {
                             "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
+                        // Invoking a method handle calls whatever the handle refers to: an
+                        // indirect call through the handle, whose function reference resolves
+                        // it (S11), with the arguments passed straight through.
+                        if matches!(call.call_kind, CallKind::Virtual)
+                            && is_method_handle_invoke(&class_name, method_name)
+                        {
+                            return Some(self.call_statement(
+                                CallStyle::FuncPtrCall {
+                                    callee: AccessPath::from(
+                                        self.convert_location_to_var_ref(recv, locals),
+                                    ),
+                                    signature: None,
+                                },
+                                call,
+                                locals,
+                            ));
+                        }
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
@@ -651,7 +670,17 @@ impl Context {
                 }
             }
         };
+        Some(self.call_statement(style, call, locals))
+    }
 
+    /// The call `style` with `call`'s arguments, returning into the result and exception
+    /// temporaries.
+    fn call_statement(
+        &mut self,
+        style: CallStyle,
+        call: &CallInfo,
+        locals: &mut Locals,
+    ) -> Statement {
         let args: ctadl_ir::ThinVec<Exp> = call
             .arguments
             .iter()
@@ -663,11 +692,11 @@ impl Context {
         self.call_result = call.return_value.as_ref().map(|_| retval.clone());
         self.catch_result = Some(throwval.clone());
 
-        Some(Statement::new_kind(StatementKind::CallAssign {
+        Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: ctadl_ir::thin_vec![retval, throwval],
             args,
-        }))
+        })
     }
 
     fn ret(locals: &mut Locals) -> VariableRef {

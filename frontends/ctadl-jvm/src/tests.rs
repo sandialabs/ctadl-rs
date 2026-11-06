@@ -321,3 +321,66 @@ fn method_handle_constant_is_a_function_reference() {
         );
     }
 }
+
+/// `mh.invokeExact(x)` calls whatever the handle `mh` refers to: an indirect call through the
+/// handle, passing `x` (R18), so a handle constant resolves it.
+#[test]
+fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
+    use ctadl_ir::mir::StatementKind;
+    use ctadl_ir::mir::call::CallStyle;
+    fn utf8(s: &str) -> Vec<u8> {
+        let mut out = vec![1];
+        out.extend((s.len() as u16).to_be_bytes());
+        out.extend(s.as_bytes());
+        out
+    }
+    let pool: [&[u8]; 9] = [
+        &[12, 0, 6, 0, 7],                      // 8: NameAndType mh(I)V
+        &[10, 0, 2, 0, 8],                      // 9: Methodref Demo.mh(I)V
+        &[15, 6, 0, 9],                         // 10: MethodHandle REF_invokeStatic #9
+        &utf8("java/lang/invoke/MethodHandle"), // 11
+        &[7, 0, 11],                            // 12: Class MethodHandle
+        &utf8("invokeExact"),                   // 13
+        &utf8("(I)V"),                          // 14
+        &[12, 0, 13, 0, 14],                    // 15: NameAndType invokeExact(I)V
+        &[10, 0, 12, 0, 15],                    // 16: Methodref MethodHandle.invokeExact
+    ];
+    // ldc #10; iload_0; invokevirtual #16; return
+    let code = [0x12, 0x0a, 0x1a, 0xb6, 0x00, 0x10, 0xb1];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("Demo.class");
+    std::fs::write(&path, class_with_pool(&pool, &[("mh", "(I)V", &code)])).expect("write class");
+
+    let info = import_class(&path).expect("the class imports");
+    let f = info
+        .program
+        .functions
+        .functions
+        .iter()
+        .find(|f| f.name == "LDemo;->mh(I)V")
+        .expect("mh is defined");
+    let calls: Vec<_> = f
+        .blocks
+        .iter()
+        .flat_map(|bb| bb.statements.iter())
+        .filter_map(|s| match &s.kind {
+            StatementKind::CallAssign { style, args, .. } => Some((style, args)),
+            _ => None,
+        })
+        .collect();
+    let [(CallStyle::FuncPtrCall { callee, .. }, args)] = calls[..] else {
+        panic!("expected one indirect call: {calls:?}");
+    };
+    assert!(callee.segments.is_empty(), "{callee}");
+    assert_eq!(args.len(), 1, "the handle is not an argument: {args:?}");
+    let handle = f
+        .locals
+        .name(callee.base.variable.local().expect("a local"));
+    let flows = copies(&info, "->mh(I)V");
+    assert!(
+        flows
+            .iter()
+            .any(|(dest, sources)| dest == handle && sources == &["ptr<LDemo;->mh(I)V>"]),
+        "the callee holds the handle's function reference: {flows:?}"
+    );
+}

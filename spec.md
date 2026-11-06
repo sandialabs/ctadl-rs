@@ -405,7 +405,8 @@ Per front end, what changes; everything else stays.
   docs/limitations.md. The same-block `addr_alias` must-alias table is a front-end
   precision device and is kept.
 - **JVM / Dex.** Arithmetic becomes value-only; `MethodHandle` constants with a known method
-  become `ptr<F>`. Dex's direct
+  become `ptr<F>`, and `MethodHandle.invoke`/`invokeExact` (Dex `invoke-polymorphic`) is an
+  indirect call through the handle, which that reference resolves. Dex's direct
   assignments to `Param` variables are fine (SSA versions them; version 0 is the incoming
   value).
 - **CIL.** Arithmetic becomes value-only; `excout` is already R21. Value-type copies remain
