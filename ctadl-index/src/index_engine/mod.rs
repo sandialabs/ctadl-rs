@@ -1775,8 +1775,8 @@ ascent_source! {
     // (`alias_of_formal`) and `v1.p1` is a program store destination (`prog_store`); S8 moves
     // them along every assignment. `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a
     // temporary codegen's load-chain composition anchors on `p`, and `y.f = p; y.f.g = a` never
-    // reaches `p.g` (the "backward alias rule" row of the register, loses). It also moves a
-    // store at `#value`, which S8 keeps forward only.
+    // reaches `p.g` (the "backward alias rule" row of the register, loses). A store at `#value`
+    // stays put, as S8 says.
     // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
     // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
     // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose
@@ -1786,6 +1786,8 @@ ascent_source! {
         locals(infunc, v1, p1, n2, bp, lc),
         if lc.is_always(),
         if !p1.is_empty(),
+        // `#value` moves forward only (S8): a store at `v1.#value` is not shared with v1's alias.
+        if !p1.is_value(),
         // v1.p1 is actually stored through in the program (not just reachable): membership
         // probe by (func,var,path). Restricts summaries to genuine aliased writes.
         prog_store(infunc, v1, p1),

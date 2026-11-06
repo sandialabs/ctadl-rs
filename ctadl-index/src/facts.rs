@@ -482,6 +482,14 @@ impl Path {
         }
     }
 
+    /// True for the path `#value` itself, the suffix that, like the empty one, moves forward only
+    /// (S8 of `docs/ir.md`).
+    #[inline]
+    pub fn is_value(&self) -> bool {
+        self.uncons()
+            .is_some_and(|(head, tail)| head.is_value() && tail.is_empty())
+    }
+
     /// The first component. `None` for the empty path.
     #[inline]
     pub fn head(&self) -> Option<&'static mir::PathSegment> {
@@ -1636,7 +1644,10 @@ pub fn isin(formal: i64) -> bool {
     formal == -3 || formal >= 0
 }
 
-/// Returns true if the formal flows output
+/// Returns true if the formal flows output: whether a flow into `path` of the formal reaches the
+/// caller's actual. For `SharedFields` that is S8 of `docs/ir.md`: the empty suffix and the
+/// suffix `#value` move forward only, so neither a flow into the whole parameter nor one into its
+/// value reaches the caller.
 #[inline(always)]
 pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -> bool {
     let i: i16 = **formal_index;
@@ -1644,7 +1655,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
         match formal_type {
             FormalType::Copied => false,
             FormalType::Shared => true,
-            FormalType::SharedFields => !path.is_empty(),
+            FormalType::SharedFields => !path.is_empty() && !path.is_value(),
         }
     } else {
         true

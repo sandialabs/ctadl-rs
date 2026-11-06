@@ -407,7 +407,10 @@ fn covered(rows: &[Row], (src, dst): &Flow) -> bool {
         let into_value = r.src.0 == src.0
             && r.dst.0 == dst.0
             && r.src.1 == src.1
-            && r.dst.1.split_last().is_some_and(|(last, init)| last == value && init == dst.1.as_slice());
+            && r.dst
+                .1
+                .split_last()
+                .is_some_and(|(last, init)| last == value && init == dst.1.as_slice());
         suffix_rides || into_value
     })
 }

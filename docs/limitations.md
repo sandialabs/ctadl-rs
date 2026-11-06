@@ -10,3 +10,7 @@
 - **A write through the address of a C global is lost.** A global `g` is `$globals.g` in every
   unit and is not moved behind `deref` when its address is taken, so `&g` is a copy of it and a
   callee's `p->f = v` through `init(&g)` is not observed at `g.f`, a false negative.
+- **JVM and Dex drop an exception a callee does not catch.** An exception is the last result of
+  every call, but the JVM and Dex front ends do not pass a callee's escaping exception on to the
+  caller's handler, so taint carried by an exception thrown in a callee and caught in a caller is
+  lost, a false negative. The CIL front end accumulates them (`excout`) and is not affected.
