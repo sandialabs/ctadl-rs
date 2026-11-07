@@ -560,7 +560,7 @@ fn resolved_call_covers_both_dispatch_arms() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Globals (G2, G5, G6 of `docs/ir.md`; R14-R20 of the compositional-globals spec). A C global
+// Globals (G2, G5, G6 of `docs/ir.md`). A C global
 // `g` is the global `$g`, whose storage is `$g.deref`.
 // ---------------------------------------------------------------------------------------------
 
@@ -592,7 +592,7 @@ mod globals {
             .collect()
     }
 
-    /// R15, R16: a flow between two global paths is no function's summary row, however many
+    /// A flow between two global paths is no function's summary row, however many
     /// functions call the one that makes it; it is an edge of the global frame, and is in
     /// `global_flow`.
     #[test]
@@ -632,7 +632,7 @@ mod globals {
         }
     }
 
-    /// R14, R15: a flow from a formal into a global, and from a global to the return, is a
+    /// A flow from a formal into a global, and from a global to the return, is a
     /// summary row rooted at the global, and a caller passing its own formal inherits the
     /// first.
     #[test]
@@ -665,9 +665,9 @@ mod globals {
         );
     }
 
-    /// R17, G6: a call target stored at a global path in one function resolves an indirect call
+    /// G6: a call target stored at a global path in one function resolves an indirect call
     /// through that path in a function no one calls, unconditionally; and the same when the
-    /// target crosses a program-level edge first (R16).
+    /// target crosses a program-level edge first.
     #[test]
     fn a_target_stored_to_a_global_resolves_a_call_in_a_function_with_no_caller() {
         let (_, si, result) = index_c(
@@ -691,7 +691,7 @@ mod globals {
         }
     }
 
-    /// R17's shape: labels come down by the paths a function reads. A function that reads
+    /// Labels come down by the paths a function reads. A function that reads
     /// `$t.deref.a` gets the label stored there; one that reads only `$t.deref.b` gets nothing;
     /// one that reads the whole cell gets the label at its extension and resolves a call
     /// through a copy of it.
@@ -730,7 +730,7 @@ mod globals {
         );
     }
 
-    /// R18: a flow between two globals that holds only under a decision is a conditional
+    /// A flow between two globals that holds only under a decision is a conditional
     /// summary row of the function that makes it, applied by rule 3.2 at the caller whose call
     /// establishes the decision, where it becomes a frame edge. Without that caller there is no
     /// frame edge.
@@ -765,7 +765,7 @@ mod globals {
         );
     }
 
-    /// R19: a store through a whole copy of a global, `l = &g; l->f = v`, reaches the global's
+    /// A store through a whole copy of a global, `l = &g; l->f = v`, reaches the global's
     /// path, as a store through a copy of a formal does.
     #[test]
     fn a_store_through_a_copy_of_a_global_reaches_the_global() {
@@ -790,7 +790,7 @@ mod globals {
         );
     }
 
-    /// G3, R22: two imports that declare one name declare one global, the same vertex in both,
+    /// G3: two imports that declare one name declare one global, the same vertex in both,
     /// with a `globals` row per import; a name only one declares is its alone.
     #[test]
     fn two_imports_declaring_one_name_share_one_global() {
@@ -861,7 +861,7 @@ mod globals {
         );
     }
 
-    /// R20: a library indexed alone contributes its summaries and its program-level flows to a
+    /// A library indexed alone contributes its summaries and its program-level flows to a
     /// consumer, by name: a flow in through one library function, held in a library global,
     /// moved to another by a third, and out through a fourth, is found in the consumer.
     #[test]

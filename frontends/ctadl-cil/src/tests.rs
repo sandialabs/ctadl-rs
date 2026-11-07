@@ -159,7 +159,7 @@ fn value_only_arithmetic() {
 }
 
 /// A static field's class is declared as a global once per program, however many statements
-/// name it (R10): the emitter interns it by name.
+/// name it: the emitter interns it by name.
 #[test]
 fn an_emitter_declares_a_class_global_once() {
     use crate::method::Emitter;

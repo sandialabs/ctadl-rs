@@ -5,11 +5,11 @@ touch the store, choose a front end, or run the engine. Reading `.class` and `.j
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout. A class
-that owns a static field is a global named by the class, `$Lcls;` (R10 of the compositional-
-globals spec), and a static field is that global's field named by the field's name alone:
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone:
 `putstatic` is the store `$Lcls;.name = v`, `getstatic` the load `x = $Lcls;.name`. The owner is
-the class the constant pool names. A class referenced from several imports is one global, since
-a global is its name. An array's elements are the one field `[]`. Arithmetic,
+the class the constant pool names. A class referenced from several imports is one global
+(G3). An array's elements are the one field `[]`. Arithmetic,
 bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
 operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
 reference to that method (`Context::method_handle_exp` says which kinds do), and
@@ -134,7 +134,7 @@ struct Context {
     /// program at [`Context::finish`].
     globals: mir::Globals,
     /// Each class this import defines, as its global is named, with the class file it is in and
-    /// the offset of its header there: where the global is declared (R27). Located in
+    /// the offset of its header there: where the global is declared. Located in
     /// [`Context::finish`], once every class has been lowered.
     class_headers: Vec<(String, ArtifactKey, u32)>,
 }
@@ -762,8 +762,7 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    /// The global that owns static field `f`, its class `Lcls;`, and the field below it: the
-    /// field's name alone, since the class is the global.
+    /// The class global `$Lcls;` and field `name` of the static field `f`.
     fn static_field(&mut self, f: &jvm_reader::flow::FieldRef) -> (VariableRef, mir::PathSegment) {
         let class = format!("L{};", f.class_name);
         let global = self.globals.declare(&class, None);

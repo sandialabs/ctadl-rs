@@ -477,7 +477,7 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
-    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`]: each is the vertex of its name.
+    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`].
     globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
@@ -913,7 +913,7 @@ impl Visitor for CodegenVisitor<'_> {
                         // composes onto it, so a later read or store through `dest` composes
                         // too.
                         let cap = if src.is_pathless() {
-                            self.capture_of(&src.base)
+                            self.cap_path.get(&src.base).cloned()
                         } else {
                             Some(self.composed(src))
                         };
@@ -1261,7 +1261,7 @@ impl Visitor for CodegenVisitor<'_> {
             // Write each parameter back to its formal at its entry version, so a store through
             // it inside the function reaches the formal path the summary reads. The entry
             // version is the one that reaches the return: rebinding a parameter does not reach
-            // the caller (see `ctadl_ir::ssa`). A global needs no write-back (R3): SSA never
+            // the caller (see `ctadl_ir::ssa`). A global needs no write-back: SSA never
             // versions it, so a store to it already lands on its vertex.
             let formals = (0..self.num_params).map(|i| {
                 let p = VariableRef::new_parameter(ParameterIdx::new(i));
@@ -1327,7 +1327,9 @@ impl CodegenVisitor<'_> {
     /// when the base is a load-chain temporary, else `(base, s)`.
     fn composed(&self, ap: &AccessPath) -> (VariableRef, fx::Path) {
         let (root, base_path) = self
-            .capture_of(&ap.base)
+            .cap_path
+            .get(&ap.base)
+            .cloned()
             .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
         let path =
             fx::Path::from_accesses(base_path.iter().cloned().chain(ap.segments.iter().cloned()));
@@ -1343,7 +1345,9 @@ impl CodegenVisitor<'_> {
     /// access path or as a chain.
     fn insert_chain_paths(&mut self, ap: &AccessPath) {
         let (_, base_path) = self
-            .capture_of(&ap.base)
+            .cap_path
+            .get(&ap.base)
+            .cloned()
             .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
         let mut run: Vec<PathSegment> = Vec::new();
         for (i, seg) in ap.segments.iter().enumerate() {
@@ -1364,12 +1368,6 @@ impl CodegenVisitor<'_> {
         self.paths_dedup.insert((fx::Path::from_accesses(run),));
     }
 
-    /// What `v` stands for as the base of an access path: a load-chain temporary's capture
-    /// ([`Self::cap_path`]).
-    fn capture_of(&self, v: &VariableRef) -> Option<(VariableRef, fx::Path)> {
-        self.cap_path.get(v).cloned()
-    }
-
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
         match v.variable {
@@ -1378,8 +1376,8 @@ impl CodegenVisitor<'_> {
         }
     }
 
-    /// Takes the program's globals: each is the vertex of its name (G3), and each declaration is
-    /// a row of [`IndexFacts::globals`] for the import being codegen'd (R22).
+    /// Takes the program's globals table, and records each declaration as a row of
+    /// [`IndexFacts::globals`] for the current import.
     fn declare_globals(&mut self, globals: &Globals) {
         let import = self.source_info.current_import();
         self.globals = globals

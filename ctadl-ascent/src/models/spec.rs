@@ -414,7 +414,7 @@ pub struct ResolvedBridge {
     pub from: facts::Str,
     /// Side B: the implementation side.
     pub to: facts::Str,
-    /// The port map, in written order. Nothing is added for globals (G7).
+    /// The port map, in written order.
     pub ports: Vec<PortPair>,
 }
 

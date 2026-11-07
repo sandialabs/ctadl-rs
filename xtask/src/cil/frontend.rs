@@ -140,8 +140,8 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     })
 }
 
-/// Checks that every global the import located is declared at its class's `TypeDef` row
-/// (R27): a span of the assembly as long as a row, at a row of the type the global names, whose
+/// Checks that every global the import located is declared at its class's `TypeDef` row:
+/// a span of the assembly as long as a row, at a row of the type the global names, whose
 /// first word is that type's flags.
 fn check_global_spans(
     path: &Path,

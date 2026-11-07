@@ -1,6 +1,6 @@
-// G6, R17: a target label stored to a global in one function resolves an indirect call through
+// G6: a target label stored to a global in one function resolves an indirect call through
 // the global in another, with no call chain between them; and the same through a flow from one
-// global to another (a program-level edge, R16).
+// global to another (a program-level edge).
 var g;
 var h;
 

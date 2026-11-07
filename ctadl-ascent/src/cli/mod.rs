@@ -1612,16 +1612,9 @@ fn report_bridged_summaries(
     }
 }
 
-/// Maps a previously indexed project's summaries into the current project.
-///
-/// A summary is kept only when its function is in the current project's `IdMap` by name.
-/// `mapped_per_function` counts the summaries kept per function in the current project.
-///
-/// Only unconditional `summary` rows are mapped; conditional ones and `critical_summary` are
-/// not.
 /// Says how many globals each import declares, and which names more than one import declares:
 /// a global is its name (G3), so those are one variable, and an unintended merge across
-/// programs shows here (R23).
+/// programs shows here.
 fn report_globals(facts: &IndexFacts, source_info: &IndexSourceInfo) {
     let (per_import, shared) = facts.global_declarations();
     let name = |id: facts::ImportId| source_info.import_name(id).unwrap_or("?").to_string();
@@ -1646,6 +1639,13 @@ fn report_globals(facts: &IndexFacts, source_info: &IndexSourceInfo) {
     }
 }
 
+/// Maps a previously indexed project's summaries into the current project.
+///
+/// A summary is kept only when its function is in the current project's `IdMap` by name.
+/// `mapped_per_function` counts the summaries kept per function in the current project.
+///
+/// Only unconditional `summary` rows are mapped; conditional ones and `critical_summary` are
+/// not.
 fn load_and_map_summaries(
     summary_project: &AnalysisProject,
     current_facts: &mut IndexFacts,
@@ -1705,7 +1705,7 @@ fn load_and_map_summaries(
     );
 
     // A global is its name (G3), so the rows rooted at a global above need no mapping, and the
-    // summary project's program-level flows between globals hold here as they are (R20).
+    // summary project's program-level flows between globals hold here as they are.
     let global_flow = crate::facts::schema::global_flow::try_load(&summary_index_path)
         .err_context(|| {
             format!(

@@ -7,10 +7,10 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 handled one level up, in `ctadl-frontends`.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout. A class
-that owns a static field is a global named by the class, `$Lcls;` (R10 of the
-compositional-globals spec), and a static field is that global's field named by the field's name
-alone: `sput` is the store `$Lcls;.name = v`, `sget` the load `x = $Lcls;.name`. A class
-referenced from several dex files or splits is one global, since a global is its name. An array's elements are the one field `[]`, and its length the
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone: `sput` is the store `$Lcls;.name = v`, `sget`
+the load `x = $Lcls;.name`. A class
+referenced from several dex files or splits is one global (G3). An array's elements are the one field `[]`, and its length the
 field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
 invokes a known method is a function reference to that method (`Context::method_handle_exp`
@@ -181,7 +181,7 @@ struct Context {
     /// program at [`Context::finish`].
     globals: ctadl_ir::mir::Globals,
     /// Each class this import defines, as its global is named, with the dex file it is in and
-    /// the offset of its `class_def_item` there: where the global is declared (R27). Located
+    /// the offset of its `class_def_item` there: where the global is declared. Located
     /// in [`Context::finish`], once every class has been lowered.
     class_defs: Vec<(String, ArtifactKey, u32)>,
 }
@@ -196,8 +196,8 @@ struct EnclosingClass {
 }
 
 impl Context {
-    /// The global that owns the static field `pretty` names (`Lcls;->name:type`), its class
-    /// `Lcls;`, and the field below it: the field's name alone, since the class is the global.
+    /// The class global `$Lcls;` and field `name` of the static field `pretty` names
+    /// (`Lcls;->name:type`).
     fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::mir::PathSegment) {
         let (class, rest) = pretty
             .split_once("->")

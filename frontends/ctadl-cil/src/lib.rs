@@ -40,7 +40,7 @@ Every lowering choice the IR does not force is a policy, made in one place:
 
 Conventions (S19). A field is the symbol `<cls::name>` and an array element the field
 `[]`, whatever the index; `length` is the array length. A class that owns a static field is a
-global named by the class (`$[asm]Namespace.Type`; R10 of the compositional-globals spec), and
+global named by the class (`$[asm]Namespace.Type`), and
 a static field is that global's field named by the field's name alone, `$[asm]Namespace.Type.f`;
 a field whose owner does not decode is a field of the global `[?]?` named by its token. A managed
 pointer to a static field resolves to the same path. The step from a `ref`, `out`, `in`, a
@@ -416,11 +416,11 @@ pub struct Context {
     spans: SourceInfoBuilder,
     defined: HashMap<String, FunctionIdx>,
     out: Collected,
-    /// The program's globals: one per class that owns a static field (R10 of the
-    /// compositional-globals spec). Moved into the program when it is finished.
+    /// The program's globals: one per class that owns a static field. Moved into the program when
+    /// it is finished.
     globals: ctadl_ir::mir::Globals,
     /// Each class the assemblies define, as its global is named, with the assembly it is in and
-    /// the file offset and size of its `TypeDef` row there: where the global is declared (R27).
+    /// the file offset and size of its `TypeDef` row there: where the global is declared.
     /// Located when the program is finished, once every class has been lowered.
     type_defs: Vec<(String, ArtifactKey, u32, u32)>,
 }

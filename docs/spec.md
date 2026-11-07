@@ -159,19 +159,13 @@ separately.
   and one-level concatenations of the two, closed under [ir.md](ir.md#normal-form)'s normal form
   and with `p.#value` for every member. This makes the fixpoint terminate (`x = x.next`
   would otherwise build `x.next.next...` forever) and is the main source of unsoundness.
-- **Summaries.** Local flow between paths rooted at two formals (the return included), or at a
-  formal and a global, becomes a summary, instantiated at each call site as assignments between
-  the actuals by prefix substitution; a global path is left as it is, since it already names the
-  shared variable. Calls and returns stay matched, and cost grows with the program, not with
+- **Summaries.** Local flow between paths rooted at a function's formals, its return and the
+  globals it reaches becomes a summary, instantiated at each call site by substituting actuals
+  for formals. Calls and returns stay matched, and cost grows with the program, not with
   calling contexts.
-- **Globals** are shared by every instance of every function ([ir.md](ir.md#globals), G2), so
-  nothing is passed for one at a call (G5). A global is a root of local reachability like a
-  formal, in every function that mentions it. A flow between two global paths holds in every
-  instance and is no function's summary (G6): it is an edge of one distinguished frame, the
-  *global frame*, where the same field rules close it, and a call-target or string label at a
-  global path is pooled there and handed to every function at the global paths it reads. A
-  query enters a global from a store in any function and leaves it into a load in any other,
-  with no call between them, and the hop resets call/return matching.
+- **Globals** are shared by every function ([ir.md](ir.md#globals)) and are analyzed
+  compositionally too: a flow between two globals holds wherever it occurs, so it is computed
+  once for the program, not carried in the summary of every function that reaches it.
 - **Call resolution.** Call targets (receiver types, function pointers) flow as data, and a
   target reaching an indirect call resolves it, so call graph and data flow share one
   fixpoint. Virtual calls go through a ladder: super calls, dispatch models, class hierarchy
@@ -181,13 +175,13 @@ separately.
   callers that establish it. The summary is still computed once, without knowing the callers,
   and context sensitivity appears only where needed.
 - **Aliasing** is [ir.md](ir.md#assignment)'s backward rule. The index implements it as a local
-  Andersen-style analysis of each formal's copy aliases, so a store through an alias still
-  yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`), and the query as a backward hop
-  along whole-variable copies; both are restrictions or widenings of the rule recorded in the
-  register.
+  Andersen-style analysis of each formal's and global's copy aliases, so a store through an
+  alias still yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`), and the query as a
+  backward hop along whole-variable copies; both are restrictions or widenings of the rule
+  recorded in the register.
 - **Queries** meet forward from sources and backward from sinks. A reported path leaves
   functions through returns before entering them through calls, so it respects call/return
-  matching.
+  matching, except across a global, which connects any two functions.
 - **Cross-language.** The JNI bridge and Android intent handling (`ctadl-ascent/src/languages`)
   add call edges between a project's programs.
 
@@ -210,15 +204,18 @@ time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
 ### 4.4 Source info
 
-Each IR instruction carries a span id into its import's source-info tables, which map it to
-a byte range in a file of an original artifact, recorded by path and content hash. Front ends
+Each IR instruction carries a span id into its import's source-info tables, which map it to a
+byte range in a file of an original artifact, recorded by path and content hash. Front ends
 record spans as they lower, and IR passes carry them along. The formatter resolves spans to
 SARIF locations. For a text file it rereads the file, checks its hash, and computes line and
-column. For a binary it uses the absolute and section-relative address. Every location also
-gets its enclosing function as a logical location. A text file that is missing, or whose hash
-no longer matches, falls back to a byte offset and a notification. Each location points to a
-SARIF artifact entry carrying the content hash, so a consumer can check that the artifact in
-front of them is the one that was analyzed.
+column. For a binary it uses the absolute and section-relative address; a pcode span records the
+address as an offset from the image base. Every location also gets its enclosing function as a
+logical location. A global's declaration has a span too (a C declarator, a class's header,
+`class_def_item` or `TypeDef` row, a pcode image), and a source or sink on a global is located
+there, with the global as its logical location. A text file that is missing, or whose hash no
+longer matches, falls back to a byte offset and a notification. Each location points to a SARIF
+artifact entry carrying the content hash, so a consumer can check that the artifact in front of
+them is the one that was analyzed.
 
 ### 4.5 Output
 

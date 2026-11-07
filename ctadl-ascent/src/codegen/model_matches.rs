@@ -163,7 +163,7 @@ fn codegen_propagations(
         let src_roots = expand_port(&prop.src, func_id, arg_arity);
         // Ensure formal_param exists for the formals used in summaries: `locals` is seeded
         // from formals and the summary rule joins on them, so without these rows a modelled
-        // function is silently lost. A global is no formal: it is a root by itself (G7).
+        // function is silently lost. A global is no formal: it is a root by itself (S15).
         for root in dst_roots.iter().chain(&src_roots) {
             if let Some(i) = root.as_formal() {
                 facts.formal_param.push((

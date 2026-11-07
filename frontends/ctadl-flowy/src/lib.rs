@@ -96,9 +96,9 @@ Global variables are created at the top level with the `var` syntax:
 var x;
 ```
 
-This declares the global `$x` (G1 of the compositional-globals spec), and any function in the
-file referring to `x` accesses that variable, transparently: a global is never rebound (G4), so
-its storage is the locations below it, written as such. `x.deref = p` and `x.f = p` are stores,
+This declares the global `$x` (G1 of `docs/ir.md`), and any function in the
+file referring to `x` accesses that variable. A global is never rebound (G4), so a function reads
+and writes the locations below it: `x.deref = p` and `x.f = p` are stores,
 `p = x.f` is a load, and `p = x` copies the global itself (its address, in C's terms). A
 whole-variable write, `x = p` or `x = f(p)`, is an error. A where-clause port on a global names
 it the same way (`x.deref`). There is no way to have a local variable and a global variable of
@@ -616,9 +616,10 @@ impl FlowyCtx {
     ) -> Result<(), FlowyError> {
         // Function we're building
         let function = self.program.new_function();
-        let mut env: Env = Default::default();
-        env.globals
-            .extend(self.toplevel_vars.iter().map(|(k, v)| (k.clone(), *v)));
+        let mut env = Env {
+            globals: self.toplevel_vars.clone(),
+            ..Default::default()
+        };
 
         let name = def.name.name;
         if ["source", "sink", "errsource", "errsink"].contains(&name) {
@@ -975,8 +976,7 @@ fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>
         .collect()
 }
 
-/// A global is never rebound (G4): its storage is the locations below it, so a write to the whole
-/// variable is an error that says where to write instead.
+/// Rejects a write to a whole global (G4), with an error that says where to write instead.
 fn reject_whole_global_write(dest: &AccessPath, pos: Pos) -> Result<(), FlowyError> {
     if dest.is_pathless() && dest.base.variable.is_global() {
         return Err(compile_error(
@@ -1291,7 +1291,7 @@ impl Counter {
 mod global_tests {
     use super::*;
 
-    /// A global is declared at its `var` (R27), and a statement spans its own text.
+    /// A global is declared at its `var`, and a statement spans its own text.
     #[test]
     fn a_global_is_declared_at_its_var() {
         let src = "// a global\nvar g;\ndef F() {\ns:\n  a = g.deref;\n  return;\n}\n";

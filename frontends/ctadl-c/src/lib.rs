@@ -58,7 +58,7 @@
 //!
 //! ## Globals
 //!
-//! A C global `g` is the global variable `$g` (R8 of the compositional-globals spec), and its
+//! A C global `g` is the global variable `$g`, and its
 //! storage is the cell `$g.deref`, the convention address-taken locals use (`in_cell`), for
 //! every global, since another unit may take its address. So `g = v` is the store
 //! `$g.deref = v`, `g.f` is `$g.deref.f`, and `&g` is the copy `$g`: a write through `&g`
@@ -1211,7 +1211,7 @@ fn lower_units(
     })
 }
 
-/// Gives each global of `program` a unit defines its declaration's span in that unit (R27), under
+/// Gives each global of `program` a unit defines its declaration's span in that unit, under
 /// the name `global_renames` gives it there; the first unit to define it wins. A global no unit
 /// defines (one declared only `extern`, or a literal address) keeps no span.
 fn locate_globals(
@@ -1259,21 +1259,19 @@ fn static_global_renames(
         .iter()
         .enumerate()
         .map(|(index, registry)| {
+            let unit = match &units[index].path {
+                Some(file) => std::path::Path::new(file)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(file.as_str())
+                    .to_string(),
+                None => index.to_string(),
+            };
             registry
                 .static_globals
                 .iter()
                 .filter(|name| declared_by.get(name.as_str()).is_some_and(|&n| n > 1))
-                .map(|name| {
-                    let unit = match &units[index].path {
-                        Some(file) => std::path::Path::new(file)
-                            .file_name()
-                            .and_then(|f| f.to_str())
-                            .unwrap_or(file.as_str())
-                            .to_string(),
-                        None => index.to_string(),
-                    };
-                    (name.clone(), format!("{name}${unit}"))
-                })
+                .map(|name| (name.clone(), format!("{name}${unit}")))
                 .collect()
         })
         .collect()
@@ -1663,7 +1661,7 @@ struct UnitRegistry {
     declared_functions: HashSet<String>,
     global_variables: HashSet<String>,
     /// The byte range of the first declarator of each file-scope variable a declaration
-    /// without `extern` declares: where the global is declared (R27).
+    /// without `extern` declares: where the global is declared.
     global_declarations: HashMap<String, std::ops::Range<usize>>,
     /// The file-scope variables declared `static`.
     static_globals: HashSet<String>,

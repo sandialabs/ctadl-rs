@@ -1365,7 +1365,7 @@ fn migrate_bridge(
         (!disjuncts.is_empty()).then(|| with_subject(one_of(&disjuncts), "fun", OTHER, &scope));
 
     // Without a map the JSON format pairs the arguments the two sides share, which needs the
-    // fact base. An empty one bridges nothing (globals need no bridge), and a DSL bridge is
+    // fact base. An empty one bridges nothing, and a DSL bridge is
     // made of its port heads.
     let pairs = match bridge.get("arguments").and_then(|v| v.as_array()) {
         Some(items) if !items.is_empty() => items,
@@ -1373,8 +1373,8 @@ fn migrate_bridge(
             return Err(untranslatable(
                 index,
                 "'bridge'",
-                "an empty 'arguments' map bridges nothing, since globals need no bridge, and a \
-                 DSL bridge needs at least one port",
+                "an empty 'arguments' map bridges nothing, and a DSL bridge needs at least one \
+                 port",
             ));
         }
         None => {
@@ -1478,7 +1478,7 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
             return Err(untranslatable(
                 index,
                 &format!("port {text:?}"),
-                "write `G::self` with `global(G, …)`",
+                "write `G::self` with `global(G)`",
             ));
         }
     };

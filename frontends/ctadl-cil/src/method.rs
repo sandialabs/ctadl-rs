@@ -72,7 +72,7 @@ pub struct Emitter<'f> {
     pub source_info: SourceInfo,
     fresh: u32,
     /// The program's globals, where a static field's class is declared. `None` for a body
-    /// that names no static field (a thunk or a bridge).
+    /// that names no static field.
     globals: Option<&'f mut Globals>,
 }
 

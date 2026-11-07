@@ -2363,7 +2363,7 @@ async fn register_source_info_tables(
 }
 
 /// Where each global is declared: the declaration span of every row of `globals` that has one,
-/// resolved against the source-info database of the import the row names (R27). A global no
+/// resolved against the source-info database of the import the row names. A global no
 /// front end gave a span has no entry.
 async fn global_declarations<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
@@ -2613,7 +2613,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .any(|src| src.direction == crate::facts::TaintDirection::Backward)
     });
 
-    // A sink on a global is anchored at no instruction (R26), so no tainted instruction's
+    // A sink on a global is anchored at no instruction, so no tainted instruction's
     // details name it; every source an instruction's details name is paired with it too, and
     // the path is reported at that instruction.
     let global_sinks: Vec<&QueryEndpoint> = endpoints
@@ -3112,10 +3112,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
-    // Which sources and sinks actually matched is part of what the run *did*, so it is
-    // reported in every profile rather than only where the extra detail was wanted. These
-    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
-    // Each global's declaring imports, for naming a source or sink on one (R27). An index
+    // Each global's declaring imports, for naming a source or sink on one. An index
     // without the table (a test fixture) names a global by itself.
     let globals = schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default();
     let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
@@ -3138,6 +3135,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         .cloned()
         .collect();
     let global_declarations = global_declarations(ctx, profile, sarif_data, &located).await?;
+    // Which sources and sinks actually matched is part of what the run *did*, so it is
+    // reported in every profile rather than only where the extra detail was wanted. These
+    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     results.extend(format_source_sink_results(
         sarif_data,
         &endpoints,
@@ -3335,9 +3335,9 @@ fn format_source_sink_results(
             // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
             let label = endpoint.label.0.to_string();
-            // A global is anchored at no function (R26). It is named by a logical location
+            // A global is anchored at no function. It is named by a logical location
             // naming the programs that declare it and the global, `<import>::$name`, and located
-            // at its declaration in each import that recorded one (R27); a global several
+            // at its declaration in each import that recorded one; a global several
             // imports declare is one variable (G3), named by each.
             let (owner, fully_qualified_name, kind) = match node.1.as_global() {
                 Some(g) => {

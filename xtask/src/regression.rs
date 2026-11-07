@@ -63,7 +63,7 @@ const CIL_KNOWN_FAILURES: &[&str] = &[
     // The frontend lowers a delegate as its target object, and the target of every lambda that
     // captures nothing is the class's one static `<>c.<>9`, a global. So `Lambda`'s `f(..)` may
     // call `Handler`'s lambda, and `Sink4` is reached first from `Lambda`'s source, which leaves
-    // `Handler`'s source line off the reported path. The CIL delegate entry of
+    // `Handler`'s source line off the reported path. See the CIL delegate entry of
     // `docs/limitations.md`.
     "Cil:delegates",
 ];

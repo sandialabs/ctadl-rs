@@ -721,7 +721,7 @@ fn const_method_handle_with_a_method_is_a_function_reference() {
     }
 }
 
-/// A static field is a field of its class's global (R10): `sput-object Foo.cb` is the store
+/// A static field is a field of its class's global: `sput-object Foo.cb` is the store
 /// `$LFoo;.cb = v`, and `sget-object Foo.cb` the load `x = $LFoo;.cb`, the class declared once
 /// by both.
 #[test]
@@ -759,7 +759,7 @@ fn a_static_field_is_a_field_of_its_class_global() {
     assert!(store && load, "{stmts:?}");
 }
 
-/// A class's global is declared at its `class_def_item` (R27): on the committed APK, every
+/// A class's global is declared at its `class_def_item`: on the committed APK, every
 /// global the program uses that one of its dex files defines has a span of
 /// [`dex_reader::types::ClassDef::ITEM_LEN`] bytes in that dex file whose first word is the
 /// class's type index.

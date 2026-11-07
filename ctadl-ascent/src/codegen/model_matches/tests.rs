@@ -220,7 +220,7 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
     assert_eq!(
         actual_formals(&facts, site),
         vec![],
-        "nothing collapses here, and no globals pair is emitted"
+        "nothing collapses here"
     );
 
     // The three ports land at their own sub-paths of the one temporary. `direction: in` emits
@@ -341,8 +341,7 @@ fn a_shared_callee_index_never_half_collapses() {
     assert_eq!(
         actual_formals(&facts, site),
         vec![],
-        "nothing collapses: callee index 0 routes through its temporary, and no globals pair \
-         is emitted"
+        "nothing collapses: callee index 0 routes through its temporary"
     );
     assert_eq!(actual_temps(&facts, site).len(), 1);
 }

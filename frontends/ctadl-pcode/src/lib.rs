@@ -11,7 +11,7 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
   frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only
   thing that makes a slot flow-sensitive.
 - An import declares one global, its image's memory, named by the import and Ghidra's address
-  space: `$<import>::ram` (R9 of the compositional-globals spec; written `$ram` below). A global
+  space: `$<import>::ram` (written `$ram` below). A global
   at address `A` is `$ram.[A].deref`, keyed on the address so that every function shares it,
   and named by the import so that two images' addresses are distinct cells. A pointer-typed
   constant stays an inert constant: there is no `&g`.
@@ -82,9 +82,8 @@ fn image_offset(address: i64, image_base: i64) -> Option<u32> {
     u32::try_from(address.checked_sub(image_base)?).ok()
 }
 
-/// The name of the memory global of the import `import_name`: the import, then Ghidra's address
-/// space (R9 of the compositional-globals spec). A global is its name, so qualifying it by the
-/// import keeps two images' addresses apart.
+/// The name of the memory global of the import `import_name`, `<import>::ram`: the import, then
+/// Ghidra's address space.
 pub fn memory_global_name(import_name: &str) -> String {
     format!("{import_name}::ram")
 }
@@ -279,7 +278,7 @@ impl Context {
             .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
             .unwrap_or(0);
         // The memory global is the image, declared at the image's start: a caret at offset 0
-        // (R27; see "Spans" in the crate docs).
+        // (see "Spans" in the crate docs).
         let image_span = builders.source_info_builder.span_for(
             artifact_key.clone(),
             0,
@@ -2202,7 +2201,7 @@ mod tests {
         assert_eq!(image_offset(i64::MIN, 1), None);
     }
 
-    /// An image's memory global is declared at the image, offset 0 from its base (R27).
+    /// An image's memory global is declared at the image, offset 0 from its base.
     #[test]
     fn the_memory_global_is_declared_at_the_image() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2289,7 +2288,7 @@ mod tests {
         assert_eq!(span.len, source_info::SpanLen::Empty);
     }
 
-    /// An image's memory is one global named by the import and the address space (R9), so a
+    /// An image's memory is one global named by the import and the address space, so a
     /// global at address `A` is `$<import>::ram.[A].deref` and two images' addresses are two
     /// cells.
     #[test]

@@ -231,7 +231,7 @@ fn test_ssa_function_h() {
     check_ssa_func(&p.functions[0.into()]);
 }
 
-/// SSA leaves a global alone (G4, R4): after the whole pipeline, no reference to `$g` is
+/// SSA leaves a global alone (G4): after the whole pipeline, no reference to `$g` is
 /// versioned, no statement binds `$g` at the entry, and no phi mentions it; the program
 /// verifies with its globals table.
 #[test]

@@ -751,7 +751,7 @@ impl TryFrom<mir::ParameterIdx> for FormalIndex {
     }
 }
 
-/// A global variable of the project (G1 of `spec.md`). A global *is* its name (G3): two
+/// A global variable of the project (G1 of `docs/ir.md`). A global *is* its name (G3): two
 /// programs that declare `g` declare one variable, so the id is the interned name and two
 /// imports' declarations meet at one id without a table. Serde writes the name.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -787,7 +787,7 @@ impl Display for GlobalId {
 }
 
 /// The root of a reachability or summary row: a formal (the return is
-/// `Formal(RETURN_INDEX)`), or a global (R14). Packed in four bytes, since it is a column of
+/// `Formal(RETURN_INDEX)`), or a global. Packed in four bytes, since it is a column of
 /// `locals`: a formal's `i16`, or the top bit and the global's name id.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
@@ -963,11 +963,11 @@ impl<'de> Deserialize<'de> for RootKind {
     }
 }
 
-/// The distinguished frame of program-level facts (`spec.md` §3.7): the flows between two global
-/// paths that hold in every instance (R16), and the call-target and string labels at global
-/// paths (R17). It has no formals and no call sites. Reserved, as [`RETURN_INDEX`] is: the
-/// largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands out, and which every `IdMap`
-/// names [`GLOBAL_FRAME_NAME`].
+/// The *global frame*, the distinguished frame of program-level facts (`docs/debugging.md`): the
+/// flows between two global paths, which hold in every instance (G6 of `docs/ir.md`), and the
+/// call-target and string labels at global paths. It has no formals and no call sites. Reserved,
+/// as [`RETURN_INDEX`] is: the largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands
+/// out, and which every `IdMap` names [`GLOBAL_FRAME_NAME`].
 pub const GLOBAL_FRAME: FunctionId = FunctionId { id: (1 << 28) - 1 };
 
 /// The name of [`GLOBAL_FRAME`].
@@ -1735,7 +1735,7 @@ pub enum FlowEdge {
     Return(PackedInsnSiteId),
     /// A step into or out of a global vertex, which every instance shares (G8 of `docs/ir.md`):
     /// a store in one function to a load in any other, with no call between them. It resets
-    /// call/return matching, since from a global the flow may continue in any instance (R25).
+    /// call/return matching, since from a global the flow may continue in any instance.
     Global,
 }
 

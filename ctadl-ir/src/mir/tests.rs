@@ -257,8 +257,8 @@ fn test_display_uses_canonical_grammar() {
     }
 }
 
-/// A function with one block, one parameter, and the given statements.
-/// A one-function program that declares the global `g` (index 0, see [`g`]) and runs `stmts`.
+/// A one-function program (one block, one parameter) that declares the global `g` (index 0, see
+/// [`g`]) and runs `stmts`.
 fn program_with(stmts: Vec<StatementKind>) -> Program {
     let mut prog = make_program();
     prog.declare_global("g", None);

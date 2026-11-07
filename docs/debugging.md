@@ -62,7 +62,7 @@ where s.dst_global is not null or s.src_global is not null;
 ```
 
 No row has two global roots: a flow between two globals is no function's (G6 of
-[ir.md](ir.md#summaries)) but an edge of the *global frame*, the reserved function `<globals>`
+[ir.md](ir.md#globals)) but an edge of the *global frame*, the reserved function `<globals>`
 (the largest function id, `GLOBAL_FRAME`), which `function_id.parquet` does not list.
 `global_flow.parquet` holds those edges, `(dst, dst_path, src, src_path)` over global names, and
 `assign.parquet` holds them too, under the frame's id. A vertex variable may be a global, tag 4 in

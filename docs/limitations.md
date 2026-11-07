@@ -9,9 +9,9 @@
   target of every lambda of a class that captures nothing one static object, `<>c.<>9`. So in
   the lowered program, calling any such delegate may call any of the class's non-capturing
   lambdas, and taint passed to one reaches what another does with its argument, a false
-  positive. The imprecision is the lowering's; the index used to hide it by dropping a call
-  target held in a global between functions no call chain connects, and computes it now that it
-  does not. The nightly `Cil:delegates` case is an XFAIL for it.
+  positive. The imprecision is the lowering's: the index carries a call target held in a global
+  between functions no call chain connects, as G2 requires. The nightly `Cil:delegates` case is an
+  XFAIL for it.
 - **The address of a C struct member is not nameable.** The C frontend has no struct layout,
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
@@ -63,8 +63,8 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
 |  | front ends | CIL: a delegate is lowered as its target, so delegates over one target share their method; the target of every non-capturing lambda of a class is the one static `<>c.<>9`, so their call targets merge | adds | the list above |
 
-The query resets call/return matching at a hop through a global (R25 of the compositional-globals
-spec). That is exact under G2, since a global is shared by every instance, and is not a row.
+The query resets call/return matching at a hop through a global. That is exact under G2, since a
+global is shared by every instance, and is not a row.
 
 Anything not in this table that differs from the reference implementation is a bug. A test
 program that shows a row names it on a `// parity: <name> <adds|loses>: ...` line, which

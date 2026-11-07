@@ -385,7 +385,7 @@ fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
     );
 }
 
-/// A static field is a field of its class's global (R10): `putstatic Demo.f` is the store
+/// A static field is a field of its class's global: `putstatic Demo.f` is the store
 /// `$LDemo;.f = v` and `getstatic Demo.f` the load `x = $LDemo;.f`, the class declared once.
 #[test]
 fn a_static_field_is_a_field_of_its_class_global() {
@@ -424,7 +424,7 @@ fn a_static_field_is_a_field_of_its_class_global() {
     assert!(dump.contains("store $LDemo;.f := "), "{dump}");
     assert!(dump.contains(" = $LDemo;.f ["), "{dump}");
 
-    // The global is declared at the class header (R27): `access_flags`, `this_class` and
+    // The global is declared at the class header: `access_flags`, `this_class` and
     // `super_class` as `class_with_pool` writes them.
     let demo = info.program.globals.lookup("LDemo;").unwrap();
     let span = info

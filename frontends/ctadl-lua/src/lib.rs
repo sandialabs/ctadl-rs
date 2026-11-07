@@ -71,11 +71,11 @@
 //!
 //! ## Globals
 //!
-//! A program declares one global, `$_ENV` ([`Variable::Global`]; R11 of the
-//! compositional-globals spec). `_ENV` is assumed never to be swapped out, so a free identifier
+//! A program declares one global, `$_ENV` ([`Variable::Global`]). `_ENV` is assumed never to be
+//! swapped out, so a free identifier
 //! (a name not bound by a `local` or a parameter) is modeled uniformly as a field of it:
 //! `n` is `$_ENV.n`, and `kong.request.x` is `$_ENV.kong.request.x`. Reads become loads and
-//! writes become stores. A global is its name, so the imports of a project share one
+//! writes become stores. By G3, the imports of a project share one
 //! `$_ENV`: one VM, one environment.
 //!
 //! ## Errors / exceptions
@@ -2474,7 +2474,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The global `_ENV`. It is declared by the chunk of the first unit that names it: in Lua
-    /// each chunk has an `_ENV`, and every chunk's is the one global table (R27).
+    /// each chunk has an `_ENV`, and every chunk's is the one global table.
     fn env(&mut self) -> VariableRef {
         if let Some(env) = self.program.globals.lookup("_ENV") {
             return VariableRef::global(env);
@@ -2998,8 +2998,8 @@ mod tests {
         );
     }
 
-    /// `_ENV` is declared by the whole chunk of the first unit that names a free variable
-    /// (R27), whichever unit is lowered first.
+    /// `_ENV` is declared by the whole chunk of the first unit that names a free variable,
+    /// whichever unit is lowered first.
     #[test]
     fn env_is_declared_at_the_first_chunk_that_names_it() {
         let quiet = "local x = 1\n";
@@ -3180,7 +3180,7 @@ mod tests {
         assert!(function_names(&info).contains(&"m.hello".to_string()));
     }
 
-    /// A free name is a field of the one global `$_ENV` (R11): `kong.request.x` is
+    /// A free name is a field of the one global `$_ENV`: `kong.request.x` is
     /// `$_ENV.kong.request.x`, and a write to a free name a store to `$_ENV`'s field.
     #[test]
     fn a_free_name_is_a_field_of_env() {
@@ -3199,6 +3199,5 @@ mod tests {
         let dump = info.program.to_string();
         assert!(dump.contains("$_ENV.kong"), "{dump}");
         assert!(dump.contains("store $_ENV.counter := "), "{dump}");
-        assert!(!dump.contains("$globals"), "{dump}");
     }
 }

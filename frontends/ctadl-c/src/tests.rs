@@ -82,7 +82,7 @@ fn simple_assign_expr() {
 #[test_log::test]
 fn simple_assign_global() {
     // Reading a name with no local declaration (`int b = a;`, where `a` was never declared). CTADL
-    // resolves it to a global, and a C global's storage is its cell, so the source is `$a.deref`.
+    // resolves it to a global.
     let src = r"
             int simple_assign_global() {
                 int b = a;
@@ -97,7 +97,7 @@ fn simple_assign_global() {
 #[test_log::test]
 fn simple_global_assign() {
     // Writing to a name with no local declaration (`a = b;`) resolves to a store to the global's
-    // storage, `$a.deref = b` (R8).
+    // storage, `$a.deref = b`.
     let src = r"
             int simple_global_assign() {
                 int b;
@@ -2992,9 +2992,8 @@ fn addr_of_a_record_is_a_cell() {
 
 #[test_log::test]
 fn addr_of_a_global_record_is_a_copy() {
-    // R8 (module docs, "Globals"): a global is a cell, so `&g` is the copy `$g` and the
-    // callee's `p->f = v` lands on `$g.deref.f`, which is what `g.f` names. A write through the
-    // address of a global is observed at the global.
+    // Pins the module docs' "Globals" convention: a write through `&g` (`p->f`, `$g.deref.f`) is
+    // observed at `g.f`.
     let src = r"
         struct S { int f; };
         struct S g;
@@ -4255,7 +4254,7 @@ fn inserted_field_name_does_not_become_an_empty_path_segment() {
 }
 
 #[test_log::test]
-fn a_named_global_still_lowers_to_a_symbolic_field() {
+fn a_named_global_still_lowers_to_its_global() {
     // The scoping pin: the guard keys on the name being empty, never on "identifier in a
     // damaged body". A global read in a cleanly parsed body must keep the global that names
     // it -- dropping every identifier in a damaged body, or renaming globals to temps,
@@ -4526,7 +4525,7 @@ fn global_names(prog: &ctadl_ir::Program) -> Vec<String> {
 
 #[test_log::test]
 fn a_static_global_in_two_files_is_two_globals() {
-    // R8, G3: a global is its name, so a file-scope `static` another unit also declares is
+    // G3: a global is its name, so a file-scope `static` another unit also declares is
     // qualified by its unit. Each file's `get` reads its own `count`; one file's store does not
     // reach the other's.
     let (prog, _dump) = program_from_files(&[
@@ -4551,7 +4550,7 @@ fn a_static_global_in_two_files_is_two_globals() {
 
 #[test_log::test]
 fn a_global_with_external_linkage_in_two_files_is_one_global() {
-    // R8, G3: a global with external linkage is named by its symbol, as the linker shares it,
+    // G3: a global with external linkage is named by its symbol, as the linker shares it,
     // so a definition in one file and an `extern` declaration in another are one global. A
     // `static` no other file declares keeps its name.
     let (prog, _dump) = program_from_files(&[
