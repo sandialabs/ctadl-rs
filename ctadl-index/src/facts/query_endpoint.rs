@@ -88,7 +88,7 @@ impl QueryEndpoint {
     /// re-anchoring each at the call-arg vertex (for `formal`) that the call passes. `call`
     /// is the static call graph (`site -> callee`). The endpoint is returned unchanged when
     /// it can't be re-anchored: it is on a global, which is a project-level endpoint no call
-    /// passes (R26), or `infunc` has no callers. `formal` is supplied by the caller because the endpoint's own vertex may have
+    /// passes, or `infunc` has no callers. `formal` is supplied by the caller because the endpoint's own vertex may have
     /// been SSA-versioned into a local even when it denotes a parameter; the formal index
     /// names the parameter the call boundary maps it to. This is how query endpoints come to
     /// denote "a vertex at a particular call site," letting the formatter distinguish flows
@@ -130,7 +130,7 @@ impl QueryEndpoint {
     /// that caller function. Unlike [`anchored_at_callsites`], there is no function-anchored
     /// fallback: if no call site matches, the result is empty (a callsite endpoint that names
     /// no real call site seeds nothing). An endpoint on a global is anchored at no call site
-    /// and is returned unchanged (R26).
+    /// and is returned unchanged.
     ///
     /// [`anchored_at_callsites`]: Self::anchored_at_callsites
     pub fn anchored_at_callsites_filtered(

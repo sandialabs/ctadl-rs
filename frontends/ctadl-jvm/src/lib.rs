@@ -5,8 +5,8 @@ touch the store, choose a front end, or run the engine. Reading `.class` and `.j
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout. A class
-that owns a static field is a global named by the class, `$Lcls;` (R10 of the compositional-
-globals spec), and a static field is that global's field named by the field's name alone:
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone:
 `putstatic` is the store `$Lcls;.name = v`, `getstatic` the load `x = $Lcls;.name`. The owner is
 the class the constant pool names. A class referenced from several imports is one global, since
 a global is its name. An array's elements are the one field `[]`. Arithmetic,

@@ -27,10 +27,10 @@ The regime:
    The search threads a [`TaintState`] annotation along the edges so
    call/return matching is respected: a `Call` edge enters `Restricted`, and a
    `Return` edge is only traversable while `Free`.
-   A global vertex belongs to every function at once (R24): it is the node
+   A global vertex belongs to every function at once: it is the node
    `(GLOBAL_FRAME, $g, p)`, entered from any function's store to it and left
    into any function's load of it, by a `Global` edge, which resets the
-   annotation to `Free` (R25).
+   annotation to `Free`.
 4. Sink endpoints are the search targets. Every sink reached gets a
    (breadth-first shortest) path from the source set, and found paths are
    reported through the existing means: the returned [`QueryResult`] carries
@@ -57,7 +57,7 @@ use crate::facts::{
 };
 
 /// The function a vertex `v` of `f` is a node of: `f`, or the global frame for a global, which
-/// every function shares (R24).
+/// every function shares.
 #[inline]
 fn home(f: FunctionId, v: &FlowVariable) -> FunctionId {
     if v.is_global() { GLOBAL_FRAME } else { f }
@@ -561,7 +561,7 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // A global vertex is the frame's, whichever function stored to it or loads from it:
-        // the step between a function and the frame is a `Global` edge (R24, R25).
+        // the step between a function and the frame is a `Global` edge.
         for ((g, w, ..), edge) in &mut out {
             let to = home(*g, w);
             if to != *g || (*g != f && f == GLOBAL_FRAME) {

@@ -7,9 +7,9 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 handled one level up, in `ctadl-frontends`.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout. A class
-that owns a static field is a global named by the class, `$Lcls;` (R10 of the
-compositional-globals spec), and a static field is that global's field named by the field's name
-alone: `sput` is the store `$Lcls;.name = v`, `sget` the load `x = $Lcls;.name`. A class
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone: `sput` is the store `$Lcls;.name = v`, `sget`
+the load `x = $Lcls;.name`. A class
 referenced from several dex files or splits is one global, since a global is its name. An array's elements are the one field `[]`, and its length the
 field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that

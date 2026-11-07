@@ -695,7 +695,7 @@ fn resolve_callsig(
 struct Anchor {
     /// The function the port hangs off. For a call-site anchor this is the *callee*, which is
     /// what a callsite-scoped endpoint names. For a global, the global frame, which anchors a
-    /// global's endpoint at no function (R26).
+    /// global's endpoint at no function.
     function: facts::Str,
     /// The global a `self` port names, when the anchor is one.
     global: Option<facts::GlobalId>,

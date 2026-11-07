@@ -164,7 +164,7 @@ fn an_import_from_an_older_build_is_refused_by_name() {
 
 /// An import written before programs declared their globals (format 13, the one global heap
 /// `$globals`) is refused: its bitcode would not decode as a program with a globals table, and
-/// nothing migrates it in place (R7 of the compositional-globals spec).
+/// nothing migrates it in place.
 #[test]
 fn an_import_from_before_declared_globals_is_refused() {
     store();

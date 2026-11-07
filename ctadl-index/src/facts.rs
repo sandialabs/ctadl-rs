@@ -787,7 +787,7 @@ impl Display for GlobalId {
 }
 
 /// The root of a reachability or summary row: a formal (the return is
-/// `Formal(RETURN_INDEX)`), or a global (R14). Packed in four bytes, since it is a column of
+/// `Formal(RETURN_INDEX)`), or a global. Packed in four bytes, since it is a column of
 /// `locals`: a formal's `i16`, or the top bit and the global's name id.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
@@ -1735,7 +1735,7 @@ pub enum FlowEdge {
     Return(PackedInsnSiteId),
     /// A step into or out of a global vertex, which every instance shares (G8 of `docs/ir.md`):
     /// a store in one function to a load in any other, with no call between them. It resets
-    /// call/return matching, since from a global the flow may continue in any instance (R25).
+    /// call/return matching, since from a global the flow may continue in any instance.
     Global,
 }
 

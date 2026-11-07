@@ -721,7 +721,7 @@ fn const_method_handle_with_a_method_is_a_function_reference() {
     }
 }
 
-/// A static field is a field of its class's global (R10): `sput-object Foo.cb` is the store
+/// A static field is a field of its class's global: `sput-object Foo.cb` is the store
 /// `$LFoo;.cb = v`, and `sget-object Foo.cb` the load `x = $LFoo;.cb`, the class declared once
 /// by both.
 #[test]

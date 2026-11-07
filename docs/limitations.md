@@ -63,8 +63,8 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
 |  | front ends | CIL: a delegate is lowered as its target, so delegates over one target share their method; the target of every non-capturing lambda of a class is the one static `<>c.<>9`, so their call targets merge | adds | the list above |
 
-The query resets call/return matching at a hop through a global (R25 of the compositional-globals
-spec). That is exact under G2, since a global is shared by every instance, and is not a row.
+The query resets call/return matching at a hop through a global. That is exact under G2, since a
+global is shared by every instance, and is not a row.
 
 Anything not in this table that differs from the reference implementation is a bug. A test
 program that shows a row names it on a `// parity: <name> <adds|loses>: ...` line, which

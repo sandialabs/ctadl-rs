@@ -58,7 +58,7 @@
 //!
 //! ## Globals
 //!
-//! A C global `g` is the global variable `$g` (R8 of the compositional-globals spec), and its
+//! A C global `g` is the global variable `$g`, and its
 //! storage is the cell `$g.deref`, the convention address-taken locals use (`in_cell`), for
 //! every global, since another unit may take its address. So `g = v` is the store
 //! `$g.deref = v`, `g.f` is `$g.deref.f`, and `&g` is the copy `$g`: a write through `&g`

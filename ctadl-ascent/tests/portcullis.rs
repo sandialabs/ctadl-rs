@@ -799,7 +799,7 @@ s:
         .program_info
 }
 
-/// R28: `global(G)` ranges over the declared globals, and `G::self.path` is a port rooted at
+/// `global(G)` ranges over the declared globals, and `G::self.path` is a port rooted at
 /// the global, anchored at no function: a source or sink names the global frame.
 #[test]
 fn global_matches_by_name_and_a_self_port_names_the_global() {
@@ -848,7 +848,7 @@ fn global_matches_by_name_and_a_self_port_names_the_global() {
     assert_eq!(got, want);
 }
 
-/// R28, G7: a propagation may name a global on one side; it is the other side's function's
+/// G7: a propagation may name a global on one side; it is the other side's function's
 /// summary, rooted at the global.
 #[test]
 fn a_propagation_names_a_global_port() {
@@ -868,7 +868,7 @@ fn a_propagation_names_a_global_port() {
     assert_eq!(p.src.path.to_string(), ".deref");
 }
 
-/// A global is shared, so no bridge maps one (R29); a flow between two globals is no
+/// A global is shared, so no bridge maps one; a flow between two globals is no
 /// function's (G6); and `self` hangs off a global only.
 #[test]
 fn a_self_port_is_rejected_where_a_global_cannot_be() {
@@ -1920,7 +1920,7 @@ fn stripped_allocator() -> ProgramInfo {
             .map(|i| {
                 Statement::new_kind(StatementKind::store(
                     AccessPath::new(
-                        // The image's memory global, `$<import>::ram` (R9), index 0 below.
+                        // The image's memory global, `$<import>::ram`, index 0 below.
                         VariableRef::global(ctadl_ir::mir::GlobalIdx::new(0)),
                         [PathSegment::offset(HEAP[i % HEAP.len()])],
                     ),

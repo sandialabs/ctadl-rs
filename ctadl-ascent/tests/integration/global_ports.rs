@@ -1,4 +1,4 @@
-//! Sources and sinks on a global, end to end (R26-R28 of the compositional-globals spec).
+//! Sources and sinks on a global, end to end.
 //!
 //! A global is shared by every instance of every function (G2), so a source on one is anchored
 //! at no function and fanned out to no call site, and a flow from it reaches a load of it in any
@@ -55,7 +55,7 @@ fn flow_found(sarif: &serde_json::Value) -> bool {
         .any(|r| r["ruleId"] == "C0001.tainted-path" && r["kind"] == "fail")
 }
 
-/// R26, R28: a source on `G::self.deref` reaches a sink in a function no one calls.
+/// A source on `G::self.deref` reaches a sink in a function no one calls.
 #[test]
 fn a_source_on_a_global_reaches_a_sink_with_no_call_between() {
     let sarif = run(
@@ -65,7 +65,7 @@ fn a_source_on_a_global_reaches_a_sink_with_no_call_between() {
     );
     assert!(flow_found(&sarif), "{sarif:#}");
 
-    // R27: the source is located by the program and the global, not by a function.
+    // The source is located by the program and the global, not by a function.
     let source = results(&sarif)
         .into_iter()
         .find(|r| r["ruleId"] == "C0003.taint-source")
@@ -95,7 +95,7 @@ fn a_source_on_an_unread_global_reaches_nothing() {
     assert!(!flow_found(&sarif), "{sarif:#}");
 }
 
-/// R26: a sink on a global is reached from a store to it in any function, and a sink on another
+/// A sink on a global is reached from a store to it in any function, and a sink on another
 /// global is not.
 #[test]
 fn a_sink_on_a_global_is_reached_from_any_store() {

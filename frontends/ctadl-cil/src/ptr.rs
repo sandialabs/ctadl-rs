@@ -449,7 +449,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         let mut fields = Vec::new();
         let root = match a.root {
             Root::Var(v) => em.var(v),
-            // A static field is a field of its class's global, `$C.g` (R10).
+            // A static field is a field of its class's global, `$C.g`.
             Root::Global => match steps.next_if(|s| matches!(s, Step::Field(_))) {
                 Some(Step::Field(t)) => {
                     let (global, field) = self.static_field(em, *t);

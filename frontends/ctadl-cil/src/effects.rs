@@ -267,7 +267,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// The global and field of a static field (R10): `$C.f` for a named field of class `C`.
+    /// The global and field of a static field: `$C.f` for a named field of class `C`.
     fn static_place(&self, em: &mut Emitter<'_>, field: &Field<Var>) -> (VariableRef, PathSegment) {
         match field {
             Field::Named(op) => self.static_field(em, op.token),

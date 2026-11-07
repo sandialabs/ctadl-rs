@@ -276,7 +276,7 @@ fn test_update_instruction() {
 }
 
 // A store of a parameter into a field of a global, `$g.field = p0`, is the summary row
-// `$g.field <- 0`, rooted at the global itself (R14, R15); nothing is a globals formal.
+// `$g.field <- 0`, rooted at the global itself; nothing is a globals formal.
 #[test]
 fn test_local_to_global_field() {
     let (globals, f) = function_with_param_to_global_field();

@@ -96,7 +96,7 @@ Global variables are created at the top level with the `var` syntax:
 var x;
 ```
 
-This declares the global `$x` (G1 of the compositional-globals spec), and any function in the
+This declares the global `$x` (G1 of `docs/ir.md`), and any function in the
 file referring to `x` accesses that variable, transparently: a global is never rebound (G4), so
 its storage is the locations below it, written as such. `x.deref = p` and `x.f = p` are stores,
 `p = x.f` is a load, and `p = x` copies the global itself (its address, in C's terms). A

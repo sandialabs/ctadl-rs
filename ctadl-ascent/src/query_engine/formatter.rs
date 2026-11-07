@@ -2489,7 +2489,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .any(|src| src.direction == crate::facts::TaintDirection::Backward)
     });
 
-    // A sink on a global is anchored at no instruction (R26), so no tainted instruction's
+    // A sink on a global is anchored at no instruction, so no tainted instruction's
     // details name it; every source an instruction's details name is paired with it too, and
     // the path is reported at that instruction.
     let global_sinks: Vec<&QueryEndpoint> = endpoints
@@ -2991,7 +2991,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Which sources and sinks actually matched is part of what the run *did*, so it is
     // reported in every profile rather than only where the extra detail was wanted. These
     // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
-    // Each global's declaring imports, for naming a source or sink on one (R27). An index
+    // Each global's declaring imports, for naming a source or sink on one. An index
     // without the table (a test fixture) names a global by itself.
     let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
     for (g, import, _) in schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default() {
@@ -3196,9 +3196,9 @@ fn format_source_sink_results(
             // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
             let label = endpoint.label.0.to_string();
-            // A global is anchored at no function (R26). No front end records a global's
+            // A global is anchored at no function. No front end records a global's
             // declaration span, so it is located by a logical location naming the program that
-            // declares it and the global, `<import>::$name` (R27); a global several imports
+            // declares it and the global, `<import>::$name`; a global several imports
             // declare is one variable (G3), named by each.
             let (owner, fully_qualified_name, kind) = match node.1.as_global() {
                 Some(g) => {

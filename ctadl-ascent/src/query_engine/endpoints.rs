@@ -168,7 +168,7 @@ pub fn build_query_endpoints(
                 vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
             // A global is anchored at no function: `func_name` is the global frame's, and the
-            // endpoint stays there (R26).
+            // endpoint stays there.
             FormalIndexTypeTag::Global(g) => vec![FlowVariable::global(g)],
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)

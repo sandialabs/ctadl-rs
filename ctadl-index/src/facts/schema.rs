@@ -121,7 +121,7 @@ pub mod summary {
 pub mod globals {
     use super::*;
     /// A global and an import that declares it, with the declaration's span in that import's
-    /// source-info database when the front end recorded one (R22). A global several imports
+    /// source-info database when the front end recorded one. A global several imports
     /// declare has a row per import.
     pub type Record = (GlobalId, ImportId, Option<FileSpanId>);
     pub const COLUMNS: [&str; 3] = ["name", "import_id", "source_span_id"];
@@ -131,8 +131,8 @@ pub mod globals {
 
 pub mod global_flow {
     use super::*;
-    /// The program-level flows between two global paths (R16): `src.src_path` reaches
-    /// `dst.dst_path` in every instance, read by a `--summary` consumer (R20).
+    /// The program-level flows between two global paths: `src.src_path` reaches
+    /// `dst.dst_path` in every instance, read by a `--summary` consumer.
     pub type Record = (GlobalId, Path, GlobalId, Path);
     pub const COLUMNS: [&str; 4] = ["dst", "dst_path", "src", "src_path"];
     pub const FILENAME: &str = "global_flow.parquet";

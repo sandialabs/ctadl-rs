@@ -1261,7 +1261,7 @@ impl Visitor for CodegenVisitor<'_> {
             // Write each parameter back to its formal at its entry version, so a store through
             // it inside the function reaches the formal path the summary reads. The entry
             // version is the one that reaches the return: rebinding a parameter does not reach
-            // the caller (see `ctadl_ir::ssa`). A global needs no write-back (R3): SSA never
+            // the caller (see `ctadl_ir::ssa`). A global needs no write-back: SSA never
             // versions it, so a store to it already lands on its vertex.
             let formals = (0..self.num_params).map(|i| {
                 let p = VariableRef::new_parameter(ParameterIdx::new(i));
@@ -1379,7 +1379,7 @@ impl CodegenVisitor<'_> {
     }
 
     /// Takes the program's globals: each is the vertex of its name (G3), and each declaration is
-    /// a row of [`IndexFacts::globals`] for the import being codegen'd (R22).
+    /// a row of [`IndexFacts::globals`] for the import being codegen'd.
     fn declare_globals(&mut self, globals: &Globals) {
         let import = self.source_info.current_import();
         self.globals = globals
