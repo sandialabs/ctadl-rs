@@ -65,19 +65,19 @@ flows. The relevant representation is:
   Neither is a pathless transfer admitted by the initial kernel.
 - Memory stores do not define a new SSA base or kill earlier stored values.
 - Paths use typed `Field`, `Offset`, `Deref`, and `Value` segments. Use
-  [mir::path](ctadl-ir/src/mir/path.rs) for normalization when recognizing
+  [cir::path](ctadl-ir/src/cir/path.rs) for normalization when recognizing
   supported flows; do not infer a path's meaning from its printed spelling.
 - Return types describe **return arity**, not concrete runtime classes.
   `ParameterType` describes sharing behavior, not a receiver's class. Neither
   justifies `ReturnsType(T)`.
-- MIR branches are nondeterministic `Goto` successors. Phi operands retain
-  predecessors in MIR, but codegen projects them into ordinary assignments,
+- CIR branches are nondeterministic `Goto` successors. Phi operands retain
+  predecessors in CIR, but codegen projects them into ordinary assignments,
   discarding that association. S16 itself defines a phi as its set of copies.
   There are no branch predicates to prove general execution feasibility.
 
-See [MIR statements and expressions](ctadl-ir/src/mir/mod.rs),
-[call styles](ctadl-ir/src/mir/call.rs),
-[terminators](ctadl-ir/src/mir/terminator.rs), and
+See [CIR statements and expressions](ctadl-ir/src/cir/mod.rs),
+[call styles](ctadl-ir/src/cir/call.rs),
+[terminators](ctadl-ir/src/cir/terminator.rs), and
 [phi lowering](ctadl-ascent/src/codegen/mod.rs).
 
 The current analysis is compositional and does **not** enumerate call
@@ -192,7 +192,7 @@ receiver reaches that instruction in an execution.
 
 ## Idea 2: build a small symbolic discovery kernel
 
-I propose a separate analysis over post-SSA MIR that follows pathless copies,
+I propose a separate analysis over post-SSA CIR that follows pathless copies,
 summarizes where return values come from, and records which parameters must
 supply evidence for an indirect call. The intended benefit is to discover calls
 through common wrappers and factories without computing the general taint-flow
@@ -482,7 +482,7 @@ case, not a complexity guarantee.
 Once the pathless kernel has been evaluated, a possible extension is to track a
 value placed in a fresh object's field by a constructor and recovered by a
 getter. This could discover calls such as `h.get().run()` without general heap
-closure. I would keep it out of the first experiment because **the existing MIR
+closure. I would keep it out of the first experiment because **the existing CIR
 cannot certify field immutability**. A field is represented by its symbol/path;
 the generic representation does not carry a sufficient contract covering
 final/readonly status, all writes, constructor initialization, and
@@ -656,7 +656,7 @@ I suggest testing Ideas 1 and 2 together before adding heap support or guarded
 return effects. The experiment would answer whether this restricted kernel
 discovers useful call edges with substantially less intermediate work:
 
-1. **Build the pathless kernel separately**, over post-SSA MIR, with direct calls,
+1. **Build the pathless kernel separately**, over post-SSA CIR, with direct calls,
    admitted copies/phis, explicit type/function evidence, return origins, and
    dispatch requirements. Use the current `Assign`/`Exp::Path` extractor above.
    No heap extension or guarded return effects initially.
