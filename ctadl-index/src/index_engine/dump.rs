@@ -381,16 +381,11 @@ store_backed!(
 macro_rules! dump_relations {
     ($dump:expr, $prog:expr) => {
         $crate::dump_relations!(@each $dump, $prog, [
-            formal_param, actual_param, call, call_target_assign, const_str_assign,
-            callee_info, callee_resolvents, intent_send, intent_filter, intent_component, paths, path_set,
-            summary, config, intent_frame, locals, assign_like, prog_store, alias_of_formal,
-            call_target_assign_like, call_target_vp, call_target_key, call_target_key_wild, call_target_edge, const_reaches, resolved_call, fnptr_call, intent_pair,
-            critical_summary, critical_call, resolvent, establishes_direct, establishes_via,
-            call_site, reach_vp, locals_key,
-            locals_key_wild, locals_wild, assign_wild, edge_split, edge_split_wild, ext_dst,
-            ext_fml, critical_arg, critical_reach, context_summary_set, set_member,
-            context_summary_top, set_establishes_direct, set_establishes_via, context_summary_d,
-            top_summary_func, tag_closure_func, global_mention, alias_flow, global_read,
+            formal_param, actual_param, call, const_str_assign, intent_send, intent_filter,
+            intent_component, paths, path_set, summary, config, intent_frame, locals,
+            assign_like, prog_store, alias_of_formal, const_reaches, resolved_call, intent_pair,
+            reach_vp, locals_key, locals_key_wild, locals_wild, assign_wild, edge_split,
+            edge_split_wild, ext_dst, ext_fml, global_mention, alias_flow, global_read,
             global_label_key, global_label_read
         ])
     };
