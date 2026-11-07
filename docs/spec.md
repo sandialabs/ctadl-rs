@@ -204,18 +204,15 @@ time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
 ### 4.4 Source info
 
-Each IR instruction carries a span id into its import's source-info tables, which map it to a
-byte range in a file of an original artifact, recorded by path and content hash. Front ends
+Each IR instruction carries a span id into its import's source-info tables, which map it to
+a byte range in a file of an original artifact, recorded by path and content hash. Front ends
 record spans as they lower, and IR passes carry them along. The formatter resolves spans to
 SARIF locations. For a text file it rereads the file, checks its hash, and computes line and
-column. For a binary it uses the absolute and section-relative address; a pcode span records the
-address as an offset from the image base. Every location also gets its enclosing function as a
-logical location. A global's declaration has a span too (a C declarator, a class's header,
-`class_def_item` or `TypeDef` row, a pcode image), and a source or sink on a global is located
-there, with the global as its logical location. A text file that is missing, or whose hash no
-longer matches, falls back to a byte offset and a notification. Each location points to a SARIF
-artifact entry carrying the content hash, so a consumer can check that the artifact in front of
-them is the one that was analyzed.
+column. For a binary it uses the absolute and section-relative address. Every location also
+gets its enclosing function as a logical location. A text file that is missing, or whose hash
+no longer matches, falls back to a byte offset and a notification. Each location points to a
+SARIF artifact entry carrying the content hash, so a consumer can check that the artifact in
+front of them is the one that was analyzed.
 
 ### 4.5 Output
 
