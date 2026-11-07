@@ -167,7 +167,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                 && dest.version.is_none()
                 && is_candidate_var(&dest.variable)
                 && !sources.is_empty()
-                // A load (a source with a field or `deref`) is left for codegen's load-chain
+                // A load (a source with a field or `deref`) is left for the load-chain
                 // composition, which needs the temporary it defines.
                 && sources.iter().all(|e| {
                     e.access_path()

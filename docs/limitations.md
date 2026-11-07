@@ -47,7 +47,7 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 | `callee cells merge` | index | Cells inside a callee merge all callers (S14). A global's cells merge every instance too, which is G2, not a deviation | adds | no (structural) |
 | `resolution ladder` | index | Resolution ladder: dispatch model, CHA under threshold | adds | config recorded |
 | `hybrid context` | index | Hybrid context widening (`collapse`, `bounded`, `spill`) | adds | config recorded |
-| `backward alias rule` | index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary codegen's load-chain composition anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
+| `backward alias rule` | index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary the load-chain composition pass (`ssa::compose_loads`) anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
 | `shared formals` | index | `Shared` formals (pcode, endpoints, JNI): whole-variable write-back through a parameter. A global is not a formal (G5), so no function writes globals back | adds | no (doc comment on the rule) |
 | `copied formals` | index | `Copied` formals: no field write-back through a parameter | loses | no (doc comment on the rule) |
 | `object hop` | query | Object hop at the empty path | adds | no |

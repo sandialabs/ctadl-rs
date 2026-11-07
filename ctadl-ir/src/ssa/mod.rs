@@ -40,6 +40,9 @@ pub use coalesce::{coalesce_copies, coalesce_function};
 mod dead_temps;
 pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
 
+mod compose_loads;
+pub use compose_loads::{compose_loads, compose_loads_function, mentioned_paths};
+
 mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
 
