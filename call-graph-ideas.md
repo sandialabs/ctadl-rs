@@ -87,6 +87,36 @@ propagation, the tag/edge join and decision-guarded summaries from the taint
 engine, which is where the recorded cost was. Index construction becomes two
 strata: discovery, then taint over a fixed call graph.
 
+### Where it runs
+
+Discovery is a pre-analysis in the index step: it runs after the IR passes and
+before codegen, as its own engine over the post-SSA IR, and the index engine
+consumes its result as input facts.
+
+```text
+imports ──passes (SSA, ...)──▶ discovery ──edge──▶ codegen ──▶ index engine ──▶ summaries
+                                   │
+                                   └──▶ unresolved, blocked, hub
+```
+
+- **Input:** the post-SSA IR of the project's imports; the VMT, for
+  `declares`, `super` and `subtype`; and the call edges language modules
+  already know as direct calls, such as JNI links by symbol. Intent bridges
+  are string-mediated (S12) and stay outside discovery.
+- **Output:** the `edge` relation, and the diagnostics. Codegen emits `edge` as
+  facts in place of the resolution machinery it generates today: CHA resolvent
+  tables, target-label tag propagation, and the hybrid-inlining decision rules
+  unless the optional `decision` export is kept.
+- **The index engine** runs taint and summaries over that fixed call graph and
+  never derives an edge itself. An indirect site discovery left unresolved is,
+  to taint, a call with no target, reported as such.
+
+The dependency runs one way: discovery does not need taint, and taint needs
+only discovery's edges. It could be written as a stratum of the same Ascent
+program, but a separate engine is easier to measure on its own and can run on
+an import without indexing it. Its result is saved with the index, so a query
+and the call-graph statistics (F12) read the same edges taint used.
+
 Starting from the under-approximation has a second advantage: every later
 admission of a flow pattern only adds edges, so the additive policy at the end
 of this document applies from the first version, and each addition can be
