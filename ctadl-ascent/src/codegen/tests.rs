@@ -276,7 +276,7 @@ fn test_update_instruction() {
 }
 
 // A store of a parameter into a field of a global, `$g.field = p0`, is the summary row
-// `$g.field <- 0`, rooted at the global itself; nothing is a globals formal.
+// `$g.field <- 0`, rooted at the global itself.
 #[test]
 fn test_local_to_global_field() {
     let (globals, f) = function_with_param_to_global_field();
@@ -296,7 +296,7 @@ fn test_local_to_global_field() {
             .formal_param
             .iter()
             .all(|(_, v, _)| v.as_formal().is_some_and(|i| *i >= -1)),
-        "no globals formal: {:?}",
+        "only parameters and returns are formals: {:?}",
         facts.formal_param
     );
     assert!(

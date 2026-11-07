@@ -97,8 +97,8 @@ var x;
 ```
 
 This declares the global `$x` (G1 of `docs/ir.md`), and any function in the
-file referring to `x` accesses that variable, transparently: a global is never rebound (G4), so
-its storage is the locations below it, written as such. `x.deref = p` and `x.f = p` are stores,
+file referring to `x` accesses that variable. A global is never rebound (G4), so a function reads
+and writes the locations below it: `x.deref = p` and `x.f = p` are stores,
 `p = x.f` is a load, and `p = x` copies the global itself (its address, in C's terms). A
 whole-variable write, `x = p` or `x = f(p)`, is an error. A where-clause port on a global names
 it the same way (`x.deref`). There is no way to have a local variable and a global variable of
@@ -971,8 +971,7 @@ fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>
         .collect()
 }
 
-/// A global is never rebound (G4): its storage is the locations below it, so a write to the whole
-/// variable is an error that says where to write instead.
+/// Rejects a write to a whole global (G4), with an error that says where to write instead.
 fn reject_whole_global_write(dest: &AccessPath, pos: Pos) -> Result<(), FlowyError> {
     if dest.is_pathless() && dest.base.variable.is_global() {
         return Err(compile_error(

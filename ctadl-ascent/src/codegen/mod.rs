@@ -477,7 +477,7 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
-    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`]: each is the vertex of its name.
+    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`].
     globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
@@ -1376,8 +1376,8 @@ impl CodegenVisitor<'_> {
         }
     }
 
-    /// Takes the program's globals: each is the vertex of its name (G3), and each declaration is
-    /// a row of [`IndexFacts::globals`] for the import being codegen'd.
+    /// Takes the program's globals table, and records each declaration as a row of
+    /// [`IndexFacts::globals`] for the current import.
     fn declare_globals(&mut self, globals: &Globals) {
         let import = self.source_info.current_import();
         self.globals = globals

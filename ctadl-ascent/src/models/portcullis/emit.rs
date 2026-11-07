@@ -417,15 +417,7 @@ fn emit_head(
                 return;
             };
             let anchor = match (&left_anchor.global, &right_anchor.global) {
-                (Some(_), Some(_)) => {
-                    errors.push(PortcullisError::Rule {
-                        message: "a flow between two globals holds in every function, so it is \
-                                  the program's, not a function's summary; it needs no model"
-                            .to_string(),
-                        span: flow.span,
-                    });
-                    return;
-                }
+                (Some(_), Some(_)) => unreachable!("rejected by check_head"),
                 (Some(_), None) => &right_anchor,
                 _ => &left_anchor,
             };
@@ -879,13 +871,10 @@ fn bridge_port(
     span: Span,
     errors: &mut PortcullisErrors,
 ) -> Option<BridgePort> {
-    if matches!(port.base, PortBase::GlobalSelf) {
-        errors.push(PortcullisError::Rule {
-            message: "a global is shared and needs no bridge".to_string(),
-            span,
-        });
-        return None;
-    }
+    assert!(
+        !matches!(port.base, PortBase::GlobalSelf),
+        "rejected by check_head"
+    );
     let (tag, index) = resolve_base(port, None, span, binding, errors)?;
     let formal = match tag {
         FormalIndexTypeTag::Index => FormalIndex::new(index.expect("Index carries one")),

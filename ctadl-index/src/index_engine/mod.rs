@@ -142,8 +142,7 @@ pub struct IndexFacts {
     pub intent_component: Vec<(Str, IntentKind, FunctionId)>,
     #[builder(default)]
     pub external_function: Vec<(FunctionId,)>,
-    /// The project's globals: one row per declaring import, with the declaration's span in that
-    /// import's source-info database.
+    /// The project's globals, as [`crate::facts::schema::globals::Record`] rows.
     #[builder(default)]
     pub globals: Vec<(GlobalId, ImportId, Option<::source_info::FileSpanId>)>,
     /// Program-level flows between global paths loaded from a `--summary` project, seeded
@@ -286,7 +285,7 @@ impl IndexFacts {
     }
 
     /// The number of globals each import declares, and the globals more than one import
-    /// declares, which are one variable (G3): the counts `ctadl index` reports.
+    /// declares.
     pub fn global_declarations(
         &self,
     ) -> (

@@ -75,7 +75,7 @@
 //! swapped out, so a free identifier
 //! (a name not bound by a `local` or a parameter) is modeled uniformly as a field of it:
 //! `n` is `$_ENV.n`, and `kong.request.x` is `$_ENV.kong.request.x`. Reads become loads and
-//! writes become stores. A global is its name, so the imports of a project share one
+//! writes become stores. By G3, the imports of a project share one
 //! `$_ENV`: one VM, one environment.
 //!
 //! ## Errors / exceptions
@@ -3172,6 +3172,5 @@ mod tests {
         let dump = info.program.to_string();
         assert!(dump.contains("$_ENV.kong"), "{dump}");
         assert!(dump.contains("store $_ENV.counter := "), "{dump}");
-        assert!(!dump.contains("$globals"), "{dump}");
     }
 }

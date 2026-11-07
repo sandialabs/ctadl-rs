@@ -897,7 +897,7 @@ pub(crate) fn check_does_not_return_param_in(
 
 /* Asserts function `name` writes parameter `param_num` into the global path `field` -- the summary
 flow `@pN -> $g.deref` for `field` `.g.deref` (e.g. `void set(int src){ g = src; }` summarizes
-`@p0 -> $g.deref`, a C global's storage being its cell), a row rooted at the global. Pairs
+`@p0 -> $g.deref`), a row rooted at the global. Pairs
 with `check_returns_global_in` to pin a cross-function flow-through-a-global as two summary
 halves. */
 #[track_caller]

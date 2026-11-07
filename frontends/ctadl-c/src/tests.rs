@@ -82,7 +82,7 @@ fn simple_assign_expr() {
 #[test_log::test]
 fn simple_assign_global() {
     // Reading a name with no local declaration (`int b = a;`, where `a` was never declared). CTADL
-    // resolves it to a global, and a C global's storage is its cell, so the source is `$a.deref`.
+    // resolves it to a global.
     let src = r"
             int simple_assign_global() {
                 int b = a;
@@ -2992,9 +2992,8 @@ fn addr_of_a_record_is_a_cell() {
 
 #[test_log::test]
 fn addr_of_a_global_record_is_a_copy() {
-    // The module docs' "Globals" convention: a global is a cell, so `&g` is the copy `$g` and the
-    // callee's `p->f = v` lands on `$g.deref.f`, which is what `g.f` names. A write through the
-    // address of a global is observed at the global.
+    // Pins the module docs' "Globals" convention: a write through `&g` (`p->f`, `$g.deref.f`) is
+    // observed at `g.f`.
     let src = r"
         struct S { int f; };
         struct S g;
