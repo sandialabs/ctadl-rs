@@ -45,12 +45,9 @@ names with no layout: two fields are related only by being equal.
 
 ### Variables
 
-A variable is a local, a parameter, or a global. A program declares its globals, each with a
-name and optionally a source location; a global is a variable like any other, so an access path
-may have it as its base (G1). A global's name is its identity: two programs of a project that
-declare `g` declare one variable (G3). A front end chooses the name and documents the rule, and a
-global that must not be shared with another program carries that program's name in its own
-(`libA.so::ram`), the way a C `static` function is qualified by its unit.
+A variable is a local, a parameter, or a global. A function declares its locals; the program
+declares its globals (G1), and a global's name is its identity across a project's programs
+(G3). See [Globals](#globals) for the rules.
 
 ### Normal form
 
@@ -176,8 +173,7 @@ through `y`.
 `p_i = a_i` into its formals and followed by the copy `r = ret` from its return. Their labels
 have scope `Fixed`, like any copy's. A program is its infinite unfolding: every variable is fresh
 per instance except a global, which every instance shares (G2), so `r1 = id(a); r2 = id(b)`
-gives `r2` only `b`'s labels. Nothing is passed for a global at a call: a callee that names `g`
-names the same variable as its caller (G5). A call to a
+gives `r2` only `b`'s labels. Nothing is passed for a global at a call (G5). A call to a
 function without a body is zero assignments unless a model supplies them, and the analysis
 reports it, never hides it.
 
@@ -198,23 +194,40 @@ nothing.
 
 ### Globals
 
-**S13.** A global has one set of cells in the whole project, not one per instance (G2), so a store to
-`$g.f` in one function is read by a load of `$g.f` in another with no call between them, and a
-witness may pass through a global between any two instances (G8). A global is never rebound
-(G4): it is never the destination of a copy or of a call result, and SSA never versions it. Its
-storage is the locations below it (`$g.deref`, `$C.f`), and where a language puts a global's
-storage is a front-end convention.
+**S13.** Globals obey G1–G8, which the rest of this document and the code cite by number:
+
+- **G1. Declaration.** A program declares its global variables, each with a name and optionally
+  a source location. A global is a variable like any other: an access path may have it as its
+  base, and it is written `$name` ([Textual form](#textual-form)).
+- **G2. Sharing.** A global has one set of cells in the whole project, not one per instance of
+  the unfolding (S10).
+- **G3. Identity.** A global is its name: two programs of a project that declare `g` declare one
+  variable. A front end chooses the name and documents the rule ([Front ends](#front-ends)); a
+  global that must not be shared with another program carries that program's name in its own
+  (`libA.so::ram`), the way a C `static` function is qualified by its unit.
+- **G4. Never rebound.** A global is never the destination of a copy or of a call result, and
+  SSA never versions it. Its storage is the locations below it (`$g.deref`, `$C.f`); where a
+  language puts that storage is a front-end convention (S19).
+- **G5. Calls.** Nothing is passed for a global at a call: a callee that names `g` names the same
+  variable as its caller, so the copies of S10 are `p_i = a_i` and `r = ret` only.
+- **G6. Summaries.** A summary (S14) excludes flows between two global paths: such a flow holds
+  in every instance (G2), so it is a fact of the program, not of any function. A target label at
+  a global path holds in every instance too, so it guards nothing, and instantiating a summary
+  leaves a global path as it is: it already names the shared variable.
+- **G7. Models.** A global path is a port: a source, sink or propagation may name it. A bridge is
+  a call (S15), so it maps formals and returns and nothing for globals.
+- **G8. Observable.** The observable is unchanged (S17). A witness may pass through a global
+  between any two instances: a store to `$g.f` in one function is read by a load of `$g.f` in
+  another with no call between them.
 
 ### Summaries
 
 **S14.** An implementation may analyze each function once into a summary: the flows of its body between
-paths rooted at its formals, its return and the globals it reaches, *excluding* flows between
-two global paths (G6). A flow between two global paths holds in every instance (G2), so it is a
-fact of the program, not of any function. A flow that exists only because a target label
-reaches a formal path is *guarded* by that requirement; a target label at a global path holds in
-every instance and guards nothing. Instantiating the summary at a call site substitutes actuals
-for formals, leaves a global path as it is (it already names the shared variable), and fires a
-guarded flow only when the actuals carry its targets. Summaries and the call graph are then one fixpoint. This computes the unfolding
+paths rooted at its formals, its return and the globals it reaches, except flows between two
+global paths (G6). A flow that exists only because a target label reaches a formal path is
+*guarded* by that requirement. Instantiating the summary at a call site substitutes actuals for
+formals and fires a guarded flow only when the actuals carry its targets. Summaries and the call
+graph are then one fixpoint. This computes the unfolding
 exactly for flows between formal paths; cells inside a callee see every caller's labels merged,
 where the unfolding keeps them apart, which is accepted. Resolving a call by other means (a
 dispatch model, class hierarchy analysis for a small candidate set) only adds targets.
@@ -223,8 +236,8 @@ dispatch model, class hierarchy analysis for a small candidate set) only adds ta
 
 **S15.** Models desugar to the constructs above: a propagation model is a store or copy between ports, a
 bridge is a call, a dispatch model adds targets, and a source or sink is an initial label or an
-observation. There is no third construct. A global path is a port: a source, sink or propagation
-may name it. A bridge is a call, so it maps formals and returns and nothing for globals (G7).
+observation. There is no third construct. A global path is a port, and a bridge maps nothing for
+globals (G7).
 
 ### Ports and the observable
 
