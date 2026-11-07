@@ -578,12 +578,7 @@ impl FlowyCtx {
         for def in defs {
             match def {
                 parse::Def::Var(name, span) => {
-                    // Exactly the `var x;`: `span` ends after the `;`.
-                    let span = self.source_info_builder.span_for(
-                        self.artifact_key.clone(),
-                        span.start.try_into().unwrap(),
-                        source_info::SpanLen::ByteLen(span.len().try_into().unwrap()),
-                    );
+                    let span = self.span_for(&span);
                     let idx = self.program.declare_global(name.name, Some(span));
                     self.toplevel_vars.insert(name.name.to_string(), idx);
                 }
@@ -599,14 +594,18 @@ impl FlowyCtx {
         Ok(())
     }
 
+    /// The span of the bytes `span` covers, which end after the `;` of a statement,
+    /// terminator or `var`.
+    fn span_for(&mut self, span: &std::ops::Range<usize>) -> source_info::FileSpanId {
+        let start = span.start.try_into().unwrap();
+        let len = source_info::SpanLen::ByteLen(span.len().try_into().unwrap());
+        self.source_info_builder
+            .span_for(self.artifact_key.clone(), start, len)
+    }
+
     /// The source info for a statement or terminator spanning `span`.
     fn source_info(&mut self, span: &std::ops::Range<usize>) -> SourceInfo {
-        let start = span.start.try_into().unwrap();
-        let len = source_info::SpanLen::ByteLen((span.end - span.start + 1).try_into().unwrap());
-        SourceInfo::new(
-            self.source_info_builder
-                .span_for(self.artifact_key.clone(), start, len),
-        )
+        SourceInfo::new(self.span_for(span))
     }
 
     /// Builds the function `def` defines: its formals, where clause, blocks and gotos.
@@ -1292,7 +1291,7 @@ impl Counter {
 mod global_tests {
     use super::*;
 
-    /// A global is declared at its `var` (R27).
+    /// A global is declared at its `var` (R27), and a statement spans its own text.
     #[test]
     fn a_global_is_declared_at_its_var() {
         let src = "// a global\nvar g;\ndef F() {\ns:\n  a = g.deref;\n  return;\n}\n";
@@ -1307,6 +1306,20 @@ mod global_tests {
             panic!("{span:?}");
         };
         assert_eq!(&src[start..start + len as usize], "var g;");
+
+        // A statement's span is the statement, through its `;` and no further.
+        let f = info.program.functions.iter().next().expect("F");
+        let (_, span) = f
+            .blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .find_map(|stmt| info.source_info.resolve(stmt.source_info.span_id))
+            .expect("a statement with a span");
+        let source_info::SpanLen::ByteLen(len) = span.len else {
+            panic!("{span:?}");
+        };
+        let start = span.start as usize;
+        assert_eq!(&src[start..start + len as usize], "a = g.deref;");
     }
 }
 
