@@ -2409,10 +2409,7 @@ impl<'a> Lowerer<'a> {
         match self.lookup(name) {
             Some(Binding::Param(idx)) => AccessPath::from(VariableRef::new_parameter(idx)),
             Some(Binding::Local) => AccessPath::from(self.local_ref(name)),
-            None => {
-                let env = self.program.declare_global("_ENV", None);
-                AccessPath::new(VariableRef::global(env), [PathSegment::field(name)])
-            }
+            None => AccessPath::new(self.env(), [PathSegment::field(name)]),
         }
     }
 
@@ -2474,6 +2471,17 @@ impl<'a> Lowerer<'a> {
         // No content child (e.g. empty string): strip one leading/trailing quote char.
         let text = self.node_text(node);
         text.trim_matches(|c| c == '"' || c == '\'').to_string()
+    }
+
+    /// The global `_ENV`. It is declared by the chunk of the first unit that names it: in Lua
+    /// each chunk has an `_ENV`, and every chunk's is the one global table.
+    fn env(&mut self) -> VariableRef {
+        if let Some(env) = self.program.globals.lookup("_ENV") {
+            return VariableRef::global(env);
+        }
+        let chunk = self.trees[self.unit].root_node();
+        let span = self.span(chunk).span_id;
+        VariableRef::global(self.program.declare_global("_ENV", Some(span)))
     }
 
     fn span(&mut self, node: Node<'_>) -> SourceInfo {
@@ -2988,6 +2996,25 @@ mod tests {
             direct_calls(&info, "kong.pdk.request._REQUEST.get_header"),
             vec!["kong.pdk.request._REQUEST.get_headers"]
         );
+    }
+
+    /// `_ENV` is declared by the whole chunk of the first unit that names a free variable,
+    /// whichever unit is lowered first.
+    #[test]
+    fn env_is_declared_at_the_first_chunk_that_names_it() {
+        let quiet = "local x = 1\n";
+        let loud = "print(x)\n";
+        let info = import_modules(&[("a", quiet), ("b", loud), ("c", loud)]);
+        let env = info
+            .program
+            .globals
+            .lookup("_ENV")
+            .expect("_ENV is declared");
+        let span = info.program.globals.get(env).unwrap().span.expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "b.lua");
+        assert_eq!(span.start, 0);
+        assert_eq!(span.len, SpanLen::ByteLen(loud.len() as u32));
     }
 
     #[test]

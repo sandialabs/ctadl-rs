@@ -758,3 +758,48 @@ fn a_static_field_is_a_field_of_its_class_global() {
     });
     assert!(store && load, "{stmts:?}");
 }
+
+/// A class's global is declared at its `class_def_item`: on the committed APK, every
+/// global the program uses that one of its dex files defines has a span of
+/// [`dex_reader::types::ClassDef::ITEM_LEN`] bytes in that dex file whose first word is the
+/// class's type index.
+#[test]
+fn a_class_global_is_declared_at_its_class_def_item() {
+    let apk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../xtask/tests/dex/com.noto_54.apk");
+    let bytes = std::fs::read(&apk).expect("the APK");
+    let dexes = dex_reader::apk::APKParser::new(&bytes).expect("the APK parses");
+    let parsers = dexes.dex_parsers_with_filenames();
+    let info = crate::import_apk(&apk)
+        .expect("the APK imports")
+        .program_info;
+
+    let mut located = 0;
+    for (_, global) in info.program.globals.iter_enumerated() {
+        let Some(span) = global.span else {
+            continue;
+        };
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(
+            span.len,
+            source_info::SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN)
+        );
+        let (_, parser) = &parsers[artifact.sub_artifact_id as usize];
+        let at = span.start as usize;
+        let class_idx = u32::from_le_bytes(parser.data[at..at + 4].try_into().unwrap());
+        let class_def = parser
+            .class_defs
+            .iter()
+            .find(|c| c.class_idx == class_idx)
+            .expect("the span is at a class_def_item");
+        assert_eq!(class_def.offset, span.start);
+        assert_eq!(parser.class_name(class_def).unwrap(), *global.name);
+        located += 1;
+    }
+    // The app's own classes hold statics; the framework's, which it only uses, are not in it.
+    assert!(located > 0, "no global is located");
+    assert!(
+        located < info.program.globals.len(),
+        "every global is located"
+    );
+}

@@ -24,6 +24,15 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
   varnode that holds the address resolves to the address too. See
   `Context::push_assign_or_store`.
 
+# Spans
+
+A span's start is an offset from the image base, the address Ghidra loaded the image at
+(`PROGRAM_IMAGE_BASE`), not the address itself: an instruction at Ghidra address `A` starts at
+`A - image_base`. Source-info positions are `u32`, and a 64-bit image's addresses are not
+(a Mach-O executable loads at `0x1_0000_0000`); its offsets are, for any image under 4 GiB. An
+instruction whose offset does not fit gets no span, and the import warns. The memory global is
+declared at offset 0, the image itself.
+
 # Why the JNI registry lives here
 
 [`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
@@ -64,6 +73,12 @@ const WORD_SIZE: i64 = 8;
 /// True when Ghidra is available to lower a binary to pcode. See [`ghidra::available`].
 pub fn ghidra_available() -> bool {
     ghidra::available()
+}
+
+/// The span start of Ghidra address `address` in an image loaded at `image_base`: its offset
+/// from the base (see "Spans" in the crate docs). `None` below the base or 4 GiB or more above it.
+fn image_offset(address: i64, image_base: i64) -> Option<u32> {
+    u32::try_from(address.checked_sub(image_base)?).ok()
 }
 
 /// The name of the memory global of the import `import_name`, `<import>::ram`: the import, then
@@ -180,6 +195,11 @@ struct Context {
     import_name: String,
     /// The import's memory global, `$<import>::ram`, declared by [`Self::process`].
     memory: Option<ctadl_ir::mir::GlobalIdx>,
+    /// The address Ghidra loaded the image at, which spans are offsets from (see "Spans" in the
+    /// crate docs); 0 when the facts do not say. Read by [`Self::process`].
+    image_base: i64,
+    /// Instructions with no span because their offset from the image base is not a `u32`.
+    unlocated_instructions: usize,
 }
 
 impl Context {
@@ -203,6 +223,8 @@ impl Context {
             counter: 0,
             import_name: "pcode".to_string(),
             memory: None,
+            image_base: 0,
+            unlocated_instructions: 0,
         }
     }
 
@@ -247,13 +269,22 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        let reader = PcodeFactsReader::new(facts_dir);
+        self.image_base = reader
+            .read_image_base()
+            .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
+            .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
+            .unwrap_or(0);
+        let image_span = builders.source_info_builder.span_for(
+            artifact_key.clone(),
+            0,
+            source_info::SpanLen::Empty,
+        );
         self.memory = Some(
             builders
                 .program
-                .declare_global(memory_global_name(&self.import_name), None),
+                .declare_global(memory_global_name(&self.import_name), Some(image_span)),
         );
-        // Use pcode-reader crate to read facts
-        let reader = PcodeFactsReader::new(facts_dir);
         let mut pcode_facts = reader
             .read_all_facts()
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
@@ -320,6 +351,15 @@ impl Context {
 
         // 3. Process pcode instructions
         self.process_pcode_instructions(&pcode_facts, artifact_key, builders)?;
+        if self.unlocated_instructions > 0 {
+            log::warn!(
+                "pcode: {}: {} instruction(s) more than 4 GiB from the image base {:#x}, or \
+                 below it, have no source location",
+                self.import_name,
+                self.unlocated_instructions,
+                self.image_base
+            );
+        }
 
         Ok(())
     }
@@ -730,12 +770,17 @@ impl Context {
                         &mut locals,
                     )? {
                         if let Some(addr) = &pcode.target {
-                            stmt.source_info =
-                                SourceInfo::new(builders.source_info_builder.span_for(
-                                    artifact_key.clone(),
-                                    addr.0 as u32,
-                                    source_info::SpanLen::ByteLen(1),
-                                ));
+                            match image_offset(addr.0, self.image_base) {
+                                Some(offset) => {
+                                    stmt.source_info =
+                                        SourceInfo::new(builders.source_info_builder.span_for(
+                                            artifact_key.clone(),
+                                            offset,
+                                            source_info::SpanLen::ByteLen(1),
+                                        ));
+                                }
+                                None => self.unlocated_instructions += 1,
+                            }
                         }
                         statements.push(stmt);
                     }
@@ -2136,6 +2181,107 @@ mod tests {
         // `p - q`, both pointers: neither is the base.
         assert_eq!(base_operand(&[PTR, PTR]), None);
         assert_eq!(base_operand(&[]), None);
+    }
+
+    /// A span starts at the offset from the image base, which a 64-bit image's addresses have
+    /// even where the addresses are not `u32`s.
+    #[test]
+    fn a_span_starts_at_the_offset_from_the_image_base() {
+        // A Mach-O executable.
+        assert_eq!(image_offset(0x1_0000_1000, 0x1_0000_0000), Some(0x1000));
+        // An ELF shared library at Ghidra's base.
+        assert_eq!(image_offset(0x10_1234, 0x10_0000), Some(0x1234));
+        assert_eq!(image_offset(0x1234, 0), Some(0x1234));
+        assert_eq!(image_offset(0xf_ffff, 0x10_0000), None);
+        assert_eq!(image_offset(0x1_0010_0000, 0x10_0000), None);
+        assert_eq!(image_offset(i64::MIN, 1), None);
+    }
+
+    /// An image's memory global is declared at the image, offset 0 from its base.
+    #[test]
+    fn the_memory_global_is_declared_at_the_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Every table the reader reads, empty, and the image base.
+        for name in [
+            ".facts",
+            "BB_FIRST.facts",
+            "BB_FOUT.facts",
+            "BB_HFUNC.facts",
+            "BB_LAST.facts",
+            "BB_OUT.facts",
+            "BB_PCODE_INDEX.facts",
+            "BB_START.facts",
+            "BB_TOUT.facts",
+            "HFUNC_EP.facts",
+            "HFUNC_ISEXT.facts",
+            "HFUNC_LOCAL_EP.facts",
+            "HFUNC_NAME.facts",
+            "HFUNC_PROTO.facts",
+            "HVAR_CLASS.facts",
+            "HVAR_NAME.facts",
+            "HVAR_REPRESENTATIVE.facts",
+            "HVAR_TYPE.facts",
+            "PCODE_INDEX.facts",
+            "PCODE_INPUT.facts",
+            "PCODE_MNEMONIC.facts",
+            "PCODE_OPCODE.facts",
+            "PCODE_OUTPUT.facts",
+            "PCODE_PARENT.facts",
+            "PCODE_TARGET.facts",
+            "PROGRAM_IMAGE_BASE.facts",
+            "PROTO_IS_VARARG.facts",
+            "PROTO_IS_VOID.facts",
+            "PROTO_PARAMETER.facts",
+            "PROTO_PARAMETER_COUNT.facts",
+            "PROTO_RETTYPE.facts",
+            "REGISTER_IS_SP.facts",
+            "REGISTER_OFF_NAME.facts",
+            "SYMBOL_HVAR.facts",
+            "TYPE_BOOLEAN.facts",
+            "TYPE_ENUM.facts",
+            "TYPE_FLOAT.facts",
+            "TYPE_INTEGER.facts",
+            "TYPE_POINTER.facts",
+            "VNODE_ADDRESS.facts",
+            "VNODE_HVAR.facts",
+            "VNODE_IS_ADDRESS.facts",
+            "VNODE_NAME.facts",
+            "VNODE_OFFSET_N.facts",
+            "VNODE_SIZE.facts",
+            "VNODE_SPACE.facts",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        std::fs::write(dir.path().join("PROGRAM_IMAGE_BASE.facts"), "1048576\n").unwrap();
+
+        let mut ctx = Context::new();
+        ctx.import_name = "lib.so".to_string();
+        let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
+        let key = ArtifactKey {
+            path: "lib.so".to_string(),
+            sub_artifact_id: 0,
+            hash: Vec::new(),
+            encoding: source_info::ArtifactEncoding::Binary,
+        };
+        ctx.process(dir.path(), key, &mut builders)
+            .expect("the facts lower");
+        let info = ctx.finish(builders).expect("the program finishes");
+        let memory = info
+            .program
+            .globals
+            .lookup(&memory_global_name("lib.so"))
+            .expect("the memory global");
+        let span = info
+            .program
+            .globals
+            .get(memory)
+            .unwrap()
+            .span
+            .expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "lib.so");
+        assert_eq!(span.start, 0);
+        assert_eq!(span.len, source_info::SpanLen::Empty);
     }
 
     /// An image's memory is one global named by the import and the address space, so a

@@ -180,6 +180,10 @@ struct Context {
     /// The globals declared so far: one per class that owns a static field. Moved into the
     /// program at [`Context::finish`].
     globals: ctadl_ir::mir::Globals,
+    /// Each class this import defines, as its global is named, with the dex file it is in and
+    /// the offset of its `class_def_item` there: where the global is declared. Located
+    /// in [`Context::finish`], once every class has been lowered.
+    class_defs: Vec<(String, ArtifactKey, u32)>,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -218,6 +222,7 @@ impl Context {
             merged: Default::default(),
             retag: Default::default(),
             globals: Default::default(),
+            class_defs: Vec::new(),
             pc: 0,
             clone_statements: 0,
         }
@@ -234,6 +239,8 @@ impl Context {
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
+            self.class_defs
+                .push((class_name.clone(), artifact_key.clone(), class_def.offset));
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -682,6 +689,17 @@ impl Context {
     ) -> Result<(ProgramInfo, Notifications), Error> {
         let mut program = builders.program;
         program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its `class_def_item`, if the program uses it.
+        for (class, key, offset) in self.class_defs.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
         log::trace!("program: {program}");
         let notifications = self
             .merged

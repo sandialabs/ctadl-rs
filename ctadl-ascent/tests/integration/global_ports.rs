@@ -82,6 +82,12 @@ fn a_source_on_a_global_reaches_a_sink_with_no_call_between() {
     let logical = &sarif["runs"][0]["logicalLocations"][index];
     assert_eq!(logical["fullyQualifiedName"], "global_source::$g_data");
     assert_eq!(logical["kind"], "variable");
+    // And at its declaration, the declarator `g_data` of `int g_data;` on line 4.
+    let physical = &source["locations"][0]["physicalLocation"];
+    assert_eq!(physical["artifactLocation"]["uri"], "g.c", "{physical:#}");
+    assert_eq!(physical["region"]["startLine"], 4, "{physical:#}");
+    assert_eq!(physical["region"]["startColumn"], 5, "{physical:#}");
+    assert_eq!(physical["region"]["endColumn"], 10, "{physical:#}");
 }
 
 /// A source on a global nothing reads, or on a path below `g_data` that `consume` does not read,
