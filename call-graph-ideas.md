@@ -1,730 +1,495 @@
 # Call-graph discovery ideas
 
-Design proposal based on the code at `3e3f09ab`. The performance observations
-come from recorded runs; the proposed analysis has not been implemented or
-benchmarked.
+Design proposal. It is written against the IR semantics in [ir.md](docs/ir.md)
+and the framing in [spec.md](docs/spec.md), not against the current engine. The
+analysis proposed here has not been implemented or benchmarked.
 
 ## Recommendation
 
-Establish a new call-discovery baseline built for scale, starting with a separate,
-small analysis over SSA using symbolic return origins and parameterized dispatch
-requirements. It should avoid computing the general taint-flow closure.
+Make the call graph its own analysis, computed **before** taint, in positive
+Datalog over a representation built for it:
 
-Changing call results during this redesign is acceptable. There is no requirement
-to reproduce the existing engine's edges or retain its expensive mechanisms for
-compatibility. In particular, remove speculative CHA dispatch and allow flows
-through unsupported heap patterns, out-parameters, globals, or conditional
-summaries to remain unresolved.
+1. **Cells, not access paths.** Every SSA variable is a cell. Memory below a
+   variable is a graph of cells reached through fields, offsets and `deref`.
+   Flow between variables is directional; the memory structure below them is
+   **unified**, as in Steensgaard's analysis. This is Das's "one level flow":
+   near-linear structure, Andersen-like precision for the pointer level that
+   decides calls.
+2. **Only two kinds of label.** Class labels and function labels flow over the
+   cell graph. Nothing else is tracked. A label's derivation is a chain of cells
+   from a `new C` or `ptr<f>` to the call site, which an analyst can read.
+3. **Hierarchy as a filter, never a generator.** A virtual call resolves by
+   exact lookup from an evidenced class. Declared types prune labels that cannot
+   be there. No class-hierarchy analysis, no fallback that enumerates subclasses.
+4. **Context sensitivity only where it is cheap and matters:** pass-through
+   summaries (formal `i` reaches return `r`) keep wrappers and identity-like
+   utilities from mixing their callers. Everything else is context-insensitive.
+5. **Taint runs afterwards on the fixed edge set.** The discovery abstraction
+   over-approximates the IR's label flow for class and function labels, so the
+   taint engine no longer propagates target labels or resolves calls at all.
 
-The experiment should establish whether this restricted discovery kernel is
-useful and structurally cheaper. The proposed relations still have potentially
-large products; their scaling must be measured before adopting the design.
-Once a useful baseline is established, prefer additive extensions that preserve
-its discoveries. Treat intentional edge removal as an explicit semantic change,
-not as a reason to retain an unsuitable architecture indefinitely.
+Changing call results during this redesign is acceptable. There is no
+requirement to reproduce the existing engine's edges or retain its mechanisms.
+Unresolved calls are reported, not guessed.
 
 ## Objectives and constraints
 
 The objective is call-graph discovery. Leaving a call unresolved is acceptable.
 There should be no CHA or other fallback that enumerates speculative callees.
-Avoiding speculative target enumeration does not guarantee execution feasibility.
+Avoiding speculative enumeration does not guarantee execution feasibility.
 
-Discovery should have declarative, evaluation-order-independent semantics.
-Stopping after a global worklist budget is not a semantic definition.
+Discovery should have declarative, evaluation-order-independent semantics: a
+least fixpoint of a monotone system. Stopping after a budget is not a semantic
+definition.
 
-The current redesign may change previously discovered call edges. After the new
-baseline is established, pursue a policy of generally preserving discoveries for
-the same input and modeling assumptions while adding supported patterns. This
-is a development policy, not an unconditional compatibility guarantee. Better
-overall coverage alone does not demonstrate preservation; removed edges should
-be detected and explained.
+Structural efficiency means no call strings, no access-path suffix products, no
+eager closure hidden in preprocessing. Remaining products and worst-case growth
+must be explicit. Reusable per-function summaries should compose without
+re-expanding bodies.
 
-Structural efficiency means avoiding call strings, eager points-to closure, and
-expensive computations hidden in preprocessing. Remaining products and
-worst-case growth must be explicit. Small reusable procedure summaries should
-compose without repeatedly expanding procedure bodies.
+All given code is analyzed ([spec.md](docs/spec.md) §1): no pruning by
+reachability from entry points, since hidden payloads must still be found.
 
-## Representation and current analysis
+## Why a separate analysis, and why this abstraction
 
-The [IR semantics](docs/ir.md) defines how function and class labels flow through
-assignments and calls. The discovery kernel uses a restricted subset of those
-flows. The relevant representation is:
+The current design makes call resolution part of the taint fixpoint (S11:
+labels create assignments). That is elegant and it is the cost center: target
+labels ride the same access-path machinery as taint, with suffix extension,
+alias summaries and conditional rows, and the tag/edge join has been the single
+most expensive relation in recorded profiles. Access paths exist because
+analysts want to see `p.f.g` in a finding. Call targets do not need them: a
+function pointer in `s.ops.read` needs a cell for `read` in the object `ops`
+points to, not a set of path suffixes.
 
-- `CallAssign` distinguishes direct, function-pointer, Java, CIL, and Lua calls.
-  Arguments and return slots are explicit.
-- `Exp::ObjectRef` carries object-class tags and function addresses. JVM/Dex
-  allocations, CIL allocations/boxing, and recognized native function addresses
-  produce these tags. JVM/Dex lower supported method-handle constants
-  to function references and `MethodHandle.invoke`/`invokeExact` to indirect
-  calls. For method handles, runtime lookup, adaptation, constructor invocation,
-  and virtual overrides are not generally modeled.
-- `Assign` has a full `AccessPath` destination and `Exp::Path` sources.
-  `StatementKind::is_store` classifies a non-empty destination path as a store;
-  an empty destination path is a copy and defines an SSA variable. A load
-  `x = y.f` and pointer arithmetic `x = y.[8]` are both copies in this terminology.
-  Neither is a pathless transfer admitted by the initial kernel.
-- Memory stores do not define a new SSA base or kill earlier stored values.
-- Paths use typed `Field`, `Offset`, `Deref`, and `Value` segments. Use
-  [cir::path](ctadl-ir/src/cir/path.rs) for normalization when recognizing
-  supported flows; do not infer a path's meaning from its printed spelling.
-- Return types describe **return arity**, not concrete runtime classes.
-  `ParameterType` describes sharing behavior, not a receiver's class. Neither
-  justifies `ReturnsType(T)`.
-- CIR branches are nondeterministic `Goto` successors. Phi operands retain
-  predecessors in CIR, but codegen projects them into ordinary assignments,
-  discarding that association. S16 itself defines a phi as its set of copies.
-  There are no branch predicates to prove general execution feasibility.
+The proposal therefore uses a **different heap abstraction for discovery than
+for taint**, chosen so that it is a quotient of the taint abstraction for the
+labels discovery cares about:
 
-See [CIR statements and expressions](ctadl-ir/src/cir/mod.rs),
-[call styles](ctadl-ir/src/cir/call.rs),
-[terminators](ctadl-ir/src/cir/terminator.rs), and
-[phi lowering](ctadl-ascent/src/codegen/mod.rs).
+- At the top level (empty path), the IR's forward rule S6 is directional and
+  copies never merge their sources (S7, S16). Discovery keeps this exactly:
+  directional `flow` edges between variable cells.
+- Below the top level, S6 to S9 together make memory effectively shared across
+  copies: a store's labels have scope `All` and move backward through every copy
+  of the base, two stores to one location merge, and `#value` is shared with
+  every alias of its cell. Discovery over-approximates this by unifying the
+  memory structure below variables that are copied, loaded or stored into one
+  another. Every location the semantics would relate, discovery relates;
+  discovery also relates some the semantics keeps apart (a `Fixed` label does
+  not move backward in the IR, but does under unification).
 
-The current analysis is compositional and does **not** enumerate call
-strings. Its `critical_summary(function, formal, path)` and
-`resolvent(function, formal, path, target, decision)` describe parameter
-dependencies; `establishes_*` retains single-hop relationships. Decisions identify
-a formal/path/target, not a calling history. The `NeedsReceiver` proposal is
-therefore a simplification and refocusing of existing ideas, rather than the
-introduction of compositionality. See the
-[hybrid rules](ctadl-index/src/index_engine/mod.rs) and
-[decision representation](ctadl-index/src/index_engine/decision.rs).
+Because discovery is coarser than the semantics wherever they differ, every
+target label the semantics places at a call operand, discovery places at the
+corresponding cell. The call graph it produces therefore contains every edge
+S11 would derive, and the taint analysis can take the edge set as input. Index
+construction becomes two strata instead of one fixpoint: discovery, then taint
+over a fixed call graph. The taint engine drops target-label propagation, the
+tag/edge join and decision-guarded summaries (or keeps the last as an input, see
+[Guards for hybrid inlining](#guards-for-hybrid-inlining)).
 
-The expensive substrate is broader:
+The precision cost is confined to memory: two objects of the same class whose
+pointers ever meet share one set of field cells. The precision gains relative to
+today are the removal of speculative CHA edges, and type filtering. Where the
+memory merge hurts, a later refinement stratum splits objects
+([Refinement](#later-strata)); it is not needed to get a baseline.
 
-- `locals` relates local access paths to formal access paths.
-- Summaries relate pairs of formal access paths.
-- Summary application produces more assignment edges.
-- Field extension, alias summaries, tag propagation, and conditional flows
-  participate in the fixpoint.
+## The cell graph
 
-Preprocessing also performs analysis: formal-alias closure, program-path ×
-model-path concatenation, and class-hierarchy closure. Moving work there would
-not satisfy the efficiency objective. See `compute_alias_of_formal` and
-`compute_paths` in the [index engine](ctadl-index/src/index_engine/mod.rs), and
-`run_cha` in [codegen](ctadl-ascent/src/codegen/mod.rs).
+### Cells and objects
 
-## Performance evidence
+```text
+cell  := Var(v)                   an SSA variable, formal, return slot, global
+       | Mem(obj, f)              the location reached from object obj by one
+                                  segment f: a field name, an offset, deref, or
+                                  #value
+obj   := Alloc(site)              the object created at an allocation site
+       | Of(cell)                 the object the pointer held in cell refers to
+```
 
-The evidence points toward reducing those products, but does not establish a
-speedup for the proposed replacement:
+Every cell has one pointee object, `Of(cell)`. Objects are subject to
+**unification**: `unify(o1, o2)` says they are the same abstract object, and
+`Mem(o, f)` is keyed by the representative of `o`, so unified objects share one
+cell per segment. The number of cells is bounded by the number of variables plus
+the number of field accesses in the program text, because a `Mem` cell is
+created only for a segment the program applies to a pointer, and unification
+only merges. Cyclic structures (`x = x.next`) unify the object with its own
+`next` pointee rather than growing a chain.
 
-| Evidence inspected | What it establishes |
+Offsets compose. A pointer cell's pointee is an object plus an offset, and `[k]`
+adjusts the offset (S5: `p.[k]` is an address, whose labels are `p`'s). Memory
+cells of a native object are keyed by absolute offset. If unification forces
+two pointees with inconsistent offsets onto one object, that object collapses
+to a single offset-insensitive cell; the collapse is reported.
+
+### Extraction
+
+Extraction is linear. After S5 normalization, a path of length greater than one
+is split into a chain through fresh cells, so the rules only ever see one
+segment:
+
+```text
+copy(d, s)                      d = s, and each phi operand
+load(d, b, f)                   d = b.f
+store(b, f, s)                  b.f = s
+seed(v, Class(C))               v = new C;   also object(Alloc(site)),
+                                unify(Of(v), Alloc(site))
+seed(v, Fun(h))                 v = ptr<h>
+site(c, g, Direct(h) | Indirect(v) | Virtual(v, sig))   call c in function g
+actual(c, i, a)   result(c, r, d)   formal(h, i, p)   ret(h, r, v)
+static_type(v, S)   subtype(C, S)   declares(C, sig, m)   super(C, D)
+```
+
+`y = value(p)` is the store `y.#value = p`. Literal arguments and literal
+return operands get synthetic cells so `return ptr<f>` and `invoke(ptr<f>)` keep
+their evidence. Globals are ordinary cells shared by every function (G2); nothing
+is passed for them at calls (G5).
+
+### Unification in Datalog
+
+Union-find is not a Datalog primitive, but an equivalence closure keyed by a
+least representative is a lattice program, which Ascent supports directly. The
+least fixpoint is unique, so results do not depend on evaluation order or on
+serial versus parallel execution.
+
+```prolog
+% rep(o, r): r is the least object id known to be in o's class (lattice: min)
+rep(o, o)                                   :- object(o).
+rep(o2, r)                                  :- unify(o1, o2), rep(o1, r).
+rep(o1, r)                                  :- unify(o1, o2), rep(o2, r).
+
+% unified objects share field cells: identify every Mem(o, f) with Mem(r, f)
+unify(Of(Mem(o, f)), Of(Mem(r, f)))         :- has_field(o, f), rep(o, r).
+```
+
+`has_field(o, f)` is derived from the loads and stores that apply `f` to a
+pointer whose pointee is `o`. As representatives only decrease, facts derived
+under an old representative stay (they are harmless) and are re-derived under
+the new one; the final representative carries everything.
+
+If the lattice encoding proves slow, a union-find kept in Rust and consulted by
+the rules computes the same fixpoint; the semantics is the Datalog program, not
+the data structure.
+
+### Structure rules
+
+```prolog
+unify(Of(d), Of(s))                         :- copy(d, s).
+unify(Of(d), Of(Mem(Of(b), f)))             :- load(d, b, f).
+unify(Of(Mem(Of(b), f)), Of(s))             :- store(b, f, s).
+unify(Of(a), Of(p))                         :- edge(c, h), actual(c, i, a), formal(h, i, p).
+unify(Of(v), Of(d))                         :- edge(c, h), result(c, r, d), ret(h, r, v).
+```
+
+`Mem(Of(b), f)` is read as `Mem(r, f)` for the current representative `r` of
+`Of(b)`. Every statement contributes a constant number of unifications. Call
+edges contribute one per argument and result, and `edge` is itself derived, so
+structure and resolution are one fixpoint; adding an edge only adds
+unifications and flows, so the system stays monotone.
+
+### Flow rules
+
+Flow edges are directional and carry a mode that says what happens to a label's
+provenance when it crosses:
+
+```prolog
+flow(s, d, Keep)                            :- copy(d, s).
+flow(Mem(Of(b), f), d, Keep)                :- load(d, b, f).
+flow(s, Mem(Of(b), f), Erase)               :- store(b, f, s).
+flow(a, p, Enter)                           :- edge(c, h), actual(c, i, a), formal(h, i, p).
+flow(v, d, Exit)                            :- edge(c, h), result(c, r, d), ret(h, r, v).
+```
+
+Labels carry one bit of provenance, `Own` or `Formal`: whether, within the
+function that holds the cell, the label arrived through one of that function's
+formals.
+
+```prolog
+holds(v, T, Own)                            :- seed(v, T).
+holds(d, T, b)                              :- flow(s, d, Keep),  holds(s, T, b),   ok(d, T).
+holds(d, T, Own)                            :- flow(s, d, Erase), holds(s, T, _),   ok(d, T).
+holds(d, T, Formal)                         :- flow(s, d, Enter), holds(s, T, _),   ok(d, T).
+holds(d, T, Own)                            :- flow(s, d, Exit),  holds(s, T, Own), ok(d, T).
+holds(Mem(r, f), T, b)                      :- holds(Mem(o, f), T, b), rep(o, r).
+```
+
+A store erases provenance because the memory cell is shared by every function
+and every caller. A return exports only labels the callee produced itself; a
+label that entered through a formal leaves through the pass-through mechanism
+below, which routes it caller-locally. This is what keeps `a = id(new A);
+b = id(new B)` from giving `a` the label `B`.
+
+`ok(d, T)` is the type filter:
+
+```prolog
+ok(d, T)                                    :- !static_type(d, _).
+ok(d, Class(C))                             :- static_type(d, S), subtype(C, S).
+ok(d, Fun(h))                               :- static_type(d, S), prototype_fits(h, S).
+```
+
+This uses the hierarchy to remove labels that a declared type rules out, the
+dual of CHA. For bytecode the declared types of fields, parameters, locals and
+`checkcast` are known and the filter is strong. For binaries it is a prototype
+check where a signature is available, and nothing otherwise; field sensitivity
+by offset does most of the filtering there.
+
+### Pass-through summaries
+
+A pass-through summary is label-free: it records that a function's formal `i`
+reaches its return slot `r` through copies and through callees' pass-throughs.
+At a call site it becomes a direct flow edge from actual to result, inside the
+caller, so labels never go into the callee and back out.
+
+```prolog
+reach(h, p, p)                              :- formal(h, _, p).
+reach(h, p, d)                              :- reach(h, p, s), copy(d, s), owner(d, h).
+reach(h, p, d)                              :- reach(h, p, a), owner(c, h), edge(c, k),
+                                               actual(c, i, a), through(k, i, r), result(c, r, d).
+through(h, i, r)                            :- formal(h, i, p), ret(h, r, v), reach(h, p, v).
+flow(a, d, Keep)                            :- edge(c, k), through(k, i, r), actual(c, i, a), result(c, r, d).
+```
+
+`reach` never crosses memory, because a load reads a cell whose labels are
+`Own`. A recursive identity wrapper derives `through` from its base case; a
+wrapper that only forwards and never returns a formal derives nothing. The
+relation sizes are `Σ_h arity(h) × |vars(h)|` for `reach` and
+`O(P × a × r)` for `through`.
+
+What this does not do: `apply(f, x) { return f(x); }` called once with
+`identity` and once with `makeB` gives both callers the label `B`, because the
+return effect of `makeB` is `Own` inside `apply`. Separating that needs a
+guarded effect ("if formal 0 is `identity`, return formal 1"), which is S14's
+guarded summary. It is deliberately not part of the kernel; see
+[Guards for hybrid inlining](#guards-for-hybrid-inlining).
+
+### Dispatch
+
+```prolog
+target(v, T)                                :- holds(v, T, _).
+target(v, T)                                :- holds(Mem(Of(v), #value), T, _).        % S11
+
+edge(c, h)                                  :- site(c, _, Direct(h)).
+edge(c, h)                                  :- site(c, _, Indirect(v)), target(v, Fun(h)).
+edge(c, m)                                  :- site(c, _, Virtual(v, sig)), target(v, Class(C)),
+                                               lookup(C, sig, m).
+
+wanted(C, sig)                              :- site(c, _, Virtual(v, sig)), target(v, Class(C)).
+wanted(D, sig)                              :- wanted(C, sig), !declares(C, sig, _), super(C, D).
+lookup(C, sig, m)                           :- wanted(C, sig), declares(C, sig, m).
+lookup(C, sig, m)                           :- wanted(C, sig), !declares(C, sig, _), super(C, D),
+                                               lookup(D, sig, m).
+```
+
+`lookup` is exact and demand-driven: it walks up from the evidenced class only,
+for signatures actually called on it, and never down. Negation is only on input
+facts, so the program remains stratified. Interface defaults, bridge methods and
+CIL's explicit interface implementations need language-specific `declares`
+facts; where a language's rule is ambiguous or unmodeled the site stays
+unresolved and says why.
+
+Only Java and CIL need `lookup`. Everywhere else a method table is memory:
+
+- A C `ops` struct, a C++ vtable, a Lua table and a .NET delegate are objects
+  whose cells hold function labels. A call through them is a load followed by
+  an indirect call, which the rules above already resolve.
+- Statically initialized data (`.data`, `.rodata`, vtable symbols, GOT entries)
+  is lowered by the front end as load-time stores into global cells:
+  `$tbl.[8] = ptr<f>`. There is no special rule for tables.
+- A C++ object's class is its vtable address: `new C` is a store of the vtable
+  symbol at offset zero, and a virtual call loads through it. No class
+  hierarchy is needed for native virtual dispatch.
+- A JVM method handle constant is `ptr<m>`; `invoke` is an indirect call.
+  Reflection and strings (S12) stay out, as today.
+
+### Reporting
+
+The final stratum, after the fixpoint, classifies what was not resolved and
+what was resolved under strain (N3, no silent loss):
+
+```prolog
+unresolved(c, NoEvidence)                   :- site(c, _, Indirect(v)), !target(v, _).
+unresolved(c, NoEvidence)                   :- site(c, _, Virtual(v, _)), !target(v, _).
+unresolved(c, NoLookup(C, sig))             :- site(c, _, Virtual(v, sig)), target(v, Class(C)),
+                                               !lookup(C, sig, _).
+unresolved(c, NoBody(h))                    :- edge(c, h), !has_body(h), !has_model(h).
+collapsed(o)                                :- offset-inconsistent unification of o
+hub(cell, n)                                :- n = #{T : target(cell, T)}, n > N
+```
+
+`hub` is a diagnostic, not a cutoff: the edges are still produced. It names the
+cells where precision is being lost (typically formals of `Object` methods and
+container internals) and is the input to the refinement stratum. `N` is
+recorded with the index like any other knob (N2, N5).
+
+## Scaling
+
+The domains and the work are:
+
+| Quantity | Bound |
 | --- | --- |
-| Commit `12f50391` | Changing the tag/edge join reduced its reported time from 1,091 to 7 seconds in one configuration; total fixpoint fell from 1,388 to 296 seconds, while peak memory rose from 13.3 to 16.2 GiB. Intermediate materialization remains a substantial tradeoff. |
-| Commit `e1ad45c2` | Consolidating conditional and unconditional rows reportedly reduced peak memory across six firmware binaries from 0.87–17.7 GiB to 0.27–3.02 GiB. “Identical findings” is weaker evidence than call-edge inclusion. |
-| [Path-set implementation notes](ctadl-index/src/index_engine/path_set.rs) | A historical dense-binary run constructed four billion candidate paths and retained six percent. Finite domains alone do not make propagation cheap. |
-| Saved `cajino_baidu` profile | A completed 0.892-second fixpoint had 302,393 `locals`, 600,948 `assign_like`, 640,587 `edge_split`, and 97,452 propagated tag rows. It uses mixed CHA and the older conditional layout; it is not a current no-CHA baseline. |
+| Cells | variables + field-access sites in the program text |
+| `unify`, `rep` | linear in statements plus one per argument of each resolved edge; the lattice converges in at most the number of merges |
+| `flow` | statements + Σ over resolved edges of arity, + `D × a × r` pass-through instantiations |
+| `holds` | cells × labels reaching × 2; the only product that can be large |
+| `reach`, `through` | Σ_h arity(h) × vars(h); `P × a × r` |
+| `lookup` | wanted (class, signature) pairs × hierarchy depth |
+| `edge` | sites × targets evidenced at the site |
 
-The saved profile inspected was
-`~/.local/state/ctadl/projects/cajino_baidu/index/profile.json`, with its adjacent
-`index_config.json`. It is a local artifact, not a repository fixture.
+There is no suffix extension, no path concatenation, no alias summary and no
+conditional row. The one product that can grow is `holds` at hub cells: a cell
+reached by many classes. Three things bound it in practice. Type filtering
+removes most labels at typed cells. Pass-through keeps utility functions from
+becoming hubs for their callers' results. And labels are classes, not
+allocation sites, so the ceiling at a hub is the number of classes with a path
+to it, not the number of allocations.
 
-These are historical measurements, not a baseline for the current code. Collect
-fresh profiles with the same imports, models, and pass configuration when
-comparing the discovery kernel with the existing engine.
+The known failure mode of unification is a chain of merges that fuses unrelated
+objects through a shared utility (`memcpy`, a generic container, `Object`
+formals). Collapsing them does not make the analysis slower, it makes it less
+precise, and `hub` and `collapsed` make it visible. The refinement stratum
+exists for exactly these cells.
 
-## Proposed design
+The second experiment to run alongside is the **directional variant**: replace
+`unify` with a directional `points_to(cell, obj)` keyed by allocation site
+(Andersen's analysis, as in Doop's context-insensitive baseline). Same
+extraction, same labels, same dispatch, more precise memory, cubic worst case.
+It is the comparison that says whether unification is buying anything on real
+inputs.
 
-The following ideas develop the Recommendation into one candidate design for
-building a call graph. They are proposals to test, not additional project
-constraints or decisions already made. The objectives above motivate the design;
-the historical performance evidence does not establish that it will be faster.
+## Later strata
 
-The core proposal combines two ideas:
+None of these is needed for the baseline. Each is a separate stratum that takes
+the baseline's output as input, so the baseline's semantics do not change.
 
-1. **Resolve dispatch from specific type or function evidence.** Replace the
-   current CHA resolvent table with lookup for the evidenced receiver class or
-   function address.
-2. **Propagate only the information needed for call discovery.** Use a separate
-   SSA analysis with symbolic return origins and dispatch requirements, so
-   wrappers and factories can contribute edges without general taint closure.
+### Refinement: split hub objects
 
-Demand restriction is a possible optimization of that core. Narrow field
-tracking and guarded return effects are possible later extensions. The sections
-below describe how these mechanisms could work, where they would lose coverage,
-and what an experiment would need to measure. Restrictions inside a mechanism
-define the proposed experiment's scope or explain what makes its rules valid;
-they are not requirements to adopt that mechanism.
-
-## Idea 1: resolve dispatch from specific evidence
-
-I propose replacing the existing dispatch lookup as part of the new baseline.
-This addresses the objective of avoiding speculative callee enumeration.
-Currently, `emit_callee_resolvents` exports `cha.resolvents`, whose construction
-includes:
-
-```prolog
-cha_resolve(supertype, signature, implementation) :-
-    inherited_method(subtype, signature, implementation),
-    subtype_of(subtype, supertype).
-```
-
-Consequently, even when discovery supplies the tag for `new A`, lookup under `A`
-can produce overriding methods in subclasses of `A`. Merely requiring a tag—or
-selecting `--strategy hi`—does not eliminate speculative target enumeration.
-See [resolvent emission and construction](ctadl-ascent/src/codegen/mod.rs).
-
-The replacement could expose a different relation:
-
-```text
-Dispatch(Type(T), signature, method)
-Dispatch(Function(f), function_call_key, f)
-```
-
-`Dispatch(Type(T), …)` means lookup for the **specific evidenced runtime class
-`T`**, including applicable inherited implementations. Under this definition,
-lookup does not enumerate descendants of `T`. For example, evidence from
-`new A` would allow the implementation selected for an `A` receiver, but would
-not add an override belonging only to a subclass of `A`.
-
-A possible implementation is demand-driven, memoized lookup for encountered
-`(T, signature)` pairs. To meet the evaluation-order-independence objective, its
-hierarchy walk, override handling, and interface-default resolution would need
-deterministic semantics over fixed metadata. The first experiment could leave
-unsupported or ambiguous language cases unresolved. Lookup would also need
-declaring-type and dispatch-kind information where relevant; the existing
-deferred key of method name and descriptor is not the whole invocation contract.
-
-This uses hierarchy metadata to implement dispatch, without using hierarchy
-membership to invent receiver possibilities. It still does not prove that the
-receiver reaches that instruction in an execution.
-
-## Idea 2: build a small symbolic discovery kernel
-
-I propose a separate analysis over post-SSA CIR that follows pathless copies,
-summarizes where return values come from, and records which parameters must
-supply evidence for an indirect call. The intended benefit is to discover calls
-through common wrappers and factories without computing the general taint-flow
-closure. This kernel would use Idea 1's lookup when concrete evidence becomes
-available.
-
-For a first experiment, the symbolic vocabulary could be:
-
-```text
-Arg(i)          value comes from this procedure's input i
-Type(T)         concrete-class evidence from an admitted producer
-Function(f)     evidence of this function address
-```
-
-These are finite atoms, not recursively nested terms. Multiple atoms mean
-alternatives. The constructor notation in the sketches is shorthand for tagged
-finite-domain values, not unrestricted term construction.
-
-The proposed discovery fact base is:
-
-```text
-Copy(p, dst, src)
-Input(p, i, value)
-Return(p, slot, value)
-Actual(callsite, i, value)
-Result(callsite, slot, value)
-Direct(callsite, procedure)
-Indirect(callsite, receiver, dispatch_key)
-Seed(p, value, concrete_evidence)
-Owner(callsite, procedure)
-```
-
-The initial extractor would admit the following flows. These boundaries keep
-the experiment small and avoid treating unrelated IR operations as copies:
-
-- Emit `Copy` for an empty destination path and an `Exp::Path` source with an
-  empty path, and for each phi operand. Several admitted sources give separate
-  alternatives; they do not make the sources aliases of one another.
-- Do not emit `Copy` merely because `is_store()` is false. `x = y.f`,
-  `x = y.[8]`, and `x = value(y)` need different treatment. Leave their
-  unsupported contributions unresolved in the initial kernel.
-- Seed pathless `ObjectRef` assignments. For literal arguments or literal return
-  operands, use finite synthetic operand slots keyed by their syntactic sites,
-  so `return ptr<f>` and `invoke(ptr<f>)` do not lose their evidence simply
-  because the literal has no variable. This is linear extraction, not a closure.
-- Bind `Input` to formal entry variables and `Return` to explicit return
-  operands. Do not import the taint codegen's return-time formal/global
-  write-backs as ordinary parameter-rebinding copies.
-- Preserve the frontend's call ABI: Java/CIL receiver arguments need the same
-  slot-zero insertion as codegen; Lua already supplies its receiver. Map result
-  slots consistently, including the final exception slot where present. The
-  sketches number results from zero; engine facts use negative formal indices.
-
-Under S15, models desugar to assignments or calls. An explicitly admitted
-pathless model copy can therefore support target-label propagation under that
-modeling assumption. A generic taint summary row, however, does not certify a
-pathless copy or source-language object identity: it can encode stores, suffix
-flows, and engine approximations. Keep admitted model semantics explicit rather
-than interpreting every taint flow as a `ReturnsArg` discovery.
-
-### Relationship to target-label semantics
-
-The proposed `Origin` relation tracks selected IR target origins. It does not
-prove that a source-language runtime value equals the origin. Frontends lower
-arithmetic operands as `value(p)`, while copying the base of an address
-computation. The extractor must distinguish those contributions.
-
-There is a deliberate limit here: S11 allows a function-pointer call through
-`e` to consume target labels at both `e` and `e.#value`. Thus a target label can
-justify a call in the IR even after value-only arithmetic, without proving the
-computed address is the function's actual address.
-
-Keep `Exp::Value`, non-empty paths, and value-only target recovery outside the
-initial kernel. This deliberately omits discoveries supported by S11. If a
-later extension admits value-only targets, use a separate finite evidence kind
-or channel; do not silently upgrade them to exact receiver types or introduce
-general suffix closure.
-
-### Summarize return origins and substitute at each callsite
-
-The first mechanism is a symbolic return summary. Keeping parameter origins
-symbolic until each callsite applies the summary avoids mixing different
-callers' arguments. Represent it as `Ret(p, slot, origin)`, accommodating the
-IR's multiple returns:
+For each object whose field cell is a `hub`, rerun discovery with that object's
+unification suppressed across call boundaries: pointers flowing into a formal
+do not unify their pointee with the formal's pointee if the pointee is a hub
+object; instead the callee is analyzed per allocation site of the hub object
+(one-object sensitivity, for those objects only). The refined result replaces
+the baseline's edges for sites whose receiver cell belongs to a refined object:
 
 ```prolog
-Origin(p, v, Arg(i)) :-
-    Input(p, i, v).
-
-Origin(p, v, e) :-
-    Seed(p, v, e).
-
-Origin(p, dst, o) :-
-    Copy(p, dst, src),
-    Origin(p, src, o).
-
-Ret(p, r, o) :-
-    Return(p, r, v),
-    Origin(p, v, o).
+edge(c, m)   :- base_edge(c, m), !refined_site(c).
+edge(c, m)   :- refined_edge(c, m).
 ```
 
-Let `Apply(c,q)` mean that callee effects may be applied at `c` without an
-outstanding caller-parameter requirement:
+This is stratified: `hub` is computed from the baseline fixpoint, the refined
+run is a fresh least fixpoint parameterized by it, and the combination uses
+negation only on finished strata. Refinement removes edges, which is why it
+cannot live inside the baseline fixpoint.
+
+### Guards for hybrid inlining
+
+Hybrid inlining (spec §4.2) makes taint flows conditional on the target that
+reached a formal. With the call graph computed separately, taint no longer sees
+targets flow. Discovery can export what it knows instead: replace the `Formal`
+bit with `Formal(i)` and derive
 
 ```prolog
-Apply(c, q) :-
-    Direct(c, q).
-
-Apply(c, q) :-
-    Owner(c, p),
-    Indirect(c, v, k),
-    Origin(p, v, e),
-    Concrete(e),
-    Dispatch(e, k, q).
+decision(c, m, i)   :- edge(c, m) derived from a target with provenance Formal(i).
 ```
 
-`Concrete` holds for admitted `Type` and `Function` atoms. Then instantiate
-summaries:
-
-```prolog
-Origin(p, dst, o) :-
-    Owner(c, p), Apply(c, q), Result(c, r, dst),
-    Ret(q, r, Arg(i)),
-    Actual(c, i, a), Origin(p, a, o).
-
-Origin(p, dst, e) :-
-    Owner(c, p), Apply(c, q), Result(c, r, dst),
-    Ret(q, r, e), Concrete(e).
-```
-
-For example:
-
-```text
-id(x)        { return x; }
-makeA()      { return new A; }
-getHandler() { return &handler; }
-
-a = id(new A);
-b = id(new B);
-a.run();
-b.run();
-```
-
-`Ret(id,0,Arg(0))` is instantiated separately at the two calls. The analysis never
-inserts both callers' concrete types into `id`'s formal and then exports their
-union back to both callers.
-
-These rules discover identity wrappers, direct factory chains, returned function
-addresses, and local dispatch using their results. They do not establish that a
-factory returns on every execution, or that each alternative is compatible with
-a particular caller.
-
-For example:
-
-```text
-choose(flag) {
-    if (flag) return new A;
-    else      return new B;
-}
-choose(true).run();
-```
-
-The branch-insensitive summary contains both types. `B.run` can be spurious
-despite having an allocation-backed derivation. Callsite instantiation preserves
-argument substitution; it does not restore branch correlation.
-
-### Carry unresolved dispatch requirements through wrappers
-
-The second mechanism is a dispatch requirement: record that a call inside a
-procedure needs evidence from one of its parameters. Such a requirement can
-pass through wrappers until an actual argument supplies concrete evidence,
-without importing callers' values into reusable summaries. The proposed rules
-for the pathless experiment are:
-
-```prolog
-Need(p, i, original_site, k) :-
-    Owner(original_site, p),
-    Indirect(original_site, v, k),
-    Origin(p, v, Arg(i)).
-
-Need(p, j, original_site, k) :-
-    Owner(c, p), Apply(c, q),
-    Need(q, i, original_site, k),
-    Actual(c, i, a),
-    Origin(p, a, Arg(j)).
-
-Edge(original_site, target) :-
-    Owner(c, p), Apply(c, q),
-    Need(q, i, original_site, k),
-    Actual(c, i, a),
-    Origin(p, a, e), Concrete(e),
-    Dispatch(e, k, target).
-
-Edge(c, q) :-
-    Apply(c, q).
-```
-
-For example:
-
-```text
-invoke(x) { x.run(); }        // site s
-forward(y) { invoke(y); }
-
-forward(new A);
-forward(new B);
-```
-
-This derives:
-
-```text
-Need(invoke, 0, s, run)
-Need(forward, 0, s, run)
-Edge(s, A.run)
-Edge(s, B.run)
-```
-
-The two edges belong to the original syntactic site inside `invoke`. No caller
-sequence is stored.
-
-The crucial restriction is that **`Edge` is not automatically fed back into
-`Apply`**. Consider:
-
-```text
-apply(f, x) { return f(x); }
-
-a = apply(&identity, new A);
-b = apply(&makeB, new A);
-```
-
-Discovering both targets inside `apply` does not justify applying both targets'
-return summaries for every caller of `apply`. Doing so would lose the distinction
-the current conditional machinery exists to preserve; the
-[hybrid-inlining fixture](ctadl-ascent/tests/tnt/hybrid_inlining.tnt) exercises that
-issue.
-
-In this example, the proposed kernel would discover the internal call edges and
-leave their caller-dependent return effects unresolved. That is a deliberate
-coverage limitation relative to S10/S14. The
-[guarded-summary fixture](frontends/ctadl-flowy/tests/semantics/s14_guarded.flowy)
-provides another concrete example of the effects this first kernel omits.
-
-### Possible later extension: guarded return effects
-
-To recover some of that coverage, a later extension could represent a guarded
-return effect:
-
-```text
-if Arg(0) = Function(identity), return Arg(1)
-```
-
-But this should be treated as a separate abstraction. Composing effects
-requiring two independent parameter facts needs conjunctions or an explicit
-approximation. The current
-[`Cond::and`](ctadl-index/src/index_engine/decision.rs) explicitly declines
-compositions needing two distinct decisions together. Replacing that behavior
-with unrestricted condition formulas could introduce combinatorial growth.
-
-### Possible optimization: restrict propagation to demanded values
-
-One way to reduce unnecessary work is demand restriction. This would focus
-propagation on values relevant to discovery without defining semantics by a
-budget. The proposed scheme seeds `Live` at indirect-call operands and return
-operands, propagates it backward through admitted copies, and requests actual
-arguments when a return summary or dispatch requirement uses them:
-
-```prolog
-Live(p, src) :-
-    Live(p, dst), Copy(p, dst, src).
-
-Live(p, a) :-
-    Owner(c, p), Apply(c, q), Result(c, r, dst),
-    Live(p, dst), Ret(q, r, Arg(i)), Actual(c, i, a).
-
-Live(p, a) :-
-    Owner(c, p), Apply(c, q),
-    Need(q, i, s, k), Actual(c, i, a).
-```
-
-Gating origin propagation by this demand relation computes a positive least
-fixpoint over relevant vertices. It does not eagerly compute variable-to-variable
-reachability or general heap points-to closure. In the worst case every vertex
-is relevant, so demand restriction is an optimization with an explicit worst
-case, not a complexity guarantee.
-
-## Optional extension: track fields of fresh local objects
-
-Once the pathless kernel has been evaluated, a possible extension is to track a
-value placed in a fresh object's field by a constructor and recovered by a
-getter. This could discover calls such as `h.get().run()` without general heap
-closure. I would keep it out of the first experiment because **the existing CIR
-cannot certify field immutability**. A field is represented by its symbol/path;
-the generic representation does not carry a sufficient contract covering
-final/readonly status, all writes, constructor initialization, and
-reflective/native interference.
-
-A narrow extension could expose:
-
-```text
-InitArg(constructor, field, argument)
-ReturnsField(getter, result_slot, receiver_argument, field)
-```
-
-For:
-
-```text
-Holder(x) { this.target = x; }
-Holder.get() { return this.target; }
-
-h = new Holder(new A);
-h.get().run();
-```
-
-At the constructor call, retain a field binding associated with that particular
-fresh object:
-
-```prolog
-FieldOrigin(p, object, field, o) :-
-    ConstructorCall(c, p, object, ctor),
-    CertifiedInitArg(ctor, field, i),
-    Actual(c, i, a),
-    Origin(p, a, o).
-```
-
-A getter application can consume that binding using the same receiver object.
-
-Recognize initialization as an `Assign` to the constructor
-receiver's field path and a getter as an assignment/return reading that path.
-Normalize first and respect frontend conventions: C's `p->f` is `p.deref.f`,
-unlike a managed object's field path. Stores accumulate possible values rather
-than killing earlier values.
-
-Heap propagation also needs direction and scope. In the IR, labels arriving by
-copies have scope `Fixed`; stores introduce scope `All`, permitting backward
-propagation of non-empty suffixes except `#value` itself (S6–S8). Two stores to
-the same destination can merge suffix labels (S9). A heap extension must account
-for these rules or explicitly restrict them; making every copy bidirectional
-would mix receiver evidence from otherwise separate values.
-
-Do **not** store `FieldType(Holder,target,A)` globally. Two `Holder` instances
-initialized with different targets would contaminate one another.
-
-An object-class tag identifies a class, not an individual allocation. Preserve
-the allocation/constructor-site relationship explicitly for this experiment;
-even a site represents multiple instances inside loops or recursion. Do not
-claim per-instance field correlation from `Type(T)` or a shared allocation site.
-
-The initial scope of this extension could be a fresh local allocation, a
-recognized constructor, explicit field initialization, and an audited alias/copy
-pattern. Constructor chains, escaping objects, arbitrary mutation, containers, and returned object
-structures can remain unresolved. If certification requires scanning writes or
-analyzing escapes, charge that work to the analysis. “No write has been
-discovered yet” is not a positive immutability certificate.
-
-Returning parameterized objects would require a richer summary than
-`ReturnsType(Holder)`: the field bindings must survive the return. Unbounded
-nested object-shape terms would defeat the proposed finite domain.
-
-## Expected costs and scaling risks of the proposed kernel
-
-The finite vocabulary gives the pathless kernel a termination argument, but not
-a guarantee that it will be cheap. The following bounds identify products the
-experiment would need to measure. Let:
-
-- `P`: procedures; `S`: callsites.
-- `a`: maximum input arity; `r`: maximum return arity.
-- `K`: distinct admitted type/function evidence atoms.
-- `V`: demanded SSA values; `G`: admitted copy edges.
-- `D`: discovered `Apply(callsite,procedure)` pairs.
-
-Loose relation-size bounds are:
-
-| Relation | Worst-case rows |
-| --- | --- |
-| `Origin` | `O(V(a + K))` |
-| `Ret` | `O(Pr(a + K))` |
-| `Need` | `O(PaS)`, with the key determined by its original site |
-| `Apply` / `Edge` | `O(SP)` each |
-
-Remaining work includes copying origins across `G` edges; pairing callee return
-alternatives with actual origins at `D` applications; and pairing requirements
-with actual origins. A loose requirement-composition/discharge bound is
-`O(DaS(a + K))`. These are real products even with exact indexes.
-
-Carrying `original_site` is not free: a chain of wrappers containing distinct
-dispatch sites can produce quadratically many propagated requirements. If that
-dominates, factor requirements into a graph of formal-to-formal forwarding links
-and propagate evidence through it, retaining original sites at the leaves. Keep
-such evidence separate from reusable return origins. The existing
-`critical_summary`/`resolvent` design already suggests this factorization.
-
-Exact dispatch lookup has a cost too: uncached lookup walks relevant ancestry,
-and cached results can approach the product of observed classes and signatures.
-Avoid materializing all subtype pairs or all class/signature combinations
-beforehand.
-
-All these domains are finite. Recursion adds facts until saturation:
-
-- A recursive identity wrapper with a base return can derive `ReturnsArg`.
-- Pure recursive forwarding with no evidence seed invents no evidence.
-- Recursive requirements revisit existing tuples rather than extend a call
-  string.
-- A recursive factory's allocation evidence may circulate without proving
-  termination of an execution.
-
-If fields are added, use an explicitly finite vocabulary—such as selected
-one-field projections. Do not recursively generate arbitrary access paths or
-nested summary terms. A timeout may report an incomplete computation; it must
-not define the analysis result.
-
-## Proposed policy after establishing a baseline
-
-This is a development policy for evolving the design, not a call-discovery
-mechanism or a prerequisite to trying it. It follows the Recommendation's
-distinction between the initial reset and subsequent extensions. The initial
-reset may discard any existing mechanism and its discoveries to establish a useful,
-scalable baseline. Comparing with the current engine is valuable for understanding
-coverage changes, but edge inclusion is not a release gate for this redesign.
-
-After that reset, default to additive discovery rules and stable evidence
-contracts. For a change intended to preserve results, the target for supported
-input `I` and fixed modeling assumptions is:
-
-```text
-Edges_old(I) ⊆ Edges_new(I)
-```
-
-Positivity ensures monotonic growth **within one fixed rule system**. Adding
-positive rules also preserves its old derivations when the input facts, domains,
-and existing rules keep their meanings. Deleting rules, changing extraction,
-narrowing admissible evidence, or replacing an abstraction can lose edges even
-if the resulting analysis is still positive Datalog.
-
-I propose the following policy for future changes:
-
-- Prefer independent rules for newly supported patterns. Avoid making a new
-  mechanism disable an older discovery merely because it now handles that site.
-- For representation or algorithm replacements claimed to preserve results,
-  explain how old derivations translate. Map old intermediate facts into the new
-  representation and show how their rule applications can be reproduced. Use
-  edge-set regression checks as evidence, not as a universal proof.
-- Permit intentional losses for corrected modeling, precision changes, or a
-  justified scalability tradeoff. Identify the affected derivations and record
-  the reason and measured impact. Do not describe such a change as preserving
-  results merely because total coverage increased.
-- Do not keep a costly compatibility engine solely to maintain the edge set.
-  The policy should support a scalable analysis, not prevent structural changes.
-
-For example, replacing `Ret(p,r,Arg(i))` with a richer summary should retain its
-callsite-substitution derivation. Adding immutable-field support should add
-discoveries without disabling existing pathless returns. Conversely, removing
-the current CHA-derived subclass targets is an intentional part of the initial
-reset and requires no compatibility rule.
-
-Better total coverage, a more precise abstraction, or unchanged taint findings
-does not establish edge inclusion. Inclusion is the default policy, with
-explicit exceptions for intentional changes.
-
-## How to evaluate the proposal: the smallest useful experiment
-
-I suggest testing Ideas 1 and 2 together before adding heap support or guarded
-return effects. The experiment would answer whether this restricted kernel
-discovers useful call edges with substantially less intermediate work:
-
-1. **Build the pathless kernel separately**, over post-SSA CIR, with direct calls,
-   admitted copies/phis, explicit type/function evidence, return origins, and
-   dispatch requirements. Use the current `Assign`/`Exp::Path` extractor above.
-   No heap extension or guarded return effects initially.
-2. **Use exact evidenced-class lookup**, independently of the existing CHA
-   preprocessing. Start with a clearly supported Java dispatch subset and
-   function-address calls.
-3. **Exercise focused fixtures:** two identity callers with different types;
-   factory chains; forwarding wrappers; recursive wrappers with and without
-   seeds; branch-dependent factories; parameter-selected callees with different
-   return effects; and `new Base` with an overriding subclass. Add literal
-   return/argument evidence, copies versus `value(..)`, a field read that is an
-   IR copy but unsupported by the kernel, and a supported method-handle constant.
-   Assert both discoveries and intended unresolved cases.
-4. **Measure on a real import**, plus synthetic sweeps of wrapper depth,
-   dispatch-site count, parameter count, and evidence alternatives. The synthetic
-   sweeps are necessary to expose the `Need` and origin products.
-
-Use the [semantics corpus](frontends/ctadl-flowy/tests/semantics) for small
-extraction and callsite-substitution fixtures. The
-[reference evaluator](ctadl-ir/src/semantics/mod.rs) can help validate these,
-subject to three limits:
-
-- It unfolds call instances with depth and path-length bounds. Use it only on
-  small fixtures and inspect `Outcome::truncated`; a bounded absence does not
-  establish that an edge is absent, especially for recursion.
-- It handles explicit direct and function-pointer calls, but does not accept a
-  class hierarchy and reports virtual call styles as unsupported. Exact class
-  dispatch needs dedicated tests against the intended lookup contract.
-- It reports taint observations rather than a resolved call-edge set.
-  Call-graph validation needs expected-edge assertions or a test-only edge
-  recorder; taint parity alone is insufficient.
-
-Fix and record the input-lowering and pass configuration for each comparison.
-Start semantic fixtures with SSA conversion alone; separately test the
-production pipeline. The
-[approximations register](docs/limitations.md#approximations-register) names
-`copy_prop` additions and `mem2reg` losses, so the pass configuration can change
-target evidence before discovery runs. Include that work in end-to-end timing
-and record frontend conventions, models, and pass options with each baseline.
-
-Record end-to-end analysis time, extraction/lookup time, peak RSS, relation and
-index sizes, join candidates versus inserted facts, fixpoint iterations, and
-unresolved-site counts. Use the existing
-[profile machinery](ctadl-index/src/index_engine/profile.rs) where applicable.
-Preserve the distinction between an indirect site with no discovered target and
-a discovered target with no body/model. The current
-[index diagnostics](ctadl-ascent/src/cli/mod.rs) already report these separately;
-the kernel should retain that visibility and identify unsupported evidence
-patterns.
-
-Compare actual edge sets using stable procedure/callsite identities:
-
-```text
-old_only = old_edges − new_edges
-new_only = new_edges − old_edges
-```
-
-For the initial reset, classify old-only edges by derivation mechanism to
-understand lost coverage; zero old-only edges is not required. Give the new
-kernel its own expected-edge fixtures and record its baseline results. For later
-changes intended to preserve results, require zero old-only edges in regression
-tests; intentional exceptions need an explanation and updated expectations.
-Also vary fact order and serial/parallel evaluation to check that results are
-invariant.
-
-The experiment succeeds if it demonstrates useful discoveries with substantially
-smaller intermediate relations, acceptable growth on the synthetic sweeps, and
-no hidden closure in extraction or lookup. Document what it discovers and leaves
-unresolved, then use the validated kernel as the baseline for generally additive
-extensions. Adoption does not depend on recovering the existing engine's edge
-set.
+This costs a factor of `a` on `holds` and gives the taint engine exactly the
+facts a guarded summary needs (this edge exists in instances where formal `i`
+carries this target) without computing target flow itself. Whether taint should
+keep guards at all is a separate decision; the kernel supports both.
+
+### Library summaries
+
+A function's contribution to the structure is a set of unifications among the
+pointees of its formals, return slots and the globals it touches, plus the
+labels it seeds into them, plus its `through` facts. That is a Steensgaard
+summary: a small shape graph that composes by unification in near-linear time.
+A separately indexed library (`--summary`, F7) can ship its shape graph and be
+linked without re-analysis. The directional variant does not have this
+property, which is a reason to prefer unification if the measurements allow.
+
+### Native evidence
+
+Binaries have fewer seeds than bytecode and the front end must produce them:
+address-taken functions (relocations and immediates equal to a function entry),
+initialized pointer tables, PLT and GOT entries as cells holding labels for
+functions without bodies, and vtable symbols as class labels for C++. All of
+these are stores into global cells, so the kernel does not change. Type
+reconstruction falls out of the unified structure as a side effect: the shape
+graph is a struct layout, and it can be reported.
+
+## Relation to the earlier draft
+
+The earlier draft of this document proposed a pathless kernel with symbolic
+return origins (`Ret(p, r, Arg(i))`) and dispatch requirements (`Need`) carried
+through wrappers. This proposal keeps the first as `through`, phrased so that it
+is one flow mode among others. It drops `Need`: a call edge belongs to a
+syntactic site, and the edges a site gets are the union over its contexts
+whether the context is tracked or not, so routing requirements through wrappers
+changes nothing about the edge set. It only mattered for guarded return effects,
+which are now the optional `decision` export.
+
+The main difference is memory. The earlier draft excluded every non-empty path
+and offered an immutable-field extension that the IR cannot certify. This
+proposal includes memory from the start, with an abstraction coarse enough to be
+linear and sound with respect to the IR's own rules, and buys precision back
+afterwards where it is measured to matter. Factories that return `this.target`,
+`ops` tables, vtables and Lua method tables are in the baseline rather than in
+an extension.
+
+## Evaluation
+
+The question is whether the kernel discovers useful edges with intermediate
+relations that are small and grow predictably.
+
+1. **Implement the kernel in Ascent** with lattice representatives, as its own
+   engine over the post-SSA IR, with `edge`, `unresolved`, `hub` and
+   `collapsed` as outputs. No taint.
+2. **Implement the directional variant** by swapping the structure rules, and
+   run both on every input.
+3. **Fixtures**, each asserting discovered edges and intended unresolved sites:
+   two identity callers with different classes; factory chains; forwarding
+   wrappers; recursive wrappers with and without a base case; a
+   branch-dependent factory; `apply(f, x)` with two callers; `new Base` with an
+   overriding subclass (the override must not appear); a getter returning a
+   constructor-stored field, with two instances holding different targets (the
+   merge is expected and must be reported as a hub when `N` is small); a C
+   `ops` table; a C++ vtable; a Lua method table; a JVM method-handle constant;
+   a `value(p)` operand; pointer arithmetic into a table; a `checkcast`-filtered
+   hub.
+4. **Order invariance:** shuffle input facts and run serial and parallel; the
+   outputs must be identical.
+5. **Measure** on the regression inputs and on real imports: wall time, peak
+   RSS, and the sizes of `cells`, `unify`, `flow`, `holds`, `through`, `edge`;
+   join candidates versus inserted facts; number and size of hubs; count of
+   collapsed objects. Synthetic sweeps of wrapper depth, hub fan-in, access-path
+   depth and class count expose the products in the table above.
+6. **Compare edge sets** with the current engine using stable site and
+   procedure identities:
+
+   ```text
+   old_only = old_edges − new_edges
+   new_only = new_edges − old_edges
+   ```
+
+   Classify `old_only` by the mechanism that produced the edge (CHA, guarded
+   summary, path-sensitive memory). CHA-only edges are intended losses. Then
+   run taint on the new call graph and compare findings, as a second signal.
+7. **Stratified taint:** run the existing taint engine with target-label
+   propagation disabled and the kernel's edges supplied as facts. This measures
+   the structural win on the taint side, which is where the recorded cost was.
+
+The experiment succeeds if the kernel finds the edges the fixtures expect, the
+real-import comparison loses only CHA and guard-dependent edges, `holds` and
+`flow` stay within a small factor of program size, and the stratified taint run
+is materially cheaper than the coupled one. Adoption does not depend on
+recovering the current engine's edge set.
+
+## Policy after a baseline exists
+
+The initial reset may discard any existing mechanism and its discoveries. After
+that, the default is additive: new rules add edges, and a change meant to
+preserve results satisfies `Edges_old(I) ⊆ Edges_new(I)` for supported input `I`
+under fixed modeling assumptions, checked by regression. Positivity guarantees
+this only within one rule system; a change of abstraction, extraction or
+evidence must explain how old derivations translate, and an intentional loss
+(corrected modeling, a precision or scalability tradeoff) is recorded with its
+measured impact. The refinement stratum is such an intentional loss and is
+reported as one. Better total coverage or unchanged taint findings do not
+establish inclusion.
