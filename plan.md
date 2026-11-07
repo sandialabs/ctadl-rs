@@ -518,15 +518,16 @@ As built (commit `deb6dc4b`). Where the implementation departs from the above:
 - **End to end.** `ctadl go` on `nightly/tests/c/globalflow.c` with `main` removed (no function
   calls both `produce` and `consume`) reports the flow; the stage-1 binary reports none.
 - **Regression** (R37, R39), `--release`, `--compare-paths` against 2a: 254 of 259 passed, the
-  same 4 xfail, and one failure, `Cil:delegates`, whose expectation is re-baselined: every sink
-  is still reached and the clean one still not, but `Handler`'s source line (55) is no longer on
-  a reported path. The CIL front end makes a delegate its target object (`calls.rs`), and the
+  same 4 xfail, and one failure, `Cil:delegates`, now an XFAIL (`CIL_KNOWN_FAILURES`): every
+  sink is still reached and the clean one still not, but `Handler`'s source line (55) is no
+  longer on a reported path. The CIL front end makes a delegate its target object (`calls.rs`), and the
   target of every non-capturing lambda of a class is the compiler's static singleton
   `<>c.<>9`, so all of them store their method at the one global path
   `$<>c.<>9.<delegate::method>`. Stage 2a hid that behind the "call target held in a global"
   deviation; under G6 the label is shared, so `Lambda`'s `f(..)` may call `Handler`'s lambda,
-  and `Sink4` is reached first from `Lambda`'s source (35). That is a false positive of the front
-  end's convention made visible by G6, registered as a new "adds" row (CIL delegates) and in
+  and `Sink4` is reached first from `Lambda`'s source (35). The test passed before only because
+  of that loss: the flow is in the lowered program, and false only of C#. It is the front end's
+  convention made visible by G6, not an imprecision of the globals model, registered as a new "adds" row (CIL delegates) and in
   `docs/limitations.md`; the fix is the front end's (a non-capturing lambda's delegate need not
   be its target), outside this spec. `JniFlow` and `Jni:JniFlow+bridge` pass with the globals
   pair gone (R29). `--compare-paths`: 77 indexes identical, 146 different, every difference the

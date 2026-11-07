@@ -3,12 +3,15 @@
 - **C# structs are not copied.** The CIL frontend treats a value type like an object, so a
   struct copy (an assignment or a by-value argument) aliases the original, and taint written
   into the copy shows up in the original as a false positive.
-- **C# lambdas that capture nothing share their call targets.** The CIL frontend models a
-  delegate as its target object holding the method, and the compiler makes the target of every
-  non-capturing lambda of a class one static singleton (`<>c.<>9`), which is a global shared by
-  every function. So calling any such delegate may call any of the class's non-capturing
+- **C# lambdas that capture nothing share their call targets.** The CIL frontend lowers a
+  delegate as its target object holding the method (`ctadl-cil/src/calls.rs`), so two delegates
+  over one target are one object with every method stored on either. The compiler makes the
+  target of every lambda of a class that captures nothing one static object, `<>c.<>9`. So in
+  the lowered program, calling any such delegate may call any of the class's non-capturing
   lambdas, and taint passed to one reaches what another does with its argument, a false
-  positive.
+  positive. The imprecision is the lowering's; the index used to hide it by dropping a call
+  target held in a global between functions no call chain connects, and computes it now that it
+  does not. The nightly `Cil:delegates` case is an XFAIL for it.
 - **The address of a C struct member is not nameable.** The C frontend has no struct layout,
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
@@ -58,7 +61,7 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
 |  | front ends | C: a file-scope initializer is not lowered | loses | the list above |
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
-|  | front ends | CIL: a delegate is its target, so delegates over one target share their method; the compiler's `<>c.<>9` singleton is the one global target of every non-capturing lambda of a class (G2), so their call targets merge program-wide | adds | the list above |
+|  | front ends | CIL: a delegate is lowered as its target, so delegates over one target share their method; the target of every non-capturing lambda of a class is the one static `<>c.<>9`, so their call targets merge | adds | the list above |
 
 The query resets call/return matching at a hop through a global (R25 of the compositional-globals
 spec). That is exact under G2, since a global is shared by every instance, and is not a row.
