@@ -168,7 +168,7 @@ fn program_h() -> Program {
 
 // Call this after running ssa. Checks some SSA properties and verifies the AST.
 fn check_ssa_func(f: &FunctionData) {
-    let mut verify = MirVerify::default();
+    let mut verify = CirVerify::default();
     verify.visit_function_data(FunctionIdx::new(0), f);
     assert_eq!(Ok(()), verify.take_error());
 
@@ -294,7 +294,7 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
             "a cleanup pass changed an already-preprocessed program"
         );
         for (idx, f) in program.functions.iter_enumerated() {
-            let mut verify = MirVerify::default();
+            let mut verify = CirVerify::default();
             verify.visit_function_data(idx, f);
             assert_eq!(Ok(()), verify.take_error());
         }

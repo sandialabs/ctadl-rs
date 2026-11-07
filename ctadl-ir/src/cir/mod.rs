@@ -49,7 +49,7 @@ There is a CIR visitor in [`self::visit`] which can be used for immutable and mu
 We have designed the CIR on purpose to exist in inconsistent states; this can be helpful when
 generating code. Once you're done generating code, it should be verified. Verification checks for
 the various kinds of errors that should not happen in well-defined programs. It can be checked with
-[`MirVerify`] or by simply calling [`Program::verify`].
+[`CirVerify`] or by simply calling [`Program::verify`].
 
 To make a program suitable for Datalog compilation, one can use SSA transformation
 ([`crate::ssa::transform`]).
@@ -115,7 +115,7 @@ use crate::cir::visit::Visitor;
 pub use crate::cir::{
     basic_blocks::BasicBlocks,
     call::{CallEdges, CallObject, CallStyle},
-    verify::{MirVerify, VerifyError, VerifyErrors},
+    verify::{CirVerify, VerifyError, VerifyErrors},
 };
 use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
 use crate::newtype_index;
@@ -271,7 +271,7 @@ pub enum StatementKind {
     /// no pass decides it any other way.
     ///
     /// The destination is never an address: [`StatementKind::assign`] rewrites `p.[k] = e` into
-    /// `p = e.[-k]` (S5), and [`MirVerify`] rejects an address destination.
+    /// `p = e.[-k]` (S5), and [`CirVerify`] rejects an address destination.
     Assign {
         dest: AccessPath,
         sources: SmallVec<[Exp; 2]>,
@@ -344,7 +344,7 @@ pub struct VariableRef {
 /// This type defines the term: everywhere else in ctadl, "access path" means a variable plus a
 /// [`PathSegment`] sequence, and a "path" is the sequence alone. Access paths are the IR's
 /// operands: an assignment's destination and sources, call arguments, an indirect call's callee.
-/// [`AccessPath::new`] puts the path in normal form ([`path::normalize`]); [`MirVerify`] checks
+/// [`AccessPath::new`] puts the path in normal form ([`path::normalize`]); [`CirVerify`] checks
 /// it, since a deserialized program bypasses the constructor.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -517,7 +517,7 @@ impl Locals {
     }
 }
 
-/// Renders MIR with [`Variable::Local`]s resolved to their source names.
+/// Renders CIR with [`Variable::Local`]s resolved to their source names.
 ///
 /// [`Display for Variable`](Variable#impl-Display-for-Variable) has no access to the enclosing
 /// function, so by default a local prints as its opaque index (`%L7`) — the same form the fact
@@ -1359,7 +1359,7 @@ impl FunctionData {
     /// Verify that the function satisfies expected invariants. See the description of each error
     /// in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_function_data(FunctionIdx::new(0), self);
         visitor.take_error()
     }
@@ -1403,14 +1403,14 @@ impl Program {
     /// Verify that the CTADL IR program satisfies expected invariants. See the description of each
     /// error in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_program(self);
         visitor.take_error()
     }
 
     /// Verify a function. See the description of each error in the [`VerifyError`] enum.
     pub fn verify_function(&self, idx: FunctionIdx) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_function_data(idx, &self[idx]);
         visitor.take_error()
     }

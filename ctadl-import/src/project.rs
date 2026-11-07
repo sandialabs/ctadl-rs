@@ -81,7 +81,7 @@ fn absolutize(path: &Path) -> PathBuf {
 /// into something wrong). History:
 ///
 /// - `1`: original format.
-/// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
+/// - `2`: CIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
 /// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
 ///   the `qualified-id` model constraint), changing the `bitcode` wire format of

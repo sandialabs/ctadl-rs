@@ -450,7 +450,7 @@ impl Context {
         // Compute successors for each basic block using dex-reader.
         let block_successors_vec = block_successors(code, &items);
 
-        // Ensure MIR has a block for each Dex basic block.
+        // Ensure CIR has a block for each Dex basic block.
         for _ in &bb_vec {
             fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
         }
@@ -464,7 +464,7 @@ impl Context {
         // All Java functions return 2 values: (normal_return, exception_return)
         fdat.return_type = ReturnType { arity: 2 };
 
-        // Populate each MIR block.
+        // Populate each CIR block.
         for (i, bb) in bb_vec.iter().enumerate() {
             let block_idx = BasicBlockIdx::new(i);
             let range = &items[bb.start..bb.end];

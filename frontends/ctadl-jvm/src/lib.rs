@@ -2,7 +2,7 @@
 
 Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
-`jvm-reader`'s job. What lives here is the lowering to MIR.
+`jvm-reader`'s job. What lives here is the lowering to CIR.
 
 Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
 field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
@@ -39,7 +39,7 @@ const JVM_ACC_INTERFACE: u16 = 0x0200;
 const JVM_ACC_ABSTRACT: u16 = 0x0400;
 
 /// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
-/// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
+/// (`LMyInterface;`) to the `L...;` symbol form used in CIR and CHA.
 fn jvm_class_symbol(name: &str) -> String {
     if name.starts_with('L') && name.ends_with(';') {
         name.to_string()

@@ -15,7 +15,7 @@
 //!     cargo xtask regression --compare-paths $TMPDIR/ctadl_xtask_PID   # an earlier run's root
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
-//!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint
+//!     cargo xtask cil bless|bless-flow|bless-cir|codegen|exec|models|taint
 
 mod android_icc;
 mod apk;
@@ -191,11 +191,11 @@ fn parse_dex_opcodes_args(mut args: impl Iterator<Item = String>) -> Result<dex_
 }
 
 /// `cargo xtask cil <command>`: regenerate cil-reader's committed artifacts
-/// (`bless`, `bless-flow`, `bless-mir`, `codegen`), or run one CIL check on its own
+/// (`bless`, `bless-flow`, `bless-cir`, `codegen`), or run one CIL check on its own
 /// (`exec`, `models`, `taint`). The full check suite is `regression --frontend cil`.
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args.next().context(
-        "`cil` requires a command: bless, bless-flow, bless-mir, exec, models, taint or codegen",
+        "`cil` requires a command: bless, bless-flow, bless-cir, exec, models, taint or codegen",
     )?;
     let mut cil_dir = None;
     let mut fixtures = None;
@@ -211,7 +211,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                     args.next().context("--cil-dir requires a value")?,
                 ));
             }
-            "--cil-goldens" if matches!(command.as_str(), "bless" | "bless-flow" | "bless-mir") => {
+            "--cil-goldens" if matches!(command.as_str(), "bless" | "bless-flow" | "bless-cir") => {
                 goldens = Some(PathBuf::from(
                     args.next().context("--cil-goldens requires a value")?,
                 ));
@@ -254,7 +254,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         cil::resolve_goldens(goldens.as_deref())?
             .context("goldens directory not found; pass --cil-goldens")
     };
-    if command == "bless-mir" {
+    if command == "bless-cir" {
         let goldens = need_goldens()?;
         let fixtures = need_fixtures()?;
         return cil::frontend::bless(&goldens, &fixtures);
@@ -295,7 +295,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
         other => {
             bail!(
-                "unknown `cil` command `{other}` (expected bless, bless-flow, bless-mir, exec, \
+                "unknown `cil` command `{other}` (expected bless, bless-flow, bless-cir, exec, \
                  models, taint or codegen)"
             )
         }
@@ -442,8 +442,8 @@ Tasks:
                              Rewrite xtask/cil-goldens/flow (or <dir>/flow), the
                              `cil-dump --flow` goldens of the flow fixtures,
                              from $CIL_READER_FIXTURES. Review the diff.
-    bless-mir [--cil-goldens <dir>] [--cil-fixtures <dir>]
-                             Rewrite xtask/cil-goldens/mir (or <dir>/mir), the
+    bless-cir [--cil-goldens <dir>] [--cil-fixtures <dir>]
+                             Rewrite xtask/cil-goldens/cir (or <dir>/cir), the
                              IR the CIL frontend makes of the frontend fixtures,
                              from $CIL_READER_FIXTURES. Review the diff.
     taint --ctadl <path> [--out <dir>]

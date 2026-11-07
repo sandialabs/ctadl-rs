@@ -1857,7 +1857,7 @@ mod tests {
     /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `cir::path` on random
     /// segment lists: offset sums, `[0]`, and `#value` absorbing offsets on both sides.
     #[test]
-    fn agrees_with_mir_path() {
+    fn agrees_with_cir_path() {
         use cir::{PathSegment as S, path as mp};
         let mut state = 0x9e37_79b9u64;
         let mut next = move || {

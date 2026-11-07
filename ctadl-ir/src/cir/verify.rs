@@ -174,7 +174,7 @@ impl Display for VerifyErrors {
 }
 
 #[derive(Debug, Default)]
-pub struct MirVerify {
+pub struct CirVerify {
     error: VerifyErrors,
     /// Name of the last function
     name: String,
@@ -189,7 +189,7 @@ pub struct MirVerify {
     defines: HashSet<String>,
 }
 
-impl MirVerify {
+impl CirVerify {
     /// After calling the visitor on an AST element, call this to retrieve any error. Also clears
     /// the error state.
     #[inline]
@@ -206,7 +206,7 @@ impl MirVerify {
     }
 }
 
-impl MirVerify {
+impl CirVerify {
     /// The checks every access path operand gets: normal form, not void, no `#value` field.
     fn check_access_path(&mut self, ap: &AccessPath, location: Location) {
         let printed = || ap.to_string();
@@ -281,7 +281,7 @@ impl MirVerify {
     }
 }
 
-impl Visitor for MirVerify {
+impl Visitor for CirVerify {
     fn visit_statement_kind(&mut self, kind: &StatementKind, location: Location) {
         self.super_statement_kind(kind, location);
         match kind {

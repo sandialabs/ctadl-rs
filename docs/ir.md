@@ -96,7 +96,7 @@ the last result of every call and the last value of every return.
 
 ### Well-formedness
 
-`MirVerify` is the executable definition of a well-formed program. It rejects, among the
+`CirVerify` is the executable definition of a well-formed program. It rejects, among the
 structural errors: a path not in normal form; `value(..)` anywhere but as an assignment's
 source; a void path as an operand; an address as an assignment's destination (see below); a
 copy into the whole of `$globals`; a field named `#value`; and, in SSA form, a store whose base
