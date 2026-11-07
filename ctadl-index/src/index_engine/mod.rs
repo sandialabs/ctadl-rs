@@ -1775,7 +1775,7 @@ ascent_source! {
     // formal `v1` copies only when `v1` is a whole-variable copy-chain alias of a formal
     // (`alias_of_formal`) and `v1.p1` is a program store destination (`prog_store`); S8 moves
     // them along every assignment. `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a
-    // temporary codegen's load-chain composition anchors on `p`, and `y.f = p; y.f.g = a` never
+    // temporary the load-chain composition pass anchors on `p`, and `y.f = p; y.f.g = a` never
     // reaches `p.g` (the "backward alias rule" row of the register, loses). A store at `#value`
     // stays put, as S8 says.
     // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and

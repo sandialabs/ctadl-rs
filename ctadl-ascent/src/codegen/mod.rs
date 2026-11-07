@@ -44,6 +44,7 @@ use ctadl_ir::mir::{
     visit::Visitor,
     *,
 };
+use ctadl_ir::ssa;
 
 #[cfg(test)]
 mod tests;
@@ -339,7 +340,8 @@ pub fn codegen_program(
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
-    for f in program_info.program.functions.drain(..) {
+    for mut f in program_info.program.functions.drain(..) {
+        ssa::compose_loads_function(&mut f);
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
     v.finish_with_vmt(&program_info.vmt);
@@ -367,7 +369,8 @@ pub fn codegen_function(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
-    let function_data_owned = function_data.clone();
+    let mut function_data_owned = function_data.clone();
+    ssa::compose_loads_function(&mut function_data_owned);
     let function_data = &function_data_owned;
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
@@ -455,13 +458,6 @@ struct CodegenVisitor<'a> {
     function: Option<fx::FunctionId>,
     /// We may see the same path multiple times so we dedup them with this set
     paths_dedup: BTreeSet<(fx::Path,)>,
-    /// Per-block map from a load-chain temporary to the (root variable, composed field path) it
-    /// stands for (`t2 = load t1.b` where `t1 = load x.a` ⟹ `t2 ↦ (x, .a.b)`). Populated in the
-    /// pre-pass over each block ([`Self::visit_basic_block_data`]) and used to *re-anchor* a
-    /// `Store` through such a temporary (`store t2.c := v`) back onto the formal path it addresses
-    /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
-    /// rather than at the temporary. Cleared per block.
-    cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
@@ -544,7 +540,6 @@ impl<'a> CodegenVisitor<'a> {
             source_info,
             strategy,
             paths_dedup: Default::default(),
-            cap_path: Default::default(),
             num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
@@ -881,41 +876,24 @@ impl Visitor for CodegenVisitor<'_> {
         block: BasicBlockIdx,
         data: &BasicBlockData,
     ) {
-        // Pre-pass: capture, for each load-chain temporary, the (root variable, composed path)
-        // it stands for. Used below to seed the `paths` gate and, in `visit_statement`, to
-        // re-anchor a read or a store through such a temporary onto the formal path it
-        // addresses.
-        self.cap_path.clear();
+        // Seeds the `paths` gate with what each access path of the block mentions. Load chains
+        // are already composed (`ssa::compose_loads`), which the seed depends on.
         for statement in &data.statements {
             match &statement.kind {
                 StatementKind::Assign { dest, sources } => {
                     for ap in sources.iter().filter_map(Exp::access_path) {
-                        self.insert_chain_paths(ap);
+                        self.insert_mentioned_paths(ap);
                     }
                     if !dest.is_pathless() {
-                        self.insert_chain_paths(dest);
-                    } else if let [Exp::Path(src)] = sources.as_slice() {
-                        // A copy `dest = v·s` stands for `<captured path of v>·s` rooted at v's
-                        // root: a whole-variable copy carries `v`'s capture forward, an address
-                        // copy `dest = v.[k]` (pointer arithmetic) or a load `dest = v.f`
-                        // composes onto it, so a later read or store through `dest` composes
-                        // too.
-                        let cap = if src.is_pathless() {
-                            self.cap_path.get(&src.base).cloned()
-                        } else {
-                            Some(self.composed(src))
-                        };
-                        if let Some(cap) = cap {
-                            self.cap_path.insert(dest.base.clone(), cap);
-                        }
+                        self.insert_mentioned_paths(dest);
                     }
                 }
                 StatementKind::CallAssign { args, style, .. } => {
                     for ap in args.iter().filter_map(Exp::access_path) {
-                        self.insert_chain_paths(ap);
+                        self.insert_mentioned_paths(ap);
                     }
                     if let CallStyle::FuncPtrCall { callee, .. } = style {
-                        self.insert_chain_paths(callee);
+                        self.insert_mentioned_paths(callee);
                     }
                 }
                 _ => {}
@@ -923,11 +901,10 @@ impl Visitor for CodegenVisitor<'_> {
         }
         if let Some(TerminatorKind::Return { args }) = data.terminator_opt().map(|t| &t.kind) {
             for ap in args.iter().filter_map(Exp::access_path) {
-                self.insert_chain_paths(ap);
+                self.insert_mentioned_paths(ap);
             }
         }
         self.super_basic_block_data(function, block, data);
-        self.cap_path.clear();
     }
 
     /// Generates formal parameters
@@ -957,14 +934,12 @@ impl Visitor for CodegenVisitor<'_> {
         match statement_kind {
             Assign { dest, sources } => {
                 // A copy defines the whole destination variable; a store writes the memory at
-                // its path, re-anchored onto the root a load-chain temporary stands for.
-                let dest = if dest.is_pathless() {
-                    FlowVertex::new(self.trans_variable_ref(&dest.base), fx::Path::empty())
-                } else {
-                    let (root, path) = self.composed(dest);
+                // its path.
+                let path = fx::Path::from_accesses(dest.segments.iter().cloned());
+                if !dest.is_pathless() {
                     self.paths_dedup.insert((path,));
-                    FlowVertex::new(self.trans_variable_ref(&root), path)
-                };
+                }
+                let dest = FlowVertex::new(self.trans_variable_ref(&dest.base), path);
                 for src in sources {
                     // A function pointer or an object stored at the destination: a target label
                     // (S11). Recorded before `src` is lowered, since `trans_exp` returns `None`
@@ -1312,62 +1287,22 @@ impl CodegenVisitor<'_> {
         }
     }
 
-    /// The vertex a read of `ap` names. A read that goes through memory (a field, `deref` or
-    /// `#value`) is re-anchored onto the root a load-chain temporary stands for, as a store is;
-    /// an address (`v.[k]`) or a whole variable is read where it is.
+    /// The vertex a read of `ap` names. A read through memory (a field, `deref` or `#value`)
+    /// puts its path in the `paths` gate; an address (`v.[k]`) or a whole variable does not.
     fn read_vertex(&mut self, ap: &AccessPath) -> FlowVertex {
-        if ap.segments.iter().all(PathSegment::is_offset) {
-            let v = self.trans_variable_ref(&ap.base);
-            return FlowVertex::new(v, fx::Path::from_accesses(ap.segments.iter().cloned()));
+        let path = fx::Path::from_accesses(ap.segments.iter().cloned());
+        if !ap.segments.iter().all(PathSegment::is_offset) {
+            self.paths_dedup.insert((path,));
         }
-        let (root, path) = self.composed(ap);
-        self.paths_dedup.insert((path,));
-        FlowVertex::new(self.trans_variable_ref(&root), path)
+        FlowVertex::new(self.trans_variable_ref(&ap.base), path)
     }
 
-    /// `ap` composed onto what its base stands for in this block: `(root, <captured path>·s)`
-    /// when the base is a load-chain temporary, else `(base, s)`.
-    fn composed(&self, ap: &AccessPath) -> (VariableRef, fx::Path) {
-        let (root, base_path) = self
-            .cap_path
-            .get(&ap.base)
-            .cloned()
-            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
-        let path =
-            fx::Path::from_accesses(base_path.iter().cloned().chain(ap.segments.iter().cloned()));
-        (root, path)
-    }
-
-    /// Seeds the `paths` gate with what a read or a store of `ap` mentions, which is what a chain
-    /// of one-step loads spelling `ap` would mention: each offset run (the address each step reads
-    /// from, or the address left over at the end, relative to the step's base), and each composed
-    /// path that ends at a memory step (field, `deref` or `#value`). The admissible set is built
-    /// from program paths (the "admissible path set" row of the approximations register,
-    /// `docs/limitations.md`), so a path admits the same set whether a front end writes it as one
-    /// access path or as a chain.
-    fn insert_chain_paths(&mut self, ap: &AccessPath) {
-        let (_, base_path) = self
-            .cap_path
-            .get(&ap.base)
-            .cloned()
-            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
-        let mut run: Vec<PathSegment> = Vec::new();
-        for (i, seg) in ap.segments.iter().enumerate() {
-            if seg.is_offset() {
-                run.push(seg.clone());
-                continue;
-            }
-            self.paths_dedup
-                .insert((fx::Path::from_accesses(std::mem::take(&mut run)),));
-            let prefix = fx::Path::from_accesses(
-                base_path
-                    .iter()
-                    .cloned()
-                    .chain(ap.segments[..=i].iter().cloned()),
-            );
-            self.paths_dedup.insert((prefix,));
+    /// Seeds the `paths` gate with what a read or a store of `ap` mentions
+    /// ([`ssa::mentioned_paths`]).
+    fn insert_mentioned_paths(&mut self, ap: &AccessPath) {
+        for p in ssa::mentioned_paths(ap) {
+            self.paths_dedup.insert((fx::Path::from_accesses(p),));
         }
-        self.paths_dedup.insert((fx::Path::from_accesses(run),));
     }
 
     #[inline]

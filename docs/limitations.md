@@ -34,7 +34,7 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 | index | Cells inside a callee merge all callers (S14) | adds | no (structural) |
 | index | Resolution ladder: dispatch model, CHA under threshold | adds | config recorded |
 | index | Hybrid context widening (`collapse`, `bounded`, `spill`) | adds | config recorded |
-| index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary codegen's load-chain composition anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
+| index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary the load-chain composition pass (`ssa::compose_loads`) anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
 | index | `Shared` formals (pcode, endpoints, JNI): whole-variable write-back through a parameter | adds | no (doc comment on the rule) |
 | index | `Copied` formals: no field write-back through a parameter | loses | no (doc comment on the rule) |
 | query | Object hop at the empty path | adds | no |
