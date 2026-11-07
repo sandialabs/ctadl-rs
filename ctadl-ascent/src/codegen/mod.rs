@@ -54,7 +54,11 @@ mod tests;
 pub mod flowy;
 pub mod model_matches;
 
-/// Strategy for resolving virtual calls
+/// Strategy for resolving virtual calls.
+///
+/// While the call graph is reworked, neither CHA nor hybrid inlining resolves a call: a site
+/// classified as CHA, or deferred, gets no `call` row. Dispatch models and exact super
+/// resolution still emit theirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum CallResolutionStrategy {
     /// Every call is resolved with Class Hierarchy Analysis.
@@ -149,7 +153,7 @@ pub enum Rung {
     Model,
     /// Rung 1 with an empty propagation.
     Skip,
-    /// Rung 2: ordinary CHA edges over the signature's resolvent set, which may be empty.
+    /// Rung 2: CHA's rung, which emits no `call` row.
     Cha,
     /// Rung 3, or a rung-1 `inline` disposition (`by_model`).
     Inline { by_model: bool },
@@ -227,7 +231,7 @@ pub struct SiteBuckets {
     pub modelled: usize,
     /// Rung 1 with an empty propagation: the target set was discarded.
     pub skipped: usize,
-    /// Rung 0 or rung 2: ordinary CHA edges.
+    /// Rung 0 or rung 2. Rung 2 emits no `call` row.
     pub cha: usize,
     /// Rung 3, or a rung-1 `resolve: inline`: deferred to hybrid inlining.
     pub inlined: usize,
@@ -525,8 +529,7 @@ enum SiteAction {
     Model(fx::FunctionId),
     /// Rung 1, empty propagation: emit nothing, count it.
     Skip,
-    /// Rung 2, and every site under `--strategy cha`: ordinary CHA edges over the signature's
-    /// resolvent set, which may be empty.
+    /// Rung 2, and every site under `--strategy cha`: unresolved, no `call` row.
     Cha,
     /// Rung 0: super resolution found the one real target.
     SuperExact(Symbol),
@@ -645,6 +648,7 @@ impl<'a> CodegenVisitor<'a> {
         action: SiteAction,
     ) {
         let (cls, simple_name, descriptor) = key;
+        let zero_targets = matches!(action, SiteAction::Cha) && self.resolvent_count(key) == 0;
         let buckets = &mut self.report.buckets[dispatch.index()];
         buckets.java_sites += 1;
         match action {
@@ -665,26 +669,13 @@ impl<'a> CodegenVisitor<'a> {
                 let target = self.source_info.sites.get_or_add_function(target);
                 self.facts.call.push((site, target));
             }
+            // CHA does not resolve calls: the site is counted and left without a callee.
             SiteAction::Cha => {
-                let resolvents: SmallVec<[Symbol; 4]> = self
-                    .cha
-                    .java_resolvents(cls.clone(), simple_name.clone(), descriptor.clone())
-                    .collect();
                 buckets.cha += 1;
-                if resolvents.is_empty() {
+                if zero_targets {
                     buckets.cha_zero_targets += 1;
-                    log::trace!("java: no resolvents {cls}.{simple_name}{descriptor}");
-                } else {
-                    log::trace!(
-                        "java: CHA resolve {cls}.{simple_name}{descriptor} with {} target(s)",
-                        resolvents.len()
-                    );
                 }
-                for target in resolvents {
-                    let target = fx::Function(target.into());
-                    let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts.call.push((site, target));
-                }
+                log::trace!("java: unresolved {cls}.{simple_name}{descriptor}");
             }
             SiteAction::Defer { by_model, summary } => {
                 buckets.inlined += 1;
@@ -1060,79 +1051,29 @@ impl Visitor for CodegenVisitor<'_> {
                         self.apply(site, recv_var, &key, dispatch, action);
                     }
                     CallStyle::LuaCall { receiver, method } => {
-                        // A Lua receiver has no static type, so there is no declared class to key
-                        // CHA on: the static resolvent set is every class method of this name
-                        // across the recovered `__index` hierarchy, and the receiver's actual
-                        // class comes from its allocation tag at analysis time. The receiver is
-                        // already actual arg 0 (inserted by the frontend), so it is not
-                        // re-inserted here.
+                        // The receiver is already actual arg 0 (inserted by the frontend), so
+                        // it is not re-inserted here.
                         let recv_var = self.trans_variable_ref(receiver);
-                        let resolvents = self.cha.lua_resolvents_by_method(method);
                         // The empty descriptor is the sentinel the Lua CHA arm keys on; see
                         // [`Self::deferred_dispatch`].
                         let deferred_key = (method.clone(), Symbol::from(""));
-                        // Deferred, context-sensitive resolution: the receiver's object facts
-                        // (`call_target_assign`) join the Lua CHA `callee_resolvents` under this
-                        // dispatch key at analysis time.
                         let deferred = (
                             site,
                             FlowVertex::new(recv_var, fx::Path::empty()),
                             fx::CallDispatchKeyKind::Lua(method.clone()).into(),
                         );
+                        // CHA does not resolve calls: every strategy leaves the site without a
+                        // callee. `Hi` still records it as a deferred site.
                         match self.strategy {
-                            CallResolutionStrategy::Cha => {
-                                log::trace!(
-                                    "lua: CHA resolve {receiver}:{method} with {} targets",
-                                    resolvents.len()
-                                );
-                                for target in &resolvents {
-                                    let target = fx::Function(target.clone().into());
-                                    let target = self.source_info.sites.get_or_add_function(target);
-                                    self.facts.call.push((site, target));
-                                }
-                            }
                             CallResolutionStrategy::Hi => {
                                 self.deferred_dispatch.insert(deferred_key);
                                 self.facts.callee_info.push(deferred);
                                 log::trace!("lua: HI resolve {receiver}:{method} (deferred)");
                             }
-                            // The ladder is a Java construct: it keys on a static receiver
-                            // class, a dispatch kind and a signature, and a Lua call has none
-                            // of the three. Both mixed strategies get the same arm here.
-                            CallResolutionStrategy::Mixed | CallResolutionStrategy::LegacyMixed => {
-                                if resolvents.is_empty() {
-                                    log::trace!("lua: no resolvents {receiver}:{method}");
-                                } else {
-                                    // Unlike the `JavaCall` arm above, an ambiguous Lua call keeps
-                                    // its static edges instead of deferring to `callee_info`
-                                    // alone. A `JavaCall` can defer safely because it carries a
-                                    // declared receiver class, so hybrid inlining always has a
-                                    // type to fall back on; a Lua receiver has none, and when no
-                                    // dataflow reaches its allocation tag -- a module singleton,
-                                    // a `self` handed in from opaque code, a computed metatable
-                                    // -- the deferred path resolves to nothing at all and the
-                                    // call site simply loses its callees. So the sound CHA set
-                                    // is always emitted, with `callee_info` on top to add the
-                                    // context-sensitive resolution for the receivers whose class
-                                    // the engine CAN reach.
-                                    for target in &resolvents {
-                                        let target = fx::Function(target.clone().into());
-                                        let target =
-                                            self.source_info.sites.get_or_add_function(target);
-                                        self.facts.call.push((site, target));
-                                    }
-                                    // `callee_info` rides along even when the static set is a
-                                    // singleton. The two are not redundant: a `call` edge is
-                                    // resolved through the callee's summary, while the deferred
-                                    // path instantiates it context-sensitively with a call
-                                    // string, and each finds flows the other merges away.
-                                    self.deferred_dispatch.insert(deferred_key);
-                                    self.facts.callee_info.push(deferred);
-                                    log::trace!(
-                                        "lua: hybrid resolve {receiver}:{method} with {} target(s) + deferred",
-                                        resolvents.len()
-                                    );
-                                }
+                            CallResolutionStrategy::Cha
+                            | CallResolutionStrategy::Mixed
+                            | CallResolutionStrategy::LegacyMixed => {
+                                log::trace!("lua: unresolved {receiver}:{method}");
                             }
                         }
                     }
