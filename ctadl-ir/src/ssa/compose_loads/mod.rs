@@ -120,47 +120,36 @@ fn compose_block(block: &mut BasicBlockData) -> usize {
     if captures.is_empty() {
         return 0;
     }
-    let mut rewritten = 0;
-    let mut rewrite = |ap: &mut AccessPath| {
-        if let Some(c) = composed(&captures, ap) {
+    // Each returns how many access paths it rewrote: one or none.
+    let store = |ap: &mut AccessPath| match composed(&captures, ap) {
+        Some(c) => {
             *ap = c;
-            rewritten += 1;
+            1
         }
+        None => 0,
     };
-    let read = |exp: &mut Exp, rewrite: &mut dyn FnMut(&mut AccessPath)| {
-        if let Some(ap) = exp.access_path_mut()
-            && reads_memory(ap)
-        {
-            rewrite(ap);
-        }
-    };
+    let read = |ap: &mut AccessPath| if reads_memory(ap) { store(ap) } else { 0 };
+    let read_exp = |exp: &mut Exp| exp.access_path_mut().map_or(0, read);
+    let mut rewritten = 0;
     for statement in block.statements.iter_mut() {
         match &mut statement.kind {
             StatementKind::Assign { dest, sources } => {
                 if !dest.is_pathless() {
-                    rewrite(dest);
+                    rewritten += store(dest);
                 }
-                for src in sources.iter_mut() {
-                    read(src, &mut rewrite);
-                }
+                rewritten += sources.iter_mut().map(read_exp).sum::<usize>();
             }
             StatementKind::CallAssign { args, style, .. } => {
-                for arg in args.iter_mut() {
-                    read(arg, &mut rewrite);
-                }
-                if let CallStyle::FuncPtrCall { callee, .. } = style
-                    && reads_memory(callee)
-                {
-                    rewrite(callee);
+                rewritten += args.iter_mut().map(read_exp).sum::<usize>();
+                if let CallStyle::FuncPtrCall { callee, .. } = style {
+                    rewritten += read(callee);
                 }
             }
             _ => {}
         }
     }
     if let Some(TerminatorKind::Return { args }) = block.terminator.as_mut().map(|t| &mut t.kind) {
-        for arg in args.iter_mut() {
-            read(arg, &mut rewrite);
-        }
+        rewritten += args.iter_mut().map(read_exp).sum::<usize>();
     }
     rewritten
 }

@@ -80,6 +80,11 @@ fn passes() -> Vec<Pass> {
             run: ssa::propagate_copies,
         },
         Pass {
+            name: "compose_loads",
+            after_ssa: true,
+            run: ssa::compose_loads,
+        },
+        Pass {
             name: "pipeline",
             after_ssa: false,
             run: |p| ssa::run_pipeline(p, Pipeline::index_default()),

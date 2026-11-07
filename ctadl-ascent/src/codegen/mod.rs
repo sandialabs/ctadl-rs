@@ -888,8 +888,7 @@ impl Visitor for CodegenVisitor<'_> {
         block: BasicBlockIdx,
         data: &BasicBlockData,
     ) {
-        // Seeds the `paths` gate with what each access path of the block mentions. Load chains
-        // are already composed (`ssa::compose_loads`), which the seed depends on.
+        // Load chains are already composed (`ssa::compose_loads`).
         for statement in &data.statements {
             match &statement.kind {
                 StatementKind::Assign { dest, sources } => {
