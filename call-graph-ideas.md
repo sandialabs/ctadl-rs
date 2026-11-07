@@ -1,8 +1,10 @@
 # Call-graph discovery ideas
 
-Analysis of the repository at commit `286e7993`, recorded on 2026-11-06.
-This is a design proposal, not an implemented replacement. The performance
-observations below come from inspected records, not a new benchmark run.
+Originally analyzed at `286e7993`; updated on 2026-11-06 against fetched
+`origin/main` at `3e3f09ab` (IR redesign, #187). That commit was already an
+ancestor of this branch when updated. This is a design proposal, not an
+implemented replacement. The performance observations below come from inspected
+records, not a new benchmark run.
 
 ## Recommendation
 
@@ -46,27 +48,61 @@ compose without repeatedly expanding procedure bodies.
 
 ## Representation and current analysis
 
+The IR now has a written labeling semantics, rules S1–S19 in
+[docs/ir.md](docs/ir.md), a
+[reference evaluator](ctadl-ir/src/semantics/mod.rs), and an
+[approximations register](docs/limitations.md#approximations-register). The
+discovery kernel should be described as a deliberately restricted analysis over
+that IR, with explicit differences from the reference semantics. The initial
+reset permits different call results; it does not justify silently redefining
+what an IR assignment means.
+
 The existing representation already has several useful ingredients:
 
 - `CallAssign` distinguishes direct, function-pointer, Java, CIL, and Lua calls.
   Arguments and return slots are explicit.
 - `Exp::ObjectRef` carries object-class tags and function addresses. JVM/Dex
   allocations, CIL allocations/boxing, and recognized native function addresses
-  produce these tags.
-- SSA preserves some assignment ordering. `Load`, `Store`, and functional
-  `Update` remain distinguishable in MIR.
+  produce these tags. JVM/Dex now also lower supported method-handle constants
+  to function references and `MethodHandle.invoke`/`invokeExact` to indirect
+  calls. Runtime lookup, adaptation, constructor handles, and virtual overrides
+  are not generally modeled; these are documented frontend limitations, not
+  evidence for enumerating additional targets.
+- `Assign` now has a full `AccessPath` destination and `Exp::Path` sources.
+  `StatementKind::is_store` classifies a non-empty destination path as a store;
+  an empty destination path is a copy and defines an SSA variable. A load
+  `x = y.f` and pointer arithmetic `x = y.[8]` are both copies in this terminology.
+  Neither is a pathless transfer admitted by the initial kernel.
+- `Load`, `Store`, `Update`, `Address`, `FieldRef`, and `ParamFlow` were removed.
+  Memory stores do not define a new SSA base, and functional-update overwrite
+  semantics and `update_sans_path` are gone. Codegen emits formal/global
+  write-backs at returns from entry-version variables instead.
+- `PathSegment::{Field, Offset, Deref, Value}` and
+  [mir::path](ctadl-ir/src/mir/path.rs) define normalization and classification.
+  Offsets combine; `#value` absorbs adjacent offsets and itself. An address ends
+  in an offset, while a field or dereference after `#value` makes a void path.
+  Match normalized segments, not printed names: a field literally named `deref`
+  is different from the `Deref` segment.
 - Return types describe **return arity**, not concrete runtime classes.
   `ParameterType` describes sharing behavior, not a receiver's class. Neither
   justifies `ReturnsType(T)`.
 - MIR branches are nondeterministic `Goto` successors. Phi operands retain
   predecessors in MIR, but codegen projects them into ordinary assignments,
-  discarding that association. There are no branch predicates to prove general
-  execution feasibility.
+  discarding that association. S16 itself defines a phi as its set of copies.
+  There are no branch predicates to prove general execution feasibility.
 
 See [MIR statements and expressions](ctadl-ir/src/mir/mod.rs),
 [call styles](ctadl-ir/src/mir/call.rs),
 [terminators](ctadl-ir/src/mir/terminator.rs), and
 [phi lowering](ctadl-ascent/src/codegen/mod.rs).
+
+The label semantics adds another important distinction. Forward copying gives
+labels scope `Fixed`; stores introduce scope `All`, which permits backward
+propagation of non-empty suffixes except `#value` itself (S6–S8). A phi does not
+thereby merge its input objects, but two stores to the same destination can
+merge suffix labels (S9). The pathless kernel needs no backward heap rule; any
+heap extension must state whether it implements these scopes or deliberately
+restricts them. Making every copy bidirectional would be a semantic change.
 
 The current analysis is already compositional and does **not** enumerate call
 strings. Its `critical_summary(function, formal, path)` and
@@ -92,6 +128,12 @@ not satisfy the efficiency objective. See `compute_alias_of_formal` and
 `compute_paths` in the [index engine](ctadl-index/src/index_engine/mod.rs), and
 `run_cha` in [codegen](ctadl-ascent/src/codegen/mod.rs).
 
+The redesign does not remove these products or introduce an exact
+evidenced-class dispatch table. The current index still uses the hybrid
+machinery and CHA resolvents discussed below. It also still approximates the
+reference's backward propagation; the register explicitly identifies that
+restriction and the sharing-mode deviations.
+
 ## Performance evidence
 
 The evidence points toward reducing those products, but does not establish a
@@ -107,6 +149,14 @@ speedup for the proposed replacement:
 The saved profile inspected was
 `~/.local/state/ctadl/projects/cajino_baidu/index/profile.json`, with its adjacent
 `index_config.json`. It is a local artifact, not a repository fixture.
+
+These measurements predate #187. It changed path normalization, frontend
+lowering, and some propagation behavior, and removed `update_sans_path`; old
+relation counts and timings must not be presented as current measurements.
+Import format is now `13` and index format `7` (see
+[project formats and options](ctadl-import/src/project.rs)); older artifacts
+must be re-imported/re-indexed for a current comparison. No new scaling result
+for the proposed kernel follows from the IR redesign.
 
 ## Dispatch must use specific evidence
 
@@ -174,12 +224,57 @@ Seed(p, value, concrete_evidence)
 Owner(callsite, procedure)
 ```
 
-Do not take general taint summaries as proof of identity preservation. A
-propagation model saying “argument taints return” need not mean the returned
-object has the argument's runtime class or function address. Likewise,
-`Exp::Value`, arithmetic dependencies, and `ParamFlow` write-backs must not
-accidentally become identity copies. Begin with admitted copy/phi operations and
-explicit evidence producers; report unsupported lowering patterns.
+Define the extractor against the current assignment representation:
+
+- Emit `Copy` for an empty destination path and an `Exp::Path` source with an
+  empty path, and for each phi operand. Several admitted sources give separate
+  alternatives; they do not make the sources aliases of one another.
+- Do not emit `Copy` merely because `is_store()` is false. `x = y.f`,
+  `x = y.[8]`, and `x = value(y)` need different treatment. Leave their
+  unsupported contributions unresolved in the initial kernel.
+- Seed pathless `ObjectRef` assignments. For literal arguments or literal return
+  operands, use finite synthetic operand slots keyed by their syntactic sites,
+  so `return ptr<f>` and `invoke(ptr<f>)` do not lose their evidence simply
+  because the literal has no variable. This is linear extraction, not a closure.
+- Bind `Input` to formal entry variables and `Return` to explicit return
+  operands. Do not import the taint codegen's return-time formal/global
+  write-backs as ordinary parameter-rebinding copies.
+- Preserve the frontend's call ABI: Java/CIL receiver arguments need the same
+  slot-zero insertion as codegen; Lua already supplies its receiver. Map result
+  slots consistently, including the final exception slot where present. The
+  sketches number results from zero; engine facts use negative formal indices.
+
+Under S15, models desugar to assignments or calls. An explicitly admitted
+pathless model copy can therefore support target-label propagation under that
+modeling assumption. A generic taint summary row, however, does not certify a
+pathless copy or source-language object identity: it can encode stores, suffix
+flows, and engine approximations. Keep admitted model semantics explicit rather
+than interpreting every taint flow as a `ReturnsArg` discovery.
+
+### Relationship to target-label semantics
+
+The proposed `Origin` relation tracks selected IR target origins. It does not
+prove that a source-language runtime value equals the origin. Frontends now
+consistently lower arithmetic operands as `value(p)`, while copying the base of
+an address computation. This makes excluding arithmetic from pathless copies
+more reliable than in the earlier representation.
+
+There is a deliberate limit here: S11 allows a function-pointer call through
+`e` to consume target labels at both `e` and `e.#value`. Thus a target label can
+justify a call in the IR even after value-only arithmetic, without proving the
+computed address is the function's actual address. The reference evaluator
+implements both reads; current production codegen emits `callee_info` for the
+callee access path alone, so neither document-level semantics nor existing
+engine behavior should be inferred solely from the other.
+
+Keep `Exp::Value`, non-empty paths, and value-only target recovery outside the
+initial kernel. Record this as an intentional restriction relative to S11 when
+integrating it, not as a claim that the IR cannot express such evidence. If a
+later extension admits value-only targets, use a separate finite evidence kind
+or channel; do not silently upgrade them to exact receiver types or introduce
+general suffix closure. Exact dispatch and caller-dependent return restrictions
+also need an explicit semantic contract alongside the existing approximations
+register.
 
 ### Return summaries
 
@@ -335,7 +430,10 @@ issue.
 
 The small kernel should discover the internal call edges and leave their
 caller-dependent return effects unresolved. That is a deliberate coverage
-limitation.
+limitation relative to S10/S14, not an implementation of the reference's full
+call-unfolding semantics. The new
+[guarded-summary fixture](frontends/ctadl-flowy/tests/semantics/s14_guarded.flowy)
+provides another concrete example of the effects this first kernel omits.
 
 A later extension could represent a guarded return effect:
 
@@ -414,8 +512,20 @@ FieldOrigin(p, object, field, o) :-
 
 A getter application can consume that binding using the same receiver object.
 
+In the current MIR, recognize initialization as an `Assign` to the constructor
+receiver's field path and a getter as an assignment/return reading that path.
+There are no `Store` or `Load` variants to match. Normalize first and respect
+frontend conventions: C's `p->f` is `p.deref.f`, unlike a managed object's field
+path. The removal of `Update` means an ordinary store cannot be treated as
+killing an earlier field value.
+
 Do **not** store `FieldType(Holder,target,A)` globally. Two `Holder` instances
 initialized with different targets would contaminate one another.
+
+An object-class tag identifies a class, not an individual allocation. Preserve
+the allocation/constructor-site relationship explicitly for this experiment;
+even a site represents multiple instances inside loops or recursion. Do not
+claim per-instance field correlation from `Type(T)` or a shared allocation site.
 
 Initially restrict this to a fresh local allocation, a recognized constructor,
 explicit field initialization, and an audited alias/copy pattern. Constructor
@@ -528,23 +638,61 @@ inclusion is now a default policy rather than an absolute requirement.
 
 1. **Build the pathless kernel separately**, over post-SSA MIR, with direct calls,
    admitted copies/phis, explicit type/function evidence, return origins, and
-   dispatch requirements. No heap extension or guarded return effects initially.
+   dispatch requirements. Use the current `Assign`/`Exp::Path` extractor above.
+   No heap extension or guarded return effects initially.
 2. **Use exact evidenced-class lookup**, independently of the existing CHA
    preprocessing. Start with a clearly supported Java dispatch subset and
    function-address calls.
 3. **Exercise focused fixtures:** two identity callers with different types;
    factory chains; forwarding wrappers; recursive wrappers with and without
    seeds; branch-dependent factories; parameter-selected callees with different
-   return effects; and `new Base` with an overriding subclass. Assert both
-   discoveries and intended unresolved cases.
+   return effects; and `new Base` with an overriding subclass. Add literal
+   return/argument evidence, copies versus `value(..)`, a field read that is an
+   IR copy but unsupported by the kernel, and a supported method-handle constant.
+   Assert both discoveries and intended unresolved cases.
 4. **Measure on a real import**, plus synthetic sweeps of wrapper depth,
    dispatch-site count, parameter count, and evidence alternatives. The synthetic
    sweeps are necessary to expose the `Need` and origin products.
+
+Use the new [semantics corpus](frontends/ctadl-flowy/tests/semantics) and
+[pass tests](frontends/ctadl-flowy/tests/passes.rs) to check extraction and
+callsite substitution on small programs. The
+[reference evaluator](ctadl-ir/src/semantics/mod.rs) is useful with important
+limits:
+
+- It enumerates call instances and labeled cells, with explicit call-depth and
+  path-length bounds. Use it only as a small-fixture oracle; it is not a
+  scalable preprocessing step or the discovery kernel's semantic definition.
+- Inspect `Outcome::truncated`; a bounded absence is not proof that an edge is
+  absent. In particular, recursive discovery tests cannot be justified just by
+  equality with a depth-limited unfolding.
+- It handles explicit direct and function-pointer calls, but does not accept a
+  class hierarchy and reports virtual call styles as unsupported. Exact class
+  dispatch needs dedicated tests against the intended lookup contract.
+- Its public `Outcome` contains taint observations, unresolved calls, and the
+  truncation flag, not a resolved call-edge set. Existing
+  [reference parity tests](ctadl-ascent/tests/integration/reference_parity.rs)
+  compare taint observations. Direct call-graph validation therefore needs
+  expected-edge assertions or a small test-only edge recorder, not a claim that
+  existing parity already proves call-edge equivalence.
+
+Fix and record the input-lowering and pass configuration for each comparison.
+Start semantic fixtures with SSA conversion alone; separately test the
+production pipeline. The approximations register names `copy_prop` additions
+and `mem2reg` losses, so a changed pipeline can change the evidence before the
+new kernel runs. Include that work in end-to-end timing. Use current-format
+imports and record frontend conventions, models, and engine/pass options with
+each baseline.
 
 Record end-to-end analysis time, extraction/lookup time, peak RSS, relation and
 index sizes, join candidates versus inserted facts, fixpoint iterations, and
 unresolved-site counts. Use the existing
 [profile machinery](ctadl-index/src/index_engine/profile.rs) where applicable.
+Preserve the distinction between an indirect site with no discovered target and
+a discovered target with no body/model. The current
+[index diagnostics](ctadl-ascent/src/cli/mod.rs) already report these separately;
+the new kernel should retain that visibility and additionally identify its own
+unsupported evidence patterns.
 On the headless Mac, use `/usr/bin/time -l` rather than the existing benchmark
 script's `footprint -p` polling. Follow the workspace disk-space instructions
 when choosing build, output, and temporary directories; keep machine-specific
