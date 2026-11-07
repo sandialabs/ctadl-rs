@@ -2301,7 +2301,12 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
 
             let fully_qualified_name = match encoding {
                 source_info::ArtifactEncoding::Binary => {
-                    format!("{}@{:08x}:{:08x}", func_name, start, start)
+                    let address = if import.language == ArtifactLanguage::Pcode {
+                        pcode_absolute_address(import, start)
+                    } else {
+                        i64::from(start)
+                    };
+                    format!("{func_name}@{address:08x}:{address:08x}")
                 }
                 _ => func_name.to_string(),
             };
@@ -2438,6 +2443,12 @@ async fn global_declarations<P: AsRef<path::Path>>(
     Ok(declarations)
 }
 
+/// The absolute address of a pcode span's `start`, an offset from the image base (see "Spans" in
+/// `ctadl_pcode`).
+fn pcode_absolute_address(import: &ImportSource, start: u32) -> i64 {
+    import.image_base.unwrap_or(0) + i64::from(start)
+}
+
 /// A span as `spans.parquet` and `artifacts.parquet` store it, joined.
 struct RawSpan<'a> {
     canonical_path: &'a str,
@@ -2509,13 +2520,13 @@ fn span_physical_location(
 
     Ok(match encoding {
         source_info::ArtifactEncoding::Binary if import.language == ArtifactLanguage::Pcode => {
-            // `start` is the absolute address (it includes the disassembler's image base). Emit
-            // the section-relative offset too so consumers (e.g. addr2line in the regression
-            // suite) need not assume a particular base. When the base is unknown, the relative
-            // offset degenerates to the absolute.
+            // `start` is the offset from the disassembler's image base (see "Spans" in
+            // `ctadl_pcode`), which is the section-relative address consumers such as addr2line
+            // in the regression suite read; the base added back is the absolute address. When
+            // the base is unknown, the two are the same.
             let address = Address::builder()
-                .absolute_address(start as i64)
-                .relative_address(start as i64 - import.image_base.unwrap_or(0))
+                .absolute_address(pcode_absolute_address(import, start))
+                .relative_address(i64::from(start))
                 .kind(address_kind)
                 .build();
             PhysicalLocation::builder()

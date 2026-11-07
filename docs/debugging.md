@@ -69,8 +69,8 @@ No row has two global roots: a flow between two globals is no function's (G6 of
 the `*_var_tag` columns, with its name in `*_var_ref_name`. `globals.parquet` lists each global and
 an import that declares it, with `source_span_id`, the declaration's span in that import's
 source-info tables when the front end recorded one: a C declarator, a flowy `var`, a Lua chunk
-(`_ENV`), a class header (JVM), `class_def_item` (dex) or `TypeDef` row (CIL), or the image base
-address (pcode).
+(`_ENV`), a class header (JVM), `class_def_item` (dex) or `TypeDef` row (CIL), or the image
+itself, offset 0 (pcode).
 
 ```sql
 select g.name, i.name as import, g.source_span_id

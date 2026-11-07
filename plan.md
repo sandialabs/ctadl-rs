@@ -635,15 +635,16 @@ As built (commit `a8ea91f9`). Where the implementation departs from the above:
   variable. JVM: the class header (`access_flags`, `this_class`, `super_class`;
   `ClassFile::header_offset`, new in `jvm-reader`). dex: the `class_def_item`
   (`ClassDef::offset`, new in `dex-reader`). CIL: the `TypeDef` row (`Metadata::row_file_span`,
-  new in `cil-reader`, over the `#~` stream's file offset). pcode: a caret at the image base
-  address. A class the import only uses (a framework class) has no span; another import that
-  defines it supplies one. The JVM, dex and CIL front ends declare a global at first use as
+  new in `cil-reader`, over the `#~` stream's file offset). pcode: a caret at offset 0,
+  the image (a pcode span is an offset from the image base, so that a 64-bit image's
+  addresses fit source-info's `u32` positions; "Spans" in the crate doc). A class the import only
+  uses (a framework class) has no span; another import that defines it supplies one. The JVM, dex and CIL front ends declare a global at first use as
   before and attach the span in their `finish` only to a global the program uses, so the set of
   globals and their order are unchanged. Tests: `global_ports.rs` checks the SARIF region of
   `g_data`'s declarator; `a_static_field_is_a_field_of_its_class_global` (JVM) the header bytes;
   `a_class_global_is_declared_at_its_class_def_item` (dex, on the committed APK) each located
   global's `class_def_item`; `env_is_declared_at_the_first_chunk_that_names_it` (Lua);
-  `a_global_is_declared_at_its_var` (flowy); `the_memory_global_is_declared_at_the_image_base`
+  `a_global_is_declared_at_its_var` (flowy); `the_memory_global_is_declared_at_the_image`
   (pcode, on a facts directory with empty tables); and `cil:frontend`'s sweep checks every
   located global of every corpus assembly against its `TypeDef` row (name and flags).
 
