@@ -355,7 +355,7 @@ fn links_an_instance_native_to_its_implementation() {
     assert_eq!(unpacked.func_id, java_id, "the site lives in the Java stub");
     assert_ne!(unpacked.insn_id, existing.insn_id, "the site is fresh");
 
-    // `this` -> jobject, argument 0 -> native 2, return -> return, globals -> globals.
+    // `this` -> jobject, argument 0 -> native 2, return -> return.
     assert_eq!(
         actuals(&facts, site),
         vec![(RETURN_INDEX, RETURN_INDEX), (1, 0), (2, 1),]

@@ -110,8 +110,7 @@ pub mod resolved_call {
 
 pub mod summary {
     use super::*;
-    /// A function's flow from root `src.src_path` to root `dst.dst_path`. A [`Root`] is two
-    /// columns, `<name>_index` and `<name>_global`, one of them null.
+    /// A function's flow from root `src.src_path` to root `dst.dst_path`.
     pub type Record = (FunctionId, Root, Path, Root, Path);
     pub const COLUMNS: [&str; 5] = ["func_id", "dst", "dst_path", "src", "src_path"];
     pub const FILENAME: &str = "summary.parquet";

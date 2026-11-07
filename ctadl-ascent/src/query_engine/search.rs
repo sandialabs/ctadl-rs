@@ -56,15 +56,15 @@ use crate::facts::{
     Label, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
+use super::{QueryEndpoint, QueryFacts, QueryResult};
+use crate::graphviz::index_vertex_cmp;
+
 /// The function a vertex `v` of `f` is a node of: `f`, or the global frame for a global, which
 /// every function shares.
 #[inline]
 fn home(f: FunctionId, v: &FlowVariable) -> FunctionId {
     if v.is_global() { GLOBAL_FRAME } else { f }
 }
-
-use super::{QueryEndpoint, QueryFacts, QueryResult};
-use crate::graphviz::index_vertex_cmp;
 
 /// Which objects a taint on a *non-empty* access path `v.p` is about.
 ///

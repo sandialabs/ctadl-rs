@@ -449,7 +449,6 @@ impl Lower<'_, '_, '_, '_, '_> {
         let mut fields = Vec::new();
         let root = match a.root {
             Root::Var(v) => em.var(v),
-            // A static field is a field of its class's global, `$C.g`.
             Root::Global => match steps.next_if(|s| matches!(s, Step::Field(_))) {
                 Some(Step::Field(t)) => {
                     let (global, field) = self.static_field(em, *t);
@@ -470,7 +469,7 @@ impl Lower<'_, '_, '_, '_, '_> {
 
     /// The global of the class that owns static field `token`, `$C`, and the field below it,
     /// named by the field's name alone. A field whose owner does not decode is a field of the
-    /// global `[?]?` named by its token, as its symbol was.
+    /// global `[?]?` named by its token.
     pub fn static_field(
         &self,
         em: &mut Emitter<'_>,

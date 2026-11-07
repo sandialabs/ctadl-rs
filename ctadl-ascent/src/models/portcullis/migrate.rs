@@ -1478,7 +1478,7 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
             return Err(untranslatable(
                 index,
                 &format!("port {text:?}"),
-                "write `G::self` with `global(G, …)`",
+                "write `G::self` with `global(G)`",
             ));
         }
     };

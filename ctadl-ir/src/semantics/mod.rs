@@ -22,8 +22,8 @@ The least labeling closed under the rules, over the program's unfolding:
   (`ptr<f>`) at an indirect call's callee path, or at its `#value`, makes it a call of `f`, so
   instances appear as labels do. A call to a function without a body, or with no target, is
   zero assignments and is reported in [`Outcome::unresolved`].
-- **Globals** (G1–G6). A global is one variable shared by every instance (G2), and two programs'
-  globals of one name are one variable (G3): its cells are keyed by its name, not by an
+- **Globals** (G2, G3, G5). A global is one variable shared by every instance (G2), and two
+  programs' globals of one name are one variable (G3): its cells are keyed by its name, not by an
   instance. Nothing is passed for a global at a call (G5); a store to `$g.f` in any instance
   writes the shared cell, and a load in any other reads it.
 - **Ports** (S17). A [`Ports::sources`] call labels its first result `r` and `r.#value` with the

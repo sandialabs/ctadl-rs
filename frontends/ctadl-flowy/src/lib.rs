@@ -611,9 +611,10 @@ impl FlowyCtx {
     ) -> Result<(), FlowyError> {
         // Function we're building
         let function = self.program.new_function();
-        let mut env: Env = Default::default();
-        env.globals
-            .extend(self.toplevel_vars.iter().map(|(k, v)| (k.clone(), *v)));
+        let mut env = Env {
+            globals: self.toplevel_vars.clone(),
+            ..Default::default()
+        };
 
         let name = def.name.name;
         if ["source", "sink", "errsource", "errsink"].contains(&name) {

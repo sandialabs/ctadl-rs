@@ -181,7 +181,7 @@ impl RuleSolutions {
         }
     }
 
-    /// The probes of the `local` atoms that ran and never matched, with the number of
+    /// The probes of the `local` and `global` atoms that ran and never matched, with the number of
     /// functions each was asked about.
     pub fn missed_locals(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.probes

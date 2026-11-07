@@ -661,7 +661,6 @@ pub struct IndexResult {
     pub intent_pair: Vec<(FunctionId, InsnId, FunctionId, IntentPairKind)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
-    /// The program-level flows between global paths.
     pub global_flow: Vec<GlobalFlow>,
     pub stats: IndexStats,
 }
@@ -1377,13 +1376,13 @@ pub fn phys_footprint_mb() -> f64 {
     -1.0
 }
 
-/// Computes `alias_of_formal`: the whole-variable copy-closure of the formals over ORIGINAL program
-/// copies. A variable `v` aliases formal `i` (in function `f`) when `v` is reachable FROM `f`'s
-/// formal `i`, following whole-variable copies (`copy_edge`) present in the original program in the
-/// direction of assignment only. The closure is inclusion-based (Andersen-style), not
-/// unification-based (Steensgaard-style): a copy `dst = src` lets `dst` inherit `src`'s
-/// formal-aliases and never the reverse, so a formal's alias set only ever grows downstream of the
-/// formal itself.
+/// Computes `alias_of_formal`: the whole-variable copy-closure of the formals and globals over
+/// ORIGINAL program copies. A variable `v` aliases formal `i` (in function `f`) when `v` is
+/// reachable FROM `f`'s formal `i`, following whole-variable copies (`copy_edge`) present in the
+/// original program in the direction of assignment only. The closure is inclusion-based
+/// (Andersen-style), not unification-based (Steensgaard-style): a copy `dst = src` lets `dst`
+/// inherit `src`'s formal-aliases and never the reverse, so a formal's alias set only ever grows
+/// downstream of the formal itself.
 ///
 /// This depends only on `formal_param` and `copy_edge`, so it is computed in its own small fixpoint
 /// BEFORE the main ascent. Doing so keeps `copy_edge` out of the main engine entirely (one fewer
@@ -1560,9 +1559,9 @@ ascent_source! {
     // which every rule that tests or splits a path asks.
     relation paths(Path);
     relation path_set(PathSetRef);
-    // A function's flow from formal `n2.p2` to out-formal `n1.p1`, under its condition: `Always`
-    // for one that holds in every calling context, or the decisions it holds under (rule 3.4's
-    // conditional summaries). The loaded models are `Always`.
+    // A function's flow from root `n2.p2` to root `n1.p1` (a formal, the return or a global), under
+    // its condition: `Always` for one that holds in every calling context, or the decisions it
+    // holds under (rule 3.4's conditional summaries). The loaded models are `Always`.
     lattice summary(FunctionId, Root, Path, Root, Path, Cond);
     relation config(IndexConfig);
     relation intent_frame(FunctionId);
@@ -1580,10 +1579,10 @@ ascent_source! {
     relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
     relation prog_store(FunctionId, FlowVariable, Path);
-    // A variable that whole-aliases a formal through original program copies, precomputed by
-    // `compute_alias_of_formal`. Unlike `locals(v, empty, formal, empty)`, it leaves out
-    // inter-procedural / summary-derived copies and the write-backs onto the formal at the return.
-    // Feeds the aliasing summary rule.
+    // A variable that whole-aliases a formal or a global through original program copies,
+    // precomputed by `compute_alias_of_formal`. Unlike `locals(v, empty, formal, empty)`, it leaves
+    // out inter-procedural / summary-derived copies and the write-backs onto the formal at the
+    // return. Feeds the aliasing summary rule.
     relation alias_of_formal(FunctionId, FlowVariable, Root);
     // Call targets propagated across `assign_like` to the receiver vertices of critical calls.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
@@ -1863,9 +1862,9 @@ ascent_source! {
         locals(f, v, p1, n2, p2, c),
         if *f != GLOBAL_FRAME,
         if c.is_always(),
-        if v.is_global(),
+        if let Some(g) = v.as_global(),
         if let Some(h) = n2.as_global(),
-        if Root::global(h) != v.as_root().unwrap() || p1 != p2;
+        if g != h || p1 != p2;
 
     // aliasing summary rule (context-free flows only).
     //
@@ -1882,7 +1881,7 @@ ascent_source! {
     // per-iteration cost is |alias_of_formal|, catastrophic on binaries with many SSA copies).
     //
     // Semantics, globals. `alias_of_formal` starts from the globals too, so a store
-    // through a copy of a global, `l = $g.x; l.f = v`, reaches `$g.x.f`. Between two globals it
+    // through a whole copy of a global, `l = $g; l.f = v`, reaches `$g.f`. Between two globals it
     // is an edge of the frame rather than a summary, as above.
     relation alias_flow(FunctionId, Root, Path, Root, Path);
     summary(f, n1, p1, n2, p2, Cond::Always) <--

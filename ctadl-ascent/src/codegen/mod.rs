@@ -913,7 +913,7 @@ impl Visitor for CodegenVisitor<'_> {
                         // composes onto it, so a later read or store through `dest` composes
                         // too.
                         let cap = if src.is_pathless() {
-                            self.capture_of(&src.base)
+                            self.cap_path.get(&src.base).cloned()
                         } else {
                             Some(self.composed(src))
                         };
@@ -1327,7 +1327,9 @@ impl CodegenVisitor<'_> {
     /// when the base is a load-chain temporary, else `(base, s)`.
     fn composed(&self, ap: &AccessPath) -> (VariableRef, fx::Path) {
         let (root, base_path) = self
-            .capture_of(&ap.base)
+            .cap_path
+            .get(&ap.base)
+            .cloned()
             .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
         let path =
             fx::Path::from_accesses(base_path.iter().cloned().chain(ap.segments.iter().cloned()));
@@ -1343,7 +1345,9 @@ impl CodegenVisitor<'_> {
     /// access path or as a chain.
     fn insert_chain_paths(&mut self, ap: &AccessPath) {
         let (_, base_path) = self
-            .capture_of(&ap.base)
+            .cap_path
+            .get(&ap.base)
+            .cloned()
             .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
         let mut run: Vec<PathSegment> = Vec::new();
         for (i, seg) in ap.segments.iter().enumerate() {
@@ -1362,12 +1366,6 @@ impl CodegenVisitor<'_> {
             self.paths_dedup.insert((prefix,));
         }
         self.paths_dedup.insert((fx::Path::from_accesses(run),));
-    }
-
-    /// What `v` stands for as the base of an access path: a load-chain temporary's capture
-    /// ([`Self::cap_path`]).
-    fn capture_of(&self, v: &VariableRef) -> Option<(VariableRef, fx::Path)> {
-        self.cap_path.get(v).cloned()
     }
 
     #[inline]

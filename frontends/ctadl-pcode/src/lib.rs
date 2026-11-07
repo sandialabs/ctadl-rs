@@ -66,9 +66,8 @@ pub fn ghidra_available() -> bool {
     ghidra::available()
 }
 
-/// The name of the memory global of the import `import_name`: the import, then Ghidra's address
-/// space. A global is its name, so qualifying it by the
-/// import keeps two images' addresses apart.
+/// The name of the memory global of the import `import_name`, `<import>::ram`: the import, then
+/// Ghidra's address space.
 pub fn memory_global_name(import_name: &str) -> String {
     format!("{import_name}::ram")
 }

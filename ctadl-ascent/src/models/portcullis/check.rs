@@ -87,7 +87,7 @@ pub struct Plan {
     /// Every variable the body binds, with its inferred type.
     pub var_types: BTreeMap<String, VarType>,
     /// What each positive `local` or `global` atom asks for, by [`AtomPlan::probe`]: the name it
-    /// constrains, as the unmatched-local diagnostic reports it.
+    /// constrains, as the unmatched-local or unmatched-global diagnostic reports it.
     pub local_probes: Vec<String>,
     /// Which of [`Self::local_probes`] are `global` atoms.
     pub global_probes: Vec<bool>,
@@ -137,9 +137,9 @@ pub struct AtomPlan {
     /// In written order. Columns are matched first, then attributes, which is the order the mode
     /// check binds in: a variable's first occurrence binds it and every later one tests it.
     pub attrs: Vec<(Attr, AttrPat)>,
-    /// For a `local` atom the rule's solutions depend on, its index in [`Plan::local_probes`]:
-    /// the engine records whether it ever matched, so a rule that matched nothing because of it
-    /// can say so.
+    /// For a `local` or `global` atom the rule's solutions depend on, its index in
+    /// [`Plan::local_probes`]: the engine records whether it ever matched, so a rule that matched
+    /// nothing because of it can say so.
     pub probe: Option<usize>,
 }
 

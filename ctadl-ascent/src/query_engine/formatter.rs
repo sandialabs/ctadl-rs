@@ -2988,9 +2988,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
-    // Which sources and sinks actually matched is part of what the run *did*, so it is
-    // reported in every profile rather than only where the extra detail was wanted. These
-    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     // Each global's declaring imports, for naming a source or sink on one. An index
     // without the table (a test fixture) names a global by itself.
     let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
@@ -3001,6 +2998,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             programs.push(name);
         }
     }
+    // Which sources and sinks actually matched is part of what the run *did*, so it is
+    // reported in every profile rather than only where the extra detail was wanted. These
+    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     results.extend(format_source_sink_results(
         sarif_data,
         &endpoints,

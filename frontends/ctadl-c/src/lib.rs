@@ -1227,21 +1227,19 @@ fn static_global_renames(
         .iter()
         .enumerate()
         .map(|(index, registry)| {
+            let unit = match &units[index].path {
+                Some(file) => std::path::Path::new(file)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(file.as_str())
+                    .to_string(),
+                None => index.to_string(),
+            };
             registry
                 .static_globals
                 .iter()
                 .filter(|name| declared_by.get(name.as_str()).is_some_and(|&n| n > 1))
-                .map(|name| {
-                    let unit = match &units[index].path {
-                        Some(file) => std::path::Path::new(file)
-                            .file_name()
-                            .and_then(|f| f.to_str())
-                            .unwrap_or(file.as_str())
-                            .to_string(),
-                        None => index.to_string(),
-                    };
-                    (name.clone(), format!("{name}${unit}"))
-                })
+                .map(|name| (name.clone(), format!("{name}${unit}")))
                 .collect()
         })
         .collect()

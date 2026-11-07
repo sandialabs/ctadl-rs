@@ -121,7 +121,7 @@ fn check(file: &Path) -> Vec<String> {
         evaluate_programs(&refs, &ports, &config)
     };
     let ssa_input: Vec<Program> = input.iter().map(ssa_form).collect();
-    let before = rendered(&evaluate(&ssa_input));
+    let before = rendered(&evaluate(&input));
     let losses = declared(&text, "loses");
     let adds = declared(&text, "adds");
     let mut out = Vec::new();

@@ -4255,7 +4255,7 @@ fn inserted_field_name_does_not_become_an_empty_path_segment() {
 }
 
 #[test_log::test]
-fn a_named_global_still_lowers_to_a_symbolic_field() {
+fn a_named_global_still_lowers_to_its_global() {
     // The scoping pin: the guard keys on the name being empty, never on "identifier in a
     // damaged body". A global read in a cleanly parsed body must keep the global that names
     // it -- dropping every identifier in a damaged body, or renaming globals to temps,

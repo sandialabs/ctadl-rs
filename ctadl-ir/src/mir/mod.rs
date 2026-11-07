@@ -656,8 +656,9 @@ impl Drop for GlobalNamesGuard {
     }
 }
 
-/// Scoped, thread-local plumbing for printing a global as its name: `Display for Program` and
-/// [`WithGlobalNames`] publish the table, `Display for Variable` reads it back.
+/// Scoped, thread-local plumbing for printing a global as its name:
+/// [`Program::global_names_guard`], [`WithGlobalNames`] and `Display for Program` publish a
+/// program's table, `Display for Variable` reads it back.
 mod global_names {
     use std::cell::RefCell;
 
@@ -1043,8 +1044,8 @@ impl Display for Variable {
                 None => write!(f, "%L{}", idx.index()),
             },
             Variable::Param(i) => write!(f, "@p{}", i.index()),
-            // A global prints as its name when a program is being rendered (or a
-            // `WithGlobalNames` render is in progress); otherwise as its index.
+            // `$name` while a program's global names are published (see `global_names`);
+            // otherwise its index.
             Variable::Global(idx) => match global_names::name_of(*idx) {
                 Some(name) => {
                     write!(f, "$")?;
