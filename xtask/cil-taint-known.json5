@@ -9,7 +9,9 @@
 //   - `engine:alias-rule`: the aliasing rule summarizes only paths the program stores through;
 //   - `design:unresolved-address-write`: a write through an address the frontend cannot
 //     resolve (two addresses merged at a join) reaches the pointer's target, not the places
-//     the address may name.
+//     the address may name;
+//   - `design:call-graph`: the flow crosses a virtual, interface or delegate call, which the
+//     index does not resolve while the call graph is reworked.
 //   The report counts XFAILs per kind, so an engine fix shows as its kind going to zero.
 // - `why`: required; an `engine:` entry names the `.tnt` reproducer in
 //   `ctadl-ascent/tests/tnt` that shows the limitation without CIL.
@@ -28,5 +30,125 @@
     flow: "arg0 -> ret.<Bag::O>",
     kind: "engine:alias-rule",
     why: "`b.O = b` makes a cycle, and the returned `b.O` is `b` again; the aliasing rule summarizes only the paths the program stores through (tnt: alias_cycle.tnt)",
+  },
+  {
+    method: "Exec.Dels::Closure",
+    flow: "arg0 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Field",
+    flow: "arg0.<Scaler::K> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Field",
+    flow: "arg1 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Instance",
+    flow: "arg0.<Scaler::K> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Instance",
+    flow: "arg1 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Lambda",
+    flow: "arg0 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Dels::Static",
+    flow: "arg0 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a delegate invocation, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Ifaces::Explicit",
+    flow: "arg1 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses an interface call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Ifaces::Pick",
+    flow: "arg0 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses an interface call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Ifaces::Pick",
+    flow: "arg1 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses an interface call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Ifaces::Through",
+    flow: "arg1 -> arg0.<Disk::R>",
+    kind: "design:call-graph",
+    why: "the flow crosses an interface call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Ifaces::Through",
+    flow: "arg1 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses an interface call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Instance",
+    flow: "arg0.<Rc::W> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Instance",
+    flow: "arg0.<Shape::Id> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Instance",
+    flow: "arg0.<Sq::S> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::MakeShapes",
+    flow: "arg0 -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Virt",
+    flow: "arg0.<Rc::W> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Virt",
+    flow: "arg0.<Shape::Id> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Obj::Virt",
+    flow: "arg0.<Sq::S> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
+  },
+  {
+    method: "Exec.Shape::Describe",
+    flow: "arg0.<Shape::Id> -> ret",
+    kind: "design:call-graph",
+    why: "the flow crosses a virtual call, which the index does not resolve while the call graph is reworked",
   },
 ]

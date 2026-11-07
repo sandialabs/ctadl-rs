@@ -73,6 +73,7 @@ const KINDS: &[&str] = &[
     "engine:path-composition",
     "engine:alias-rule",
     "design:unresolved-address-write",
+    "design:call-graph",
 ];
 
 /// The formal of the normal and the exceptional return.
