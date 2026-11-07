@@ -55,59 +55,29 @@ const LUA_XFAIL: &[&str] = &[];
 const JVM_KNOWN_FAILURES: &[&str] = &[];
 
 /// Cases that need a call edge the index no longer derives while the call graph is reworked: a
-/// function-pointer, closure or delegate call, or a virtual, interface or Lua method call --
-/// including a call to a library method whose model reached the site only through its CHA edge
-/// (`StringBuilder.append`, `Intent.putExtra`). A listed case that passes fails as an XPASS
-/// until its entry is deleted.
+/// function-pointer, closure or delegate call, or a virtual, interface or Lua method call that
+/// dispatches into program code. A listed case that passes fails as an XPASS until its entry is
+/// deleted.
 ///
 /// `Jvm:ClassIdMergedTryFlow` left [`JVM_KNOWN_FAILURES`] for this list's reason: it is a
-/// negative case, and it passes now only because no flow reaches anything. Restore its entry
-/// there once calls resolve again.
+/// negative case, and it passes now only because the merged method's arms are not dispatched
+/// to. Restore its entry there once calls resolve again.
 const CALL_GRAPH_XFAIL: &[&str] = &[
-    "AndroidIcc:droidbench-activity-communication-2",
-    "AndroidIcc:droidbench-activity-communication-5",
-    "AndroidIcc:droidbench-component-not-in-manifest-1",
-    "AnotherExample",
-    "ArrayListIteratorFlow",
-    "BranchingFlow",
     "C:funcptr",
     "C:funcptrfactory",
     "C:vtable",
-    "CallResultReceiver",
     "Cil:assemblies",
     "Cil:dispatch",
     "Cil:iterators",
-    "Cil:library",
     "Cil:overrides",
     "ClassIdMergedFlow",
-    "ExceptionFlow",
-    "InstanceMethodFlow",
-    "Jni:JniArgShift",
-    "Jni:JniArgShift+apk",
-    "Jni:JniArgShift+bridge",
-    "Jni:JniArgShift+split-apks",
-    "Jni:JniArgShift+summary",
-    "Jvm:AnotherExample",
-    "Jvm:ArrayListIteratorFlow",
-    "Jvm:BranchingFlow",
-    "Jvm:CallResultReceiver",
     "Jvm:ClassIdMergedFlow",
-    "Jvm:ExceptionFlow",
-    "Jvm:InstanceMethodFlow",
-    "Jvm:LoopFlow",
     "Jvm:MethodCallFlow",
-    "Jvm:SelfReferenceStore",
-    "Jvm:SourceSinkExample",
-    "Jvm:StringBuilderFlow",
-    "LoopFlow",
     "Lua:closure-flow",
     "Lua:metatable-inherit-flow",
     "Lua:metatable-oop-account",
     "Lua:method-colon-flow",
     "MethodCallFlow",
-    "SelfReferenceStore",
-    "SourceSinkExample",
-    "StringBuilderFlow",
     "funcptrfactory",
 ];
 

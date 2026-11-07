@@ -57,8 +57,9 @@ pub mod model_matches;
 /// Strategy for resolving virtual calls.
 ///
 /// While the call graph is reworked, neither CHA nor hybrid inlining resolves a call: a site
-/// classified as CHA, or deferred, gets no `call` row. Dispatch models and exact super
-/// resolution still emit theirs.
+/// classified as CHA, or deferred, gets a `call` row only to the method its reference names
+/// (`CodegenVisitor::named_method`). Dispatch models and exact super resolution still emit
+/// theirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum CallResolutionStrategy {
     /// Every call is resolved with Class Hierarchy Analysis.
@@ -529,7 +530,8 @@ enum SiteAction {
     Model(fx::FunctionId),
     /// Rung 1, empty propagation: emit nothing, count it.
     Skip,
-    /// Rung 2, and every site under `--strategy cha`: unresolved, no `call` row.
+    /// Rung 2, and every site under `--strategy cha`: unresolved, but for the method its reference
+    /// names.
     Cha,
     /// Rung 0: super resolution found the one real target.
     SuperExact(Symbol),
@@ -570,6 +572,21 @@ impl<'a> CodegenVisitor<'a> {
             synthetics: Default::default(),
             deferred_dispatch: Default::default(),
             report: Default::default(),
+        }
+    }
+
+    /// The method a dispatch site names: the implementation found by walking up from the site's
+    /// declared class, as resolving the method reference does, whether or not the program has
+    /// a body for it.
+    ///
+    /// Models attach to methods by name, and a query finds a source or sink's call sites
+    /// through the call graph, so this edge is how a model on the named method reaches the
+    /// site, whichever models the query brings. It is not dispatch: the one target is the
+    /// method the bytecode names, and an override in a subclass is not found.
+    fn named_method(&self, key: &SignatureKey) -> Option<Symbol> {
+        match self.cha.super_resolvent(&key.0, &key.1, &key.2) {
+            SuperResolution::Exactly(target) => Some(target),
+            _ => None,
         }
     }
 
@@ -649,6 +666,16 @@ impl<'a> CodegenVisitor<'a> {
     ) {
         let (cls, simple_name, descriptor) = key;
         let zero_targets = matches!(action, SiteAction::Cha) && self.resolvent_count(key) == 0;
+        let named = match action {
+            SiteAction::Cha | SiteAction::Defer { .. } => self.named_method(key),
+            _ => None,
+        };
+        if let Some(target) = named {
+            log::trace!("java: {cls}.{simple_name}{descriptor} calls the named method {target}");
+            let target = fx::Function(target.into());
+            let target = self.source_info.sites.get_or_add_function(target);
+            self.facts.call.push((site, target));
+        }
         let buckets = &mut self.report.buckets[dispatch.index()];
         buckets.java_sites += 1;
         match action {
@@ -669,7 +696,8 @@ impl<'a> CodegenVisitor<'a> {
                 let target = self.source_info.sites.get_or_add_function(target);
                 self.facts.call.push((site, target));
             }
-            // CHA does not resolve calls: the site is counted and left without a callee.
+            // CHA does not resolve calls: the site is counted, and calls only the method its
+            // reference names, if any (above).
             SiteAction::Cha => {
                 buckets.cha += 1;
                 if zero_targets {
