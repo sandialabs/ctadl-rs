@@ -2,14 +2,13 @@ use super::*;
 
 use hashbrown::HashSet;
 
-use super::GLOBALS_INDEX;
 use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVertex, TaintEndpoint};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexFacts, taint_index};
 use crate::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use ctadl_ir::cir::builder::FunctionBuilder;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::ssa;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
@@ -133,14 +132,14 @@ fn a_skipped_body_contributes_no_facts() {
         .get_function_id(fx::Function("G".into()))
         .unwrap();
 
-    // The signature survives: one declared parameter plus the globals and return auxiliaries.
+    // The signature survives: one declared parameter plus the return auxiliary.
     assert_eq!(
         facts
             .formal_param
             .iter()
             .filter(|(f, ..)| *f == g_id)
             .count(),
-        3
+        2
     );
     // The body does not. G's call to F was the program's only call site.
     assert!(
@@ -276,42 +275,53 @@ fn test_update_instruction() {
     assert!(!result.summary.is_empty());
 }
 
-// Test that local variables flow into fields of globals, not globals index itself
+// A store of a parameter into a field of a global, `$g.field = p0`, is the summary row
+// `$g.field <- 0`, rooted at the global itself.
 #[test]
 fn test_local_to_global_field() {
-    let f = function_with_param_to_global_field();
+    let (globals, f) = function_with_param_to_global_field();
     let mut f_ssa = f.clone();
-    log::trace!("Local to global field function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
-    log::trace!("Local to global field function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
-    codegen_function(&f_ssa, &mut facts, &mut source_info);
+    super::codegen_function_with_globals(&f_ssa, &globals, &mut facts, &mut source_info);
+    let g = fx::GlobalId::new("g");
+    assert_eq!(
+        facts.globals.iter().map(|(id, ..)| *id).collect::<Vec<_>>(),
+        vec![g],
+        "the program's one global is declared for its import"
+    );
+    assert!(
+        facts
+            .formal_param
+            .iter()
+            .all(|(_, v, _)| v.as_formal().is_some_and(|i| *i >= -1)),
+        "only parameters and returns are formals: {:?}",
+        facts.formal_param
+    );
+    assert!(
+        facts
+            .assign
+            .iter()
+            .any(|(_, dst, _)| dst.0 == FlowVariable::global(g)),
+        "the store is an assign row whose destination is the global's vertex"
+    );
     let result = taint_index(facts);
-    log::trace!("Local to global field result: {:#?}", result);
-
-    // Check that local variable flows to global field, not globals index
     let f_id = source_info
         .sites
         .get_function_id(fx::Function("param_to_global_field".into()))
         .unwrap();
-
-    // The correct behavior is that param flows to global field
-    let has_bad_flow =
-        result
-            .summary
-            .iter()
-            .any(|(func_id, dst_index, dst_path, src_index, src_path)| {
-                *func_id == f_id
-                    && **src_index == 0
-                    && src_path.is_empty()
-                    && **dst_index == GLOBALS_INDEX
-                    && dst_path.is_empty()
-            });
-
+    let field = fx::Path::from_accesses([ctadl_ir::cir::PathSegment::field("field")]);
     assert!(
-        !has_bad_flow,
-        "Local variable should flow to a field of globals, not the globals index itself"
+        result.summary.contains(&(
+            f_id,
+            fx::Root::global(g),
+            field,
+            fx::Root::formal(0i16.into()),
+            fx::Path::empty()
+        )),
+        "the store `$g.field = p0` is the summary row `$g.field <- 0`: {:#?}",
+        result.summary
     );
 }
 
@@ -544,7 +554,7 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
 //   return x;
 // }
 fn function_with_phi() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "phi_func".to_string(),
@@ -608,7 +618,7 @@ fn function_with_phi() -> FunctionData {
 //   return s;
 // }
 fn function_with_update() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "update_func".to_string(),
@@ -637,7 +647,7 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::PathSegment::field("field"),
+        ctadl_ir::cir::PathSegment::field("field"),
         Exp::variable(new_value.clone()),
     );
 
@@ -648,12 +658,13 @@ fn function_with_update() -> FunctionData {
     f
 }
 
+// global g;
 // def param_to_global_field(p0) {
-//   globals.field = p0;
+//   g.field = p0;
 //   return;
 //}
-fn function_with_param_to_global_field() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+fn function_with_param_to_global_field() -> (Globals, FunctionData) {
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "param_to_global_field".to_string(),
@@ -672,26 +683,26 @@ fn function_with_param_to_global_field() -> FunctionData {
     // Create local variable and assign it a value
     let local_var = builder.new_param_var(ParameterIdx::new(0));
 
-    // Create globals access and update its field with local_var
-    let globals_var = builder.new_global_var();
+    // Declare the global `g` and update its field with local_var
+    let mut globals = Globals::default();
+    let globals_var = builder.new_global_var(globals.declare("g", None));
 
-    // This is the key assignment: globals.field = local_var
+    // This is the key assignment: g.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::PathSegment::field("field"),
+        ctadl_ir::cir::PathSegment::field("field"),
         Exp::variable(local_var.clone()),
     );
 
-    // Return globals
     builder.create_ret(vec![]);
 
     f.verify().expect("doesn't verify");
-    f
+    (globals, f)
 }
 
 #[test]
 fn test_cap_algorithm() {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "cap_test".to_string(),
@@ -747,7 +758,7 @@ fn test_cap_algorithm() {
 /// that stopped seeing `new` would otherwise make RTA look brilliant instead of broken.
 #[test]
 fn rta_keeps_only_allocated_implementers() {
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     };
 
@@ -865,7 +876,7 @@ fn rta_keeps_only_allocated_implementers() {
 mod ladder {
     use super::*;
     use crate::models::{DispatchModel, Disposition, ProgramModelMatches};
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 
@@ -1359,7 +1370,7 @@ mod ladder {
 
 mod super_resolution {
     use super::*;
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 

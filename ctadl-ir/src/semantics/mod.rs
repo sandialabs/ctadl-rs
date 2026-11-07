@@ -22,7 +22,10 @@ The least labeling closed under the rules, over the program's unfolding:
   (`ptr<f>`) at an indirect call's callee path, or at its `#value`, makes it a call of `f`, so
   instances appear as labels do. A call to a function without a body, or with no target, is
   zero assignments and is reported in [`Outcome::unresolved`].
-- **Globals** (S13). `$globals` is one variable shared by every instance.
+- **Globals** (G2, G3, G5). A global is one variable shared by every instance (G2), and two
+  programs' globals of one name are one variable (G3): its cells are keyed by its name, not by an
+  instance. Nothing is passed for a global at a call (G5); a store to `$g.f` in any instance
+  writes the shared cell, and a load in any other reads it.
 - **Ports** (S17). A [`Ports::sources`] call labels its first result `r` and `r.#value` with the
   label its first argument names, scope `All`. A [`Ports::sinks`] call observes exactly its
   first argument and that argument's `#value`.
@@ -44,12 +47,12 @@ puts a program in it. Phi nodes are the copies of their operands.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-use crate::index::idx::Idx;
-use crate::mir::path::{self, PathClass};
-use crate::mir::{
+use crate::cir::path::{self, PathClass};
+use crate::cir::{
     AccessPath, BasicBlockIdx, CallEdges, CallObject, CallStyle, Exp, FunctionData, FunctionIdx,
     PathSegment, Program, SourceInfo, StatementKind, TerminatorKind, Variable, VariableRef,
 };
+use crate::index::idx::Idx;
 
 #[cfg(test)]
 mod tests;
@@ -168,8 +171,7 @@ pub fn ssa_form(program: &Program) -> Program {
     out
 }
 
-/// Whether `f` has been through SSA conversion: its parameters and globals are bound at version
-/// 0 by the entry block.
+/// Whether `f` has been through SSA conversion: some variable reference in it is versioned.
 fn is_ssa(f: &FunctionData) -> bool {
     f.blocks.iter_enumerated().any(|(_, b)| {
         b.statements.iter().any(|s| {
@@ -182,16 +184,24 @@ fn is_ssa(f: &FunctionData) -> bool {
 /// Evaluates `program`, which must be in SSA form, to its least labeling. See the module
 /// documentation.
 pub fn evaluate(program: &Program, ports: &Ports, config: &Config) -> Outcome {
-    let mut eval = Eval::new(program, ports, config);
+    evaluate_programs(&[program], ports, config)
+}
+
+/// Evaluates the programs of a project together, each in SSA form: their functions are one set
+/// of roots, a call by name reaches a function of any of them (the first that has a body), and
+/// a global's cells are shared by every program that declares its name (G3).
+pub fn evaluate_programs(programs: &[&Program], ports: &Ports, config: &Config) -> Outcome {
+    let mut eval = Eval::new(programs, ports, config);
     eval.run();
     eval.outcome
 }
 
-/// Who a variable belongs to: an instance, or every instance (`$globals`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Who a variable belongs to: an instance, or every instance of every program, for a global,
+/// which is its name (G2, G3).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Owner {
     Instance(usize),
-    Shared,
+    Global(crate::cir::Symbol),
 }
 
 /// A variable of one instance.
@@ -202,17 +212,19 @@ type Labels = BTreeMap<Label, Scope>;
 
 /// One instance of a function in the unfolding.
 struct Instance {
+    /// The index of the instance's program in [`Eval::programs`].
+    program: usize,
     function: FunctionIdx,
     depth: usize,
     /// The instance each call site called, by site and callee.
-    children: HashMap<(BasicBlockIdx, usize, FunctionIdx), usize>,
+    children: HashMap<(BasicBlockIdx, usize, usize, FunctionIdx), usize>,
 }
 
 struct Eval<'a> {
-    program: &'a Program,
+    programs: &'a [&'a Program],
     ports: &'a Ports,
     config: &'a Config,
-    by_name: HashMap<&'a str, FunctionIdx>,
+    by_name: HashMap<&'a str, (usize, FunctionIdx)>,
     instances: Vec<Instance>,
     cells: HashMap<Var, BTreeMap<Vec<PathSegment>, Labels>>,
     outcome: Outcome,
@@ -220,25 +232,30 @@ struct Eval<'a> {
 }
 
 impl<'a> Eval<'a> {
-    fn new(program: &'a Program, ports: &'a Ports, config: &'a Config) -> Self {
-        let by_name = program
-            .functions
-            .iter_enumerated()
-            .filter(|(_, f)| !f.blocks.is_empty())
-            .map(|(i, f)| (f.name.as_str(), i))
-            .collect();
-        let instances = program
-            .functions
-            .iter_enumerated()
-            .filter(|(_, f)| !f.blocks.is_empty())
-            .map(|(function, _)| Instance {
+    fn new(programs: &'a [&'a Program], ports: &'a Ports, config: &'a Config) -> Self {
+        let bodies = || {
+            programs.iter().enumerate().flat_map(|(p, program)| {
+                program
+                    .functions
+                    .iter_enumerated()
+                    .filter(|(_, f)| !f.blocks.is_empty())
+                    .map(move |(i, f)| (p, i, f))
+            })
+        };
+        let mut by_name = HashMap::new();
+        for (p, i, f) in bodies() {
+            by_name.entry(f.name.as_str()).or_insert((p, i));
+        }
+        let instances = bodies()
+            .map(|(program, function, _)| Instance {
+                program,
                 function,
                 depth: 0,
                 children: HashMap::new(),
             })
             .collect();
         Eval {
-            program,
+            programs,
             ports,
             config,
             by_name,
@@ -263,14 +280,29 @@ impl<'a> Eval<'a> {
         }
     }
 
-    /// The variable `v` names in instance `inst`. Unversioned `$globals` is the one shared
-    /// variable; SSA's `$globals_0 = $globals` copies it into each instance.
-    fn var(inst: usize, v: &VariableRef) -> Var {
-        if v.variable == Variable::GlobalHeap && v.version.is_none() {
-            (Owner::Shared, v.clone())
-        } else {
-            (Owner::Instance(inst), v.clone())
+    /// The variable `v` names in instance `inst`. A global is the one variable of its name,
+    /// whatever instance or program names it (G2, G3); every other variable is the instance's.
+    fn var(&self, inst: usize, v: &VariableRef) -> Var {
+        match v.variable {
+            Variable::Global(idx) => {
+                let program = self.programs[self.instances[inst].program];
+                let name = program.global_name(idx).clone();
+                // The index is the program's own; the name is the identity.
+                (
+                    Owner::Global(name),
+                    VariableRef::global(crate::cir::GlobalIdx::new(0)),
+                )
+            }
+            _ => (Owner::Instance(inst), v.clone()),
         }
+    }
+
+    /// The function of instance `inst`.
+    fn function_of(&self, inst: usize) -> &'a FunctionData {
+        let Instance {
+            program, function, ..
+        } = self.instances[inst];
+        &self.programs[program][function]
     }
 
     /// Adds `labels` at `var.p`, which must be a location within the path bound, each with at
@@ -384,12 +416,12 @@ impl<'a> Eval<'a> {
         let scope = if store { Scope::All } else { Scope::Fixed };
         match e {
             Exp::Path(ap) => {
-                self.assign(dst, d, &Self::var(src_inst, &ap.base), &ap.segments, store)
+                self.assign(dst, d, &self.var(src_inst, &ap.base), &ap.segments, store)
             }
             // `y = value(p)` is the store `y.#value = p`.
             Exp::Value(ap) => {
                 let d = path::concat(d, &[PathSegment::Value]);
-                self.assign(dst, &d, &Self::var(src_inst, &ap.base), &ap.segments, true)
+                self.assign(dst, &d, &self.var(src_inst, &ap.base), &ap.segments, true)
             }
             Exp::ObjectRef(obj) => {
                 let label = match obj {
@@ -407,12 +439,10 @@ impl<'a> Eval<'a> {
     }
 
     fn step(&mut self, inst: usize) {
-        let function = self.instances[inst].function;
-        let program = self.program;
-        let f = &program[function];
+        let f = self.function_of(inst);
         let ports = self.ports;
         for seed in ports.seeds.iter().filter(|s| s.function == f.name) {
-            let var = Self::var(inst, &seed.path.base);
+            let var = self.var(inst, &seed.path.base);
             let label = Label::Taint(seed.label.clone());
             let value = path::concat(&seed.path.segments, &[PathSegment::Value]);
             self.add(&var, &seed.path.segments, [(&label, Scope::All)]);
@@ -425,15 +455,15 @@ impl<'a> Eval<'a> {
             for (i, stmt) in block.statements.iter().enumerate() {
                 match &stmt.kind {
                     StatementKind::Assign { dest, sources } => {
-                        let dst = Self::var(inst, &dest.base);
+                        let dst = self.var(inst, &dest.base);
                         for e in sources {
                             self.assign_exp(&dst, &dest.segments, inst, e);
                         }
                     }
                     StatementKind::Phi { dest, operands } => {
-                        let dst = Self::var(inst, dest);
+                        let dst = self.var(inst, dest);
                         for (_, op) in operands {
-                            self.assign(&dst, &[], &Self::var(inst, op), &[], false);
+                            self.assign(&dst, &[], &self.var(inst, op), &[], false);
                         }
                     }
                     StatementKind::CallAssign { style, rets, args } => {
@@ -447,7 +477,7 @@ impl<'a> Eval<'a> {
 
     /// Where an unresolved call is, for [`Outcome::unresolved`].
     fn site(&self, inst: usize, bb: BasicBlockIdx, i: usize) -> String {
-        let f = &self.program[self.instances[inst].function];
+        let f = self.function_of(inst);
         format!("{}@{}:{}", f.name, bb.index(), i)
     }
 
@@ -468,7 +498,7 @@ impl<'a> Eval<'a> {
             } => names.iter().cloned().collect(),
             CallStyle::FuncPtrCall { callee, .. } => {
                 // The target labels at the callee path and at its value (S11).
-                let var = Self::var(inst, &callee.base);
+                let var = self.var(inst, &callee.base);
                 let value = path::concat(&callee.segments, &[PathSegment::Value]);
                 let mut names: BTreeSet<String> = BTreeSet::new();
                 for p in [&callee.segments[..], &value[..]] {
@@ -520,7 +550,7 @@ impl<'a> Eval<'a> {
             Some(Exp::Str(s)) => Label::Taint(s.to_string()),
             _ => Label::Taint(name.to_string()),
         };
-        let var = Self::var(inst, r);
+        let var = self.var(inst, r);
         self.add(&var, &[], [(&label, Scope::All)]);
         self.add(&var, &[PathSegment::Value], [(&label, Scope::All)]);
     }
@@ -539,11 +569,11 @@ impl<'a> Eval<'a> {
 
     /// Records every taint label at `ap` and `ap.#value` in `inst` as observed at `site`.
     fn observe(&mut self, inst: usize, ap: &AccessPath, site: String) {
-        let var = Self::var(inst, &ap.base);
+        let var = self.var(inst, &ap.base);
         let value = path::concat(&ap.segments, &[PathSegment::Value]);
         let mut labels = self.read(&var, &ap.segments);
         labels.extend(self.read(&var, &value));
-        let function = self.program[self.instances[inst].function].name.clone();
+        let function = self.function_of(inst).name.clone();
         for label in labels.into_keys() {
             if let Label::Taint(label) = label {
                 let obs = Observation {
@@ -565,11 +595,11 @@ impl<'a> Eval<'a> {
         inst: usize,
         bb: BasicBlockIdx,
         i: usize,
-        callee: FunctionIdx,
+        (callee_program, callee): (usize, FunctionIdx),
         rets: &[VariableRef],
         args: &[Exp],
     ) {
-        let key = (bb, i, callee);
+        let key = (bb, i, callee_program, callee);
         let child = match self.instances[inst].children.get(&key) {
             Some(&c) => c,
             None => {
@@ -579,6 +609,7 @@ impl<'a> Eval<'a> {
                     return;
                 }
                 self.instances.push(Instance {
+                    program: callee_program,
                     function: callee,
                     depth,
                     children: HashMap::new(),
@@ -589,12 +620,11 @@ impl<'a> Eval<'a> {
                 c
             }
         };
-        let program = self.program;
-        let f = &program[callee];
-        // `p_i = a_i`.
+        let f = &self.programs[callee_program][callee];
+        // `p_i = a_i`. Nothing is passed for a global (G5).
         for (idx, arg) in args.iter().enumerate().take(f.num_parameters()) {
-            let formal = VariableRef::new_parameter(crate::mir::ParameterIdx::new(idx));
-            self.assign_exp(&Self::var(child, &formal), &[], inst, arg);
+            let formal = VariableRef::new_parameter(crate::cir::ParameterIdx::new(idx));
+            self.assign_exp(&self.var(child, &formal), &[], inst, arg);
         }
         // `r_j = ret_j`, for every return.
         let returns: Vec<Vec<Exp>> = f
@@ -607,7 +637,7 @@ impl<'a> Eval<'a> {
             .collect();
         for ret in returns {
             for (r, e) in rets.iter().zip(ret.iter()) {
-                self.assign_exp(&Self::var(inst, r), &[], child, e);
+                self.assign_exp(&self.var(inst, r), &[], child, e);
             }
         }
     }

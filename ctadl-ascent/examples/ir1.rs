@@ -137,10 +137,11 @@ fn function_g1() -> FunctionData {
 
 // def F(p)
 // {
-//   %global.bar = p;
+//   $g.bar = p;
 // }
 fn program_h() -> Program {
     let mut program = Program::default();
+    let g = program.declare_global("g", None);
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
@@ -154,11 +155,11 @@ fn program_h() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath::from(VariableRef::new_parameter(ParameterIdx::new(0)));
-        let global_ref = VariableRef::new_global();
+        let global_ref = VariableRef::global(g);
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::from(global_ref.clone()),
-                ctadl_ir::mir::PathSegment::field("bar"),
+                ctadl_ir::cir::PathSegment::field("bar"),
                 Exp::from(p.clone()),
             ))];
         let body_block = &mut h[body];

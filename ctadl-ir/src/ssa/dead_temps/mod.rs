@@ -41,8 +41,8 @@ use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
+use crate::cir::*;
 use crate::index::idx::Idx;
-use crate::mir::*;
 
 #[cfg(test)]
 mod tests;

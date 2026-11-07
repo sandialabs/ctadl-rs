@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use ctadl_ir::mir::ParameterType;
+use ctadl_ir::cir::ParameterType;
 
 use crate::FlowSpec;
 
@@ -44,8 +44,8 @@ impl<'s> LineIndex<'s> {
 
 #[derive(Debug)]
 pub enum Def<'s> {
-    /// `var x;`, a global variable.
-    Var(Ident<'s>),
+    /// `var x;`, a global variable, and the span of its declaration.
+    Var(Ident<'s>, Range<usize>),
     Function(FunctionDef<'s>),
 }
 
@@ -130,7 +130,7 @@ pub enum Operand<'s> {
     FunctionPtr(Ident<'s>),
     AccessPath(AccessPath<'s>),
     /// `value(x.f)`: the value of the access path, not its identity
-    /// ([`ctadl_ir::mir::Exp::Value`]). Only an assignment source.
+    /// ([`ctadl_ir::cir::Exp::Value`]). Only an assignment source.
     Value(AccessPath<'s>, Pos),
     Int(i64),
     /// The text between the quotes, with escapes left as written.
@@ -138,7 +138,7 @@ pub enum Operand<'s> {
 }
 
 /// An access path as written: a variable followed by any number of segments, `x.foo.[8].bar`.
-/// Lowering resolves it to a [`ctadl_ir::mir::AccessPath`].
+/// Lowering resolves it to a [`ctadl_ir::cir::AccessPath`].
 #[derive(Debug)]
 pub struct AccessPath<'s> {
     pub base: Ident<'s>,
@@ -171,7 +171,8 @@ peg::parser! {
         pub rule program() -> Vec<Def<'input>> = _ defs:(def() ** _) _ { defs }
 
         rule def() -> Def<'input>
-            = kw("var") _ name:ident() _ ";" { Def::Var(name) }
+            = start:position!() kw("var") _ name:ident() _ ";" end:position!()
+              { Def::Var(name, start..end) }
             / f:function_def() { Def::Function(f) }
 
         rule function_def() -> FunctionDef<'input>

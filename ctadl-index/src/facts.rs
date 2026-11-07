@@ -15,7 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::{Idx, mir, mir::Offset};
+use ctadl_ir::{Idx, cir, cir::Offset};
 
 pub mod parquet;
 mod query_endpoint;
@@ -122,7 +122,7 @@ lazy_static::lazy_static! {
 /// them.
 #[derive(Clone, Debug)]
 pub struct PathNode {
-    head: mir::PathSegment,
+    head: cir::PathSegment,
     tail: Option<PathId>,
     /// The suffix hash `mix(head, tail's hash)`, so the hash of `segments · rest` folds from
     /// `rest`'s without walking it.
@@ -155,7 +155,7 @@ const EMPTY_PATH_HASH: u32 = 0;
 
 /// The suffix hash of `head · tail`, given `tail`'s.
 #[inline]
-pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
+pub(crate) fn suffix_hash(head: &cir::PathSegment, tail_hash: u32) -> u32 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     head.hash(&mut h);
@@ -167,7 +167,7 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 
 /// A path: a sequence of field/array accesses, with no variable.
 ///
-/// A path is the segment part of an access path (see [`mir::AccessPath`]); [`FlowVertex`] pairs
+/// A path is the segment part of an access path (see [`cir::AccessPath`]); [`FlowVertex`] pairs
 /// one with a variable. It is represented as a stack of accesses, innermost first. So the path of
 /// the access path x.foo.bar.baz, `.foo.bar.baz`, is represented as
 /// `cons(.foo, cons(.bar, cons(.baz)))`. Each cons cell is a
@@ -180,7 +180,7 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 /// runs: sort with [`Path::content_cmp`] wherever the order is printed. serde, `Display` and
 /// [`Path::parse`] go through the content.
 ///
-/// A `Path` is always in the normal form of [`mir::path`]: contiguous runs of offset accesses are
+/// A `Path` is always in the normal form of [`cir::path`]: contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row, and `#value` absorbs itself and
 /// adjacent offsets. In effect, the offsets are "addresses of" the containing field.
 ///
@@ -232,7 +232,7 @@ impl Path {
     /// `head · tail`, which the caller has normalized: `head` and `tail`'s head are not both
     /// offsets, and `head` is not a zero offset.
     #[inline]
-    fn cons(head: mir::PathSegment, tail: Path) -> Path {
+    fn cons(head: cir::PathSegment, tail: Path) -> Path {
         let hash = suffix_hash(&head, tail.suffix_hash());
         Path::from_id(Some(PathId::intern(&PathNode {
             head,
@@ -254,16 +254,16 @@ impl Path {
 
     /// The first segment and the rest, in one arena read. `None` for the empty path.
     #[inline]
-    pub(crate) fn uncons(self) -> Option<(&'static mir::PathSegment, Path)> {
+    pub(crate) fn uncons(self) -> Option<(&'static cir::PathSegment, Path)> {
         self.node().map(|n| (&n.head, Path::from_id(n.tail)))
     }
 
     /// Creates a path from a sequence of accesses
-    /// The segments are put in normal form ([`mir::path::normalize`]), so every `Path` is normal.
-    pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
-        let items = mir::path::normalize(iter.into_iter().inspect(|item| {
+    /// The segments are put in normal form ([`cir::path::normalize`]), so every `Path` is normal.
+    pub fn from_accesses(iter: impl IntoIterator<Item = cir::PathSegment>) -> Self {
+        let items = cir::path::normalize(iter.into_iter().inspect(|item| {
             debug_assert!(
-                !matches!(item, mir::PathSegment::Field(s) if s.is_empty()),
+                !matches!(item, cir::PathSegment::Field(s) if s.is_empty()),
                 "Field(\"\") is not a representable path segment"
             );
         }));
@@ -331,7 +331,7 @@ impl Path {
     }
 
     /// Creates a path from a sequence of *field names*, every one of which becomes a
-    /// [`mir::PathSegment::Field`].
+    /// [`cir::PathSegment::Field`].
     ///
     /// This is deliberately named rather than a `FromIterator<S: AsRef<str>>` impl: an iterator
     /// of strings is exactly as plausible a spelling for "parse these as path segments",
@@ -340,25 +340,25 @@ impl Path {
     pub fn from_symbol_names(iter: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         Self::from_accesses(
             iter.into_iter()
-                .map(|name| mir::PathSegment::Field(ArcIntern::from(name.as_ref()))),
+                .map(|name| cir::PathSegment::Field(ArcIntern::from(name.as_ref()))),
         )
     }
 
-    /// Parses a path in the canonical grammar ([`mir::path_syntax`]).
+    /// Parses a path in the canonical grammar ([`cir::path_syntax`]).
     ///
     /// Not injective, and deliberately so: parsing normalizes through [`Path::from_accesses`],
     /// which sums adjacent offset runs and drops `Offset(0)`. So `".[1].[2]"` and `".[3]"` both
     /// yield `Offset(3)`, and `".x.[0]"` yields just `.x`. That is a *semantic* property of this
-    /// type (see the type docs), not a parsing one -- [`mir::parse_segments`] gives the segments
+    /// type (see the type docs), not a parsing one -- [`cir::parse_segments`] gives the segments
     /// exactly as written if you need them.
-    pub fn parse(s: &str) -> Result<Self, mir::PathSyntaxError> {
-        mir::parse_segments(s).map(Self::from_accesses)
+    pub fn parse(s: &str) -> Result<Self, cir::PathSyntaxError> {
+        cir::parse_segments(s).map(Self::from_accesses)
     }
 
     /// Returns the canonical string representation, e.g. `.foo.bar`, `.foo.[8]`, `.\[_elem_]`.
     /// The exact inverse of [`Path::parse`], modulo that parse's documented normalization.
     pub fn to_dot_string(&self) -> String {
-        mir::path_to_string(self.iter())
+        cir::path_to_string(self.iter())
     }
 
     /// Iterates from the innermost access out
@@ -391,7 +391,7 @@ impl Path {
     }
 
     /// True iff `self` starts with `port` structurally: `self` is `port` followed
-    /// by zero or more additional [`PathSegment`](mir::PathSegment) components,
+    /// by zero or more additional [`PathSegment`](cir::PathSegment) components,
     /// compared component-wise (innermost-first) with **no** offset arithmetic
     /// (unlike [`match_prefix`], whose last component merges offsets). An empty
     /// `port` matches every path.
@@ -418,7 +418,7 @@ impl Path {
     ///
     /// `rest` is a tail of this path, so it shares its storage; each `key` is interned anew.
     pub fn prefix_keys(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::with_capacity(comps.len() + 1);
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
@@ -438,14 +438,14 @@ impl Path {
     /// [`Path::prefix_keys`], so a wild match excludes it. A `#value` component splits the same
     /// way, `rest` beginning with `#value`, and matches every `key.[m]`.
     pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::new();
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
         for k in 0..comps.len() {
             if matches!(
                 comps[k],
-                mir::PathSegment::Offset(_) | mir::PathSegment::Value
+                cir::PathSegment::Offset(_) | cir::PathSegment::Value
             ) {
                 let key = Path::from_accesses(comps[..k].iter().cloned());
                 out.push((key, rest));
@@ -462,8 +462,8 @@ impl Path {
     #[inline]
     pub fn wild_rest(&self, m: i64) -> Option<(i64, Path)> {
         match self.head()? {
-            mir::PathSegment::Offset(Offset(n)) if *n != m => Some((n - m, self.tail())),
-            mir::PathSegment::Value => Some((0, *self)),
+            cir::PathSegment::Offset(Offset(n)) if *n != m => Some((n - m, self.tail())),
+            cir::PathSegment::Value => Some((0, *self)),
             _ => None,
         }
     }
@@ -471,9 +471,9 @@ impl Path {
     /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
     /// path and for a path whose last component is a symbol.
     pub fn split_trailing_offset(&self) -> Option<(Path, i64)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         match comps.last() {
-            Some(mir::PathSegment::Offset(mir::Offset(m))) => {
+            Some(cir::PathSegment::Offset(cir::Offset(m))) => {
                 let m = *m;
                 let key = Path::from_accesses(comps[..comps.len() - 1].iter().cloned());
                 Some((key, m))
@@ -492,7 +492,7 @@ impl Path {
 
     /// The first component. `None` for the empty path.
     #[inline]
-    pub fn head(&self) -> Option<&'static mir::PathSegment> {
+    pub fn head(&self) -> Option<&'static cir::PathSegment> {
         self.node().map(|n| &n.head)
     }
 
@@ -500,7 +500,7 @@ impl Path {
     #[inline]
     pub fn head_offset(&self) -> Option<i64> {
         match self.head() {
-            Some(mir::PathSegment::Offset(mir::Offset(n))) => Some(*n),
+            Some(cir::PathSegment::Offset(cir::Offset(n))) => Some(*n),
             _ => None,
         }
     }
@@ -514,7 +514,7 @@ impl Path {
     /// This path with its first component replaced by `head`, which the caller has normalized
     /// against the tail as [`Path::cons`] requires. Not for the empty path.
     #[inline]
-    fn with_head(&self, head: mir::PathSegment) -> Path {
+    fn with_head(&self, head: cir::PathSegment) -> Path {
         debug_assert!(!self.is_empty());
         Path::cons(head, self.tail())
     }
@@ -525,7 +525,7 @@ impl Path {
 pub struct PathIter(Path);
 
 impl Iterator for PathIter {
-    type Item = &'static mir::PathSegment;
+    type Item = &'static cir::PathSegment;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -570,7 +570,7 @@ impl<'de> Deserialize<'de> for Path {
                 enum NodeData {
                     Nil,
                     Name(String),
-                    Cons { head: mir::PathSegment, tail: Node },
+                    Cons { head: cir::PathSegment, tail: Node },
                 }
                 Ok(Node(match NodeData::deserialize(deserializer)? {
                     NodeData::Nil => Path::EMPTY,
@@ -620,13 +620,13 @@ impl Heap {
 impl Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = String::new();
-        mir::write_path(&mut out, self.iter());
+        cir::write_path(&mut out, self.iter());
         f.write_str(&out)
     }
 }
 
 impl FromStr for Path {
-    type Err = mir::PathSyntaxError;
+    type Err = cir::PathSyntaxError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
@@ -688,9 +688,6 @@ impl FromStr for Function {
 #[repr(transparent)]
 pub struct FormalIndex(i16);
 
-/// For passing globals reference in parameter list
-pub const GLOBALS_INDEX: i16 = i16::MIN;
-
 /// Start of return values. If there's more than one return value, uses -2, -3, etc
 pub const RETURN_INDEX: i16 = -1i16;
 
@@ -742,9 +739,9 @@ impl Display for FormalIndex {
     }
 }
 
-impl TryFrom<mir::ParameterIdx> for FormalIndex {
+impl TryFrom<cir::ParameterIdx> for FormalIndex {
     type Error = Error;
-    fn try_from(p: mir::ParameterIdx) -> Result<FormalIndex, Self::Error> {
+    fn try_from(p: cir::ParameterIdx) -> Result<FormalIndex, Self::Error> {
         match p.index().try_into() {
             Ok(i) => Ok(FormalIndex(i)),
             Err(_e) => Err(Error::FactsConvert(
@@ -753,6 +750,231 @@ impl TryFrom<mir::ParameterIdx> for FormalIndex {
         }
     }
 }
+
+/// A global variable of the project (G1 of `docs/ir.md`). A global *is* its name (G3): two
+/// programs that declare `g` declare one variable, so the id is the interned name and two
+/// imports' declarations meet at one id without a table. Serde writes the name.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct GlobalId(pub Str);
+
+impl GlobalId {
+    pub fn new(name: impl Into<Str>) -> Self {
+        GlobalId(name.into())
+    }
+
+    pub fn name(&self) -> Str {
+        self.0
+    }
+
+    /// Orders by name, not by id.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.content_cmp(&other.0)
+    }
+}
+
+impl Debug for GlobalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Global({})", self.0)
+    }
+}
+
+/// `$name`, the textual form of a global (G1).
+impl Display for GlobalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "${}", self.0)
+    }
+}
+
+/// The root of a reachability or summary row: a formal (the return is
+/// `Formal(RETURN_INDEX)`), or a global. Packed in four bytes, since it is a column of
+/// `locals`: a formal's `i16`, or the top bit and the global's name id.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[repr(transparent)]
+pub struct Root(u32);
+
+const ROOT_GLOBAL: u32 = 1 << 31;
+
+/// What a [`Root`] is.
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum RootKind {
+    Formal(FormalIndex),
+    Global(GlobalId),
+}
+
+impl Root {
+    #[inline]
+    pub fn formal(i: FormalIndex) -> Self {
+        Root((*i as u16) as u32)
+    }
+
+    #[inline]
+    pub fn global(g: GlobalId) -> Self {
+        let raw = g.0.raw();
+        assert!(
+            raw & ROOT_GLOBAL == 0,
+            "a global's name id does not fit a root"
+        );
+        Root(raw | ROOT_GLOBAL)
+    }
+
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        self.0 & ROOT_GLOBAL != 0
+    }
+
+    #[inline]
+    pub fn as_formal(&self) -> Option<FormalIndex> {
+        (!self.is_global()).then(|| FormalIndex::new(self.0 as u16 as i16))
+    }
+
+    #[inline]
+    pub fn as_global(&self) -> Option<GlobalId> {
+        self.is_global().then(|| {
+            // SAFETY: the bits are `raw()` of a `Str` `Root::global` was handed.
+            GlobalId(unsafe { Str::from_raw_unchecked(self.0 & !ROOT_GLOBAL) })
+        })
+    }
+
+    pub fn kind(&self) -> RootKind {
+        match self.as_global() {
+            Some(g) => RootKind::Global(g),
+            None => RootKind::Formal(self.as_formal().unwrap()),
+        }
+    }
+
+    /// The bits, for the LSM store.
+    pub fn raw(self) -> u32 {
+        self.0
+    }
+
+    /// Whether a global root's name was handed out, for roots read back from storage that
+    /// bypassed the interner.
+    pub fn is_valid(&self) -> bool {
+        !self.is_global() || Str::from_raw(self.0 & !ROOT_GLOBAL).is_some()
+    }
+
+    /// Whether a flow into `path` of this root reaches the caller: [`isout`] for a formal, and
+    /// always for a global, which every instance shares (G2).
+    #[inline]
+    pub fn isout(&self, formal_type: FormalType, path: &Path) -> bool {
+        match self.as_formal() {
+            Some(i) => isout(&i, formal_type, path),
+            None => true,
+        }
+    }
+
+    /// Orders by what the root denotes, not by its bits.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self.kind(), other.kind()) {
+            (RootKind::Formal(a), RootKind::Formal(b)) => a.cmp(&b),
+            (RootKind::Global(a), RootKind::Global(b)) => a.content_cmp(&b),
+            (RootKind::Formal(_), RootKind::Global(_)) => std::cmp::Ordering::Less,
+            (RootKind::Global(_), RootKind::Formal(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl From<FormalIndex> for Root {
+    fn from(i: FormalIndex) -> Self {
+        Root::formal(i)
+    }
+}
+
+/// The formal of that index.
+impl From<i16> for Root {
+    fn from(i: i16) -> Self {
+        Root::formal(i.into())
+    }
+}
+
+impl From<GlobalId> for Root {
+    fn from(g: GlobalId) -> Self {
+        Root::global(g)
+    }
+}
+
+impl From<RootKind> for Root {
+    fn from(k: RootKind) -> Self {
+        match k {
+            RootKind::Formal(i) => Root::formal(i),
+            RootKind::Global(g) => Root::global(g),
+        }
+    }
+}
+
+impl Debug for Root {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            RootKind::Formal(i) => write!(f, "Formal({i})"),
+            RootKind::Global(g) => write!(f, "{g:?}"),
+        }
+    }
+}
+
+/// A formal prints as its index, as [`FormalIndex`] does; a global as `$name`.
+impl Display for Root {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            RootKind::Formal(i) => write!(f, "{i}"),
+            RootKind::Global(g) => write!(f, "{g}"),
+        }
+    }
+}
+
+impl Serialize for Root {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.kind().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Root {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(RootKind::deserialize(deserializer)?.into())
+    }
+}
+
+impl Serialize for RootKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        enum R<'a> {
+            Formal(i16),
+            Global(&'a str),
+        }
+        match self {
+            RootKind::Formal(i) => R::Formal(**i),
+            RootKind::Global(g) => R::Global(g.0.as_str()),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for RootKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum R {
+            Formal(i16),
+            Global(String),
+        }
+        Ok(match R::deserialize(deserializer)? {
+            R::Formal(i) => RootKind::Formal(i.into()),
+            R::Global(g) => RootKind::Global(GlobalId::new(g)),
+        })
+    }
+}
+
+/// The *global frame*, the distinguished frame of program-level facts (`docs/debugging.md`): the
+/// flows between two global paths, which hold in every instance (G6 of `docs/ir.md`), and the
+/// call-target and string labels at global paths. It has no formals and no call sites. Reserved,
+/// as [`RETURN_INDEX`] is: the largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands
+/// out, and which every `IdMap` names [`GLOBAL_FRAME_NAME`].
+pub const GLOBAL_FRAME: FunctionId = FunctionId { id: (1 << 28) - 1 };
+
+/// The name of [`GLOBAL_FRAME`].
+pub const GLOBAL_FRAME_NAME: &str = "<globals>";
+
+static GLOBAL_FRAME_FUNCTION: LazyLock<Function> =
+    LazyLock::new(|| Function::from(Str::from(GLOBAL_FRAME_NAME)));
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
@@ -987,9 +1209,10 @@ pub struct ImportId(pub u32);
 
 /// A variable with metadata that relates it to functions and call sites
 ///
-/// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to
-/// represent. The Local variable is represented with its [`Str`]'s 32-bit id. The Formal is an i16. And the Packed Call Arg similarly only
-/// requires 62 bits.
+/// Flow variables are crafted to be 8 bytes. There are five variants, four of them told apart by
+/// the top 2 bits. The Local variable is represented with its [`Str`]'s 32-bit id, and the Global
+/// shares its tag, with bit 61 set, and is its name's 32-bit id. The Formal is an i16. And the
+/// Packed Call Arg similarly only requires 62 bits.
 #[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Default)]
 pub struct FlowVariable(u64);
 
@@ -999,6 +1222,8 @@ const TAG_FORMAL: u64 = 2 << 62;
 const TAG_CALL_ARG: u64 = 3 << 62;
 const TAG_MASK: u64 = 3 << 62;
 const DATA_MASK: u64 = !TAG_MASK;
+/// Under [`TAG_LOCAL`], marks a global.
+const GLOBAL_BIT: u64 = 1 << 61;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
 pub enum FlowVariableKind {
@@ -1006,6 +1231,7 @@ pub enum FlowVariableKind {
     Local(Str),
     Formal(FormalIndex),
     CallArg(PackedCallArg),
+    Global(GlobalId),
 }
 
 impl From<FlowVariableKind> for FlowVariable {
@@ -1022,6 +1248,7 @@ impl From<FlowVariableKind> for FlowVariable {
                 debug_assert!((val & TAG_MASK) == 0, "CallArg top bits must be 0");
                 FlowVariable(val | TAG_CALL_ARG)
             }
+            FlowVariableKind::Global(g) => FlowVariable(g.0.raw() as u64 | TAG_LOCAL | GLOBAL_BIT),
         }
     }
 }
@@ -1039,24 +1266,49 @@ impl FlowVariable {
         FlowVariableKind::CallArg(c).into()
     }
 
-    /// The vertex of the actual for parameter `formal` of the call at `insn`. The global heap
-    /// already aliases the caller's heap formal at every call site, so its actual is that formal
-    /// rather than a per-call copy.
-    pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
-        if formal == GLOBALS_INDEX.into() {
-            FlowVariable::formal_index(formal)
-        } else {
-            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
+    pub fn global(g: GlobalId) -> Self {
+        FlowVariableKind::Global(g).into()
+    }
+
+    /// The vertex of root `r` at the call `insn`: the actual of a formal, and a global itself,
+    /// which no call passes (G5).
+    pub fn call_root(insn: InsnId, r: Root) -> Self {
+        match r.kind() {
+            RootKind::Formal(n) => FlowVariable::call_actual(insn, n),
+            RootKind::Global(g) => FlowVariable::global(g),
         }
+    }
+
+    /// The root this variable is in its own function: a formal or a global.
+    pub fn as_root(&self) -> Option<Root> {
+        match self.kind() {
+            FlowVariableKind::Formal(i) => Some(Root::formal(i)),
+            FlowVariableKind::Global(g) => Some(Root::global(g)),
+            _ => None,
+        }
+    }
+
+    pub fn as_global(&self) -> Option<GlobalId> {
+        self.is_global().then(|| GlobalId(self.local_str()))
+    }
+
+    pub fn is_global(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_LOCAL && (self.0 & GLOBAL_BIT) != 0
+    }
+
+    /// The vertex of the actual for parameter `formal` of the call at `insn`.
+    pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
+        FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
     }
 
     pub fn as_local(&self) -> Option<Str> {
         self.is_local().then(|| self.local_str())
     }
 
-    /// The `Str` of a `Local`, whose payload is the id `local` put there.
+    /// The `Str` of a `Local` or a `Global`, whose payload is the id `local` or `global` put
+    /// there.
     fn local_str(&self) -> Str {
-        Str::from_raw((self.0 & DATA_MASK) as u32).expect("a Local holds a Str's id")
+        Str::from_raw(self.0 as u32).expect("a Local holds a Str's id")
     }
 
     pub fn as_formal(&self) -> Option<FormalIndex> {
@@ -1075,6 +1327,7 @@ impl FlowVariable {
     pub fn kind(&self) -> FlowVariableKind {
         match self.0 & TAG_MASK {
             TAG_UNINIT => FlowVariableKind::Uninit,
+            TAG_LOCAL if self.is_global() => FlowVariableKind::Global(GlobalId(self.local_str())),
             TAG_LOCAL => FlowVariableKind::Local(self.local_str()),
             TAG_FORMAL => {
                 let val = (self.0 & DATA_MASK) as i16;
@@ -1093,7 +1346,7 @@ impl FlowVariable {
     }
 
     pub fn is_local(&self) -> bool {
-        (self.0 & TAG_MASK) == TAG_LOCAL
+        (self.0 & TAG_MASK) == TAG_LOCAL && (self.0 & GLOBAL_BIT) == 0
     }
 
     pub fn is_formal(&self) -> bool {
@@ -1104,10 +1357,10 @@ impl FlowVariable {
         (self.0 & TAG_MASK) == TAG_CALL_ARG
     }
 
-    /// Whether a `Local`'s [`Str`] was handed out, for variables read back from storage that
-    /// bypassed the interner. True for every other variant.
+    /// Whether a `Local`'s or a `Global`'s [`Str`] was handed out, for variables read back from
+    /// storage that bypassed the interner. True for every other variant.
     pub fn is_valid(&self) -> bool {
-        !self.is_local() || Str::from_raw((self.0 & DATA_MASK) as u32).is_some()
+        (self.0 & TAG_MASK) != TAG_LOCAL || Str::from_raw(self.0 as u32).is_some()
     }
 }
 
@@ -1146,16 +1399,6 @@ impl FlowVariable {
         }
     }
 
-    pub fn is_globals(&self) -> bool {
-        match self.kind() {
-            FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
-            // This has to be kept in sync with the name `ctadl-ascent`'s `CodegenVisitor` gives
-            // globals.
-            FlowVariableKind::Local(name) => name.starts_with("$globals_"),
-            _ => false,
-        }
-    }
-
     /// Orders two flow variables by what they *denote*, not by their packed bits. This is usable as
     /// a sort comparator over a whole index table.
     pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -1165,8 +1408,13 @@ impl FlowVariable {
             (Local(a), Local(b)) => a.as_str().cmp(b.as_str()),
             (Formal(a), Formal(b)) => a.cmp(&b),
             (CallArg(a), CallArg(b)) => a.0.cmp(&b.0),
-            // Different variants: order by the tag, which is what the derived `Ord` does too.
-            _ => (self.0 & TAG_MASK).cmp(&(other.0 & TAG_MASK)),
+            (Global(a), Global(b)) => a.content_cmp(&b),
+            // Different variants: order by the tag, which is what the derived `Ord` does too (a
+            // global after a local, as its bit 61 makes it).
+            _ => {
+                let rank = |v: &FlowVariable| (v.0 & TAG_MASK, v.is_global());
+                rank(self).cmp(&rank(other))
+            }
         }
     }
 }
@@ -1177,6 +1425,7 @@ impl Display for FlowVariable {
             FlowVariableKind::Uninit => write!(f, "uninit"),
             FlowVariableKind::Local(name) => write!(f, "local({name})"),
             FlowVariableKind::Formal(index) => write!(f, "formal({index})"),
+            FlowVariableKind::Global(g) => write!(f, "{g}"),
             FlowVariableKind::CallArg(packed) => {
                 let CallArgId { insn_id, formal } = packed.try_into().unwrap();
                 write!(f, "call-arg({}, {formal})", insn_id.id)
@@ -1185,10 +1434,10 @@ impl Display for FlowVariable {
     }
 }
 
-impl TryFrom<mir::ParameterIdx> for FlowVariable {
+impl TryFrom<cir::ParameterIdx> for FlowVariable {
     type Error = TryFromVariableError;
     #[inline]
-    fn try_from(idx: mir::ParameterIdx) -> Result<FlowVariable, Self::Error> {
+    fn try_from(idx: cir::ParameterIdx) -> Result<FlowVariable, Self::Error> {
         match idx.try_into() {
             Ok(i) => Ok(FlowVariableKind::Formal(i).into()),
             Err(_) => Err(TryFromVariableError::Param),
@@ -1198,34 +1447,34 @@ impl TryFrom<mir::ParameterIdx> for FlowVariable {
 
 #[derive(Error, Debug)]
 pub enum TryFromVariableError {
-    #[error("global variables unsupported in datalog")]
+    #[error("a global is named by its program's table, which codegen holds")]
     Global,
     #[error("parameter doesn't fit")]
     Param,
 }
 
-impl TryFrom<&mir::Variable> for FlowVariable {
+impl TryFrom<&cir::Variable> for FlowVariable {
     type Error = TryFromVariableError;
     #[inline]
-    fn try_from(v: &mir::Variable) -> Result<FlowVariable, Self::Error> {
+    fn try_from(v: &cir::Variable) -> Result<FlowVariable, Self::Error> {
         match v {
-            mir::Variable::Local(_) => {
+            cir::Variable::Local(_) => {
                 let name = format!("{v}");
                 Ok(FlowVariableKind::Local(Str::from(name)).into())
             }
-            mir::Variable::Param(idx) => (*idx).try_into(),
-            mir::Variable::GlobalHeap => Err(TryFromVariableError::Global),
+            cir::Variable::Param(idx) => (*idx).try_into(),
+            cir::Variable::Global(_) => Err(TryFromVariableError::Global),
         }
     }
 }
 
-impl TryFrom<&mir::VariableRef> for FlowVariable {
+impl TryFrom<&cir::VariableRef> for FlowVariable {
     type Error = TryFromVariableError;
     /// If the variable has no version, tries to convert from a variable. Otherwise, *formats* the
     /// variable and returns a local. Every version var, in other words, becomes a local.
     #[inline]
-    fn try_from(v: &mir::VariableRef) -> Result<FlowVariable, Self::Error> {
-        let mir::VariableRef { variable, version } = v;
+    fn try_from(v: &cir::VariableRef) -> Result<FlowVariable, Self::Error> {
+        let cir::VariableRef { variable, version } = v;
         match version {
             None => variable.try_into(),
             Some(version) => {
@@ -1236,7 +1485,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
     }
 }
 
-/// An access path: a variable and its path. The fact-level form of [`mir::AccessPath`].
+/// An access path: a variable and its path. The fact-level form of [`cir::AccessPath`].
 ///
 /// The third field is padding: it makes the 4-byte [`Path`] fill the vertex's 16 bytes, so the
 /// LSM provider, which stores and compares a value's raw bytes, never reads an uninitialized one.
@@ -1351,12 +1600,12 @@ pub enum CallTargetObjectKind {
     FunctionId(FunctionId),
     Symbol(Symbol),
     /// A Lua class-table symbol (`lua$class$Account`), the projection of
-    /// [`ctadl_ir::mir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
+    /// [`ctadl_ir::cir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
     /// import and a JVM import sharing one fact base cannot collide in the
     /// `callee_resolvents` key space.
     LuaClass(Symbol),
     /// A .NET class (`[Asm]Ns.Type`), the projection of
-    /// [`ctadl_ir::mir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
+    /// [`ctadl_ir::cir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
     /// reason `LuaClass` is: a Xamarin app is Dex and CIL in one fact base.
     CilClass(Symbol),
 }
@@ -1484,6 +1733,10 @@ pub enum FlowEdge {
     Intra,
     Call(PackedInsnSiteId),
     Return(PackedInsnSiteId),
+    /// A step into or out of a global vertex, which every instance shares (G8 of `docs/ir.md`):
+    /// a store in one function to a load in any other, with no call between them. It resets
+    /// call/return matching, since from a global the flow may continue in any instance.
+    Global,
 }
 
 impl FlowEdge {
@@ -1491,7 +1744,7 @@ impl FlowEdge {
     #[inline]
     pub fn site(&self) -> Option<PackedInsnSiteId> {
         match self {
-            FlowEdge::Intra => None,
+            FlowEdge::Intra | FlowEdge::Global => None,
             FlowEdge::Call(s) | FlowEdge::Return(s) => Some(*s),
         }
     }
@@ -1503,6 +1756,7 @@ impl Display for FlowEdge {
             FlowEdge::Intra => write!(f, "intra"),
             FlowEdge::Call(s) => write!(f, "call({s})"),
             FlowEdge::Return(s) => write!(f, "return({s})"),
+            FlowEdge::Global => write!(f, "global"),
         }
     }
 }
@@ -1626,10 +1880,10 @@ pub enum FormalType {
     Shared,
 }
 
-impl From<mir::ParameterType> for FormalType {
+impl From<cir::ParameterType> for FormalType {
     #[inline]
-    fn from(ty: mir::ParameterType) -> Self {
-        use mir::ParameterType::*;
+    fn from(ty: cir::ParameterType) -> Self {
+        use cir::ParameterType::*;
         match ty {
             Copied => FormalType::Copied,
             Shared => FormalType::Shared,
@@ -1668,7 +1922,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
 /// without rebuilding and re-interning `suffix`.
 ///
 /// Every `Path` in the system is built through [`Path::from_accesses`], which collapses runs of
-/// adjacent [`mir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
+/// adjacent [`cir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
 /// by [`match_prefix`] (a tail of an interned path, possibly with an offset-adjusted head) ever
 /// contains internal adjacent offsets. The *only* place `from_accesses` could merge is therefore
 /// the `new_prefix`/`suffix` junction — which this handles explicitly — so the result is
@@ -1676,13 +1930,13 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
 /// O(|new_prefix| + |suffix|) (and zero when `new_prefix` is empty, the common copy/load case).
 #[inline]
 fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
-    use mir::{Offset, PathSegment};
+    use cir::{Offset, PathSegment};
     // `new_prefix` is a short program path prefix (usually 0–2 components).
     let comps: Vec<PathSegment> = new_prefix.iter().cloned().collect();
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
-    // Junction rewriting, the equations of `ctadl_ir::mir::path` applied where the two meet.
+    // Junction rewriting, the equations of `ctadl_ir::cir::path` applied where the two meet.
     // Both sides are normal, so only the last component of `new_prefix` and the head of `suffix`
     // can combine, and at most once:
     // - two offsets sum, and a zero sum vanishes;
@@ -1719,7 +1973,7 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
 #[inline]
 pub fn match_prefix(path: &Path, prefix: &Path) -> Option<Path> {
     match_prefix_split(path, prefix).map(|(adjust, rest)| match adjust {
-        Some(adj) => Path::cons(mir::PathSegment::Offset(Offset(adj)), rest),
+        Some(adj) => Path::cons(cir::PathSegment::Offset(Offset(adj)), rest),
         None => rest,
     })
 }
@@ -1729,7 +1983,7 @@ pub fn match_prefix(path: &Path, prefix: &Path) -> Option<Path> {
 /// present only when `adjust` is `Some`. Interns nothing.
 #[inline]
 pub fn match_prefix_split(path: &Path, prefix: &Path) -> Option<(Option<i64>, Path)> {
-    use mir::PathSegment;
+    use cir::PathSegment;
     let mut path_seq = *path;
     let mut prefix_seq = *prefix;
 
@@ -1824,10 +2078,17 @@ impl IdMap {
     }
 
     pub fn get_function_id(&self, f: Function) -> Option<FunctionId> {
+        if f.as_str() == GLOBAL_FRAME_NAME {
+            return Some(GLOBAL_FRAME);
+        }
         self.function_id.get(&f).copied()
     }
 
+    /// The function `func_id` names; [`GLOBAL_FRAME`] is named [`GLOBAL_FRAME_NAME`].
     pub fn get_function(&self, func_id: FunctionId) -> Option<&Function> {
+        if func_id == GLOBAL_FRAME {
+            return Some(&GLOBAL_FRAME_FUNCTION);
+        }
         self.functions.get(func_id.id as usize)
     }
 
@@ -1840,10 +2101,14 @@ impl IdMap {
 
     /// Adds a function or returns the id previously assigned for the function.
     pub fn get_or_add_function(&mut self, f: Function) -> FunctionId {
-        if let Some(id) = self.function_id.get(&f) {
-            return *id;
+        if let Some(id) = self.get_function_id(f.clone()) {
+            return id;
         }
         let i = FunctionId::new(self.functions.len().try_into().unwrap());
+        assert!(
+            i != GLOBAL_FRAME,
+            "too many functions: the next id is the global frame's"
+        );
         self.function_id.insert(f.clone(), i);
         self.functions.push(f);
         i
@@ -1854,11 +2119,75 @@ impl IdMap {
 mod tests {
     use super::*;
 
-    /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `mir::path` on random
+    /// A root is a formal or a global, and reads back as what it was, in memory and through
+    /// the `summary` parquet schema.
+    #[test]
+    fn root_round_trips() {
+        let g = GlobalId::new("Lcom/C;");
+        let roots = [
+            Root::formal(0i16.into()),
+            Root::formal(RETURN_INDEX.into()),
+            Root::formal((-3i16).into()),
+            Root::global(g),
+        ];
+        assert_eq!(roots[1].as_formal(), Some(RETURN_INDEX.into()));
+        assert_eq!(roots[3].as_global(), Some(g));
+        assert!(roots[3].is_global() && !roots[0].is_global());
+        assert!(roots[3].isout(FormalType::Copied, &Path::empty()));
+
+        let dir = tempfile::tempdir().unwrap();
+        let f = FunctionId::new(3);
+        let p = Path::parse(".f").unwrap();
+        let rows: Vec<_> = roots
+            .iter()
+            .flat_map(|d| roots.iter().map(move |s| (f, *d, p, *s, Path::empty())))
+            .collect();
+        schema::summary::try_save(dir.path(), rows.clone()).unwrap();
+        assert_eq!(schema::summary::try_load(dir.path()).unwrap(), rows);
+    }
+
+    /// A global is a flow variable of its own kind, distinct from a local of its name, and
+    /// survives the parquet encoding of a vertex.
+    #[test]
+    fn global_flow_variable_round_trips() {
+        let g = FlowVariable::global(GlobalId::new("x"));
+        let l = FlowVariable::local(Str::from("x"));
+        assert_ne!(g, l);
+        assert!(g.is_global() && !g.is_local() && g.is_valid());
+        assert!(l.is_local() && !l.is_global());
+        assert_eq!(g.as_global(), Some(GlobalId::new("x")));
+        assert_eq!(g.as_root(), Some(Root::global(GlobalId::new("x"))));
+        assert_eq!(l.content_cmp(&g), std::cmp::Ordering::Less);
+        assert_eq!(format!("{g}"), "$x");
+
+        let dir = tempfile::tempdir().unwrap();
+        let rows = vec![(FunctionId::new(1), g, Path::empty(), l, Path::empty())];
+        schema::assign::try_save(dir.path(), rows.clone()).unwrap();
+        assert_eq!(schema::assign::try_load(dir.path()).unwrap(), rows);
+    }
+
+    /// The global frame is a function every `IdMap` names, and none hands out.
+    #[test]
+    fn global_frame_is_named_in_every_id_map() {
+        let mut ids = IdMap::new();
+        assert_eq!(
+            ids.get_function(GLOBAL_FRAME).map(|f| f.as_str()),
+            Some(GLOBAL_FRAME_NAME)
+        );
+        assert_eq!(
+            ids.get_function_id(Function::from(Str::from(GLOBAL_FRAME_NAME))),
+            Some(GLOBAL_FRAME)
+        );
+        let f = ids.get_or_add_function(Function::from(Str::from("f")));
+        assert_ne!(f, GLOBAL_FRAME);
+        assert!(ids.functions().all(|(id, _)| id != GLOBAL_FRAME));
+    }
+
+    /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `cir::path` on random
     /// segment lists: offset sums, `[0]`, and `#value` absorbing offsets on both sides.
     #[test]
-    fn agrees_with_mir_path() {
-        use mir::{PathSegment as S, path as mp};
+    fn agrees_with_cir_path() {
+        use cir::{PathSegment as S, path as mp};
         let mut state = 0x9e37_79b9u64;
         let mut next = move || {
             state = state
@@ -1991,8 +2320,8 @@ mod tests {
             .chain([
                 Path::from_symbol_names(["path_cmp/x", "path_cmp/y"]),
                 Path::from_accesses([
-                    mir::PathSegment::field("path_cmp/x"),
-                    mir::PathSegment::offset(3),
+                    cir::PathSegment::field("path_cmp/x"),
+                    cir::PathSegment::offset(3),
                 ]),
                 Path::EMPTY,
             ])
@@ -2051,7 +2380,7 @@ mod tests {
         // wants two accesses to may-alias (a non-constant subscript and the element it might be,
         // say) must spell them the same path -- that choice belongs to the frontend, not here.
         // Offsets, which the IR does give arithmetic meaning, are covered by the tests below.
-        use ctadl_ir::mir::PathSegment;
+        use ctadl_ir::cir::PathSegment;
         let sym = |s: &str| Path::from_accesses([PathSegment::field(s)]);
         let elem = sym("[_elem_]"); // the lua frontend's non-constant key
         let c0 = sym("[0]");
@@ -2096,7 +2425,7 @@ mod tests {
 
         // Test case: p23.substitute_prefix(p2, p1) where p23=.[1], p2='', p1=.[1] -> .[2]
         // This tests offset merging when matching empty prefix
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Create p23 = .[1]
         let p23 = Path::from_accesses([PathSegment::Offset(Offset(1))]);
@@ -2136,7 +2465,7 @@ mod tests {
     /// different path and slip past `paths()` feasibility gates the real forward chain failed.
     #[test]
     fn test_match_prefix_exact_offset_consumes_component() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
         let path = parse_path(".x.[2]");
@@ -2352,7 +2681,7 @@ mod tests {
     fn test_path_with_offsets() {
         // Test path with numeric offsets
         // Create a path manually with mixed PathSegment types
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
         let path = Path::from_accesses([
             PathSegment::Field(ArcIntern::from("foo")),
             PathSegment::Offset(Offset(42)),
@@ -2371,7 +2700,7 @@ mod tests {
     /// `Symbol("[3]")`) must come back as that symbol, not as the empty path or an offset.
     #[test]
     fn test_path_round_trip_corpus() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
         let sym = |s: &str| PathSegment::field(s);
         let off = |n: i64| PathSegment::Offset(Offset(n));
 
@@ -2407,7 +2736,7 @@ mod tests {
     /// they are pinned here rather than left to look like round-trip failures.
     #[test]
     fn test_path_parse_normalizes() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Adjacent offsets are summed: a path holds at most one offset in a row.
         assert_eq!(
@@ -2450,7 +2779,7 @@ mod tests {
 
     #[test]
     fn test_path_parse_rejects_malformed() {
-        use ctadl_ir::mir::PathSyntaxErrorKind;
+        use ctadl_ir::cir::PathSyntaxErrorKind;
         assert_eq!(
             Path::parse("foo").unwrap_err().kind,
             PathSyntaxErrorKind::MissingLeadingDot
@@ -2521,7 +2850,7 @@ mod prefix_key_tests {
                         && let Some((adj, tail)) = rest.wild_rest(m)
                     {
                         found.push(Path::from_accesses(
-                            std::iter::once(mir::PathSegment::Offset(mir::Offset(adj)))
+                            std::iter::once(cir::PathSegment::Offset(cir::Offset(adj)))
                                 .chain(tail.iter().cloned()),
                         ));
                     }

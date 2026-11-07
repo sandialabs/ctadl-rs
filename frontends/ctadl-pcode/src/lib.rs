@@ -10,8 +10,11 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
 - There is no address-of. Address-taken storage lives behind `deref`. The frame is memory:
   frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only
   thing that makes a slot flow-sensitive.
-- A global at address `A` is `$globals.[A].deref`, keyed on the address so that every function
-  shares it.
+- An import declares one global, its image's memory, named by the import and Ghidra's address
+  space: `$<import>::ram` (written `$ram` below). A global
+  at address `A` is `$ram.[A].deref`, keyed on the address so that every function shares it,
+  and named by the import so that two images' addresses are distinct cells. A pointer-typed
+  constant stays an inert constant: there is no `&g`.
 - A constant offset is an offset segment: `PTRSUB p, 8` is `p.[8]`. A non-constant offset is a
   copy of the base plus the value of the index: `q = PTRADD p, i, 4` is `q = p, value(i)`.
   Under `CTADL_EXP_INT_ARITH=merge`, a comparison mode, every operand is merged instead.
@@ -20,6 +23,15 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
 - A write to a frame address itself, `__stack_top.[k]`, is dropped, because every read of the
   varnode that holds the address resolves to the address too. See
   `Context::push_assign_or_store`.
+
+# Spans
+
+A span's start is an offset from the image base, the address Ghidra loaded the image at
+(`PROGRAM_IMAGE_BASE`), not the address itself: an instruction at Ghidra address `A` starts at
+`A - image_base`. Source-info positions are `u32`, and a 64-bit image's addresses are not
+(a Mach-O executable loads at `0x1_0000_0000`); its offsets are, for any image under 4 GiB. An
+instruction whose offset does not fit gets no span, and the import warns. The memory global is
+declared at offset 0, the image itself.
 
 # Why the JNI registry lives here
 
@@ -41,7 +53,7 @@ use source_info::ArtifactKey;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{FunctionNames, VirtualMethodTable};
+use ctadl_ir::cir::call::{FunctionNames, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -61,6 +73,18 @@ const WORD_SIZE: i64 = 8;
 /// True when Ghidra is available to lower a binary to pcode. See [`ghidra::available`].
 pub fn ghidra_available() -> bool {
     ghidra::available()
+}
+
+/// The span start of Ghidra address `address` in an image loaded at `image_base`: its offset
+/// from the base (see "Spans" in the crate docs). `None` below the base or 4 GiB or more above it.
+fn image_offset(address: i64, image_base: i64) -> Option<u32> {
+    u32::try_from(address.checked_sub(image_base)?).ok()
+}
+
+/// The name of the memory global of the import `import_name`, `<import>::ram`: the import, then
+/// Ghidra's address space.
+pub fn memory_global_name(import_name: &str) -> String {
+    format!("{import_name}::ram")
 }
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts.
@@ -95,6 +119,7 @@ pub fn import_pcode(
     }
 
     let mut ctx = Context::new();
+    ctx.import_name = import.name.clone();
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
 
     let key = ArtifactKey {
@@ -125,7 +150,7 @@ enum VnodeRep {
     /// stack memory `__stack_top.[F].deref` so it unifies with stack-address derefs.
     StackSlot(i64),
     /// Storage for a global variable living at address `A`, expressed as the canonical
-    /// global memory `$globals.[A].deref`.
+    /// global memory `$ram.[A].deref`.
     Global(i64),
 }
 
@@ -166,6 +191,15 @@ struct Context {
     /// `process_functions`.
     entry_points: BTreeMap<i64, String>,
     counter: i64,
+    /// The name of the import being lowered, which names its memory global.
+    import_name: String,
+    /// The import's memory global, `$<import>::ram`, declared by [`Self::process`].
+    memory: Option<ctadl_ir::cir::GlobalIdx>,
+    /// The address Ghidra loaded the image at, which spans are offsets from (see "Spans" in the
+    /// crate docs); 0 when the facts do not say. Read by [`Self::process`].
+    image_base: i64,
+    /// Instructions with no span because their offset from the image base is not a `u32`.
+    unlocated_instructions: usize,
 }
 
 impl Context {
@@ -187,12 +221,16 @@ impl Context {
             current_hfunc: None,
             entry_points: Default::default(),
             counter: 0,
+            import_name: "pcode".to_string(),
+            memory: None,
+            image_base: 0,
+            unlocated_instructions: 0,
         }
     }
 
     /// Appends a write of `src` to the access path `dest`: a plain assign for a bare variable, or a
     /// field store (with any needed loads emitted for intermediate dereferences) via
-    /// [`mir::store_access_path`].
+    /// [`cir::store_access_path`].
     ///
     /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
     /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
@@ -231,8 +269,22 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Use pcode-reader crate to read facts
         let reader = PcodeFactsReader::new(facts_dir);
+        self.image_base = reader
+            .read_image_base()
+            .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
+            .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
+            .unwrap_or(0);
+        let image_span = builders.source_info_builder.span_for(
+            artifact_key.clone(),
+            0,
+            source_info::SpanLen::Empty,
+        );
+        self.memory = Some(
+            builders
+                .program
+                .declare_global(memory_global_name(&self.import_name), Some(image_span)),
+        );
         let mut pcode_facts = reader
             .read_all_facts()
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
@@ -299,6 +351,15 @@ impl Context {
 
         // 3. Process pcode instructions
         self.process_pcode_instructions(&pcode_facts, artifact_key, builders)?;
+        if self.unlocated_instructions > 0 {
+            log::warn!(
+                "pcode: {}: {} instruction(s) more than 4 GiB from the image base {:#x}, or \
+                 below it, have no source location",
+                self.import_name,
+                self.unlocated_instructions,
+                self.image_base
+            );
+        }
 
         Ok(())
     }
@@ -434,7 +495,7 @@ impl Context {
                     for _ in 0..proto_data.parameters.len() {
                         func.params
                             .parameters
-                            .push(ctadl_ir::mir::ParameterType::Shared);
+                            .push(ctadl_ir::cir::ParameterType::Shared);
                     }
                 }
             } else {
@@ -709,12 +770,17 @@ impl Context {
                         &mut locals,
                     )? {
                         if let Some(addr) = &pcode.target {
-                            stmt.source_info =
-                                SourceInfo::new(builders.source_info_builder.span_for(
-                                    artifact_key.clone(),
-                                    addr.0 as u32,
-                                    source_info::SpanLen::ByteLen(1),
-                                ));
+                            match image_offset(addr.0, self.image_base) {
+                                Some(offset) => {
+                                    stmt.source_info =
+                                        SourceInfo::new(builders.source_info_builder.span_for(
+                                            artifact_key.clone(),
+                                            offset,
+                                            source_info::SpanLen::ByteLen(1),
+                                        ));
+                                }
+                                None => self.unlocated_instructions += 1,
+                            }
                         }
                         statements.push(stmt);
                     }
@@ -1382,8 +1448,8 @@ impl Context {
     /// root used by LOAD/STORE address resolution (see [`Self::resolve_mem_exp`]), so taint
     /// written through a stack pointer meets taint read from the corresponding slot.
     ///
-    /// Global storage is canonicalized the same way, as `$globals.[A].deref` (a
-    /// [`VnodeRep::Global`]). Globals are rooted at the shared global heap rather than at
+    /// Global storage is canonicalized the same way, as `$ram.[A].deref` (a
+    /// [`VnodeRep::Global`]). Globals are rooted at the import's memory global rather than at
     /// the varnode, because Ghidra gives each referencing function its own varnode and its
     /// own high variable for one global; only the address is common to all of them.
     fn convert_vnode(
@@ -1468,13 +1534,17 @@ impl Context {
         AccessPath::new(stack_top, [PathSegment::offset(offset), PathSegment::Deref])
     }
 
-    /// Builds the access path for the canonical global `$globals.[address].deref`.
+    /// Builds the access path for the canonical global `$ram.[address].deref`.
     ///
-    /// [`Variable::GlobalHeap`] is threaded through every call, so rooting globals here
-    /// is what carries their taint between functions that never pass it directly.
-    fn global_path(address: i64) -> AccessPath {
+    /// Every function names the one memory global, which is shared by every instance, so
+    /// rooting globals here is what carries their taint between functions that never pass it
+    /// directly.
+    fn global_path(&self, address: i64) -> AccessPath {
+        let memory = self
+            .memory
+            .expect("the memory global is declared before any instruction is lowered");
         AccessPath::new(
-            VariableRef::new_global(),
+            VariableRef::global(memory),
             [PathSegment::offset(address), PathSegment::Deref],
         )
     }
@@ -1564,13 +1634,13 @@ impl Context {
                     locals.get_or_intern("unknown_callee"),
                 ))
             };
-            ctadl_ir::mir::call::CallStyle::FuncPtrCall {
+            ctadl_ir::cir::call::CallStyle::FuncPtrCall {
                 callee,
                 signature: None,
             }
         } else {
-            ctadl_ir::mir::call::CallStyle::DirectCall {
-                call_edges: ctadl_ir::mir::call::CallEdges::Explicit(call_edges),
+            ctadl_ir::cir::call::CallStyle::DirectCall {
+                call_edges: ctadl_ir::cir::call::CallEdges::Explicit(call_edges),
             }
         };
 
@@ -1662,13 +1732,13 @@ impl Context {
                 Exp::path(self.load_ap(stmts, ap, locals))
             }
             VnodeRep::Global(address) => {
-                Exp::path(self.load_ap(stmts, Self::global_path(address), locals))
+                Exp::path(self.load_ap(stmts, self.global_path(address), locals))
             }
         };
         Ok(exp)
     }
 
-    /// Reads the memory part of `ap` into a temporary with [`mir::read_into_temp`], appending
+    /// Reads the memory part of `ap` into a temporary with [`cir::read_into_temp`], appending
     /// the copy to `stmts`, and returns the temporary plus `ap`'s trailing offsets.
     fn load_ap(
         &mut self,
@@ -1676,7 +1746,7 @@ impl Context {
         ap: AccessPath,
         locals: &mut Locals,
     ) -> AccessPath {
-        mir::read_into_temp(ap, stmts, || self.create_temp(locals))
+        cir::read_into_temp(ap, stmts, || self.create_temp(locals))
     }
 
     fn get_lvalue(
@@ -1695,7 +1765,7 @@ impl Context {
             VnodeRep::Var(var) => AccessPath::from(var),
             VnodeRep::Offset(var, offset) => AccessPath::new(var, [PathSegment::offset(offset)]),
             VnodeRep::StackSlot(offset) => Self::stack_slot_path(offset, locals),
-            VnodeRep::Global(address) => Self::global_path(address),
+            VnodeRep::Global(address) => self.global_path(address),
         };
         Ok(ap)
     }
@@ -2111,5 +2181,125 @@ mod tests {
         // `p - q`, both pointers: neither is the base.
         assert_eq!(base_operand(&[PTR, PTR]), None);
         assert_eq!(base_operand(&[]), None);
+    }
+
+    /// A span starts at the offset from the image base, which a 64-bit image's addresses have
+    /// even where the addresses are not `u32`s.
+    #[test]
+    fn a_span_starts_at_the_offset_from_the_image_base() {
+        // A Mach-O executable.
+        assert_eq!(image_offset(0x1_0000_1000, 0x1_0000_0000), Some(0x1000));
+        // An ELF shared library at Ghidra's base.
+        assert_eq!(image_offset(0x10_1234, 0x10_0000), Some(0x1234));
+        assert_eq!(image_offset(0x1234, 0), Some(0x1234));
+        assert_eq!(image_offset(0xf_ffff, 0x10_0000), None);
+        assert_eq!(image_offset(0x1_0010_0000, 0x10_0000), None);
+        assert_eq!(image_offset(i64::MIN, 1), None);
+    }
+
+    /// An image's memory global is declared at the image, offset 0 from its base.
+    #[test]
+    fn the_memory_global_is_declared_at_the_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Every table the reader reads, empty, and the image base.
+        for name in [
+            ".facts",
+            "BB_FIRST.facts",
+            "BB_FOUT.facts",
+            "BB_HFUNC.facts",
+            "BB_LAST.facts",
+            "BB_OUT.facts",
+            "BB_PCODE_INDEX.facts",
+            "BB_START.facts",
+            "BB_TOUT.facts",
+            "HFUNC_EP.facts",
+            "HFUNC_ISEXT.facts",
+            "HFUNC_LOCAL_EP.facts",
+            "HFUNC_NAME.facts",
+            "HFUNC_PROTO.facts",
+            "HVAR_CLASS.facts",
+            "HVAR_NAME.facts",
+            "HVAR_REPRESENTATIVE.facts",
+            "HVAR_TYPE.facts",
+            "PCODE_INDEX.facts",
+            "PCODE_INPUT.facts",
+            "PCODE_MNEMONIC.facts",
+            "PCODE_OPCODE.facts",
+            "PCODE_OUTPUT.facts",
+            "PCODE_PARENT.facts",
+            "PCODE_TARGET.facts",
+            "PROGRAM_IMAGE_BASE.facts",
+            "PROTO_IS_VARARG.facts",
+            "PROTO_IS_VOID.facts",
+            "PROTO_PARAMETER.facts",
+            "PROTO_PARAMETER_COUNT.facts",
+            "PROTO_RETTYPE.facts",
+            "REGISTER_IS_SP.facts",
+            "REGISTER_OFF_NAME.facts",
+            "SYMBOL_HVAR.facts",
+            "TYPE_BOOLEAN.facts",
+            "TYPE_ENUM.facts",
+            "TYPE_FLOAT.facts",
+            "TYPE_INTEGER.facts",
+            "TYPE_POINTER.facts",
+            "VNODE_ADDRESS.facts",
+            "VNODE_HVAR.facts",
+            "VNODE_IS_ADDRESS.facts",
+            "VNODE_NAME.facts",
+            "VNODE_OFFSET_N.facts",
+            "VNODE_SIZE.facts",
+            "VNODE_SPACE.facts",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        std::fs::write(dir.path().join("PROGRAM_IMAGE_BASE.facts"), "1048576\n").unwrap();
+
+        let mut ctx = Context::new();
+        ctx.import_name = "lib.so".to_string();
+        let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
+        let key = ArtifactKey {
+            path: "lib.so".to_string(),
+            sub_artifact_id: 0,
+            hash: Vec::new(),
+            encoding: source_info::ArtifactEncoding::Binary,
+        };
+        ctx.process(dir.path(), key, &mut builders)
+            .expect("the facts lower");
+        let info = ctx.finish(builders).expect("the program finishes");
+        let memory = info
+            .program
+            .globals
+            .lookup(&memory_global_name("lib.so"))
+            .expect("the memory global");
+        let span = info
+            .program
+            .globals
+            .get(memory)
+            .unwrap()
+            .span
+            .expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "lib.so");
+        assert_eq!(span.start, 0);
+        assert_eq!(span.len, source_info::SpanLen::Empty);
+    }
+
+    /// An image's memory is one global named by the import and the address space, so a
+    /// global at address `A` is `$<import>::ram.[A].deref` and two images' addresses are two
+    /// cells.
+    #[test]
+    fn a_global_address_is_a_cell_of_the_import_memory() {
+        let mut program = Program::default();
+        let mut paths = Vec::new();
+        for import in ["libA.so", "libB.so"] {
+            let mut ctx = Context::new();
+            ctx.import_name = import.to_string();
+            ctx.memory = Some(program.declare_global(memory_global_name(import), None));
+            paths.push(ctx.global_path(4096));
+        }
+        assert_ne!(paths[0], paths[1]);
+        let _names = program.global_names_guard();
+        assert_eq!(paths[0].to_string(), r"$libA\.so::ram.[4096].deref");
+        assert_eq!(paths[1].to_string(), r"$libB\.so::ram.[4096].deref");
     }
 }

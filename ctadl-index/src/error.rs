@@ -30,7 +30,7 @@ pub enum JsonModelError {
     InvalidPath {
         index: usize,
         text: String,
-        source: ctadl_ir::mir::PathSyntaxError,
+        source: ctadl_ir::cir::PathSyntaxError,
     },
     InvalidInteger {
         index: usize,
@@ -265,7 +265,7 @@ from_import!(
     serde_json::Error,
     json5::Error,
     bitcode::Error,
-    ctadl_ir::mir::VerifyErrors,
+    ctadl_ir::cir::VerifyErrors,
     source_info::parquet_io::ParquetError,
     dex_reader::error::DexError,
     jvm_reader::error::ClassFileError,

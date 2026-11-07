@@ -38,7 +38,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 
 use crate::error::{Error, JsonModelError, JsonModelErrors};
 use crate::models::json_schema;
@@ -1365,16 +1365,16 @@ fn migrate_bridge(
         (!disjuncts.is_empty()).then(|| with_subject(one_of(&disjuncts), "fun", OTHER, &scope));
 
     // Without a map the JSON format pairs the arguments the two sides share, which needs the
-    // fact base. With an empty one it still bridges the pair, with only the implicit globals port,
-    // and a DSL bridge is made of its port heads.
+    // fact base. An empty one bridges nothing, and a DSL bridge is
+    // made of its port heads.
     let pairs = match bridge.get("arguments").and_then(|v| v.as_array()) {
         Some(items) if !items.is_empty() => items,
         Some(_) => {
             return Err(untranslatable(
                 index,
                 "'bridge'",
-                "an empty 'arguments' map bridges only the globals, and a DSL bridge needs at \
-                 least one port",
+                "an empty 'arguments' map bridges nothing, and a DSL bridge needs at least one \
+                 port",
             ));
         }
         None => {
@@ -1473,12 +1473,12 @@ fn port_text(value: Option<&Value>, field: &str, index: usize) -> Result<String,
                 "'Variable(...)' is valid only on a source or sink port",
             ));
         }
-        // `parse_port` never produces it: the globals port has no spelling in either format.
-        crate::models::FormalIndexTypeTag::Global => {
+        // `parse_port` never produces it: the JSON format has no spelling for a global.
+        crate::models::FormalIndexTypeTag::Global(_) => {
             return Err(untranslatable(
                 index,
                 &format!("port {text:?}"),
-                "the globals port is implicit",
+                "write `G::self` with `global(G)`",
             ));
         }
     };

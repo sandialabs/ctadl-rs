@@ -39,7 +39,11 @@ Every lowering choice the IR does not force is a policy, made in one place:
 | Assembly selection             | framework and BCL not imported by default ([`is_framework_assembly`]); their metadata always read | `lib.rs` |
 
 Conventions (S19). A field is the symbol `<cls::name>` and an array element the field
-`[]`, whatever the index; `length` is the array length. The step from a `ref`, `out`, `in`, a
+`[]`, whatever the index; `length` is the array length. A class that owns a static field is a
+global named by the class (`$[asm]Namespace.Type`), and
+a static field is that global's field named by the field's name alone, `$[asm]Namespace.Type.f`;
+a field whose owner does not decode is a field of the global `[?]?` named by its token. A managed
+pointer to a static field resolves to the same path. The step from a `ref`, `out`, `in`, a
 managed or an unmanaged pointer to the memory there is `PathSegment::Deref`, and only that.
 A byref argument whose place is traced is copied into a cell (`cell.deref`) before the call
 and copied back out after it. Arithmetic, bitwise operations, shifts, conversions and
@@ -412,6 +416,13 @@ pub struct Context {
     spans: SourceInfoBuilder,
     defined: HashMap<String, FunctionIdx>,
     out: Collected,
+    /// The program's globals: one per class that owns a static field. Moved into the program when
+    /// it is finished.
+    globals: ctadl_ir::cir::Globals,
+    /// Each class the assemblies define, as its global is named, with the assembly it is in and
+    /// the file offset and size of its `TypeDef` row there: where the global is declared.
+    /// Located when the program is finished, once every class has been lowered.
+    type_defs: Vec<(String, ArtifactKey, u32, u32)>,
 }
 
 impl Default for Context {
@@ -428,6 +439,8 @@ impl Context {
             spans: SourceInfoBuilder::new(source_info::ArtifactMetadata::new()),
             defined: HashMap::new(),
             out: Collected::default(),
+            globals: Default::default(),
+            type_defs: Vec::new(),
         }
     }
 
@@ -457,6 +470,14 @@ impl Context {
     ) -> Result<(), Error> {
         self.out.stats.types += 1;
         let cls = names.typedef_cls(&td);
+        if let Some((offset, size)) = module
+            .metadata()
+            .row_file_span(cil_reader::raw::Table::TypeDef, td.rid())
+            && let Ok(offset) = u32::try_from(offset)
+        {
+            self.type_defs
+                .push((cls.clone(), spans.key.clone(), offset, size));
+        }
         let mut parents = Vec::new();
         if let Some(base) = td.base_type()? {
             parents.extend(names.tdor_cls(&base));
@@ -550,6 +571,7 @@ impl Context {
                     &body,
                     &sig,
                     fdat,
+                    &mut self.globals,
                     &mut lines,
                     &mut self.spans,
                     &mut self.out,
@@ -624,7 +646,17 @@ impl Context {
             method::thunk_body(fdat, &target, target_params.len());
         }
 
-        let program = self.program;
+        let mut program = self.program;
+        program.globals = self.globals;
+        // A class's global is declared at its `TypeDef` row, if the program uses it.
+        for (cls, key, offset, size) in self.type_defs {
+            if program.globals.lookup(&cls).is_some() {
+                let span = self
+                    .spans
+                    .span_for(key, offset, source_info::SpanLen::ByteLen(size));
+                program.globals.declare(&cls, Some(span));
+            }
+        }
         program.verify()?;
         let Table {
             names: function_names,

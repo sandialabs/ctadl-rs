@@ -17,7 +17,7 @@ use ctadl_ascent::models::{
     ProgramMatchIndex, ProgramModelMatches, try_load_models,
 };
 use ctadl_ascent::project::ArtifactLanguage;
-use ctadl_ir::mir::ProgramInfo;
+use ctadl_ir::cir::ProgramInfo;
 
 // ---------------------------------------------------------------------------
 // Fixtures

@@ -15,7 +15,7 @@ a misspelling is a hard error. For the same reason a non-array `where` is an err
 
 use std::path::{Path as FsPath, PathBuf};
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::error::{Error, ErrorContext, JsonModelError};
 use crate::facts::{self, FormalIndex};
 use crate::models::FormalIndexTypeTag;
@@ -281,9 +281,8 @@ impl ImportScope {
 /// One end of a port map entry: a formal index plus a literal path.
 ///
 /// The index is a [`FormalIndex`] rather than a tag/index pair because the port space a bridge
-/// admits is exactly `Argument(n)` and `Return`; the globals pseudo-parameter is mapped
-/// unconditionally and is not user-visible, and `Argument(*)` is rejected (a wildcard has no
-/// correspondent).
+/// admits is exactly `Argument(n)` and `Return`; a global is shared by both sides and needs no
+/// bridge (G7), and `Argument(*)` is rejected (a wildcard has no correspondent).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct BridgePort {
     pub index: FormalIndex,
@@ -325,13 +324,11 @@ impl BridgePort {
                         .to_string(),
                 });
             }
-            FormalIndexTypeTag::Global => {
+            FormalIndexTypeTag::Global(_) => {
                 return Err(JsonModelError::UnexpectedField {
                     index,
                     field_name: key.to_string(),
-                    message: "the globals pseudo-parameter is mapped unconditionally and is not \
-                              user-visible"
-                        .to_string(),
+                    message: "a global is shared and needs no bridge".to_string(),
                 });
             }
         };
@@ -352,21 +349,6 @@ pub struct PortPair {
 }
 
 impl PortPair {
-    /// The globals pair, emitted for every bridge whether the model asks for it or not. Without
-    /// it heap flows do not cross the boundary at all: taint in through one native function,
-    /// held in a native global, out through another never comes back.
-    pub fn globals() -> Self {
-        let port = BridgePort {
-            index: GLOBALS_INDEX.into(),
-            path: facts::Path::empty(),
-        };
-        PortPair {
-            from: port,
-            to: port,
-            direction: Direction::Both,
-        }
-    }
-
     /// The normal-return pair. A Java function's return arity is 2 (`-1` normal, `-2`
     /// exception) while a native function's is 1, so only `-1` is ever mapped.
     pub fn ret() -> Self {
@@ -432,7 +414,7 @@ pub struct ResolvedBridge {
     pub from: facts::Str,
     /// Side B: the implementation side.
     pub to: facts::Str,
-    /// The port map, in written order. The globals pair is added at emission.
+    /// The port map, in written order.
     pub ports: Vec<PortPair>,
 }
 
@@ -777,7 +759,7 @@ pub(crate) fn check_keys(
 /// way a port's trailing path is (`.next.next.next`).
 pub(crate) fn parse_declared_path(text: &str, index: usize) -> Result<facts::Path, JsonModelError> {
     let segments =
-        ctadl_ir::mir::parse_segments(text).map_err(|source| JsonModelError::InvalidPath {
+        ctadl_ir::cir::parse_segments(text).map_err(|source| JsonModelError::InvalidPath {
             index,
             text: text.to_string(),
             source,

@@ -1,5 +1,5 @@
-// A source created inside a callee must return through the caller's heap formal.
-// The same heap must also enter consume(), with call-site labels preserved.
+// A source created inside a callee and stored to a global is read by the caller after the call,
+// and by consume(), which the caller calls next: one global, shared by every instance (G2).
 var g;
 var clean;
 
@@ -7,13 +7,13 @@ def produce() {
 start:
   x = source(Secret);
   sink(x, Secret);
-  g = x;
+  g.deref = x;
   return;
 }
 
 def consume() {
 start:
-  y = g;
+  y = g.deref;
   sink(y, Secret);
   errsink(clean, Secret);
   return;
@@ -22,7 +22,7 @@ start:
 def main() {
 start:
   produce();
-  y = g;
+  y = g.deref;
   sink(y, Secret);
   consume();
   errsink(clean, Secret);

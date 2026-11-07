@@ -52,6 +52,34 @@ select * from summary.parquet join function_id.parquet on summary.func_id = func
 `ctadl inspect <index>/function_id.parquet` prints the same function table without duckdb,
 one `<id> function(<name>)` per line.
 
+A summary row relates two *roots*, each a formal or a global, written as two columns: `dst_index`
+and `dst_global` (one of them null), and likewise `src_index` and `src_global`. A formal index is
+`-1` for the return. The rows rooted at a global:
+
+```sql
+select f.name, s.* from summary.parquet s join function_id.parquet f on s.func_id = f.id
+where s.dst_global is not null or s.src_global is not null;
+```
+
+No row has two global roots: a flow between two globals is no function's (G6 of
+[ir.md](ir.md#globals)) but an edge of the *global frame*, the reserved function `<globals>`
+(the largest function id, `GLOBAL_FRAME`), which `function_id.parquet` does not list.
+`global_flow.parquet` holds those edges, `(dst, dst_path, src, src_path)` over global names, and
+`assign.parquet` holds them too, under the frame's id. A vertex variable may be a global, tag 4 in
+the `*_var_tag` columns, with its name in `*_var_ref_name`. `globals.parquet` lists each global and
+an import that declares it, with `source_span_id`, the declaration's span in that import's
+source-info tables when the front end recorded one: a C declarator, a flowy `var`, a Lua chunk
+(`_ENV`), a class header (JVM), `class_def_item` (dex) or `TypeDef` row (CIL), or the image
+itself, offset 0 (pcode).
+
+```sql
+select g.name, i.name as import, g.source_span_id
+from globals.parquet g join import_id.parquet i on g.import_id = i.id;
+```
+
+`CTADL_DUMP_RELATIONS` (below) prints the frame's rows under `<globals>`, among them
+`call_target_assign_like` and `const_reaches`, the labels pooled at global paths.
+
 Get functions endpoints are in:
 
 ```sql
@@ -121,7 +149,7 @@ order ever matters; the third is not.
    propagates into derivation order. Sorting these two makes `paths.parquet`
    byte-stable, and nothing else.
 3. Interned keys hash by address or id: `Symbol = ArcIntern<str>`
-   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
+   (`ctadl-ir/src/cir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
    interner id, which depends on the order paths were first interned. Every hash
    container keyed by a path or a field symbol therefore iterates in an
    order that moves per process. This is hasher-independent: ascent's relation

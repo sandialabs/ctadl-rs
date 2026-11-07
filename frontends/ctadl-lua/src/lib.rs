@@ -8,7 +8,7 @@
 //! # What it does
 //!
 //! The lowering mirrors the C tree-sitter frontend (`ctadl_ascent::languages::tree_sitter_c`):
-//! walk the parse tree, build a [`Program`](ctadl_ir::mir::Program) of functions and
+//! walk the parse tree, build a [`Program`](ctadl_ir::cir::Program) of functions and
 //! basic blocks, and lower Lua assignments, calls, table constructors, field/index
 //! accesses, and control flow into IR statements.
 //!
@@ -71,10 +71,12 @@
 //!
 //! ## Globals
 //!
-//! `_ENV` is assumed never to be swapped out, so a free identifier (a name not bound by a
-//! `local` or a parameter) is modeled uniformly as a field of the global heap:
-//! `$globals.name` ([`Variable::GlobalHeap`] + a symbolic field). Reads become loads and
-//! writes become stores on the global heap.
+//! A program declares one global, `$_ENV` ([`Variable::Global`]). `_ENV` is assumed never to be
+//! swapped out, so a free identifier
+//! (a name not bound by a `local` or a parameter) is modeled uniformly as a field of it:
+//! `n` is `$_ENV.n`, and `kong.request.x` is `$_ENV.kong.request.x`. Reads become loads and
+//! writes become stores. By G3, the imports of a project share one
+//! `$_ENV`: one VM, one environment.
 //!
 //! ## Errors / exceptions
 //!
@@ -92,9 +94,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
+use ctadl_ir::cir::call::{Dispatch, FunctionNames, VirtualMethodTable};
+use ctadl_ir::cir::*;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
-use ctadl_ir::mir::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
@@ -2396,7 +2398,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Builds an [`AccessPath`] for a bare name: a parameter or local becomes a bare variable; a
-    /// free name is a field of the global heap (`$globals.name`), modeling `_ENV`.
+    /// free name is a field of the global `$_ENV` (`$_ENV.name`).
     fn build_var(&mut self, name: &str) -> AccessPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
         if self.cur_upvalues.contains(name)
@@ -2407,18 +2409,18 @@ impl<'a> Lowerer<'a> {
         match self.lookup(name) {
             Some(Binding::Param(idx)) => AccessPath::from(VariableRef::new_parameter(idx)),
             Some(Binding::Local) => AccessPath::from(self.local_ref(name)),
-            None => AccessPath::new(VariableRef::new_global(), [PathSegment::field(name)]),
+            None => AccessPath::new(self.env(), [PathSegment::field(name)]),
         }
     }
 
     /// Reads the memory part of `ap` into a temporary appended to `blk`
-    /// ([`ctadl_ir::mir::read_into_temp`]), and returns the temporary plus any trailing offsets.
+    /// ([`ctadl_ir::cir::read_into_temp`]), and returns the temporary plus any trailing offsets.
     fn emit_loads(&mut self, blk: BasicBlockIdx, ap: AccessPath) -> AccessPath {
         let mut stmts = Vec::new();
         let mut counter = self.temp_counter;
         let fidx = self.fidx;
         let locals = &mut self.program[fidx].locals;
-        let addr = ctadl_ir::mir::read_into_temp(ap, &mut stmts, || {
+        let addr = ctadl_ir::cir::read_into_temp(ap, &mut stmts, || {
             let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
             counter += 1;
             v
@@ -2469,6 +2471,17 @@ impl<'a> Lowerer<'a> {
         // No content child (e.g. empty string): strip one leading/trailing quote char.
         let text = self.node_text(node);
         text.trim_matches(|c| c == '"' || c == '\'').to_string()
+    }
+
+    /// The global `_ENV`. It is declared by the chunk of the first unit that names it: in Lua
+    /// each chunk has an `_ENV`, and every chunk's is the one global table.
+    fn env(&mut self) -> VariableRef {
+        if let Some(env) = self.program.globals.lookup("_ENV") {
+            return VariableRef::global(env);
+        }
+        let chunk = self.trees[self.unit].root_node();
+        let span = self.span(chunk).span_id;
+        VariableRef::global(self.program.declare_global("_ENV", Some(span)))
     }
 
     fn span(&mut self, node: Node<'_>) -> SourceInfo {
@@ -2578,7 +2591,7 @@ fn collect_label_names(src: &str, node: Node<'_>, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctadl_ir::mir::visit::Visitor;
+    use ctadl_ir::cir::visit::Visitor;
 
     /// Imports one in-memory file as module `m`.
     fn import_str(src: &str) -> ProgramInfo {
@@ -2985,6 +2998,25 @@ mod tests {
         );
     }
 
+    /// `_ENV` is declared by the whole chunk of the first unit that names a free variable,
+    /// whichever unit is lowered first.
+    #[test]
+    fn env_is_declared_at_the_first_chunk_that_names_it() {
+        let quiet = "local x = 1\n";
+        let loud = "print(x)\n";
+        let info = import_modules(&[("a", quiet), ("b", loud), ("c", loud)]);
+        let env = info
+            .program
+            .globals
+            .lookup("_ENV")
+            .expect("_ENV is declared");
+        let span = info.program.globals.get(env).unwrap().span.expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "b.lua");
+        assert_eq!(span.start, 0);
+        assert_eq!(span.len, SpanLen::ByteLen(loud.len() as u32));
+    }
+
     #[test]
     fn localizing_a_global_keeps_the_global_meaning() {
         // `local kong = kong` is pervasive in OpenResty. The local must keep denoting the global,
@@ -3146,5 +3178,26 @@ mod tests {
 
         let info = import_lua(dir.path()).expect("import of a non-UTF-8 file failed");
         assert!(function_names(&info).contains(&"m.hello".to_string()));
+    }
+
+    /// A free name is a field of the one global `$_ENV`: `kong.request.x` is
+    /// `$_ENV.kong.request.x`, and a write to a free name a store to `$_ENV`'s field.
+    #[test]
+    fn a_free_name_is_a_field_of_env() {
+        let src = r#"
+            function read() return kong.request.x end
+            function write(v) counter = v end
+        "#;
+        let info = import_str(src);
+        let globals: Vec<String> = info
+            .program
+            .globals
+            .iter_enumerated()
+            .map(|(_, g)| g.name.to_string())
+            .collect();
+        assert_eq!(globals, ["_ENV"]);
+        let dump = info.program.to_string();
+        assert!(dump.contains("$_ENV.kong"), "{dump}");
+        assert!(dump.contains("store $_ENV.counter := "), "{dump}");
     }
 }

@@ -4,7 +4,7 @@
 use thin_vec::thin_vec;
 
 use super::*;
-use crate::mir::{
+use crate::cir::{
     AccessPath, BasicBlockData, ParameterIdx, ParameterType, ReturnType, Statement, Terminator,
 };
 
@@ -44,10 +44,28 @@ impl P {
         f.blocks.blocks_mut().push(block);
     }
 
+    /// Declares the global `name` and returns a reference to it.
+    fn global(&mut self, name: &str) -> VariableRef {
+        VariableRef::global(self.program.declare_global(name, None))
+    }
+
     fn eval(&self) -> Outcome {
         let ssa = ssa_form(&self.program);
         ssa.verify().expect("verifies");
         evaluate(&ssa, &ports(), &Config::default())
+    }
+
+    /// Evaluates this program together with `others`, as the programs of one project.
+    fn eval_with(&self, others: &[&P]) -> Outcome {
+        let ssa: Vec<Program> = std::iter::once(self)
+            .chain(others.iter().copied())
+            .map(|p| ssa_form(&p.program))
+            .collect();
+        for p in &ssa {
+            p.verify().expect("verifies");
+        }
+        let refs: Vec<&Program> = ssa.iter().collect();
+        evaluate_programs(&refs, &ports(), &Config::default())
     }
 }
 
@@ -200,15 +218,18 @@ fn calls_are_instances() {
     assert_eq!(reached(&o), 1, "{o:?}");
 }
 
-/// A global written in a callee reaches the caller (S13), and a call with no body is reported.
+/// A global written in a callee reaches the caller (G2, G5: nothing is passed for it), and a
+/// call with no body is reported.
 #[test]
 fn globals_are_shared_and_bodyless_calls_reported() {
     let mut p = P::new();
+    let g = p.global("g");
+    let g2 = g.clone();
     p.function("set", 1, 0, |_| {
         (
             vec![StatementKind::store(
-                VariableRef::new_global(),
-                f("g"),
+                g2,
+                PathSegment::Deref,
                 Exp::variable(VariableRef::new_parameter(ParameterIdx::new(0))),
             )],
             vec![],
@@ -222,10 +243,7 @@ fn globals_are_shared_and_bodyless_calls_reported() {
                 src(&a),
                 call("set", vec![], vec![Exp::variable(a)]),
                 call("nobody", vec![], vec![]),
-                StatementKind::assign(
-                    r.clone(),
-                    [Exp::path(ap(&VariableRef::new_global(), &[f("g")]))],
-                ),
+                StatementKind::assign(r.clone(), [Exp::path(ap(&g, &[PathSegment::Deref]))]),
                 sink(Exp::variable(r)),
             ],
             vec![],
@@ -299,4 +317,108 @@ fn an_address_reads_its_base() {
         )
     });
     assert_eq!(reached(&p.eval()), 1);
+}
+
+/// A store to a global in one function is read in another with no call between them (G2): the
+/// two are roots of the unfolding with no common caller.
+#[test]
+fn a_global_needs_no_common_caller() {
+    let mut p = P::new();
+    let g = p.global("g");
+    let g2 = g.clone();
+    p.function("put", 0, 0, |fd| {
+        let a = local(fd, "a");
+        (
+            vec![
+                src(&a),
+                StatementKind::store(g2, PathSegment::Deref, Exp::variable(a)),
+            ],
+            vec![],
+        )
+    });
+    p.function("get", 0, 0, |fd| {
+        let r = local(fd, "r");
+        (
+            vec![
+                StatementKind::assign(r.clone(), [Exp::path(ap(&g, &[PathSegment::Deref]))]),
+                sink(Exp::variable(r)),
+            ],
+            vec![],
+        )
+    });
+    let o = p.eval();
+    assert_eq!(reached(&o), 1, "{o:?}");
+}
+
+/// A function of one program that writes `$g`, and one of another program that reads `$g`:
+/// two programs that declare one name declare one variable (G3), and two names are two.
+#[test]
+fn two_programs_share_a_global_by_name() {
+    let put = |name: &str| {
+        let mut p = P::new();
+        let g = p.global(name);
+        p.function("put", 0, 0, |fd| {
+            let a = local(fd, "a");
+            (
+                vec![
+                    src(&a),
+                    StatementKind::store(g, PathSegment::Deref, Exp::variable(a)),
+                ],
+                vec![],
+            )
+        });
+        p
+    };
+    let mut get = P::new();
+    // A second global first, so that `g`'s index differs between the two programs.
+    get.global("other");
+    let g = get.global("g");
+    get.function("get", 0, 0, |fd| {
+        let r = local(fd, "r");
+        (
+            vec![
+                StatementKind::assign(r.clone(), [Exp::path(ap(&g, &[PathSegment::Deref]))]),
+                sink(Exp::variable(r)),
+            ],
+            vec![],
+        )
+    });
+    let o = get.eval_with(&[&put("g")]);
+    assert_eq!(reached(&o), 1, "{o:?}");
+    let o = get.eval_with(&[&put("h")]);
+    assert_eq!(reached(&o), 0, "{o:?}");
+}
+
+/// Nothing is passed for a global at a call (G5): a callee that names `$g` reads the cell its
+/// caller stored to, though no argument carries it.
+#[test]
+fn nothing_is_passed_for_a_global_at_a_call() {
+    let mut p = P::new();
+    let g = p.global("g");
+    let g2 = g.clone();
+    p.function("get", 0, 1, |fd| {
+        let r = local(fd, "r");
+        (
+            vec![StatementKind::assign(
+                r.clone(),
+                [Exp::path(ap(&g2, &[PathSegment::Deref]))],
+            )],
+            vec![Exp::variable(r)],
+        )
+    });
+    p.function("F", 0, 0, |fd| {
+        let a = local(fd, "a");
+        let r = local(fd, "r");
+        (
+            vec![
+                src(&a),
+                StatementKind::store(g, PathSegment::Deref, Exp::variable(a)),
+                call("get", vec![r.clone()], vec![]),
+                sink(Exp::variable(r)),
+            ],
+            vec![],
+        )
+    });
+    let o = p.eval();
+    assert_eq!(reached(&o), 1, "{o:?}");
 }

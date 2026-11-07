@@ -275,11 +275,11 @@ propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
 // ---- allocation ----
 // The allocator's bodies are skipped. A statically linked dlmalloc keeps its heap state (top
 // chunk, bins, fastbins) in globals and computes bin addresses from the request size, so its
-// summary relates nearly every `$globals` path to the size and to each other. `$globals` is an
-// implicit in/out of every function, so that block reaches the summary of every transitive
-// caller and is re-instantiated at every call site. None of it is application data flow, since a
-// fresh block carries nothing from its size or from the free lists. The internals are skipped
-// too, for the callers outside `malloc` and `free` (`mallopt`, `malloc_trim`).
+// body relates nearly every memory path to the size and to each other. None of it is
+// application data flow, since a fresh block carries nothing from its size or from the free
+// lists, and every flow it would add between memory paths holds program-wide (G2 of
+// docs/ir.md), joining unrelated allocations. The internals are skipped too, for the callers
+// outside `malloc` and `free` (`mallopt`, `malloc_trim`).
 //
 // `allocator` finds the entry points by name, or in a stripped binary by dlmalloc's shape
 // (docs/portcullis.md §3). Every by-shape pick is reported as CTADL0109; `analyze(F)` keeps a

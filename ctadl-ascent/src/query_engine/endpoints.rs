@@ -1,6 +1,6 @@
 //! Stage 2 of source/sink matching: map name-based matched elements → `QueryEndpoint`s.
 //!
-//! Stage 1 (the Portcullis engine, [`crate::models::PortcullisMatcher`]) matches MIR elements —
+//! Stage 1 (the Portcullis engine, [`crate::models::PortcullisMatcher`]) matches CIR elements —
 //! function names, signatures, arity, regexes — and emits name-based
 //! [`EndpointMatch`](crate::models::EndpointMatch) rows. Stage 2, here, consumes those rows
 //! together with the index facts and resolves them into concrete
@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::facts::{self, FlowVariable, FlowVertex, Label, PackedInsnSiteId};
 use crate::index_engine::IndexFacts;
 
@@ -88,6 +88,15 @@ pub fn build_query_endpoints(
     // `Variable(name)` base index to an existing versioned vertex (see the `Local` arm below).
     let mut local_vars: HashMap<facts::FunctionId, BTreeSet<FlowVariable>> = HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
+        // A global's paths, in whichever function, are the global frame's vertex's.
+        for (v, p) in [(v1, p1), (v2, p2)] {
+            if v.is_global() {
+                vertex_paths
+                    .entry((facts::GLOBAL_FRAME, *v))
+                    .or_default()
+                    .insert(*p);
+            }
+        }
         vertex_paths
             .entry((*func, rep_of(*func, *v1)))
             .or_default()
@@ -158,9 +167,8 @@ pub fn build_query_endpoints(
             FormalIndexTypeTag::Return => {
                 vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
-            FormalIndexTypeTag::Global => {
-                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
-            }
+            // `func_name` is the global frame's, and the endpoint stays there.
+            FormalIndexTypeTag::Global(g) => vec![FlowVariable::global(g)],
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
                 .map(|n| {
@@ -293,7 +301,7 @@ pub fn build_query_endpoints(
     }
 }
 
-/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::mir::PathSegment::Value).
+/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::cir::PathSegment::Value).
 fn strip_value(p: facts::Path) -> facts::Path {
     let segments: Vec<_> = p.iter().cloned().collect();
     match segments.split_last() {

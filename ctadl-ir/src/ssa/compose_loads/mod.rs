@@ -56,8 +56,8 @@ own offsets are not mentioned when the chain is written as one path.
 */
 use std::collections::HashMap;
 
-use crate::mir::call::CallStyle;
-use crate::mir::*;
+use crate::cir::call::CallStyle;
+use crate::cir::*;
 
 #[cfg(test)]
 mod tests;

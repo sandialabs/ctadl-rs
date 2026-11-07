@@ -18,10 +18,11 @@
 // actually indexing: the same class imported as a `.jar` would number them differently the
 // moment a `long` appeared.
 //
-// The globals pseudo-parameter is mapped unconditionally and is not written here. It is what
-// makes this case work at all: the taint enters `nativeStash`, is held in the native global
-// `g_slot`, and leaves through a *different* function, `nativeFetch`. Nothing in the Java half
-// connects the two.
+// Nothing is written, or mapped, for globals: a global is shared by every function (G2 of
+// docs/ir.md), so a bridge needs no port for one. The taint enters `nativeStash`, is held in
+// the native global `g_slot` (in the library's memory global), and leaves through a *different*
+// function, `nativeFetch`. Nothing in the Java half connects the two; the query hops through the
+// global between them.
 
 // nativeStash(String data) -> void. `data` is Java slot 0, native index 2.
 bridge(F::arg(0) <-> G::arg(2)) :-

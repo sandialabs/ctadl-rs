@@ -7,7 +7,7 @@ Nothing in this module knows what a `ProgramMatchIndex` is.
 
 use std::fmt;
 
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 
 use crate::models::FormalIndexTypeTag;
 
@@ -326,6 +326,9 @@ pub enum PortBase {
     ArgVar(String),
     /// `local(L)` where `L` is bound in the body by `local(F, L)`. A source/sink port only.
     Local(String),
+    /// `self`, the global a port is anchored at: `G::self.deref`, with `G` bound by
+    /// `global(G)` (G7 of `docs/ir.md`).
+    GlobalSelf,
 }
 
 impl PortBase {
@@ -336,7 +339,7 @@ impl PortBase {
             PortBase::Return => Some((FormalIndexTypeTag::Return, None)),
             PortBase::Arg(i) => Some((FormalIndexTypeTag::Index, Some(*i))),
             PortBase::AnyArg => Some((FormalIndexTypeTag::AnyArgument, None)),
-            PortBase::ArgVar(_) | PortBase::Local(_) => None,
+            PortBase::ArgVar(_) | PortBase::Local(_) | PortBase::GlobalSelf => None,
         }
     }
 
@@ -470,6 +473,7 @@ pub const BUILTIN_RELATIONS: &[&str] = &[
     "callsig",
     "param",
     "local",
+    "global",
     "callsite",
     "subclass",
     "subclass*",
@@ -520,6 +524,9 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
         ],
         "callsite" => &["callee_string"],
         "local" => &["name"],
+        // `import` is an import that declares the global; a global several declare is one
+        // variable (G3) and matches each of them.
+        "global" => &["name", "import"],
         "allocator" => &["kind", "by"],
         _ => &[],
     }
@@ -533,6 +540,7 @@ pub fn relation_arity(name: &str) -> Option<usize> {
         "callsig" => Some(1),
         "param" => Some(2),
         "local" => Some(2),
+        "global" => Some(1),
         "callsite" => Some(2),
         "subclass" | "subclass*" | "subclass+" => Some(2),
         "uses_field" => Some(2),

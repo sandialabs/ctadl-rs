@@ -4,13 +4,13 @@
 use super::*;
 use crate::facts;
 use crate::facts::TaintDirection;
-use ctadl_ir::mir;
-use ctadl_ir::mir::{PathSegment, ProgramInfo};
+use ctadl_ir::cir;
+use ctadl_ir::cir::{PathSegment, ProgramInfo};
 
 /// A native (binary-frontend) program with one 2-parameter function per name, each carrying a
 /// local called `buf`.
 fn native_program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
 
@@ -144,7 +144,7 @@ fn a_wildcard_sink_fills_its_fields() {
 /// dex/jvm/lua frontends emit collapse into each other.
 #[test]
 fn bracketed_segment_spellings_stay_distinct() {
-    use ctadl_ir::mir::Offset;
+    use ctadl_ir::cir::Offset;
 
     for seg in [
         PathSegment::Offset(Offset(8)),
@@ -152,16 +152,16 @@ fn bracketed_segment_spellings_stay_distinct() {
         PathSegment::field("[]"),
         PathSegment::field("plain"),
     ] {
-        let spelled = mir::segment_to_string(&seg);
+        let spelled = cir::segment_to_string(&seg);
         assert_eq!(
-            mir::parse_segment(&spelled).expect("re-parses"),
+            cir::parse_segment(&spelled).expect("re-parses"),
             seg,
             "{spelled:?} did not round-trip"
         );
     }
     assert_ne!(
-        mir::segment_to_string(&PathSegment::Offset(Offset(8))),
-        mir::segment_to_string(&PathSegment::field("[8]"))
+        cir::segment_to_string(&PathSegment::Offset(Offset(8))),
+        cir::segment_to_string(&PathSegment::field("[8]"))
     );
 }
 
@@ -356,8 +356,8 @@ mod capture {
     /// A frontend with no method table -- what C and flowy use. `fun` still ranges over the IR
     /// functions, so a `where` matches.
     fn unknown_vmt_program(names: &[&str]) -> ProgramInfo {
-        use ctadl_ir::mir::call::VirtualMethodTable;
-        use ctadl_ir::mir::{FunctionData, Functions, ParameterType, Program};
+        use ctadl_ir::cir::call::VirtualMethodTable;
+        use ctadl_ir::cir::{FunctionData, Functions, ParameterType, Program};
 
         let functions: Vec<FunctionData> = names
             .iter()
@@ -477,11 +477,11 @@ mod capture {
 mod dispatch {
     use super::*;
     use crate::models::match_index::DispatchKeys;
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
         VirtualMethodTable,
     };
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, Program, Statement, StatementKind, VariableRef,
     };
 
@@ -489,7 +489,7 @@ mod dispatch {
     /// declares `Lcom/example/Impl;->next(...)`, so a `find: methods` generator has something to
     /// match and the dispatch keys can be seen to differ from it.
     fn java_program(sites: &[(&str, &str, &str)]) -> ProgramInfo {
-        use ctadl_ir::mir::builder::FunctionBuilder;
+        use ctadl_ir::cir::builder::FunctionBuilder;
 
         let mut caller = FunctionData {
             name: "Lcom/example/Caller;->run()V".to_string(),
@@ -514,7 +514,7 @@ mod dispatch {
                     Vec::new(),
                 );
             }
-            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+            b.create_ret(Vec::<ctadl_ir::cir::Exp>::new());
         }
         let mut impl_fn = FunctionData::default();
         impl_fn.set_name("Lcom/example/Impl;->next()Ljava/lang/Object;".to_string());
@@ -610,7 +610,7 @@ mod dispatch {
     /// A `callvirt` is keyed the same way, in .NET spellings, and its id is the CIL method id.
     #[test]
     fn matches_a_cil_call_site() {
-        use ctadl_ir::mir::builder::FunctionBuilder;
+        use ctadl_ir::cir::builder::FunctionBuilder;
 
         const CLS: &str = "[System.Private.CoreLib]System.Object";
         const DESC: &str = "()->System.String";
@@ -633,7 +633,7 @@ mod dispatch {
                 Vec::new(),
                 Vec::new(),
             );
-            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+            b.create_ret(Vec::<ctadl_ir::cir::Exp>::new());
         }
         let program_info = ProgramInfo {
             vmt: VirtualMethodTable::new_cil(),

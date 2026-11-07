@@ -38,8 +38,8 @@ The semantics of the IR is in `docs/ir.md`; [`path`] owns the path equations.
   and the function declares the arity each return statement must have. This is not necessary to
   emulate returning by reference; like having multiple parallel assignments, it's just a convenience.
 
-- There is a global heap. Together with access paths, global variables can be modeled as fields of
-  the global heap.
+- A program declares its global variables, which every function shares. See "How to Generate
+  CIR" below.
 
 CIR variables are untyped, but represent an object. Variables have fields that you can load and
 store simply by accessing them with the appropriate statements.
@@ -49,7 +49,7 @@ There is a CIR visitor in [`self::visit`] which can be used for immutable and mu
 We have designed the CIR on purpose to exist in inconsistent states; this can be helpful when
 generating code. Once you're done generating code, it should be verified. Verification checks for
 the various kinds of errors that should not happen in well-defined programs. It can be checked with
-[`MirVerify`] or by simply calling [`Program::verify`].
+[`CirVerify`] or by simply calling [`Program::verify`].
 
 To make a program suitable for Datalog compilation, one can use SSA transformation
 ([`crate::ssa::transform`]).
@@ -67,10 +67,16 @@ Statements like `obj.x = F(y.z)` have to be split into two CIR instructions: fir
 function and return into a temporary like `t1 = F(y.z)`; next, store the temporary to the
 destination object.
 
-Globals variables in frontend languages can be modeled using [`Variable::GlobalHeap`] and fields.
-Say you have a global variable `speed`. Loading a global is an assignment whose source is the
-global heap's field `$globals.speed`; storing to it is an assignment whose destination is that
-access path.
+A program declares its global variables ([`Program::declare_global`]), each with a name and
+optionally a span, and refers to one with [`Variable::Global`]. A global is a variable like any
+other: an access path may have it as its base, and it prints as `$name` (G1). It differs from a
+local in three ways. Every instance of every function shares it (G2), so nothing passes it at a
+call. Its identity is its name: two programs of a project that declare `g` declare one variable
+(G3), and a front end that wants a global of its own qualifies the name (`libA.so::ram`). And it
+is never rebound (G4): never the destination of a copy or of a call result, never versioned by
+SSA. Its storage is the locations below it, so a front end lowers a global `speed` to a location
+such as `$speed.deref` (C) or a class `C`'s static field `f` to `$C.f` (Java): loading it is an
+assignment whose source is that access path, and storing to it is one whose destination is.
 
 Extern functions (functions that are called, for example, but not defined) are modeled with a
 [`FunctionData`] and empty basic blocks.
@@ -109,15 +115,15 @@ use internment::ArcIntern;
 use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
-use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
-use crate::mir::call::VirtualMethodTable;
-pub use crate::mir::terminator::{Terminator, TerminatorKind};
-use crate::mir::visit::Visitor;
-pub use crate::mir::{
+use crate::cir::call::VirtualMethodTable;
+pub use crate::cir::terminator::{Terminator, TerminatorKind};
+use crate::cir::visit::Visitor;
+pub use crate::cir::{
     basic_blocks::BasicBlocks,
     call::{CallEdges, CallObject, CallStyle},
-    verify::{MirVerify, VerifyError, VerifyErrors},
+    verify::{CirVerify, VerifyError, VerifyErrors},
 };
+use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
 use crate::newtype_index;
 
 #[cfg(test)]
@@ -137,7 +143,7 @@ mod terminator;
 mod verify;
 pub mod visit;
 
-pub use crate::mir::path_syntax::{
+pub use crate::cir::path_syntax::{
     PathSyntaxError, PathSyntaxErrorKind, parse_path, parse_segment, parse_segments,
     path_to_string, segment_to_string, write_path, write_segment,
 };
@@ -271,7 +277,7 @@ pub enum StatementKind {
     /// no pass decides it any other way.
     ///
     /// The destination is never an address: [`StatementKind::assign`] rewrites `p.[k] = e` into
-    /// `p = e.[-k]` (S5), and [`MirVerify`] rejects an address destination.
+    /// `p = e.[-k]` (S5), and [`CirVerify`] rejects an address destination.
     Assign {
         dest: AccessPath,
         sources: SmallVec<[Exp; 2]>,
@@ -319,9 +325,9 @@ pub struct SourceInfo {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
-    /// A global variable represents a heap for storing globals. This variable may only be written
-    /// by a store, an assignment with a non-empty destination path.
-    GlobalHeap,
+    /// A global variable, identified by its index into the program's [`Globals`] table. It may
+    /// only be written by a store, an assignment with a non-empty destination path (G4).
+    Global(GlobalIdx),
     /// A local variable, identified by its index into the enclosing function's [`Locals`] table.
     Local(LocalIdx),
     /// A parameter
@@ -344,7 +350,7 @@ pub struct VariableRef {
 /// This type defines the term: everywhere else in ctadl, "access path" means a variable plus a
 /// [`PathSegment`] sequence, and a "path" is the sequence alone. Access paths are the IR's
 /// operands: an assignment's destination and sources, call arguments, an indirect call's callee.
-/// [`AccessPath::new`] puts the path in normal form ([`path::normalize`]); [`MirVerify`] checks
+/// [`AccessPath::new`] puts the path in normal form ([`path::normalize`]); [`CirVerify`] checks
 /// it, since a deserialized program bypasses the constructor.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -436,6 +442,29 @@ impl From<u16> for ParameterIdx {
 // Index into a local declaration in a function's `Locals` table.
 newtype_index!(LocalIdx, u32);
 
+// Index into a global declaration in a program's `Globals` table.
+newtype_index!(GlobalIdx, u32);
+
+/// The declaration of a global variable: its name, which is its identity across the programs of a
+/// project (G3), and where the source declares it, if the front end knows.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GlobalData {
+    pub name: Symbol,
+    pub span: Option<source_info::FileSpanId>,
+}
+
+/// A program's table of global declarations, interned by name: declaring a name twice returns the
+/// first declaration's index, and the first span given wins.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Globals {
+    decls: IndexVec<GlobalIdx, GlobalData>,
+    /// Transient name→index map; rebuilt on demand after deserialize.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    by_name: HashMap<String, GlobalIdx>,
+}
+
 /// The declaration of a single local variable. Currently only holds the local's source name, but
 /// has room to grow (type, source info, is_temp, …).
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -517,7 +546,151 @@ impl Locals {
     }
 }
 
-/// Renders MIR with [`Variable::Local`]s resolved to their source names.
+impl Globals {
+    /// Returns the index for `name`, declaring a new global if this name has not been seen. A
+    /// repeated declaration keeps the first span given.
+    pub fn declare(
+        &mut self,
+        name: impl AsRef<str>,
+        span: Option<source_info::FileSpanId>,
+    ) -> GlobalIdx {
+        if self.by_name.len() != self.decls.len() {
+            self.rebuild_index();
+        }
+        let name = name.as_ref();
+        if let Some(&idx) = self.by_name.get(name) {
+            if self.decls[idx].span.is_none() {
+                self.decls[idx].span = span;
+            }
+            return idx;
+        }
+        let name: Symbol = ArcIntern::from(name);
+        let idx = self.decls.push(GlobalData {
+            name: name.clone(),
+            span,
+        });
+        self.by_name.insert(name.to_string(), idx);
+        idx
+    }
+
+    /// The global declared under `name`, if any.
+    pub fn lookup(&self, name: &str) -> Option<GlobalIdx> {
+        if self.by_name.len() == self.decls.len() {
+            self.by_name.get(name).copied()
+        } else {
+            self.decls
+                .iter_enumerated()
+                .find(|(_, d)| &*d.name == name)
+                .map(|(i, _)| i)
+        }
+    }
+
+    /// The declaration of global `i`, if it exists.
+    #[inline]
+    pub fn get(&self, i: GlobalIdx) -> Option<&GlobalData> {
+        self.decls.get(i)
+    }
+
+    /// The number of declared globals.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.decls.len()
+    }
+
+    /// Whether the program declares no globals.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.decls.is_empty()
+    }
+
+    /// Iterate over `(GlobalIdx, &GlobalData)` pairs.
+    #[inline]
+    pub fn iter_enumerated(&self) -> impl DoubleEndedIterator<Item = (GlobalIdx, &GlobalData)> {
+        self.decls.iter_enumerated()
+    }
+
+    /// Rebuild the transient `by_name` index from the declarations.
+    pub fn rebuild_index(&mut self) {
+        self.by_name.clear();
+        for (idx, decl) in self.decls.iter_enumerated() {
+            self.by_name.entry(decl.name.to_string()).or_insert(idx);
+        }
+    }
+}
+
+impl Index<GlobalIdx> for Globals {
+    type Output = GlobalData;
+    #[inline]
+    fn index(&self, index: GlobalIdx) -> &Self::Output {
+        &self.decls[index]
+    }
+}
+
+/// Renders CIR with [`Variable::Global`]s resolved to their names in `program`'s table, for
+/// rendering a part of a program (a function, a statement, an access path) on its own.
+/// [`Display for Program`](Program#impl-Display-for-Program) does this itself.
+pub struct WithGlobalNames<'a, T>(pub &'a Program, pub T);
+
+impl<T: Display> Display for WithGlobalNames<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _guard = global_names::push(&self.0.globals);
+        write!(f, "{}", self.1)
+    }
+}
+
+impl Program {
+    /// Publishes this program's global names on the current thread until the guard drops, so
+    /// that every `Display` of a [`Variable::Global`] in between prints `$name` rather than its
+    /// index. For callers that render many pieces of one program.
+    pub fn global_names_guard(&self) -> GlobalNamesGuard {
+        global_names::push(&self.globals)
+    }
+}
+
+/// Keeps a program's global names published for printing; see [`Program::global_names_guard`].
+pub struct GlobalNamesGuard(());
+
+impl Drop for GlobalNamesGuard {
+    fn drop(&mut self) {
+        global_names::pop();
+    }
+}
+
+/// Scoped, thread-local plumbing for printing a global as its name:
+/// [`Program::global_names_guard`], [`WithGlobalNames`] and `Display for Program` publish a
+/// program's table, `Display for Variable` reads it back.
+mod global_names {
+    use std::cell::RefCell;
+
+    use super::{GlobalIdx, GlobalNamesGuard, Globals, Symbol};
+    use crate::index::idx::Idx;
+
+    thread_local! {
+        static FRAMES: RefCell<Vec<Vec<Symbol>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn push(globals: &Globals) -> GlobalNamesGuard {
+        let names = globals
+            .iter_enumerated()
+            .map(|(_, d)| d.name.clone())
+            .collect();
+        FRAMES.with_borrow_mut(|frames| frames.push(names));
+        GlobalNamesGuard(())
+    }
+
+    pub(super) fn pop() {
+        FRAMES.with_borrow_mut(|frames| {
+            frames.pop();
+        });
+    }
+
+    /// The name of `idx` in the innermost published table, if there is one.
+    pub(super) fn name_of(idx: GlobalIdx) -> Option<Symbol> {
+        FRAMES.with_borrow(|frames| frames.last()?.get(idx.index()).cloned())
+    }
+}
+
+/// Renders CIR with [`Variable::Local`]s resolved to their source names.
 ///
 /// [`Display for Variable`](Variable#impl-Display-for-Variable) has no access to the enclosing
 /// function, so by default a local prints as its opaque index (`%L7`) — the same form the fact
@@ -671,6 +844,9 @@ pub struct Location {
 pub struct Program {
     /// Set of functions
     pub functions: Functions,
+    /// The program's global variables. Every [`Variable::Global`] in the program indexes into
+    /// this table.
+    pub globals: Globals,
 }
 
 /// Program together with all metadata that enables CTADL analysis. This is the target datatype for
@@ -733,8 +909,16 @@ impl Variable {
     }
 
     #[inline]
-    pub fn new_global() -> Self {
-        Variable::GlobalHeap
+    pub fn global(&self) -> Option<GlobalIdx> {
+        match self {
+            Variable::Global(idx) => Some(*idx),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        matches!(self, Variable::Global(_))
     }
 
     #[inline]
@@ -764,11 +948,11 @@ impl VariableRef {
         }
     }
 
-    /// Creates a global heap reference with no version
+    /// Creates a reference to a global. A global is never versioned (G4).
     #[inline]
-    pub fn new_global() -> Self {
+    pub fn global(idx: GlobalIdx) -> Self {
         VariableRef {
-            variable: Variable::GlobalHeap,
+            variable: Variable::Global(idx),
             version: None,
         }
     }
@@ -860,7 +1044,15 @@ impl Display for Variable {
                 None => write!(f, "%L{}", idx.index()),
             },
             Variable::Param(i) => write!(f, "@p{}", i.index()),
-            Variable::GlobalHeap => write!(f, "$globals"),
+            // `$name` while a program's global names are published (see `global_names`);
+            // otherwise its index.
+            Variable::Global(idx) => match global_names::name_of(*idx) {
+                Some(name) => {
+                    write!(f, "$")?;
+                    path_syntax::write_symbol(f, &name)
+                }
+                None => write!(f, "$#{}", idx.index()),
+            },
         }
     }
 }
@@ -1359,7 +1551,7 @@ impl FunctionData {
     /// Verify that the function satisfies expected invariants. See the description of each error
     /// in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_function_data(FunctionIdx::new(0), self);
         visitor.take_error()
     }
@@ -1390,7 +1582,30 @@ impl Functions {
 
 impl Program {
     pub fn new(functions: Functions) -> Self {
-        Self { functions }
+        Self {
+            functions,
+            globals: Globals::default(),
+        }
+    }
+
+    /// Declares the global `name`, or returns the global already declared under it (the first
+    /// span given is kept).
+    pub fn declare_global(
+        &mut self,
+        name: impl AsRef<str>,
+        span: Option<source_info::FileSpanId>,
+    ) -> GlobalIdx {
+        self.globals.declare(name, span)
+    }
+
+    /// The global declared under `name`, if any.
+    pub fn global_named(&self, name: &str) -> Option<GlobalIdx> {
+        self.globals.lookup(name)
+    }
+
+    /// The name of global `idx`.
+    pub fn global_name(&self, idx: GlobalIdx) -> &Symbol {
+        &self.globals[idx].name
     }
 
     /// Allocates and returns a new function with defaulted contents.
@@ -1403,14 +1618,14 @@ impl Program {
     /// Verify that the CTADL IR program satisfies expected invariants. See the description of each
     /// error in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_program(self);
         visitor.take_error()
     }
 
     /// Verify a function. See the description of each error in the [`VerifyError`] enum.
     pub fn verify_function(&self, idx: FunctionIdx) -> Result<(), VerifyErrors> {
-        let mut visitor = MirVerify::default();
+        let mut visitor = CirVerify::default();
         visitor.visit_function_data(idx, &self[idx]);
         visitor.take_error()
     }
@@ -1690,8 +1905,16 @@ impl Display for Location {
 
 impl Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Program { functions } = self;
+        let Program { functions, globals } = self;
+        let _names = global_names::push(globals);
         writeln!(f, "begin ctadl-ir ast program")?;
+        if !globals.is_empty() {
+            write!(f, "globals:")?;
+            for (idx, _) in globals.iter_enumerated() {
+                write!(f, " {}", Variable::Global(idx))?;
+            }
+            writeln!(f)?;
+        }
         write!(f, "{}", functions)?;
         writeln!(f, "end ctadl-ir ast program")
     }

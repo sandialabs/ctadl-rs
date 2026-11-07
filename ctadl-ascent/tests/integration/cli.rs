@@ -1270,6 +1270,27 @@ fn index_version_gate_rejects_an_index_from_before_the_gate() {
     });
 }
 
+/// An index from before globals were variables (format 7) has formal-only root columns in
+/// `summary.parquet` and no `globals.parquet`; it is refused, not misread.
+#[test]
+fn index_version_gate_rejects_an_index_from_before_declared_globals() {
+    run_store_test(|| {
+        let project =
+            AnalysisProject::try_create("gate_globals", &["nonexistent_import"], SubImports::All)
+                .unwrap();
+        let path = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
+        std::fs::write(&path, r#"{"version":"7"}"#).unwrap();
+        match project.check_index_config() {
+            Err(ctadl_import::Error::IncompatibleIndex {
+                found, expected, ..
+            }) => {
+                assert_eq!((found.as_str(), expected.as_str()), ("7", "8"));
+            }
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+    });
+}
+
 #[test]
 fn index_version_gate_rejects_a_different_version() {
     run_store_test(|| {

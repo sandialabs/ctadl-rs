@@ -2,8 +2,8 @@ use super::*;
 
 use smallvec::smallvec;
 
+use crate::cir::call::CallEdges;
 use crate::index::idx::Idx;
-use crate::mir::call::CallEdges;
 use crate::ssa::transform;
 
 /// A function under construction: interns locals into its own table.

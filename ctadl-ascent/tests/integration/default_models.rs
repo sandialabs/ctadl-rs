@@ -16,13 +16,13 @@ use ctadl_ascent::models::{
     DEFAULT_DSL_MODELS, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
     try_load_default_models, try_load_models,
 };
-use ctadl_ir::mir::ProgramInfo;
-use ctadl_ir::mir::Symbol;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::ProgramInfo;
+use ctadl_ir::cir::Symbol;
+use ctadl_ir::cir::call::{
     CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
     JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -65,8 +65,8 @@ const DISPATCH_SITES: &[(&str, &str, &str)] = &[
 fn dispatch_caller() -> FunctionData {
     use ctadl_ir::Idx;
     use ctadl_ir::builder::FunctionBuilder;
-    use ctadl_ir::mir::Exp;
-    use ctadl_ir::mir::call::{CallStyle, JavaDispatch};
+    use ctadl_ir::cir::Exp;
+    use ctadl_ir::cir::call::{CallStyle, JavaDispatch};
 
     let mut f = FunctionData {
         name: "Lcom/example/Caller;->run()V".to_string(),
@@ -90,7 +90,7 @@ fn dispatch_caller() -> FunctionData {
             },
             vec![result],
             vec![Exp::variable(
-                b.new_param_var(ctadl_ir::mir::ParameterIdx::new(0)),
+                b.new_param_var(ctadl_ir::cir::ParameterIdx::new(0)),
             )],
         );
     }
@@ -352,7 +352,7 @@ fn cil_import_loads_only_the_cil_defaults() {
 /// has to escape. Both are silent if wrong: the port parses and names a path no frontend writes.
 #[test]
 fn cil_ports_name_the_pointee_and_the_tuple_field() {
-    use ctadl_ir::mir::PathSegment;
+    use ctadl_ir::cir::PathSegment;
 
     let program_info = cil_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
@@ -436,7 +436,7 @@ fn every_shipped_default_file_parses() {
 /// with each other. Only an assertion on the decoded segment catches that.
 #[test]
 fn java_collection_generators_name_the_real_array_element() {
-    use ctadl_ir::mir::PathSegment;
+    use ctadl_ir::cir::PathSegment;
 
     let program_info = java_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());

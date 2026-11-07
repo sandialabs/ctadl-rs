@@ -19,7 +19,7 @@ Three implementations follow this document:
   used as an oracle on small programs.
 - The index (`ctadl-index`) and the query (`ctadl-ascent/src/query_engine`), the engines, which
   compute the same labeling compositionally and at scale, deviating only as the register says.
-- `ctadl_ir::mir::path`, the one implementation of the path equations.
+- `ctadl_ir::cir::path`, the one implementation of the path equations.
 
 ## Syntax
 
@@ -37,11 +37,17 @@ Three implementations follow this document:
 `deref` and `#value` are segment kinds, not field names. A field literally named `deref` or
 `#value` is written with its first character escaped, `.\deref`, `.\#value`; a field whose name
 contains `.`, or begins with `[`, escapes those characters (`.a\.b`, `.\[3]`). Offsets are
-decimal. `ctadl_ir::mir::path_syntax` is the grammar's one printer and parser, used by IR dumps,
+decimal. `ctadl_ir::cir::path_syntax` is the grammar's one printer and parser, used by IR dumps,
 the fact store, model ports and flowy alike.
 
 Offsets are always constants; there is no `[*]` and no variable offset. Fields are symbolic
 names with no layout: two fields are related only by being equal.
+
+### Variables
+
+A variable is a local, a parameter, or a global. A function declares its locals; the program
+declares its globals (G1), and a global's name is its identity across a project's programs
+(G3). See [Globals](#globals) for the rules.
 
 ### Normal form
 
@@ -96,19 +102,22 @@ the last result of every call and the last value of every return.
 
 ### Well-formedness
 
-`MirVerify` is the executable definition of a well-formed program. It rejects, among the
+`CirVerify` is the executable definition of a well-formed program. It rejects, among the
 structural errors: a path not in normal form; `value(..)` anywhere but as an assignment's
 source; a void path as an operand; an address as an assignment's destination (see below); a
-copy into the whole of `$globals`; a field named `#value`; and, in SSA form, a store whose base
-is a version nothing defines (a store treated as a definition).
+global the program does not declare; a versioned global; a copy into a global, a call result
+bound to one, or a phi over one (G4); a field named `#value`; and, in SSA form, a store whose
+base is a version nothing defines (a store treated as a definition).
 
 ### Textual form
 
 An IR dump prints a copy as `assign y = e, ...` and a store as `store y.d := e, ...`, an
 expression as its access path, `value(x.s)`, or `<const: ...>`, and a variable as `%name`
-(`%L7` by local index in the fact base), `@p0` for a parameter, and `$globals`, with `_k`
-appended for SSA version `k`. [flowy](../frontends/ctadl-flowy) is the IR's own test language:
-`.deref` and `.#value` are the segments, `.*` is an error, and an address destination
+(`%L7` by local index in the fact base), `@p0` for a parameter, and `$name` for a global, the
+name escaped by the field rules (a C static qualified by its unit is `$g$util\.c`), with `_k`
+appended for SSA version `k` (never to a global). A program's dump lists its globals first.
+[flowy](../frontends/ctadl-flowy) is the IR's own test language: `.deref` and `.#value` are
+the segments, `.*` is an error, and an address destination
 `p.[k] = e` is accepted and lowered by the rewrite below.
 
 ## Semantics
@@ -160,12 +169,13 @@ through `y`.
 
 ### Calls
 
-**S10.** A call `r = f(a_1, ..., a_n)` is the body of `f` with fresh variables, preceded by the
-copies `p_i = a_i` into its formals and followed by the copy `r = ret` from its return. Their labels
-have scope `Fixed`, like any copy's. A program is its infinite unfolding; only `$globals` is shared
-between instances, so `r1 = id(a); r2 = id(b)` gives `r2` only `b`'s labels. A call to a function
-without a body is zero assignments unless a model supplies them, and the analysis reports it, never
-hides it.
+**S10.** A call `r = f(a_1, ..., a_n)` is the body of `f` with fresh variables, preceded by the copies
+`p_i = a_i` into its formals and followed by the copy `r = ret` from its return. Their labels
+have scope `Fixed`, like any copy's. A program is its infinite unfolding: every variable is fresh
+per instance except a global, which every instance shares (G2), so `r1 = id(a); r2 = id(b)`
+gives `r2` only `b`'s labels. Nothing is passed for a global at a call (G5). A call to a
+function without a body is zero assignments unless a model supplies them, and the analysis
+reports it, never hides it.
 
 **S11.** A function reference is a label: `x = ptr<f>` puts the target label `f` at `x`, and
 `x = new C` puts the class label `C`. An indirect call `r = (*e)(a_1, ..., a_n)` is the call of
@@ -184,26 +194,50 @@ nothing.
 
 ### Globals
 
-**S13.** There is one variable `$globals`, shared by every function; a global `g` is the location
-`$globals.g`. An implementation may pass it to every function like a formal: a copy in, and
-stores inside the callee reach the caller's `$globals` backward.
+**S13.** Globals obey G1–G8, which the rest of this document and the code cite by number:
+
+- **G1. Declaration.** A program declares its global variables, each with a name and optionally
+  a source location. A global is a variable like any other: an access path may have it as its
+  base, and it is written `$name` ([Textual form](#textual-form)).
+- **G2. Sharing.** A global has one set of cells in the whole project, not one per instance of
+  the unfolding (S10).
+- **G3. Identity.** A global is its name: two programs of a project that declare `g` declare one
+  variable. A front end chooses the name and documents the rule ([Front ends](#front-ends)); a
+  global that must not be shared with another program carries that program's name in its own
+  (`libA.so::ram`), the way a C `static` function is qualified by its unit.
+- **G4. Never rebound.** A global is never the destination of a copy or of a call result, and
+  SSA never versions it. Its storage is the locations below it (`$g.deref`, `$C.f`); where a
+  language puts that storage is a front-end convention (S19).
+- **G5. Calls.** Nothing is passed for a global at a call: a callee that names `g` names the same
+  variable as its caller, so the copies of S10 are `p_i = a_i` and `r = ret` only.
+- **G6. Summaries.** A summary (S14) excludes flows between two global paths: such a flow holds
+  in every instance (G2), so it is a fact of the program, not of any function. A target label at
+  a global path holds in every instance too, so it guards nothing, and instantiating a summary
+  leaves a global path as it is: it already names the shared variable.
+- **G7. Models.** A global path is a port: a source, sink or propagation may name it. A bridge is
+  a call (S15), so it maps formals and returns and nothing for globals.
+- **G8. Observable.** The observable is unchanged (S17). A witness may pass through a global
+  between any two instances: a store to `$g.f` in one function is read by a load of `$g.f` in
+  another with no call between them.
 
 ### Summaries
 
-**S14.** An implementation may analyze each function once into a summary: the flows of its body
-between paths rooted at its formals, return and `$globals`. A flow that exists only because a target
-label reaches a formal path is *guarded* by that requirement; instantiating the summary at a call
-site substitutes actuals for formals and fires a guarded flow only when the actuals carry its
-targets. Summaries and the call graph are then one fixpoint. This computes the unfolding exactly for
-flows between formal paths; cells inside a callee see every caller's labels merged, where the
-unfolding keeps them apart, which is accepted. Resolving a call by other means (a dispatch model,
-class hierarchy analysis for a small candidate set) only adds targets.
+**S14.** An implementation may analyze each function once into a summary: the flows of its body between
+paths rooted at its formals, its return and the globals it reaches, except flows between two
+global paths (G6). A flow that exists only because a target label reaches a formal path is
+*guarded* by that requirement. Instantiating the summary at a call site substitutes actuals for
+formals and fires a guarded flow only when the actuals carry its targets. Summaries and the call
+graph are then one fixpoint. This computes the unfolding
+exactly for flows between formal paths; cells inside a callee see every caller's labels merged,
+where the unfolding keeps them apart, which is accepted. Resolving a call by other means (a
+dispatch model, class hierarchy analysis for a small candidate set) only adds targets.
 
 ### Models
 
-**S15.** Models desugar to the constructs above: a propagation model is a store or copy between
-ports, a bridge is a call, a dispatch model adds targets, and a source or sink is an initial label
-or an observation. There is no third construct.
+**S15.** Models desugar to the constructs above: a propagation model is a store or copy between ports, a
+bridge is a call, a dispatch model adds targets, and a source or sink is an initial label or an
+observation. There is no third construct. A global path is a port, and a bridge maps nothing for
+globals (G7).
 
 ### Ports and the observable
 
@@ -246,11 +280,19 @@ documentation:
   of an address computation, which is a copy.
 - **Widths.** Offsets have no width; `p.[0].deref` and `p.[4].deref` are distinct locations, and
   overlap is lost.
+- **Globals.** Each front end declares its globals and names them; a global's storage is below
+  it. C: a global `g` is `$g` and its storage the cell `$g.deref`, so `&g` is the copy `$g`; a
+  `static` another unit also declares is qualified by its unit (`g$util.c`); a constant address
+  `(T *)K` is `$<address K>`. pcode: one global per import, its memory `$<import>::ram`, and a
+  global at address `A` is `$<import>::ram.[A].deref`. JVM, Dex, CIL: one global per class that
+  owns a static field, named by the class (`$Lcom/C;`, `$Namespace.Type`), a static field its
+  field (`$Lcom/C;.f`). Lua: one global, `$_ENV`, and a free name `n` is `$_ENV.n`. flowy: `var
+  g;` declares `$g`, written `g`, and a whole-variable write is an error.
 
 ## Testing the definition
 
-- `ctadl-ir/src/mir/path.rs`: property tests of the equations and the classification.
-- `ctadl-ir/src/mir/tests.rs`: one test per verifier check.
+- `ctadl-ir/src/cir/path.rs`: property tests of the equations and the classification.
+- `ctadl-ir/src/cir/tests.rs`: one test per verifier check.
 - `frontends/ctadl-flowy/tests/semantics/*.flowy`: one program per rule, run on the reference
   implementation, each pinning its observable in an `// expect:` block.
 - `ctadl-ascent/tests/integration/reference_parity.rs`: the engines against the reference on the

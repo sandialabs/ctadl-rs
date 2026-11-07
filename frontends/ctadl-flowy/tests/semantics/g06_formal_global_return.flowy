@@ -1,0 +1,28 @@
+// G5, G6: nothing is passed for a global at a call. A flow from a formal into a global in one
+// callee, and from the global to the return of another, composes in the caller that calls both:
+// formal -> global -> return across two calls.
+var g;
+
+def Set(p) {
+s:
+  g.f = p;
+  return;
+}
+
+def Get(): 1 {
+s:
+  r = g.f;
+  return r;
+}
+
+def Main() {
+s:
+  a = source(S);
+  Set(a);
+  b = Get();
+  sink(b, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S

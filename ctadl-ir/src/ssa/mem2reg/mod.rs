@@ -78,9 +78,9 @@ pass does not classify (a phi).
 */
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use crate::cir::call::CallStyle;
+use crate::cir::*;
 use crate::index::idx::Idx;
-use crate::mir::call::CallStyle;
-use crate::mir::*;
 
 #[cfg(test)]
 mod tests;

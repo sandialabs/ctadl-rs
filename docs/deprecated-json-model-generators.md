@@ -733,14 +733,13 @@ correspondent on the other side.
 
 Three things are handled for you:
 
-- **Globals** are mapped unconditionally and are not writable. Without them heap flows do not
-  cross the boundary at all — taint in through one function, held in a native global, out
-  through another is the case that fails.
+- **Globals** need no mapping: every function shares them, so taint in through one function,
+  held in a native global, and out through another crosses the boundary without a port.
 - **`Return`** means the *normal* return. A Java method's exception return is deliberately
   never mapped.
 - **Omitting `arguments`** gives the identity mapping over the arity the two sides share, plus
   `Return`. On a bodyless stub that arity is often zero, so you will get a warning saying only
-  the return and globals cross; write the map.
+  the return crosses; write the map.
 
 `direction` is `in` | `out` | `both`, defaulting to `both` — which is how the engine treats an
 ordinary call.

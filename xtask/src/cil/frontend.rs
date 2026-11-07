@@ -6,8 +6,8 @@
 //!   (`Pipeline::index_default`). Neither may panic, and an assembly cil-reader reads must
 //!   import. `ssa::transform` asserts `FunctionData::verify` itself, so this also checks every
 //!   function the frontend makes is well formed.
-//! - **goldens**: the IR of the frontend fixtures against `xtask/cil-goldens/mir`, reviewed
-//!   when blessed with `cargo xtask cil bless-mir`.
+//! - **goldens**: the IR of the frontend fixtures against `xtask/cil-goldens/cir`, reviewed
+//!   when blessed with `cargo xtask cil bless-cir`.
 //!
 //! Per-assembly counts (functions, stubs, unresolved address writes, the flow layer and the
 //! frontend disagreeing on an address) go to `<work>/cil-frontend/summary.txt`. A
@@ -26,15 +26,15 @@ use super::{parallel_map, to_outcome};
 use crate::regression::Outcome;
 
 /// The fixtures whose IR has a golden.
-pub const MIR_FIXTURES: &[&str] = &["exec.cs.dll", "exec.il.dll", "flow.il.dll"];
+pub const CIR_FIXTURES: &[&str] = &["exec.cs.dll", "exec.il.dll", "flow.il.dll"];
 
 /// Where the IR goldens live under the goldens directory.
 pub fn goldens_dir(goldens: &Path) -> PathBuf {
-    goldens.join("mir")
+    goldens.join("cir")
 }
 
 fn golden_path(goldens: &Path, fixture: &str) -> PathBuf {
-    goldens_dir(goldens).join(format!("{fixture}.mir"))
+    goldens_dir(goldens).join(format!("{fixture}.cir"))
 }
 
 /// What one assembly's import came to.
@@ -89,18 +89,18 @@ pub fn run(inputs: &[Input], fixtures: &Path, goldens: &Path, work: &Path) -> Re
         failures.push("sweep: no assembly imported".to_string());
     }
 
-    for fixture in MIR_FIXTURES {
+    for fixture in CIR_FIXTURES {
         let path = golden_path(goldens, fixture);
         let golden = std::fs::read_to_string(&path).with_context(|| {
             format!(
-                "failed to read {} (bless with `cargo xtask cil bless-mir`)",
+                "failed to read {} (bless with `cargo xtask cil bless-cir`)",
                 path.display()
             )
         })?;
-        match mir_dump(&fixtures.join(fixture)) {
+        match cir_dump(&fixtures.join(fixture)) {
             Ok(dump) if dump == golden => {}
             Ok(dump) => {
-                let actual = dir.join(format!("{fixture}.mir"));
+                let actual = dir.join(format!("{fixture}.cir"));
                 std::fs::write(&actual, &dump)?;
                 let (line, lines) = super::parity::first_divergence(&golden, &dump);
                 let mut msg = format!("golden {fixture}: differs at line {line}");
@@ -128,6 +128,7 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     })
     .map_err(|p| format!("the frontend panicked: {}", panic_message(&p)))?;
     let (mut info, stats) = imported.map_err(|e| format!("import failed: {e:#}"))?;
+    check_global_spans(path, &data, &info)?;
     let functions = info.program.functions.len();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ssa::run_pipeline(&mut info.program, Pipeline::index_default())
@@ -139,6 +140,61 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     })
 }
 
+/// Checks that every global the import located is declared at its class's `TypeDef` row:
+/// a span of the assembly as long as a row, at a row of the type the global names, whose
+/// first word is that type's flags.
+fn check_global_spans(
+    path: &Path,
+    data: &[u8],
+    info: &ctadl_ir::cir::ProgramInfo,
+) -> Result<(), String> {
+    let module = cil_reader::Module::read(data).map_err(|e| e.to_string())?;
+    let rows: std::collections::HashMap<u64, cil_reader::model::TypeDef<'_>> = module
+        .all_types()
+        .filter_map(|td| {
+            let (offset, _) = module
+                .metadata()
+                .row_file_span(cil_reader::raw::Table::TypeDef, td.rid())?;
+            Some((offset, td))
+        })
+        .collect();
+    for (_, global) in info.program.globals.iter_enumerated() {
+        let Some(span) = global.span else {
+            continue;
+        };
+        let name = &*global.name;
+        let (artifact, span) = info
+            .source_info
+            .resolve(span)
+            .ok_or_else(|| format!("global {name}: its span does not resolve"))?;
+        if artifact.canonical_path != path.to_string_lossy() {
+            return Err(format!(
+                "global {name}: located in {}",
+                artifact.canonical_path
+            ));
+        }
+        let td = rows
+            .get(&u64::from(span.start))
+            .ok_or_else(|| format!("global {name}: span at {} is no TypeDef row", span.start))?;
+        let row_size = module
+            .metadata()
+            .table_info(cil_reader::raw::Table::TypeDef)
+            .row_size;
+        let full_name = td.full_name().map_err(|e| e.to_string())?;
+        let flags = td.attributes().map_err(|e| e.to_string())?;
+        let at = span.start as usize;
+        if span.len != source_info::SpanLen::ByteLen(row_size)
+            || !name.ends_with(&format!("]{full_name}"))
+            || data[at..at + 4] != flags.to_le_bytes()
+        {
+            return Err(format!(
+                "global {name}: span {span:?} is the TypeDef row of {full_name}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
     p.downcast_ref::<String>()
         .cloned()
@@ -147,30 +203,31 @@ fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
 }
 
 /// The IR of an assembly as the goldens hold it: the method table, then every function.
-pub fn mir_dump(path: &Path) -> Result<String> {
+pub fn cir_dump(path: &Path) -> Result<String> {
     let opts = ctadl_cil::ImportOptions::default();
     let info = ctadl_cil::import_files(&[path.to_path_buf()], &opts)
         .map_err(|e| anyhow::anyhow!("{e:#}"))
         .with_context(|| format!("importing {}", path.display()))?;
     let mut out = String::new();
     let _ = writeln!(out, "{}", info.vmt);
+    let _names = info.program.global_names_guard();
     for func in info.program.functions.iter() {
-        let _ = writeln!(out, "{}", ctadl_ir::mir::WithLocalNames(func));
+        let _ = writeln!(out, "{}", ctadl_ir::cir::WithLocalNames(func));
     }
     Ok(out)
 }
 
-/// `cargo xtask cil bless-mir`: regenerate the IR goldens from the fixtures.
+/// `cargo xtask cil bless-cir`: regenerate the IR goldens from the fixtures.
 pub fn bless(goldens: &Path, fixtures: &Path) -> Result<bool> {
     let dir = goldens_dir(goldens);
     std::fs::create_dir_all(&dir)?;
-    for fixture in MIR_FIXTURES {
-        let dump = mir_dump(&fixtures.join(fixture))?;
+    for fixture in CIR_FIXTURES {
+        let dump = cir_dump(&fixtures.join(fixture))?;
         std::fs::write(golden_path(goldens, fixture), dump)?;
     }
     println!(
-        "bless-mir: wrote {} golden(s) to {}",
-        MIR_FIXTURES.len(),
+        "bless-cir: wrote {} golden(s) to {}",
+        CIR_FIXTURES.len(),
         dir.display()
     );
     Ok(true)

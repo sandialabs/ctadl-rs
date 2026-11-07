@@ -8,7 +8,7 @@ once per import and dropped with it, exactly as the match index is: the engine k
 
 `fun`'s column is the IR name, the one identity a function has. Its `name`, `parent` and
 `signature` are what the import's name table
-([`VirtualMethodTable::names`](ctadl_ir::mir::call::VirtualMethodTable::names)) says, one value
+([`VirtualMethodTable::names`](ctadl_ir::cir::call::VirtualMethodTable::names)) says, one value
 each, so an attribute is a field of the row and never multiplies the solutions. The other names
 a frontend knows a function by (pcode's namespace-qualified name, say) are rows of `name_of`,
 together with the simple name: "some name of `F` is `x`" is a join a rule writes, not a
@@ -28,8 +28,8 @@ use std::ops::Range;
 
 use hashbrown::hash_map::HashMap;
 
-use ctadl_ir::mir::call::{CallEdges, CallStyle, Dispatch};
-use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
+use ctadl_ir::cir::call::{CallEdges, CallStyle, Dispatch};
+use ctadl_ir::cir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
 use crate::models::match_index::ProgramMatchIndex;
@@ -173,6 +173,12 @@ pub struct LocalRow {
     pub name: Str,
 }
 
+/// One declared global: a `global` row. A global is its name (G3), so the name is the row.
+#[derive(Clone, Copy, Debug)]
+pub struct GlobalRow {
+    pub name: Str,
+}
+
 /// A row's position in one of [`ProgramFacts`]'s tables, as the indexes store it. The indexes
 /// hold one per row they list, so a `u32` halves them; no one import has four billion rows.
 pub type RowIdx = u32;
@@ -196,6 +202,8 @@ pub struct ProgramFacts {
     pub uses_field: Vec<(Str, Str)>,
     /// Every function's declared locals, each function's adjacent and in declaration order.
     pub locals: Vec<LocalRow>,
+    /// The program's declared globals, in declaration order.
+    pub globals: Vec<GlobalRow>,
     /// The allocator entry points, one row per function, sorted by name. Native programs only.
     pub allocators: Vec<AllocatorRow>,
     /// Direct `(subclass, superclass)` edges.
@@ -222,6 +230,7 @@ pub struct ProgramFacts {
     uses_field_by_fun: HashMap<Str, Vec<RowIdx>>,
     /// Each function's rows, which are adjacent.
     locals_by_fun: HashMap<Str, Range<RowIdx>>,
+    globals_by_name: HashMap<Str, RowIdx>,
     allocators_by_fun: HashMap<Str, RowIdx>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
@@ -248,6 +257,8 @@ pub struct Needs {
     pub callsig: bool,
     /// `allocator`: a pass over every native function body, for the by-shape rows.
     pub allocator: bool,
+    /// `global`: the program's table of globals.
+    pub global: bool,
 }
 
 impl Needs {
@@ -260,6 +271,7 @@ impl Needs {
             subclass: true,
             callsig: true,
             allocator: true,
+            global: true,
         }
     }
 
@@ -275,6 +287,7 @@ impl Needs {
                     "subclass" | "subclass*" | "subclass+" => needs.subclass = true,
                     "callsig" => needs.callsig = true,
                     "allocator" => needs.allocator = true,
+                    "global" => needs.global = true,
                     _ => {}
                 },
                 BodyItem::Not(inner) => visit(inner, needs),
@@ -297,6 +310,7 @@ impl Needs {
         self.subclass |= other.subclass;
         self.callsig |= other.callsig;
         self.allocator |= other.allocator;
+        self.global |= other.global;
     }
 }
 
@@ -381,6 +395,16 @@ impl ProgramFacts {
             }
         }
 
+        let mut globals: Vec<GlobalRow> = Vec::new();
+        let mut globals_by_name: HashMap<Str, RowIdx> = HashMap::new();
+        if needs.global {
+            for (_, g) in index.globals.iter_enumerated() {
+                let name = Str::from(g.name.as_ref());
+                globals_by_name.insert(name, row_idx(globals.len()));
+                globals.push(GlobalRow { name });
+            }
+        }
+
         let allocators = if needs.allocator && matches!(index.vmt().dispatch, Dispatch::Native) {
             allocator::find(&rows, &lowered)
         } else {
@@ -459,6 +483,7 @@ impl ProgramFacts {
             callsites,
             uses_field,
             locals,
+            globals,
             allocators,
             subclass,
             classes,
@@ -473,6 +498,7 @@ impl ProgramFacts {
             callsites_by_callee,
             uses_field_by_fun,
             locals_by_fun,
+            globals_by_name,
             allocators_by_fun,
             supers_of,
             subs_of,
@@ -569,6 +595,11 @@ impl ProgramFacts {
         self.allocators_by_fun.get(&f).map(|&i| i as usize)
     }
 
+    /// The `global` row of the global named `name`, if the program declares it.
+    pub fn global_of(&self, name: Str) -> Option<usize> {
+        self.globals_by_name.get(&name).map(|&i| i as usize)
+    }
+
     /// The `local` rows of function `f`.
     pub fn locals_of(&self, f: Str) -> Range<usize> {
         self.locals_by_fun
@@ -655,20 +686,20 @@ fn scan_bodies(
                     StatementKind::Assign { dest, sources } if needs.uses_field => {
                         let store = (!dest.is_pathless()).then_some(dest);
                         let reads = sources.iter().filter_map(|e| match e {
-                            ctadl_ir::mir::Exp::Path(ap) => Some(ap),
+                            ctadl_ir::cir::Exp::Path(ap) => Some(ap),
                             _ => None,
                         });
                         for ap in store.into_iter().chain(reads) {
                             for seg in &ap.segments {
                                 let name: &str = match seg {
-                                    ctadl_ir::mir::PathSegment::Field(name) => name,
-                                    ctadl_ir::mir::PathSegment::Value => {
-                                        ctadl_ir::mir::path_syntax::VALUE
+                                    ctadl_ir::cir::PathSegment::Field(name) => name,
+                                    ctadl_ir::cir::PathSegment::Value => {
+                                        ctadl_ir::cir::path_syntax::VALUE
                                     }
-                                    ctadl_ir::mir::PathSegment::Deref => {
-                                        ctadl_ir::mir::path_syntax::DEREF
+                                    ctadl_ir::cir::PathSegment::Deref => {
+                                        ctadl_ir::cir::path_syntax::DEREF
                                     }
-                                    ctadl_ir::mir::PathSegment::Offset(_) => continue,
+                                    ctadl_ir::cir::PathSegment::Offset(_) => continue,
                                 };
                                 fields.push((caller, Str::from(name)));
                             }

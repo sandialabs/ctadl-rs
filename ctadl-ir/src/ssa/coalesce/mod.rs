@@ -38,8 +38,8 @@ use std::collections::HashMap;
 
 use smallvec::SmallVec;
 
+use crate::cir::*;
 use crate::index::idx::Idx;
-use crate::mir::*;
 
 /// Runs copy coalescing on every function of `program`. Intended to run
 /// before SSA conversion; see the module docs.
@@ -102,7 +102,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
         for pos in 0..num_stmts {
             let stmt = block
                 .statements
-                .get_mut(crate::mir::StatementIdx::new(pos))
+                .get_mut(crate::cir::StatementIdx::new(pos))
                 .expect("in range");
 
             // (a) Try to fuse pending defs into this statement's reads.
@@ -213,7 +213,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
         // Delete fused defs. Each defines a temporary with exactly one use, the one it was
         // fused into: the side condition that makes the fusion correct.
         for &pos in &dead {
-            let def = &block.statements[crate::mir::StatementIdx::new(pos)];
+            let def = &block.statements[crate::cir::StatementIdx::new(pos)];
             for v in def.iter_dst_var() {
                 assert_eq!(
                     uses.get(&v.variable),
