@@ -135,9 +135,9 @@ function (G2), with nothing passed for them at calls (G5). A global whose
 own value (empty path) holds a function label resolves calls through it; its
 storage below (`$g.deref`, `$C.f`) is memory and is not in the kernel.
 
-### Extraction
+### Fact generation
 
-Extraction is the pass that reads the post-SSA IR once and writes the input
+Fact generation is the pass that reads the post-SSA IR once and writes the input
 facts the Datalog rules run over; it does no analysis of its own, only a
 statement-by-statement translation, and it either admits a statement as one of
 the facts below or leaves it out. It is linear and admits, after S5
@@ -353,7 +353,7 @@ locally built table case (`ops.read = &f; use(ops)`). The cell is
 `Mem(Alloc(site), f)`, keyed by allocation site, with directional flow in and
 out. It is under-approximate because it declines any base it cannot pin to a
 site. The "no intervening escape" and "only writes" conditions are syntactic
-checks over the function body, charged to extraction, and refusing when unsure.
+checks over the function body, charged to fact generation, and refusing when unsure.
 
 ### Stage 3: `#value` and `value(p)`
 
@@ -497,7 +497,7 @@ preserve results satisfies `Edges_old(I) ⊆ Edges_new(I)` for supported input `
 under fixed modeling assumptions, checked by regression. Starting from the
 under-approximation makes this the natural shape of every memory stage.
 Positivity guarantees inclusion only within one rule system; a change of
-abstraction, extraction or evidence must explain how old derivations translate,
+abstraction, fact generation or evidence must explain how old derivations translate,
 and an intentional loss (corrected modeling, a precision or scalability
 tradeoff) is recorded with its measured impact. Better total coverage or
 unchanged taint findings do not establish inclusion.
