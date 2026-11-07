@@ -1192,6 +1192,9 @@ fn lower_units(
             views.append(&mut ctx.scope_tree.blocks);
         }
     }
+    if let Some(builder) = builder.as_mut() {
+        locate_globals(&mut program, builder, units, &registries, &global_renames);
+    }
     if extern_stubs {
         define_extern_functions(&mut program);
     }
@@ -1206,6 +1209,35 @@ fn lower_units(
         has_error,
         marked_up,
     })
+}
+
+/// Gives each global of `program` a unit defines its declaration's span in that unit (R27), under
+/// the name `global_renames` gives it there; the first unit to define it wins. A global no unit
+/// defines (one declared only `extern`, or a literal address) keeps no span.
+fn locate_globals(
+    program: &mut Program,
+    builder: &mut SourceInfoBuilder,
+    units: &[TranslationUnit],
+    registries: &[UnitRegistry],
+    global_renames: &[HashMap<String, String>],
+) {
+    for (index, unit) in units.iter().enumerate() {
+        let Some(key) = unit.artifact_key() else {
+            continue;
+        };
+        let mut declarations: Vec<_> = registries[index].global_declarations.iter().collect();
+        declarations.sort_by_key(|(_, range)| range.start);
+        for (name, range) in declarations {
+            let name = global_renames[index].get(name).unwrap_or(name);
+            if program.globals.lookup(name).is_none() {
+                continue;
+            }
+            let start = range.start.min(unit.source.len());
+            let len = (range.end.min(unit.source.len()) - start) as u32;
+            let span = builder.span_for(key.clone(), start as u32, SpanLen::ByteLen(len));
+            program.globals.declare(name, Some(span));
+        }
+    }
 }
 
 /// For each unit, the global names its file-scope `static` variables get: a `static` another
@@ -1630,6 +1662,9 @@ struct UnitRegistry {
     type_names: HashSet<String>,
     declared_functions: HashSet<String>,
     global_variables: HashSet<String>,
+    /// The byte range of the first declarator of each file-scope variable a declaration
+    /// without `extern` declares: where the global is declared (R27).
+    global_declarations: HashMap<String, std::ops::Range<usize>>,
     /// The file-scope variables declared `static`.
     static_globals: HashSet<String>,
     pointer_globals: HashMap<String, bool>,
@@ -1667,12 +1702,14 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
         // A prototype, `int zzz(int);`. Only function-shaped declarators count:
         // `void (*fp)(int);` declares a variable, and `function_head` says no to it.
         let file_scope = at_file_scope(node);
-        let is_static = {
+        let storage_class = |class: &str| {
             let mut c = node.walk();
             node.children(&mut c).any(|child| {
-                child.kind() == "storage_class_specifier" && to_str(&child, source) == "static"
+                child.kind() == "storage_class_specifier" && to_str(&child, source) == class
             })
         };
+        let is_static = storage_class("static");
+        let is_extern = storage_class("extern");
         let mut dcursor = node.walk();
         for declarator in node.children_by_field_name("declarator", &mut dcursor) {
             if let Some(head) = function_head(declarator) {
@@ -1684,6 +1721,12 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
                 *registry.pointer_globals.entry(name.clone()).or_insert(true) &= pointer;
                 if is_static {
                     registry.static_globals.insert(name.clone());
+                }
+                if !is_extern {
+                    registry
+                        .global_declarations
+                        .entry(name.clone())
+                        .or_insert(declarator.byte_range());
                 }
                 registry.global_variables.insert(name);
             }

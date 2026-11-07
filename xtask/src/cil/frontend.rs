@@ -128,6 +128,7 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     })
     .map_err(|p| format!("the frontend panicked: {}", panic_message(&p)))?;
     let (mut info, stats) = imported.map_err(|e| format!("import failed: {e:#}"))?;
+    check_global_spans(path, &data, &info)?;
     let functions = info.program.functions.len();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ssa::run_pipeline(&mut info.program, Pipeline::index_default())
@@ -137,6 +138,61 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
         functions,
         stats: Some(stats),
     })
+}
+
+/// Checks that every global the import located is declared at its class's `TypeDef` row
+/// (R27): a span of the assembly as long as a row, at a row of the type the global names, whose
+/// first word is that type's flags.
+fn check_global_spans(
+    path: &Path,
+    data: &[u8],
+    info: &ctadl_ir::mir::ProgramInfo,
+) -> Result<(), String> {
+    let module = cil_reader::Module::read(data).map_err(|e| e.to_string())?;
+    let rows: std::collections::HashMap<u64, cil_reader::model::TypeDef<'_>> = module
+        .all_types()
+        .filter_map(|td| {
+            let (offset, _) = module
+                .metadata()
+                .row_file_span(cil_reader::raw::Table::TypeDef, td.rid())?;
+            Some((offset, td))
+        })
+        .collect();
+    for (_, global) in info.program.globals.iter_enumerated() {
+        let Some(span) = global.span else {
+            continue;
+        };
+        let name = &*global.name;
+        let (artifact, span) = info
+            .source_info
+            .resolve(span)
+            .ok_or_else(|| format!("global {name}: its span does not resolve"))?;
+        if artifact.canonical_path != path.to_string_lossy() {
+            return Err(format!(
+                "global {name}: located in {}",
+                artifact.canonical_path
+            ));
+        }
+        let td = rows
+            .get(&u64::from(span.start))
+            .ok_or_else(|| format!("global {name}: span at {} is no TypeDef row", span.start))?;
+        let row_size = module
+            .metadata()
+            .table_info(cil_reader::raw::Table::TypeDef)
+            .row_size;
+        let full_name = td.full_name().map_err(|e| e.to_string())?;
+        let flags = td.attributes().map_err(|e| e.to_string())?;
+        let at = span.start as usize;
+        if span.len != source_info::SpanLen::ByteLen(row_size)
+            || !name.ends_with(&format!("]{full_name}"))
+            || data[at..at + 4] != flags.to_le_bytes()
+        {
+            return Err(format!(
+                "global {name}: span {span:?} is the TypeDef row of {full_name}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {

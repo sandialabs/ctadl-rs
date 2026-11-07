@@ -305,6 +305,9 @@ pub struct TypeList {
 // Class definitions (class_def_item)
 #[derive(Debug, Clone, Copy)]
 pub struct ClassDef {
+    /// Byte offset of this `class_def_item` in the dex file, [`ClassDef::ITEM_LEN`] bytes long:
+    /// where the class is declared.
+    pub offset: u32,
     pub class_idx: u32,
     pub access_flags: u32,
     pub superclass_idx: u32,

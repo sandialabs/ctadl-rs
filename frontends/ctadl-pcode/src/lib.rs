@@ -248,13 +248,24 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        // Use pcode-reader crate to read facts
+        let reader = PcodeFactsReader::new(facts_dir);
+        // The memory global is the image, declared where the image is loaded: a caret at its
+        // base address, the address convention instructions' spans use (R27).
+        let image_base = reader
+            .read_image_base()
+            .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
+            .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
+        let image_span = builders.source_info_builder.span_for(
+            artifact_key.clone(),
+            image_base.unwrap_or(0) as u32,
+            source_info::SpanLen::Empty,
+        );
         self.memory = Some(
             builders
                 .program
-                .declare_global(memory_global_name(&self.import_name), None),
+                .declare_global(memory_global_name(&self.import_name), Some(image_span)),
         );
-        // Use pcode-reader crate to read facts
-        let reader = PcodeFactsReader::new(facts_dir);
         let mut pcode_facts = reader
             .read_all_facts()
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
@@ -2137,6 +2148,94 @@ mod tests {
         // `p - q`, both pointers: neither is the base.
         assert_eq!(base_operand(&[PTR, PTR]), None);
         assert_eq!(base_operand(&[]), None);
+    }
+
+    /// An image's memory global is declared at the image's base address, as a caret: the
+    /// address convention instructions' spans use (R27).
+    #[test]
+    fn the_memory_global_is_declared_at_the_image_base() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Every table the reader reads, empty, and the image base.
+        for name in [
+            ".facts",
+            "BB_FIRST.facts",
+            "BB_FOUT.facts",
+            "BB_HFUNC.facts",
+            "BB_LAST.facts",
+            "BB_OUT.facts",
+            "BB_PCODE_INDEX.facts",
+            "BB_START.facts",
+            "BB_TOUT.facts",
+            "HFUNC_EP.facts",
+            "HFUNC_ISEXT.facts",
+            "HFUNC_LOCAL_EP.facts",
+            "HFUNC_NAME.facts",
+            "HFUNC_PROTO.facts",
+            "HVAR_CLASS.facts",
+            "HVAR_NAME.facts",
+            "HVAR_REPRESENTATIVE.facts",
+            "HVAR_TYPE.facts",
+            "PCODE_INDEX.facts",
+            "PCODE_INPUT.facts",
+            "PCODE_MNEMONIC.facts",
+            "PCODE_OPCODE.facts",
+            "PCODE_OUTPUT.facts",
+            "PCODE_PARENT.facts",
+            "PCODE_TARGET.facts",
+            "PROGRAM_IMAGE_BASE.facts",
+            "PROTO_IS_VARARG.facts",
+            "PROTO_IS_VOID.facts",
+            "PROTO_PARAMETER.facts",
+            "PROTO_PARAMETER_COUNT.facts",
+            "PROTO_RETTYPE.facts",
+            "REGISTER_IS_SP.facts",
+            "REGISTER_OFF_NAME.facts",
+            "SYMBOL_HVAR.facts",
+            "TYPE_BOOLEAN.facts",
+            "TYPE_ENUM.facts",
+            "TYPE_FLOAT.facts",
+            "TYPE_INTEGER.facts",
+            "TYPE_POINTER.facts",
+            "VNODE_ADDRESS.facts",
+            "VNODE_HVAR.facts",
+            "VNODE_IS_ADDRESS.facts",
+            "VNODE_NAME.facts",
+            "VNODE_OFFSET_N.facts",
+            "VNODE_SIZE.facts",
+            "VNODE_SPACE.facts",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        std::fs::write(dir.path().join("PROGRAM_IMAGE_BASE.facts"), "1048576\n").unwrap();
+
+        let mut ctx = Context::new();
+        ctx.import_name = "lib.so".to_string();
+        let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
+        let key = ArtifactKey {
+            path: "lib.so".to_string(),
+            sub_artifact_id: 0,
+            hash: Vec::new(),
+            encoding: source_info::ArtifactEncoding::Binary,
+        };
+        ctx.process(dir.path(), key, &mut builders)
+            .expect("the facts lower");
+        let info = ctx.finish(builders).expect("the program finishes");
+        let memory = info
+            .program
+            .globals
+            .lookup(&memory_global_name("lib.so"))
+            .expect("the memory global");
+        let span = info
+            .program
+            .globals
+            .get(memory)
+            .unwrap()
+            .span
+            .expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "lib.so");
+        assert_eq!(span.start, 1_048_576);
+        assert_eq!(span.len, source_info::SpanLen::Empty);
     }
 
     /// An image's memory is one global named by the import and the address space (R9), so a

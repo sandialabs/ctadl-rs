@@ -577,8 +577,14 @@ impl FlowyCtx {
         let mut defined_functions = HashSet::new();
         for def in defs {
             match def {
-                parse::Def::Var(name) => {
-                    let idx = self.program.declare_global(name.name, None);
+                parse::Def::Var(name, span) => {
+                    // Exactly the `var x;`: `span` ends after the `;`.
+                    let span = self.source_info_builder.span_for(
+                        self.artifact_key.clone(),
+                        span.start.try_into().unwrap(),
+                        source_info::SpanLen::ByteLen(span.len().try_into().unwrap()),
+                    );
+                    let idx = self.program.declare_global(name.name, Some(span));
                     self.toplevel_vars.insert(name.name.to_string(), idx);
                 }
                 parse::Def::Function(f) => {
@@ -1279,6 +1285,28 @@ impl Counter {
         let v = self.value;
         self.value += 1u32;
         v
+    }
+}
+
+#[cfg(test)]
+mod global_tests {
+    use super::*;
+
+    /// A global is declared at its `var` (R27).
+    #[test]
+    fn a_global_is_declared_at_its_var() {
+        let src = "// a global\nvar g;\ndef F() {\ns:\n  a = g.deref;\n  return;\n}\n";
+        let prog = compile_program_contents("test.tnt", src).expect("compiles");
+        let info = &prog.program_info;
+        let g = info.program.globals.lookup("g").expect("g is declared");
+        let span = info.program.globals.get(g).unwrap().span.expect("a span");
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(artifact.canonical_path, "test.tnt");
+        let start = span.start as usize;
+        let source_info::SpanLen::ByteLen(len) = span.len else {
+            panic!("{span:?}");
+        };
+        assert_eq!(&src[start..start + len as usize], "var g;");
     }
 }
 

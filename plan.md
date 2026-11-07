@@ -610,10 +610,10 @@ As built (commit `a8ea91f9`). Where the implementation departs from the above:
 - **CTADL0004.** A `global` atom is probed like a `local` one (`Plan::global_probes` marks which);
   one that ran and never matched gives `UnmatchedReason::GlobalNotFound`, message id
   `globalNotFound`.
-- **R27 in the formatter.** No front end records a global's declaration span, so a source or sink
-  on a global is named `global <import>::$name` and located by a logical location of kind
-  `variable` with that name, the imports read from `globals.parquet` (each declaring import,
-  comma-separated). A *flow* into a sink on a global is at no instruction, so no tainted
+- **R27 in the formatter.** A source or sink on a global is named `global <import>::$name` and
+  carries a logical location of kind `variable` with that name, the imports read from
+  `globals.parquet` (each declaring import, comma-separated). At stage 3 no front end recorded a
+  declaration span, so that was its only location; see "R27's declaration spans" below. A *flow* into a sink on a global is at no instruction, so no tainted
   instruction's details name its sink; the path search also pairs every source an instruction
   names with every sink on a global, and reports the path at that instruction.
 - **Tests.** `ctadl-ascent/tests/portcullis.rs`:
@@ -624,6 +624,28 @@ As built (commit `a8ea91f9`). Where the implementation departs from the above:
   location), `a_source_on_an_unread_global_reaches_nothing`,
   `a_sink_on_a_global_is_reached_from_any_store`. 1944 workspace tests pass. The integration
   tests that pinned the globals pair were already rewritten in 2b (R38).
+
+- **R27's declaration spans** (after stage 4). Every front end now gives a global the span of
+  its declaration, in the byte positions its instructions' spans use, and the formatter locates
+  a source or sink on a global there (`global_declarations`, through the same
+  `span_physical_location` as an instruction), one location per declaring import that recorded a
+  span, with the logical location beside it. C: the declarator of a file-scope declaration that
+  is not `extern`, located after every unit is lowered, so a global one unit defines and another
+  uses is located. flowy: the `var x;`. Lua: the chunk of the first unit that names a free
+  variable. JVM: the class header (`access_flags`, `this_class`, `super_class`;
+  `ClassFile::header_offset`, new in `jvm-reader`). dex: the `class_def_item`
+  (`ClassDef::offset`, new in `dex-reader`). CIL: the `TypeDef` row (`Metadata::row_file_span`,
+  new in `cil-reader`, over the `#~` stream's file offset). pcode: a caret at the image base
+  address. A class the import only uses (a framework class) has no span; another import that
+  defines it supplies one. The JVM, dex and CIL front ends declare a global at first use as
+  before and attach the span in their `finish` only to a global the program uses, so the set of
+  globals and their order are unchanged. Tests: `global_ports.rs` checks the SARIF region of
+  `g_data`'s declarator; `a_static_field_is_a_field_of_its_class_global` (JVM) the header bytes;
+  `a_class_global_is_declared_at_its_class_def_item` (dex, on the committed APK) each located
+  global's `class_def_item`; `env_is_declared_at_the_first_chunk_that_names_it` (Lua);
+  `a_global_is_declared_at_its_var` (flowy); `the_memory_global_is_declared_at_the_image_base`
+  (pcode, on a facts directory with empty tables); and `cil:frontend`'s sweep checks every
+  located global of every corpus assembly against its `TypeDef` row (name and flags).
 
 ## Stage 4: documentation (R33's remainder, R34's edits)
 

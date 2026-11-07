@@ -67,10 +67,14 @@ No row has two global roots: a flow between two globals is no function's (G6 of
 `global_flow.parquet` holds those edges, `(dst, dst_path, src, src_path)` over global names, and
 `assign.parquet` holds them too, under the frame's id. A vertex variable may be a global, tag 4 in
 the `*_var_tag` columns, with its name in `*_var_ref_name`. `globals.parquet` lists each global and
-an import that declares it:
+an import that declares it, with `source_span_id`, the declaration's span in that import's
+source-info tables when the front end recorded one: a C declarator, a flowy `var`, a Lua chunk
+(`_ENV`), a class header (JVM), `class_def_item` (dex) or `TypeDef` row (CIL), or the image base
+address (pcode).
 
 ```sql
-select g.name, i.name as import from globals.parquet g join import_id.parquet i on g.import_id = i.id;
+select g.name, i.name as import, g.source_span_id
+from globals.parquet g join import_id.parquet i on g.import_id = i.id;
 ```
 
 `CTADL_DUMP_RELATIONS` (below) prints the frame's rows under `<globals>`, among them

@@ -423,4 +423,24 @@ fn a_static_field_is_a_field_of_its_class_global() {
     let dump = info.program.to_string();
     assert!(dump.contains("store $LDemo;.f := "), "{dump}");
     assert!(dump.contains(" = $LDemo;.f ["), "{dump}");
+
+    // The global is declared at the class header (R27): `access_flags`, `this_class` and
+    // `super_class` as `class_with_pool` writes them.
+    let demo = info.program.globals.lookup("LDemo;").unwrap();
+    let span = info
+        .program
+        .globals
+        .get(demo)
+        .unwrap()
+        .span
+        .expect("a span");
+    let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+    assert_eq!(artifact.canonical_path, path.to_string_lossy());
+    assert_eq!(span.len, source_info::SpanLen::ByteLen(6));
+    let bytes = std::fs::read(&path).unwrap();
+    let start = span.start as usize;
+    assert_eq!(
+        bytes[start..start + 6],
+        [0x00, 0x21, 0x00, 0x02, 0x00, 0x04]
+    );
 }

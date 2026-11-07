@@ -133,6 +133,10 @@ struct Context {
     /// The globals declared so far: one per class that owns a static field. Moved into the
     /// program at [`Context::finish`].
     globals: mir::Globals,
+    /// Each class this import defines, as its global is named, with the class file it is in and
+    /// the offset of its header there: where the global is declared (R27). Located in
+    /// [`Context::finish`], once every class has been lowered.
+    class_headers: Vec<(String, ArtifactKey, u32)>,
 }
 
 /// What lowering an `invokespecial` needs to know about the class the call appears in.
@@ -176,6 +180,7 @@ impl Context {
             catch_result: None,
             enclosing: None,
             globals: Default::default(),
+            class_headers: Vec::new(),
         }
     }
 
@@ -187,6 +192,11 @@ impl Context {
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = jvm_class_symbol(parser.class_name()?);
+            self.class_headers.push((
+                class_name.clone(),
+                artifact_key.clone(),
+                class_def.header_offset,
+            ));
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -487,6 +497,17 @@ impl Context {
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
         program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its class header, if the program uses it.
+        for (class, key, offset) in self.class_headers.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(jvm_reader::types::ClassFile::HEADER_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
         for (_sig, entry) in self.ext.drain() {
             if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 if !methods

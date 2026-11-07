@@ -2175,30 +2175,7 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
     let index_dir = ctx.index_dir.as_ref();
     let ctx_session = SessionContext::new();
 
-    register_parquet_checked(
-        &ctx_session,
-        "file_spans",
-        object_store_path(&dir.join("file_spans.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "spans",
-        object_store_path(&dir.join("spans.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "files",
-        object_store_path(&dir.join("files.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "artifacts",
-        object_store_path(&dir.join("artifacts.parquet")),
-    )
-    .await?;
+    register_source_info_tables(&ctx_session, dir).await?;
     register_parquet_checked(
         &ctx_session,
         "function_id",
@@ -2308,73 +2285,19 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
                 0
             };
 
-            let region = match encoding {
-                source_info::ArtifactEncoding::Binary => {
-                    let builder = Region::builder().byte_offset(start);
-                    if matches!(profile, SarifProfile::Machine) {
-                        builder.build()
-                    } else {
-                        builder.byte_length(len_value).build()
-                    }
-                }
-                source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
-                    let file = File::open(canonical_path)
-                        .err_context(|| format!("opening source file: {canonical_path}"))?;
-                    // SAFETY: This is inherently unsafe because of mmap(). *shrug*
-                    let contents = unsafe {
-                        MmapOptions::new()
-                            .map(&file)
-                            .err_context(|| format!("mapping source file: {canonical_path}"))?
-                    };
-                    let line_map = LineMap::from_bytes(&contents);
-                    let end_byte = match len_tag {
-                        0 => start,
-                        1 => start + len_value,
-                        2 => contents[start as usize..]
-                            .iter()
-                            .position(|&b| b == b'\n')
-                            .map(|p| start + p as u32 + 1)
-                            .unwrap_or(contents.len() as u32),
-                        _ => start,
-                    };
-                    let start_lc = offset_to_line_column(&line_map, start);
-                    let end_lc =
-                        offset_to_line_column(&line_map, end_byte.saturating_sub(1).max(start));
-                    Region::builder()
-                        .start_line(start_lc.line as i64)
-                        .start_column((start_lc.column + 1) as i64)
-                        .end_line(end_lc.line as i64)
-                        .end_column((end_lc.column + 1) as i64)
-                        .build()
-                }
-            };
-
-            let artifact_location =
-                source_artifact_location(import, canonical_path, &mut sarif_data.uri_bases);
-
-            let is_pcode = import.language == ArtifactLanguage::Pcode;
-            let physical_location = match encoding {
-                source_info::ArtifactEncoding::Binary if is_pcode => {
-                    // `start` is the absolute instruction address (it includes
-                    // the disassembler's image base). Emit the section-relative
-                    // offset too so consumers (e.g. addr2line in the regression
-                    // suite) need not assume a particular base. When the base is
-                    // unknown, the relative offset degenerates to the absolute.
-                    let address = Address::builder()
-                        .absolute_address(start as i64)
-                        .relative_address(start as i64 - import.image_base.unwrap_or(0))
-                        .kind("instruction")
-                        .build();
-                    PhysicalLocation::builder()
-                        .artifact_location(artifact_location)
-                        .address(address)
-                        .build()
-                }
-                _ => PhysicalLocation::builder()
-                    .artifact_location(artifact_location)
-                    .region(region)
-                    .build(),
-            };
+            let physical_location = span_physical_location(
+                import,
+                profile,
+                &mut sarif_data.uri_bases,
+                RawSpan {
+                    canonical_path,
+                    encoding,
+                    start,
+                    len_tag,
+                    len_value,
+                },
+                "instruction",
+            )?;
 
             let fully_qualified_name = match encoding {
                 source_info::ArtifactEncoding::Binary => {
@@ -2415,6 +2338,196 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
         }
     }
     Ok(())
+}
+
+/// Registers `dir`'s source-info tables in `session` as `file_spans`, `spans`, `files` and
+/// `artifacts`.
+async fn register_source_info_tables(
+    session: &SessionContext,
+    dir: &path::Path,
+) -> Result<(), Error> {
+    for table in ["file_spans", "spans", "files", "artifacts"] {
+        register_parquet_checked(
+            session,
+            table,
+            object_store_path(&dir.join(format!("{table}.parquet"))),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Where each global is declared: the declaration span of every row of `globals` that has one,
+/// resolved against the source-info database of the import the row names (R27). A global no
+/// front end gave a span has no entry.
+async fn global_declarations<P: AsRef<path::Path>>(
+    ctx: &ProjectContext<'_, P>,
+    profile: SarifProfile,
+    sarif_data: &mut SarifData,
+    globals: &[schema::globals::Record],
+) -> Result<BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>>, Error> {
+    let mut declarations: BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>> = BTreeMap::new();
+    for import in ctx.imports {
+        let mut by_span: BTreeMap<u32, Vec<crate::facts::GlobalId>> = BTreeMap::new();
+        for (g, i, span) in globals {
+            if *i == import.id
+                && let Some(span) = span
+            {
+                by_span.entry(span.0).or_default().push(*g);
+            }
+        }
+        if by_span.is_empty() {
+            continue;
+        }
+        let session = SessionContext::new();
+        register_source_info_tables(&session, import.source_info_dir.as_path()).await?;
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "file_span_id",
+            DataType::UInt32,
+            false,
+        )]));
+        let ids: UInt32Array = by_span.keys().copied().collect();
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids)])?;
+        session.register_table(
+            "global_span",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]])?),
+        )?;
+        let sql = "
+            SELECT g.file_span_id, art.canonical_path, art.encoding, s.start, s.len_tag,
+                   s.len_value
+            FROM global_span g
+            JOIN file_spans fs ON fs.file_span_id = g.file_span_id
+            JOIN spans s   ON fs.span_id    = s.span_id
+            JOIN files f   ON fs.file_id    = f.file_id
+            JOIN artifacts art ON f.artifact_id = art.artifact_id
+            ORDER BY g.file_span_id
+        ";
+        for batch in session.sql(sql).await?.collect().await? {
+            let column = |i: usize| batch.column(i).as_any();
+            let file_span_ids = column(0).downcast_ref::<UInt32Array>().unwrap();
+            let canonical_paths = column(1).downcast_ref::<StringViewArray>().unwrap();
+            let encodings = column(2).downcast_ref::<UInt8Array>().unwrap();
+            let starts = column(3).downcast_ref::<UInt32Array>().unwrap();
+            let len_tags = column(4).downcast_ref::<UInt8Array>().unwrap();
+            let len_values = column(5).downcast_ref::<UInt32Array>().unwrap();
+            for row in 0..batch.num_rows() {
+                let len_tag = len_tags.value(row);
+                let location = span_physical_location(
+                    import,
+                    profile,
+                    &mut sarif_data.uri_bases,
+                    RawSpan {
+                        canonical_path: canonical_paths.value(row),
+                        encoding: source_info::ArtifactEncoding::from_u8(encodings.value(row)),
+                        start: starts.value(row),
+                        len_tag,
+                        len_value: if len_tag == 1 {
+                            len_values.value(row)
+                        } else {
+                            0
+                        },
+                    },
+                    "data",
+                )?;
+                for g in &by_span[&file_span_ids.value(row)] {
+                    declarations.entry(*g).or_default().push(location.clone());
+                }
+            }
+        }
+    }
+    Ok(declarations)
+}
+
+/// A span as `spans.parquet` and `artifacts.parquet` store it, joined.
+struct RawSpan<'a> {
+    canonical_path: &'a str,
+    encoding: source_info::ArtifactEncoding,
+    start: u32,
+    /// `spans.len_tag`: 0 a caret, 1 `len_value` bytes, 2 to the end of the line.
+    len_tag: u8,
+    len_value: u32,
+}
+
+/// Where `span`, a span of `import`'s source-info database, is: a byte region of a binary
+/// artifact, an address for a pcode one (`address_kind` is the SARIF address kind), or lines and
+/// columns of a text one, which is read to find them.
+fn span_physical_location(
+    import: &ImportSource,
+    profile: SarifProfile,
+    uri_bases: &mut BTreeMap<String, String>,
+    span: RawSpan<'_>,
+    address_kind: &str,
+) -> Result<PhysicalLocation, Error> {
+    let RawSpan {
+        canonical_path,
+        encoding,
+        start,
+        len_tag,
+        len_value,
+    } = span;
+    let region = match encoding {
+        source_info::ArtifactEncoding::Binary => {
+            let builder = Region::builder().byte_offset(start);
+            if matches!(profile, SarifProfile::Machine) {
+                builder.build()
+            } else {
+                builder.byte_length(len_value).build()
+            }
+        }
+        source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
+            let file = File::open(canonical_path)
+                .err_context(|| format!("opening source file: {canonical_path}"))?;
+            // SAFETY: This is inherently unsafe because of mmap(). *shrug*
+            let contents = unsafe {
+                MmapOptions::new()
+                    .map(&file)
+                    .err_context(|| format!("mapping source file: {canonical_path}"))?
+            };
+            let line_map = LineMap::from_bytes(&contents);
+            let end_byte = match len_tag {
+                0 => start,
+                1 => start + len_value,
+                2 => contents[start as usize..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map(|p| start + p as u32 + 1)
+                    .unwrap_or(contents.len() as u32),
+                _ => start,
+            };
+            let start_lc = offset_to_line_column(&line_map, start);
+            let end_lc = offset_to_line_column(&line_map, end_byte.saturating_sub(1).max(start));
+            Region::builder()
+                .start_line(start_lc.line as i64)
+                .start_column((start_lc.column + 1) as i64)
+                .end_line(end_lc.line as i64)
+                .end_column((end_lc.column + 1) as i64)
+                .build()
+        }
+    };
+
+    let artifact_location = source_artifact_location(import, canonical_path, uri_bases);
+
+    Ok(match encoding {
+        source_info::ArtifactEncoding::Binary if import.language == ArtifactLanguage::Pcode => {
+            // `start` is the absolute address (it includes the disassembler's image base). Emit
+            // the section-relative offset too so consumers (e.g. addr2line in the regression
+            // suite) need not assume a particular base. When the base is unknown, the relative
+            // offset degenerates to the absolute.
+            let address = Address::builder()
+                .absolute_address(start as i64)
+                .relative_address(start as i64 - import.image_base.unwrap_or(0))
+                .kind(address_kind)
+                .build();
+            PhysicalLocation::builder()
+                .artifact_location(artifact_location)
+                .address(address)
+                .build()
+        }
+        _ => PhysicalLocation::builder()
+            .artifact_location(artifact_location)
+            .region(region)
+            .build(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2993,18 +3106,32 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     // Each global's declaring imports, for naming a source or sink on one (R27). An index
     // without the table (a test fixture) names a global by itself.
+    let globals = schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default();
     let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
-    for (g, import, _) in schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default() {
-        let programs = global_programs.entry(g).or_default();
-        let name = import_name(ctx.imports, import);
+    for (g, import, _) in &globals {
+        let programs = global_programs.entry(*g).or_default();
+        let name = import_name(ctx.imports, *import);
         if !programs.contains(&name) {
             programs.push(name);
         }
     }
+    // Only the globals a source or sink is on are located, so a project of many imports, each
+    // declaring globals, reads no source-info table for a query with no endpoint on a global.
+    let endpoint_globals: BTreeSet<crate::facts::GlobalId> = endpoints
+        .iter()
+        .filter_map(|ep| ep.vertex.0.as_global())
+        .collect();
+    let located: Vec<_> = globals
+        .iter()
+        .filter(|(g, _, _)| endpoint_globals.contains(g))
+        .cloned()
+        .collect();
+    let global_declarations = global_declarations(ctx, profile, sarif_data, &located).await?;
     results.extend(format_source_sink_results(
         sarif_data,
         &endpoints,
         &global_programs,
+        &global_declarations,
         &source_data.id_to_name,
         &call_callee,
         &site_by_var,
@@ -3165,6 +3292,7 @@ fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &[&QueryEndpoint],
     global_programs: &BTreeMap<crate::facts::GlobalId, Vec<String>>,
+    global_declarations: &BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>>,
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
     site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
@@ -3196,10 +3324,10 @@ fn format_source_sink_results(
             // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
             let label = endpoint.label.0.to_string();
-            // A global is anchored at no function (R26). No front end records a global's
-            // declaration span, so it is located by a logical location naming the program that
-            // declares it and the global, `<import>::$name` (R27); a global several imports
-            // declare is one variable (G3), named by each.
+            // A global is anchored at no function (R26). It is named by a logical location
+            // naming the programs that declare it and the global, `<import>::$name`, and located
+            // at its declaration in each import that recorded one (R27); a global several
+            // imports declare is one variable (G3), named by each.
             let (owner, fully_qualified_name, kind) = match node.1.as_global() {
                 Some(g) => {
                     let programs = global_programs
@@ -3249,7 +3377,17 @@ fn format_source_sink_results(
                     .build(),
             ];
 
-            if let Some(&site) = site_by_var.get(&(node.0, node.1))
+            if let Some(declared) = node.1.as_global().and_then(|g| global_declarations.get(&g)) {
+                locations = declared
+                    .iter()
+                    .map(|physical| {
+                        Location::builder()
+                            .physical_location(physical.clone())
+                            .logical_locations(vec![logical_location.clone()])
+                            .build()
+                    })
+                    .collect();
+            } else if let Some(&site) = site_by_var.get(&(node.0, node.1))
                 && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
             {
                 let mut loc_with_phys = physical_loc.clone();
