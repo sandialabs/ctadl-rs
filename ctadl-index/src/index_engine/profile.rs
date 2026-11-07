@@ -15,7 +15,6 @@ use serde::Serialize;
 pub use immortal::Stats;
 
 use crate::facts::{CallDispatchKey, CallTargetObject, PathId, Str};
-use crate::index_engine::decision;
 use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
@@ -63,7 +62,6 @@ impl MemoryProfile {
             ("CallDispatchKey", CallDispatchKey::stats()),
             ("Path", PathId::stats()),
         ]);
-        self.interned.extend(decision::interner_stats());
     }
 
     /// The entries of each interner that the fixpoint may not add to, by name.
@@ -203,17 +201,11 @@ mod tests {
     #[test]
     fn memory_reports_each_interner() {
         Str::intern("memory_reports_each_interner");
-        let target = CallTargetObject::intern(&crate::facts::CallTargetObjectKind::Symbol(
+        CallTargetObject::intern(&crate::facts::CallTargetObjectKind::Symbol(
             "memory_reports_each_interner".into(),
         ));
         CallDispatchKey::c();
-        let path = crate::facts::Path::from_symbol_names(["memory_reports_each_interner"]);
-        // Mints the decision's singleton set of each kind.
-        crate::index_engine::DecisionId::of(crate::index_engine::Decision {
-            formal: crate::facts::FormalIndex::new(0),
-            path,
-            target,
-        });
+        crate::facts::Path::from_symbol_names(["memory_reports_each_interner"]);
         let mut p = IndexProfile::default();
         p.memory.read_interned();
         let json = serde_json::to_value(&p).unwrap();
@@ -222,8 +214,6 @@ mod tests {
             "CallTargetObject",
             "CallDispatchKey",
             "Path",
-            "DecisionSet.exact",
-            "DecisionSet.collapsing",
         ] {
             let s = &json["memory"]["interned"][name];
             assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");

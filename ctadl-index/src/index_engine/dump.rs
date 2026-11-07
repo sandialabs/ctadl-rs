@@ -3,8 +3,7 @@
 //! and compares these dumps to check that two builds or engines derive the same sets.
 //!
 //! A row is one line, its columns separated by tabs. Every column is printed by content, never by
-//! an intern id: a function by its name, a string, path or call target by its text, and a
-//! decision set by its decisions, sorted. Rows come out in whatever order the engine holds them,
+//! an intern id: a function by its name, and a string, path or call target by its text. Rows come out in whatever order the engine holds them,
 //! which differs between runs and engines; only the sorted file is comparable.
 //!
 //! Every relation in the program's `relation_sizes_summary` must be written, or the dump panics
@@ -20,9 +19,7 @@ use crate::facts::{
     FormalType, FunctionId, IdMap, InsnId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 use crate::index_engine::path_set::PathSetRef;
-use crate::index_engine::{
-    Cond, Decision, DecisionId, DecisionSet, IndexConfig, Rows, unpack_site,
-};
+use crate::index_engine::{IndexConfig, Rows, unpack_site};
 
 /// The environment variable that turns the dump on and names its directory.
 pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
@@ -126,68 +123,19 @@ impl DumpCol for CallTargetObject {
     }
 }
 
-/// As [`Decision`]'s `Display`, with the target's function by name.
-impl DumpCol for Decision {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
-        write!(out, "[arg{}{} = ", self.formal, self.path.to_dot_string()).unwrap();
-        self.target.dump_col(cx, out);
-        out.push(']');
-    }
-}
-
-impl DumpCol for DecisionId {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
-        self.get().dump_col(cx, out)
-    }
-}
-
-impl DumpCol for Cond {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
-        match self {
-            Cond::Always => out.push_str("always"),
-            Cond::Under(ds) => ds.dump_col(cx, out),
-        }
-    }
-}
-
-/// Sorted by the decisions' text, since a set holds its decisions in id order, and ids are
-/// minted in the order the run first derives each decision.
-impl DumpCol for DecisionSet {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
-        if self.is_top() {
-            out.push('⊤');
-            return;
-        }
-        let mut ds: Vec<String> = self
-            .decisions()
-            .iter()
-            .map(|d| {
-                let mut s = String::new();
-                d.dump_col(cx, &mut s);
-                s
-            })
-            .collect();
-        ds.sort_unstable();
-        write!(out, "{{{}}}", ds.join(", ")).unwrap()
-    }
-}
-
 /// The settings that change what is derived. The engine and storage are left out: they must not
 /// change the result, and leaving them out lets two engines' dumps be compared.
 impl DumpCol for IndexConfig {
     fn dump_col(&self, _: &Cx<'_>, out: &mut String) {
         let IndexConfig {
             alias_rule,
-            hybrid_context,
-            context_join,
             parallelism: _,
             storage: _,
             deref_paths,
         } = self;
         write!(
             out,
-            "alias_rule={alias_rule} hybrid_context={hybrid_context:?} \
-             context_join={context_join} deref_paths={deref_paths}"
+            "alias_rule={alias_rule} deref_paths={deref_paths}"
         )
         .unwrap()
     }
@@ -351,12 +299,6 @@ impl<Row: DumpRow> DumpField<Row> for Vec<Row> {
 }
 
 impl<Row: DumpRow> DumpField<Row> for ascent::boxcar::Vec<Row> {
-    fn dump_field(&self, dump: &mut RelationDump<'_>, name: &str) {
-        dump_rows::<Row>(self, dump, name)
-    }
-}
-
-impl<Row: DumpRow> DumpField<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
     fn dump_field(&self, dump: &mut RelationDump<'_>, name: &str) {
         dump_rows::<Row>(self, dump, name)
     }

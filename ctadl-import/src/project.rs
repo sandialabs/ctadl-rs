@@ -233,8 +233,6 @@ pub struct EngineRecord {
     /// Whether the alias summary rule ran (the backward rule's restriction to copy chains rooted
     /// at a formal).
     pub alias_rule: bool,
-    /// The hybrid-inlining context widening, as `--hybrid-context` spells it.
-    pub hybrid_context: String,
     /// Whether every program path gained its `.deref` extension.
     pub deref_paths: bool,
     /// The `--mem2reg` policy the IR passes ran with, `off` for none.

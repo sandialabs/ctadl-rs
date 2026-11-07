@@ -1,7 +1,7 @@
 //! Everything known about one variable of one function, keyed by path.
 //!
-//! The BYODS stores ([`super::locals_trie`], [`super::c_locals_trie`], and the `Always` rows of
-//! [`super::cond_trie`] and [`super::c_cond_trie`]) keep one *group* per `(function, variable)`.
+//! The BYODS stores ([`super::locals_trie`] and [`super::c_locals_trie`]) keep one *group* per
+//! `(function, variable)`.
 //! For `locals` the group is what reaches that variable: each leaf is a path `p` of the
 //! variable together with the formal `a.p4` that reaches `v.p`. For `assign_like` the group is the edges read from that variable: each leaf is a source path `p` together with the
 //! destination vertex `v1.p1` that `v1.p1 = v.p` writes. In both, the path is the first

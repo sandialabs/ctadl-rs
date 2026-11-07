@@ -266,6 +266,24 @@ where
         self.len == 0
     }
 
+    /// Adds `rows`, which seeds a relation before the run.
+    pub fn extend_rows(&mut self, rows: impl IntoIterator<Item = (F, V, P, M, Fp)>) {
+        for row in rows {
+            self.insert(&row);
+        }
+    }
+
+    /// Every row, consuming the store, which frees as the output fills.
+    pub fn into_rows(mut self) -> Vec<(F, V, P, M, Fp)> {
+        let mut out = Vec::with_capacity(self.len);
+        for ((f, v), group) in self.fwd.drain() {
+            for (p, m, fp) in group {
+                out.push((f.clone(), v.clone(), p, m, fp));
+            }
+        }
+        out
+    }
+
     /// Visits every row.
     pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
         for ((fk, v), group) in &self.fwd {

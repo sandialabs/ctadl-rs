@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism, Storage};
+use ctadl_ascent::index_engine::{Parallelism, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -437,25 +437,6 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub alias_rule: Option<bool>,
 
-    /// How the flows of a resolved indirect or virtual call are kept apart by caller.
-    ///
-    /// `decision` (the default) tags each flow with the set of decisions -- which formal held
-    /// which target -- it holds under, so every caller that passed that target gets the flow
-    /// and no other caller does. `collapse` does the same but gives up the set the moment two
-    /// decisions meet at a flow, sharing that flow among every caller that passed any target:
-    /// coarser, and far cheaper on a function that thousands of targets reach. `none` shares
-    /// the resolved callee's flows among all callers, which is the cheapest and the least
-    /// precise.
-    #[arg(long, default_value = "decision")]
-    pub hybrid_context: HybridContext,
-
-    /// How the index engine pairs a function's conditional summaries with the calls that
-    /// established a decision at it (rule 3.2 of hybrid inlining). `sets` (the default) and
-    /// `unfold` join on the decision exactly; `scan` joins on the function and filters, which
-    /// is quadratic on functions that many decisions reach. Same result under all three.
-    #[arg(long, default_value = "sets")]
-    pub context_join: ContextJoin,
-
     /// Number of threads to compute the flow relation with.
     ///
     /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
@@ -754,8 +735,6 @@ fn main() -> anyhow::Result<()> {
                 call: args.call.clone(),
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
-                hybrid_context: HybridContext::default(),
-                context_join: ContextJoin::default(),
                 jobs: args.jobs,
                 lsm: false,
                 lsm_memtable_limit: None,
@@ -977,8 +956,6 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             call_policy: args.call.call_policy(),
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
-            hybrid_context: args.hybrid_context,
-            context_join: args.context_join,
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
             storage: if args.lsm {
                 Storage::Lsm

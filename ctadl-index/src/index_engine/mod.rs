@@ -29,12 +29,11 @@ to 0.f.
 
 # Interned values
 
-`Path`, `Str`, `CallTargetObject`, `CallDispatchKey` and [`DecisionSet`] are 4-byte handles into
-process-wide interners that never free. Before the fixpoint starts, building an index interns
+`Path`, `Str`, `CallTargetObject` and `CallDispatchKey` are 4-byte handles into process-wide
+interners that never free. Before the fixpoint starts, building an index interns
 every `Path` and `Str` the rules can produce: the path set's members and their splits
 ([`path_set`]) and the paths the intent rules match by name. The fixpoint only reads them,
-without a lock. Decision sets are the
-exception: lattice joins intern new ones during the fixpoint ([`decision`]). `profile.json`
+without a lock. `profile.json`
 reports each interner's size, and how much the read-only ones grew during the fixpoint.
 
 */
@@ -57,13 +56,9 @@ use crate::facts::{
     FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId,
     IntentKind, IntentPairKind, PackedInsnSiteId, Path, Root, Str,
 };
-pub use crate::index_engine::decision::{Cond, Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
-pub mod c_cond_trie;
 pub mod c_locals_trie;
-pub mod cond_trie;
-pub mod decision;
 pub mod dump;
 pub mod hybrid_set;
 pub mod locals_trie;
@@ -357,10 +352,6 @@ impl IndexFacts {
 pub struct IndexConfig {
     /// Enables the aliasing summary rule.
     pub alias_rule: bool,
-    /// How a critical call site's resolved summary is instantiated. See [`HybridContext`].
-    pub hybrid_context: HybridContext,
-    /// How rule 3.2 finds the callers a conditional summary applies at. See [`ContextJoin`].
-    pub context_join: ContextJoin,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
@@ -375,143 +366,9 @@ impl Default for IndexConfig {
     fn default() -> Self {
         IndexConfig {
             alias_rule: true,
-            hybrid_context: HybridContext::default(),
-            context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             deref_paths: false,
-        }
-    }
-}
-
-/// How rule 3.2 pairs a function's conditional summaries (the `summary` rows under a
-/// [`DecisionSet`]) with the calls that established a decision at it
-/// (`establishes_direct` / `establishes_via`, one row per call site and decision). All three
-/// compute the same fixpoint; they differ in how much of the pairing is wasted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub enum ContextJoin {
-    /// Join both sides on the function alone and test `ds.contains(d)` on every pair. The
-    /// work is `|summaries(f)| x |establishing calls(f)|` per function, most of which the
-    /// membership test throws away.
-    Scan,
-    /// Factor the pairing through the distinct decision sets the summaries carry: unfold each
-    /// set's members once (`set_member`), join those with the establishing calls on
-    /// `(f, d)`, and join the result back to the summary rows on `(f, set)`. Every join is an
-    /// exact probe, and the unfolding is per distinct set, not per summary row.
-    #[default]
-    Sets,
-    /// Unfold every summary row per decision in its set (`context_summary_d`) and join the
-    /// establishing calls on `(f, d)`. Exact probes too, but the unfolded relation has one row
-    /// per (summary row, decision): more memory than `Sets` wherever rows share a set.
-    Unfold,
-}
-
-impl std::str::FromStr for ContextJoin {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "scan" => Ok(ContextJoin::Scan),
-            "sets" => Ok(ContextJoin::Sets),
-            "unfold" => Ok(ContextJoin::Unfold),
-            other => Err(format!(
-                "unknown context join '{other}'; expected 'scan', 'sets' or 'unfold'"
-            )),
-        }
-    }
-}
-
-impl std::fmt::Display for ContextJoin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            ContextJoin::Scan => "scan",
-            ContextJoin::Sets => "sets",
-            ContextJoin::Unfold => "unfold",
-        })
-    }
-}
-
-/// What the hybrid-inlining rules do once a resolvent has decided which function a critical
-/// (indirect / virtual) call site invokes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub enum HybridContext {
-    /// The decided callee's summary is instantiated at the site as edges conditioned on the
-    /// [`Decision`] that resolved it, closed into a summary of the enclosing function
-    /// conditioned on that decision, and applied one call site at a time at every caller whose
-    /// route established the decision, until it lands as a plain edge in a function that held
-    /// the call target. Two callers passing different targets get different flows.
-    ///
-    /// A row that several decisions reach is one row, with one [`Cond`], rather than repeated,
-    /// so there is one row per `(f, v, p, a, p4)` whatever the number of decisions reaching a
-    /// function.
-    /// Complete, deterministic (the fixpoint does not depend on the order routes are found in),
-    /// and the default.
-    #[default]
-    Decision,
-    /// As `Decision`, with the set collapsed to ⊤ -- "every decision of this function" -- the
-    /// moment a row is reached by two different decisions. A conditional summary row under ⊤
-    /// is applied at every caller that establishes any decision of the function. Coarser than
-    /// `Decision` exactly where two decisions' flows meet at a row and a third decision does
-    /// not share the flow; no parameter, and still a lattice, so the fixpoint is unique. A row
-    /// changes at most once after it is created, where an exact set changes once per decision
-    /// that reaches it later, and each change re-propagates everything downstream: on a
-    /// function that thousands of decisions reach through a feedback loop that is the
-    /// difference between minutes and the context-free closure's own cost.
-    Collapse,
-    /// As `Decision`, with the set widened to ⊤ the moment an exact union has more than `k`
-    /// members. `Bounded(1)` is `Collapse` on the same lattice (`⊥ < {d} < ⊤`), and every
-    /// `k` bounds the number of times a row can change to `k + 1`. Coarser than `Decision`
-    /// exactly where more than `k` decisions share a row and another decision does not.
-    Bounded(usize),
-    /// As `Bounded(k)`, but a row whose set widens to ⊤ is `Always` instead, so the flow is
-    /// shared by every caller through the unconditional `summary` (as under `None`), and
-    /// nothing conditional is derived from it. Coarser than `Bounded(k)` downstream of the
-    /// widened row (`Bounded` still conditions the callers' inherited flows on their own
-    /// decisions), but no ⊤ summary is ever applied at every establishing caller, which is what
-    /// makes `Bounded` feed back on itself.
-    Spill(usize),
-    /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
-    /// directly resolved call's would be. The resolvent machinery still decides *which* callees
-    /// a site can have -- a target that never flows to the site is never instantiated -- but the
-    /// effect is shared by every caller: the context-sensitive fixpoint derives a call graph,
-    /// and the dataflow is computed over it context-insensitively. No `context_*` relation is
-    /// ever populated.
-    ///
-    /// Bounded by the context-free analysis; but it unions the decisions at a site, which is
-    /// what hybrid inlining exists to avoid (`tests/tnt/hybrid_inlining.tnt`).
-    None,
-}
-
-/// The spelling [`HybridContext::from_str`](std::str::FromStr) reads.
-impl std::fmt::Display for HybridContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HybridContext::Decision => write!(f, "decision"),
-            HybridContext::Collapse => write!(f, "collapse"),
-            HybridContext::None => write!(f, "none"),
-            HybridContext::Bounded(k) => write!(f, "bounded:{k}"),
-            HybridContext::Spill(k) => write!(f, "spill:{k}"),
-        }
-    }
-}
-
-impl std::str::FromStr for HybridContext {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "decision" => Ok(HybridContext::Decision),
-            "collapse" => Ok(HybridContext::Collapse),
-            "none" => Ok(HybridContext::None),
-            other => match (
-                other.strip_prefix("bounded:").map(str::parse::<usize>),
-                other.strip_prefix("spill:").map(str::parse::<usize>),
-            ) {
-                (Some(Ok(k)), _) if k > 0 => Ok(HybridContext::Bounded(k)),
-                (_, Some(Ok(k))) if k > 0 => Ok(HybridContext::Spill(k)),
-                _ => Err(format!(
-                    "unknown hybrid context '{other}'; expected 'decision', 'collapse', \
-                     'bounded:K', 'spill:K' (K >= 1) or 'none'"
-                )),
-            },
         }
     }
 }
@@ -544,9 +401,8 @@ impl Parallelism {
 }
 
 /// Where the index engine keeps `locals_key` and the next largest few relations. `locals`,
-/// `assign_like`, `edge_split` and `ext_dst` carry a [`Cond`] and are in the in-memory
-/// [`cond_trie`] stores under both; every other relation is an ordinary in-memory Ascent relation
-/// either way.
+/// `assign_like`, `edge_split` and `ext_dst` are in the in-memory [`locals_trie`] stores under
+/// both; every other relation is an ordinary in-memory Ascent relation either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
     /// The in-memory trie of [`locals_trie`].
@@ -789,19 +645,13 @@ impl IndexResult {
     }
 }
 
-/// One relation's rows, whatever the index engine happens to store them in.
-///
-/// Serial Ascent keeps a plain relation in a `Vec<Row>`. Parallel Ascent keeps a plain relation in
-/// a `boxcar::Vec<Row>` (a lock-free append-only vector) and a *lattice* in a
-/// `boxcar::Vec<RwLock<Row>>`. The three differ in how a row is reached — directly by reference,
-/// or through a read guard — so [`HybridInliningRelations`] reads them through this trait instead
-/// of a slice. That keeps the trace-dump call site identical under `ascent!` and `ascent_par!`,
-/// and it copies nothing in any of the three cases.
+/// One relation's rows, whatever the index engine happens to store them in: a `Vec` under
+/// `ascent!`, a `boxcar::Vec` (a lock-free append-only vector) under `ascent_par!`. The relation
+/// dump reads both through this trait.
 ///
 /// The count is its own method rather than something taken from the stream, because `boxcar::Vec`
 /// reports no upper size bound when iterated: the vector can be appended to mid-iteration, so its
-/// iterator cannot be an `ExactSizeIterator`. Nothing appends here — the fixpoint is over before we
-/// dump — but the type cannot know that.
+/// iterator cannot be an `ExactSizeIterator`.
 pub trait Rows<Row> {
     fn len(&self) -> usize;
 
@@ -810,13 +660,6 @@ pub trait Rows<Row> {
     }
 
     /// Stream the rows, each borrowed for as long as it is looked at.
-    ///
-    /// A [`StreamingIterator`] rather than an `Iterator` because a lattice row lives behind an
-    /// `RwLock`: the only way to hand out a plain `&Row` without copying is to keep that row's read
-    /// guard alive for exactly the span of the borrow, which is what a streaming iterator's
-    /// `advance`/`get` split expresses and a plain iterator cannot. Yielding `&Row` uniformly is
-    /// also what keeps this trait object-safe, so [`HybridInliningRelations`] needs no type
-    /// parameters.
     fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_>;
 }
 
@@ -830,8 +673,8 @@ impl<Row> Rows<Row> for Vec<Row> {
     }
 }
 
-// The two parallel-engine cases. They are dead code under `ascent!` and live under `ascent_par!`;
-// keeping both compiled is what lets the switch between the macros touch nothing here.
+// The parallel-engine case. Dead code under `ascent!` and live under `ascent_par!`; keeping it
+// compiled is what lets the switch between the macros touch nothing here.
 impl<Row> Rows<Row> for ascent::boxcar::Vec<Row> {
     fn len(&self) -> usize {
         ascent::boxcar::Vec::len(self)
@@ -842,87 +685,12 @@ impl<Row> Rows<Row> for ascent::boxcar::Vec<Row> {
     }
 }
 
-/// A lattice's rows, each held under its own read guard while it is being looked at.
-struct GuardedRows<'a, I, Row> {
-    inner: I,
-    guard: Option<std::sync::RwLockReadGuard<'a, Row>>,
-}
-
-impl<'a, I, Row> StreamingIterator for GuardedRows<'a, I, Row>
-where
-    I: Iterator<Item = &'a std::sync::RwLock<Row>>,
-    Row: 'a,
-{
-    type Item = Row;
-
-    fn advance(&mut self) {
-        // Dropping the previous guard here is what bounds each row's lock to its own turn.
-        self.guard = self.inner.next().map(|lock| lock.read().unwrap());
-    }
-
-    fn get(&self) -> Option<&Row> {
-        self.guard.as_deref()
-    }
-}
-
-impl<Row> Rows<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
-    fn len(&self) -> usize {
-        ascent::boxcar::Vec::len(self)
-    }
-
-    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
-        Box::new(GuardedRows {
-            inner: self.iter(),
-            guard: None,
-        })
-    }
-}
-
-/// Builds a lattice relation's field from its input rows, once each: a `Vec` under `ascent!`, a
-/// vector of locked rows under `ascent_par!`.
-pub trait FromLatticeRows<Row> {
-    fn from_lattice_rows(rows: impl Iterator<Item = Row>) -> Self;
-}
-
-impl<Row: Copy + Eq + std::hash::Hash> FromLatticeRows<Row> for Vec<Row> {
-    fn from_lattice_rows(rows: impl Iterator<Item = Row>) -> Self {
-        distinct(rows).collect()
-    }
-}
-
-impl<Row: Copy + Eq + std::hash::Hash> FromLatticeRows<Row>
-    for ascent::boxcar::Vec<std::sync::RwLock<Row>>
-{
-    fn from_lattice_rows(rows: impl Iterator<Item = Row>) -> Self {
-        distinct(rows).map(std::sync::RwLock::new).collect()
-    }
-}
-
-/// Ascent keeps a seeded field as given, and a lattice row seeded twice stays twice.
-fn distinct<Row: Copy + Eq + std::hash::Hash>(
-    rows: impl Iterator<Item = Row>,
+/// The rows, each once: Ascent keeps a seeded field as given, so a row seeded twice stays twice.
+pub fn distinct_rows<Row: Copy + Eq + std::hash::Hash>(
+    rows: impl IntoIterator<Item = Row>,
 ) -> impl Iterator<Item = Row> {
     let mut seen = hashbrown::HashSet::new();
-    rows.filter(move |r| seen.insert(*r))
-}
-
-pub type AssignLikeCondRow = (FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
-pub type LocalsCondRow = (FunctionId, FlowVariable, Path, Root, Path, Cond);
-pub type SummaryCondRow = (FunctionId, Root, Path, Root, Path, Cond);
-
-/// The `Always` rows of a lattice relation of five columns and a [`Cond`], without the
-/// condition: the facts that hold in every calling context, which is what the output keeps.
-pub fn always_rows<A: Copy, B: Copy, C: Copy, D: Copy, E: Copy>(
-    rows: &dyn Rows<(A, B, C, D, E, Cond)>,
-) -> Vec<(A, B, C, D, E)> {
-    let mut out = Vec::new();
-    let mut it = rows.stream();
-    while let Some((a, b, c, d, e, cond)) = it.next() {
-        if cond.is_always() {
-            out.push((*a, *b, *c, *d, *e));
-        }
-    }
-    out
+    rows.into_iter().filter(move |r| seen.insert(*r))
 }
 
 /// The edges of the global frame: the program-level flows between global paths.
@@ -932,16 +700,6 @@ pub fn global_flow_rows(assign_like: &[AssignLikeRow]) -> Vec<GlobalFlow> {
         .filter(|(f, ..)| *f == crate::facts::GLOBAL_FRAME)
         .filter_map(|(_, v1, p1, v2, p2)| Some((v1.as_global()?, *p1, v2.as_global()?, *p2)))
         .collect()
-}
-
-/// How many rows of a relation of five columns and a [`Cond`] are conditional.
-pub fn conditional_count<A, B, C, D, E>(rows: &dyn Rows<(A, B, C, D, E, Cond)>) -> usize {
-    let mut n = 0;
-    let mut it = rows.stream();
-    while let Some((.., cond)) = it.next() {
-        n += usize::from(!cond.is_always());
-    }
-    n
 }
 
 /// What `run_engine!` does with the stores of the large relations, which differ by [`Storage`]:
@@ -956,123 +714,80 @@ pub trait EngineStores {
 
 pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
 
-/// The store-backed relations every storage has, other than the [`CondStores`].
+/// The store-backed relations every storage has, other than the [`TrieStores`].
 pub struct StoreSizes {
     pub locals_key: usize,
 }
 
-/// What `run_engine!` does with the [`cond_trie`] stores of `locals`, `assign_like`, `edge_split`
-/// and `ext_dst`, serial or concurrent. Implemented by [`cond_stores!`](crate::cond_stores).
-pub trait CondStores {
-    /// Seeds `assign_like` with the program's assignments, `Always`, before the run.
+/// What `run_engine!` does with the [`locals_trie`] stores of `locals`, `assign_like`,
+/// `edge_split` and `ext_dst`, serial or concurrent. Implemented by
+/// [`trie_relations!`](crate::trie_relations).
+pub trait TrieStores {
+    /// Seeds `assign_like` with the program's assignments before the run.
     fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
-    /// Takes `assign_like`'s `Always` rows out, after the run.
+    /// Takes `assign_like`'s rows out, after the run.
     fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
-    fn cond_sizes(&self) -> CondSizes;
-    /// The heap of the `locals` store's `Always` rows.
+    fn trie_sizes(&self) -> TrieSizes;
+    /// The heap of the `locals` store.
     fn locals_heap_report(&self) -> locals_trie::HeapReport;
-    /// The heap of the conditional rows, one line.
-    fn cond_heap_report(&self) -> String;
-    fn locals_rows(&self) -> Box<dyn Rows<LocalsCondRow> + '_>;
-    fn assign_like_rows(&self) -> Box<dyn Rows<AssignLikeCondRow> + '_>;
     /// Writes the four relations, whose fields hold no rows, to `dump`.
-    fn dump_cond_stores(&self, dump: &mut dump::RelationDump<'_>);
+    fn dump_trie_stores(&self, dump: &mut dump::RelationDump<'_>);
 }
 
-/// Row counts of the [`CondStores`]: every row, and the conditional ones.
-pub struct CondSizes {
-    pub locals: (usize, usize),
-    pub assign_like: (usize, usize),
-    pub edge_split: (usize, usize),
-    pub ext_dst: (usize, usize),
-    /// The distinct `(f, v)` an `Always` `locals` row reaches.
+/// Row counts of the [`TrieStores`].
+pub struct TrieSizes {
+    pub locals: usize,
+    pub assign_like: usize,
+    pub edge_split: usize,
+    pub ext_dst: usize,
+    /// The distinct `(f, v)` a `locals` row reaches.
     pub reached_variables: usize,
 }
 
-/// Implements [`CondStores`] for a program whose four conditional relations are in the stores
-/// of `$m`, [`cond_trie`] or [`c_cond_trie`].
+/// Implements [`TrieStores`] for a program, serial or concurrent: the stores of both have the
+/// same methods.
 #[macro_export]
-macro_rules! cond_stores {
-    ($prog_ty:ty, $m:ident) => {
-        impl $crate::index_engine::CondStores for $prog_ty {
+macro_rules! trie_relations {
+    ($prog_ty:ty) => {
+        impl $crate::index_engine::TrieStores for $prog_ty {
             fn seed_assign_like(&mut self, rows: Vec<$crate::index_engine::AssignLikeRow>) {
-                self.__assign_like_ind_common =
-                    $crate::index_engine::cond_trie::FromRows::from_rows(rows);
+                // Stored source first.
+                self.__assign_like_ind_common.extend_rows(
+                    rows.into_iter().map(|(f, v1, p1, v2, p2)| (f, v2, p2, v1, p1)),
+                );
             }
             fn take_assign_like(&mut self) -> Vec<$crate::index_engine::AssignLikeRow> {
-                $crate::index_engine::$m::assign::into_always_vec(std::mem::take(
-                    &mut self.__assign_like_ind_common,
-                ))
+                std::mem::take(&mut self.__assign_like_ind_common)
+                    .into_rows()
+                    .into_iter()
+                    .map(|(f, v2, p2, v1, p1)| (f, v1, p1, v2, p2))
+                    .collect()
             }
-            fn cond_sizes(&self) -> $crate::index_engine::CondSizes {
-                $crate::index_engine::CondSizes {
-                    locals: (
-                        self.__locals_ind_common.len(),
-                        self.__locals_ind_common.conditional_len(),
-                    ),
-                    assign_like: (
-                        self.__assign_like_ind_common.len(),
-                        self.__assign_like_ind_common.conditional_len(),
-                    ),
-                    edge_split: (
-                        self.__edge_split_ind_common.len(),
-                        self.__edge_split_ind_common.conditional_len(),
-                    ),
-                    ext_dst: (
-                        self.__ext_dst_ind_common.len(),
-                        self.__ext_dst_ind_common.conditional_len(),
-                    ),
-                    reached_variables: self.__locals_ind_common.always().num_reached_variables(),
+            fn trie_sizes(&self) -> $crate::index_engine::TrieSizes {
+                $crate::index_engine::TrieSizes {
+                    locals: self.__locals_ind_common.len(),
+                    assign_like: self.__assign_like_ind_common.len(),
+                    edge_split: self.__edge_split_ind_common.len(),
+                    ext_dst: self.__ext_dst_ind_common.len(),
+                    reached_variables: self.__locals_ind_common.num_reached_variables(),
                 }
             }
             fn locals_heap_report(&self) -> $crate::index_engine::locals_trie::HeapReport {
-                self.__locals_ind_common.always().heap_report()
+                self.__locals_ind_common.heap_report()
             }
-            fn cond_heap_report(&self) -> String {
-                let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
-                format!(
-                    "conditional rows: locals {} ({:.1} MB), assign_like {} ({:.1} MB), \
-                     edge_split {} ({:.1} MB), ext_dst {} ({:.1} MB)",
-                    self.__locals_ind_common.conditional_len(),
-                    mb(self.__locals_ind_common.cond_heap_bytes()),
-                    self.__assign_like_ind_common.conditional_len(),
-                    mb(self.__assign_like_ind_common.cond_heap_bytes()),
-                    self.__edge_split_ind_common.conditional_len(),
-                    mb(self.__edge_split_ind_common.cond_heap_bytes()),
-                    self.__ext_dst_ind_common.conditional_len(),
-                    mb(self.__ext_dst_ind_common.cond_heap_bytes()),
-                )
-            }
-            fn locals_rows(
-                &self,
-            ) -> Box<dyn $crate::index_engine::Rows<$crate::index_engine::LocalsCondRow> + '_> {
-                Box::new($crate::index_engine::$m::locals::AsRows(
-                    &self.__locals_ind_common,
-                ))
-            }
-            fn assign_like_rows(
-                &self,
-            ) -> Box<dyn $crate::index_engine::Rows<$crate::index_engine::AssignLikeCondRow> + '_>
-            {
-                Box::new($crate::index_engine::$m::assign::AsRows(
-                    &self.__assign_like_ind_common,
-                ))
-            }
-            fn dump_cond_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
-                use $crate::index_engine::dump::dump_rows;
-                use $crate::index_engine::$m::{assign, locals};
-                dump_rows(&locals::AsRows(&self.__locals_ind_common), dump, "locals");
-                dump_rows(
-                    &assign::AsRows(&self.__assign_like_ind_common),
-                    dump,
-                    "assign_like",
-                );
-                dump_rows(
-                    &locals::AsRows(&self.__edge_split_ind_common),
-                    dump,
-                    "edge_split",
-                );
-                dump_rows(&assign::AsRows(&self.__ext_dst_ind_common), dump, "ext_dst");
+            fn dump_trie_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
+                dump.relation("locals", |w| {
+                    self.__locals_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("assign_like", |w| {
+                    self.__assign_like_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("edge_split", |w| {
+                    self.__edge_split_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("ext_dst", |w| {
+                    self.__ext_dst_ind_common.for_each_row(|r| w.row(&r))
+                });
             }
         }
     };
@@ -1296,24 +1011,22 @@ ascent_source! {
     // which every rule that tests or splits a path asks.
     relation paths(Path);
     relation path_set(PathSetRef);
-    // A function's flow from root `n2.p2` to root `n1.p1` (a formal, the return or a global), under
-    // its condition: `Always` for one that holds in every calling context, or the decisions it
-    // holds under (rule 3.4's conditional summaries). The loaded models are `Always`.
-    lattice summary(FunctionId, Root, Path, Root, Path, Cond);
+    // A function's flow from root `n2.p2` to root `n1.p1` (a formal, the return or a global).
+    relation summary(FunctionId, Root, Path, Root, Path);
     relation config(IndexConfig);
     relation intent_frame(FunctionId);
 
     // Derived:
 
-    // Local reachability, under its condition. The core, most expensive relation.
-    //
-    // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]. The rules that do
-    // not reason about context (call-target propagation, the critical summaries and resolvents,
-    // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts.
-    #[ds($crate::index_engine::cond_trie::locals)]
-    relation locals(FunctionId, FlowVariable, Path, Root, Path, Cond);
-    #[ds($crate::index_engine::cond_trie::assign)]
-    relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
+    // Local reachability: `locals(f, v, p, a, p4)` is `v.p` reached from root `a.p4`. The core,
+    // most expensive relation.
+    #[ds($crate::index_engine::locals_trie)]
+    relation locals(FunctionId, FlowVariable, Path, Root, Path);
+    // An edge `v1.p1 = v2.p2` of `f`, stored SOURCE FIRST: `assign_like(f, v2, p2, v1, p1)`.
+    // The rules probe an edge by its source, and the store groups on the first three columns.
+    // The engine's input and output rows are destination first; `run_engine!` swaps them.
+    #[ds($crate::index_engine::locals_trie)]
+    relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
     relation prog_store(FunctionId, FlowVariable, Path);
     // A variable that whole-aliases a formal or a global through original program copies,
@@ -1328,7 +1041,7 @@ ascent_source! {
     relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
 
     // Initialize locals with formals
-    locals(infunc, v1, p1.clone(), Root::formal(i), p1.clone(), Cond::Always) <--
+    locals(infunc, v1, p1.clone(), Root::formal(i), p1.clone()) <--
         formal_param(infunc, v1, _),
         if let Some(i) = v1.as_formal(),
         let p1 = Path::empty();
@@ -1339,15 +1052,15 @@ ascent_source! {
     // are summaries (with a formal) or program-level edges (with another global), below.
     relation global_mention(FunctionId, GlobalId);
     global_mention(f, g) <--
-        assign_like(f, v1, _, v2, _, _),
+        assign_like(f, v2, _, v1, _),
         for g in [v1.as_global(), v2.as_global()].into_iter().flatten();
     global_mention(f, g) <-- const_str_assign(f, v, _, _), if let Some(g) = v.as_global();
     global_mention(GLOBAL_FRAME, g) <-- global_mention(_, g);
-    locals(f, v, Path::empty(), Root::global(*g), Path::empty(), Cond::Always) <--
+    locals(f, v, Path::empty(), Root::global(*g), Path::empty()) <--
         global_mention(f, g),
         let v = FlowVariable::global(*g);
 
-    // Forward field propagation (context-free), as exact-key joins.
+    // Forward field propagation, as exact-key joins.
     //
     // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an edge
     // `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
@@ -1368,10 +1081,10 @@ ascent_source! {
     // `[m].#value = #value` for every `m`. `Path::prefix_keys` spells out both, and
     // `Path::wild_rest` matches a wild key.
 
-    // The distinct `(f, v, p)` reached under any condition, so the splits below run once per
-    // path, not once per row (rows outnumber paths thirty to one on a dense binary).
+    // The distinct `(f, v, p)` reached, so the splits below run once per path, not once per row
+    // (rows outnumber paths thirty to one on a dense binary).
     relation reach_vp(FunctionId, FlowVariable, Path);
-    reach_vp(f, v, p) <-- locals(f, v, p, _, _, _);
+    reach_vp(f, v, p) <-- locals(f, v, p, _, _);
     // The exact and wild keys of a `locals` path. Two relations rather than a flag column: a
     // literal in a clause makes Ascent index that column alone, and the planner then drives
     // whole-relation scans off a two-key index.
@@ -1393,24 +1106,23 @@ ascent_source! {
         reach_vp(f, v, p),
         path_set(ps),
         if let Some((key, m)) = ps.split_trailing_offset(p);
-    // An edge whose source path ends in an offset, keyed without it, for the wild match. The
-    // edges and the expanded edges below carry the edge's condition.
-    lattice assign_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, Cond);
-    assign_wild(f, v2, key, m, v1, p1, *c) <--
-        assign_like(f, v1, p1, v2, p2, c),
+    // An edge whose source path ends in an offset, keyed without it, for the wild match.
+    relation assign_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path);
+    assign_wild(f, v2, key, m, v1, p1) <--
+        assign_like(f, v2, p2, v1, p1),
         path_set(ps),
         if let Some((key, m)) = ps.split_trailing_offset(p2);
     // The exact and wild keys of an edge's source path.
     // Held in the `locals` store's shape: `(f, v2, key)` probed exactly.
-    #[ds($crate::index_engine::cond_trie::locals)]
-    relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path), Cond);
-    edge_split(f, v2, key, rest, (*v1, *p1), *c) <--
-        assign_like(f, v1, p1, v2, p2, c),
+    #[ds($crate::index_engine::locals_trie)]
+    relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path));
+    edge_split(f, v2, key, rest, (*v1, *p1)) <--
+        assign_like(f, v2, p2, v1, p1),
         path_set(ps),
         for (key, rest) in ps.splits(p2).exact;
-    lattice edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, Cond);
-    edge_split_wild(f, v2, key, rest, v1, p1, *c) <--
-        assign_like(f, v1, p1, v2, p2, c),
+    relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
+    edge_split_wild(f, v2, key, rest, v1, p1) <--
+        assign_like(f, v2, p2, v1, p1),
         path_set(ps),
         for (key, rest) in ps.splits(p2).wild;
 
@@ -1425,24 +1137,24 @@ ascent_source! {
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
     // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)
     // rather than once per `locals` row, so the reachability step below is an exact join.
-    // Held in the `assign_like` store's shape: an edge, probed exactly by `(f, v2, p23)`.
-    #[ds($crate::index_engine::cond_trie::assign)]
-    relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, Cond);
-    ext_dst(f, v1, p13, v2, p23, *c) <--
+    // Stored source first like `assign_like`: `ext_dst(f, v2, p23, v1, p13)`, probed exactly by
+    // `(f, v2, p23)`.
+    #[ds($crate::index_engine::locals_trie)]
+    relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path);
+    ext_dst(f, v2, p23, v1, p13) <--
         locals_key(f, v2, key, rest, p23),
-        assign_like(f, v1, p1, v2, key, c),
+        assign_like(f, v2, key, v1, p1),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, None, rest);
-    ext_dst(f, v1, p13, v2, p23, *c) <--
+    ext_dst(f, v2, p23, v1, p13) <--
         locals_key_wild(f, v2, key, rest, p23),
-        assign_wild(f, v2, key, m, v1, p1, c),
+        assign_wild(f, v2, key, m, v1, p1),
         if let Some((adj, tail)) = rest.wild_rest(*m),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, Some(adj), &tail);
-    locals(f, v1, p13, a, p4, c) <--
-        ext_dst(f, v1, p13, v2, p23, c1),
-        locals(f, v2, p23, a, p4, c2),
-        if let Some(c) = c1.and(*c2);
+    locals(f, v1, p13, a, p4) <--
+        ext_dst(f, v2, p23, v1, p13),
+        locals(f, v2, p23, a, p4);
 
     // Semantics: `edge_split` and `ext_fml` are S6 applied to a label's suffixes, so a label at
     // `a.p4` on `v2.p2` extends by the `rest` the edge reads beyond `p2`. Same deviations as
@@ -1451,23 +1163,21 @@ ascent_source! {
     // Formal side: `v1.p1 = v2.p23` with `p23 = p2·rest` and `v2.p2` reached from `a.p4` give
     // `v1.p1` reached from `a.(p4·rest)`. The split is on the edge's source path, and the
     // `locals` probe is exact.
-    locals(f, v1, p1, a, p43, c) <--
-        edge_split(f, v2, key, rest, dst, c1),
-        locals(f, v2, key, a, p4, c2),
-        if let Some(c) = c1.and(*c2),
+    locals(f, v1, p1, a, p43) <--
+        edge_split(f, v2, key, rest, dst),
+        locals(f, v2, key, a, p4),
         let (v1, p1) = dst,
         path_set(ps),
         if let Some(p43) = ps.concat(p4, None, rest);
     // The wild half: the `locals` path is `key.[m]`, the edge reads `key.[n]·tail`.
-    lattice ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path, Cond);
-    ext_fml(f, v1, p1, v2, p2, adj, tail, *c) <--
-        edge_split_wild(f, v2, key, rest, v1, p1, c),
+    relation ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path);
+    ext_fml(f, v1, p1, v2, p2, adj, tail) <--
+        edge_split_wild(f, v2, key, rest, v1, p1),
         locals_wild(f, v2, key, m, p2),
         if let Some((adj, tail)) = rest.wild_rest(*m);
-    locals(f, v1, p1, a, p43, c) <--
-        ext_fml(f, v1, p1, v2, p2, adj, rest, c1),
-        locals(f, v2, p2, a, p4, c2),
-        if let Some(c) = c1.and(*c2),
+    locals(f, v1, p1, a, p43) <--
+        ext_fml(f, v1, p1, v2, p2, adj, rest),
+        locals(f, v2, p2, a, p4),
         path_set(ps),
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
@@ -1479,17 +1189,16 @@ ascent_source! {
     // "the empty suffix moves forward only". `Shared` also writes the whole variable back
     // ("shared formals" row, adds), and `Copied` writes nothing back ("copied formals" row,
     // loses).
-    assign_like(func_id, v.clone(), p, cv.clone(), Path::empty(), Cond::Always),
-    assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p, Cond::Always) <--
+    assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p),
+    assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()) <--
         actual_param(call_site_slice, n, vx),
         let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
         let cv = call_arg!(insn_id, *n),
         let FlowVertex(v, p, ..) = vx;
 
     // Compute assignments from summaries: a summary at every site that calls its function.
-    assign_like(caller, v1, p1, v2, p2, Cond::Always) <--
-        summary(callee, n1, p1, n2, p2, c),
-        if c.is_always(),
+    assign_like(caller, v2, p2, v1, p1) <--
+        summary(callee, n1, p1, n2, p2),
         call(caller, insn, callee),
         let v1 = call_arg!(*insn, *n1),
         let v2 = call_arg!(*insn, *n2);
@@ -1501,8 +1210,7 @@ ascent_source! {
     const_reaches(func_id, v1.clone(), p_new.clone(), s) <--
         intent_frame(func_id),
         const_reaches(func_id, v2, p_context, s),
-        assign_like(func_id, v1, p1, v2, p2, c),
-        if c.is_always(),
+        assign_like(func_id, v2, p2, v1, p1),
         path_set(ps),
         if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
 
@@ -1535,10 +1243,9 @@ ascent_source! {
     resolved_call(func_id, bridge_insn, recv) <--
         intent_pair(func_id, bridge_insn, recv, _);
 
-    // Compute summaries from local reachability, under the flow's condition (rule 3.4 for a
-    // conditional one).
-    summary(infunc, n1, p1, n2, p2, *c) <--
-        locals(infunc, dst_var, p1, n2, p2, c),
+    // Compute summaries from local reachability.
+    summary(infunc, n1, p1, n2, p2) <--
+        locals(infunc, dst_var, p1, n2, p2),
         // join with formal_param here instead of using if so that we don't have to traverse all of
         // locals
         formal_param(infunc, dst_var, formal_ty),
@@ -1546,27 +1253,22 @@ ascent_source! {
         if n1.isout(*formal_ty, p1),
         if n1 != *n2 || p1 != p2;
 
-    // Semantics: G6. A flow into a global path is a summary when it comes from a
-    // formal, and from another global path only under a decision (rule 3.2 applies it at
-    // the callers that establish the decision, where it becomes `Always` and lands below). A flow
-    // between two global paths that holds in every calling context holds in every instance
-    // (G2), so it is no function's summary: it is an edge of the global frame, where the
-    // field rules close it.
-    summary(f, Root::global(g), p1, n2, p2, *c) <--
-        locals(f, v, p1, n2, p2, c),
+    // Semantics: G6. A flow into a global path is a summary when it comes from a formal. A flow
+    // between two global paths holds in every instance (G2), so it is no function's summary: it
+    // is an edge of the global frame, where the field rules close it.
+    summary(f, Root::global(g), p1, n2, p2) <--
+        locals(f, v, p1, n2, p2),
         if *f != GLOBAL_FRAME,
         if let Some(g) = v.as_global(),
-        if !(n2.is_global() && c.is_always()),
-        if Root::global(g) != *n2 || p1 != p2;
-    assign_like(GLOBAL_FRAME, v, p1, FlowVariable::global(h), p2, Cond::Always) <--
-        locals(f, v, p1, n2, p2, c),
+        if !n2.is_global();
+    assign_like(GLOBAL_FRAME, FlowVariable::global(h), p2, v, p1) <--
+        locals(f, v, p1, n2, p2),
         if *f != GLOBAL_FRAME,
-        if c.is_always(),
         if let Some(g) = v.as_global(),
         if let Some(h) = n2.as_global(),
         if g != h || p1 != p2;
 
-    // aliasing summary rule (context-free flows only).
+    // aliasing summary rule.
     //
     // Semantics: S8, the backward rule, restricted. A store's labels move backward to the
     // formal `v1` copies only when `v1` is a whole-variable copy-chain alias of a formal
@@ -1584,17 +1286,16 @@ ascent_source! {
     // through a whole copy of a global, `l = $g; l.f = v`, reaches `$g.f`. Between two globals it
     // is an edge of the frame rather than a summary, as above.
     relation alias_flow(FunctionId, Root, Path, Root, Path);
-    summary(f, n1, p1, n2, p2, Cond::Always) <--
+    summary(f, n1, p1, n2, p2) <--
         alias_flow(f, n1, p1, n2, p2),
         if !(n1.is_global() && n2.is_global());
-    assign_like(GLOBAL_FRAME, FlowVariable::global(g1), p1, FlowVariable::global(g2), p2, Cond::Always) <--
+    assign_like(GLOBAL_FRAME, FlowVariable::global(g2), p2, FlowVariable::global(g1), p1) <--
         alias_flow(_, n1, p1, n2, p2),
         if let Some(g1) = n1.as_global(),
         if let Some(g2) = n2.as_global();
     alias_flow(infunc, n1, p1.clone(), n2, bp) <--
         // v1.p1 <- n2.bp  (delta driver)
-        locals(infunc, v1, p1, n2, bp, lc),
-        if lc.is_always(),
+        locals(infunc, v1, p1, n2, bp),
         if !p1.is_empty(),
         // `#value` moves forward only (S8): a store at `v1.#value` is not shared with v1's alias.
         if !p1.is_value(),
@@ -1616,7 +1317,7 @@ ascent_source! {
     // into every function.
     relation global_read(FunctionId, GlobalId, Path);
     global_read(f, g, p) <--
-        assign_like(f, _, _, v, p, _),
+        assign_like(f, v, p, _, _),
         if *f != GLOBAL_FRAME,
         if let Some(g) = v.as_global();
 
@@ -1670,13 +1371,6 @@ impl<'a> EngineInput<'a> {
     pub fn new(mut facts: IndexFacts, config: IndexConfig, id_map: Option<&'a IdMap>) -> Self {
         let parallelism = config.parallelism;
         let storage = config.storage;
-        // The widening bound is process-global (sets are interned process-wide); one kind of set
-        // per run.
-        decision::set_widen_bound(match config.hybrid_context {
-            HybridContext::Bounded(k) | HybridContext::Spill(k) => k,
-            _ => 0,
-        });
-        decision::set_spill(matches!(config.hybrid_context, HybridContext::Spill(_)));
         use hashbrown::hash_set::HashSet;
         let num_functions = facts
             .formal_param
@@ -1880,8 +1574,7 @@ impl<'a> EngineInput<'a> {
 /// included, so each engine crate glob-imports this.
 pub mod rules_prelude {
     pub use super::{
-        ACTION_PATH, COMPONENT_PATH, Cond, ContextJoin, Decision, DecisionId, DecisionSet,
-        HybridContext, IndexConfig, TYPE_PATH, decision, mime_matches, label_splits,
+        ACTION_PATH, COMPONENT_PATH, IndexConfig, TYPE_PATH, label_splits, mime_matches,
     };
     pub use crate::call_arg;
     pub use crate::facts::{
@@ -1924,7 +1617,8 @@ macro_rules! trie_stores {
 ///
 /// Everything from seeding the inputs to extracting the result is written once, here, and
 /// expanded once per engine crate. The program types spell their fields identically, but each
-/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `CondTrie` vs `CCondTrie`), so
+/// field's type differs by engine (`Vec` vs `boxcar::Vec`, `LocalsIndCommon` vs
+/// `CLocalsIndCommon`), so
 /// no one function signature covers them all and a trait would only restate every field.
 //
 // Relation inputs are set here rather than as inline `= <init>` initializers, because the
@@ -1936,7 +1630,7 @@ macro_rules! trie_stores {
 #[macro_export]
 macro_rules! run_engine {
     ($prog_ty:ty, $input:expr) => {{
-        use $crate::index_engine::CondStores as _;
+        use $crate::index_engine::TrieStores as _;
         use $crate::index_engine::EngineStores as _;
         let $crate::index_engine::EngineInput {
             facts,
@@ -1959,12 +1653,7 @@ macro_rules! run_engine {
         prog.formal_param = facts.formal_param.into_iter().collect();
         prog.actual_param = facts.actual_param.into_iter().collect();
         prog.call = call.into_iter().collect();
-        prog.summary = $crate::index_engine::FromLatticeRows::from_lattice_rows(
-            facts
-                .summary
-                .into_iter()
-                .map(|(f, n1, p1, n2, p2)| (f, n1, p1, n2, p2, $crate::index_engine::Cond::Always)),
-        );
+        prog.summary = $crate::index_engine::distinct_rows(facts.summary).collect();
         prog.const_str_assign = facts
             .const_str_assign
             .into_iter()
@@ -2021,14 +1710,14 @@ macro_rules! run_engine {
             prog.relation_sizes_summary()
         );
         let sizes = prog.store_sizes();
-        let cond_sizes = prog.cond_sizes();
+        let trie_sizes = prog.trie_sizes();
         log::debug!(
-            "[relsizes] byods-backed (rows, conditional): assign_like {:?}, locals {:?}, \
+            "[relsizes] byods-backed: assign_like {:?}, locals {:?}, \
              edge_split {:?}, ext_dst {:?}; locals_key size: {}",
-            cond_sizes.assign_like,
-            cond_sizes.locals,
-            cond_sizes.edge_split,
-            cond_sizes.ext_dst,
+            trie_sizes.assign_like,
+            trie_sizes.locals,
+            trie_sizes.edge_split,
+            trie_sizes.ext_dst,
             sizes.locals_key
         );
         let locals_heap = prog.locals_heap_report();
@@ -2040,11 +1729,11 @@ macro_rules! run_engine {
                 &prog.relation_sizes_summary(),
                 &prog.scc_times_summary(),
                 &[
-                    ("assign_like", cond_sizes.assign_like.0),
-                    ("locals", cond_sizes.locals.0),
-                    ("edge_split", cond_sizes.edge_split.0),
+                    ("assign_like", trie_sizes.assign_like),
+                    ("locals", trie_sizes.locals),
+                    ("edge_split", trie_sizes.edge_split),
                     ("locals_key", sizes.locals_key),
-                    ("ext_dst", cond_sizes.ext_dst.0),
+                    ("ext_dst", trie_sizes.ext_dst),
                 ],
             )
         };
@@ -2060,13 +1749,12 @@ macro_rules! run_engine {
             prog.locals_key_wild.len(),
             prog.locals_wild.len(),
             prog.assign_wild.len(),
-            cond_sizes.edge_split.0,
+            trie_sizes.edge_split,
             prog.edge_split_wild.len(),
-            cond_sizes.ext_dst.0,
+            trie_sizes.ext_dst,
             prog.ext_fml.len()
         );
         log::debug!("{locals_heap}");
-        log::debug!("{}", prog.cond_heap_report());
         profile.memory.locals = Some(locals_heap);
         profile.memory.fixpoint_interned = interned_after
             .into_iter()
@@ -2083,12 +1771,12 @@ macro_rules! run_engine {
         if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);
-            prog.dump_cond_stores(&mut dump);
+            prog.dump_trie_stores(&mut dump);
             dump.finish(&prog.relation_sizes_summary());
         }
 
         let assign_like_out = prog.take_assign_like();
-        let summary_out = $crate::index_engine::always_rows(&prog.summary);
+        let summary_out: Vec<_> = prog.summary.into_iter().collect();
         let global_flow_out = $crate::index_engine::global_flow_rows(&assign_like_out);
 
         let stats = $crate::index_engine::IndexStats {
@@ -2096,12 +1784,12 @@ macro_rules! run_engine {
             initial_assign,
             final_assign_like: assign_like_out.len(),
             initial_formals,
-            final_locals: cond_sizes.locals.0 - cond_sizes.locals.1,
+            final_locals: trie_sizes.locals,
             initial_summary,
             final_summary: summary_out.len(),
             num_functions,
             num_variables,
-            reached_variables: cond_sizes.reached_variables,
+            reached_variables: trie_sizes.reached_variables,
             final_resolved_call: prog.resolved_call.len(),
         };
         stats.log();

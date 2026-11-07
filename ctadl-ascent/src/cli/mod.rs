@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, Storage,
+    IndexFacts, IndexResult, Parallelism, Storage,
     source_info::IndexSourceInfo, taint_index_with_config,
 };
 use crate::languages::{android_intent, android_manifest, jni};
@@ -82,10 +82,6 @@ pub struct IndexOptions {
     pub call_policy: crate::codegen::CallPolicy,
     pub prune_unreachable_cfg_nodes: bool,
     pub alias_rule: bool,
-    /// How a decided critical call site's summary is instantiated; see [`HybridContext`].
-    pub hybrid_context: HybridContext,
-    /// How rule 3.2 pairs conditional summaries with establishing calls; see [`ContextJoin`].
-    pub context_join: ContextJoin,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
@@ -104,8 +100,6 @@ impl Default for IndexOptions {
             call_policy: crate::codegen::CallPolicy::default(),
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
-            hybrid_context: HybridContext::default(),
-            context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
@@ -397,8 +391,6 @@ pub fn index(
         call_policy,
         prune_unreachable_cfg_nodes,
         alias_rule,
-        hybrid_context,
-        context_join,
         parallelism,
         storage,
         mem2reg,
@@ -778,8 +770,6 @@ pub fn index(
     });
     let config = crate::index_engine::IndexConfig {
         alias_rule,
-        hybrid_context,
-        context_join,
         parallelism,
         storage,
         deref_paths,
@@ -855,7 +845,6 @@ pub fn index(
         )?),
         Some(ctadl_import::project::EngineRecord {
             alias_rule,
-            hybrid_context: hybrid_context.to_string(),
             deref_paths,
             mem2reg: mem2reg.map_or_else(|| "off".to_string(), |m| m.tag()),
         }),
