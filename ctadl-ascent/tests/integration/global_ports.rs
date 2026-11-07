@@ -10,12 +10,13 @@ use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, S
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 
 /// `consume` reads `g_data`, which nothing writes and nothing calls `consume` with; `quiet`
-/// reads `other`, which `store` writes from `input`.
+/// reads `other`, which `store` writes from `input`; nothing reads `unread`.
 const PROGRAM: &str = r"
 void sink(int x);
 int input(void);
 int g_data;
 int other;
+int unread;
 
 void consume(void) { sink(g_data); }
 void quiet(void) { sink(other); }
@@ -83,12 +84,13 @@ fn a_source_on_a_global_reaches_a_sink_with_no_call_between() {
     assert_eq!(logical["kind"], "variable");
 }
 
-/// A source on another global reaches nothing: the flow above is through `g_data` itself.
+/// A source on a global nothing reads, or on a path below `g_data` that `consume` does not read,
+/// reaches nothing.
 #[test]
 fn a_source_on_an_unread_global_reaches_nothing() {
     let sarif = run(
         "global_source_unread",
-        r#"source(G::self.deref, kind = "Config") :- global(G, name = "absent_from_sinks");
+        r#"source(G::self.deref, kind = "Config") :- global(G, name = "unread");
            source(G::self.f, kind = "Config") :- global(G, name = "g_data");
            sink(F::arg(0), kind = "Out") :- fun(F, name = "sink");"#,
     );
