@@ -2279,11 +2279,7 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
             let encoding = source_info::ArtifactEncoding::from_u8(encoding_arr.value(i));
             let start = starts.value(i);
             let len_tag = len_tags.value(i);
-            let len_value = if len_tags.value(i) == 1 {
-                len_values.value(i)
-            } else {
-                0
-            };
+            let len_value = len_values.value(i);
 
             let physical_location = span_physical_location(
                 import,
@@ -2416,7 +2412,6 @@ async fn global_declarations<P: AsRef<path::Path>>(
             let len_tags = column(4).downcast_ref::<UInt8Array>().unwrap();
             let len_values = column(5).downcast_ref::<UInt32Array>().unwrap();
             for row in 0..batch.num_rows() {
-                let len_tag = len_tags.value(row);
                 let location = span_physical_location(
                     import,
                     profile,
@@ -2425,12 +2420,8 @@ async fn global_declarations<P: AsRef<path::Path>>(
                         canonical_path: canonical_paths.value(row),
                         encoding: source_info::ArtifactEncoding::from_u8(encodings.value(row)),
                         start: starts.value(row),
-                        len_tag,
-                        len_value: if len_tag == 1 {
-                            len_values.value(row)
-                        } else {
-                            0
-                        },
+                        len_tag: len_tags.value(row),
+                        len_value: len_values.value(row),
                     },
                     "data",
                 )?;
@@ -2456,6 +2447,7 @@ struct RawSpan<'a> {
     start: u32,
     /// `spans.len_tag`: 0 a caret, 1 `len_value` bytes, 2 to the end of the line.
     len_tag: u8,
+    /// `spans.len_value`, meaningful only when `len_tag` is 1.
     len_value: u32,
 }
 
@@ -2476,6 +2468,7 @@ fn span_physical_location(
         len_tag,
         len_value,
     } = span;
+    let len_value = if len_tag == 1 { len_value } else { 0 };
     let region = match encoding {
         source_info::ArtifactEncoding::Binary => {
             let builder = Region::builder().byte_offset(start);

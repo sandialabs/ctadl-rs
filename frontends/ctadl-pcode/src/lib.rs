@@ -29,10 +29,9 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
 A span's start is an offset from the image base, the address Ghidra loaded the image at
 (`PROGRAM_IMAGE_BASE`), not the address itself: an instruction at Ghidra address `A` starts at
 `A - image_base`. Source-info positions are `u32`, and a 64-bit image's addresses are not
-(a Mach-O executable loads at `0x1_0000_0000`); its offsets are, for any image under 4 GiB. The
-formatter adds the base back for SARIF's `absoluteAddress`, and the offset is the
-`relativeAddress`. An instruction whose offset does not fit gets no span, and the import warns.
-The memory global is declared at offset 0, the image itself.
+(a Mach-O executable loads at `0x1_0000_0000`); its offsets are, for any image under 4 GiB. An
+instruction whose offset does not fit gets no span, and the import warns. The memory global is
+declared at offset 0, the image itself.
 
 # Why the JNI registry lives here
 
@@ -270,15 +269,12 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Use pcode-reader crate to read facts
         let reader = PcodeFactsReader::new(facts_dir);
         self.image_base = reader
             .read_image_base()
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
             .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
             .unwrap_or(0);
-        // The memory global is the image, declared at the image's start: a caret at offset 0
-        // (see "Spans" in the crate docs).
         let image_span = builders.source_info_builder.span_for(
             artifact_key.clone(),
             0,

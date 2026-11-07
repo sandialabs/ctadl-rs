@@ -594,8 +594,7 @@ impl FlowyCtx {
         Ok(())
     }
 
-    /// The span of the bytes `span` covers, which end after the `;` of a statement,
-    /// terminator or `var`.
+    /// The span of the bytes `span` covers.
     fn span_for(&mut self, span: &std::ops::Range<usize>) -> source_info::FileSpanId {
         let start = span.start.try_into().unwrap();
         let len = source_info::SpanLen::ByteLen(span.len().try_into().unwrap());
