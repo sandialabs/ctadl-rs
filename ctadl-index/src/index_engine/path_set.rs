@@ -21,7 +21,7 @@ use std::hash::Hasher;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ctadl_ir::mir::{Offset, PathSegment};
+use ctadl_ir::cir::{Offset, PathSegment};
 use hashbrown::HashTable;
 
 use crate::facts::{Path, suffix_hash};
@@ -252,7 +252,7 @@ impl PathSet {
     #[inline]
     pub fn concat(&self, prefix: &Path, adjust: Option<i64>, rest: &Path) -> Option<Path> {
         // Offsets merge only at the junction: `prefix` and `rest` are each normalized. The
-        // equations are those of `ctadl_ir::mir::path`.
+        // equations are those of `ctadl_ir::cir::path`.
         let mut len = 0;
         let mut last_off = None;
         let mut last_value = false;

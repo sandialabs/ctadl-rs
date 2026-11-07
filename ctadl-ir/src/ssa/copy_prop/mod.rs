@@ -67,7 +67,7 @@ directly.
 */
 use std::collections::HashMap;
 
-use crate::mir::*;
+use crate::cir::*;
 
 #[cfg(test)]
 mod tests;

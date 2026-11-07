@@ -10,10 +10,10 @@ use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
 use ctadl_ascent::facts::Path;
+use ctadl_ir::cir::TerminatorKind;
+use ctadl_ir::cir::call::{CallEdges, CallStyle};
+use ctadl_ir::cir::{LocalIdx, Locals};
 use ctadl_ir::graph::{DirectedGraph, Successors};
-use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -293,14 +293,14 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 
 // A debugging aid for inspecting parsed blocks.
 /// Parses the path tail of a DSL access-path string with the one canonical grammar
-/// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
+/// ([`ctadl_ir::cir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
 /// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
 /// behavior of silently dropping empty segments.
 #[track_caller]
 fn parse_path(s: &str) -> Vec<PathSegment> {
-    ctadl_ir::mir::parse_segments(s)
+    ctadl_ir::cir::parse_segments(s)
         .unwrap_or_else(|e| panic!("malformed access path {s:?} in test DSL: {e}"))
 }
 

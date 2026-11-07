@@ -1,10 +1,10 @@
-use crate::index::idx::Idx;
-use crate::mir::call::CallStyle;
-use crate::mir::terminator::{Terminator, TerminatorKind};
-use crate::mir::{
+use crate::cir::call::CallStyle;
+use crate::cir::terminator::{Terminator, TerminatorKind};
+use crate::cir::{
     AccessPath, BasicBlockData, BasicBlockIdx, Exp, FunctionData, LocalIdx, Locals, ParameterIdx,
     ParameterType, PathSegment, Statement, StatementIdx, StatementKind, VariableRef,
 };
+use crate::index::idx::Idx;
 
 /// A builder for creating functions.
 #[derive(Debug)]
@@ -182,7 +182,7 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `targets` - Target basic blocks
-    pub fn create_goto(&mut self, targets: impl IntoIterator<Item = crate::mir::BasicBlockIdx>) {
+    pub fn create_goto(&mut self, targets: impl IntoIterator<Item = crate::cir::BasicBlockIdx>) {
         let terminator = Terminator::new_kind(TerminatorKind::Goto {
             targets: targets.into_iter().collect(),
         });
@@ -197,7 +197,7 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn create_phi(
         &mut self,
         dest: VariableRef,
-        operands: impl IntoIterator<Item = (crate::mir::BasicBlockIdx, VariableRef)>,
+        operands: impl IntoIterator<Item = (crate::cir::BasicBlockIdx, VariableRef)>,
     ) -> StatementIdx {
         self.insert_kind(StatementKind::Phi {
             dest,

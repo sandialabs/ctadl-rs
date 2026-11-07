@@ -24,7 +24,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
     JavaSimpleName, VirtualMethodTable, is_method_handle_invoke,
 };
@@ -732,9 +732,9 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::PathSegment {
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> cir::PathSegment {
         let class = format!("L{};", f.class_name);
-        mir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
+        cir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
@@ -1000,7 +1000,7 @@ impl Context {
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
-                    mir::PathSegment::field("[]"),
+                    cir::PathSegment::field("[]"),
                 ))]
             }
             // *astore
@@ -1017,7 +1017,7 @@ impl Context {
                 let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::from(object),
-                    mir::PathSegment::field("[]"),
+                    cir::PathSegment::field("[]"),
                     value,
                 ))]
             }

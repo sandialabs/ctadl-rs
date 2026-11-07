@@ -169,7 +169,7 @@ pub struct TaintSearchGraph {
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
     /// A source on `v.p` also taints `v.p.#value`, what `v.p`'s value is computed into: each
     /// source vertex, keyed to its `#value` vertex. Empty when the program has no `#value`
-    /// paths (see [`ctadl_ir::mir::PathSegment::Value`]).
+    /// paths (see [`ctadl_ir::cir::PathSegment::Value`]).
     value_of_source: HashMap<TaintVertex, Path>,
     /// A sink on `v.p` also matches `v.p.#value`: each such `#value` vertex, keyed to the sink
     /// path `p` it steps to. The step reaches the sink at the vertex its endpoint names, so a
@@ -182,7 +182,7 @@ fn value_path(p: &Path, paths: &HashSet<Path>) -> Option<Path> {
     if p.iter().last().is_some_and(|s| s.is_value()) {
         return None;
     }
-    let vp = p.concat(&Path::from_accesses([ctadl_ir::mir::PathSegment::Value]));
+    let vp = p.concat(&Path::from_accesses([ctadl_ir::cir::PathSegment::Value]));
     paths.contains(&vp).then_some(vp)
 }
 
@@ -872,7 +872,7 @@ mod tests {
 
     /// A single-field path `.field`.
     fn field_path(field: &str) -> Path {
-        Path::from_accesses([ctadl_ir::mir::PathSegment::Field(
+        Path::from_accesses([ctadl_ir::cir::PathSegment::Field(
             internment::ArcIntern::from(field),
         )])
     }

@@ -1,6 +1,6 @@
 use super::*;
 
-use ctadl_ir::mir::call::{FunctionNames, JavaClass, JavaMethod, JavaSignature, JavaSimpleName};
+use ctadl_ir::cir::call::{FunctionNames, JavaClass, JavaMethod, JavaSignature, JavaSimpleName};
 
 use crate::facts::{Function, InsnSiteId};
 

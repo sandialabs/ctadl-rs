@@ -777,7 +777,7 @@ pub(crate) fn check_keys(
 /// way a port's trailing path is (`.next.next.next`).
 pub(crate) fn parse_declared_path(text: &str, index: usize) -> Result<facts::Path, JsonModelError> {
     let segments =
-        ctadl_ir::mir::parse_segments(text).map_err(|source| JsonModelError::InvalidPath {
+        ctadl_ir::cir::parse_segments(text).map_err(|source| JsonModelError::InvalidPath {
             index,
             text: text.to_string(),
             source,

@@ -38,7 +38,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 
 use crate::error::{Error, JsonModelError, JsonModelErrors};
 use crate::models::json_schema;

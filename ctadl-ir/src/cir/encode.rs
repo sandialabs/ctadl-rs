@@ -1,7 +1,7 @@
 #[cfg(feature = "serde")]
 use super::*;
 #[cfg(feature = "serde")]
-use crate::mir::call::VirtualMethodTable;
+use crate::cir::call::VirtualMethodTable;
 #[cfg(feature = "serde")]
 use bitcode::Error;
 
@@ -38,7 +38,7 @@ pub fn decode_vmt(bytes: &[u8]) -> Result<VirtualMethodTable, Error> {
 #[cfg(all(test, feature = "serde"))]
 mod tests {
     use super::*;
-    use crate::mir::call::VirtualMethodTable;
+    use crate::cir::call::VirtualMethodTable;
 
     /// Checks that each kind of table survives a trip through [`encode_vmt`] and
     /// [`decode_vmt`].

@@ -19,11 +19,11 @@ use ctadl_ascent::models::{
     PortcullisPhase, ProgramMatchIndex, ProgramModelMatches,
 };
 use ctadl_ascent::project::ArtifactLanguage;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass, JavaMethod,
     JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
     StatementKind, Symbol,
 };
@@ -68,8 +68,8 @@ fn java_method(cls: &str) -> String {
 fn dispatch_caller(classes: &[&str]) -> FunctionData {
     use ctadl_ir::Idx;
     use ctadl_ir::builder::FunctionBuilder;
-    use ctadl_ir::mir::Exp;
-    use ctadl_ir::mir::call::{CallStyle, JavaDispatch};
+    use ctadl_ir::cir::Exp;
+    use ctadl_ir::cir::call::{CallStyle, JavaDispatch};
 
     let mut f = FunctionData {
         name: "Lq/Caller;->run()V".to_string(),
@@ -93,7 +93,7 @@ fn dispatch_caller(classes: &[&str]) -> FunctionData {
             },
             vec![result],
             vec![Exp::variable(
-                b.new_param_var(ctadl_ir::mir::ParameterIdx::new(0)),
+                b.new_param_var(ctadl_ir::cir::ParameterIdx::new(0)),
             )],
         );
     }

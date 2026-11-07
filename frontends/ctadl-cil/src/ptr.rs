@@ -63,7 +63,7 @@ use cil_reader::MetadataToken;
 use cil_reader::flow::{
     BoundIns, Control, Effect, InsId, MethodFlow, Place, StackKind, Transfer, Var,
 };
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use ctadl_ir::*;
 use hashbrown::{HashMap, HashSet};
 

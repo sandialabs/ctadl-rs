@@ -133,8 +133,8 @@ fn port_paths_keep_the_offset_symbol_distinction() {
     assert_eq!(
         segs,
         vec![
-            ctadl_ir::mir::PathSegment::field("stack"),
-            ctadl_ir::mir::PathSegment::offset(1),
+            ctadl_ir::cir::PathSegment::field("stack"),
+            ctadl_ir::cir::PathSegment::offset(1),
         ]
     );
 }
@@ -413,8 +413,8 @@ fn a_declared_path_parses_with_the_canonical_grammar() {
     assert_eq!(
         segs,
         vec![
-            ctadl_ir::mir::PathSegment::field("stack"),
-            ctadl_ir::mir::PathSegment::offset(1),
+            ctadl_ir::cir::PathSegment::field("stack"),
+            ctadl_ir::cir::PathSegment::offset(1),
         ]
     );
 }

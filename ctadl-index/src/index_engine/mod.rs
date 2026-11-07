@@ -45,7 +45,7 @@ use std::sync::{Arc, LazyLock};
 
 use ascent::ascent_run;
 use ascent::ascent_source;
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
@@ -1384,7 +1384,7 @@ pub static TYPE_PATH: LazyLock<Path> = LazyLock::new(|| Path::from_symbol_names(
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
 ///
-/// With `deref_paths`, `deref` ([`PathSegment::Deref`](ctadl_ir::mir::PathSegment::Deref)) is also a model
+/// With `deref_paths`, `deref` ([`PathSegment::Deref`](ctadl_ir::cir::PathSegment::Deref)) is also a model
 /// path, so every program path gains its `.deref` extension.
 fn compute_paths(
     program_paths: Vec<(Path,)>,
@@ -1410,11 +1410,11 @@ fn compute_paths(
     with_value_paths(pre.paths)
 }
 
-/// Closes `paths` under the terminal [`PathSegment::Value`](ctadl_ir::mir::PathSegment::Value): `p·#value` is
+/// Closes `paths` under the terminal [`PathSegment::Value`](ctadl_ir::cir::PathSegment::Value): `p·#value` is
 /// admissible for every admissible `p` and the empty path, and no path has a segment after
 /// `#value`. A program that never mentions `#value` keeps its paths as they are.
 ///
-/// Because every [`Path`] is normal, the closure is under the equations of `ctadl_ir::mir::path`
+/// Because every [`Path`] is normal, the closure is under the equations of `ctadl_ir::cir::path`
 /// too: `p.[k].#value` is the member `p.#value`, and no member is void.
 ///
 /// With [`PathSet::concat`] absorbing `#value` and its adjacent offsets, that is all the index rules need to

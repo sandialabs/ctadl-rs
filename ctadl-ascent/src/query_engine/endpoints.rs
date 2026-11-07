@@ -293,7 +293,7 @@ pub fn build_query_endpoints(
     }
 }
 
-/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::mir::PathSegment::Value).
+/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::cir::PathSegment::Value).
 fn strip_value(p: facts::Path) -> facts::Path {
     let segments: Vec<_> = p.iter().cloned().collect();
     match segments.split_last() {

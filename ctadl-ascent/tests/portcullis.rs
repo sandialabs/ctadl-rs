@@ -13,16 +13,16 @@ use ctadl_ascent::models::{
     FormalIndexTypeTag, ImportScope, ProgramMatchIndex, ProgramModelMatches, portcullis,
 };
 use ctadl_ir::Idx;
-use ctadl_ir::mir::ProgramInfo;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::ProgramInfo;
+use ctadl_ir::cir::call::{
     CallEdges, CallStyle, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
     VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     AccessPath, BasicBlockData, FunctionData, Functions, ParameterType, PathSegment, Program,
     Statement, StatementKind, VariableRef,
 };
-use ctadl_ir::mir::{LocalIdx, Symbol};
+use ctadl_ir::cir::{LocalIdx, Symbol};
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -877,7 +877,7 @@ fn a_quoted_segment_decodes_to_the_symbol_it_names() {
     let path = matches.propagations[0].src.path;
     assert_eq!(
         path.iter().cloned().collect::<Vec<_>>(),
-        vec![ctadl_ir::mir::PathSegment::Field(Symbol::from("[]"))]
+        vec![ctadl_ir::cir::PathSegment::Field(Symbol::from("[]"))]
     );
 }
 
@@ -913,7 +913,7 @@ fn java_call(cls: &str, name: &str, desc: &str) -> Statement {
             cls: Symbol::from(cls),
             simple_name: Symbol::from(name),
             descriptor: Symbol::from(desc),
-            dispatch: ctadl_ir::mir::call::JavaDispatch::Interface,
+            dispatch: ctadl_ir::cir::call::JavaDispatch::Interface,
             super_start: None,
         },
         rets: Default::default(),
@@ -1767,7 +1767,7 @@ fn allocator_is_native_only() {
 /// word but writes nothing, `FUN_stats` writes the heap state but has no allocator signature,
 /// and `FUN_lonely` is shaped like `malloc` but has a single caller. `main` calls them.
 fn stripped_allocator() -> ProgramInfo {
-    use ctadl_ir::mir::{Exp, ParameterIdx, ReturnType};
+    use ctadl_ir::cir::{Exp, ParameterIdx, ReturnType};
     const HEAP: [i64; 4] = [0x10003010, 0x10003014, 0x10003040, 0x10003044];
     let heap_stores = |n: usize| -> Vec<Statement> {
         (0..n)

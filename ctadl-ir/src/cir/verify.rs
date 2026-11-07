@@ -4,13 +4,13 @@ use std::{fmt, fmt::Display};
 use hashbrown::hash_set::HashSet;
 use thiserror::Error;
 
-use crate::index::idx::Idx;
-use crate::mir::path::{self, PathClass};
-use crate::mir::{
+use crate::cir::path::{self, PathClass};
+use crate::cir::{
     AccessPath, BasicBlockData, BasicBlockIdx, CallStyle, Exp, FunctionData, FunctionIdx, LocalIdx,
     Location, ParameterIdx, PathSegment, StatementKind, TerminatorKind, Variable, VariableRef,
     path_syntax, visit::Visitor,
 };
+use crate::index::idx::Idx;
 
 /// These are the errors that CTADL IR verification detects. Any of these errors mean that the IR
 /// is malformed and attempting to compile it may result in panics.
@@ -86,7 +86,7 @@ pub enum VerifyError {
         path: String,
     },
 
-    /// An address as an assignment's destination. [`crate::mir::StatementKind::assign`]
+    /// An address as an assignment's destination. [`crate::cir::StatementKind::assign`]
     /// rewrites `p.[k] = e` into `p = e.[-k]` (S5), so one that survives bypassed it.
     #[error("in function: {function}: address destination {path} at {location}")]
     AddressDestination {

@@ -108,10 +108,10 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::parse::{LineIndex, Operand, Pos};
+use ctadl_ir::cir::call::VirtualMethodTable;
+use ctadl_ir::cir::visit::MutVisitor;
+use ctadl_ir::cir::*;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::VirtualMethodTable;
-use ctadl_ir::mir::visit::MutVisitor;
-use ctadl_ir::mir::*;
 use ctadl_ir::ssa;
 
 pub mod parse;
@@ -340,7 +340,7 @@ pub enum FlowyError {
     #[error("parse error")]
     Parse(#[from] peg::error::ParseError<peg::str::LineCol>),
     #[error("ir verification error")]
-    Verify(#[from] ctadl_ir::mir::VerifyErrors),
+    Verify(#[from] ctadl_ir::cir::VerifyErrors),
     #[error("{line}:{col}: {message}")]
     Compile {
         message: String,
@@ -1199,7 +1199,7 @@ impl Counter {
 #[cfg(test)]
 mod path_grammar_tests {
     use super::*;
-    use ctadl_ir::mir::path_syntax;
+    use ctadl_ir::cir::path_syntax;
 
     fn compile(src: &str) -> Result<FlowyProgram, FlowyError> {
         compile_program_contents("test.tnt", src)

@@ -255,8 +255,8 @@ fn only_a_finished_import_of_unchanged_contents_is_up_to_date() {
 /// Lua VMT with one row per column, so an empty-vs-empty comparison cannot pass by accident.
 #[test]
 fn load_vmt_agrees_with_load_import() {
-    use ctadl_ir::mir::Symbol;
-    use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
+    use ctadl_ir::cir::Symbol;
+    use ctadl_ir::cir::call::{Dispatch, FunctionNames, VirtualMethodTable};
 
     store();
     let dir = tempfile::tempdir().unwrap();

@@ -155,7 +155,7 @@ pub fn mir_dump(path: &Path) -> Result<String> {
     let mut out = String::new();
     let _ = writeln!(out, "{}", info.vmt);
     for func in info.program.functions.iter() {
-        let _ = writeln!(out, "{}", ctadl_ir::mir::WithLocalNames(func));
+        let _ = writeln!(out, "{}", ctadl_ir::cir::WithLocalNames(func));
     }
     Ok(out)
 }

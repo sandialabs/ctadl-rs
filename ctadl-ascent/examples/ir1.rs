@@ -158,7 +158,7 @@ fn program_h() -> Program {
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::from(global_ref.clone()),
-                ctadl_ir::mir::PathSegment::field("bar"),
+                ctadl_ir::cir::PathSegment::field("bar"),
                 Exp::from(p.clone()),
             ))];
         let body_block = &mut h[body];

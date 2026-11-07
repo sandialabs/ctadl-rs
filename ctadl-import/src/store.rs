@@ -10,8 +10,8 @@ through [`ArtifactImport::load`], so an out-of-date store fails with
 [`Error::IncompatibleImport`], which names the artifact to import again.
 */
 
+use ctadl_ir::cir::call::VirtualMethodTable;
 use ctadl_ir::graph::is_connected;
-use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::{ProgramInfo, encode, ssa};
 
 use crate::error::{Error, ErrorContext};

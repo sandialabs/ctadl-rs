@@ -28,7 +28,7 @@ use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::notifications::Notifications;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
     JavaSimpleName, VirtualMethodTable,
 };
@@ -775,7 +775,7 @@ impl Context {
         if matches!(
             inst,
             Instruction::InvokePolymorphic(_) | Instruction::InvokePolymorphicRange(_)
-        ) && ctadl_ir::mir::call::is_method_handle_invoke(&cls, &simple_name)
+        ) && ctadl_ir::cir::call::is_method_handle_invoke(&cls, &simple_name)
         {
             let callee = args[0].access_path()?.clone();
             let style = CallStyle::FuncPtrCall {
@@ -969,7 +969,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::load(
                     dest,
                     source,
-                    ctadl_ir::mir::PathSegment::field("length"),
+                    ctadl_ir::cir::PathSegment::field("length"),
                 )));
                 return Ok(stmts);
             }
@@ -993,7 +993,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(VariableRef::new_global()),
-                    ctadl_ir::mir::PathSegment::field(name),
+                    ctadl_ir::cir::PathSegment::field(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1015,7 +1015,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         VariableRef::new_global(),
-                        ctadl_ir::mir::PathSegment::field(name.clone()),
+                        ctadl_ir::cir::PathSegment::field(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -1043,7 +1043,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(object),
-                    ctadl_ir::mir::PathSegment::field(name),
+                    ctadl_ir::cir::PathSegment::field(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1066,7 +1066,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::mir::PathSegment::field(name.clone()),
+                        ctadl_ir::cir::PathSegment::field(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -1084,7 +1084,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
                         array_var.clone(),
-                        ctadl_ir::mir::PathSegment::field("[]"),
+                        ctadl_ir::cir::PathSegment::field("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -1109,7 +1109,7 @@ impl Context {
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(array_var),
-                    ctadl_ir::mir::PathSegment::field("[]"),
+                    ctadl_ir::cir::PathSegment::field("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

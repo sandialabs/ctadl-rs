@@ -20,8 +20,8 @@ use serde_json::Value;
 use super::FormalIndexTypeTag;
 use super::spec;
 use crate::error::JsonModelError;
-use ctadl_ir::mir;
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir;
+use ctadl_ir::cir::PathSegment;
 
 /// A generator's `find`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -749,7 +749,7 @@ fn parse_port_path(input_text: Option<&str>) -> Result<Vec<PathSegment>, JsonMod
     let Some(s) = input_text else {
         return Ok(Vec::new());
     };
-    mir::parse_segments(s).map_err(|source| JsonModelError::InvalidPath {
+    cir::parse_segments(s).map_err(|source| JsonModelError::InvalidPath {
         index: 0, // filled in by `parse_port`
         text: s.to_string(),
         source,
@@ -851,7 +851,7 @@ mod parse_port_tests {
     #[test]
     fn malformed_paths_are_hard_errors() {
         use crate::error::JsonModelError;
-        use ctadl_ir::mir::PathSyntaxErrorKind;
+        use ctadl_ir::cir::PathSyntaxErrorKind;
 
         // `*` is not an offset.
         let e = parse_port("Argument(0).[*]", 7).unwrap_err();

@@ -1,12 +1,12 @@
+pub mod cir;
 pub mod graph;
 pub mod index;
-pub mod mir;
 pub mod semantics;
 pub mod ssa;
 
 // trait that is used everywhere
+pub use cir::*;
 pub use index::idx::Idx;
-pub use mir::*;
 // Re-exported so frontends can construct the ThinVec-typed IR fields (e.g. call
 // args/rets) without depending on thin-vec themselves.
 pub use thin_vec::{ThinVec, thin_vec};

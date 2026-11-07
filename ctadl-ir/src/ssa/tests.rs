@@ -3,8 +3,8 @@ use super::*;
 use smallvec::smallvec;
 
 use super::visit::Visitor;
+use crate::cir::call::*;
 use crate::indexvec;
-use crate::mir::call::*;
 
 // def F(p, q)
 // {

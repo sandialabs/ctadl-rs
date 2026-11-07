@@ -50,7 +50,7 @@ use cil_reader::{MetadataToken, Module};
 use ctadl_ascent::facts::IdMap;
 use ctadl_ascent::facts::schema;
 use ctadl_cil::names::{ModNames, Namer};
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use serde::Deserialize;
 
 use super::exec::interp::{Interp, Obj, SObj, Stop};
@@ -170,7 +170,7 @@ impl Shadow<'_, '_, '_, '_, '_> {
             Value::Ptr(loc) if loc.path.is_empty() => {
                 if let Base::Cell(c) = loc.base {
                     let content = self.interp.cells[c].1.clone();
-                    let p = extend(path, ctadl_ir::mir::path_syntax::DEREF.to_string());
+                    let p = extend(path, ctadl_ir::cir::path_syntax::DEREF.to_string());
                     let csh = self.label_value(k, &content, &p, seen);
                     merge(&mut self.interp.scells[c], csh);
                 }
@@ -285,7 +285,7 @@ impl Shadow<'_, '_, '_, '_, '_> {
                 if let Base::Cell(c) = loc.base {
                     let content = self.interp.cells[c].1.clone();
                     let csh = self.interp.scells[c].clone();
-                    let p = extend(&path, ctadl_ir::mir::path_syntax::DEREF.to_string());
+                    let p = extend(&path, ctadl_ir::cir::path_syntax::DEREF.to_string());
                     self.collect(&content, &csh, p, true, seen, out);
                 }
             }
@@ -323,8 +323,8 @@ fn segments(path: &ctadl_ascent::facts::Path) -> Vec<String> {
         .map(|s| match s {
             PathSegment::Field(sym) => sym.to_string(),
             PathSegment::Offset(o) => format!("[{}]", o.0),
-            PathSegment::Deref => ctadl_ir::mir::path_syntax::DEREF.to_string(),
-            PathSegment::Value => ctadl_ir::mir::path_syntax::VALUE.to_string(),
+            PathSegment::Deref => ctadl_ir::cir::path_syntax::DEREF.to_string(),
+            PathSegment::Value => ctadl_ir::cir::path_syntax::VALUE.to_string(),
         })
         .collect()
 }
@@ -395,7 +395,7 @@ fn index_fixture(ctadl: &Path, fixture: &Path, dir: &Path) -> Result<Static> {
 }
 
 fn covered(rows: &[Row], (src, dst): &Flow) -> bool {
-    let value = ctadl_ir::mir::path_syntax::VALUE;
+    let value = ctadl_ir::cir::path_syntax::VALUE;
     rows.iter().any(|r| {
         let suffix_rides = r.src.0 == src.0
             && r.dst.0 == dst.0

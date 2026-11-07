@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use ctadl_import::SourceInfoMode;
 use ctadl_import::load_import;
-use ctadl_ir::mir::{Program, StatementKind};
+use ctadl_ir::cir::{Program, StatementKind};
 use ctadl_ir::ssa;
 
 #[derive(Debug, PartialEq, Eq)]

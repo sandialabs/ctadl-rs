@@ -8,7 +8,7 @@
 use ctadl_ascent::error::{Error, JsonModelError};
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{ImportScope, ModelLoadReport, ProgramMatchIndex, ProgramModelMatches};
-use ctadl_ir::mir::ProgramInfo;
+use ctadl_ir::cir::ProgramInfo;
 use serde_json::json;
 
 use crate::common::{load_json, without_context};
@@ -148,7 +148,7 @@ fn test_valid_json_still_works() {
 /// not anything calls it (`docs/portcullis.md` §9).
 #[test]
 fn test_callsites_matches_callee_and_caller() {
-    use ctadl_ir::mir::call::{CallEdges, CallStyle};
+    use ctadl_ir::cir::call::{CallEdges, CallStyle};
 
     let mut caller = make_function("read_http_data", 0, false, &[]);
     let body = caller.blocks.blocks_mut().push(BasicBlockData::new(None));
@@ -230,10 +230,10 @@ fn test_callsites_propagation_rejected() {
 // constraints match.
 // ---------------------------------------------------------------------------
 
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     AccessPath, BasicBlockData, Exp, FunctionData, Functions, ParameterIdx, ParameterType,
     PathSegment, Program, Statement, StatementKind, VariableRef,
 };

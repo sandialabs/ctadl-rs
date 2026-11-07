@@ -24,11 +24,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use smallvec::{SmallVec, smallvec};
 
+use crate::cir::visit::MutVisitor;
+use crate::cir::*;
 use crate::graph::dominators::{DominanceFrontier, DominatorTree};
 use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors, reachable};
 use crate::index::{idx::Idx, index_vec::IndexVec};
-use crate::mir::visit::MutVisitor;
-use crate::mir::*;
 
 #[cfg(test)]
 mod tests;

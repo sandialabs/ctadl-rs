@@ -109,15 +109,15 @@ use internment::ArcIntern;
 use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
-use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
-use crate::mir::call::VirtualMethodTable;
-pub use crate::mir::terminator::{Terminator, TerminatorKind};
-use crate::mir::visit::Visitor;
-pub use crate::mir::{
+use crate::cir::call::VirtualMethodTable;
+pub use crate::cir::terminator::{Terminator, TerminatorKind};
+use crate::cir::visit::Visitor;
+pub use crate::cir::{
     basic_blocks::BasicBlocks,
     call::{CallEdges, CallObject, CallStyle},
     verify::{MirVerify, VerifyError, VerifyErrors},
 };
+use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
 use crate::newtype_index;
 
 #[cfg(test)]
@@ -137,7 +137,7 @@ mod terminator;
 mod verify;
 pub mod visit;
 
-pub use crate::mir::path_syntax::{
+pub use crate::cir::path_syntax::{
     PathSyntaxError, PathSyntaxErrorKind, parse_path, parse_segment, parse_segments,
     path_to_string, segment_to_string, write_path, write_segment,
 };

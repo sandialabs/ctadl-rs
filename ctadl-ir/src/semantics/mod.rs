@@ -44,12 +44,12 @@ puts a program in it. Phi nodes are the copies of their operands.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-use crate::index::idx::Idx;
-use crate::mir::path::{self, PathClass};
-use crate::mir::{
+use crate::cir::path::{self, PathClass};
+use crate::cir::{
     AccessPath, BasicBlockIdx, CallEdges, CallObject, CallStyle, Exp, FunctionData, FunctionIdx,
     PathSegment, Program, SourceInfo, StatementKind, TerminatorKind, Variable, VariableRef,
 };
+use crate::index::idx::Idx;
 
 #[cfg(test)]
 mod tests;
@@ -593,7 +593,7 @@ impl<'a> Eval<'a> {
         let f = &program[callee];
         // `p_i = a_i`.
         for (idx, arg) in args.iter().enumerate().take(f.num_parameters()) {
-            let formal = VariableRef::new_parameter(crate::mir::ParameterIdx::new(idx));
+            let formal = VariableRef::new_parameter(crate::cir::ParameterIdx::new(idx));
             self.assign_exp(&Self::var(child, &formal), &[], inst, arg);
         }
         // `r_j = ret_j`, for every return.

@@ -48,7 +48,7 @@ use cil_reader::flow::{
 };
 use cil_reader::model::{MethodBody, MethodDef, MethodSig, TypeSig};
 use cil_reader::token::TokenType;
-use ctadl_ir::mir::{LocalIdx, PathSegment};
+use ctadl_ir::cir::{LocalIdx, PathSegment};
 use ctadl_ir::*;
 use smallvec::{SmallVec, smallvec};
 use source_info::SourceInfoBuilder;

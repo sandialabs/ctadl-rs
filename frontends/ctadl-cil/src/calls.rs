@@ -51,7 +51,7 @@ use cil_reader::flow::{BoundIns, CallKind, CallSite, InsId, MethodOp, TypeOp, Va
 use cil_reader::model::{ResolvedMember, TypeSig};
 use cil_reader::token::TokenType;
 use ctadl_ir::call::CallObject;
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use ctadl_ir::*;
 
 use crate::hierarchy::resolve_type;
