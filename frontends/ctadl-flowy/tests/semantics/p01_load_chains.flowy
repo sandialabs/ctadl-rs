@@ -1,0 +1,53 @@
+// Load chains (`ctadl_ir::ssa::compose_loads`): a store through the end of a chain of loads from
+// a formal reaches the caller at the path the chain spells (S8), through fields, `deref`, an
+// address copy and a plain copy. Reads through a chain see what the path holds.
+def StoreThroughChain(p) {
+s:
+  t1 = p.a;
+  t2 = t1.b;
+  t2.c = source(S);
+  return;
+}
+
+def StoreThroughAddresses(p) {
+s:
+  t1 = p.deref.[4];
+  t2 = t1;
+  t3 = t2.[4];
+  t3.deref = source(T);
+  return;
+}
+
+def ReturnThroughChain(p): 1 {
+s:
+  t = p.deref;
+  return t.g;
+}
+
+def Id(p): 1 {
+s:
+  return p;
+}
+
+def Main() {
+s:
+  StoreThroughChain(o);
+  r1 = o.a.b.c;
+  sink(r1, S);
+  StoreThroughAddresses(q);
+  r2 = q.deref.[8].deref;
+  sink(r2, T);
+  v.deref.g = source(U);
+  r3 = ReturnThroughChain(v);
+  sink(r3, U);
+  t = v.deref;
+  r4 = Id(t.g);
+  sink(r4, U);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S
+// expect: Main: sink(%T)#1 <- %T
+// expect: Main: sink(%U)#2 <- %U
+// expect: Main: sink(%U)#3 <- %U

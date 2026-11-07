@@ -13,25 +13,11 @@ store of the chain back at the path it addresses, so a write through a loaded po
 the object it names rather than on the temporary. It is the last pass before codegen, which
 runs it on every function it lowers.
 
-# What is a load-chain temporary
-
-Within one block, a whole-variable copy `t = v·s` with a single access-path source makes `t`
-stand for `v·s`, composed onto what `v` stands for: a load `t = v.f`, an address copy
-`t = v.[k]`, and a plain copy `t = v` (which carries `v`'s capture forward, if it has one) all
-qualify. A copy with several sources, a `value(..)` source or a constant does not. The map from
-temporaries is built over the whole block before anything is rewritten, and a temporary assigned
-twice in a block (which SSA rules out) stands for its last assignment. Nothing crosses a block
-boundary.
-
-# What is rewritten
-
-An access path `t·s` whose base is a load-chain temporary becomes `root·c·s`, where `t` stands for
-`root·c`, when it is:
-
-- an assignment's destination with a non-empty path (a store);
-- an assignment's source, a call argument, a return value or an indirect call's callee, as a
-  path or under `value(..)`, whose path has a field, `deref` or `#value` in it: a read through
-  memory. A read of an address (`t.[k]`) or of the whole temporary is left alone.
+Within one block, a copy `t = v·s` with a single access-path source makes `t` stand for `v·s`,
+composed onto what `v` stands for. A store through `t`, and a read through memory from it (a path
+with a field, `deref` or `#value`), is rewritten onto what `t` stands for; a read of `t` itself or
+of an address `t.[k]` is not. The map is built over the whole block before anything is
+rewritten, so a temporary assigned twice stands for its last assignment.
 
 # Correctness (S18 of `docs/ir.md`)
 
@@ -45,14 +31,10 @@ register, `docs/limitations.md`).
 
 # The admissible path set depends on this pass
 
-The analysis keeps only the paths the program mentions, and their one-level concatenations (the
-"admissible path set" row of the approximations register). Codegen seeds that set from
-[`mentioned_paths`] of each access path it lowers, so composing a chain changes which paths are
-mentioned: `x.a.b.c` rather than `t2.c`. That is what makes a path admit the same set whether a
-front end writes it as one access path or as a chain of loads, since a composed chain mentions
-the same memory paths as the single access path (tested in this module). The offsets differ:
-`t = v.[1]; t.[2].deref` mentions the offset `[2]` as a chain and `[3]` composed, and the chain's
-own offsets are not mentioned when the chain is written as one path.
+The admissible path set is built from the paths the program mentions ([`mentioned_paths`] of
+each access path codegen lowers), so composition changes it: a composed chain mentions the same
+paths as the single access path it spells, except for offsets at a junction of the chain
+(`t = v.[1]; t.[2].deref` mentions `[2]` uncomposed and `[3]` composed).
 */
 use std::collections::HashMap;
 

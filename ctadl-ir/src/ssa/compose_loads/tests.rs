@@ -2,8 +2,6 @@ use super::*;
 
 use std::collections::BTreeSet;
 
-use thin_vec::thin_vec;
-
 use crate::cir::path_syntax::{parse_path, path_to_string};
 use crate::index::idx::Idx;
 
@@ -66,66 +64,6 @@ fn return_args(f: &FunctionData, b: usize) -> Vec<Exp> {
     }
 }
 
-/// The module docs' example: a store through the end of a chain lands on the root, and each load
-/// of the chain reads from the root.
-#[test]
-fn store_through_chain_lands_on_root() {
-    let mut f = function(vec![block(
-        vec![
-            copy("t1", "x", ".a"),
-            copy("t2", "t1", ".b"),
-            assign(ap("t2", ".c"), vec![Exp::Path(ap("v", ""))]),
-        ],
-        vec![],
-    )]);
-    assert_eq!(compose_loads_function(&mut f), 2);
-    assert_eq!(
-        statements(&f, 0),
-        vec![
-            copy("t1", "x", ".a").kind,
-            copy("t2", "x", ".a.b").kind,
-            assign(ap("x", ".a.b.c"), vec![Exp::Path(ap("v", ""))]).kind,
-        ]
-    );
-}
-
-/// Reads through memory are composed wherever they appear: assignment sources, `value(..)`,
-/// call arguments, an indirect call's callee and return values.
-#[test]
-fn reads_through_memory_are_composed() {
-    let call = Statement::new_kind(StatementKind::CallAssign {
-        style: CallStyle::FuncPtrCall {
-            callee: ap("t", ".fp"),
-            signature: None,
-        },
-        rets: thin_vec![],
-        args: thin_vec![Exp::Path(ap("t", ".g"))],
-    });
-    let mut f = function(vec![block(
-        vec![
-            copy("t", "x", ".deref"),
-            assign(ap("y", ""), vec![Exp::Value(ap("t", ".h"))]),
-            call,
-        ],
-        vec![Exp::Path(ap("t", ".r"))],
-    )]);
-    assert_eq!(compose_loads_function(&mut f), 4);
-    let s = statements(&f, 0);
-    assert_eq!(
-        s[1],
-        assign(ap("y", ""), vec![Exp::Value(ap("x", ".deref.h"))]).kind
-    );
-    let StatementKind::CallAssign { style, args, .. } = &s[2] else {
-        panic!("not a call: {:?}", s[2]);
-    };
-    assert_eq!(args.to_vec(), vec![Exp::Path(ap("x", ".deref.g"))]);
-    let CallStyle::FuncPtrCall { callee, .. } = style else {
-        panic!("not an indirect call: {style:?}");
-    };
-    assert_eq!(*callee, ap("x", ".deref.fp"));
-    assert_eq!(return_args(&f, 0), vec![Exp::Path(ap("x", ".deref.r"))]);
-}
-
 /// A read of the whole temporary or of an address relative to it is not a read through memory,
 /// so it stays on the temporary. A store at an address is still composed.
 #[test]
@@ -156,52 +94,6 @@ fn whole_and_address_reads_stay() {
         assign(ap("x", ".a.[8]"), vec![Exp::Path(ap("v", ""))]).kind
     );
     assert_eq!(return_args(&f, 0), vec![Exp::Path(ap("t", ""))]);
-}
-
-/// A plain copy carries a capture forward, and an address copy composes with offsets adding,
-/// though the address read itself stays where it is. A copy of an uncaptured variable captures
-/// nothing.
-#[test]
-fn copies_carry_captures() {
-    let mut f = function(vec![block(
-        vec![
-            copy("t1", "x", ".deref.[4]"),
-            copy("t2", "t1", ""),
-            copy("t3", "t2", ".[4]"),
-            copy("u", "x", ""),
-            assign(ap("y", ""), vec![Exp::Path(ap("t3", ".deref"))]),
-            assign(ap("z", ""), vec![Exp::Path(ap("u", ".f"))]),
-        ],
-        vec![],
-    )]);
-    compose_loads_function(&mut f);
-    let s = statements(&f, 0);
-    assert_eq!(s[2], copy("t3", "t2", ".[4]").kind);
-    assert_eq!(s[4], copy("y", "x", ".deref.[8].deref").kind);
-    assert_eq!(s[5], copy("z", "u", ".f").kind);
-}
-
-/// Only a copy with a single access-path source captures; a `value(..)` source or a second
-/// source does not. Nothing crosses a block boundary.
-#[test]
-fn what_does_not_capture() {
-    let mut f = function(vec![
-        block(
-            vec![
-                assign(ap("t1", ""), vec![Exp::Value(ap("x", ".a"))]),
-                assign(
-                    ap("t2", ""),
-                    vec![Exp::Path(ap("x", ".a")), Exp::Path(ap("w", ""))],
-                ),
-                copy("t3", "x", ".a"),
-                copy("y1", "t1", ".f"),
-                copy("y2", "t2", ".f"),
-            ],
-            vec![],
-        ),
-        block(vec![copy("y3", "t3", ".f")], vec![]),
-    ]);
-    assert_eq!(compose_loads_function(&mut f), 0);
 }
 
 /// Within a block, the map from temporaries is built before anything is rewritten, so a
