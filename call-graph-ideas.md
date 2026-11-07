@@ -124,10 +124,35 @@ These are historical measurements, not a baseline for the current code. Collect
 fresh profiles with the same imports, models, and pass configuration when
 comparing the discovery kernel with the existing engine.
 
-## Dispatch must use specific evidence
+## Proposed design
 
-The first semantic change must be dispatch lookup. Currently,
-`emit_callee_resolvents` exports `cha.resolvents`, whose construction includes:
+The following ideas develop the Recommendation into one candidate design for
+building a call graph. They are proposals to test, not additional project
+constraints or decisions already made. The objectives above motivate the design;
+the historical performance evidence does not establish that it will be faster.
+
+The core proposal combines two ideas:
+
+1. **Resolve dispatch from specific type or function evidence.** Replace the
+   current CHA resolvent table with lookup for the evidenced receiver class or
+   function address.
+2. **Propagate only the information needed for call discovery.** Use a separate
+   SSA analysis with symbolic return origins and dispatch requirements, so
+   wrappers and factories can contribute edges without general taint closure.
+
+Demand restriction is a possible optimization of that core. Narrow field
+tracking and guarded return effects are possible later extensions. The sections
+below describe how these mechanisms could work, where they would lose coverage,
+and what an experiment would need to measure. Restrictions inside a mechanism
+define the proposed experiment's scope or explain what makes its rules valid;
+they are not requirements to adopt that mechanism.
+
+## Idea 1: resolve dispatch from specific evidence
+
+I propose replacing the existing dispatch lookup as part of the new baseline.
+This addresses the objective of avoiding speculative callee enumeration.
+Currently, `emit_callee_resolvents` exports `cha.resolvents`, whose construction
+includes:
 
 ```prolog
 cha_resolve(supertype, signature, implementation) :-
@@ -140,7 +165,7 @@ can produce overriding methods in subclasses of `A`. Merely requiring a tag—or
 selecting `--strategy hi`—does not eliminate speculative target enumeration.
 See [resolvent emission and construction](ctadl-ascent/src/codegen/mod.rs).
 
-For the proposed analysis, use a different relation:
+The replacement could expose a different relation:
 
 ```text
 Dispatch(Type(T), signature, method)
@@ -148,23 +173,33 @@ Dispatch(Function(f), function_call_key, f)
 ```
 
 `Dispatch(Type(T), …)` means lookup for the **specific evidenced runtime class
-`T`**, including applicable inherited implementations. It must not enumerate
-descendants of `T`.
+`T`**, including applicable inherited implementations. Under this definition,
+lookup does not enumerate descendants of `T`. For example, evidence from
+`new A` would allow the implementation selected for an `A` receiver, but would
+not add an override belonging only to a subclass of `A`.
 
-Implement this as demand-driven, memoized lookup for encountered
-`(T, signature)` pairs. The hierarchy walk, override handling, and
-interface-default resolution must have deterministic semantics over fixed
-metadata. Unsupported or ambiguous language cases can remain unresolved.
-Preserve declaring-type and dispatch-kind information where needed; the existing
+A possible implementation is demand-driven, memoized lookup for encountered
+`(T, signature)` pairs. To meet the evaluation-order-independence objective, its
+hierarchy walk, override handling, and interface-default resolution would need
+deterministic semantics over fixed metadata. The first experiment could leave
+unsupported or ambiguous language cases unresolved. Lookup would also need
+declaring-type and dispatch-kind information where relevant; the existing
 deferred key of method name and descriptor is not the whole invocation contract.
 
 This uses hierarchy metadata to implement dispatch, without using hierarchy
 membership to invent receiver possibilities. It still does not prove that the
 receiver reaches that instruction in an execution.
 
-## A finite discovery kernel
+## Idea 2: build a small symbolic discovery kernel
 
-For a first discovery kernel, use the following finite symbolic vocabulary:
+I propose a separate analysis over post-SSA MIR that follows pathless copies,
+summarizes where return values come from, and records which parameters must
+supply evidence for an indirect call. The intended benefit is to discover calls
+through common wrappers and factories without computing the general taint-flow
+closure. This kernel would use Idea 1's lookup when concrete evidence becomes
+available.
+
+For a first experiment, the symbolic vocabulary could be:
 
 ```text
 Arg(i)          value comes from this procedure's input i
@@ -176,7 +211,7 @@ These are finite atoms, not recursively nested terms. Multiple atoms mean
 alternatives. The constructor notation in the sketches is shorthand for tagged
 finite-domain values, not unrestricted term construction.
 
-Extract a separate discovery fact base from post-SSA MIR:
+The proposed discovery fact base is:
 
 ```text
 Copy(p, dst, src)
@@ -190,7 +225,8 @@ Seed(p, value, concrete_evidence)
 Owner(callsite, procedure)
 ```
 
-Extract only the supported flows:
+The initial extractor would admit the following flows. These boundaries keep
+the experiment small and avoid treating unrelated IR operations as copies:
 
 - Emit `Copy` for an empty destination path and an `Exp::Path` source with an
   empty path, and for each phi operand. Several admitted sources give separate
@@ -235,10 +271,12 @@ later extension admits value-only targets, use a separate finite evidence kind
 or channel; do not silently upgrade them to exact receiver types or introduce
 general suffix closure.
 
-### Return summaries
+### Summarize return origins and substitute at each callsite
 
-Return summaries should remain symbolic until each callsite applies them. Write
-them as `Ret(p, slot, origin)`, accommodating the IR's multiple returns:
+The first mechanism is a symbolic return summary. Keeping parameter origins
+symbolic until each callsite applies the summary avoids mixing different
+callers' arguments. Represent it as `Ret(p, slot, origin)`, accommodating the
+IR's multiple returns:
 
 ```prolog
 Origin(p, v, Arg(i)) :-
@@ -321,10 +359,13 @@ The branch-insensitive summary contains both types. `B.run` can be spurious
 despite having an allocation-backed derivation. Callsite instantiation preserves
 argument substitution; it does not restore branch correlation.
 
-### Dispatch requirements
+### Carry unresolved dispatch requirements through wrappers
 
-Dispatch requirements should record obligations without importing callers'
-values into reusable summaries. For the pathless experiment:
+The second mechanism is a dispatch requirement: record that a call inside a
+procedure needs evidence from one of its parameters. Such a requirement can
+pass through wrappers until an actual argument supplies concrete evidence,
+without importing callers' values into reusable summaries. The proposed rules
+for the pathless experiment are:
 
 ```prolog
 Need(p, i, original_site, k) :-
@@ -387,13 +428,16 @@ the current conditional machinery exists to preserve; the
 [hybrid-inlining fixture](ctadl-ascent/tests/tnt/hybrid_inlining.tnt) exercises that
 issue.
 
-The small kernel should discover the internal call edges and leave their
-caller-dependent return effects unresolved. That is a deliberate coverage
-limitation relative to S10/S14. The
+In this example, the proposed kernel would discover the internal call edges and
+leave their caller-dependent return effects unresolved. That is a deliberate
+coverage limitation relative to S10/S14. The
 [guarded-summary fixture](frontends/ctadl-flowy/tests/semantics/s14_guarded.flowy)
 provides another concrete example of the effects this first kernel omits.
 
-A later extension could represent a guarded return effect:
+### Possible later extension: guarded return effects
+
+To recover some of that coverage, a later extension could represent a guarded
+return effect:
 
 ```text
 if Arg(0) = Function(identity), return Arg(1)
@@ -406,12 +450,13 @@ approximation. The current
 compositions needing two distinct decisions together. Replacing that behavior
 with unrestricted condition formulas could introduce combinatorial growth.
 
-### Demand restriction
+### Possible optimization: restrict propagation to demanded values
 
-Demand restriction can keep the kernel focused without defining semantics by a
-budget. Seed `Live` at indirect-call operands and return operands, propagate it
-backward through admitted copies, and request actual arguments when a return
-summary or dispatch requirement uses them:
+One way to reduce unnecessary work is demand restriction. This would focus
+propagation on values relevant to discovery without defining semantics by a
+budget. The proposed scheme seeds `Live` at indirect-call operands and return
+operands, propagates it backward through admitted copies, and requests actual
+arguments when a return summary or dispatch requirement uses them:
 
 ```prolog
 Live(p, src) :-
@@ -426,19 +471,22 @@ Live(p, a) :-
     Need(q, i, s, k), Actual(c, i, a).
 ```
 
-Gate origin propagation by this demand relation. This computes a positive least
+Gating origin propagation by this demand relation computes a positive least
 fixpoint over relevant vertices. It does not eagerly compute variable-to-variable
 reachability or general heap points-to closure. In the worst case every vertex
 is relevant, so demand restriction is an optimization with an explicit worst
 case, not a complexity guarantee.
 
-## Narrow heap support
+## Optional extension: track fields of fresh local objects
 
-The immutable-field idea is useful, but **the existing MIR cannot certify
-immutability**. A field is represented by its symbol/path; the generic
-representation does not carry a sufficient contract covering final/readonly
-status, all writes, constructor initialization, and reflective/native
-interference.
+Once the pathless kernel has been evaluated, a possible extension is to track a
+value placed in a fresh object's field by a constructor and recovered by a
+getter. This could discover calls such as `h.get().run()` without general heap
+closure. I would keep it out of the first experiment because **the existing MIR
+cannot certify field immutability**. A field is represented by its symbol/path;
+the generic representation does not carry a sufficient contract covering
+final/readonly status, all writes, constructor initialization, and
+reflective/native interference.
 
 A narrow extension could expose:
 
@@ -491,9 +539,9 @@ the allocation/constructor-site relationship explicitly for this experiment;
 even a site represents multiple instances inside loops or recursion. Do not
 claim per-instance field correlation from `Type(T)` or a shared allocation site.
 
-Initially restrict this to a fresh local allocation, a recognized constructor,
-explicit field initialization, and an audited alias/copy pattern. Constructor
-chains, escaping objects, arbitrary mutation, containers, and returned object
+The initial scope of this extension could be a fresh local allocation, a
+recognized constructor, explicit field initialization, and an audited alias/copy
+pattern. Constructor chains, escaping objects, arbitrary mutation, containers, and returned object
 structures can remain unresolved. If certification requires scanning writes or
 analyzing escapes, charge that work to the analysis. “No write has been
 discovered yet” is not a positive immutability certificate.
@@ -502,9 +550,11 @@ Returning parameterized objects would require a richer summary than
 `ReturnsType(Holder)`: the field bindings must survive the return. Unbounded
 nested object-shape terms would defeat the proposed finite domain.
 
-## Termination and cost
+## Expected costs and scaling risks of the proposed kernel
 
-Termination and cost should be stated separately. For the pathless kernel, let:
+The finite vocabulary gives the pathless kernel a termination argument, but not
+a guarantee that it will be cheap. The following bounds identify products the
+experiment would need to measure. Let:
 
 - `P`: procedures; `S`: callsites.
 - `a`: maximum input arity; `r`: maximum return arity.
@@ -552,10 +602,12 @@ one-field projections. Do not recursively generate arbitrary access paths or
 nested summary terms. A timeout may report an incomplete computation; it must
 not define the analysis result.
 
-## Preservation across versions
+## Proposed policy after establishing a baseline
 
-Separate the initial reset from subsequent evolution. The initial reset may
-discard any existing mechanism and its discoveries to establish a useful,
+This is a development policy for evolving the design, not a call-discovery
+mechanism or a prerequisite to trying it. It follows the Recommendation's
+distinction between the initial reset and subsequent extensions. The initial
+reset may discard any existing mechanism and its discoveries to establish a useful,
 scalable baseline. Comparing with the current engine is valuable for understanding
 coverage changes, but edge inclusion is not a release gate for this redesign.
 
@@ -573,7 +625,7 @@ and existing rules keep their meanings. Deleting rules, changing extraction,
 narrowing admissible evidence, or replacing an abstraction can lose edges even
 if the resulting analysis is still positive Datalog.
 
-Use the following policy for future changes:
+I propose the following policy for future changes:
 
 - Prefer independent rules for newly supported patterns. Avoid making a new
   mechanism disable an older discovery merely because it now handles that site.
@@ -598,7 +650,11 @@ Better total coverage, a more precise abstraction, or unchanged taint findings
 does not establish edge inclusion. Inclusion is the default policy, with
 explicit exceptions for intentional changes.
 
-## Smallest useful experiment
+## How to evaluate the proposal: the smallest useful experiment
+
+I suggest testing Ideas 1 and 2 together before adding heap support or guarded
+return effects. The experiment would answer whether this restricted kernel
+discovers useful call edges with substantially less intermediate work:
 
 1. **Build the pathless kernel separately**, over post-SSA MIR, with direct calls,
    admitted copies/phis, explicit type/function evidence, return origins, and
