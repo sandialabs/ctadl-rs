@@ -1,8 +1,8 @@
 use crate::cir::builder::BasicBlockBuilder;
 use crate::cir::call::CallStyle;
 use crate::cir::{
-    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, PathSegment, StatementIdx,
-    VariableRef, path_to_string,
+    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, PathSegment, Program, StatementIdx,
+    VariableRef, WithGlobalNames, path_to_string,
 };
 use crate::index::idx::Idx;
 
@@ -150,7 +150,9 @@ fn test_builder_convenience_methods() {
     // once we stop using it, letting us resolve local names below.
     let local_var = builder.new_local_var("test");
     let param_var = builder.new_param_var(ParameterIdx::new(0));
-    let global_var = builder.new_global_var();
+    let mut program = Program::default();
+    let g = program.declare_global("speed", None);
+    let global_var = builder.new_global_var(g);
     // Access path creation; the path is normalized.
     let addr = builder.new_access_path(
         local_var.clone(),
@@ -167,7 +169,8 @@ fn test_builder_convenience_methods() {
     // Test variable creation
     assert_eq!(local_name(&locals, &local_var), "test");
     assert_eq!(param_var.to_string(), "@p0");
-    assert_eq!(global_var.to_string(), "$globals");
+    assert_eq!(global_var.to_string(), "$#0");
+    assert_eq!(WithGlobalNames(&program, &global_var).to_string(), "$speed");
 
     // The base is the local `test`, followed by the summed offset and the deref.
     assert_eq!(local_name(&locals, &addr.base), "test");

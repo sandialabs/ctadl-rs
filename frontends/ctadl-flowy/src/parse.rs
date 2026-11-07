@@ -44,8 +44,8 @@ impl<'s> LineIndex<'s> {
 
 #[derive(Debug)]
 pub enum Def<'s> {
-    /// `var x;`, a global variable.
-    Var(Ident<'s>),
+    /// `var x;`, a global variable, and the span of its declaration.
+    Var(Ident<'s>, Range<usize>),
     Function(FunctionDef<'s>),
 }
 
@@ -171,7 +171,8 @@ peg::parser! {
         pub rule program() -> Vec<Def<'input>> = _ defs:(def() ** _) _ { defs }
 
         rule def() -> Def<'input>
-            = kw("var") _ name:ident() _ ";" { Def::Var(name) }
+            = start:position!() kw("var") _ name:ident() _ ";" end:position!()
+              { Def::Var(name, start..end) }
             / f:function_def() { Def::Function(f) }
 
         rule function_def() -> FunctionDef<'input>

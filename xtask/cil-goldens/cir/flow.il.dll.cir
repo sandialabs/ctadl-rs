@@ -406,7 +406,7 @@ assign %t0 = cil<[flow]Holder> [139]
 %retval, %throwval = direct-call [flow]Holder::.ctor(System.Object,System.Int32)->System.Void(%t0, %s1, %s2) [139]
 assign %excout = %excout, %throwval [139]
 assign %s1 = %t0 [139]
-store $globals.<[flow]Holder::s> := %s1 [140]
+store $\[flow]Holder.s := %s1 [140]
 return %s0, %excout
 end block_0
 

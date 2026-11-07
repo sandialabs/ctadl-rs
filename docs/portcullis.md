@@ -162,6 +162,7 @@ relation name.
   | `arg(_)` | *every* argument, expanded by the engine over the function's arity |
   | `arg(I)` | argument `I`, where `I` is bound in the body |
   | `local(L)` | local variable `L`, bound in the body by `local(F, L)`; sources and sinks only |
+  | `self` | the global the port is anchored at, bound by `global(G)`: `G::self.deref` |
   | `arg(0).foo[2]` | argument 0's `foo` field, then offset 2 |
   | `arg(4)."weird.field[0]"` | a field whose name contains dots and brackets |
 
@@ -172,8 +173,19 @@ relation name.
   function: `source(F::local(L)) :- fun(F, name = "handle"), local(F, L, name = "buf");`. The
   local is seeded at its first SSA version, its incoming value.
 
-- **Anchored ports** hang a port off a function or a call site: `F::return` is "the return port
-  in `F`". The anchor may be a variable or a literal name.
+  A `self` port hangs off a global, which every function shares ([ir.md](ir.md), G2), so it is
+  anchored at no function and at no call site: `source(G::self.deref) :- global(G, name =
+  "g_data");` taints the C global `g_data`'s storage wherever it is read. A propagation may name
+  a global on one side; it is the other side's function's summary
+  (`propagation(F::return <- G::self.f) :- fun(F, name = "get"), global(G, name = "LC;");`). A
+  flow between two globals is no function's, and a bridge needs no global, since both of its
+  sides already share them: both are errors. Where a front end puts a global's storage is its
+  convention ([ir.md](ir.md), front ends): a C global's port is `G::self.deref`, a Java static
+  field's `G::self.f` with `G` the class, a binary's memory `G::self[A].deref` with `G` the
+  import's `<import>::ram`.
+
+- **Anchored ports** hang a port off a function, a call site or a global: `F::return` is "the
+  return port in `F`". The anchor may be a variable or a literal name.
 - **Flows** connect two anchored ports: `A -> B`, `A <- B`, `A <-> B`.
 
 ### Paths
@@ -231,6 +243,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id`, `language`, `import` |
 | `param(F, Index)` | function, parameter index | — |
 | `local(F, L)` | function, one of its declared local variables | `name` |
+| `global(G)` | a declared global | `name`, `import` |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
 | `subclass(Sub, Super)` | two classes, direct edge | — |
 | `subclass*(Sub, Super)` | reflexive transitive closure | — |
@@ -275,6 +288,9 @@ Notes worth having:
   `import` are those of the import the call site was read from. Collecting
   the keys costs a pass over every statement, so an import pays for it only when some rule reads
   `callsig`; a rule that reads it against an import collected without them matches nothing.
+- `global` lists the program's declared globals, by name. A global is its name ([ir.md](ir.md),
+  G3): a name two imports declare is one global, and `import` matches each of them. A rule
+  whose `global` atom matches nothing is reported as `CTADL0004` (`globalNotFound`).
 - `allocator` lists the entry points of a C heap allocator, in native code only. `kind` is
   `"malloc"` (returns a fresh block: `malloc`, `calloc`, `memalign`, …), `"realloc"` (returns a
   block holding its first argument's contents), `"free"`, or `"internal"` (`mallopt`,
@@ -282,8 +298,8 @@ Notes worth having:
   - `"name"`: its simple name, or its full name without leading underscores, is one of the
     allocator names in `ctadl-ascent/src/models/portcullis/allocator.rs`.
   - `"shape"`: it has no allocator name, but has dlmalloc's shape. `free` and `realloc` read
-    the header word just before the pointer they are passed. Every entry point writes the globals
-    those two write themselves, hundreds of times. The kind comes from the signature and the
+    the header word just before the pointer they are passed. Every entry point writes the
+    memory those two write themselves, at constant addresses, hundreds of times. The kind comes from the signature and the
     number of callers. This is what finds the allocator in a stripped binary. A pick is a
     heuristic, so `ctadl index` reports every one as `CTADL0109`, saying whether its body was
     skipped.
@@ -535,9 +551,9 @@ bridge(F::arg(0) -> G::arg(0).stack[1]),
 ```
 
 Every bridge head over one `(rule, F, G)` triple accumulates into **one** bridge with several
-ports, which is what keeps three ports on one callee argument from aliasing each other. Globals
-are mapped unconditionally and are not writable; without them heap flows do not cross the
-boundary at all.
+ports, which is what keeps three ports on one callee argument from aliasing each other. A bridge
+maps no globals: every function shares them already ([ir.md](ir.md), G2), so a flow in through
+one function, held in a native global, and out through another crosses without one.
 
 This rule mentions two programs, and no single import satisfies its body. That works because the
 body is split into connected components, each accumulated as the imports stream past and joined
@@ -739,8 +755,8 @@ Keys the format allows and that have no effect (`taint`, `forward_self`, an empt
 format allows and Portcullis cannot say fail the migration, naming the generator:
 
 - A `bridge` with no `arguments` map, or an empty one. The JSON format means an identity map over
-  the arity the two sides share, which needs the fact base; an empty map bridges only the
-  globals. Write the map.
+  the arity the two sides share, which needs the fact base; an empty map bridges nothing, since
+  globals need no bridge. Write the map.
 - `on-unmatched` / `on-ambiguous: "error"`, which fails the run, and a rule cannot.
 
 ---

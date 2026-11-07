@@ -48,7 +48,7 @@ use cil_reader::flow::{
 };
 use cil_reader::model::{MethodBody, MethodDef, MethodSig, TypeSig};
 use cil_reader::token::TokenType;
-use ctadl_ir::cir::{LocalIdx, PathSegment};
+use ctadl_ir::cir::{Globals, LocalIdx, PathSegment};
 use ctadl_ir::*;
 use smallvec::{SmallVec, smallvec};
 use source_info::SourceInfoBuilder;
@@ -71,6 +71,9 @@ pub struct Emitter<'f> {
     pub block: BasicBlockIdx,
     pub source_info: SourceInfo,
     fresh: u32,
+    /// The program's globals, where a static field's class is declared. `None` for a body
+    /// that names no static field.
+    globals: Option<&'f mut Globals>,
 }
 
 impl<'f> Emitter<'f> {
@@ -80,7 +83,25 @@ impl<'f> Emitter<'f> {
             block: BasicBlockIdx::new(0),
             source_info: SourceInfo::default(),
             fresh: 0,
+            globals: None,
         }
+    }
+
+    /// An emitter that can declare globals in `globals`.
+    pub fn with_globals(fdat: &'f mut FunctionData, globals: &'f mut Globals) -> Self {
+        Emitter {
+            globals: Some(globals),
+            ..Self::new(fdat)
+        }
+    }
+
+    /// The global `name`, declared if it is not yet.
+    pub fn global(&mut self, name: &str) -> VariableRef {
+        let globals = self
+            .globals
+            .as_deref_mut()
+            .expect("an emitter that names a global has the program's globals");
+        VariableRef::global(globals.declare(name, None))
     }
 
     /// The `VariableRef` for a flow-layer variable.
@@ -251,6 +272,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     body: &MethodBody<'m>,
     sig: &MethodSig,
     fdat: &mut FunctionData,
+    globals: &mut Globals,
     lines: &mut MethodSpans<'_, '_>,
     spans: &mut SourceInfoBuilder,
     out: &mut Collected,
@@ -300,7 +322,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     for _ in blocks {
         fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     }
-    let mut em = Emitter::new(fdat);
+    let mut em = Emitter::with_globals(fdat, globals);
     for (b, block) in blocks.iter().enumerate() {
         em.block = BasicBlockIdx::new(b);
         lower.static_fnptrs.clear();

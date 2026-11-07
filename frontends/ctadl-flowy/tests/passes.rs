@@ -6,16 +6,17 @@
 //! compares them. The only differences allowed are the approximations the register lists, and a
 //! corpus program that documents one says so on a `// passes: loses <pass>, ...` line, where the
 //! output may only lose observations, or a `// passes: adds <pass>, ...` line, where it may only
-//! gain them.
+//! gain them. A file whose programs must not compile (`// expect-error:`) is skipped, and a
+//! file of several programs is evaluated as one project, each pass applied to every program.
 
 mod common;
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use common::{corpus, rendered, tnt_programs};
+use common::{corpus, expected_error, rendered, tnt_programs};
 use ctadl_ir::cir::Program;
-use ctadl_ir::semantics::{Config, Ports, evaluate, ssa_form};
+use ctadl_ir::semantics::{Config, Ports, evaluate_programs, ssa_form};
 use ctadl_ir::ssa::{self, EscapePolicy, Mem2Reg, Pipeline};
 
 /// The flowy builtins, by name: before SSA, flowy's `source` and `sink` are still calls.
@@ -101,25 +102,39 @@ fn declared(text: &str, how: &str) -> BTreeSet<String> {
 /// file declares; empty when there is none.
 fn check(file: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(file).unwrap();
-    let input = match ctadl_flowy::compile_ir(&file.to_string_lossy(), &text) {
+    if expected_error(&text).is_some() {
+        return Vec::new();
+    }
+    let input: Vec<Program> = match ctadl_flowy::split_programs(&text)
+        .iter()
+        .map(|text| ctadl_flowy::compile_ir(&file.to_string_lossy(), text))
+        .collect()
+    {
         Ok(p) => p,
         Err(e) => return vec![format!("does not compile: {e}")],
     };
     let ports = ports();
     let config = Config::default();
-    let ssa_input = ssa_form(&input);
-    let before = rendered(&evaluate(&ssa_input, &ports, &config));
+    let evaluate = |programs: &[Program]| {
+        let ssa: Vec<Program> = programs.iter().map(ssa_form).collect();
+        let refs: Vec<&Program> = ssa.iter().collect();
+        evaluate_programs(&refs, &ports, &config)
+    };
+    let ssa_input: Vec<Program> = input.iter().map(ssa_form).collect();
+    let before = rendered(&evaluate(&input));
     let losses = declared(&text, "loses");
     let adds = declared(&text, "adds");
     let mut out = Vec::new();
     for pass in passes() {
-        let mut program = if pass.after_ssa {
+        let mut programs = if pass.after_ssa {
             ssa_input.clone()
         } else {
             input.clone()
         };
-        (pass.run)(&mut program);
-        let after = rendered(&evaluate(&ssa_form(&program), &ports, &config));
+        for program in &mut programs {
+            (pass.run)(program);
+        }
+        let after = rendered(&evaluate(&programs));
         if after == before {
             if losses.contains(pass.name) || adds.contains(pass.name) {
                 out.push(format!(

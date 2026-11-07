@@ -2321,6 +2321,7 @@ mod tests {
     /// where the sample sources are already compiled.
     fn constant_pool_only() -> ClassFile {
         ClassFile {
+            header_offset: 0,
             magic: 0xCAFE_BABE,
             minor_version: 0,
             major_version: 52,
@@ -2867,6 +2868,7 @@ mod tests {
     /// normalizer -- the two passes `basic_blocks_with_stack_slots` chains.
     fn normalize(code: Vec<u8>, handlers: Vec<ExceptionEntry>) -> ClassFileResult<()> {
         let cf = ClassFile {
+            header_offset: 0,
             magic: 0xCAFE_BABE,
             minor_version: 0,
             major_version: 52,

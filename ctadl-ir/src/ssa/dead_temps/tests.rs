@@ -218,9 +218,9 @@ fn call_arg_keeps_feeding_temp_alive() {
 
 #[test]
 fn keeps_store() {
-    // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
+    // store $g.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
-        AccessPath::from(VariableRef::new_global()),
+        AccessPath::from(VariableRef::global(GlobalIdx::new(0))),
         PathSegment::field("f"),
         read("v"),
     ))]);

@@ -6,9 +6,9 @@ use thiserror::Error;
 
 use crate::cir::path::{self, PathClass};
 use crate::cir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, CallStyle, Exp, FunctionData, FunctionIdx, LocalIdx,
-    Location, ParameterIdx, PathSegment, StatementKind, TerminatorKind, Variable, VariableRef,
-    path_syntax, visit::Visitor,
+    AccessPath, BasicBlockData, BasicBlockIdx, CallStyle, Exp, FunctionData, FunctionIdx,
+    GlobalIdx, LocalIdx, Location, ParameterIdx, PathSegment, Program, StatementKind,
+    TerminatorKind, Variable, VariableRef, path_syntax, visit::Visitor,
 };
 use crate::index::idx::Idx;
 
@@ -104,12 +104,43 @@ pub enum VerifyError {
         location: Location,
     },
 
-    /// A write to the whole of `$globals`: a copy into it, or a call result bound to it. A global
-    /// `g` is the location `$globals.g` (S13); the variable itself is shared, never rebound.
-    #[error("in function: {function}: write to $globals with an empty path at {location}")]
-    EmptyGlobalsWrite {
+    /// A reference to a global the program does not declare.
+    #[error("in function: {function}: global {global:?} does not exist")]
+    GlobalOutOfRange { function: String, global: GlobalIdx },
+
+    /// A versioned reference to a global. A global is never rebound, so SSA never versions it
+    /// (G4).
+    #[error("in function: {function}: global {global:?} has version {version}")]
+    VersionedGlobal {
+        function: String,
+        global: GlobalIdx,
+        version: u32,
+    },
+
+    /// A copy into a global: an assignment to it with an empty path. A global's storage is the
+    /// locations below it; the variable itself is shared, never rebound (G4).
+    #[error("in function: {function}: copy into global {global} at {location}")]
+    CopyIntoGlobal {
         function: String,
         location: Location,
+        global: String,
+    },
+
+    /// A call result bound to a global (G4).
+    #[error("in function: {function}: call result bound to global {global} at {location}")]
+    CallResultIntoGlobal {
+        function: String,
+        location: Location,
+        global: String,
+    },
+
+    /// A phi over a global, as destination or operand. Nothing defines a global, so SSA never
+    /// places one (G4).
+    #[error("in function: {function}: phi over global {global} at {location}")]
+    PhiOverGlobal {
+        function: String,
+        location: Location,
+        global: String,
     },
 
     /// The `#value` segment spelled as a field. `#value` names no field of any source language,
@@ -186,6 +217,9 @@ pub struct CirVerify {
     locals_len: Option<usize>,
     /// Length of return values from function
     return_arity: Option<u8>,
+    /// Number of globals the program declares; `None` when verifying a function on its own,
+    /// which leaves global references unchecked for range.
+    globals_len: Option<usize>,
     defines: HashSet<String>,
 }
 
@@ -294,15 +328,11 @@ impl Visitor for CirVerify {
                         path: dest.to_string(),
                     });
                 }
-                // SSA's entry binding `$globals_0 = $globals` names the incoming heap; it is the
-                // one copy into `$globals` there is.
-                if dest.is_pathless()
-                    && dest.base.variable == Variable::GlobalHeap
-                    && dest.base.version != Some(0)
-                {
-                    self.add_error(VerifyError::EmptyGlobalsWrite {
+                if dest.is_pathless() && dest.base.variable.is_global() {
+                    self.add_error(VerifyError::CopyIntoGlobal {
                         function: self.name.clone(),
                         location,
+                        global: dest.base.to_string(),
                     });
                 }
                 for e in sources {
@@ -316,15 +346,34 @@ impl Visitor for CirVerify {
                 if let CallStyle::FuncPtrCall { callee, .. } = style {
                     self.check_access_path(callee, location);
                 }
-                if rets.iter().any(|r| r.variable == Variable::GlobalHeap) {
-                    self.add_error(VerifyError::EmptyGlobalsWrite {
+                for r in rets.iter().filter(|r| r.variable.is_global()) {
+                    self.add_error(VerifyError::CallResultIntoGlobal {
                         function: self.name.clone(),
                         location,
+                        global: r.to_string(),
+                    });
+                }
+            }
+            StatementKind::Phi { dest, operands } => {
+                let global = std::iter::once(dest)
+                    .chain(operands.iter().map(|(_, v)| v))
+                    .find(|v| v.variable.is_global());
+                if let Some(global) = global {
+                    self.add_error(VerifyError::PhiOverGlobal {
+                        function: self.name.clone(),
+                        location,
+                        global: global.to_string(),
                     });
                 }
             }
             _ => {}
         }
+    }
+
+    fn visit_program(&mut self, program: &Program) {
+        self.globals_len = Some(program.globals.len());
+        let _names = program.global_names_guard();
+        self.super_program(program);
     }
 
     #[inline]
@@ -377,6 +426,21 @@ impl Visitor for CirVerify {
                 function: self.name.clone(),
                 parameter: *idx,
             });
+        }
+        if let Variable::Global(idx) = &variable.variable {
+            if self.globals_len.is_some_and(|len| idx.index() >= len) {
+                self.add_error(VerifyError::GlobalOutOfRange {
+                    function: self.name.clone(),
+                    global: *idx,
+                });
+            }
+            if let Some(version) = variable.version {
+                self.add_error(VerifyError::VersionedGlobal {
+                    function: self.name.clone(),
+                    global: *idx,
+                    version,
+                });
+            }
         }
         // Check that referenced local exists.
         if let Variable::Local(idx) = &variable.variable

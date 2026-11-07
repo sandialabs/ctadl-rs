@@ -27,6 +27,10 @@ The regime:
    The search threads a [`TaintState`] annotation along the edges so
    call/return matching is respected: a `Call` edge enters `Restricted`, and a
    `Return` edge is only traversable while `Free`.
+   A global vertex belongs to every function at once: it is the node
+   `(GLOBAL_FRAME, $g, p)`, entered from any function's store to it and left
+   into any function's load of it, by a `Global` edge, which resets the
+   annotation to `Free`.
 4. Sink endpoints are the search targets. Every sink reached gets a
    (breadth-first shortest) path from the source set, and found paths are
    reported through the existing means: the returned [`QueryResult`] carries
@@ -48,12 +52,19 @@ type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
 type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
+    CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, GLOBAL_FRAME, IdMap, InsnSiteId,
+    Label, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
 use super::{QueryEndpoint, QueryFacts, QueryResult};
 use crate::graphviz::index_vertex_cmp;
+
+/// The function a vertex `v` of `f` is a node of: `f`, or the global frame for a global, which
+/// every function shares.
+#[inline]
+fn home(f: FunctionId, v: &FlowVariable) -> FunctionId {
+    if v.is_global() { GLOBAL_FRAME } else { f }
+}
 
 /// Which objects a taint on a *non-empty* access path `v.p` is about.
 ///
@@ -116,24 +127,26 @@ type TaintVertex = (FunctionId, FlowVariable, Path);
 /// breaks ties between equal-length paths by it, and the index's row order depends on handles.
 pub struct TaintSearchGraph {
     /// `assign_like` edges indexed by source variable:
-    /// `(f, src) -> [(dst, dst_path, src_path)]`.
-    assign_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path, Path)>>,
+    /// `(home(f, src), src) -> [(f, dst, dst_path, src_path)]`. A global's are its loads in every
+    /// function.
+    assign_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FunctionId, FlowVariable, Path, Path)>>,
     /// Field/offset loads `x = a.q` (destination path empty, `q` non-empty)
     /// indexed by destination: `(f, x) -> [(a, q)]`. A load makes `x` an
     /// *alias* of `a.q`, so taint on `x` also lives at `a.q` — the back-flow
     /// direction the direct `assign_by_src` edges don't cover.
     loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
-    /// The same loads `x = a.q` indexed by *base*: `(f, a) -> [(x, q)]`. The
+    /// The same loads `x = a.q` indexed by *base*: `(home(f, a), a) -> [(f, x, q)]`. The
     /// mirror of `loads_by_dst`, consulted only by the saturating rule: reading
     /// any offset `q` off a saturating base `a` taints the load's destination
     /// `x`, regardless of whether `q` matches the tainted path.
-    loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
+    loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FunctionId, FlowVariable, Path)>>,
     /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
     /// ends in an offset, like C's `&a[2]` or pcode's `PTRADD` -- indexed by
-    /// source and keyed by the path `k` before the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
+    /// source and keyed by the path `k` before the offset:
+    /// `(home(f, src), src) -> [(k, f, dst, dp)]`. The address depends on the
     /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
     /// `assign_by_src` step only carries taint that lies under the offset.
-    addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
+    addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FunctionId, FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
@@ -141,9 +154,6 @@ pub struct TaintSearchGraph {
     /// Callees of each call site, for actual-to-formal (call entry) steps. Several when the
     /// index resolved an indirect or virtual call to more than one target.
     callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
-    /// Calls accepting a heap, keyed by caller. Their actual vertex is the caller's
-    /// heap formal, so it cannot encode the site as an ordinary `CallArg` does.
-    heap_calls_by_caller: HashMap<FunctionId, Vec<(PackedInsnSiteId, FunctionId)>>,
     /// The materialized paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -215,53 +225,64 @@ impl TaintSearchGraph {
     pub fn new(facts: &QueryFacts) -> Self {
         let mut assign_by_src: HashMap<
             (FunctionId, FlowVariable),
-            Vec<(FlowVariable, Path, Path)>,
+            Vec<(FunctionId, FlowVariable, Path, Path)>,
         > = HashMap::default();
         let mut loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
             HashMap::default();
-        let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
-            HashMap::default();
-        let mut addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>> =
-            HashMap::default();
+        let mut loads_by_src: HashMap<
+            (FunctionId, FlowVariable),
+            Vec<(FunctionId, FlowVariable, Path)>,
+        > = HashMap::default();
+        let mut addrs_by_src: HashMap<
+            (FunctionId, FlowVariable),
+            Vec<(Path, FunctionId, FlowVariable, Path)>,
+        > = HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
-            if let Some((key, _)) = sp.split_trailing_offset() {
+            let key = (home(*f, src), *src);
+            if let Some((k, _)) = sp.split_trailing_offset() {
                 addrs_by_src
-                    .entry((*f, *src))
+                    .entry(key)
                     .or_default()
-                    .push((key, *dst, *dp));
+                    .push((k, *f, *dst, *dp));
             }
             assign_by_src
-                .entry((*f, *src))
+                .entry(key)
                 .or_default()
-                .push((*dst, *dp, *sp));
+                .push((*f, *dst, *dp, *sp));
             if dp.is_empty() && !sp.is_empty() {
                 loads_by_dst
                     .entry((*f, *dst))
                     .or_default()
                     .push((*src, *sp));
-                loads_by_src
-                    .entry((*f, *src))
-                    .or_default()
-                    .push((*dst, *sp));
+                loads_by_src.entry(key).or_default().push((*f, *dst, *sp));
             }
         }
 
         for succs in assign_by_src.values_mut() {
             succs.sort_unstable_by(|a, b| {
-                a.0.content_cmp(&b.0)
+                a.0.cmp(&b.0)
+                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.2.content_cmp(&b.2))
+                    .then_with(|| a.3.content_cmp(&b.3))
+            });
+        }
+        for succs in loads_by_dst.values_mut() {
+            succs
+                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
+        }
+        for succs in loads_by_src.values_mut() {
+            succs.sort_unstable_by(|a, b| {
+                a.0.cmp(&b.0)
                     .then_with(|| a.1.content_cmp(&b.1))
                     .then_with(|| a.2.content_cmp(&b.2))
             });
         }
-        for succs in loads_by_dst.values_mut().chain(loads_by_src.values_mut()) {
-            succs
-                .sort_unstable_by(|a, b| a.0.content_cmp(&b.0).then_with(|| a.1.content_cmp(&b.1)));
-        }
         for succs in addrs_by_src.values_mut() {
             succs.sort_unstable_by(|a, b| {
                 a.0.content_cmp(&b.0)
-                    .then_with(|| a.1.content_cmp(&b.1))
+                    .then_with(|| a.1.cmp(&b.1))
                     .then_with(|| a.2.content_cmp(&b.2))
+                    .then_with(|| a.3.content_cmp(&b.3))
             });
         }
 
@@ -273,18 +294,9 @@ impl TaintSearchGraph {
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
         let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
-        let mut heap_calls_by_caller: HashMap<_, Vec<_>> = HashMap::default();
-        let heap = FlowVariable::formal_index(crate::codegen::GLOBALS_INDEX.into());
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
             callee_by_site.entry(*site).or_default().push(*callee);
-            if formal_ty.contains_key(&(*callee, heap)) {
-                let caller = InsnSiteId::try_from(site).unwrap().func_id;
-                heap_calls_by_caller
-                    .entry(caller)
-                    .or_default()
-                    .push((*site, *callee));
-            }
         }
 
         for sites in callers_by_callee.values_mut() {
@@ -292,9 +304,6 @@ impl TaintSearchGraph {
         }
         for callees in callee_by_site.values_mut() {
             callees.sort_unstable();
-        }
-        for calls in heap_calls_by_caller.values_mut() {
-            calls.sort_unstable();
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -359,7 +368,6 @@ impl TaintSearchGraph {
             formal_ty,
             callers_by_callee,
             callee_by_site,
-            heap_calls_by_caller,
             paths,
             copies_by_dst,
             sink_ext_by_var,
@@ -396,7 +404,7 @@ impl LazySuccessors for TaintSearchGraph {
         // destination's scope is `Fixed`; any other step is a fresh derivation
         // about whatever the destination holds, so it starts `All`.
         if let Some(edges) = self.assign_by_src.get(&(f, v)) {
-            for (dst, dp, sp) in edges {
+            for (g, dst, dp, sp) in edges {
                 if let Some(p2) = p.substitute_prefix(sp, dp)
                     && self.paths.contains(&p2)
                 {
@@ -405,7 +413,7 @@ impl LazySuccessors for TaintSearchGraph {
                     } else {
                         ObjectScope::All
                     };
-                    out.push(((f, *dst, p2, level, scope2), FlowEdge::Intra));
+                    out.push(((*g, *dst, p2, level, scope2), FlowEdge::Intra));
                 }
             }
         }
@@ -413,9 +421,9 @@ impl LazySuccessors for TaintSearchGraph {
         // Address computation off the tainted value: a fresh derivation, so
         // `All`.
         if let Some(addrs) = self.addrs_by_src.get(&(f, v)) {
-            for (key, dst, dp) in addrs {
+            for (key, g, dst, dp) in addrs {
                 if *key == p && self.paths.contains(dp) {
-                    out.push(((f, *dst, *dp, level, ObjectScope::All), FlowEdge::Intra));
+                    out.push(((*g, *dst, *dp, level, ObjectScope::All), FlowEdge::Intra));
                 }
             }
         }
@@ -470,13 +478,13 @@ impl LazySuccessors for TaintSearchGraph {
         // cannot over-taint.
         if level == TaintLevel::Saturating {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
-                for (dst, q) in loads {
+                for (g, dst, q) in loads {
                     if !saturating_read(q, &p) {
                         continue;
                     }
                     out.push((
                         (
-                            f,
+                            *g,
                             *dst,
                             Path::empty(),
                             TaintLevel::Saturating,
@@ -506,8 +514,7 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Formal-to-actual (function exit): taint on an out-flowing formal
-        // continues at the corresponding call vertex of every caller (the caller's
-        // heap formal for globals, a per-site call-arg for other parameters). The
+        // continues at the corresponding call vertex of every caller. The
         // `Return` label makes the edge traversable only in the `Free` state,
         // enforcing call/return matching exactly as the closure engine's
         // `TaintState::Free` premise does.
@@ -552,12 +559,16 @@ impl LazySuccessors for TaintSearchGraph {
                 }
             }
         }
-        if v.as_formal() == Some(crate::codegen::GLOBALS_INDEX.into()) {
-            for (site, callee) in self.heap_calls_by_caller.get(&f).into_iter().flatten() {
-                out.push((
-                    (*callee, v, p, level, ObjectScope::All),
-                    FlowEdge::Call(*site),
-                ));
+
+        // A global vertex is the frame's, whichever function stored to it or loads from it:
+        // the step between a function and the frame is a `Global` edge.
+        for ((g, w, ..), edge) in &mut out {
+            let to = home(*g, w);
+            if to != *g || (*g != f && f == GLOBAL_FRAME) {
+                *g = to;
+                if *edge == FlowEdge::Intra && to != f {
+                    *edge = FlowEdge::Global;
+                }
             }
         }
 
@@ -589,6 +600,7 @@ impl LazyAnnotation<TaintSearchGraph> for TaintState {
                 TaintState::Free => Some(TaintState::Free),
                 TaintState::Restricted => None,
             },
+            FlowEdge::Global => Some(TaintState::Free),
         }
     }
 }
@@ -793,7 +805,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         };
         let call_arg_id = CallArgId::try_from(packed).unwrap();
         let site = PackedInsnSiteId::try_from_parts(*f, call_arg_id.insn_id).unwrap();
-        if !v.is_globals() && *call_arg_id.formal() >= 0 {
+        if *call_arg_id.formal() >= 0 {
             tainted_insn.insert((site, src.label.clone(), *v, *p));
         }
         for target in graph.callee_by_site.get(&site).into_iter().flatten() {

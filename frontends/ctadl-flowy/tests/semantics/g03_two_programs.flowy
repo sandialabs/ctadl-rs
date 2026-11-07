@@ -1,0 +1,36 @@
+// G3: a global is its name. Two programs of a project that declare `g` declare one variable, so a
+// store in one is read in the other; `k` and `h` are two names, so two variables.
+var g;
+
+def PutG() {
+s:
+  a = source(S);
+  g.deref = a;
+  return;
+}
+
+// --- program ---
+var k;
+
+def PutK() {
+s:
+  b = source(T);
+  k.deref = b;
+  return;
+}
+
+// --- program ---
+var g;
+var h;
+
+def Get() {
+s:
+  r = g.deref;
+  sink(r, S);
+  q = h.deref;
+  errsink(q, T);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Get: sink(%S)#0 <- %S

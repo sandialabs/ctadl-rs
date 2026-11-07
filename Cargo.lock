@@ -5074,6 +5074,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "source-info",
  "zip",
 ]
 

@@ -12,7 +12,9 @@ indexing.
 Some notes about choices made in the design of generating code:
 
 Parameters in IR are mapped to the same indices in the Datalog. Return values are mapped to index
--1, -2, -3, etc. The global heap is mapped to [`GLOBALS_INDEX`], which is [`i16::MIN`].
+-1, -2, -3, etc. A global `$g` is the vertex [`FlowVariable::global`] of its name, the same in
+every function and every import of the project (G3 of `docs/ir.md`); nothing is passed for it at a
+call (G5), and each import's declarations are rows of [`IndexFacts::globals`].
 
 # Resolving a Java call
 
@@ -339,6 +341,7 @@ pub fn codegen_program(
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
+    v.declare_globals(&program_info.program.globals);
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
@@ -367,6 +370,17 @@ pub fn codegen_function(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
+    codegen_function_with_globals(function_data, &Globals::default(), facts, source_info)
+}
+
+/// [`codegen_function`] for a function that names the globals `globals` declares: its
+/// program's table.
+pub fn codegen_function_with_globals(
+    function_data: &FunctionData,
+    globals: &Globals,
+    facts: &mut IndexFacts,
+    source_info: &mut IndexSourceInfo,
+) {
     let function_data_owned = function_data.clone();
     let function_data = &function_data_owned;
     let mut instantiated_classes = BTreeSet::new();
@@ -386,11 +400,12 @@ pub fn codegen_function(
         CallPolicy::default(),
         &no_matches,
     );
+    v.declare_globals(globals);
     v.visit_function_data(FunctionIdx::new(0), function_data);
     v.finish();
 }
 
-pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
+pub use crate::facts::RETURN_INDEX;
 
 /// The `call_target_assign` payload for an *object-valued* expression: the class of an
 /// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
@@ -462,6 +477,8 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// The program's globals, by [`ctadl_ir::cir::GlobalIdx`].
+    globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
@@ -545,6 +562,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
+            globals: Vec::new(),
             num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
@@ -839,12 +857,6 @@ impl Visitor for CodegenVisitor<'_> {
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
         }
-        // Gens global param
-        self.facts.formal_param.push((
-            self.function.unwrap(),
-            FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            fx::FormalType::Shared,
-        ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
@@ -1160,9 +1172,8 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 // pass parameters
                 for (i, arg_exp) in args.iter().enumerate() {
-                    // The negative half is reserved for the engine (returns at -1, -2, ...; globals
-                    // at `GLOBALS_INDEX`), which is why this stops at `i16::MAX` rather than
-                    // wrapping into it.
+                    // The negative half is reserved for the engine (returns at -1, -2, ...),
+                    // which is why this stops at `i16::MAX` rather than wrapping into it.
                     let Ok(formal_index) = FormalIndex::try_from(i) else {
                         log::warn!(
                             "found > {} parameters in function call; skipping rest",
@@ -1233,15 +1244,6 @@ impl Visitor for CodegenVisitor<'_> {
                         FlowVertex::new(ret, fx::Path::empty()),
                     ));
                 }
-                // pass globals
-                self.facts.actual_param.push((
-                    site,
-                    GLOBALS_INDEX.into(),
-                    FlowVertex::new(
-                        FlowVariable::formal_index(GLOBALS_INDEX.into()),
-                        fx::Path::empty(),
-                    ),
-                ));
             }
             Nop => (),
         }
@@ -1256,19 +1258,15 @@ impl Visitor for CodegenVisitor<'_> {
             insn_site_id.try_into().unwrap()
         };
         if let TerminatorKind::Return { args } = terminator {
-            // Write each parameter, and the global heap, back to its formal at its entry version,
-            // so a store through it inside the function reaches the formal path the summary
-            // reads. The entry version is the one that reaches the return: rebinding a parameter
-            // does not reach the caller, and nothing rebinds the global heap (see `ctadl_ir::ssa`).
-            let formals = (0..self.num_params)
-                .map(|i| {
-                    let p = VariableRef::new_parameter(ParameterIdx::new(i));
-                    (FlowVariable::formal_index(i.try_into().unwrap()), p)
-                })
-                .chain(std::iter::once((
-                    FlowVariable::formal_index(GLOBALS_INDEX.into()),
-                    VariableRef::new_global(),
-                )));
+            // Write each parameter back to its formal at its entry version, so a store through
+            // it inside the function reaches the formal path the summary reads. The entry
+            // version is the one that reaches the return: rebinding a parameter does not reach
+            // the caller (see `ctadl_ir::ssa`). A global needs no write-back: SSA never
+            // versions it, so a store to it already lands on its vertex.
+            let formals = (0..self.num_params).map(|i| {
+                let p = VariableRef::new_parameter(ParameterIdx::new(i));
+                (FlowVariable::formal_index(i.try_into().unwrap()), p)
+            });
             for (dst, v) in formals {
                 let src = self.trans_variable_ref(&v.with_version(0));
                 self.facts.assign.push((
@@ -1372,15 +1370,24 @@ impl CodegenVisitor<'_> {
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
-        match (&v.variable, v.version) {
-            // The one global heap maps to the globals index
-            (Variable::GlobalHeap, None) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            // A versioned global heap is a local variable
-            (Variable::GlobalHeap, Some(version)) => {
-                FlowVariable::local(Str::from(format!("$globals_{}", version)))
-            }
+        match v.variable {
+            Variable::Global(idx) => FlowVariable::global(self.globals[idx.index()]),
             _ => v.try_into().unwrap(),
         }
+    }
+
+    /// Takes the program's globals table, and records each declaration as a row of
+    /// [`IndexFacts::globals`] for the current import.
+    fn declare_globals(&mut self, globals: &Globals) {
+        let import = self.source_info.current_import();
+        self.globals = globals
+            .iter_enumerated()
+            .map(|(_, g)| {
+                let id = fx::GlobalId(Str::from(g.name.clone()));
+                self.facts.globals.push((id, import, g.span));
+                id
+            })
+            .collect();
     }
 }
 

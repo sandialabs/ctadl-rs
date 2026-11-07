@@ -841,6 +841,7 @@ pub fn parse_class_defs(data: &[u8], header: &DexHeader) -> DexResult<Vec<ClassD
         let static_values_off = read_u32_le(data, off + 28)?;
 
         class_defs.push(ClassDef {
+            offset: off as u32,
             class_idx,
             access_flags,
             superclass_idx,
@@ -856,6 +857,9 @@ pub fn parse_class_defs(data: &[u8], header: &DexHeader) -> DexResult<Vec<ClassD
 }
 
 impl ClassDef {
+    /// The length of a `class_def_item`.
+    pub const ITEM_LEN: u32 = 32;
+
     pub fn class_name<'a>(
         &self,
         type_ids: &[TypeId],

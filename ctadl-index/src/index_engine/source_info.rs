@@ -41,6 +41,11 @@ impl IndexSourceInfo {
         self.current_import()
     }
 
+    /// The name of import `id`, as [`Self::begin_import`] was given it.
+    pub fn import_name(&self, id: ImportId) -> Option<&str> {
+        self.imports.get(id.0 as usize).map(String::as_str)
+    }
+
     /// The import codegen is currently running over. Zero before the first
     /// [`Self::begin_import`], which is the id a single-import index uses throughout.
     pub fn current_import(&self) -> ImportId {

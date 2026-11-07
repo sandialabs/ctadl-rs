@@ -48,10 +48,10 @@ no reference is left dangling.
 
 The pass is conservative and SSA-only:
 
-- Only versioned refs are aliased, so it is a no-op on non-SSA IR. In particular
+- Only versioned refs are aliased, so it is a no-op on non-SSA IR, and a copy of a
+  global (never versioned) is never aliased to it. In particular
   the version-0 anchor assigns that [`transform`](super::transform) seeds for
-  parameters and the global heap (`p_0 = p`, `$globals_0 = $globals`) read an
-  *unversioned* source and are never treated as copies, so those anchors, which
+  parameters (`p_0 = p`) read an *unversioned* source and are never treated as copies, so those anchors, which
   codegen writes back to the formals at the return, are preserved.
 - Only bare variable copies propagate. Multi-source assigns, address-arithmetic
   ([`Exp::Address`]), constants, loads, and call results are never aliased:

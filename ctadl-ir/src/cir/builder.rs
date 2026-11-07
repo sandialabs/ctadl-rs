@@ -1,8 +1,8 @@
 use crate::cir::call::CallStyle;
 use crate::cir::terminator::{Terminator, TerminatorKind};
 use crate::cir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FunctionData, LocalIdx, Locals, ParameterIdx,
-    ParameterType, PathSegment, Statement, StatementIdx, StatementKind, VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FunctionData, GlobalIdx, LocalIdx, Locals,
+    ParameterIdx, ParameterType, PathSegment, Statement, StatementIdx, StatementKind, VariableRef,
 };
 use crate::index::idx::Idx;
 
@@ -231,9 +231,9 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_parameter(param_idx)
     }
 
-    /// Create a new global heap variable reference
-    pub fn new_global_var(&self) -> VariableRef {
-        VariableRef::new_global()
+    /// Create a reference to the global `idx` of the program being built
+    pub fn new_global_var(&self, idx: GlobalIdx) -> VariableRef {
+        VariableRef::global(idx)
     }
 
     /// Create an access path from a variable and its segments.

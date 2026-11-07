@@ -121,7 +121,10 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `13`: assignments take full access paths as destination and sources, and the `Load`,
 ///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
 ///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "13";
+/// - `14`: a program declares its globals (`Program::globals`), and `Variable::Global` names one
+///   in place of the one global heap `$globals`. A `bitcode` wire-format change to every
+///   `ir-program.bitcode`, and every front end's global lowering changed.
+pub const IMPORT_FORMAT_VERSION: &str = "14";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -174,7 +177,11 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 /// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
 ///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::cir::path`, with
 ///   `deref` and `#value` segments distinct from fields.
-pub const INDEX_FORMAT_VERSION: &str = "7";
+/// - `8`: globals are variables (`docs/ir.md`, G1). `summary.parquet`'s roots are two columns each,
+///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
+///   gained `globals.parquet`, the project's globals by declaring import, and
+///   `global_flow.parquet`, the program-level flows between globals.
+pub const INDEX_FORMAT_VERSION: &str = "8";
 
 /// The front-end convention options set in the environment to something other than their
 /// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by

@@ -101,7 +101,7 @@ macro_rules! make_ast_visitor {
 
             // The `super_xxx` methods define default behavior and aren't meant to be overriden.
             fn super_program(&mut self, program: &$($mutability)? Program) {
-                let Program { functions } = program;
+                let Program { functions, .. } = program;
                 self.visit_functions(functions);
             }
 

@@ -6,8 +6,11 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 `dex_reader::apk`'s job. An APK's native libraries belong to a different front end, and are
 handled one level up, in `ctadl-frontends`.
 
-Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout; a static
-field is that field of `globals`. An array's elements are the one field `[]`, and its length the
+Conventions (S19). A field is the symbolic field `<Lcls;->name:type>`, with no layout. A class
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone: `sput` is the store `$Lcls;.name = v`, `sget`
+the load `x = $Lcls;.name`. A class
+referenced from several dex files or splits is one global (G3). An array's elements are the one field `[]`, and its length the
 field `length`. Arithmetic, bitwise operations, comparisons (a numeric conversion is a cast and stays a copy) and
 `instance-of` supply values only: each operand is `value(v)`. A `const-method-handle` that
 invokes a known method is a function reference to that method (`Context::method_handle_exp`
@@ -174,6 +177,13 @@ struct Context {
     pc: usize,
     /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
     clone_statements: usize,
+    /// The globals declared so far: one per class that owns a static field. Moved into the
+    /// program at [`Context::finish`].
+    globals: ctadl_ir::cir::Globals,
+    /// Each class this import defines, as its global is named, with the dex file it is in and
+    /// the offset of its `class_def_item` there: where the global is declared. Located
+    /// in [`Context::finish`], once every class has been lowered.
+    class_defs: Vec<(String, ArtifactKey, u32)>,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -186,6 +196,20 @@ struct EnclosingClass {
 }
 
 impl Context {
+    /// The class global `$Lcls;` and field `name` of the static field `pretty` names
+    /// (`Lcls;->name:type`).
+    fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::cir::PathSegment) {
+        let (class, rest) = pretty
+            .split_once("->")
+            .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
+        let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
+        let global = self.globals.declare(class, None);
+        (
+            VariableRef::global(global),
+            ctadl_ir::cir::PathSegment::field(name),
+        )
+    }
+
     fn new() -> Self {
         Self {
             counter: Default::default(),
@@ -197,6 +221,8 @@ impl Context {
             enclosing: None,
             merged: Default::default(),
             retag: Default::default(),
+            globals: Default::default(),
+            class_defs: Vec::new(),
             pc: 0,
             clone_statements: 0,
         }
@@ -213,6 +239,8 @@ impl Context {
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
+            self.class_defs
+                .push((class_name.clone(), artifact_key.clone(), class_def.offset));
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -659,7 +687,19 @@ impl Context {
         &mut self,
         mut builders: ProgramInfoBuilder,
     ) -> Result<(ProgramInfo, Notifications), Error> {
-        let program = builders.program;
+        let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its `class_def_item`, if the program uses it.
+        for (class, key, offset) in self.class_defs.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
         log::trace!("program: {program}");
         let notifications = self
             .merged
@@ -981,7 +1021,7 @@ impl Context {
             | Instruction::SPutShort(f)
             | Instruction::SPutWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
                 let temp_var = self.counter.temp(locals);
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
@@ -992,8 +1032,8 @@ impl Context {
                 )));
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
-                    AccessPath::from(VariableRef::new_global()),
-                    ctadl_ir::cir::PathSegment::field(name),
+                    AccessPath::from(global),
+                    field,
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1006,7 +1046,7 @@ impl Context {
             | Instruction::SGetShort(f)
             | Instruction::SGetWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
                 for dest in dest
                     .iter()
                     .cloned()
@@ -1014,8 +1054,8 @@ impl Context {
                 {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
-                        VariableRef::new_global(),
-                        ctadl_ir::cir::PathSegment::field(name.clone()),
+                        global.clone(),
+                        field.clone(),
                     )));
                 }
                 return Ok(stmts);
