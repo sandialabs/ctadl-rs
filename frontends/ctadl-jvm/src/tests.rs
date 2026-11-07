@@ -1,6 +1,6 @@
 use super::import_class;
-use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::Dispatch;
+use ctadl_ir::cir::TerminatorKind;
+use ctadl_ir::cir::call::Dispatch;
 
 /// A class file for `Demo` with a `public static` method for each
 /// `(name, descriptor, bytecode)`.
@@ -187,7 +187,7 @@ fn receiverless_invokedynamic_extern_class_matches_its_signature() {
 /// The copies in the function whose name contains `name`, as `(dest, sources)` with a
 /// variable printed by name and `value(v)` for a value-only source.
 fn copies(info: &ctadl_ir::ProgramInfo, name: &str) -> Vec<(String, Vec<String>)> {
-    use ctadl_ir::{Exp, VariableRef, mir::StatementKind};
+    use ctadl_ir::{Exp, VariableRef, cir::StatementKind};
     let f = info
         .program
         .functions
@@ -326,8 +326,8 @@ fn method_handle_constant_is_a_function_reference() {
 /// handle, passing `x` (S11), so a handle constant resolves it.
 #[test]
 fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
-    use ctadl_ir::mir::StatementKind;
-    use ctadl_ir::mir::call::CallStyle;
+    use ctadl_ir::cir::StatementKind;
+    use ctadl_ir::cir::call::CallStyle;
     fn utf8(s: &str) -> Vec<u8> {
         let mut out = vec![1];
         out.extend((s.len() as u16).to_be_bytes());
@@ -382,5 +382,65 @@ fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
             .iter()
             .any(|(dest, sources)| dest == handle && sources == &["ptr<LDemo;->mh(I)V>"]),
         "the callee holds the handle's function reference: {flows:?}"
+    );
+}
+
+/// A static field is a field of its class's global: `putstatic Demo.f` is the store
+/// `$LDemo;.f = v` and `getstatic Demo.f` the load `x = $LDemo;.f`, the class declared once.
+#[test]
+fn a_static_field_is_a_field_of_its_class_global() {
+    fn utf8(s: &str) -> Vec<u8> {
+        let mut out = vec![1];
+        out.extend((s.len() as u16).to_be_bytes());
+        out.extend(s.as_bytes());
+        out
+    }
+    let name = utf8("f"); // 8
+    let descriptor = utf8("I"); // 9
+    let name_and_type = [12, 0, 8, 0, 9]; // 10
+    let fieldref = [9, 0, 2, 0, 10]; // 11: Demo.f:I
+    // iload_0; putstatic #11; getstatic #11; ireturn
+    let code = [0x1a, 0xb3, 0x00, 0x0b, 0xb2, 0x00, 0x0b, 0xac];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("Demo.class");
+    std::fs::write(
+        &path,
+        class_with_pool(
+            &[&name, &descriptor, &name_and_type, &fieldref],
+            &[("roundtrip", "(I)I", &code)],
+        ),
+    )
+    .expect("write class");
+
+    let info = import_class(&path).expect("the class imports");
+    let globals: Vec<String> = info
+        .program
+        .globals
+        .iter_enumerated()
+        .map(|(_, g)| g.name.to_string())
+        .collect();
+    assert_eq!(globals, ["LDemo;"]);
+    let dump = info.program.to_string();
+    assert!(dump.contains("store $LDemo;.f := "), "{dump}");
+    assert!(dump.contains(" = $LDemo;.f ["), "{dump}");
+
+    // The global is declared at the class header: `access_flags`, `this_class` and
+    // `super_class` as `class_with_pool` writes them.
+    let demo = info.program.globals.lookup("LDemo;").unwrap();
+    let span = info
+        .program
+        .globals
+        .get(demo)
+        .unwrap()
+        .span
+        .expect("a span");
+    let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+    assert_eq!(artifact.canonical_path, path.to_string_lossy());
+    assert_eq!(span.len, source_info::SpanLen::ByteLen(6));
+    let bytes = std::fs::read(&path).unwrap();
+    let start = span.start as usize;
+    assert_eq!(
+        bytes[start..start + 6],
+        [0x00, 0x21, 0x00, 0x02, 0x00, 0x04]
     );
 }

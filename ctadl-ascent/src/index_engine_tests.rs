@@ -6,9 +6,9 @@ use crate::facts::{CallTargetObject, FlowVariable, FunctionId, IdMap, InsnId, Pa
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::*;
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{CallEdges, CallObject, CallStyle};
-use ctadl_ir::mir::{AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
+use ctadl_ir::cir::builder::FunctionBuilder;
+use ctadl_ir::cir::call::{CallEdges, CallObject, CallStyle};
+use ctadl_ir::cir::{AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
 use std::num::NonZeroUsize;
 
 /// Lowers one C translation unit. This function and [`index_program`] are test helpers
@@ -89,6 +89,7 @@ fn canonical(
         intent_pair: _,
         mut paths,
         mut external_function,
+        global_flow: _,
         stats: _,
     } = result;
     summary.sort();
@@ -512,7 +513,11 @@ fn exceptional_return_is_summarized() {
     let (thrower, catcher) = (func_id(&si.sites, "thrower"), func_id(&si.sites, "catcher"));
     let has = |f: FunctionId, dst: i16, src: i16| {
         result.summary.iter().any(|(sf, d, dp, s, sp)| {
-            *sf == f && **d == dst && dp.is_empty() && **s == src && sp.is_empty()
+            *sf == f
+                && d.as_formal().map(|i| *i) == Some(dst)
+                && dp.is_empty()
+                && s.as_formal().map(|i| *i) == Some(src)
+                && sp.is_empty()
         })
     };
     assert!(has(thrower, -2, 0), "summary = {:?}", result.summary);
@@ -552,4 +557,385 @@ fn resolved_call_covers_both_dispatch_arms() {
         "the target passed through a formal did not resolve; resolved_call = {:?}",
         result.resolved_call
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Globals (G2, G5, G6 of `docs/ir.md`). A C global
+// `g` is the global `$g`, whose storage is `$g.deref`.
+// ---------------------------------------------------------------------------------------------
+
+mod globals {
+    use super::*;
+    use crate::facts::{GLOBAL_FRAME, GlobalId, Root};
+
+    fn index_c(src: &str) -> (IndexFacts, IndexSourceInfo, IndexResult) {
+        let (facts, source_info) = index_program(program_from_string(src).0);
+        let result = taint_index(facts.clone());
+        (facts, source_info, result)
+    }
+
+    fn deref() -> Path {
+        Path::parse(".deref").unwrap()
+    }
+
+    fn global(name: &str) -> GlobalId {
+        GlobalId::new(name)
+    }
+
+    /// The call sites of `f` that the index resolved, whatever the target.
+    fn resolved_in(result: &IndexResult, f: FunctionId) -> Vec<FunctionId> {
+        result
+            .resolved_call
+            .iter()
+            .filter(|(caller, ..)| *caller == f)
+            .map(|(.., target)| *target)
+            .collect()
+    }
+
+    /// A flow between two global paths is no function's summary row, however many
+    /// functions call the one that makes it; it is an edge of the global frame, and is in
+    /// `global_flow`.
+    #[test]
+    fn a_flow_between_two_globals_is_a_frame_edge_not_a_summary() {
+        let (_, si, result) = index_c(
+            r"
+            int a; int b;
+            void copy(void) { b = a; }
+            void c1(void) { copy(); }
+            void c2(void) { c1(); copy(); }",
+        );
+        assert!(
+            !result
+                .summary
+                .iter()
+                .any(|(_, d, _, s, _)| d.is_global() && s.is_global()),
+            "no summary row has two global roots: {:#?}",
+            result.summary
+        );
+        let edge = (global("b"), deref(), global("a"), deref());
+        assert_eq!(result.global_flow, vec![edge], "{:#?}", result.global_flow);
+        assert!(result.assign_like.contains(&(
+            GLOBAL_FRAME,
+            FlowVariable::global(edge.0),
+            edge.1,
+            FlowVariable::global(edge.2),
+            edge.3
+        )));
+        // And nothing is passed for a global at a call (G5): no function has a summary at all.
+        for f in ["copy", "c1", "c2"] {
+            let f = func_id(&si.sites, f);
+            assert!(
+                result.summary.iter().all(|r| r.0 != f),
+                "{:#?}",
+                result.summary
+            );
+        }
+    }
+
+    /// A flow from a formal into a global, and from a global to the return, is a
+    /// summary row rooted at the global, and a caller passing its own formal inherits the
+    /// first.
+    #[test]
+    fn a_flow_between_a_formal_and_a_global_is_a_summary_rooted_at_the_global() {
+        let (_, si, result) = index_c(
+            r"
+            int g;
+            void put(int x) { g = x; }
+            int get(void) { return g; }
+            void outer(int y) { put(y); }",
+        );
+        let g = Root::global(global("g"));
+        let (put, get, outer) = (
+            func_id(&si.sites, "put"),
+            func_id(&si.sites, "get"),
+            func_id(&si.sites, "outer"),
+        );
+        let s = &result.summary;
+        assert!(
+            s.contains(&(put, g, deref(), 0i16.into(), Path::empty())),
+            "{s:#?}"
+        );
+        assert!(
+            s.contains(&(get, (-1i16).into(), Path::empty(), g, deref())),
+            "{s:#?}"
+        );
+        assert!(
+            s.contains(&(outer, g, deref(), 0i16.into(), Path::empty())),
+            "{s:#?}"
+        );
+    }
+
+    /// G6: a call target stored at a global path in one function resolves an indirect call
+    /// through that path in a function no one calls, unconditionally; and the same when the
+    /// target crosses a program-level edge first.
+    #[test]
+    fn a_target_stored_to_a_global_resolves_a_call_in_a_function_with_no_caller() {
+        let (_, si, result) = index_c(
+            r"
+            void target(int x) {}
+            void (*g)(int);
+            void (*h)(int);
+            void install(void) { g = target; }
+            void move(void) { h = g; }
+            void fire_g(int x) { g(x); }
+            void fire_h(int x) { h(x); }",
+        );
+        let target = func_id(&si.sites, "target");
+        for fire in ["fire_g", "fire_h"] {
+            assert_eq!(
+                resolved_in(&result, func_id(&si.sites, fire)),
+                vec![target],
+                "{fire}: {:#?}",
+                result.resolved_call
+            );
+        }
+    }
+
+    /// Labels come down by the paths a function reads. A function that reads
+    /// `$t.deref.a` gets the label stored there; one that reads only `$t.deref.b` gets nothing;
+    /// one that reads the whole cell gets the label at its extension and resolves a call
+    /// through a copy of it.
+    #[test]
+    fn labels_come_down_at_the_paths_a_function_reads() {
+        let (_, si, result) = index_c(
+            r"
+            void target(int x) {}
+            struct T { void (*a)(int); void (*b)(int); };
+            struct T t;
+            void install(void) { t.a = target; }
+            void fire_a(int x) { t.a(x); }
+            void fire_b(int x) { t.b(x); }
+            void fire_copy(int x) { struct T l = t; l.a(x); }",
+        );
+        let target = func_id(&si.sites, "target");
+        let fire_b = func_id(&si.sites, "fire_b");
+        assert_eq!(
+            resolved_in(&result, func_id(&si.sites, "fire_a")),
+            vec![target]
+        );
+        assert_eq!(resolved_in(&result, fire_b), vec![]);
+        assert!(
+            result
+                .call_target_assign_like
+                .iter()
+                .all(|(f, ..)| *f != fire_b),
+            "a function that reads only `$t.deref.b` holds no label: {:#?}",
+            result.call_target_assign_like
+        );
+        assert_eq!(
+            resolved_in(&result, func_id(&si.sites, "fire_copy")),
+            vec![target],
+            "{:#?}",
+            result.call_target_assign_like
+        );
+    }
+
+    /// A flow between two globals that holds only under a decision is a conditional
+    /// summary row of the function that makes it, applied by rule 3.2 at the caller whose call
+    /// establishes the decision, where it becomes a frame edge. Without that caller there is no
+    /// frame edge.
+    #[test]
+    fn a_conditional_flow_between_globals_lands_in_the_frame_at_its_establishing_caller() {
+        let lib = r"
+            int a; int b;
+            void set(int *dst, int v) { *dst = v; }
+            void run(void (*f)(int *, int)) { f(&b, a); }";
+        let edge = (global("b"), deref(), global("a"), deref());
+
+        let (_, _, alone) = index_c(lib);
+        assert!(
+            !alone.global_flow.contains(&edge),
+            "{:#?}",
+            alone.global_flow
+        );
+
+        let (_, _, called) = index_c(&format!("{lib}\nvoid main1(void) {{ run(set); }}"));
+        assert!(
+            called.global_flow.contains(&edge),
+            "{:#?}",
+            called.global_flow
+        );
+        assert!(
+            !called
+                .summary
+                .iter()
+                .any(|(_, d, _, s, _)| d.is_global() && s.is_global()),
+            "{:#?}",
+            called.summary
+        );
+    }
+
+    /// A store through a whole copy of a global, `l = &g; l->f = v`, reaches the global's
+    /// path, as a store through a copy of a formal does.
+    #[test]
+    fn a_store_through_a_copy_of_a_global_reaches_the_global() {
+        let (_, si, result) = index_c(
+            r"
+            struct S { int f; };
+            struct S g;
+            void f(int v) { struct S *l = &g; l->f = v; }",
+        );
+        let f = func_id(&si.sites, "f");
+        let gf = Path::parse(".deref.f").unwrap();
+        assert!(
+            result.summary.contains(&(
+                f,
+                Root::global(global("g")),
+                gf,
+                0i16.into(),
+                Path::empty()
+            )),
+            "{:#?}",
+            result.summary
+        );
+    }
+
+    /// G3: two imports that declare one name declare one global, the same vertex in both,
+    /// with a `globals` row per import; a name only one declares is its alone.
+    #[test]
+    fn two_imports_declaring_one_name_share_one_global() {
+        let mut facts = IndexFacts::default();
+        let mut si = IndexSourceInfo::default();
+        for (name, src) in [
+            (
+                "one",
+                "int shared; int mine; void put(int x) { shared = x; mine = x; }",
+            ),
+            ("two", "int shared; int get(void) { return shared; }"),
+        ] {
+            si.begin_import(name);
+            let mut program_info = ProgramInfo {
+                program: program_from_string(src).0,
+                ..Default::default()
+            };
+            ctadl_ir::ssa::transform_program(&mut program_info.program, true);
+            codegen_program(
+                program_info,
+                &mut facts,
+                &mut si,
+                CallResolutionStrategy::Mixed,
+                Default::default(),
+                &Default::default(),
+            );
+        }
+        let mut rows: Vec<_> = facts
+            .globals
+            .iter()
+            .map(|(g, i, _)| {
+                (
+                    g.name().to_string(),
+                    si.import_name(*i).unwrap().to_string(),
+                )
+            })
+            .collect();
+        rows.sort();
+        let row = |g: &str, i: &str| (g.to_string(), i.to_string());
+        assert_eq!(
+            rows,
+            vec![
+                row("mine", "one"),
+                row("shared", "one"),
+                row("shared", "two")
+            ]
+        );
+        let (per_import, shared) = facts.global_declarations();
+        assert_eq!(per_import.values().copied().collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].0, global("shared"));
+
+        // The flow in through one import's function and out through the other's is one
+        // global's: `put`'s row and `get`'s row name the same root.
+        let result = taint_index(facts);
+        let g = Root::global(global("shared"));
+        let put = func_id(&si.sites, "put");
+        let get = func_id(&si.sites, "get");
+        assert!(
+            result
+                .summary
+                .contains(&(put, g, deref(), 0i16.into(), Path::empty()))
+        );
+        assert!(
+            result
+                .summary
+                .contains(&(get, (-1i16).into(), Path::empty(), g, deref()))
+        );
+    }
+
+    /// A library indexed alone contributes its summaries and its program-level flows to a
+    /// consumer, by name: a flow in through one library function, held in a library global,
+    /// moved to another by a third, and out through a fourth, is found in the consumer.
+    #[test]
+    fn a_summary_projects_global_flows_cross_into_its_consumer() {
+        let (_, lib_si, lib) = index_c(
+            r"
+            int g; int h;
+            void put(int x) { g = x; }
+            void mv(void) { h = g; }
+            int get(void) { return h; }",
+        );
+        assert_eq!(
+            lib.global_flow,
+            vec![(global("h"), deref(), global("g"), deref())]
+        );
+
+        let (mut facts, si) = index_program(
+            program_from_string(
+                r"
+                void put(int);
+                int get(void);
+                int main1(int x) { put(x); return get(); }",
+            )
+            .0,
+        );
+        for (f, d, dp, s, sp) in &lib.summary {
+            let name = lib_si.sites.get_function(*f).unwrap().clone();
+            if let Some(f) = si.sites.get_function_id(name) {
+                facts.summary.push((f, *d, *dp, *s, *sp));
+            }
+        }
+        facts.global_flow = lib.global_flow.clone();
+        let result = taint_index(facts.clone());
+        let main1 = func_id(&si.sites, "main1");
+        let endpoint = |var: FlowVariable, direction| crate::query_engine::QueryEndpoint {
+            infunc: main1,
+            vertex: crate::facts::FlowVertex::new(var, Path::empty()),
+            label: crate::facts::Label("L".into()),
+            direction,
+            call_site: None,
+            saturating: false,
+        };
+        let query = crate::query_engine::QueryFacts {
+            formal_param: facts.formal_param,
+            actual_param: facts.actual_param,
+            call: facts.call,
+            assign: result.assign_like,
+            paths: result.paths,
+            external_function: result.external_function,
+            endpoints: vec![
+                (endpoint(
+                    FlowVariable::formal_index(0i16.into()),
+                    crate::facts::TaintDirection::Forward,
+                ),),
+                (endpoint(
+                    FlowVariable::formal_index((-1i16).into()),
+                    crate::facts::TaintDirection::Backward,
+                ),),
+            ],
+        };
+        let found = crate::query_engine::taint_analysis(query, Some(&si.sites));
+        assert!(
+            found
+                .taint_edge
+                .iter()
+                .any(|e| e.0 == crate::facts::FlowEdge::Global),
+            "the flow goes through the frame: {:#?}",
+            found.taint_edge
+        );
+        assert!(
+            found.taint.iter().any(|r| r.0 == main1
+                && r.2 == FlowVariable::formal_index((-1i16).into())
+                && r.4.direction == crate::facts::TaintDirection::Forward),
+            "the return of `main1` is reached from its parameter"
+        );
+    }
 }

@@ -12,7 +12,7 @@ The language itself, and its semantics, are described in [`super`].
 
 use std::cell::RefCell;
 
-use ctadl_ir::mir::{Offset, PathSegment, Symbol};
+use ctadl_ir::cir::{Offset, PathSegment, Symbol};
 
 use super::ast::*;
 use super::{PortcullisError, PortcullisErrors};
@@ -102,6 +102,7 @@ enum RawPortBase<'s> {
     Return,
     Arg(RawArgSel<'s>, Span),
     Local(&'s str),
+    GlobalSelf,
 }
 
 enum RawArgSel<'s> {
@@ -231,6 +232,7 @@ peg::parser! {
               e:position!()
               { RawPortBase::Arg(sel, span(s, e)) }
             / "local" !name_char() _ "(" _ v:var() _ ")" { RawPortBase::Local(v) }
+            / "self" !name_char() { RawPortBase::GlobalSelf }
 
         rule arg_sel() -> RawArgSel<'input>
             = i:int() { RawArgSel::Int(i) }
@@ -652,7 +654,7 @@ impl Builder {
                     );
                     return None;
                 };
-                match ctadl_ir::mir::parse_segments(&text) {
+                match ctadl_ir::cir::parse_segments(&text) {
                     Ok(segments) if segments.is_empty() => {
                         self.error(
                             lspan,
@@ -814,7 +816,7 @@ impl Builder {
             .into_iter()
             .filter_map(|seg| self.path_seg(seg))
             .collect();
-        // `#value` is the analysis's terminal value segment (`ctadl_ir::mir::PathSegment::Value`): nothing
+        // `#value` is the analysis's terminal value segment (`ctadl_ir::cir::PathSegment::Value`): nothing
         // follows it in any admissible path, so a port that names a segment after it matches
         // nothing.
         if let Some(i) = path.iter().position(PathSegment::is_value)
@@ -828,7 +830,7 @@ impl Builder {
         }
         // Paths are compared only in normal form (`docs/ir.md`), so `arg(0).[0].f` is
         // `arg(0).f` and `arg(0).[4].[4]` is `arg(0).[8]`.
-        let path = ctadl_ir::mir::path::normalize(path);
+        let path = ctadl_ir::cir::path::normalize(path);
         Some(PortExpr {
             anchor: raw.anchor,
             port: Port { base: base?, path },
@@ -853,6 +855,7 @@ impl Builder {
             RawPortBase::Arg(RawArgSel::Wildcard, _) => Some(PortBase::AnyArg),
             RawPortBase::Arg(RawArgSel::Var(v), _) => Some(PortBase::ArgVar(v.to_string())),
             RawPortBase::Local(v) => Some(PortBase::Local(v.to_string())),
+            RawPortBase::GlobalSelf => Some(PortBase::GlobalSelf),
         }
     }
 
@@ -879,8 +882,8 @@ impl Builder {
                     return None;
                 }
                 Some(match text.as_str() {
-                    ctadl_ir::mir::path_syntax::DEREF if !quoted => PathSegment::Deref,
-                    ctadl_ir::mir::path_syntax::VALUE if !quoted => PathSegment::Value,
+                    ctadl_ir::cir::path_syntax::DEREF if !quoted => PathSegment::Deref,
+                    ctadl_ir::cir::path_syntax::VALUE if !quoted => PathSegment::Value,
                     _ => PathSegment::Field(Symbol::from(text.as_str())),
                 })
             }

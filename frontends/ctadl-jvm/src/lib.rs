@@ -2,10 +2,14 @@
 
 Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
-`jvm-reader`'s job. What lives here is the lowering to MIR.
+`jvm-reader`'s job. What lives here is the lowering to CIR.
 
-Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
-field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
+Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout. A class
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone:
+`putstatic` is the store `$Lcls;.name = v`, `getstatic` the load `x = $Lcls;.name`. The owner is
+the class the constant pool names. A class referenced from several imports is one global
+(G3). An array's elements are the one field `[]`. Arithmetic,
 bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
 operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
 reference to that method (`Context::method_handle_exp` says which kinds do), and
@@ -24,7 +28,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
     JavaSimpleName, VirtualMethodTable, is_method_handle_invoke,
 };
@@ -39,7 +43,7 @@ const JVM_ACC_INTERFACE: u16 = 0x0200;
 const JVM_ACC_ABSTRACT: u16 = 0x0400;
 
 /// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
-/// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
+/// (`LMyInterface;`) to the `L...;` symbol form used in CIR and CHA.
 fn jvm_class_symbol(name: &str) -> String {
     if name.starts_with('L') && name.ends_with(';') {
         name.to_string()
@@ -126,6 +130,13 @@ struct Context {
     catch_result: Option<VariableRef>,
     /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
+    /// The globals declared so far: one per class that owns a static field. Moved into the
+    /// program at [`Context::finish`].
+    globals: cir::Globals,
+    /// Each class this import defines, as its global is named, with the class file it is in and
+    /// the offset of its header there: where the global is declared. Located in
+    /// [`Context::finish`], once every class has been lowered.
+    class_headers: Vec<(String, ArtifactKey, u32)>,
 }
 
 /// What lowering an `invokespecial` needs to know about the class the call appears in.
@@ -168,6 +179,8 @@ impl Context {
             call_result: None,
             catch_result: None,
             enclosing: None,
+            globals: Default::default(),
+            class_headers: Vec::new(),
         }
     }
 
@@ -179,6 +192,11 @@ impl Context {
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = jvm_class_symbol(parser.class_name()?);
+            self.class_headers.push((
+                class_name.clone(),
+                artifact_key.clone(),
+                class_def.header_offset,
+            ));
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -478,6 +496,18 @@ impl Context {
 
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its class header, if the program uses it.
+        for (class, key, offset) in self.class_headers.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(jvm_reader::types::ClassFile::HEADER_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
         for (_sig, entry) in self.ext.drain() {
             if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 if !methods
@@ -732,9 +762,19 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::PathSegment {
+    /// The class global `$Lcls;` and field `name` of the static field `f`.
+    fn static_field(&mut self, f: &jvm_reader::flow::FieldRef) -> (VariableRef, cir::PathSegment) {
         let class = format!("L{};", f.class_name);
-        mir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
+        let global = self.globals.declare(&class, None);
+        (
+            VariableRef::global(global),
+            cir::PathSegment::field(f.field_name.as_str()),
+        )
+    }
+
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> cir::PathSegment {
+        let class = format!("L{};", f.class_name);
+        cir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
@@ -923,10 +963,11 @@ impl Context {
             // getstatic
             0xb2 => {
                 let field = Self::field_ref_in(&data.sources).expect("getstatic field");
+                let (global, field) = self.static_field(field);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
-                    VariableRef::new_global(),
-                    Self::jvm_field_symbol(field),
+                    global,
+                    field,
                 ))]
             }
             // putstatic
@@ -941,9 +982,10 @@ impl Context {
                         .expect("putstatic value"),
                     locals,
                 );
+                let (global, field) = self.static_field(field);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::from(VariableRef::new_global()),
-                    Self::jvm_field_symbol(field),
+                    AccessPath::from(global),
+                    field,
                     value,
                 ))]
             }
@@ -1000,7 +1042,7 @@ impl Context {
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
-                    mir::PathSegment::field("[]"),
+                    cir::PathSegment::field("[]"),
                 ))]
             }
             // *astore
@@ -1017,7 +1059,7 @@ impl Context {
                 let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::from(object),
-                    mir::PathSegment::field("[]"),
+                    cir::PathSegment::field("[]"),
                     value,
                 ))]
             }

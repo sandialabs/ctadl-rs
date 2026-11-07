@@ -1,7 +1,7 @@
 //! The one path grammar: parser and printer for [`PathSegment`] sequences.
 //!
 //! A path is a sequence of [`PathSegment`]s, each a field name, a numeric offset, `deref` or
-//! `#value`; an access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This
+//! `#value`; an access path ([`crate::cir::AccessPath`]) prints as its variable followed by its path. This
 //! module owns the *only* textual encoding of that sequence. The fact store's on-disk columns,
 //! model-generator ports, the IR's `Display` impls, and the test DSLs all go through here, so
 //! printing and parsing are exact inverses and a malformed path fails loudly instead of silently
@@ -33,7 +33,7 @@ use std::fmt;
 
 use internment::ArcIntern;
 
-use crate::mir::{Offset, PathSegment};
+use crate::cir::{Offset, PathSegment};
 
 /// The spelling of [`PathSegment::Deref`].
 pub const DEREF: &str = "deref";
@@ -130,10 +130,10 @@ pub fn parse_segments(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
     Ok(segments)
 }
 
-/// Parse a whole path and put it in normal form ([`crate::mir::path::normalize`]). This is what
+/// Parse a whole path and put it in normal form ([`crate::cir::path::normalize`]). This is what
 /// every consumer of textual paths should call: paths are compared only in normal form.
 pub fn parse_path(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
-    parse_segments(s).map(crate::mir::path::normalize)
+    parse_segments(s).map(crate::cir::path::normalize)
 }
 
 /// Parses the segment beginning at byte `at` (the leading `.` already consumed) and returns it
@@ -259,6 +259,43 @@ pub fn write_segment(out: &mut String, seg: &PathSegment) {
             }
         }
     }
+}
+
+/// Print a global's name as it follows the `$` of `$name`: escaped by the field rules, so a
+/// name with a `.` in it (`g$util.c`) prints as `g$util\.c` and parses back to one name.
+pub fn write_symbol(f: &mut impl fmt::Write, name: &str) -> fmt::Result {
+    let mut out = String::new();
+    write_segment(&mut out, &PathSegment::Field(ArcIntern::from(name)));
+    f.write_str(&out)
+}
+
+/// Parses a global access path, `$name` followed by a path, into the global's name and the path
+/// in normal form. Returns `Ok(None)` when `s` does not begin with `$`. The name follows the
+/// field rules ([`write_symbol`]): it runs to the next unescaped `.`.
+pub fn parse_global_access_path(
+    s: &str,
+) -> Result<Option<(ArcIntern<str>, Vec<PathSegment>)>, PathSyntaxError> {
+    let Some(rest) = s.strip_prefix('$') else {
+        return Ok(None);
+    };
+    let (seg, end) =
+        parse_segment_at(rest, 0).map_err(|e| PathSyntaxError { at: e.at + 1, ..e })?;
+    let name = match seg {
+        PathSegment::Field(name) => name,
+        PathSegment::Deref => ArcIntern::from(DEREF),
+        PathSegment::Value => ArcIntern::from(VALUE),
+        PathSegment::Offset(_) => {
+            return Err(PathSyntaxError {
+                at: 1,
+                kind: PathSyntaxErrorKind::InvalidOffset(rest[..end].to_string()),
+            });
+        }
+    };
+    let path = parse_path(&rest[end..]).map_err(|e| PathSyntaxError {
+        at: e.at + 1 + end,
+        ..e
+    })?;
+    Ok(Some((name, path)))
 }
 
 /// Print one segment, WITHOUT a leading `.`.
@@ -478,5 +515,32 @@ mod tests {
             parse_segment("").unwrap_err().kind,
             PathSyntaxErrorKind::EmptySegment
         );
+    }
+
+    #[test]
+    fn global_access_paths_round_trip() {
+        for (text, name, path) in [
+            ("$g$util\\.c.deref", "g$util.c", vec![PathSegment::Deref]),
+            (
+                "$libA.so::ram.[4096].deref",
+                "libA",
+                vec![sym("so::ram"), off(4096), PathSegment::Deref],
+            ),
+            (
+                "$libA\\.so::ram.[4096].deref",
+                "libA.so::ram",
+                vec![off(4096), PathSegment::Deref],
+            ),
+            ("$Lcom/C;.f", "Lcom/C;", vec![sym("f")]),
+        ] {
+            let (n, p) = parse_global_access_path(text).unwrap().unwrap();
+            assert_eq!((&*n, &p), (name, &path), "{text}");
+            let mut printed = String::from("$");
+            write_symbol(&mut printed, &n).unwrap();
+            printed.push_str(&path_to_string(&p));
+            assert_eq!(printed, text);
+        }
+        assert_eq!(parse_global_access_path("@p0.f"), Ok(None));
+        assert!(parse_global_access_path("$").is_err());
     }
 }

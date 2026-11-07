@@ -1,0 +1,36 @@
+// G8: a witness may pass through a global between any two instances. Here the flow enters `Set`
+// by a call, is stored to the global, and leaves `Get` by its return: the return out of `Get` is
+// admissible even though the call taken was into `Set`.
+var g;
+
+def Set(p) {
+s:
+  g.deref = p;
+  return;
+}
+
+def Get(): 1 {
+s:
+  r = g.deref;
+  return r;
+}
+
+def Main() {
+s:
+  a = source(S);
+  Set(a);
+  b = Get();
+  sink(b, S);
+  return;
+}
+
+def Other() {
+s:
+  c = Get();
+  sink(c, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S
+// expect: Other: sink(%S)#0 <- %S

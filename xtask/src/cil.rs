@@ -29,7 +29,7 @@
 //!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
 //! - `cil:frontend`      — the CIL frontend (`ctadl-cil`): every corpus assembly
 //!   imported and put through the index's SSA pipeline, and the IR goldens
-//!   (`xtask/cil-goldens/mir`); see [`frontend`].
+//!   (`xtask/cil-goldens/cir`); see [`frontend`].
 //! - `cil:taint`         — the index's summaries of the exec fixtures' methods
 //!   against the flows the interpreter's runs show; see [`taint`]. Self-skips
 //!   without `flow-run`.

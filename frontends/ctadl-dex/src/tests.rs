@@ -720,3 +720,86 @@ fn const_method_handle_with_a_method_is_a_function_reference() {
         assert_eq!(ctx.call_to.contains(&method), is_ref, "kind {kind:#x}");
     }
 }
+
+/// A static field is a field of its class's global: `sput-object Foo.cb` is the store
+/// `$LFoo;.cb = v`, and `sget-object Foo.cb` the load `x = $LFoo;.cb`, the class declared once
+/// by both.
+#[test]
+fn a_static_field_is_a_field_of_its_class_global() {
+    use dex_reader::instructions::{FieldIdx, Format21c};
+    let parser = parser_with_field();
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let mut stmts = Vec::new();
+    for inst in [
+        Instruction::SPutObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+        Instruction::SGetObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+    ] {
+        stmts.extend(
+            ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
+                .unwrap(),
+        );
+    }
+    let foo = ctx.globals.lookup("LFoo;").expect("the class is a global");
+    assert_eq!(ctx.globals.len(), 1);
+    let field = AccessPath::new(VariableRef::global(foo), [PathSegment::field("cb")]);
+    let store = stmts
+        .iter()
+        .any(|s| matches!(&s.kind, StatementKind::Assign { dest, .. } if *dest == field));
+    let load = stmts.iter().any(|s| {
+        matches!(&s.kind, StatementKind::Assign { dest, sources }
+            if dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&field)))
+    });
+    assert!(store && load, "{stmts:?}");
+}
+
+/// A class's global is declared at its `class_def_item`: on the committed APK, every
+/// global the program uses that one of its dex files defines has a span of
+/// [`dex_reader::types::ClassDef::ITEM_LEN`] bytes in that dex file whose first word is the
+/// class's type index.
+#[test]
+fn a_class_global_is_declared_at_its_class_def_item() {
+    let apk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../xtask/tests/dex/com.noto_54.apk");
+    let bytes = std::fs::read(&apk).expect("the APK");
+    let dexes = dex_reader::apk::APKParser::new(&bytes).expect("the APK parses");
+    let parsers = dexes.dex_parsers_with_filenames();
+    let info = crate::import_apk(&apk)
+        .expect("the APK imports")
+        .program_info;
+
+    let mut located = 0;
+    for (_, global) in info.program.globals.iter_enumerated() {
+        let Some(span) = global.span else {
+            continue;
+        };
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(
+            span.len,
+            source_info::SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN)
+        );
+        let (_, parser) = &parsers[artifact.sub_artifact_id as usize];
+        let at = span.start as usize;
+        let class_idx = u32::from_le_bytes(parser.data[at..at + 4].try_into().unwrap());
+        let class_def = parser
+            .class_defs
+            .iter()
+            .find(|c| c.class_idx == class_idx)
+            .expect("the span is at a class_def_item");
+        assert_eq!(class_def.offset, span.start);
+        assert_eq!(parser.class_name(class_def).unwrap(), *global.name);
+        located += 1;
+    }
+    // The app's own classes hold statics; the framework's, which it only uses, are not in it.
+    assert!(located > 0, "no global is located");
+    assert!(
+        located < info.program.globals.len(),
+        "every global is located"
+    );
+}

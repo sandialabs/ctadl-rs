@@ -1,10 +1,11 @@
-// S13: one variable `globals`, shared by every function: a global written in a callee reaches
-// the caller.
+// G2, G5: a global is one variable shared by every instance, and nothing is passed for it at a
+// call: a global written in a callee reaches the caller. Its storage is the location below it
+// (G4), here `g.deref`.
 var g;
 
 def Set(p) {
 s:
-  g = p;
+  g.deref = p;
   return;
 }
 
@@ -12,7 +13,7 @@ def Main() {
 s:
   a = source(S);
   Set(a);
-  r = g;
+  r = g.deref;
   sink(r, S);
   return;
 }

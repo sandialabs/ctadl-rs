@@ -42,12 +42,12 @@ use ctadl_ascent::models::{
     PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex,
     ProgramModelMatches,
 };
-use ctadl_ir::mir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::builder::FunctionBuilder;
+use ctadl_ir::cir::call::{
     CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames,
     VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
     Statement, StatementKind,
 };
@@ -636,11 +636,11 @@ fn show(l: &Loc) -> String {
         // A `Loc` spells `deref` as the string `deref`; CIL field names are `<cls::name>`,
         // so no field collides with it.
         let seg = match seg.as_str() {
-            ctadl_ir::mir::path_syntax::DEREF => PathSegment::Deref,
-            ctadl_ir::mir::path_syntax::VALUE => PathSegment::Value,
+            ctadl_ir::cir::path_syntax::DEREF => PathSegment::Deref,
+            ctadl_ir::cir::path_syntax::VALUE => PathSegment::Value,
             name => PathSegment::field(name),
         };
-        s.push_str(&ctadl_ir::mir::path_syntax::segment_to_string(&seg));
+        s.push_str(&ctadl_ir::cir::path_syntax::segment_to_string(&seg));
     }
     s
 }

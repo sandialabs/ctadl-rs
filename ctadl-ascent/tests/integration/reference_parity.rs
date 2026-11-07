@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use ctadl_ascent::codegen::flowy::engine_observable;
 use ctadl_ascent::index_engine::IndexConfig;
-use ctadl_ir::semantics::{Config, Observer, Ports, Seed, evaluate};
+use ctadl_ir::semantics::{Config, Observer, Ports, Seed, evaluate_programs};
 
 /// Whether a register row's deviation adds flows or loses them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -66,30 +66,35 @@ fn corpus() -> Vec<PathBuf> {
     files
 }
 
-/// The reference's observable for `file`, each sink restricted to its own label.
+/// The reference's observable for `file`, each sink restricted to its own label. A file of
+/// several programs is evaluated as one project.
 fn reference_observable(file: &Path) -> BTreeSet<String> {
-    let prog = ctadl_flowy::compile_program(file).unwrap();
+    let progs = ctadl_flowy::compile_programs(file).unwrap();
     let mut ports = Ports::default();
-    for (function, endpoint) in prog.sources() {
-        ports.seeds.push(Seed {
-            function,
-            path: endpoint.port.clone(),
-            label: endpoint.label.clone(),
-        });
-    }
     let mut own_label = std::collections::HashMap::new();
-    for sink in prog.named_sinks() {
-        own_label.insert(
-            (sink.function.clone(), sink.name.clone()),
-            sink.endpoint.label.clone(),
-        );
-        ports.observers.push(Observer {
-            function: sink.function,
-            path: sink.endpoint.port.clone(),
-            name: sink.name,
-        });
+    for prog in &progs {
+        for (function, endpoint) in prog.sources() {
+            ports.seeds.push(Seed {
+                function,
+                path: endpoint.port.clone(),
+                label: endpoint.label.clone(),
+            });
+        }
+        for sink in prog.named_sinks() {
+            own_label.insert(
+                (sink.function.clone(), sink.name.clone()),
+                sink.endpoint.label.clone(),
+            );
+            ports.observers.push(Observer {
+                function: sink.function,
+                path: sink.endpoint.port.clone(),
+                name: sink.name,
+            });
+        }
     }
-    evaluate(&prog.program_info.program, &ports, &Config::default())
+    let programs: Vec<&ctadl_ir::cir::Program> =
+        progs.iter().map(|p| &p.program_info.program).collect();
+    evaluate_programs(&programs, &ports, &Config::default())
         .observed
         .into_iter()
         .filter(|o| own_label.get(&(o.function.clone(), o.site.clone())) == Some(&o.label))
@@ -123,6 +128,10 @@ fn declared(text: &str) -> Vec<(String, Direction, String)> {
 /// The unexplained differences of one program, empty when there are none.
 fn check(file: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(file).unwrap();
+    // A program that must not compile has no observable.
+    if text.contains("// expect-error:") {
+        return Vec::new();
+    }
     let engine = match engine_observable(file, IndexConfig::default()) {
         Ok(o) => o,
         Err(e) => return vec![format!("the engines failed: {e:#}")],

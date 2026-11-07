@@ -239,6 +239,7 @@ impl PortcullisFile {
                     components: Vec::new(),
                     var_types: Default::default(),
                     local_probes: Vec::new(),
+                    global_probes: Vec::new(),
                 }),
             }
         }
@@ -668,12 +669,15 @@ impl<'a> PortcullisMatcher<'a> {
                         );
                     }
                     let mut stats = state.emitter.finish();
-                    let probes = &file.plans[ri].local_probes;
-                    stats.missed_locals = state
-                        .solutions
-                        .missed_locals()
-                        .map(|(p, functions)| (probes[p].clone(), functions))
-                        .collect();
+                    let plan = &file.plans[ri];
+                    for (p, functions) in state.solutions.missed_locals() {
+                        let name = plan.local_probes[p].clone();
+                        if plan.global_probes[p] {
+                            stats.missed_globals.push(name);
+                        } else {
+                            stats.missed_locals.push((name, functions));
+                        }
+                    }
                     file_report.rules.push(stats);
                 }
                 errors.extend_unique(emitted);

@@ -29,7 +29,6 @@ A member access through a pointer steps through `deref` first: `p->f` and `(*p).
 `p.deref.f` (`arrow_and_deref_share_the_deref_prefix`).
 */
 
-use ctadl_ascent::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use ctadl_ir::ParameterType::SharedFields;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
@@ -83,7 +82,7 @@ fn simple_assign_expr() {
 #[test_log::test]
 fn simple_assign_global() {
     // Reading a name with no local declaration (`int b = a;`, where `a` was never declared). CTADL
-    // resolves it to a global, so the assignment's source is `$globals.a`.
+    // resolves it to a global.
     let src = r"
             int simple_assign_global() {
                 int b = a;
@@ -91,14 +90,14 @@ fn simple_assign_global() {
             }
         ";
     let prog = program_from_string(src).0;
-    // Reading the global `a` lowers to a load of `$globals.a` (into a temp that flows to `b`).
-    check_loads(&prog, "$globals.a");
+    // Reading the global `a` lowers to a load of `$a.deref` (into a temp that flows to `b`).
+    check_loads(&prog, "$a.deref");
 }
 
 #[test_log::test]
 fn simple_global_assign() {
-    // Writing to a name with no local declaration (`a = b;`) resolves to a global store,
-    // `$globals.a = b`.
+    // Writing to a name with no local declaration (`a = b;`) resolves to a store to the global's
+    // storage, `$a.deref = b`.
     let src = r"
             int simple_global_assign() {
                 int b;
@@ -108,7 +107,7 @@ fn simple_global_assign() {
         ";
     let (prog, dump) = program_from_string(src);
     log::info!("{}", dump);
-    check_assign_or_update(&prog, "$globals.a", ["b"], None);
+    check_assign_or_update(&prog, "$a.deref", ["b"], None);
 }
 
 #[test_log::test]
@@ -1201,7 +1200,7 @@ fn statements_after_a_case_labelled_if_body_follow_the_if() {
     let _strict = super::force_error_on_ast();
     let (prog, _, _dump) = super::parse_c_program(src).expect("not a frontend gap");
     let (s, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&s, &si, "check", 2, ".g");
+    check_param_into_global_in(&s, &si, "check", 2, ".g.deref");
 }
 
 #[test_log::test]
@@ -1213,9 +1212,9 @@ fn the_tail_of_a_case_two_bodies_deep_is_lowered_once() {
             switch (a) { case 1: if (b) if (v) case 2: return; g = v; }
         }";
     let (prog, _dump) = program_from_string(src);
-    check_writes_to(&prog, "$globals.g", 1);
+    check_writes_to(&prog, "$g.deref", 1);
     let (s, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&s, &si, "f", 2, ".g");
+    check_param_into_global_in(&s, &si, "f", 2, ".g.deref");
 }
 
 #[test_log::test]
@@ -1718,7 +1717,7 @@ fn goto_label_after_return_lowers() {
 fn label_after_return_dataflow() {
     // The dataflow half: lowering the label body is only worth anything if taint flows
     // through it. `out:` writes `a` into global `g`, so the summary must carry
-    // @p0 -> $globals.g; strict mode also pins that the shape reports NO frontend gap.
+    // @p0 -> $g.deref; strict mode also pins that the shape reports NO frontend gap.
     let _strict = super::force_error_on_ast();
     let src = r"
         int g;
@@ -1732,7 +1731,7 @@ fn label_after_return_dataflow() {
         .expect("goto-cleanup must not gap in strict mode")
         .0;
     let (s, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&s, &si, "f", 0, ".g");
+    check_param_into_global_in(&s, &si, "f", 0, ".g.deref");
 }
 
 #[test_log::test]
@@ -1759,7 +1758,7 @@ fn statements_after_return_still_import() {
     // The reachable write survives untouched, and the dead `cleanup()` block is
     // terminated well enough for verify()/SSA/codegen to run end to end.
     let (s, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&s, &si, "f", 0, ".g");
+    check_param_into_global_in(&s, &si, "f", 0, ".g.deref");
 }
 
 #[test_log::test]
@@ -1834,7 +1833,7 @@ fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
         .0;
     // The real statements around it still lower: `a` reaches the global.
     let (summary, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+    check_param_into_global_in(&summary, &si, "f", 0, ".g.deref");
 }
 
 #[test_log::test]
@@ -1912,7 +1911,7 @@ fn a_label_stranded_in_recovery_output_is_not_a_frontend_gap() {
     // lowers, so `a` still reaches the global.
     let prog = super::parse_c_program(src).expect("ingestion recovers").0;
     let (summary, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+    check_param_into_global_in(&summary, &si, "f", 0, ".g.deref");
 }
 
 #[test_log::test]
@@ -1939,7 +1938,7 @@ fn a_goto_still_resolves_in_a_damaged_body() {
     }
     let prog = super::parse_c_program(src).expect("ingestion recovers").0;
     let (summary, si) = get_summary(prog).unwrap();
-    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+    check_param_into_global_in(&summary, &si, "f", 0, ".g.deref");
 }
 
 #[test_log::test]
@@ -2657,8 +2656,8 @@ fn a_dereferenced_cast_of_minus_one_is_not_pointer_arithmetic() {
     let src = r"
         typedef long *lp;
         long f(void) { return *((lp) - 1); }";
-    let (_prog, dump) = program_from_string(src);
-    assert!(check_no_match(&dump, "$globals"), "{dump}");
+    let (prog, dump) = program_from_string(src);
+    assert!(prog.globals.is_empty(), "{dump}");
 }
 
 #[test_log::test]
@@ -2694,7 +2693,11 @@ fn vararg_call_carries_argument() {
     let (prog, _dump) = program_from_string(src);
     check_has_direct_call(&prog, "f", "printf");
     // `@p0` is a parameter reference, so it resolves without consulting any local-name table.
-    let src_exp = exp_from_str("@p0", &ctadl_ir::Locals::default());
+    let src_exp = exp_from_str(
+        "@p0",
+        &ctadl_ir::Locals::default(),
+        &ctadl_ir::Globals::default(),
+    );
     let carries_src = direct_calls_in(&prog, "f")
         .iter()
         .any(|(callees, args)| callees.iter().any(|c| c == "printf") && args.contains(&src_exp));
@@ -2722,16 +2725,16 @@ fn designated_initializer_flows() {
 #[test_log::test]
 fn global_flows_across_functions() {
     // Taint through a global: `set` writes its parameter into global `g`, `get` returns `g`. Each half
-    // is a summary endpoint on the special global heap -- `set`: @p0 -> $globals.g, `get`:
-    // $globals.g -> return -- so the two compose into a cross-function flow `set`'s param ~> `get`'s
+    // is a summary endpoint on the global's storage -- `set`: @p0 -> $g.deref, `get`:
+    // $g.deref -> return -- so the two compose into a cross-function flow `set`'s param ~> `get`'s
     // return. Pins that global writes/reads are summarized (not dropped) and tied to the right function.
     let src = r"
         int g;
         void set(int src) { g = src; }
         int get() { return g; }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_param_into_global_in(&s, &si, "set", 0, ".g");
-    check_returns_global_in(&s, &si, "get", ".g");
+    check_param_into_global_in(&s, &si, "set", 0, ".g.deref");
+    check_returns_global_in(&s, &si, "get", ".g.deref");
 }
 
 #[test_log::test]
@@ -2808,7 +2811,7 @@ fn pointer_plus_index_is_a_copy_of_the_base_plus_the_index_value() {
         int ints(int a, int i) { return a + i; }";
     let prog = program_from_string(src).0;
     let add = function_named(&prog, "add").unwrap();
-    let t0 = access_path_from_str("<t0>", &add.locals);
+    let t0 = access_path_from_str("<t0>", &add.locals, &prog.globals);
     let expected = StatementKind::assign(
         t0,
         [
@@ -2989,16 +2992,17 @@ fn addr_of_a_record_is_a_cell() {
 
 #[test_log::test]
 fn addr_of_a_global_record_is_a_copy() {
-    // Limitation pin (module docs, "Address-taken globals"): a global is not a cell, so `&g`
-    // is a copy of `$globals.g` and the callee's `p->f = v` lands on `$globals.g.deref.f`,
-    // which `g.f` (`$globals.g.f`) does not name.
+    // Pins the module docs' "Globals" convention: a write through `&g` (`p->f`, `$g.deref.f`) is
+    // observed at `g.f`.
     let src = r"
         struct S { int f; };
         struct S g;
         void init(struct S *p, int v) { p->f = v; }
         int f(int v) { init(&g, v); return g.f; }";
-    let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_does_not_return_param_in(&s, &si, "f", 0, "");
+    let prog = program_from_string(src).0;
+    check_direct_call(&prog, "f", "init", ["$g", "@p0"]);
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
 }
 
 #[test_log::test]
@@ -3010,7 +3014,7 @@ fn addr_of_a_union_is_a_cell_and_its_members_still_collapse() {
         int f(int src) { union U u; keep(&u); u.a = src; return u.b; }";
     let prog = program_from_string(src).0;
     let f = function_named(&prog, "f").unwrap();
-    let dest = access_path_from_str("u.deref.$union", &f.locals);
+    let dest = access_path_from_str("u.deref.$union", &f.locals, &prog.globals);
     assert!(
         f.blocks
             .iter()
@@ -3398,7 +3402,11 @@ fn compound_literal_argument_carries_value() {
     let prog = program_from_string(src).0;
     check_has_direct_call(&prog, "f", "use");
 
-    let param = exp_from_str("@p0", &ctadl_ir::Locals::default());
+    let param = exp_from_str(
+        "@p0",
+        &ctadl_ir::Locals::default(),
+        &ctadl_ir::Globals::default(),
+    );
     let object = statements_of(&prog)
         .find_map(|stmt| match &stmt.kind {
             StatementKind::Assign { dest, sources }
@@ -4164,7 +4172,7 @@ fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
 // ---------------------------------------------------------------------------------------
 // Names tree-sitter inserted. Where the grammar requires a name and the parse fails,
 // tree-sitter INSERTS a zero-width `identifier`/`field_identifier`. The empty string is
-// not a name -- it would mint `$globals.` with an empty first path segment, which
+// not a name -- it would declare a global with the empty name, an empty path segment, which
 // `facts::Path` rejects, making the whole index unqueryable. A token nobody wrote names
 // nothing: the body is named once as holding recovery output and the name lowers to a
 // fresh temp.
@@ -4246,9 +4254,9 @@ fn inserted_field_name_does_not_become_an_empty_path_segment() {
 }
 
 #[test_log::test]
-fn a_named_global_still_lowers_to_a_symbolic_field() {
+fn a_named_global_still_lowers_to_its_global() {
     // The scoping pin: the guard keys on the name being empty, never on "identifier in a
-    // damaged body". A global read in a cleanly parsed body must keep the field that names
+    // damaged body". A global read in a cleanly parsed body must keep the global that names
     // it -- dropping every identifier in a damaged body, or renaming globals to temps,
     // would pass the two tests above and delete the analysis.
     let src = r"
@@ -4257,8 +4265,9 @@ fn a_named_global_still_lowers_to_a_symbolic_field() {
     let (prog, dump) = program_from_string(src);
     assert!(
         field_symbols(&prog).contains(&"named"),
-        "a global read must still load `$globals.named`\n{dump}"
+        "a global read must still load `$named.deref`\n{dump}"
     );
+    check_loads(&prog, "$named.deref");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -4503,6 +4512,66 @@ fn one_definition_and_an_undefined_callee_are_left_alone() {
     assert_eq!(stub.params.len(), 1, "sized from the call site");
 }
 
+/// The names of the program's globals, sorted.
+fn global_names(prog: &ctadl_ir::Program) -> Vec<String> {
+    let mut names: Vec<String> = prog
+        .globals
+        .iter_enumerated()
+        .map(|(_, g)| g.name.to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test_log::test]
+fn a_static_global_in_two_files_is_two_globals() {
+    // G3: a global is its name, so a file-scope `static` another unit also declares is
+    // qualified by its unit. Each file's `get` reads its own `count`; one file's store does not
+    // reach the other's.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "one.c",
+            r"static int count;
+              void put(int x) { count = x; }
+              int get_one(void) { return count; }",
+        ),
+        (
+            "two.c",
+            r"static int count;
+              int get_two(void) { return count; }",
+        ),
+    ]);
+    assert_eq!(global_names(&prog), ["count$one.c", "count$two.c"]);
+    let (summary, si) = get_summary(prog).expect("must verify");
+    check_param_into_global_in(&summary, &si, "put", 0, r".count$one\.c.deref");
+    check_returns_global_in(&summary, &si, "get_one", r".count$one\.c.deref");
+    check_returns_global_in(&summary, &si, "get_two", r".count$two\.c.deref");
+}
+
+#[test_log::test]
+fn a_global_with_external_linkage_in_two_files_is_one_global() {
+    // G3: a global with external linkage is named by its symbol, as the linker shares it,
+    // so a definition in one file and an `extern` declaration in another are one global. A
+    // `static` no other file declares keeps its name.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "one.c",
+            r"int shared;
+              static int mine;
+              void put(int x) { shared = x; mine = x; }",
+        ),
+        (
+            "two.c",
+            r"extern int shared;
+              int get(void) { return shared; }",
+        ),
+    ]);
+    assert_eq!(global_names(&prog), ["mine", "shared"]);
+    let (summary, si) = get_summary(prog).expect("must verify");
+    check_param_into_global_in(&summary, &si, "put", 0, ".shared.deref");
+    check_returns_global_in(&summary, &si, "get", ".shared.deref");
+}
+
 #[test_log::test]
 fn a_call_from_a_file_defining_no_such_name_takes_the_first_definition() {
     // C would refuse to link this: `c.c` calls a `g` that exists only as two file-local
@@ -4578,22 +4647,22 @@ fn a_function_pointer_reference_resolves_within_its_own_file() {
 // resolved through `flatten_lvalue`'s catch-all when `e` is an object. It is not a
 // variable for the one thing a cast exists for here: naming an address that is no
 // declared object. `(T *)K` lowers to an `Exp::Str`, and a constant address IS an lvalue
-// -- two designations with the same `K` designate the SAME object -- so it gets
-// `$globals.<address K>`; a fresh temp per site would make every reference to one
+// -- two designations with the same `K` designate the SAME object -- so it is the global
+// `$<address K>`; a fresh temp per site would make every reference to one
 // hardware register a distinct object.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
 fn store_through_cast_of_a_constant_writes_through() {
     // The store lands on a location the rest of the program can name, instead of on a dead
-    // temp: the field of the object at `$globals.<address 0x1000>`, the same shape
+    // temp: the field of the object at `$<address 0x1000>`, the same shape
     // `((struct S *)t->q)->f = x` lowers to, which is the point: a constant address is just
     // another way of spelling the pointer.
     let src = r"
         struct S { int f; };
         void e(int x) { ((struct S *)0x1000)->f = x; }";
     let (prog, _dump) = program_from_string(src);
-    check_assign_or_update(&prog, "$globals.<address 0x1000>.deref.f", ["@p0"], None);
+    check_assign_or_update(&prog, "$<address 0x1000>.deref.f", ["@p0"], None);
 }
 
 #[test_log::test]
@@ -5376,7 +5445,7 @@ fn a_cast_of_a_signed_operand_reads_no_type_name() {
         long pos(long x, long y) { return (count_t) + x - y; }";
     let (prog, dump) = program_from_string(src);
     assert!(
-        check_no_match(&dump, "$globals"),
+        prog.globals.is_empty(),
         "a type name is not a global\n{dump}"
     );
     let (s, si) = get_summary(prog).unwrap();
@@ -5393,7 +5462,7 @@ fn a_cast_of_a_dereference_reads_the_pointee() {
         typedef long T;
         long first(long *p, long q) { return (T) *p + q; }";
     let (prog, dump) = program_from_string(src);
-    assert!(check_no_match(&dump, "$globals"), "{dump}");
+    assert!(prog.globals.is_empty(), "{dump}");
     check_loads(&prog, "@p0.deref");
     let s = get_summary(prog).unwrap().0;
     check_returns_param_value(&s, 0, ".deref");
@@ -5435,15 +5504,7 @@ fn a_parenthesized_variable_minus_one_is_a_subtraction() {
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
     // A subtraction of integers supplies values only.
     check_returns_param_value_in(&s, &si, "param", 0, "");
-    check_flow_in(
-        &s,
-        &si,
-        "global",
-        GLOBALS_INDEX,
-        ".g",
-        RETURN_INDEX,
-        ".#value",
-    );
+    check_returns_global_at_in(&s, &si, "global", ".g.deref", ".#value");
     check_returns_param_value_in(&s, &si, "shadow", 0, "");
 }
 
@@ -5468,7 +5529,7 @@ fn a_statement_expression_callee_is_an_indirect_call() {
         function_named(&prog, "({ target; })").is_none(),
         "no function is invented for the braces' source text\n{dump}"
     );
-    check_loads(&prog, "$globals.target");
+    check_loads(&prog, "$target.deref");
     let callee = local_render(&prog, "fire", "<t1>");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
@@ -5581,14 +5642,14 @@ fn a_prototype_makes_a_parenthesized_call_a_call() {
 // `cfg.handler()` is a call THROUGH a pointer `cfg` holds. A direct call to a function
 // literally named `cfg.handler` would fail twice: the edge would point at a function that
 // does not exist, and the indirect call the program makes would not be in the IR. The
-// subtlety is the BASE: storage class says nothing -- the PATH does. `$globals.hook` IS
-// the object `hook` and names it; `$globals.cfg.handler` is a location *inside* `cfg`,
+// subtlety is the BASE: storage class says nothing -- the PATH does. `$hook.deref` IS
+// the object `hook` and names it; `$cfg.deref.handler` is a location *inside* `cfg`,
 // reached by a load, exactly like the local `s.f`.
 
 /// The rendering of the variable a copy from `source` (an access-path DSL string) defines.
 fn loaded_from(prog: &ctadl_ir::Program, source: &str) -> String {
     let locals = &get_only_function(prog).expect("one function").locals;
-    let ap = crate::test_utils::access_path_from_str(source, locals);
+    let ap = crate::test_utils::access_path_from_str(source, locals, &prog.globals);
     statements_of(prog)
         .find_map(|s| match &s.kind {
             StatementKind::Assign { dest, sources }
@@ -5618,8 +5679,8 @@ fn a_call_through_a_field_of_a_global_is_indirect() {
         function_named(&prog, "g.f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.g.f");
-    let callee = loaded_from(&prog, "$globals.g.f");
+    check_loads(&prog, "$g.deref.f");
+    let callee = loaded_from(&prog, "$g.deref.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5643,7 +5704,7 @@ fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
         "no function is invented for the callee's source text\n{dump}"
     );
     // `gp->f` is `gp.deref.f`: the global pointer is read, then its member.
-    let member = format!(" = {}.deref.f", loaded_from(&prog, "$globals.gp"));
+    let member = format!(" = {}.deref.f", loaded_from(&prog, "$gp.deref"));
     let callee = dump
         .lines()
         .find_map(|l| l.strip_prefix("assign ")?.strip_suffix(member.as_str()))
@@ -5673,8 +5734,8 @@ fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
         function_named(&prog, "ga[i].f").is_none(),
         "no function is invented for the callee's source text\n{dump}"
     );
-    check_loads(&prog, "$globals.ga.deref.f");
-    let callee = loaded_from(&prog, "$globals.ga.deref.f");
+    check_loads(&prog, "$ga.deref.deref.f");
+    let callee = loaded_from(&prog, "$ga.deref.deref.f");
     assert!(
         check_match(&dump, &format!("funcptr-call {callee} ")),
         "the callee is the loaded field\n{dump}"
@@ -5819,7 +5880,7 @@ fn taint_crosses_a_call_through_a_field_of_a_global() {
 
 #[test_log::test]
 fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
-    // The same crossing from the argument side: `wrap` summarizes @p1 -> `$globals.taken`
+    // The same crossing from the argument side: `wrap` summarizes @p1 -> `$taken.deref`
     // only if the indirect call resolves to `store_it`. The `check_no_flow_in` makes it a
     // measurement: @p0 is never passed anywhere, so an over-approximation letting any
     // argument reach any callee would show up here.
@@ -5833,16 +5894,8 @@ fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
             g.f(b);
         }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
-    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
-    check_no_flow_in(
-        &summary,
-        &si,
-        "wrap",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken",
-    );
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken.deref");
+    check_no_param_into_global_in(&summary, &si, "wrap", 0, ".taken.deref");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -5880,7 +5933,7 @@ fn a_static_call_style_expansion_is_an_indirect_call() {
             .all(|f| !f.name.starts_with("({")),
         "no function is invented for the braces' source text\n{dump}"
     );
-    check_loads(&prog, "$globals.__tramp_fn");
+    check_loads(&prog, "$__tramp_fn.deref");
     assert!(check_match(&dump, "funcptr-call"), "{dump}");
 }
 
@@ -5916,7 +5969,7 @@ fn taint_crosses_a_statement_expression_callee() {
 fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
     // The same crossing from the argument side, with the `check_no_flow_in` control that makes it
     // a measurement: `a` is passed to nothing, so an over-approximation letting any argument reach
-    // any callee would show up as a second flow into `$globals.taken`.
+    // any callee would show up as a second flow into `$taken.deref`.
     let src = r"
         int taken;
         void store_it(int p) { taken = p; }
@@ -5926,16 +5979,8 @@ fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
             ({ g; })(b);
         }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
-    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
-    check_no_flow_in(
-        &summary,
-        &si,
-        "wrap",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken",
-    );
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken.deref");
+    check_no_param_into_global_in(&summary, &si, "wrap", 0, ".taken.deref");
 }
 
 #[test_log::test]
@@ -5943,22 +5988,14 @@ fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
     // What the analysis can NOT do, stated rather than implied: a real trampoline is
     // patched in by assembly, so no unit assigns the pointer and there is nothing to
     // resolve. The call is still in the IR as an indirect call through
-    // `$globals.__tramp_f` -- what a whole-program run needs, and strictly more than an
+    // `$__tramp_f.deref` -- what a whole-program run needs, and strictly more than an
     // edge to an invented empty function -- but within the unit no taint crosses it.
     let src = r"
         int taken;
         void __tramp_f(int);
         void fire(int x) { ({ (&__tramp_f); })(x); }";
     let (summary, si) = get_summary(program_from_string(src).0).unwrap();
-    check_no_flow_in(
-        &summary,
-        &si,
-        "fire",
-        0,
-        "",
-        ctadl_ascent::codegen::GLOBALS_INDEX,
-        ".taken",
-    );
+    check_no_param_into_global_in(&summary, &si, "fire", 0, ".taken.deref");
 }
 
 #[test_log::test]

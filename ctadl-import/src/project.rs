@@ -81,7 +81,7 @@ fn absolutize(path: &Path) -> PathBuf {
 /// into something wrong). History:
 ///
 /// - `1`: original format.
-/// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
+/// - `2`: CIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
 /// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
 ///   the `qualified-id` model constraint), changing the `bitcode` wire format of
@@ -121,7 +121,10 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `13`: assignments take full access paths as destination and sources, and the `Load`,
 ///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
 ///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "13";
+/// - `14`: a program declares its globals (`Program::globals`), and `Variable::Global` names one
+///   in place of the one global heap `$globals`. A `bitcode` wire-format change to every
+///   `ir-program.bitcode`, and every front end's global lowering changed.
+pub const IMPORT_FORMAT_VERSION: &str = "14";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -155,7 +158,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
 ///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
 ///   to `Offset(3)`.
-/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::mir::path_syntax`),
+/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::cir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
 /// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
@@ -172,9 +175,13 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 /// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
 ///   which loading an index result now requires.
 /// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
-///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::mir::path`, with
+///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::cir::path`, with
 ///   `deref` and `#value` segments distinct from fields.
-pub const INDEX_FORMAT_VERSION: &str = "7";
+/// - `8`: globals are variables (`docs/ir.md`, G1). `summary.parquet`'s roots are two columns each,
+///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
+///   gained `globals.parquet`, the project's globals by declaring import, and
+///   `global_flow.parquet`, the program-level flows between globals.
+pub const INDEX_FORMAT_VERSION: &str = "8";
 
 /// The front-end convention options set in the environment to something other than their
 /// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by
@@ -1144,7 +1151,7 @@ impl ArtifactLanguage {
     ];
 
     /// The lowercase spelling a model generator's `in` block uses. Distinct from the
-    /// [`ctadl_ir::mir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
+    /// [`ctadl_ir::cir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
     /// from `apk` from `jar`, and `in` must.
     pub fn name(self) -> &'static str {
         match self {

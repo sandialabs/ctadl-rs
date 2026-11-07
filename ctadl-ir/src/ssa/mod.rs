@@ -13,22 +13,23 @@ The SSA form is *pruned*: a phi for a variable goes only where the variable is l
 the block, so no phi is placed that no later use can observe.
 
 After SSA conversion, one may depend on a few things:
-- All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
-- There is exactly one `return`. The version of a parameter, and of the global heap, that reaches
-  the caller is always the entry version, version 0: rebinding a parameter does not change the
-  caller's argument (see [`ParameterType`]), and nothing rebinds the global heap (the verifier
-  rejects it). Codegen writes version 0 back to the formals at the `return`.
+- All variables but globals are versioned. Version 0 is the "incoming" version for each variable,
+  conceptually. A global is never versioned: nothing rebinds it (G4; the verifier rejects a copy
+  into one), so SSA leaves every reference to it as it is, with no entry binding and no phi.
+- There is exactly one `return`. The version of a parameter that reaches the caller is always the
+  entry version, version 0: rebinding a parameter does not change the caller's argument (see
+  [`ParameterType`]). Codegen writes version 0 back to the formals at the `return`.
 
 */
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use smallvec::{SmallVec, smallvec};
 
+use crate::cir::visit::MutVisitor;
+use crate::cir::*;
 use crate::graph::dominators::{DominanceFrontier, DominatorTree};
 use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors, reachable};
 use crate::index::{idx::Idx, index_vec::IndexVec};
-use crate::mir::visit::MutVisitor;
-use crate::mir::*;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +39,9 @@ pub use coalesce::{coalesce_copies, coalesce_function};
 
 mod dead_temps;
 pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
+
+mod compose_loads;
+pub use compose_loads::{compose_loads, compose_loads_function, mentioned_paths};
 
 mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
@@ -430,15 +434,6 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
             sources: smallvec![Exp::variable(variable)],
         }));
     }
-    // Set version 0 of global heap to global
-    {
-        let blocks = function.blocks.blocks_mut_preserves_cfg();
-        let variable = VariableRef::new_global();
-        blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
-            dest: variable.with_version(0).into(),
-            sources: smallvec![Exp::variable(variable)],
-        }));
-    }
     log::trace!("assume that version 0 is initial version");
     log::trace!("blocks after rename: {}", function);
     function.verify().unwrap();
@@ -627,8 +622,12 @@ impl PhiPlace {
                     upward_uses.entry(v.variable).or_default().push(bb);
                 }
             };
+            // A global is never versioned (G4), so it gets no phi.
             for stmt in data.iter() {
-                for v in stmt.iter_src_var().filter(|v| v.version.is_none()) {
+                for v in stmt
+                    .iter_src_var()
+                    .filter(|v| v.version.is_none() && !v.variable.is_global())
+                {
                     variables.insert(v.variable);
                     note_use(v, &killed);
                 }
@@ -638,7 +637,11 @@ impl PhiPlace {
                     killed.insert(v.variable);
                 }
             }
-            for v in data.terminator().iter_src_var() {
+            for v in data
+                .terminator()
+                .iter_src_var()
+                .filter(|v| !v.variable.is_global())
+            {
                 variables.insert(v.variable);
                 note_use(v, &killed);
             }
@@ -760,8 +763,12 @@ impl SsaRename {
         for (_z, stmt) in blocks[x].iter_enumerated_mut() {
             // Rewrite every use but a phi's, whose operands are renamed from the predecessors
             if !matches!(stmt.kind, Phi { .. }) {
-                // A use that already names a version is left as it is (see `complete`).
-                for v in stmt.iter_src_var_mut().filter(|v| v.version.is_none()) {
+                // A use that already names a version is left as it is (see `complete`), and so
+                // is a global, which is never versioned (G4).
+                for v in stmt
+                    .iter_src_var_mut()
+                    .filter(|v| v.version.is_none() && !v.variable.is_global())
+                {
                     let i = *self.s(&v.variable).last().unwrap();
                     // Replace use of v with v_i
                     v.version = Some(i.try_into().unwrap());
@@ -774,7 +781,11 @@ impl SsaRename {
                 *self.c_mut(&v.variable) = i + 1;
             }
         }
-        for v in blocks[x].terminator_mut().iter_src_var_mut() {
+        for v in blocks[x]
+            .terminator_mut()
+            .iter_src_var_mut()
+            .filter(|v| !v.variable.is_global())
+        {
             let i = *self.s(&v.variable).last().unwrap();
             // Replace use of v with v_i
             v.version = Some(i.try_into().unwrap());

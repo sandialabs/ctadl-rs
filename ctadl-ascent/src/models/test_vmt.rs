@@ -1,7 +1,7 @@
 //! Name tables for hand-built test programs, written the way the frontends write theirs.
 
-use ctadl_ir::mir::Symbol;
-use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
+use ctadl_ir::cir::Symbol;
+use ctadl_ir::cir::call::{Dispatch, FunctionNames, VirtualMethodTable};
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 

@@ -33,6 +33,8 @@ cil-dump = { path = "../readers/cil-reader/crates/cil-dump" }
 # process.
 ctadl-cil = { path = "../frontends/ctadl-cil" }
 ctadl-ir = { path = "../ctadl-ir" }
+# `cil:frontend` resolves the span a global is declared at.
+source-info = { path = "../source-info" }
 # `cil:models` reads the accepted-miss file's function-id patterns. Already built for
 # ctadl-ascent.
 regex = "1.12"

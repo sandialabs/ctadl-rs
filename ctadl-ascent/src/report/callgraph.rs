@@ -18,13 +18,13 @@ use serde::Serialize;
 
 use crate::codegen::{ChaLanguage, ClassHierarchyAnalysis, InstantiationFinder};
 use crate::stats::{Distribution, top_n_share};
-use ctadl_ir::graph::{DirectedGraph, Successors, scc::Sccs};
-use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::visit::Visitor;
-use ctadl_ir::mir::{
+use ctadl_ir::cir::visit::Visitor;
+use ctadl_ir::cir::{
     FunctionIdx, ProgramInfo, StatementKind, Symbol,
     call::{CallStyle, JavaDispatch, TypeFacts},
 };
+use ctadl_ir::graph::{DirectedGraph, Successors, scc::Sccs};
+use ctadl_ir::index::idx::Idx;
 
 /// A method's simple name and descriptor, matched exactly. Obfuscation renames and
 /// repackages classes, but an `equals(Ljava/lang/Object;)Z` override still has to keep the
@@ -892,7 +892,7 @@ impl Walk {
 /// Walks every statement of every function once, recording the call census, the site count
 /// per virtual-call signature, and the caller-to-callee edges that the fan-in and SCC
 /// sections need. This is the only pass over the program.
-fn walk(program: &ctadl_ir::mir::Program) -> Walk {
+fn walk(program: &ctadl_ir::cir::Program) -> Walk {
     let mut w = Walk::default();
     // Every function gets a node up front. That keeps a function with no calls in the call
     // graph, and keeps the node ids of the program's own functions stable.
@@ -1768,12 +1768,12 @@ impl Successors for ChaCallGraph<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctadl_ir::mir::builder::FunctionBuilder;
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::builder::FunctionBuilder;
+    use ctadl_ir::cir::call::{
         CallObject, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
         VirtualMethodTable,
     };
-    use ctadl_ir::mir::{Exp, FunctionData, Program};
+    use ctadl_ir::cir::{Exp, FunctionData, Program};
 
     /// A program with one interface `LI;` (one abstract `m()V`, so it is functional), two
     /// implementers, a class `LC;` with a subclass, and one caller making one call of each

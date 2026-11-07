@@ -14,13 +14,13 @@ use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{IndexFacts, taint_index};
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches};
-use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::builder::FunctionBuilder;
+use ctadl_ir::cir::call::{
     CallStyle, Dispatch, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     VirtualMethodTable,
 };
-use ctadl_ir::mir::{Exp, FunctionData, ParameterType, Program, ProgramInfo};
+use ctadl_ir::cir::{Exp, FunctionData, ParameterType, Program, ProgramInfo};
+use ctadl_ir::index::idx::Idx;
 
 const IFACE: &str = "Ljava/util/Iterator;";
 const NAME: &str = "next";
@@ -66,11 +66,11 @@ fn caller() -> FunctionData {
     let recv = b.new_local_var("recv");
     b.create_assign(
         recv.clone(),
-        vec![Exp::ObjectRef(ctadl_ir::mir::CallObject::JavaObject(
+        vec![Exp::ObjectRef(ctadl_ir::cir::CallObject::JavaObject(
             JavaClass("LA;".into()),
         ))],
     );
-    let arg = b.new_param_var(ctadl_ir::mir::ParameterIdx::new(1));
+    let arg = b.new_param_var(ctadl_ir::cir::ParameterIdx::new(1));
     let result = b.new_local_var("result");
     b.create_call(
         CallStyle::JavaCall {
@@ -136,13 +136,7 @@ struct Indexed {
     facts: IndexFacts,
     source_info: IndexSourceInfo,
     report: ctadl_ascent::codegen::CodegenReport,
-    summary: Vec<(
-        fx::FunctionId,
-        fx::FormalIndex,
-        fx::Path,
-        fx::FormalIndex,
-        fx::Path,
-    )>,
+    summary: Vec<(fx::FunctionId, fx::Root, fx::Path, fx::Root, fx::Path)>,
 }
 
 impl Indexed {

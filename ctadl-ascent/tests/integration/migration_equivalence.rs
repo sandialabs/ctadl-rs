@@ -40,11 +40,11 @@ use ctadl_ascent::models::{
 use ctadl_ascent::project::ArtifactLanguage;
 use ctadl_ir::Idx;
 use ctadl_ir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CallEdges, CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, JavaClass,
     JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     Exp, FunctionData, Functions, ParameterIdx, ParameterType, Program, ProgramInfo, StatementKind,
     Symbol,
 };

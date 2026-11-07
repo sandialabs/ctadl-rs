@@ -1,6 +1,6 @@
 // Tests for CTADL IR verification errors
 use super::*;
-use crate::mir::{
+use crate::cir::{
     AccessPath, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FunctionIdx, Offset, ParameterIdx,
     Params, PathSegment, ReturnType, StatementKind, TerminatorKind, VariableRef,
 };
@@ -257,9 +257,11 @@ fn test_display_uses_canonical_grammar() {
     }
 }
 
-/// A function with one block, one parameter, and the given statements.
+/// A one-function program (one block, one parameter) that declares the global `g` (index 0, see
+/// [`g`]) and runs `stmts`.
 fn program_with(stmts: Vec<StatementKind>) -> Program {
     let mut prog = make_program();
+    prog.declare_global("g", None);
     let f = &mut prog[FunctionIdx::new(0)];
     f.params.push(ParameterType::SharedFields);
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
@@ -278,6 +280,18 @@ fn errors_of(prog: &Program) -> Vec<VerifyError> {
 
 fn p0() -> VariableRef {
     VariableRef::new_parameter(ParameterIdx::new(0))
+}
+
+/// The global `g` of [`program_with`].
+fn g() -> VariableRef {
+    VariableRef::global(GlobalIdx::new(0))
+}
+
+/// Publishes `g`'s name for printing, as rendering a whole program would.
+fn g_names() -> GlobalNamesGuard {
+    let mut prog = Program::default();
+    prog.declare_global("g", None);
+    prog.global_names_guard()
 }
 
 /// `x.f.[8].deref = v` keeps its path in order; the field is not moved behind the offset.
@@ -305,12 +319,13 @@ fn store_keeps_path_order() {
 /// `p = e`, and `x.f.[8] = v` is `x.f = v.[-8]`.
 #[test]
 fn address_destination_is_rewritten() {
-    let e = VariableRef::new_global();
+    let _names = g_names();
+    let e = g();
     let s = StatementKind::assign(
         AccessPath::new(p0(), [PathSegment::offset(8)]),
         [Exp::variable(e.clone())],
     );
-    assert_eq!(s.to_string(), "assign @p0 = $globals.[-8]");
+    assert_eq!(s.to_string(), "assign @p0 = $g.[-8]");
     assert!(!s.is_store());
     let s = StatementKind::assign(
         AccessPath::new(p0(), [PathSegment::offset(8)]),
@@ -319,7 +334,7 @@ fn address_destination_is_rewritten() {
             [PathSegment::offset(8)],
         ))],
     );
-    assert_eq!(s.to_string(), "assign @p0 = $globals");
+    assert_eq!(s.to_string(), "assign @p0 = $g");
     let s = StatementKind::assign(
         AccessPath::new(p0(), [PathSegment::field("f"), PathSegment::offset(8)]),
         [
@@ -330,7 +345,7 @@ fn address_destination_is_rewritten() {
     );
     assert_eq!(
         s.to_string(),
-        "store @p0.f := $globals.[-8], value($globals), <const: 3>"
+        "store @p0.f := $g.[-8], value($g), <const: 3>"
     );
 }
 
@@ -346,7 +361,6 @@ fn verify_rejects_unnormalized_path() {
         .into_iter()
         .collect(),
     };
-    let tmp = VariableRef::new_global();
     let prog = program_with(vec![StatementKind::Assign {
         dest: ap,
         sources: [Exp::variable(p0())].into_iter().collect(),
@@ -357,13 +371,12 @@ fn verify_rejects_unnormalized_path() {
             .any(|e| matches!(e, VerifyError::NotNormal { .. })),
         "{errs:?}"
     );
-    let _ = tmp;
 }
 
 #[test]
 fn verify_rejects_misplaced_value() {
     let prog = program_with(vec![StatementKind::CallAssign {
-        style: crate::mir::CallStyle::Unknown,
+        style: crate::cir::CallStyle::Unknown,
         rets: Default::default(),
         args: [Exp::value(p0())].into_iter().collect(),
     }]);
@@ -415,25 +428,119 @@ fn verify_rejects_address_destination() {
     );
 }
 
+/// A store to a global, and a load from one, is how a global is written and read (G4).
 #[test]
-fn verify_rejects_empty_globals_write() {
+fn verify_accepts_global_store_and_load() {
+    let prog = program_with(vec![
+        StatementKind::store(g(), PathSegment::Deref, Exp::variable(p0())),
+        StatementKind::assign(
+            p0(),
+            [Exp::path(AccessPath::new(g(), [PathSegment::Deref]))],
+        ),
+        // `&g` is a copy of the global into a local, not out of the global's storage.
+        StatementKind::assign(p0(), [Exp::variable(g())]),
+    ]);
+    assert_eq!(errors_of(&prog), vec![]);
+}
+
+#[test]
+fn verify_rejects_copy_into_global() {
+    // At any version: there is no SSA entry binding of a global.
+    for dest in [g(), g().with_version(0)] {
+        let prog = program_with(vec![StatementKind::assign(dest, [Exp::variable(p0())])]);
+        let errs = errors_of(&prog);
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, VerifyError::CopyIntoGlobal { .. })),
+            "{errs:?}"
+        );
+    }
+}
+
+#[test]
+fn verify_rejects_call_result_into_global() {
+    let prog = program_with(vec![StatementKind::CallAssign {
+        style: CallStyle::DirectCall {
+            call_edges: CallEdges::Explicit(["f".to_string()].into_iter().collect()),
+        },
+        rets: thin_vec::thin_vec![g()],
+        args: thin_vec::thin_vec![],
+    }]);
+    let errs = errors_of(&prog);
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::CallResultIntoGlobal { .. })),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn verify_rejects_phi_over_global() {
+    let prog = program_with(vec![StatementKind::Phi {
+        dest: p0().with_version(1),
+        operands: smallvec![(BasicBlockIdx::START_BLOCK, g())],
+    }]);
+    let errs = errors_of(&prog);
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::PhiOverGlobal { .. })),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn verify_rejects_versioned_global() {
     let prog = program_with(vec![StatementKind::assign(
-        VariableRef::new_global(),
-        [Exp::variable(p0())],
+        p0(),
+        [Exp::path(AccessPath::new(
+            g().with_version(1),
+            [PathSegment::Deref],
+        ))],
     )]);
     let errs = errors_of(&prog);
     assert!(
         errs.iter()
-            .any(|e| matches!(e, VerifyError::EmptyGlobalsWrite { .. })),
+            .any(|e| matches!(e, VerifyError::VersionedGlobal { version: 1, .. })),
         "{errs:?}"
     );
-    // A store to a global is the way to write one.
-    let prog = program_with(vec![StatementKind::store(
-        VariableRef::new_global(),
-        "g",
-        Exp::variable(p0()),
+}
+
+#[test]
+fn verify_rejects_global_out_of_range() {
+    let prog = program_with(vec![StatementKind::assign(
+        p0(),
+        [Exp::variable(VariableRef::global(GlobalIdx::new(1)))],
     )]);
-    assert_eq!(errors_of(&prog), vec![]);
+    let errs = errors_of(&prog);
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::GlobalOutOfRange { .. })),
+        "{errs:?}"
+    );
+}
+
+/// Declaring a name twice returns the first declaration's index and keeps its span; a program
+/// renders its globals by name.
+#[test]
+fn declare_global_interns_by_name() {
+    let span = |i| Some(source_info::FileSpanId(i));
+    let mut prog = Program::default();
+    let a = prog.declare_global("a", span(1));
+    let b = prog.declare_global("b$util.c", None);
+    assert_ne!(a, b);
+    assert_eq!(prog.declare_global("a", span(2)), a);
+    assert_eq!(prog.globals[a].span, span(1));
+    // A later declaration supplies a span the first lacked.
+    assert_eq!(prog.declare_global("b$util.c", span(3)), b);
+    assert_eq!(prog.globals[b].span, span(3));
+    assert_eq!(prog.global_named("b$util.c"), Some(b));
+    assert_eq!(prog.global_named("c"), None);
+    assert_eq!(prog.globals.len(), 2);
+    assert_eq!(
+        WithGlobalNames(&prog, VariableRef::global(b)).to_string(),
+        "$b$util\\.c"
+    );
+    assert_eq!(VariableRef::global(b).to_string(), "$#1");
 }
 
 #[test]

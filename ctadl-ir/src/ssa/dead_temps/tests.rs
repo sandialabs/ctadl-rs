@@ -2,11 +2,11 @@ use super::*;
 
 use smallvec::smallvec;
 
-use crate::mir::call::{CallEdges, CallStyle};
+use crate::cir::call::{CallEdges, CallStyle};
 
 thread_local! {
-    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
-        std::cell::RefCell::new(crate::mir::Locals::default());
+    static LOCALS: std::cell::RefCell<crate::cir::Locals> =
+        std::cell::RefCell::new(crate::cir::Locals::default());
 }
 
 /// Interns `name` into a per-thread table so repeated names share one `LocalIdx`.
@@ -218,9 +218,9 @@ fn call_arg_keeps_feeding_temp_alive() {
 
 #[test]
 fn keeps_store() {
-    // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
+    // store $g.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
-        AccessPath::from(VariableRef::new_global()),
+        AccessPath::from(VariableRef::global(GlobalIdx::new(0))),
         PathSegment::field("f"),
         read("v"),
     ))]);

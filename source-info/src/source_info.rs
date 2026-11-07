@@ -25,6 +25,17 @@ impl SourceInfo {
     pub fn from_parquet(dir: &Path) -> parquet_io::Result<Self> {
         parquet_io::read_parquet_source_info(dir)
     }
+
+    /// The artifact `id` is in and the span it covers there; `None` for [`crate::NO_SPAN`] or
+    /// an id this database does not hold.
+    pub fn resolve(&self, id: crate::FileSpanId) -> Option<(&ArtifactRecord, &Span)> {
+        let nth = |i: u32| (i as usize).checked_sub(1);
+        let file_span = self.file_spans.get(nth(id.0)?)?;
+        let file = self.files.get(nth(file_span.file.0)?)?;
+        let artifact = self.artifacts.get(nth(file.artifact.0)?)?;
+        let span = self.spans.get(nth(file_span.span.0)?)?;
+        Some((artifact, span))
+    }
 }
 
 impl std::fmt::Display for SourceInfo {

@@ -1,10 +1,10 @@
-use crate::index::idx::Idx;
-use crate::mir::builder::BasicBlockBuilder;
-use crate::mir::call::CallStyle;
-use crate::mir::{
-    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, PathSegment, StatementIdx,
-    VariableRef, path_to_string,
+use crate::cir::builder::BasicBlockBuilder;
+use crate::cir::call::CallStyle;
+use crate::cir::{
+    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, PathSegment, Program, StatementIdx,
+    VariableRef, WithGlobalNames, path_to_string,
 };
+use crate::index::idx::Idx;
 
 /// The source name of a local variable ref, via the locals table.
 fn local_name(locals: &Locals, var: &VariableRef) -> String {
@@ -53,32 +53,32 @@ fn test_builder_insertion_at_positions() {
 
     // Insert at position 0
     builder.set_insertion_point(0);
-    builder.insert_statement(crate::mir::Statement::new_kind(
-        crate::mir::StatementKind::assign(var_a.clone(), vec![var_b.clone().into()]),
+    builder.insert_statement(crate::cir::Statement::new_kind(
+        crate::cir::StatementKind::assign(var_a.clone(), vec![var_b.clone().into()]),
     ));
 
     // Insert at position 1
     builder.set_insertion_point(1);
-    builder.insert_statement(crate::mir::Statement::new_kind(
-        crate::mir::StatementKind::assign(var_b.clone(), vec![var_c.clone().into()]),
+    builder.insert_statement(crate::cir::Statement::new_kind(
+        crate::cir::StatementKind::assign(var_b.clone(), vec![var_c.clone().into()]),
     ));
 
     // Insert at position 0 (should shift others)
     builder.set_insertion_point(0);
-    builder.insert_statement(crate::mir::Statement::new_kind(
-        crate::mir::StatementKind::Nop,
+    builder.insert_statement(crate::cir::Statement::new_kind(
+        crate::cir::StatementKind::Nop,
     ));
 
     assert_eq!(block_data.statements.len(), 3);
 
     // Verify order: Nop, a = b, b = c
     match block_data.statements[StatementIdx::new(0)].kind {
-        crate::mir::StatementKind::Nop => {}
+        crate::cir::StatementKind::Nop => {}
         _ => panic!("Expected Nop at position 0"),
     }
 
     match &block_data.statements[StatementIdx::new(1)].kind {
-        crate::mir::StatementKind::Assign { dest, sources } => {
+        crate::cir::StatementKind::Assign { dest, sources } => {
             assert_eq!(local_name(&locals, &dest.base), "a");
             assert_eq!(sources.len(), 1);
         }
@@ -98,7 +98,7 @@ fn test_builder_call_statement() {
 
     // Create a call statement
     let call_style = CallStyle::DirectCall {
-        call_edges: crate::mir::call::CallEdges::Explicit(thin_vec::thin_vec!["test".to_string()]),
+        call_edges: crate::cir::call::CallEdges::Explicit(thin_vec::thin_vec!["test".to_string()]),
     };
 
     builder.create_call(
@@ -110,7 +110,7 @@ fn test_builder_call_statement() {
     assert_eq!(block_data.statements.len(), 1);
 
     match &block_data.statements[StatementIdx::new(0)].kind {
-        crate::mir::StatementKind::CallAssign { rets, args, .. } => {
+        crate::cir::StatementKind::CallAssign { rets, args, .. } => {
             assert_eq!(rets.len(), 1);
             assert_eq!(args.len(), 2);
         }
@@ -150,7 +150,9 @@ fn test_builder_convenience_methods() {
     // once we stop using it, letting us resolve local names below.
     let local_var = builder.new_local_var("test");
     let param_var = builder.new_param_var(ParameterIdx::new(0));
-    let global_var = builder.new_global_var();
+    let mut program = Program::default();
+    let g = program.declare_global("speed", None);
+    let global_var = builder.new_global_var(g);
     // Access path creation; the path is normalized.
     let addr = builder.new_access_path(
         local_var.clone(),
@@ -167,7 +169,8 @@ fn test_builder_convenience_methods() {
     // Test variable creation
     assert_eq!(local_name(&locals, &local_var), "test");
     assert_eq!(param_var.to_string(), "@p0");
-    assert_eq!(global_var.to_string(), "$globals");
+    assert_eq!(global_var.to_string(), "$#0");
+    assert_eq!(WithGlobalNames(&program, &global_var).to_string(), "$speed");
 
     // The base is the local `test`, followed by the summed offset and the deref.
     assert_eq!(local_name(&locals, &addr.base), "test");

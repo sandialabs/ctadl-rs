@@ -45,6 +45,8 @@ pub enum VarType {
     /// A local variable of one function, bound by `local`'s second column. Opaque: it is not
     /// an integer, so it cannot index an argument, nor an argument index a local.
     Local,
+    /// A global, bound by `global`'s column. Anchors a `self` port, and nothing else.
+    Global,
 }
 
 impl VarType {
@@ -59,6 +61,7 @@ impl VarType {
             VarType::Int => "integer",
             VarType::Bool => "boolean",
             VarType::Local => "local variable",
+            VarType::Global => "global",
         }
     }
 
@@ -83,9 +86,11 @@ pub struct Plan {
     pub components: Vec<Component>,
     /// Every variable the body binds, with its inferred type.
     pub var_types: BTreeMap<String, VarType>,
-    /// What each positive `local` atom asks for, by [`AtomPlan::probe`]: the name it constrains,
-    /// as the unmatched-local diagnostic reports it.
+    /// What each positive `local` or `global` atom asks for, by [`AtomPlan::probe`]: the name it
+    /// constrains, as the unmatched-local or unmatched-global diagnostic reports it.
     pub local_probes: Vec<String>,
+    /// Which of [`Self::local_probes`] are `global` atoms.
+    pub global_probes: Vec<bool>,
 }
 
 /// One connected component: a set of body items sharing variables, compiled into the steps the
@@ -132,9 +137,9 @@ pub struct AtomPlan {
     /// In written order. Columns are matched first, then attributes, which is the order the mode
     /// check binds in: a variable's first occurrence binds it and every later one tests it.
     pub attrs: Vec<(Attr, AttrPat)>,
-    /// For a `local` atom the rule's solutions depend on, its index in [`Plan::local_probes`]:
-    /// the engine records whether it ever matched, so a rule that matched nothing because of it
-    /// can say so.
+    /// For a `local` or `global` atom the rule's solutions depend on, its index in
+    /// [`Plan::local_probes`]: the engine records whether it ever matched, so a rule that matched
+    /// nothing because of it can say so.
     pub probe: Option<usize>,
 }
 
@@ -163,6 +168,8 @@ pub enum Relation {
     Param,
     /// A function and one of its declared locals.
     Local,
+    /// A declared global.
+    Global,
     CallSite,
     /// `subclass` is neither, `subclass*` both, `subclass+` only `deep`.
     Subclass {
@@ -181,6 +188,7 @@ impl Relation {
             "callsig" => Relation::CallSig,
             "param" => Relation::Param,
             "local" => Relation::Local,
+            "global" => Relation::Global,
             "callsite" => Relation::CallSite,
             "subclass" => Relation::Subclass {
                 reflexive: false,
@@ -210,6 +218,7 @@ impl Relation {
             | Relation::CallSig
             | Relation::Param
             | Relation::Local
+            | Relation::Global
             | Relation::UsesField
             | Relation::Allocator => &[0],
             // A function's names, the functions with a name.
@@ -236,6 +245,8 @@ impl Relation {
         match self {
             // A handful of rows.
             Relation::Allocator => 5,
+            // One row per global; a binary declares one.
+            Relation::Global => 6,
             Relation::Subclass { .. } => 10,
             Relation::UsesField => 20,
             Relation::Param => 25,
@@ -421,13 +432,15 @@ pub fn plan_rule(rule: &Rule, errors: &mut PortcullisErrors) -> Option<Plan> {
     }
     let mut components = components;
     let mut local_probes = Vec::new();
+    let mut global_probes = Vec::new();
     for component in &mut components {
         for (step, &item) in component.body.iter_mut().zip(&component.steps) {
             if let (Step::Atom(atom), BodyItem::Atom(written)) = (step, &rule.body[item])
-                && atom.rel == Relation::Local
+                && matches!(atom.rel, Relation::Local | Relation::Global)
             {
                 atom.probe = Some(local_probes.len());
                 local_probes.push(local_name_constraint(written));
+                global_probes.push(atom.rel == Relation::Global);
             }
         }
     }
@@ -435,6 +448,7 @@ pub fn plan_rule(rule: &Rule, errors: &mut PortcullisErrors) -> Option<Plan> {
         components,
         var_types: types,
         local_probes,
+        global_probes,
     })
 }
 
@@ -968,11 +982,34 @@ fn check_head(
                         | VarType::Site
                         | VarType::CallSig
                         | VarType::Str
-                        | VarType::Unknown => {}
+                        | VarType::Unknown => {
+                            if matches!(port.port.base, PortBase::GlobalSelf)
+                                && types.get(v).is_some()
+                            {
+                                errors.push(PortcullisError::Rule {
+                                    message: format!(
+                                        "'{v}::self' names a global, but '{v}' is not one; bind \
+                                         it with 'global({v})'"
+                                    ),
+                                    span: port.span,
+                                });
+                            }
+                        }
+                        VarType::Global => {
+                            if !matches!(port.port.base, PortBase::GlobalSelf) {
+                                errors.push(PortcullisError::Rule {
+                                    message: format!(
+                                        "'{v}' is a global, which has no arguments or return; \
+                                         its port is '{v}::self', with a path"
+                                    ),
+                                    span: port.span,
+                                });
+                            }
+                        }
                         other => errors.push(PortcullisError::Rule {
                             message: format!(
                                 "'{v}' is a {} and cannot anchor a port; a port hangs off a \
-                                 function or a call site",
+                                 function, a call site or a global",
                                 other.name()
                             ),
                             span: port.span,
@@ -1011,11 +1048,35 @@ fn check_head(
         }
     }
 
-    // Whether a flow's two ports resolve to the same anchor term; `None` when either has none.
+    let globals = ports
+        .iter()
+        .filter(|p| matches!(p.port.base, PortBase::GlobalSelf))
+        .count();
+    if globals > 0 {
+        let message = match &head.kind {
+            HeadKind::Bridge { .. } => Some("a global is shared and needs no bridge"),
+            HeadKind::Propagation { .. } if globals == 2 => Some(
+                "a flow between two globals holds in every function, so it is the program's, \
+                 not a function's summary; it needs no model",
+            ),
+            HeadKind::Source { .. } | HeadKind::Sink { .. } | HeadKind::Propagation { .. } => None,
+            _ => Some("a 'self' port is valid only on a source, a sink or a propagation"),
+        };
+        if let Some(message) = message {
+            errors.push(PortcullisError::Rule {
+                message: message.to_string(),
+                span: head.span,
+            });
+        }
+    }
+
+    // Whether a flow's two ports resolve to the same anchor term; `None` when either has none,
+    // or when one is a global's, which a propagation of the other's function may name (G7).
     let same_anchor = match (
         anchors.first().copied().flatten(),
         anchors.get(1).copied().flatten(),
     ) {
+        _ if globals > 0 => None,
         (Some(a), Some(b)) => Some(same_term(a, b)),
         _ => None,
     };
@@ -1508,6 +1569,7 @@ fn column_types(name: &str) -> &'static [VarType] {
         "callsig" => &[VarType::CallSig],
         "param" => &[VarType::Function, VarType::Int],
         "local" => &[VarType::Function, VarType::Local],
+        "global" => &[VarType::Global],
         "callsite" => &[VarType::Function, VarType::Site],
         "subclass" | "subclass*" | "subclass+" => &[VarType::Class, VarType::Class],
         "uses_field" => &[VarType::Function, VarType::Str],

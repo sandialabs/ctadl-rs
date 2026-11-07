@@ -106,7 +106,6 @@ declares. [`port_map`] maps ports across that shift:
 | `this`, instance methods only | `1` -- `jobject` / `jclass` |
 | declared parameter *k* | the next native index, or the next two for a split `long`/`double` |
 | return value | return value |
-| globals | globals |
 
 Where the declared parameters land depends on the [`NativeSlotModel`]:
 
@@ -125,8 +124,9 @@ and `(JI)V` puts the `int` at slot 2, while the JVM numbers them by *argument po
 the same `int` at slot 1. Both put `this` at slot 0 for an instance method.
 
 Only the *normal* return is mapped: a Java function has return arity 2 (normal and exception) while
-a native function has one, and a JNI implementation cannot throw into the second. Globals are
-threaded through exactly as they are at a real call site. Because ports are bidirectional,
+a native function has one, and a JNI implementation cannot throw into the second. Nothing is
+mapped for globals: both sides already share every global (G5, G7 of `docs/ir.md`), and a flow
+through a native global is found by the query's hop through it. Because ports are bidirectional,
 by-reference out-parameters and the return value come back across the boundary with no extra work.
 
 # Linking against a summary project
@@ -242,13 +242,13 @@ use hashbrown::hash_set::HashSet;
 use std::collections::BTreeMap;
 
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
+use ctadl_ir::cir::call::{Dispatch, VirtualMethodTable};
 
 /// The `RegisterNatives` table scan and its run attribution. [`ctadl_pcode`]'s crate docs say
 /// why the scan lives there.
 pub use ctadl_pcode::jni_registry as registry;
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::error::Error;
 use crate::facts::{
     self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
@@ -576,8 +576,8 @@ pub fn param_descriptor(descriptor: &str) -> Option<String> {
     Some(descriptor_params(descriptor)?.concat())
 }
 
-/// The `(java_index, native_index)` port pairs for one native method, including `this`, the return
-/// value and the globals pseudo-parameter.
+/// The `(java_index, native_index)` port pairs for one native method, including `this` and the
+/// return value.
 ///
 /// The native side is fixed by the JNI ABI up to `native`: index 0 is `JNIEnv *` (never mapped),
 /// index 1 is the receiver `jobject` for an instance method or the declaring `jclass` for a static
@@ -611,9 +611,6 @@ pub fn port_map(
         java += slots.width(p);
     }
     ports.push((RETURN_INDEX.into(), RETURN_INDEX.into()));
-    // Globals ride through the synthetic site exactly as they do at a real call site, so a native
-    // implementation writing a global is visible to Java and vice versa.
-    ports.push((GLOBALS_INDEX.into(), GLOBALS_INDEX.into()));
     Some(ports)
 }
 

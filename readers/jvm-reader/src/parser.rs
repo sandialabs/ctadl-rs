@@ -41,6 +41,8 @@ pub fn parse(data: &[u8]) -> ClassFileResult<ClassFile> {
         }
     }
 
+    let header_offset = u32::try_from(pos)
+        .map_err(|_| ClassFileError::InvalidClassFile("class header offset overflow"))?;
     let access_flags = read_u16_be(data, pos)?;
     pos += 2;
     let this_class = read_u16_be(data, pos)?;
@@ -95,6 +97,7 @@ pub fn parse(data: &[u8]) -> ClassFileResult<ClassFile> {
         });
 
     Ok(ClassFile {
+        header_offset,
         magic,
         minor_version,
         major_version,

@@ -3,7 +3,7 @@
 # Introduction
 
 Codegen is the process of generating Datalog code from CTADL IR. CTADL IR, the input, is expressed
-as a [`ctadl_ir::mir::ProgramInfo`]; [`crate::index_engine::IndexFacts`] is the output type. This
+as a [`ctadl_ir::cir::ProgramInfo`]; [`crate::index_engine::IndexFacts`] is the output type. This
 phase provides a hook in [`crate::models::codegen`] to run arbitrary code that generates models for
 indexing.
 
@@ -12,7 +12,9 @@ indexing.
 Some notes about choices made in the design of generating code:
 
 Parameters in IR are mapped to the same indices in the Datalog. Return values are mapped to index
--1, -2, -3, etc. The global heap is mapped to [`GLOBALS_INDEX`], which is [`i16::MIN`].
+-1, -2, -3, etc. A global `$g` is the vertex [`FlowVariable::global`] of its name, the same in
+every function and every import of the project (G3 of `docs/ir.md`); nothing is passed for it at a
+call (G5), and each import's declarations are rows of [`IndexFacts::globals`].
 
 # Resolving a Java call
 
@@ -38,12 +40,13 @@ use smallvec::SmallVec;
 use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
-use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     call::{Dispatch, JavaDispatch, VirtualMethodTable},
     visit::Visitor,
     *,
 };
+use ctadl_ir::index::idx::Idx;
+use ctadl_ir::ssa;
 
 #[cfg(test)]
 mod tests;
@@ -339,7 +342,9 @@ pub fn codegen_program(
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
-    for f in program_info.program.functions.drain(..) {
+    v.declare_globals(&program_info.program.globals);
+    for mut f in program_info.program.functions.drain(..) {
+        ssa::compose_loads_function(&mut f);
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
     v.finish_with_vmt(&program_info.vmt);
@@ -367,7 +372,19 @@ pub fn codegen_function(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
-    let function_data_owned = function_data.clone();
+    codegen_function_with_globals(function_data, &Globals::default(), facts, source_info)
+}
+
+/// [`codegen_function`] for a function that names the globals `globals` declares: its
+/// program's table.
+pub fn codegen_function_with_globals(
+    function_data: &FunctionData,
+    globals: &Globals,
+    facts: &mut IndexFacts,
+    source_info: &mut IndexSourceInfo,
+) {
+    let mut function_data_owned = function_data.clone();
+    ssa::compose_loads_function(&mut function_data_owned);
     let function_data = &function_data_owned;
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
@@ -386,11 +403,12 @@ pub fn codegen_function(
         CallPolicy::default(),
         &no_matches,
     );
+    v.declare_globals(globals);
     v.visit_function_data(FunctionIdx::new(0), function_data);
     v.finish();
 }
 
-pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
+pub use crate::facts::RETURN_INDEX;
 
 /// The `call_target_assign` payload for an *object-valued* expression: the class of an
 /// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
@@ -455,13 +473,8 @@ struct CodegenVisitor<'a> {
     function: Option<fx::FunctionId>,
     /// We may see the same path multiple times so we dedup them with this set
     paths_dedup: BTreeSet<(fx::Path,)>,
-    /// Per-block map from a load-chain temporary to the (root variable, composed field path) it
-    /// stands for (`t2 = load t1.b` where `t1 = load x.a` ⟹ `t2 ↦ (x, .a.b)`). Populated in the
-    /// pre-pass over each block ([`Self::visit_basic_block_data`]) and used to *re-anchor* a
-    /// `Store` through such a temporary (`store t2.c := v`) back onto the formal path it addresses
-    /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
-    /// rather than at the temporary. Cleared per block.
-    cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// The program's globals, by [`ctadl_ir::cir::GlobalIdx`].
+    globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
     /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
@@ -544,7 +557,7 @@ impl<'a> CodegenVisitor<'a> {
             source_info,
             strategy,
             paths_dedup: Default::default(),
-            cap_path: Default::default(),
+            globals: Vec::new(),
             num_params: 0,
             funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
@@ -839,12 +852,6 @@ impl Visitor for CodegenVisitor<'_> {
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
         }
-        // Gens global param
-        self.facts.formal_param.push((
-            self.function.unwrap(),
-            FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            fx::FormalType::Shared,
-        ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
@@ -881,41 +888,23 @@ impl Visitor for CodegenVisitor<'_> {
         block: BasicBlockIdx,
         data: &BasicBlockData,
     ) {
-        // Pre-pass: capture, for each load-chain temporary, the (root variable, composed path)
-        // it stands for. Used below to seed the `paths` gate and, in `visit_statement`, to
-        // re-anchor a read or a store through such a temporary onto the formal path it
-        // addresses.
-        self.cap_path.clear();
+        // Load chains are already composed (`ssa::compose_loads`).
         for statement in &data.statements {
             match &statement.kind {
                 StatementKind::Assign { dest, sources } => {
                     for ap in sources.iter().filter_map(Exp::access_path) {
-                        self.insert_chain_paths(ap);
+                        self.insert_mentioned_paths(ap);
                     }
                     if !dest.is_pathless() {
-                        self.insert_chain_paths(dest);
-                    } else if let [Exp::Path(src)] = sources.as_slice() {
-                        // A copy `dest = v·s` stands for `<captured path of v>·s` rooted at v's
-                        // root: a whole-variable copy carries `v`'s capture forward, an address
-                        // copy `dest = v.[k]` (pointer arithmetic) or a load `dest = v.f`
-                        // composes onto it, so a later read or store through `dest` composes
-                        // too.
-                        let cap = if src.is_pathless() {
-                            self.cap_path.get(&src.base).cloned()
-                        } else {
-                            Some(self.composed(src))
-                        };
-                        if let Some(cap) = cap {
-                            self.cap_path.insert(dest.base.clone(), cap);
-                        }
+                        self.insert_mentioned_paths(dest);
                     }
                 }
                 StatementKind::CallAssign { args, style, .. } => {
                     for ap in args.iter().filter_map(Exp::access_path) {
-                        self.insert_chain_paths(ap);
+                        self.insert_mentioned_paths(ap);
                     }
                     if let CallStyle::FuncPtrCall { callee, .. } = style {
-                        self.insert_chain_paths(callee);
+                        self.insert_mentioned_paths(callee);
                     }
                 }
                 _ => {}
@@ -923,11 +912,10 @@ impl Visitor for CodegenVisitor<'_> {
         }
         if let Some(TerminatorKind::Return { args }) = data.terminator_opt().map(|t| &t.kind) {
             for ap in args.iter().filter_map(Exp::access_path) {
-                self.insert_chain_paths(ap);
+                self.insert_mentioned_paths(ap);
             }
         }
         self.super_basic_block_data(function, block, data);
-        self.cap_path.clear();
     }
 
     /// Generates formal parameters
@@ -957,14 +945,12 @@ impl Visitor for CodegenVisitor<'_> {
         match statement_kind {
             Assign { dest, sources } => {
                 // A copy defines the whole destination variable; a store writes the memory at
-                // its path, re-anchored onto the root a load-chain temporary stands for.
-                let dest = if dest.is_pathless() {
-                    FlowVertex::new(self.trans_variable_ref(&dest.base), fx::Path::empty())
-                } else {
-                    let (root, path) = self.composed(dest);
+                // its path.
+                let path = fx::Path::from_accesses(dest.segments.iter().cloned());
+                if !dest.is_pathless() {
                     self.paths_dedup.insert((path,));
-                    FlowVertex::new(self.trans_variable_ref(&root), path)
-                };
+                }
+                let dest = FlowVertex::new(self.trans_variable_ref(&dest.base), path);
                 for src in sources {
                     // A function pointer or an object stored at the destination: a target label
                     // (S11). Recorded before `src` is lowered, since `trans_exp` returns `None`
@@ -989,7 +975,7 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     // `dest = value(p)` lowers to `dest.#value <- p`; `dest` itself gets
                     // nothing. `p.#value` comes along since `#value` absorbs itself
-                    // (`ctadl_ir::mir::PathSegment::Value`).
+                    // (`ctadl_ir::cir::PathSegment::Value`).
                     if let Exp::Value(ap) = src {
                         let value = dest
                             .1
@@ -1160,9 +1146,8 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 // pass parameters
                 for (i, arg_exp) in args.iter().enumerate() {
-                    // The negative half is reserved for the engine (returns at -1, -2, ...; globals
-                    // at `GLOBALS_INDEX`), which is why this stops at `i16::MAX` rather than
-                    // wrapping into it.
+                    // The negative half is reserved for the engine (returns at -1, -2, ...),
+                    // which is why this stops at `i16::MAX` rather than wrapping into it.
                     let Ok(formal_index) = FormalIndex::try_from(i) else {
                         log::warn!(
                             "found > {} parameters in function call; skipping rest",
@@ -1233,15 +1218,6 @@ impl Visitor for CodegenVisitor<'_> {
                         FlowVertex::new(ret, fx::Path::empty()),
                     ));
                 }
-                // pass globals
-                self.facts.actual_param.push((
-                    site,
-                    GLOBALS_INDEX.into(),
-                    FlowVertex::new(
-                        FlowVariable::formal_index(GLOBALS_INDEX.into()),
-                        fx::Path::empty(),
-                    ),
-                ));
             }
             Nop => (),
         }
@@ -1256,19 +1232,15 @@ impl Visitor for CodegenVisitor<'_> {
             insn_site_id.try_into().unwrap()
         };
         if let TerminatorKind::Return { args } = terminator {
-            // Write each parameter, and the global heap, back to its formal at its entry version,
-            // so a store through it inside the function reaches the formal path the summary
-            // reads. The entry version is the one that reaches the return: rebinding a parameter
-            // does not reach the caller, and nothing rebinds the global heap (see `ctadl_ir::ssa`).
-            let formals = (0..self.num_params)
-                .map(|i| {
-                    let p = VariableRef::new_parameter(ParameterIdx::new(i));
-                    (FlowVariable::formal_index(i.try_into().unwrap()), p)
-                })
-                .chain(std::iter::once((
-                    FlowVariable::formal_index(GLOBALS_INDEX.into()),
-                    VariableRef::new_global(),
-                )));
+            // Write each parameter back to its formal at its entry version, so a store through
+            // it inside the function reaches the formal path the summary reads. The entry
+            // version is the one that reaches the return: rebinding a parameter does not reach
+            // the caller (see `ctadl_ir::ssa`). A global needs no write-back: SSA never
+            // versions it, so a store to it already lands on its vertex.
+            let formals = (0..self.num_params).map(|i| {
+                let p = VariableRef::new_parameter(ParameterIdx::new(i));
+                (FlowVariable::formal_index(i.try_into().unwrap()), p)
+            });
             for (dst, v) in formals {
                 let src = self.trans_variable_ref(&v.with_version(0));
                 self.facts.assign.push((
@@ -1312,75 +1284,44 @@ impl CodegenVisitor<'_> {
         }
     }
 
-    /// The vertex a read of `ap` names. A read that goes through memory (a field, `deref` or
-    /// `#value`) is re-anchored onto the root a load-chain temporary stands for, as a store is;
-    /// an address (`v.[k]`) or a whole variable is read where it is.
+    /// The vertex a read of `ap` names. A read through memory (a field, `deref` or `#value`)
+    /// puts its path in the `paths` gate; an address (`v.[k]`) or a whole variable does not.
     fn read_vertex(&mut self, ap: &AccessPath) -> FlowVertex {
-        if ap.segments.iter().all(PathSegment::is_offset) {
-            let v = self.trans_variable_ref(&ap.base);
-            return FlowVertex::new(v, fx::Path::from_accesses(ap.segments.iter().cloned()));
+        let path = fx::Path::from_accesses(ap.segments.iter().cloned());
+        if !ap.segments.iter().all(PathSegment::is_offset) {
+            self.paths_dedup.insert((path,));
         }
-        let (root, path) = self.composed(ap);
-        self.paths_dedup.insert((path,));
-        FlowVertex::new(self.trans_variable_ref(&root), path)
+        FlowVertex::new(self.trans_variable_ref(&ap.base), path)
     }
 
-    /// `ap` composed onto what its base stands for in this block: `(root, <captured path>·s)`
-    /// when the base is a load-chain temporary, else `(base, s)`.
-    fn composed(&self, ap: &AccessPath) -> (VariableRef, fx::Path) {
-        let (root, base_path) = self
-            .cap_path
-            .get(&ap.base)
-            .cloned()
-            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
-        let path =
-            fx::Path::from_accesses(base_path.iter().cloned().chain(ap.segments.iter().cloned()));
-        (root, path)
-    }
-
-    /// Seeds the `paths` gate with what a read or a store of `ap` mentions, which is what a chain
-    /// of one-step loads spelling `ap` would mention: each offset run (the address each step reads
-    /// from, or the address left over at the end, relative to the step's base), and each composed
-    /// path that ends at a memory step (field, `deref` or `#value`). The admissible set is built
-    /// from program paths (the "admissible paths" row of the approximations register,
-    /// `docs/limitations.md`), so a path admits the same set whether a front end writes it as one
-    /// access path or as a chain.
-    fn insert_chain_paths(&mut self, ap: &AccessPath) {
-        let (_, base_path) = self
-            .cap_path
-            .get(&ap.base)
-            .cloned()
-            .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
-        let mut run: Vec<PathSegment> = Vec::new();
-        for (i, seg) in ap.segments.iter().enumerate() {
-            if seg.is_offset() {
-                run.push(seg.clone());
-                continue;
-            }
-            self.paths_dedup
-                .insert((fx::Path::from_accesses(std::mem::take(&mut run)),));
-            let prefix = fx::Path::from_accesses(
-                base_path
-                    .iter()
-                    .cloned()
-                    .chain(ap.segments[..=i].iter().cloned()),
-            );
-            self.paths_dedup.insert((prefix,));
+    /// Seeds the `paths` gate with what a read or a store of `ap` mentions
+    /// ([`ssa::mentioned_paths`]).
+    fn insert_mentioned_paths(&mut self, ap: &AccessPath) {
+        for p in ssa::mentioned_paths(ap) {
+            self.paths_dedup.insert((fx::Path::from_accesses(p),));
         }
-        self.paths_dedup.insert((fx::Path::from_accesses(run),));
     }
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
-        match (&v.variable, v.version) {
-            // The one global heap maps to the globals index
-            (Variable::GlobalHeap, None) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            // A versioned global heap is a local variable
-            (Variable::GlobalHeap, Some(version)) => {
-                FlowVariable::local(Str::from(format!("$globals_{}", version)))
-            }
+        match v.variable {
+            Variable::Global(idx) => FlowVariable::global(self.globals[idx.index()]),
             _ => v.try_into().unwrap(),
         }
+    }
+
+    /// Takes the program's globals table, and records each declaration as a row of
+    /// [`IndexFacts::globals`] for the current import.
+    fn declare_globals(&mut self, globals: &Globals) {
+        let import = self.source_info.current_import();
+        self.globals = globals
+            .iter_enumerated()
+            .map(|(_, g)| {
+                let id = fx::GlobalId(Str::from(g.name.clone()));
+                self.facts.globals.push((id, import, g.span));
+                id
+            })
+            .collect();
     }
 }
 
