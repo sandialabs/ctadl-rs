@@ -41,7 +41,7 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
 /// Lua cases that are known to fail because they exercise analysis capabilities not yet
 /// implemented. They run for visibility but report as XFAIL rather than counting toward the
-/// suite exit code.
+/// suite exit code; one that passes fails as an XPASS until its entry is deleted.
 ///
 /// Currently empty: every `tests/lua/` case is expected to pass. Add an entry only for a
 /// genuinely unimplemented capability, never to paper over a regression.
@@ -50,7 +50,8 @@ const LUA_XFAIL: &[&str] = &[];
 /// JVM E2E cases known to fail today, quarantined as XFAIL. Every other
 /// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
-/// Add an entry only for a known, documented gap, and delete it once the case passes.
+/// Add an entry only for a known, documented gap. A listed case that passes fails as an XPASS
+/// until its entry is deleted.
 const JVM_KNOWN_FAILURES: &[&str] = &[
     // A negative case for the dex frontend's split of R8-merged classes. The jvm frontend
     // does not split them, so the merged method's every arm reaches the sink there.
@@ -58,7 +59,8 @@ const JVM_KNOWN_FAILURES: &[&str] = &[
 ];
 
 /// CIL cases known to fail today, quarantined as XFAIL. Every other `Cil:*` case is enforced, as
-/// in [`C_KNOWN_FAILURES`]. Delete an entry once the case passes.
+/// in [`C_KNOWN_FAILURES`]. A listed case that passes fails as an XPASS until its entry is
+/// deleted.
 const CIL_KNOWN_FAILURES: &[&str] = &[
     // The frontend lowers a delegate as its target object, and the target of every lambda that
     // captures nothing is the class's one static `<>c.<>9`, a global. So `Lambda`'s `f(..)` may
@@ -72,8 +74,9 @@ const CIL_KNOWN_FAILURES: &[&str] = &[
 /// stays green while that frontend matures.
 ///
 /// Enforcement is the default and only these named gaps are exempt. Each entry
-/// is a current limitation, not a permanent waiver -- delete it once the case
-/// passes so a later regression is caught rather than silently re-quarantined.
+/// is a current limitation, not a permanent waiver: a listed case that passes
+/// fails as an XPASS until its entry is deleted, so a later regression is caught
+/// rather than silently re-quarantined.
 /// These names are the `C:`-prefixed reporting names.
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
@@ -169,8 +172,8 @@ pub(crate) enum Outcome {
     Pass,
     Fail(String),
     /// A failure no known-failure list may demote to XFAIL. Reported exactly
-    /// like [`Outcome::Fail`]; see [`with_valid_sarif`] for the one thing that
-    /// raises it.
+    /// like [`Outcome::Fail`]. Raised by [`with_valid_sarif`] and by an XPASS, a
+    /// known failure that passes.
     HardFail(String),
     Skip(String),
     /// Expected failure on a case in a known-failure list; does not fail the
@@ -795,24 +798,27 @@ fn preflight_java() -> Result<()> {
 
 /// Convert a failure to XFAIL when the case is in a frontend's known-failure list
 /// ([`LUA_XFAIL`], [`JVM_KNOWN_FAILURES`], [`C_KNOWN_FAILURES`], [`CIL_KNOWN_FAILURES`]),
-/// leaving passes,
-/// skips, and enforced failures untouched. Applied to every case so a maturing
-/// frontend's known gaps keep the suite green without hiding regressions in the
-/// cases that are enforced.
+/// and a pass of such a case to an XPASS, which fails the suite so the stale entry is removed
+/// before a later regression hides behind it. Skips and the outcomes of unlisted cases are
+/// untouched. Applied to every case so a maturing frontend's known gaps keep the suite green
+/// without hiding regressions in the cases that are enforced.
 fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
+    let lists: [(&str, &[&str]); 4] = [
+        ("LUA_XFAIL", LUA_XFAIL),
+        ("JVM_KNOWN_FAILURES", JVM_KNOWN_FAILURES),
+        ("C_KNOWN_FAILURES", C_KNOWN_FAILURES),
+        ("CIL_KNOWN_FAILURES", CIL_KNOWN_FAILURES),
+    ];
+    let Some((list, _)) = lists.iter().find(|(_, names)| names.contains(&name)) else {
+        return outcome;
+    };
     match outcome {
-        Outcome::Fail(why)
-            if [
-                LUA_XFAIL,
-                JVM_KNOWN_FAILURES,
-                C_KNOWN_FAILURES,
-                CIL_KNOWN_FAILURES,
-            ]
-            .iter()
-            .any(|list| list.contains(&name)) =>
-        {
-            Outcome::Xfail(why)
-        }
+        Outcome::Fail(why) => Outcome::Xfail(why),
+        // A HardFail, so `--mem2reg`'s `explain_lost_flow` cannot demote it to an XFAIL.
+        Outcome::Pass => Outcome::HardFail(format!(
+            "XPASS: the case is in {list} in xtask/src/regression.rs, but it now passes; \
+             remove it from the list"
+        )),
         other => other,
     }
 }
@@ -1046,8 +1052,10 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
     };
     let outcome = match (spec.status, outcome) {
         (android_icc::CaseStatus::Pass, outcome) => outcome,
-        (_, Outcome::Pass) => Outcome::Fail(format!(
-            "case is marked {:?}, but it now passes; update the Android ICC expected status",
+        // A HardFail, so `--mem2reg`'s `explain_lost_flow` cannot demote it to an XFAIL.
+        (_, Outcome::Pass) => Outcome::HardFail(format!(
+            "XPASS: the case is marked {:?}, but it now passes; update the Android ICC expected \
+             status",
             spec.status
         )),
         (_, Outcome::Fail(why)) => Outcome::Xfail(why),
@@ -2822,6 +2830,19 @@ mod tests {
     fn a_failing_jvm_case_is_enforced() {
         let outcome = apply_xfail_allowlists("Jvm:NewCase", Outcome::Fail("no flow".into()));
         assert!(matches!(outcome, Outcome::Fail(_)));
+    }
+
+    /// A known failure that fails is an XFAIL, and one that passes is an XPASS, which fails.
+    #[test]
+    fn a_known_failure_that_passes_fails() {
+        let outcome = apply_xfail_allowlists("Cil:delegates", Outcome::Fail("no flow".into()));
+        assert!(matches!(outcome, Outcome::Xfail(_)));
+        let outcome = apply_xfail_allowlists("Cil:delegates", Outcome::Pass);
+        assert!(matches!(&outcome, Outcome::HardFail(why) if why.contains("CIL_KNOWN_FAILURES")));
+        assert!(matches!(
+            apply_xfail_allowlists("Jvm:NewCase", Outcome::Pass),
+            Outcome::Pass
+        ));
     }
 
     /// Under `--mem2reg`, a lost flow is an XFAIL when an index named a function it promoted

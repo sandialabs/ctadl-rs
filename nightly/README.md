@@ -242,8 +242,9 @@ code-flow regions — no compiler, no Ghidra, no `addr2line`, and no macOS skip
 to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
 maturing, so a short quarantine list in `xtask/src/regression.rs`
 (`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
-suite; every other `C:` case is enforced. Remove an entry once its case passes so
-a later regression is caught. One case is quarantined today:
+suite; every other `C:` case is enforced. A listed case that passes is an
+**XPASS** and fails the suite, so its entry is removed and a later regression is
+caught. One case is quarantined today:
 
 - `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
   which only a Native (pcode) import loads. Its chain lives in
