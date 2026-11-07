@@ -963,11 +963,11 @@ impl<'de> Deserialize<'de> for RootKind {
     }
 }
 
-/// The distinguished frame of program-level facts, the *global frame* of `docs/spec.md` §4.2: the
+/// The *global frame*, the distinguished frame of program-level facts (`docs/debugging.md`): the
 /// flows between two global paths, which hold in every instance (G6 of `docs/ir.md`), and the
-/// call-target and string labels at global paths. It has no formals and no call sites. Reserved, as [`RETURN_INDEX`] is: the
-/// largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands out, and which every `IdMap`
-/// names [`GLOBAL_FRAME_NAME`].
+/// call-target and string labels at global paths. It has no formals and no call sites. Reserved,
+/// as [`RETURN_INDEX`] is: the largest id an [`InsnSiteId`] can hold, which no [`IdMap`] hands
+/// out, and which every `IdMap` names [`GLOBAL_FRAME_NAME`].
 pub const GLOBAL_FRAME: FunctionId = FunctionId { id: (1 << 28) - 1 };
 
 /// The name of [`GLOBAL_FRAME`].
