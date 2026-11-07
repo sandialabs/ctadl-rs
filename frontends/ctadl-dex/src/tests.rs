@@ -720,3 +720,41 @@ fn const_method_handle_with_a_method_is_a_function_reference() {
         assert_eq!(ctx.call_to.contains(&method), is_ref, "kind {kind:#x}");
     }
 }
+
+/// A static field is a field of its class's global: `sput-object Foo.cb` is the store
+/// `$LFoo;.cb = v`, and `sget-object Foo.cb` the load `x = $LFoo;.cb`, the class declared once
+/// by both.
+#[test]
+fn a_static_field_is_a_field_of_its_class_global() {
+    use dex_reader::instructions::{FieldIdx, Format21c};
+    let parser = parser_with_field();
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let mut stmts = Vec::new();
+    for inst in [
+        Instruction::SPutObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+        Instruction::SGetObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+    ] {
+        stmts.extend(
+            ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
+                .unwrap(),
+        );
+    }
+    let foo = ctx.globals.lookup("LFoo;").expect("the class is a global");
+    assert_eq!(ctx.globals.len(), 1);
+    let field = AccessPath::new(VariableRef::global(foo), [PathSegment::field("cb")]);
+    let store = stmts
+        .iter()
+        .any(|s| matches!(&s.kind, StatementKind::Assign { dest, .. } if *dest == field));
+    let load = stmts.iter().any(|s| {
+        matches!(&s.kind, StatementKind::Assign { dest, sources }
+            if dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&field)))
+    });
+    assert!(store && load, "{stmts:?}");
+}

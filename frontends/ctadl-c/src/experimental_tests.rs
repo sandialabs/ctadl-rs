@@ -207,8 +207,9 @@ fn params_and_simple_assign_in_example_2() {
         "has the simplest assign, a=b"
     );
     assert!(
-        // Reading the global `d` lowers to a load of `$globals.d` (into a temp that flows to a).
-        check_match(&dump, "= $globals.d\n"),
+        // Reading the global `d` lowers to a load of its storage `$d.deref` (into a temp that
+        // flows to a).
+        check_match(&dump, "= $d.deref\n"),
         "has 2nd simple a=d"
     );
 }

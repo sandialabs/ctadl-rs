@@ -56,12 +56,19 @@
 //! arithmetic: `q` gets the operands' values, and the memory behind `f()` is not reachable
 //! through `q`.
 //!
-//! ## Address-taken globals
+//! ## Globals
 //!
-//! A global lives at `$globals.g` in every unit, and is not moved behind `deref` when one
-//! unit takes its address (another unit, which cannot know, must name the same storage). So
-//! `&g` is a copy of `$globals.g`, and a write through it -- `*p` or `p->f`, which are
-//! `$globals.g.deref` and `$globals.g.deref.f` -- is not observed at `g` or `g.f`.
+//! A C global `g` is the global variable `$g`, and its
+//! storage is the cell `$g.deref`, the convention address-taken locals use (`in_cell`), for
+//! every global, since another unit may take its address. So `g = v` is the store
+//! `$g.deref = v`, `g.f` is `$g.deref.f`, and `&g` is the copy `$g`: a write through `&g`
+//! (`p->f` with `p = &g`) lands on `$g.deref.f`, which is `g.f`. A global with external linkage
+//! is named by its symbol, as the linker would share it. A file-scope `static` that another unit
+//! of the import also declares is qualified by its unit, `g$util.c`, as a `static` function is
+//! (`plan_definitions`); two imports with a same-named unit still merge. A constant address
+//! `(T *)K` is the global `$<address K>`, whose storage is `$<address K>.deref`. A name that
+//! resolves to no declaration (an enumerator, an unexpanded macro) is a global like any other.
+//! A file-scope initializer is not lowered.
 //!
 //! ## Pointers and values look the same
 //!
@@ -544,17 +551,15 @@ impl UnitPlan {
 /// out of the C identifier space, so it can never collide with a real source-level field.
 const UNION_FIELD: &str = "$union";
 
-/// The field of the globals object naming the object at a compile-time constant address:
-/// `((struct s *)0)->f` becomes `$globals.<address 0>.f`. A global rather than a fresh temp
-/// per site because two casts of the same constant designate the same object in C. Keyed on
-/// the constant's *text* (`0` and `0x0` are two names for one address -- normalizing would
-/// mean re-implementing C integer-literal semantics for a distinction real code rarely
-/// draws). `<...>` is not C identifier syntax, so no collision with declared globals.
-fn literal_address_path(constant: &str) -> AccessPath {
-    AccessPath::new(
-        VariableRef::new_global(),
-        [PathSegment::field(format!("<address {constant}>"))],
-    )
+/// The name of the global standing for the object at a compile-time constant address `K`:
+/// `(struct s *)0` is the global `$<address 0>`, a pointer to its storage, so
+/// `((struct s *)0)->f` is `$<address 0>.deref.f`. A global rather than a fresh temp per site
+/// because two casts of the same constant designate the same object in C. Keyed on the
+/// constant's *text* (`0` and `0x0` are two names for one address -- normalizing would mean
+/// re-implementing C integer-literal semantics for a distinction real code rarely draws).
+/// `<...>` is not C identifier syntax, so no collision with declared globals.
+fn literal_address_name(constant: &str) -> String {
+    format!("<address {constant}>")
 }
 
 /// The compile-time value of a lowered subscript index, if it has one. Only an integer literal
@@ -883,6 +888,13 @@ struct Context<'a> {
     /// every declaration of the name a pointer or an array? See [`Context::pointer_operand`].
     pointer_globals: HashMap<String, bool>,
     pointer_members: HashMap<String, bool>,
+    /// The import's globals, shared by every unit: [`lower_units`] moves the program's table in
+    /// before a unit is lowered and back out after. A `RefCell` because a name is resolved, and
+    /// its global declared, by [`Context::build_access_path`], which takes `&self`.
+    globals: std::cell::RefCell<Globals>,
+    /// The global name each of this unit's qualified `static` variables gets; see
+    /// [`static_global_renames`].
+    global_renames: HashMap<String, String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
@@ -1134,6 +1146,7 @@ fn lower_units(
         declared_functions.extend(registry.declared_functions.iter().cloned());
         registries.push(registry);
     }
+    let global_renames = static_global_renames(units, &registries);
     let mut program = Program::default();
     let mut functions: HashMap<String, FunctionIdx> = HashMap::new();
     for def in &defs {
@@ -1167,9 +1180,13 @@ fn lower_units(
                 None
             },
             source_info: builder.take(),
+            global_renames: global_renames[index].clone(),
+            globals: std::cell::RefCell::new(std::mem::take(&mut program.globals)),
             ..Default::default()
         };
-        ctx.toplevel(&unit.source, tree, &mut program, &query)?;
+        let lowered = ctx.toplevel(&unit.source, tree, &mut program, &query);
+        program.globals = ctx.globals.take();
+        lowered?;
         builder = ctx.source_info.take();
         if dump {
             views.append(&mut ctx.scope_tree.blocks);
@@ -1189,6 +1206,43 @@ fn lower_units(
         has_error,
         marked_up,
     })
+}
+
+/// For each unit, the global names its file-scope `static` variables get: a `static` another
+/// unit also declares at file scope is qualified by its unit (`g$util.c`, or `g$<n>` for a unit
+/// with no path), as [`plan_definitions`] qualifies a `static` function, so that it is not one
+/// cell with the other unit's `g` (G3: a global is its name). A `static` no other unit declares
+/// keeps its name.
+fn static_global_renames(
+    units: &[TranslationUnit],
+    registries: &[UnitRegistry],
+) -> Vec<HashMap<String, String>> {
+    let mut declared_by: HashMap<&str, usize> = HashMap::new();
+    for registry in registries {
+        for name in &registry.global_variables {
+            *declared_by.entry(name.as_str()).or_default() += 1;
+        }
+    }
+    registries
+        .iter()
+        .enumerate()
+        .map(|(index, registry)| {
+            let unit = match &units[index].path {
+                Some(file) => std::path::Path::new(file)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(file.as_str())
+                    .to_string(),
+                None => index.to_string(),
+            };
+            registry
+                .static_globals
+                .iter()
+                .filter(|name| declared_by.get(name.as_str()).is_some_and(|&n| n > 1))
+                .map(|name| (name.clone(), format!("{name}${unit}")))
+                .collect()
+        })
+        .collect()
 }
 
 /// The query that finds every `function_definition`. The declarator is captured whole, not
@@ -1574,6 +1628,8 @@ struct UnitRegistry {
     type_names: HashSet<String>,
     declared_functions: HashSet<String>,
     global_variables: HashSet<String>,
+    /// The file-scope variables declared `static`.
+    static_globals: HashSet<String>,
     pointer_globals: HashMap<String, bool>,
     pointer_members: HashMap<String, bool>,
 }
@@ -1609,6 +1665,12 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
         // A prototype, `int zzz(int);`. Only function-shaped declarators count:
         // `void (*fp)(int);` declares a variable, and `function_head` says no to it.
         let file_scope = at_file_scope(node);
+        let is_static = {
+            let mut c = node.walk();
+            node.children(&mut c).any(|child| {
+                child.kind() == "storage_class_specifier" && to_str(&child, source) == "static"
+            })
+        };
         let mut dcursor = node.walk();
         for declarator in node.children_by_field_name("declarator", &mut dcursor) {
             if let Some(head) = function_head(declarator) {
@@ -1618,6 +1680,9 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
             } else if file_scope && let Some((name, pointer)) = declares_pointer(declarator) {
                 let name = to_str(&name, source).to_string();
                 *registry.pointer_globals.entry(name.clone()).or_insert(true) &= pointer;
+                if is_static {
+                    registry.static_globals.insert(name.clone());
+                }
                 registry.global_variables.insert(name);
             }
         }
@@ -2633,8 +2698,8 @@ impl<'a> Context<'a> {
     /// Report a name node that quotes to the empty string, and say whose fault it is.
     ///
     /// Where the grammar requires a name and the parse fails, tree-sitter INSERTS a
-    /// zero-width token. The empty string is not a name: it would mint `$globals.` with an
-    /// empty first path segment, which `facts::Path`'s parser rejects -- one such token
+    /// zero-width token. The empty string is not a name: it would declare a global with the
+    /// empty name, an empty path segment `facts::Path`'s parser rejects -- one such token
     /// makes the whole index unqueryable. An inserted token only exists because the body
     /// did not parse, so say once that the body holds recovery output and let the caller
     /// substitute a fresh temp. The `else` arm cannot fire on a tree-sitter tree (an
@@ -3335,6 +3400,20 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    /// The global `name`, declared if it is not yet.
+    fn global(&self, name: &str) -> VariableRef {
+        VariableRef::global(self.globals.borrow_mut().declare(name, None))
+    }
+
+    /// Whether `name` resolves, in `scope_view`, to a global: a file-scope declaration, or no
+    /// declaration at all (a temporary aside).
+    fn resolves_to_global(&self, name: &str, scope_view: &ScopeView) -> bool {
+        match self.scope_tree.find_variable(scope_view.sidx, name) {
+            Some(vardecl) => vardecl.kind == VarKind::Global,
+            None => !name.starts_with("<t"),
+        }
+    }
+
     fn get_param_idx(&self, func_name: &str, var_name: &str) -> Option<ParameterIdx> {
         let param_vec = self.param_names.get(func_name).unwrap();
         // Find returns Option<(ParameterIdx, &String)>
@@ -3348,7 +3427,7 @@ impl<'a> Context<'a> {
     fn build_access_path(
         &self,
         name_pre_scope: &str,
-        mut path: ThinVec<PathSegment>,
+        path: ThinVec<PathSegment>,
         scope_view: &ScopeView,
         locals: &mut Locals,
     ) -> AccessPath {
@@ -3375,12 +3454,11 @@ impl<'a> Context<'a> {
         // An address-taken scalar lives in memory (see `Context::cells`).
         let is_cell = varkind != VarKind::Global && self.cells.contains(name_pre_scope);
         match varkind {
-            // A global `name` is a symbolic field of the globals object: `$globals.name.<path>`.
+            // A global `name` is the global `$name`, and its storage the cell `$name.deref`
+            // (see "Globals" in the crate docs).
             VarKind::Global => {
-                let mut segments = ThinVec::with_capacity(path.len() + 1);
-                segments.push(PathSegment::field(name.as_str()));
-                segments.append(&mut path);
-                AccessPath::new(VariableRef::new_global(), segments)
+                let name = self.global_renames.get(&name).unwrap_or(&name);
+                AccessPath::new(self.global(name), in_cell(path))
             }
             VarKind::Local if is_cell => AccessPath::new(
                 VariableRef::new_local_idx(locals.get_or_intern(&name)),
@@ -3513,9 +3591,9 @@ impl<'a> Context<'a> {
                     let target = self.resolve_reference(text);
                     Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())))
                 } else {
-                    // A read of a variable. A global identifier `a` is really `$globals.a` (a
-                    // field of the globals object), so this may lower to a load; a local is a
-                    // bare variable (no load emitted).
+                    // A read of a variable. A global identifier `a` is really its storage
+                    // `$a.deref`, so this lowers to a load; a local is a bare variable (no load
+                    // emitted).
                     let ap = self.build_access_path(
                         text,
                         Default::default(),
@@ -4160,7 +4238,15 @@ impl<'a> Context<'a> {
             return Ok(Exp::path(self.emit_loads(program, scope_view, ap)));
         }
         let operand = unparenthesized_callee(arg);
-        if operand.kind() == "identifier" && self.cells.contains(to_str(&operand, source)) {
+        // `&x` of an address-taken local, or of a global variable (not a function), is the
+        // cell variable itself: `&g` is the copy `$g`.
+        let names_a_cell = |name: &str| {
+            self.cells.contains(name)
+                || (self.resolves_to_global(name, scope_view)
+                    && !self.functions.contains_key(name)
+                    && !self.declared_functions.contains(name))
+        };
+        if operand.kind() == "identifier" && names_a_cell(to_str(&operand, source)) {
             let cell = self.build_access_path(
                 to_str(&operand, source),
                 Default::default(),
@@ -4443,31 +4529,6 @@ impl<'a> Context<'a> {
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
-        // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
-        // dereference form `(*op_func)(...)` wraps the pointer in a
-        // parenthesized/pointer expression, so route it through flatten_expr to
-        // recover the underlying variable (`op_func`).
-        let access_path = if func_node.kind() == "identifier" {
-            self.build_access_path(
-                func_name,
-                Default::default(),
-                scope_view,
-                &mut program[scope_view.fidx].locals,
-            )
-        } else {
-            // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
-            // lvalue so its access path is preserved rather than lowered into a load.
-            self.flatten_lvalue(program, func_node, source, scope_view)
-                .unwrap_or_else(|_| {
-                    self.build_access_path(
-                        func_name,
-                        Default::default(),
-                        scope_view,
-                        &mut program[scope_view.fidx].locals,
-                    )
-                })
-        };
-
         // A callee that is a VALUE is called through, not by name. Its path can look like a
         // named global's, so ask the construct: a GNU statement expression, or a global
         // variable with no function of that name defined. Left as a name, an empty-bodied
@@ -4477,48 +4538,55 @@ impl<'a> Context<'a> {
                 && self.global_variables.contains(func_name)
                 && !self.functions.contains_key(func_name));
 
+        // A plain `foo(...)` naming no local or parameter is a call of the function `foo`:
+        // decided before the name is resolved, so that a function's name is not declared as
+        // a global.
+        let names_a_function = func_node.kind() == "identifier"
+            && !callee_is_a_value
+            && self.resolves_to_global(func_name, scope_view);
+
+        // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
+        // dereference form `(*op_func)(...)` wraps the pointer in a
+        // parenthesized/pointer expression, so route it through flatten_expr to
+        // recover the underlying variable (`op_func`).
+        let access_path = if names_a_function {
+            None
+        } else if func_node.kind() == "identifier" {
+            Some(self.build_access_path(
+                func_name,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            ))
+        } else {
+            // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
+            // lvalue so its access path is preserved rather than lowered into a load.
+            Some(
+                self.flatten_lvalue(program, func_node, source, scope_view)
+                    .unwrap_or_else(|_| {
+                        self.build_access_path(
+                            func_name,
+                            Default::default(),
+                            scope_view,
+                            &mut program[scope_view.fidx].locals,
+                        )
+                    }),
+            )
+        };
+
         // Direct or indirect, decided by what the callee *resolved to*, not how it was
         // spelled: a name is a direct call; a location holding a function pointer is a call
         // through what it holds. Every arm below reads the resolved access path.
-        let var = access_path.base.variable;
-        let style = match &var {
-            Variable::Local(name) => {
-                log::debug!(
-                    "This is an Indirect LOCAL call: {}",
-                    program[scope_view.fidx].locals.name(*name)
-                );
-                // The callee is a call-target address. Any symbolic field (e.g. `%o.f`, a
-                // function pointer stored in a field) is lowered to a load, leaving an
-                // offset-only callee address.
-                let callee = self.emit_loads(program, scope_view, access_path);
-                CallStyle::FuncPtrCall {
-                    callee,
-                    signature: (Some("indirect-call".to_string())),
-                }
-            }
-            Variable::Param(idx) => {
-                log::debug!("This is an Indirect PARAMETER call: {}", idx.get());
-                let callee = self.emit_loads(program, scope_view, access_path);
-                CallStyle::FuncPtrCall {
-                    callee,
-                    signature: (Some("indirect-call".to_string())),
-                }
-            }
-            // A global's access path is `$globals.<name>.<path>`, so the base being the
-            // globals object says nothing about whether the callee is a name -- the PATH
-            // does. `$globals.f` alone is the name `f`; anything past that leading segment
-            // is a location *inside* the object, reached by a load -- a function pointer a
-            // file-scope object holds, not a function. `callee_is_a_value` covers the shapes
-            // whose path cannot say it.
-            Variable::GlobalHeap if access_path.segments.len() > 1 || callee_is_a_value => {
-                log::debug!("This is an Indirect GLOBAL call: {func_name}");
-                let callee = self.emit_loads(program, scope_view, access_path);
-                CallStyle::FuncPtrCall {
-                    callee,
-                    signature: (Some("indirect-call".to_string())),
-                }
-            }
-            Variable::GlobalHeap => CallStyle::DirectCall { call_edges },
+        let style = match access_path {
+            None => CallStyle::DirectCall { call_edges },
+            Some(access_path) => self.callee_style(
+                program,
+                scope_view,
+                func_name,
+                access_path,
+                callee_is_a_value,
+                call_edges,
+            ),
         };
 
         let ret =
@@ -4541,6 +4609,57 @@ impl<'a> Context<'a> {
             )
             .base,
         ))
+    }
+
+    /// The call style of a callee resolved to `access_path`.
+    fn callee_style(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        func_name: &str,
+        access_path: AccessPath,
+        callee_is_a_value: bool,
+        call_edges: CallEdges,
+    ) -> CallStyle {
+        match &access_path.base.variable {
+            Variable::Local(name) => {
+                log::debug!(
+                    "This is an Indirect LOCAL call: {}",
+                    program[scope_view.fidx].locals.name(*name)
+                );
+                // The callee is a call-target address. Any symbolic field (e.g. `%o.f`, a
+                // function pointer stored in a field) is lowered to a load, leaving an
+                // offset-only callee address.
+                let callee = self.emit_loads(program, scope_view, access_path);
+                CallStyle::FuncPtrCall {
+                    callee,
+                    signature: (Some("indirect-call".to_string())),
+                }
+            }
+            Variable::Param(idx) => {
+                log::debug!("This is an Indirect PARAMETER call: {}", idx.get());
+                let callee = self.emit_loads(program, scope_view, access_path);
+                CallStyle::FuncPtrCall {
+                    callee,
+                    signature: (Some("indirect-call".to_string())),
+                }
+            }
+            // A global `g`'s storage is `$g.deref`, so the base being a global says nothing
+            // about whether the callee is a name -- the PATH does. `$f.deref` alone is the
+            // name `f` (a callee spelled other than as a plain identifier, `(f)(x)`); anything
+            // past it is a location *inside* the global's storage, reached by a load -- a
+            // function pointer a file-scope object holds, not a function. `callee_is_a_value`
+            // covers the shapes whose path cannot say it.
+            Variable::Global(_) if access_path.segments.len() > 1 || callee_is_a_value => {
+                log::debug!("This is an Indirect GLOBAL call: {func_name}");
+                let callee = self.emit_loads(program, scope_view, access_path);
+                CallStyle::FuncPtrCall {
+                    callee,
+                    signature: (Some("indirect-call".to_string())),
+                }
+            }
+            Variable::Global(_) => CallStyle::DirectCall { call_edges },
+        }
     }
 
     /// The IR name a reference to the function `name` from this unit resolves to. Almost
@@ -5011,7 +5130,9 @@ impl<'a> Context<'a> {
             // the catch-all.
             "cast_expression" => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Path(ap) if ap.is_pathless() => Ok(ap),
-                Exp::Str(constant) if !constant.is_empty() => Ok(literal_address_path(&constant)),
+                Exp::Str(constant) if !constant.is_empty() => Ok(AccessPath::from(
+                    self.global(&literal_address_name(&constant)),
+                )),
                 _ => self.not_a_location(program, node, scope_view),
             },
             _ => match self.flatten_expr(program, node, source, scope_view)? {
@@ -5073,7 +5194,7 @@ impl<'a> Context<'a> {
         let mut ap = match value {
             Exp::Path(addr) => addr,
             Exp::Str(constant) if operand.kind() == "cast_expression" && !constant.is_empty() => {
-                literal_address_path(&constant)
+                AccessPath::from(self.global(&literal_address_name(&constant)))
             }
             // A constant, a string or a function: no memory this program writes. Unless the
             // parse recovery made it, as `__alignof__(h->ctx)` does: then the body is reported.

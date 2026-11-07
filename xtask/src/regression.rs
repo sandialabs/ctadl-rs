@@ -57,6 +57,17 @@ const JVM_KNOWN_FAILURES: &[&str] = &[
     "Jvm:ClassIdMergedTryFlow",
 ];
 
+/// CIL cases known to fail today, quarantined as XFAIL. Every other `Cil:*` case is enforced, as
+/// in [`C_KNOWN_FAILURES`]. Delete an entry once the case passes.
+const CIL_KNOWN_FAILURES: &[&str] = &[
+    // The frontend lowers a delegate as its target object, and the target of every lambda that
+    // captures nothing is the class's one static `<>c.<>9`, a global. So `Lambda`'s `f(..)` may
+    // call `Handler`'s lambda, and `Sink4` is reached first from `Lambda`'s source, which leaves
+    // `Handler`'s source line off the reported path. See the CIL delegate entry of
+    // `docs/limitations.md`.
+    "Cil:delegates",
+];
+
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
 /// stays green while that frontend matures.
 ///
@@ -783,16 +794,22 @@ fn preflight_java() -> Result<()> {
 }
 
 /// Convert a failure to XFAIL when the case is in a frontend's known-failure list
-/// ([`LUA_XFAIL`], [`JVM_KNOWN_FAILURES`], [`C_KNOWN_FAILURES`]), leaving passes,
+/// ([`LUA_XFAIL`], [`JVM_KNOWN_FAILURES`], [`C_KNOWN_FAILURES`], [`CIL_KNOWN_FAILURES`]),
+/// leaving passes,
 /// skips, and enforced failures untouched. Applied to every case so a maturing
 /// frontend's known gaps keep the suite green without hiding regressions in the
 /// cases that are enforced.
 fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why)
-            if [LUA_XFAIL, JVM_KNOWN_FAILURES, C_KNOWN_FAILURES]
-                .iter()
-                .any(|list| list.contains(&name)) =>
+            if [
+                LUA_XFAIL,
+                JVM_KNOWN_FAILURES,
+                C_KNOWN_FAILURES,
+                CIL_KNOWN_FAILURES,
+            ]
+            .iter()
+            .any(|list| list.contains(&name)) =>
         {
             Outcome::Xfail(why)
         }

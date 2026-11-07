@@ -1065,6 +1065,7 @@ fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
 const DEAD_UNKNOWN: &str = "default";
 const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
 const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
+const DEAD_GLOBAL_NOT_FOUND: &str = "globalNotFound";
 const DEAD_MIXED: &str = "mixedReasons";
 /// The one condition that is not about a source/sink port at all: a `propagation` that matched
 /// no function. Its own id because what it contributes nothing to is the *index*, not the query.
@@ -1128,6 +1129,19 @@ fn unmatched_message(
             ),
             variable: Some(name.clone()),
         },
+        (Some(UnmatchedReason::GlobalNotFound(name)), None) => UnmatchedMessage {
+            message_id: DEAD_GLOBAL_NOT_FOUND,
+            arguments: {
+                let mut a = head;
+                a.push(name.clone());
+                a
+            },
+            text: format!(
+                "Model rule {index} in '{file}' declares a {direction} on a global, but no \
+                 import declares a global '{name}', so it contributes nothing to the query."
+            ),
+            variable: Some(name.clone()),
+        },
         (Some(_), Some(_)) => {
             let joined = stats
                 .unmatched
@@ -1173,6 +1187,7 @@ fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
         UnmatchedReason::LocalNotFound(name) => {
             format!("no matched function has a local '{name}'")
         }
+        UnmatchedReason::GlobalNotFound(name) => format!("no import declares a global '{name}'"),
     }
 }
 
@@ -1223,6 +1238,11 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
                     "Model rule {0} in '{1}' declares a {2} on a local: its body matched {4} \
                      function(s), but none of them has a local '{3}', so it contributes nothing \
                      to the query.",
+                ),
+                (
+                    DEAD_GLOBAL_NOT_FOUND,
+                    "Model rule {0} in '{1}' declares a {2} on a global, but no import declares \
+                     a global '{3}', so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_MIXED,
@@ -1492,6 +1512,7 @@ impl Annotation<LabeledTaintGraph> for TaintState {
                 TaintState::Free => Some(TaintState::Free),
                 TaintState::Restricted => None,
             },
+            FlowEdge::Global => Some(TaintState::Free),
         }
     }
 }
@@ -2468,6 +2489,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .any(|src| src.direction == crate::facts::TaintDirection::Backward)
     });
 
+    // A sink on a global is anchored at no instruction, so no tainted instruction's
+    // details name it; every source an instruction's details name is paired with it too, and
+    // the path is reported at that instruction.
+    let global_sinks: Vec<&QueryEndpoint> = endpoints
+        .iter()
+        .copied()
+        .filter(|e| e.direction == crate::facts::TaintDirection::Backward && e.vertex.0.is_global())
+        .collect();
+
     let mut results_by_path: BTreeMap<
         Vec<u32>,
         (SpanKey, Vec<(QueryEndpoint, Option<QueryEndpoint>, Label)>),
@@ -2491,7 +2521,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .iter()
                     .partition(|s| s.direction == crate::facts::TaintDirection::Forward);
 
-                for sink in &bwd_sinks {
+                for sink in bwd_sinks.iter().chain(&global_sinks) {
                     let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
                     // Nodes are bare vertices, so a sink resolves to one node.
                     let Some(&target_id) = node_to_id.get(&end_vertex) else {
@@ -2958,12 +2988,23 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
+    // Each global's declaring imports, for naming a source or sink on one. An index
+    // without the table (a test fixture) names a global by itself.
+    let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
+    for (g, import, _) in schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default() {
+        let programs = global_programs.entry(g).or_default();
+        let name = import_name(ctx.imports, import);
+        if !programs.contains(&name) {
+            programs.push(name);
+        }
+    }
     // Which sources and sinks actually matched is part of what the run *did*, so it is
     // reported in every profile rather than only where the extra detail was wanted. These
     // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     results.extend(format_source_sink_results(
         sarif_data,
         &endpoints,
+        &global_programs,
         &source_data.id_to_name,
         &call_callee,
         &site_by_var,
@@ -3123,6 +3164,7 @@ fn endpoint_callee(
 fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &[&QueryEndpoint],
+    global_programs: &BTreeMap<crate::facts::GlobalId, Vec<String>>,
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
     site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
@@ -3153,21 +3195,38 @@ fn format_source_sink_results(
             // Name the source/sink by the framework method it models (the callee
             // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
-            let func_name = id_to_name
-                .get(&callee_id.id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string());
             let label = endpoint.label.0.to_string();
+            // A global is anchored at no function. No front end records a global's
+            // declaration span, so it is located by a logical location naming the program that
+            // declares it and the global, `<import>::$name`; a global several imports
+            // declare is one variable (G3), named by each.
+            let (owner, fully_qualified_name, kind) = match node.1.as_global() {
+                Some(g) => {
+                    let programs = global_programs
+                        .get(&g)
+                        .map(|p| p.join(", "))
+                        .unwrap_or_default();
+                    let fq = if programs.is_empty() {
+                        g.to_string()
+                    } else {
+                        format!("{programs}::{g}")
+                    };
+                    (format!("global {fq}"), fq, "variable")
+                }
+                None => {
+                    let name = id_to_name
+                        .get(&callee_id.id)
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    (format!("function {name}"), name, "member")
+                }
+            };
             let msg_text = if is_source {
-                format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
+                format!("Source of tainted data: {vertex} in {owner} (kind '{label}')")
             } else {
-                format!("Sink of tainted data: {vertex} in function {func_name} (kind '{label}')")
+                format!("Sink of tainted data: {vertex} in {owner} (kind '{label}')")
             };
 
-            let fully_qualified_name = id_to_name
-                .get(&callee_id.id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string());
             let loc_idx = *sarif_data
                 .global_logical_locations_map
                 .entry(fully_qualified_name.clone())
@@ -3175,7 +3234,7 @@ fn format_source_sink_results(
                     let idx = sarif_data.global_logical_locations.len();
                     sarif_data.global_logical_locations.push(
                         LogicalLocation::builder()
-                            .kind("member")
+                            .kind(kind)
                             .name(fully_qualified_name.clone())
                             .fully_qualified_name(fully_qualified_name)
                             .build(),

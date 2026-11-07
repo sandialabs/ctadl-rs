@@ -71,10 +71,12 @@
 //!
 //! ## Globals
 //!
-//! `_ENV` is assumed never to be swapped out, so a free identifier (a name not bound by a
-//! `local` or a parameter) is modeled uniformly as a field of the global heap:
-//! `$globals.name` ([`Variable::GlobalHeap`] + a symbolic field). Reads become loads and
-//! writes become stores on the global heap.
+//! A program declares one global, `$_ENV` ([`Variable::Global`]). `_ENV` is assumed never to be
+//! swapped out, so a free identifier
+//! (a name not bound by a `local` or a parameter) is modeled uniformly as a field of it:
+//! `n` is `$_ENV.n`, and `kong.request.x` is `$_ENV.kong.request.x`. Reads become loads and
+//! writes become stores. By G3, the imports of a project share one
+//! `$_ENV`: one VM, one environment.
 //!
 //! ## Errors / exceptions
 //!
@@ -2396,7 +2398,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Builds an [`AccessPath`] for a bare name: a parameter or local becomes a bare variable; a
-    /// free name is a field of the global heap (`$globals.name`), modeling `_ENV`.
+    /// free name is a field of the global `$_ENV` (`$_ENV.name`).
     fn build_var(&mut self, name: &str) -> AccessPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
         if self.cur_upvalues.contains(name)
@@ -2407,7 +2409,10 @@ impl<'a> Lowerer<'a> {
         match self.lookup(name) {
             Some(Binding::Param(idx)) => AccessPath::from(VariableRef::new_parameter(idx)),
             Some(Binding::Local) => AccessPath::from(self.local_ref(name)),
-            None => AccessPath::new(VariableRef::new_global(), [PathSegment::field(name)]),
+            None => {
+                let env = self.program.declare_global("_ENV", None);
+                AccessPath::new(VariableRef::global(env), [PathSegment::field(name)])
+            }
         }
     }
 
@@ -3146,5 +3151,26 @@ mod tests {
 
         let info = import_lua(dir.path()).expect("import of a non-UTF-8 file failed");
         assert!(function_names(&info).contains(&"m.hello".to_string()));
+    }
+
+    /// A free name is a field of the one global `$_ENV`: `kong.request.x` is
+    /// `$_ENV.kong.request.x`, and a write to a free name a store to `$_ENV`'s field.
+    #[test]
+    fn a_free_name_is_a_field_of_env() {
+        let src = r#"
+            function read() return kong.request.x end
+            function write(v) counter = v end
+        "#;
+        let info = import_str(src);
+        let globals: Vec<String> = info
+            .program
+            .globals
+            .iter_enumerated()
+            .map(|(_, g)| g.name.to_string())
+            .collect();
+        assert_eq!(globals, ["_ENV"]);
+        let dump = info.program.to_string();
+        assert!(dump.contains("$_ENV.kong"), "{dump}");
+        assert!(dump.contains("store $_ENV.counter := "), "{dump}");
     }
 }

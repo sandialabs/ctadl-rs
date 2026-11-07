@@ -261,6 +261,43 @@ pub fn write_segment(out: &mut String, seg: &PathSegment) {
     }
 }
 
+/// Print a global's name as it follows the `$` of `$name`: escaped by the field rules, so a
+/// name with a `.` in it (`g$util.c`) prints as `g$util\.c` and parses back to one name.
+pub fn write_symbol(f: &mut impl fmt::Write, name: &str) -> fmt::Result {
+    let mut out = String::new();
+    write_segment(&mut out, &PathSegment::Field(ArcIntern::from(name)));
+    f.write_str(&out)
+}
+
+/// Parses a global access path, `$name` followed by a path, into the global's name and the path
+/// in normal form. Returns `Ok(None)` when `s` does not begin with `$`. The name follows the
+/// field rules ([`write_symbol`]): it runs to the next unescaped `.`.
+pub fn parse_global_access_path(
+    s: &str,
+) -> Result<Option<(ArcIntern<str>, Vec<PathSegment>)>, PathSyntaxError> {
+    let Some(rest) = s.strip_prefix('$') else {
+        return Ok(None);
+    };
+    let (seg, end) =
+        parse_segment_at(rest, 0).map_err(|e| PathSyntaxError { at: e.at + 1, ..e })?;
+    let name = match seg {
+        PathSegment::Field(name) => name,
+        PathSegment::Deref => ArcIntern::from(DEREF),
+        PathSegment::Value => ArcIntern::from(VALUE),
+        PathSegment::Offset(_) => {
+            return Err(PathSyntaxError {
+                at: 1,
+                kind: PathSyntaxErrorKind::InvalidOffset(rest[..end].to_string()),
+            });
+        }
+    };
+    let path = parse_path(&rest[end..]).map_err(|e| PathSyntaxError {
+        at: e.at + 1 + end,
+        ..e
+    })?;
+    Ok(Some((name, path)))
+}
+
 /// Print one segment, WITHOUT a leading `.`.
 pub fn segment_to_string(seg: &PathSegment) -> String {
     let mut out = String::new();
@@ -478,5 +515,32 @@ mod tests {
             parse_segment("").unwrap_err().kind,
             PathSyntaxErrorKind::EmptySegment
         );
+    }
+
+    #[test]
+    fn global_access_paths_round_trip() {
+        for (text, name, path) in [
+            ("$g$util\\.c.deref", "g$util.c", vec![PathSegment::Deref]),
+            (
+                "$libA.so::ram.[4096].deref",
+                "libA",
+                vec![sym("so::ram"), off(4096), PathSegment::Deref],
+            ),
+            (
+                "$libA\\.so::ram.[4096].deref",
+                "libA.so::ram",
+                vec![off(4096), PathSegment::Deref],
+            ),
+            ("$Lcom/C;.f", "Lcom/C;", vec![sym("f")]),
+        ] {
+            let (n, p) = parse_global_access_path(text).unwrap().unwrap();
+            assert_eq!((&*n, &p), (name, &path), "{text}");
+            let mut printed = String::from("$");
+            write_symbol(&mut printed, &n).unwrap();
+            printed.push_str(&path_to_string(&p));
+            assert_eq!(printed, text);
+        }
+        assert_eq!(parse_global_access_path("@p0.f"), Ok(None));
+        assert!(parse_global_access_path("$").is_err());
     }
 }

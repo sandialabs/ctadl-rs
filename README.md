@@ -157,7 +157,10 @@ sub-imports (another ABI, app or version), or one that changed since `P` was ind
 
 The native half of such a flow is carried by the summaries alone, so its SARIF locates the Java
 steps only; co-index the library to see where the taint goes inside it. Only context-free summaries
-cross this way, so a flow in the library that depends on resolving an indirect call is lost.
+cross this way, so a flow in the library that depends on resolving an indirect call is lost. The
+library's flows between its globals cross too: a global is one variable for the whole project, so
+a value one library function stores in a global is there for another to read, with no call between
+them.
 
 ## Documentation
 

@@ -643,6 +643,8 @@ pub fn index(
         jni::link(&jni_observer, &mut facts, &mut source_info).targets
     };
 
+    report_globals(&facts, &source_info);
+
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
         &mut facts,
@@ -1610,6 +1612,33 @@ fn report_bridged_summaries(
     }
 }
 
+/// Says how many globals each import declares, and which names more than one import declares:
+/// a global is its name (G3), so those are one variable, and an unintended merge across
+/// programs shows here.
+fn report_globals(facts: &IndexFacts, source_info: &IndexSourceInfo) {
+    let (per_import, shared) = facts.global_declarations();
+    let name = |id: facts::ImportId| source_info.import_name(id).unwrap_or("?").to_string();
+    for (import, n) in &per_import {
+        log::info!("globals: '{}' declares {n} global(s)", name(*import));
+    }
+    if !shared.is_empty() {
+        log::info!(
+            "globals: {} name(s) declared by more than one import are one variable each",
+            shared.len()
+        );
+    }
+    for (g, imports) in &shared {
+        log::debug!(
+            "globals: {g} is declared by {}",
+            imports
+                .iter()
+                .map(|i| format!("'{}'", name(*i)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
 /// Maps a previously indexed project's summaries into the current project.
 ///
 /// A summary is kept only when its function is in the current project's `IdMap` by name.
@@ -1675,6 +1704,21 @@ fn load_and_map_summaries(
         discarded_summaries
     );
 
+    // A global is its name (G3), so the rows rooted at a global above need no mapping, and the
+    // summary project's program-level flows between globals hold here as they are.
+    let global_flow = crate::facts::schema::global_flow::try_load(&summary_index_path)
+        .err_context(|| {
+            format!(
+                "loading source project global flows: {}",
+                summary_project_name
+            )
+        })?;
+    log::info!(
+        "Loaded {} program-level global flows from source project",
+        global_flow.len()
+    );
+    current_facts.global_flow.extend(global_flow);
+
     Ok(())
 }
 
@@ -1718,6 +1762,8 @@ fn dump_one(
     header: bool,
 ) -> usize {
     let mut matched = 0usize;
+    // A global prints as its name, which only the program's table knows.
+    let _names = program_info.program.global_names_guard();
     for func in program_info.program.functions.iter() {
         if filter.is_none_or(|pat| func.name.contains(pat)) {
             if header && matched == 0 {

@@ -198,10 +198,10 @@ assign %loc0 = %s0 [70]
 goto 2, 1, 3
 end block_0
 begin block_1:
-assign %s0 = $globals.<[exec]Holder::Count> [72]
+assign %s0 = $\[exec]Holder.Count [72]
 assign %s1 = <const: 1> [73]
 assign %s0 = value(%s0), value(%s1) [74]
-store $globals.<[exec]Holder::Count> := %s0 [75]
+store $\[exec]Holder.Count := %s0 [75]
 goto 3
 end block_1
 begin block_2:
@@ -428,10 +428,10 @@ assign %pt_1 = @p0.<[exec]Holder::C> [218]
 store %pt_1.<[exec]Cell::B> := %s1 [218]
 assign %s0 = %s0 [220]
 assign %s1 = %s0 [220]
-assign %s1 = $globals.<[exec]Holder::Count> [221]
+assign %s1 = $\[exec]Holder.Count [221]
 assign %s2 = <const: 1> [222]
 assign %s1 = value(%s1), value(%s2) [223]
-store $globals.<[exec]Holder::Count> := %s1 [224]
+store $\[exec]Holder.Count := %s1 [224]
 assign %s0 = @p0 [225]
 assign %s0 = %s0.<[exec]Holder::C> [226]
 assign %loc0 = %s0 [227]

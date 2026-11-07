@@ -173,6 +173,12 @@ pub struct LocalRow {
     pub name: Str,
 }
 
+/// One declared global: a `global` row. A global is its name (G3), so the name is the row.
+#[derive(Clone, Copy, Debug)]
+pub struct GlobalRow {
+    pub name: Str,
+}
+
 /// A row's position in one of [`ProgramFacts`]'s tables, as the indexes store it. The indexes
 /// hold one per row they list, so a `u32` halves them; no one import has four billion rows.
 pub type RowIdx = u32;
@@ -196,6 +202,8 @@ pub struct ProgramFacts {
     pub uses_field: Vec<(Str, Str)>,
     /// Every function's declared locals, each function's adjacent and in declaration order.
     pub locals: Vec<LocalRow>,
+    /// The program's declared globals, in declaration order.
+    pub globals: Vec<GlobalRow>,
     /// The allocator entry points, one row per function, sorted by name. Native programs only.
     pub allocators: Vec<AllocatorRow>,
     /// Direct `(subclass, superclass)` edges.
@@ -222,6 +230,7 @@ pub struct ProgramFacts {
     uses_field_by_fun: HashMap<Str, Vec<RowIdx>>,
     /// Each function's rows, which are adjacent.
     locals_by_fun: HashMap<Str, Range<RowIdx>>,
+    globals_by_name: HashMap<Str, RowIdx>,
     allocators_by_fun: HashMap<Str, RowIdx>,
     supers_of: HashMap<Str, Vec<Str>>,
     subs_of: HashMap<Str, Vec<Str>>,
@@ -248,6 +257,8 @@ pub struct Needs {
     pub callsig: bool,
     /// `allocator`: a pass over every native function body, for the by-shape rows.
     pub allocator: bool,
+    /// `global`: the program's table of globals.
+    pub global: bool,
 }
 
 impl Needs {
@@ -260,6 +271,7 @@ impl Needs {
             subclass: true,
             callsig: true,
             allocator: true,
+            global: true,
         }
     }
 
@@ -275,6 +287,7 @@ impl Needs {
                     "subclass" | "subclass*" | "subclass+" => needs.subclass = true,
                     "callsig" => needs.callsig = true,
                     "allocator" => needs.allocator = true,
+                    "global" => needs.global = true,
                     _ => {}
                 },
                 BodyItem::Not(inner) => visit(inner, needs),
@@ -297,6 +310,7 @@ impl Needs {
         self.subclass |= other.subclass;
         self.callsig |= other.callsig;
         self.allocator |= other.allocator;
+        self.global |= other.global;
     }
 }
 
@@ -381,6 +395,16 @@ impl ProgramFacts {
             }
         }
 
+        let mut globals: Vec<GlobalRow> = Vec::new();
+        let mut globals_by_name: HashMap<Str, RowIdx> = HashMap::new();
+        if needs.global {
+            for (_, g) in index.globals.iter_enumerated() {
+                let name = Str::from(g.name.as_ref());
+                globals_by_name.insert(name, row_idx(globals.len()));
+                globals.push(GlobalRow { name });
+            }
+        }
+
         let allocators = if needs.allocator && matches!(index.vmt().dispatch, Dispatch::Native) {
             allocator::find(&rows, &lowered)
         } else {
@@ -459,6 +483,7 @@ impl ProgramFacts {
             callsites,
             uses_field,
             locals,
+            globals,
             allocators,
             subclass,
             classes,
@@ -473,6 +498,7 @@ impl ProgramFacts {
             callsites_by_callee,
             uses_field_by_fun,
             locals_by_fun,
+            globals_by_name,
             allocators_by_fun,
             supers_of,
             subs_of,
@@ -567,6 +593,11 @@ impl ProgramFacts {
     /// The `allocator` row of function `f`, if it is one.
     pub fn allocator_of(&self, f: Str) -> Option<usize> {
         self.allocators_by_fun.get(&f).map(|&i| i as usize)
+    }
+
+    /// The `global` row of the global named `name`, if the program declares it.
+    pub fn global_of(&self, name: Str) -> Option<usize> {
+        self.globals_by_name.get(&name).map(|&i| i as usize)
     }
 
     /// The `local` rows of function `f`.

@@ -16,7 +16,7 @@
 //! | `Local(n)`     | `x := loc{n}`        | `loc{n} := x`         | `loc{n}.f`                       |
 //! | `Arg(n)`       | `x := p{n}`          | `p{n} := x`           | `p{n}.f`                         |
 //! | `Field(b, g)`  | `x := load b.g`      | `store b.g := x`      | `t := load b.g`, then `t.f`      |
-//! | `Static(g)`    | `x := load global.g` | `store global.g := x` | `t := load global.g`, then `t.f` |
+//! | `Static(g)`    | `x := load $C.g`     | `store $C.g := x`     | `t := load $C.g`, then `t.f`     |
 //! | `Element(b,_)` | `x := load b.[]`     | `store b.[] := x`     | `t := load b.[]`, then `t.f`     |
 //!
 //! # Tracing addresses
@@ -39,7 +39,7 @@
 //! frontend's policy is that an index does not taint the element. And a base held in a
 //! stack slot is saved into a frontend local, `ab{block}_{index}`, by the instruction that
 //! takes the address, so the place names a variable nothing overwrites. A place is then an
-//! [`Addr`]: a root (an argument, a local, the global heap or a saved base) and the fields
+//! [`Addr`]: a root (an argument, a local, a static field's class or a saved base) and the fields
 //! from it, which can go through another address (`ldloca r; ldflda Lo; ldfld X` is
 //! `loc_r.Lo.X`). Everything the layer resolves, this resolves too, and the two are checked
 //! against each other as methods are lowered.
@@ -80,7 +80,7 @@ pub fn deref() -> PathSegment {
 pub enum Root {
     /// An argument or a local.
     Var(Var),
-    /// The static-field base.
+    /// The static-field base: the global of the class that owns the first step's field.
     Global,
     /// The base the `AddressOf` at this instruction read from a stack slot, saved into
     /// `ab{block}_{index}` as it took the address.
@@ -445,21 +445,43 @@ impl Lower<'_, '_, '_, '_, '_> {
 
     /// The path of a traced place.
     pub fn place_path(&self, em: &mut Emitter<'_>, a: &Addr) -> PlacePath {
+        let mut steps = a.steps.iter().peekable();
+        let mut fields = Vec::new();
         let root = match a.root {
             Root::Var(v) => em.var(v),
-            Root::Global => VariableRef::new_global(),
+            Root::Global => match steps.next_if(|s| matches!(s, Step::Field(_))) {
+                Some(Step::Field(t)) => {
+                    let (global, field) = self.static_field(em, *t);
+                    fields.push(field);
+                    global
+                }
+                _ => em.global(crate::names::UNKNOWN_CLASS),
+            },
             Root::Saved(at) => em.local(&saved_base_name(at)),
         };
-        let fields = a
-            .steps
-            .iter()
-            .map(|s| match s {
-                Step::Field(t) => self.field_ref(*t),
-                Step::Element => PathSegment::field(ELEMENT),
-                Step::Deref => deref(),
-            })
-            .collect();
+        fields.extend(steps.map(|s| match s {
+            Step::Field(t) => self.field_ref(*t),
+            Step::Element => PathSegment::field(ELEMENT),
+            Step::Deref => deref(),
+        }));
         PlacePath { root, fields }
+    }
+
+    /// The global of the class that owns static field `token`, `$C`, and the field below it,
+    /// named by the field's name alone. A field whose owner does not decode is a field of the
+    /// global `[?]?` named by its token.
+    pub fn static_field(
+        &self,
+        em: &mut Emitter<'_>,
+        token: MetadataToken,
+    ) -> (VariableRef, PathSegment) {
+        let (cls, name) = self.names.field_owner(token).unwrap_or_else(|| {
+            (
+                crate::names::UNKNOWN_CLASS.to_string(),
+                format!("?{:08x}", token.raw()),
+            )
+        });
+        (em.global(&cls), PathSegment::field(name))
     }
 
     /// The field symbol of a field token, `<cls::name>`.

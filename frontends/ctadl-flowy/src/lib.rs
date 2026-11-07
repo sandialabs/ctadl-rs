@@ -96,8 +96,14 @@ Global variables are created at the top level with the `var` syntax:
 var x;
 ```
 
-Any function in the file referring to `x` accesses the global variable. There is no way to have a
-local variable and a global variable of the same name.
+This declares the global `$x` (G1 of `docs/ir.md`), and any function in the
+file referring to `x` accesses that variable. A global is never rebound (G4), so a function reads
+and writes the locations below it: `x.deref = p` and `x.f = p` are stores,
+`p = x.f` is a load, and `p = x` copies the global itself (its address, in C's terms). A
+whole-variable write, `x = p` or `x = f(p)`, is an error. A where-clause port on a global names
+it the same way (`x.deref`). There is no way to have a local variable and a global variable of
+the same name: a parameter of a global's name is an error, and any other use of the name is the
+global.
 */
 use std::{fmt, fmt::Display};
 
@@ -123,8 +129,11 @@ pub mod parse;
 pub enum PortBase {
     /// Denotes the return value in a summary requirement
     Return,
-    /// A variable
+    /// A parameter
     Var(VariableRef),
+    /// A global, by name: a requirement is read apart from the program, so it names the global
+    /// by its identity (G3) rather than by the program's index.
+    Global(ArcIntern<str>),
 }
 
 impl Display for PortBase {
@@ -132,6 +141,10 @@ impl Display for PortBase {
         match self {
             PortBase::Return => write!(f, "return"),
             PortBase::Var(v) => write!(f, "{v}"),
+            PortBase::Global(name) => {
+                write!(f, "$")?;
+                path_syntax::write_symbol(f, name)
+            }
         }
     }
 }
@@ -329,7 +342,8 @@ impl Display for EndpointDirection {
 struct Env {
     /// Parameters by name.
     parameters: HashMap<String, VariableRef>,
-    globals: HashSet<String>,
+    /// Globals by name.
+    globals: HashMap<String, GlobalIdx>,
 }
 
 /// Compile errors
@@ -356,6 +370,55 @@ pub fn compile_program<P: AsRef<std::path::Path>>(file: P) -> Result<FlowyProgra
     let file = file.as_ref();
     let contents = source_info::read_source(file)?;
     compile_program_contents(file.to_string_lossy().as_ref(), contents.as_str())
+}
+
+/// The line that separates two programs of one project in a flowy file.
+pub const PROGRAM_SEPARATOR: &str = "// --- program ---";
+
+/// The programs of a flowy file: the text between [`PROGRAM_SEPARATOR`] lines, each program the
+/// whole file with every other program's lines blanked, so that a position in an error is a
+/// position in the file. A file with no separator is one program.
+pub fn split_programs(contents: &str) -> Vec<String> {
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut owner = Vec::with_capacity(lines.len());
+    let mut n = 0;
+    for line in &lines {
+        if line.trim() == PROGRAM_SEPARATOR {
+            n += 1;
+        }
+        owner.push(n);
+    }
+    (0..=n)
+        .map(|p| {
+            lines
+                .iter()
+                .zip(&owner)
+                .map(|(line, &o)| if o == p { *line } else { "" })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect()
+}
+
+/// Compiles every program of a flowy file ([`split_programs`]): the programs of one project,
+/// which share a global of one name (G3) and nothing else.
+pub fn compile_programs<P: AsRef<std::path::Path>>(
+    file: P,
+) -> Result<Vec<FlowyProgram>, FlowyError> {
+    let file = file.as_ref();
+    let contents = source_info::read_source(file)?;
+    split_programs(&contents)
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let name = if i == 0 {
+                file.to_string_lossy().to_string()
+            } else {
+                format!("{}#{i}", file.to_string_lossy())
+            };
+            compile_program_contents(&name, text)
+        })
+        .collect()
 }
 
 /// A sink of a flowy program, named as the semantics corpus names it.
@@ -479,8 +542,8 @@ struct FlowyCtx {
     artifact_key: source_info::ArtifactKey,
     source_info_builder: source_info::SourceInfoBuilder,
     summary_requires: HashMap<ArcIntern<str>, Vec<SummarySpec>>,
-    /// Global variables
-    toplevel_vars: HashSet<String>,
+    /// Global variables, by name.
+    toplevel_vars: HashMap<String, GlobalIdx>,
     /// Used for temporaries
     counter: Counter,
 }
@@ -515,7 +578,8 @@ impl FlowyCtx {
         for def in defs {
             match def {
                 parse::Def::Var(name) => {
-                    self.toplevel_vars.insert(name.name.to_string());
+                    let idx = self.program.declare_global(name.name, None);
+                    self.toplevel_vars.insert(name.name.to_string(), idx);
                 }
                 parse::Def::Function(f) => {
                     defined_functions.insert(f.name.name.to_string());
@@ -547,8 +611,10 @@ impl FlowyCtx {
     ) -> Result<(), FlowyError> {
         // Function we're building
         let function = self.program.new_function();
-        let mut env: Env = Default::default();
-        env.globals.extend(self.toplevel_vars.iter().cloned());
+        let mut env = Env {
+            globals: self.toplevel_vars.clone(),
+            ..Default::default()
+        };
 
         let name = def.name.name;
         if ["source", "sink", "errsource", "errsink"].contains(&name) {
@@ -559,7 +625,7 @@ impl FlowyCtx {
         }
         self.program[function].name = name.to_string();
 
-        self.parse_formals(&def.params, &mut env, function);
+        self.parse_formals(&def.params, &mut env, function)?;
         if let Some(arity) = def.return_arity {
             self.program.functions[function].set_return_type(ReturnType { arity });
         }
@@ -618,9 +684,18 @@ impl FlowyCtx {
         formals: &[parse::Param<'_>],
         locals: &mut Env,
         function: FunctionIdx,
-    ) {
+    ) -> Result<(), FlowyError> {
         let params = &mut self.program[function].params;
         for formal in formals {
+            if locals.globals.contains_key(formal.name.name) {
+                return Err(compile_error(
+                    formal.name.pos,
+                    format!(
+                        "parameter '{}' has the name of a global; a global cannot be shadowed",
+                        formal.name.name
+                    ),
+                ));
+            }
             params.parameters.push(formal.ty);
             let index = params.last_index().unwrap();
             locals.parameters.insert(
@@ -628,6 +703,7 @@ impl FlowyCtx {
                 VariableRef::new_parameter(index),
             );
         }
+        Ok(())
     }
 
     /// Parses a basic block and returns any goto targets from the terminator, with the position of
@@ -693,7 +769,9 @@ impl FlowyCtx {
         let local_table = &mut func.locals;
         match &stmt.kind {
             parse::StmtKind::Assign { dest, sources } => {
+                let dest_pos = dest.base.pos;
                 let dest = parse_access_path(locals, local_table, dest)?;
+                reject_whole_global_write(&dest, dest_pos)?;
                 // src is comma-separated; each source is an access path, a `value(..)` of one,
                 // or a constant.
                 let mut src = Vec::new();
@@ -711,7 +789,9 @@ impl FlowyCtx {
                 ));
             }
             parse::StmtKind::AssignCall { dest, callee, args } => {
+                let dest_pos = dest.base.pos;
                 let dest = parse_access_path(locals, local_table, dest)?;
+                reject_whole_global_write(&dest, dest_pos)?;
                 let callee = parse_access_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
                 let style = lower_call_style(
@@ -860,12 +940,10 @@ fn parse_summary_ap(env: &Env, ap: &parse::AccessPath<'_>) -> Result<Port, Flowy
             base: PortBase::Var(v.clone()),
             fields: field_accesses,
         })
-    } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
-        global_field_accesses.extend(field_accesses);
+    } else if env.globals.contains_key(name) {
         Ok(Port {
-            base: PortBase::Var(VariableRef::new_global()),
-            fields: global_field_accesses,
+            base: PortBase::Global(ArcIntern::from(name)),
+            fields: field_accesses,
         })
     } else {
         panic!("In summary requires, found nonexistent formal reference: {name}")
@@ -891,6 +969,17 @@ fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>
             )),
         })
         .collect()
+}
+
+/// Rejects a write to a whole global (G4), with an error that says where to write instead.
+fn reject_whole_global_write(dest: &AccessPath, pos: Pos) -> Result<(), FlowyError> {
+    if dest.is_pathless() && dest.base.variable.is_global() {
+        return Err(compile_error(
+            pos,
+            "a global is never rebound: write a location below it, such as 'g.deref' or 'g.f'",
+        ));
+    }
+    Ok(())
 }
 
 fn compile_error(pos: Pos, message: impl Into<String>) -> FlowyError {
@@ -995,8 +1084,7 @@ fn lower_call_style(
 }
 
 /// Resolves a syntactic access path in a function body (as opposed to a summary access path, see
-/// [`parse_summary_ap`]) to an [`AccessPath`]. A global becomes the global heap with the global's
-/// name as the path's leading field.
+/// [`parse_summary_ap`]) to an [`AccessPath`]. A global's name is the global, `$name`.
 fn parse_access_path(
     env: &Env,
     local_table: &mut Locals,
@@ -1006,10 +1094,8 @@ fn parse_access_path(
     let field_accesses = path_segments(&ap.segments)?;
     Ok(if let Some(v) = env.parameters.get(name) {
         AccessPath::new(v.clone(), field_accesses)
-    } else if env.globals.contains(name) {
-        let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::field(name)];
-        global_field_accesses.extend(field_accesses);
-        AccessPath::new(VariableRef::new_global(), global_field_accesses)
+    } else if let Some(&idx) = env.globals.get(name) {
+        AccessPath::new(VariableRef::global(idx), field_accesses)
     } else {
         // treat it as local
         AccessPath::new(

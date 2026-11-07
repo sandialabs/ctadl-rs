@@ -136,13 +136,7 @@ struct Indexed {
     facts: IndexFacts,
     source_info: IndexSourceInfo,
     report: ctadl_ascent::codegen::CodegenReport,
-    summary: Vec<(
-        fx::FunctionId,
-        fx::FormalIndex,
-        fx::Path,
-        fx::FormalIndex,
-        fx::Path,
-    )>,
+    summary: Vec<(fx::FunctionId, fx::Root, fx::Path, fx::Root, fx::Path)>,
 }
 
 impl Indexed {

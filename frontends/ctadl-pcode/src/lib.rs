@@ -10,8 +10,11 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
 - There is no address-of. Address-taken storage lives behind `deref`. The frame is memory:
   frame slot `k` is `__stack_top.[k].deref`, and writing one is a store. `mem2reg` is the only
   thing that makes a slot flow-sensitive.
-- A global at address `A` is `$globals.[A].deref`, keyed on the address so that every function
-  shares it.
+- An import declares one global, its image's memory, named by the import and Ghidra's address
+  space: `$<import>::ram` (written `$ram` below). A global
+  at address `A` is `$ram.[A].deref`, keyed on the address so that every function shares it,
+  and named by the import so that two images' addresses are distinct cells. A pointer-typed
+  constant stays an inert constant: there is no `&g`.
 - A constant offset is an offset segment: `PTRSUB p, 8` is `p.[8]`. A non-constant offset is a
   copy of the base plus the value of the index: `q = PTRADD p, i, 4` is `q = p, value(i)`.
   Under `CTADL_EXP_INT_ARITH=merge`, a comparison mode, every operand is merged instead.
@@ -63,6 +66,12 @@ pub fn ghidra_available() -> bool {
     ghidra::available()
 }
 
+/// The name of the memory global of the import `import_name`, `<import>::ram`: the import, then
+/// Ghidra's address space.
+pub fn memory_global_name(import_name: &str) -> String {
+    format!("{import_name}::ram")
+}
+
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts.
 ///
 /// `jobs` caps Ghidra's threads; see [`ghidra::run_ghidra_export`].
@@ -95,6 +104,7 @@ pub fn import_pcode(
     }
 
     let mut ctx = Context::new();
+    ctx.import_name = import.name.clone();
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
 
     let key = ArtifactKey {
@@ -125,7 +135,7 @@ enum VnodeRep {
     /// stack memory `__stack_top.[F].deref` so it unifies with stack-address derefs.
     StackSlot(i64),
     /// Storage for a global variable living at address `A`, expressed as the canonical
-    /// global memory `$globals.[A].deref`.
+    /// global memory `$ram.[A].deref`.
     Global(i64),
 }
 
@@ -166,6 +176,10 @@ struct Context {
     /// `process_functions`.
     entry_points: BTreeMap<i64, String>,
     counter: i64,
+    /// The name of the import being lowered, which names its memory global.
+    import_name: String,
+    /// The import's memory global, `$<import>::ram`, declared by [`Self::process`].
+    memory: Option<ctadl_ir::mir::GlobalIdx>,
 }
 
 impl Context {
@@ -187,6 +201,8 @@ impl Context {
             current_hfunc: None,
             entry_points: Default::default(),
             counter: 0,
+            import_name: "pcode".to_string(),
+            memory: None,
         }
     }
 
@@ -231,6 +247,11 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        self.memory = Some(
+            builders
+                .program
+                .declare_global(memory_global_name(&self.import_name), None),
+        );
         // Use pcode-reader crate to read facts
         let reader = PcodeFactsReader::new(facts_dir);
         let mut pcode_facts = reader
@@ -1382,8 +1403,8 @@ impl Context {
     /// root used by LOAD/STORE address resolution (see [`Self::resolve_mem_exp`]), so taint
     /// written through a stack pointer meets taint read from the corresponding slot.
     ///
-    /// Global storage is canonicalized the same way, as `$globals.[A].deref` (a
-    /// [`VnodeRep::Global`]). Globals are rooted at the shared global heap rather than at
+    /// Global storage is canonicalized the same way, as `$ram.[A].deref` (a
+    /// [`VnodeRep::Global`]). Globals are rooted at the import's memory global rather than at
     /// the varnode, because Ghidra gives each referencing function its own varnode and its
     /// own high variable for one global; only the address is common to all of them.
     fn convert_vnode(
@@ -1468,13 +1489,17 @@ impl Context {
         AccessPath::new(stack_top, [PathSegment::offset(offset), PathSegment::Deref])
     }
 
-    /// Builds the access path for the canonical global `$globals.[address].deref`.
+    /// Builds the access path for the canonical global `$ram.[address].deref`.
     ///
-    /// [`Variable::GlobalHeap`] is threaded through every call, so rooting globals here
-    /// is what carries their taint between functions that never pass it directly.
-    fn global_path(address: i64) -> AccessPath {
+    /// Every function names the one memory global, which is shared by every instance, so
+    /// rooting globals here is what carries their taint between functions that never pass it
+    /// directly.
+    fn global_path(&self, address: i64) -> AccessPath {
+        let memory = self
+            .memory
+            .expect("the memory global is declared before any instruction is lowered");
         AccessPath::new(
-            VariableRef::new_global(),
+            VariableRef::global(memory),
             [PathSegment::offset(address), PathSegment::Deref],
         )
     }
@@ -1662,7 +1687,7 @@ impl Context {
                 Exp::path(self.load_ap(stmts, ap, locals))
             }
             VnodeRep::Global(address) => {
-                Exp::path(self.load_ap(stmts, Self::global_path(address), locals))
+                Exp::path(self.load_ap(stmts, self.global_path(address), locals))
             }
         };
         Ok(exp)
@@ -1695,7 +1720,7 @@ impl Context {
             VnodeRep::Var(var) => AccessPath::from(var),
             VnodeRep::Offset(var, offset) => AccessPath::new(var, [PathSegment::offset(offset)]),
             VnodeRep::StackSlot(offset) => Self::stack_slot_path(offset, locals),
-            VnodeRep::Global(address) => Self::global_path(address),
+            VnodeRep::Global(address) => self.global_path(address),
         };
         Ok(ap)
     }
@@ -2111,5 +2136,24 @@ mod tests {
         // `p - q`, both pointers: neither is the base.
         assert_eq!(base_operand(&[PTR, PTR]), None);
         assert_eq!(base_operand(&[]), None);
+    }
+
+    /// An image's memory is one global named by the import and the address space, so a
+    /// global at address `A` is `$<import>::ram.[A].deref` and two images' addresses are two
+    /// cells.
+    #[test]
+    fn a_global_address_is_a_cell_of_the_import_memory() {
+        let mut program = Program::default();
+        let mut paths = Vec::new();
+        for import in ["libA.so", "libB.so"] {
+            let mut ctx = Context::new();
+            ctx.import_name = import.to_string();
+            ctx.memory = Some(program.declare_global(memory_global_name(import), None));
+            paths.push(ctx.global_path(4096));
+        }
+        assert_ne!(paths[0], paths[1]);
+        let _names = program.global_names_guard();
+        assert_eq!(paths[0].to_string(), r"$libA\.so::ram.[4096].deref");
+        assert_eq!(paths[1].to_string(), r"$libB\.so::ram.[4096].deref");
     }
 }

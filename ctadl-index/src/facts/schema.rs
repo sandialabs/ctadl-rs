@@ -11,8 +11,8 @@ use crate::error::Error;
 use crate::facts::QueryEndpoint;
 use crate::facts::parquet;
 use crate::facts::{
-    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
-    TaintState,
+    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, GlobalId, ImportId,
+    InsnId, Path, Root, TaintState,
 };
 
 // Captures the Record type and FILENAME and COLUMNS constants.
@@ -110,9 +110,31 @@ pub mod resolved_call {
 
 pub mod summary {
     use super::*;
-    pub type Record = (FunctionId, FormalIndex, Path, FormalIndex, Path);
-    pub const COLUMNS: [&str; 5] = ["func_id", "dst_index", "dst_path", "src_index", "src_path"];
+    /// A function's flow from root `src.src_path` to root `dst.dst_path`.
+    pub type Record = (FunctionId, Root, Path, Root, Path);
+    pub const COLUMNS: [&str; 5] = ["func_id", "dst", "dst_path", "src", "src_path"];
     pub const FILENAME: &str = "summary.parquet";
+    save_load!();
+}
+
+pub mod globals {
+    use super::*;
+    /// A global and an import that declares it, with the declaration's span in that import's
+    /// source-info database when the front end recorded one. A global several imports
+    /// declare has a row per import.
+    pub type Record = (GlobalId, ImportId, Option<FileSpanId>);
+    pub const COLUMNS: [&str; 3] = ["name", "import_id", "source_span_id"];
+    pub const FILENAME: &str = "globals.parquet";
+    save_load!();
+}
+
+pub mod global_flow {
+    use super::*;
+    /// The program-level flows between two global paths: `src.src_path` reaches
+    /// `dst.dst_path` in every instance, read by a `--summary` consumer.
+    pub type Record = (GlobalId, Path, GlobalId, Path);
+    pub const COLUMNS: [&str; 4] = ["dst", "dst_path", "src", "src_path"];
+    pub const FILENAME: &str = "global_flow.parquet";
     save_load!();
 }
 
@@ -445,6 +467,15 @@ mod tests {
                 node(4).1,
                 node(4).2,
             ),
+            (
+                FlowEdge::Global,
+                node(4).0,
+                node(4).1,
+                node(4).2,
+                crate::facts::GLOBAL_FRAME,
+                FlowVariable::global(crate::facts::GlobalId::new("g")),
+                node(4).2,
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -457,7 +488,8 @@ mod tests {
             vec![
                 FlowEdge::Intra,
                 FlowEdge::Call(site),
-                FlowEdge::Return(site)
+                FlowEdge::Return(site),
+                FlowEdge::Global
             ]
         );
         assert_eq!(loaded, records);

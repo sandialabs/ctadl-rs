@@ -17,9 +17,9 @@
 //! | `Const { String(tok) }`                       | `dst := "text"`                               |
 //! | `Const { Token(tok) }`                        | `dst := "name of tok"`                        |
 //! | `Load { Slot(b).f }`                          | `dst := load b.F(f)`, or `ptr.rs` through a pointer |
-//! | `Load { Static.f }`                           | `dst := load global.F(f)`                     |
+//! | `Load { Static.f }`                           | `dst := load $C.f`, `C` the owner of `f`      |
 //! | `Store { Slot(b).f := src }`                  | `store b.F(f) := src`, or `ptr.rs`            |
-//! | `Store { Static.f := src }`                   | `store global.F(f) := src`                    |
+//! | `Store { Static.f := src }`                   | `store $C.f := src`                           |
 //! | `AddressOf { dst, place }`                    | nothing; if it escapes resolution, a cell (`ptr.rs`) |
 //! | `New { Object \| ValueType, T }`              | `dst := cil<T>`                               |
 //! | `New { Array, T }`                            | `dst := cil<T[]>`                             |
@@ -267,13 +267,24 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// The global and field of a static field: `$C.f` for a named field of class `C`.
+    fn static_place(&self, em: &mut Emitter<'_>, field: &Field<Var>) -> (VariableRef, PathSegment) {
+        match field {
+            Field::Named(op) => self.static_field(em, op.token),
+            other => (
+                em.global(crate::names::UNKNOWN_CLASS),
+                self.field_symbol(other),
+            ),
+        }
+    }
+
     /// `dst := root.field`, through a pointer root as `ptr.rs` lowers it.
     fn load(&mut self, em: &mut Emitter<'_>, ins: &BoundIns, dst: Var, src: &Path<Var>) {
         let d = em.var(dst);
         let b = match src.root {
             Root::Static => {
-                let f = self.field_symbol(&src.field);
-                em.load(d, VariableRef::new_global(), f);
+                let (global, f) = self.static_place(em, &src.field);
+                em.load(d, global, f);
                 return;
             }
             Root::Slot(b) => b,
@@ -306,8 +317,8 @@ impl Lower<'_, '_, '_, '_, '_> {
     fn store(&mut self, em: &mut Emitter<'_>, ins: &BoundIns, dst: &Path<Var>, value: Exp) {
         let b = match dst.root {
             Root::Static => {
-                let f = self.field_symbol(&dst.field);
-                em.store(VariableRef::new_global(), f, value);
+                let (global, f) = self.static_place(em, &dst.field);
+                em.store(global, f, value);
                 return;
             }
             Root::Slot(b) => b,

@@ -12,6 +12,7 @@ mod default_models;
 mod determinism;
 mod dispatch_models;
 mod flowy_tests;
+mod global_ports;
 mod jni_summary;
 mod json_error_handling;
 mod lua_model_externals;

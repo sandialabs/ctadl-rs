@@ -141,4 +141,6 @@ pub enum UnmatchedReason {
     /// Functions matched, but none of them declares a local by this name: a `local` atom (a
     /// migrated `Variable(name)` port) matched nothing.
     LocalNotFound(String),
+    /// No import declares a global the rule's `global` atom asks for.
+    GlobalNotFound(String),
 }

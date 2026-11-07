@@ -374,6 +374,11 @@ fn index_fixture(ctadl: &Path, fixture: &Path, dir: &Path) -> Result<Static> {
         let Some(name) = ids.get_function(f) else {
             continue;
         };
+        // The fixtures compare flows between parameters and the return; a row rooted at a
+        // static field's class is a global's.
+        let (Some(src_i), Some(dst_i)) = (src_i.as_formal(), dst_i.as_formal()) else {
+            continue;
+        };
         st.rows
             .entry(name.0.as_str().to_string())
             .or_default()

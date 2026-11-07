@@ -2097,7 +2097,7 @@ return <const: []>, %excout
 end block_1
 begin block_2:
 assign %s0 = @p0 [919]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [920]
+store $\[exec]Exec\.G.Counter := %s0 [920]
 return <const: []>, %excout
 end block_2
 
@@ -2198,10 +2198,10 @@ assign %loc0 = %s0 [978]
 goto 3, 2
 end block_1
 begin block_2:
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [980]
+assign %s0 = $\[exec]Exec\.G.Counter [980]
 assign %s1 = <const: 1> [981]
 assign %s0 = value(%s0), value(%s1) [982]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [983]
+store $\[exec]Exec\.G.Counter := %s0 [983]
 goto 3
 end block_2
 begin block_3:
@@ -2223,17 +2223,17 @@ assign %loc0 = %s0 [991]
 goto 5, 3
 end block_1
 begin block_2:
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [993]
+assign %s0 = $\[exec]Exec\.G.Counter [993]
 assign %s1 = <const: 2> [994]
 assign %s0 = value(%s0), value(%s1) [995]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [996]
+store $\[exec]Exec\.G.Counter := %s0 [996]
 goto 4, 3
 end block_2
 begin block_3:
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [998]
+assign %s0 = $\[exec]Exec\.G.Counter [998]
 assign %s1 = <const: 3> [999]
 assign %s0 = value(%s0), value(%s1) [1000]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1001]
+store $\[exec]Exec\.G.Counter := %s0 [1001]
 goto 5, 4
 end block_3
 begin block_4:
@@ -2267,7 +2267,7 @@ assign %s1 = <const: 100> [1016]
 assign %s0 = value(%s0), value(%s1) [1017]
 assign %loc0 = %s0 [1018]
 assign %s0 = %loc0 [1019]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1020]
+store $\[exec]Exec\.G.Counter := %s0 [1020]
 goto 3, 4
 end block_2
 begin block_3:
@@ -2434,10 +2434,10 @@ end block_3
 begin block_4:
 assign %caught0 = %throwval [1100]
 assign %s0 = %caught0 [1100]
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1101]
+assign %s0 = $\[exec]Exec\.G.Counter [1101]
 assign %s1 = <const: 1> [1102]
 assign %s0 = value(%s0), value(%s1) [1103]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1104]
+store $\[exec]Exec\.G.Counter := %s0 [1104]
 assign %throwval = %caught0 [1105]
 goto 5
 end block_4
@@ -2556,10 +2556,10 @@ assign %loc0 = %s0 [1154]
 goto 3, 2
 end block_1
 begin block_2:
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1156]
+assign %s0 = $\[exec]Exec\.G.Counter [1156]
 assign %s1 = <const: 1> [1157]
 assign %s0 = value(%s0), value(%s1) [1158]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1159]
+store $\[exec]Exec\.G.Counter := %s0 [1159]
 goto 3
 end block_2
 begin block_3:
@@ -2764,10 +2764,10 @@ assign %excout = %excout, %throwval [1258]
 goto 3, 4
 end block_2
 begin block_3:
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1259]
+assign %s0 = $\[exec]Exec\.G.Counter [1259]
 assign %s1 = <const: 5> [1260]
 assign %s0 = value(%s0), value(%s1) [1261]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1262]
+store $\[exec]Exec\.G.Counter := %s0 [1262]
 goto 5, 4
 end block_3
 begin block_4:
@@ -2818,7 +2818,7 @@ define [exec]Exec.Exc::TwoPass(System.Int32)->System.Int64(@p0[shared_fields]) -
 begin block_0 [start]:
 assign %excout = <const: []> [1286]
 assign %s0 = <const: 0> [1286]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1287]
+store $\[exec]Exec\.G.Counter := %s0 [1287]
 goto 1
 end block_0
 begin block_1:
@@ -2836,7 +2836,7 @@ goto 3, 4
 end block_2
 begin block_3:
 assign %s0 = <const: 1> [1291]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1292]
+store $\[exec]Exec\.G.Counter := %s0 [1292]
 goto 4
 end block_3
 begin block_4:
@@ -2865,11 +2865,11 @@ goto 8
 end block_7
 begin block_8:
 assign %s0 = %caught1 [1306]
-assign %s0 = $globals.<[exec]Exec\.G::Total> [1307]
+assign %s0 = $\[exec]Exec\.G.Total [1307]
 assign %s1 = <const: 10> [1308]
 assign %s1 = %s1 [1309]
 assign %s0 = value(%s0), value(%s1) [1310]
-assign %s1 = $globals.<[exec]Exec\.G::Counter> [1311]
+assign %s1 = $\[exec]Exec\.G.Counter [1311]
 assign %s1 = %s1 [1312]
 assign %s0 = value(%s0), value(%s1) [1313]
 assign %loc0 = %s0 [1314]
@@ -2884,11 +2884,11 @@ define [exec]Exec.Exc::Record(System.Int32)->System.Boolean(@p0[shared_fields]) 
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1318]
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1319]
+assign %s0 = $\[exec]Exec\.G.Counter [1319]
 assign %s1 = @p0 [1320]
 assign %s0 = value(%s0), value(%s1) [1321]
 assign %s0 = %s0 [1322]
-store $globals.<[exec]Exec\.G::Total> := %s0 [1323]
+store $\[exec]Exec\.G.Total := %s0 [1323]
 assign %s0 = @p0 [1324]
 assign %s1 = <const: 3> [1325]
 assign %s0 = value(%s0), value(%s1) [1326]
@@ -2979,8 +2979,8 @@ assign %s0 = %t0 [1367]
 goto 1, 2
 end block_0
 begin block_1:
-store $globals.<[exec]Exec\.G::O> := %s0 [1368]
-assign %s0 = $globals.<[exec]Exec\.G::O> [1369]
+store $\[exec]Exec\.G.O := %s0 [1368]
+assign %s0 = $\[exec]Exec\.G.O [1369]
 assign %s0 = %s0 [1370]
 assign %throwval = %s0 [1371]
 assign %excout = %excout, %throwval [1371]
@@ -2999,7 +2999,7 @@ assign %s0 = <const: 0> [1377]
 goto 5
 end block_3
 begin block_4:
-assign %s1 = $globals.<[exec]Exec\.G::O> [1379]
+assign %s1 = $\[exec]Exec\.G.O [1379]
 assign %s0 = value(%s0), value(%s1) [1380]
 assign %s1 = <const: 0> [1381]
 assign %s0 = value(%s0), value(%s1) [1382]
@@ -3436,23 +3436,23 @@ define [exec]Exec.Obj::Statics(System.Int32)->System.Int32(@p0[shared_fields]) -
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1653]
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1654]
+assign %s0 = $\[exec]Exec\.G.Counter [1654]
 assign %s1 = @p0 [1655]
 assign %s0 = value(%s0), value(%s1) [1656]
-store $globals.<[exec]Exec\.G::Counter> := %s0 [1657]
-assign %s0 = $globals.<[exec]Exec\.G::Total> [1658]
-assign %s1 = $globals.<[exec]Exec\.G::Counter> [1659]
+store $\[exec]Exec\.G.Counter := %s0 [1657]
+assign %s0 = $\[exec]Exec\.G.Total [1658]
+assign %s1 = $\[exec]Exec\.G.Counter [1659]
 assign %s1 = %s1 [1660]
 assign %s0 = value(%s0), value(%s1) [1661]
-store $globals.<[exec]Exec\.G::Total> := %s0 [1662]
-assign %s0 = $globals.<[exec]Exec\.G::D> [1663]
+store $\[exec]Exec\.G.Total := %s0 [1662]
+assign %s0 = $\[exec]Exec\.G.D [1663]
 assign %s1 = <const: 4602678819172646912> [1664]
 assign %s0 = value(%s0), value(%s1) [1665]
 assign %s1 = @p0 [1666]
 assign %s1 = %s1 [1667]
 assign %s0 = value(%s0), value(%s1) [1668]
-store $globals.<[exec]Exec\.G::D> := %s0 [1669]
-assign %s0 = $globals.<[exec]Exec\.G::Counter> [1670]
+store $\[exec]Exec\.G.D := %s0 [1669]
+assign %s0 = $\[exec]Exec\.G.Counter [1670]
 return %s0, %excout
 end block_0
 
@@ -4139,20 +4139,20 @@ begin block_0 [start]:
 assign %excout = <const: []> [2073]
 assign %s0 = %s0 [2076]
 assign %s1 = %s0 [2076]
-assign %pt_0 = $globals.<[exec]Exec\.G::P> [2077]
+assign %pt_0 = $\[exec]Exec\.G.P [2077]
 assign %s1 = %pt_0.<[exec]Exec\.Pt::X> [2077]
 assign %s2 = @p0 [2078]
 assign %s1 = value(%s1), value(%s2) [2079]
-assign %pt_1 = $globals.<[exec]Exec\.G::P> [2080]
+assign %pt_1 = $\[exec]Exec\.G.P [2080]
 store %pt_1.<[exec]Exec\.Pt::X> := %s1 [2080]
 assign %s1 = <const: 2> [2082]
-assign %c_3 = $globals.<[exec]Exec\.G::P> [2083]
+assign %c_3 = $\[exec]Exec\.G.P [2083]
 store %cell_2.deref := %c_3 [2083]
 %retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_2, %s1) [2083]
 assign %excout = %excout, %throwval [2083]
 assign %u_4 = %cell_2.deref [2083]
-store $globals.<[exec]Exec\.G::P> := %u_4 [2083]
-assign %pt_5 = $globals.<[exec]Exec\.G::P> [2085]
+store $\[exec]Exec\.G.P := %u_4 [2083]
+assign %pt_5 = $\[exec]Exec\.G.P [2085]
 assign %s0 = %pt_5.<[exec]Exec\.Pt::Y> [2085]
 return %s0, %excout
 end block_0
@@ -4405,20 +4405,20 @@ define [exec]Exec.Val::PtrToStatic(System.Int32)->System.Int64(@p0[shared_fields
 begin block_0 [start]:
 assign %excout = <const: []> [2261]
 assign %s1 = @p0 [2263]
-assign %c_1 = $globals.<[exec]Exec\.G::Total> [2264]
+assign %c_1 = $\[exec]Exec\.G.Total [2264]
 store %cell_0.deref := %c_1 [2264]
 %retval, %throwval = direct-call [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void(%cell_0, %s1) [2264]
 assign %excout = %excout, %throwval [2264]
 assign %u_2 = %cell_0.deref [2264]
-store $globals.<[exec]Exec\.G::Total> := %u_2 [2264]
+store $\[exec]Exec\.G.Total := %u_2 [2264]
 assign %s1 = @p0 [2266]
-assign %c_4 = $globals.<[exec]Exec\.G::Counter> [2267]
+assign %c_4 = $\[exec]Exec\.G.Counter [2267]
 store %cell_3.deref := %c_4 [2267]
 %retval, %throwval = direct-call [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void(%cell_3, %s1) [2267]
 assign %excout = %excout, %throwval [2267]
 assign %u_5 = %cell_3.deref [2267]
-store $globals.<[exec]Exec\.G::Counter> := %u_5 [2267]
-assign %s0 = $globals.<[exec]Exec\.G::Total> [2268]
+store $\[exec]Exec\.G.Counter := %u_5 [2267]
+assign %s0 = $\[exec]Exec\.G.Total [2268]
 return %s0, %excout
 end block_0
 
@@ -4951,14 +4951,14 @@ begin block_0 [start]:
 assign %excout = <const: []> [2632]
 assign %s0 = <const: 4> [2632]
 assign %s0 = cil<System.Int32[]> [2633]
-store $globals.<[exec]Exec\.G::Data> := %s0 [2634]
-assign %s0 = $globals.<[exec]Exec\.G::Data> [2635]
+store $\[exec]Exec\.G.Data := %s0 [2634]
+assign %s0 = $\[exec]Exec\.G.Data [2635]
 assign %s1 = @p0 [2636]
 assign %s2 = <const: 3> [2637]
 assign %s1 = value(%s1), value(%s2) [2638]
 assign %s2 = @p0 [2639]
 store %s0.\[] := %s2 [2640]
-assign %s0 = $globals.<[exec]Exec\.G::Data> [2641]
+assign %s0 = $\[exec]Exec\.G.Data [2641]
 assign %s1 = @p0 [2642]
 assign %s2 = <const: 1> [2643]
 assign %s1 = value(%s1), value(%s2) [2644]
@@ -4968,7 +4968,7 @@ assign %ab0_15 = %s0 [2647]
 assign %s0 = %s0 [2648]
 assign %s1 = %s0 [2648]
 assign %s1 = %ab0_15.\[] [2649]
-assign %s2 = $globals.<[exec]Exec\.G::Data> [2650]
+assign %s2 = $\[exec]Exec\.G.Data [2650]
 assign %s3 = @p0 [2651]
 assign %s4 = <const: 3> [2652]
 assign %s3 = value(%s3), value(%s4) [2653]
@@ -4977,7 +4977,7 @@ assign %s3 = <const: 1> [2655]
 assign %s2 = value(%s2), value(%s3) [2656]
 assign %s1 = value(%s1), value(%s2) [2657]
 store %ab0_15.\[] := %s1 [2658]
-assign %s0 = $globals.<[exec]Exec\.G::Data> [2659]
+assign %s0 = $\[exec]Exec\.G.Data [2659]
 assign %s1 = <const: 3> [2660]
 assign %s0 = %s0.\[] [2661]
 return %s0, %excout
@@ -5309,7 +5309,7 @@ define [exec]Exec.Dels::Static(System.Int32)->System.Int32(@p0[shared_fields]) -
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2824]
-assign %s0 = $globals.<[exec]Exec\.Dels/<>O::<0>__Twice> [2825]
+assign %s0 = $\[exec]Exec\.Dels/<>O.<0>__Twice [2825]
 assign %s0 = %s0 [2826]
 assign %s1 = %s0 [2826]
 goto 2, 1
@@ -5325,7 +5325,7 @@ assign %excout = %excout, %throwval [2831]
 assign %s0 = %t0 [2831]
 assign %s0 = %s0 [2832]
 assign %s1 = %s0 [2832]
-store $globals.<[exec]Exec\.Dels/<>O::<0>__Twice> := %s1 [2833]
+store $\[exec]Exec\.Dels/<>O.<0>__Twice := %s1 [2833]
 goto 2
 end block_1
 begin block_2:
@@ -5390,13 +5390,13 @@ define [exec]Exec.Dels::Lambda(System.Int32)->System.Int32(@p0[shared_fields]) -
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2858]
-assign %s0 = $globals.<[exec]Exec\.Dels/<>c::<>9__4_0> [2859]
+assign %s0 = $\[exec]Exec\.Dels/<>c.<>9__4_0 [2859]
 assign %s0 = %s0 [2860]
 assign %s1 = %s0 [2860]
 goto 2, 1
 end block_0
 begin block_1:
-assign %s0 = $globals.<[exec]Exec\.Dels/<>c::<>9> [2863]
+assign %s0 = $\[exec]Exec\.Dels/<>c.<>9 [2863]
 assign %s1 = ptr<[exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32> [2864]
 assign %t0 = cil<[exec]Exec.IntFn> [2865]
 assign %t0 = %s0 [2865]
@@ -5406,7 +5406,7 @@ assign %excout = %excout, %throwval [2865]
 assign %s0 = %t0 [2865]
 assign %s0 = %s0 [2866]
 assign %s1 = %s0 [2866]
-store $globals.<[exec]Exec\.Dels/<>c::<>9__4_0> := %s1 [2867]
+store $\[exec]Exec\.Dels/<>c.<>9__4_0 := %s1 [2867]
 goto 2
 end block_1
 begin block_2:
@@ -5475,7 +5475,7 @@ assign %excout = <const: []> [2889]
 assign %s0 = cil<[exec]Exec.Dels/<>c> [2890]
 %retval, %throwval = direct-call [exec]Exec.Dels/<>c::.ctor()->System.Void(%s0) [2890]
 assign %excout = %excout, %throwval [2890]
-store $globals.<[exec]Exec\.Dels/<>c::<>9> := %s0 [2891]
+store $\[exec]Exec\.Dels/<>c.<>9 := %s0 [2891]
 return <const: []>, %excout
 end block_0
 

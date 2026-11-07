@@ -38,6 +38,8 @@ pub struct ProgramMatchIndex<'p> {
     /// costs a pass over every statement. Unlike the method table, it holds types the app never
     /// declares; see [`CallSigRow`](super::portcullis::relations::CallSigRow).
     pub(crate) dispatch: Option<DispatchUniverse<'p>>,
+    /// The program's declared globals, which `global` ranges over.
+    pub(crate) globals: &'p ctadl_ir::mir::Globals,
 }
 
 /// The distinct signature keys of a program's Java and CIL call sites, owned.
@@ -161,6 +163,7 @@ impl<'p> ProgramMatchIndex<'p> {
             vmt,
             program_functions,
             dispatch: dispatch_keys.map(DispatchUniverse::new),
+            globals: &program_info.program.globals,
         }
     }
 

@@ -4,8 +4,12 @@ Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 
-Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout; a static
-field is that field of `globals`. An array's elements are the one field `[]`. Arithmetic,
+Conventions (S19). A field is the symbolic field `<Lcls;->name:desc>`, with no layout. A class
+that owns a static field is a global named by the class, `$Lcls;`, and a static field is that
+global's field named by the field's name alone:
+`putstatic` is the store `$Lcls;.name = v`, `getstatic` the load `x = $Lcls;.name`. The owner is
+the class the constant pool names. A class referenced from several imports is one global
+(G3). An array's elements are the one field `[]`. Arithmetic,
 bitwise operations, comparisons and `instanceof` supply values only (a numeric conversion is a cast and stays a copy): each
 operand is `value(v)`. A `MethodHandle` constant that invokes a known method is a function
 reference to that method (`Context::method_handle_exp` says which kinds do), and
@@ -126,6 +130,9 @@ struct Context {
     catch_result: Option<VariableRef>,
     /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
+    /// The globals declared so far: one per class that owns a static field. Moved into the
+    /// program at [`Context::finish`].
+    globals: mir::Globals,
 }
 
 /// What lowering an `invokespecial` needs to know about the class the call appears in.
@@ -168,6 +175,7 @@ impl Context {
             call_result: None,
             catch_result: None,
             enclosing: None,
+            globals: Default::default(),
         }
     }
 
@@ -478,6 +486,7 @@ impl Context {
 
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
         for (_sig, entry) in self.ext.drain() {
             if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 if !methods
@@ -732,6 +741,16 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
+    /// The class global `$Lcls;` and field `name` of the static field `f`.
+    fn static_field(&mut self, f: &jvm_reader::flow::FieldRef) -> (VariableRef, mir::PathSegment) {
+        let class = format!("L{};", f.class_name);
+        let global = self.globals.declare(&class, None);
+        (
+            VariableRef::global(global),
+            mir::PathSegment::field(f.field_name.as_str()),
+        )
+    }
+
     fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::PathSegment {
         let class = format!("L{};", f.class_name);
         mir::PathSegment::field(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
@@ -923,10 +942,11 @@ impl Context {
             // getstatic
             0xb2 => {
                 let field = Self::field_ref_in(&data.sources).expect("getstatic field");
+                let (global, field) = self.static_field(field);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
-                    VariableRef::new_global(),
-                    Self::jvm_field_symbol(field),
+                    global,
+                    field,
                 ))]
             }
             // putstatic
@@ -941,9 +961,10 @@ impl Context {
                         .expect("putstatic value"),
                     locals,
                 );
+                let (global, field) = self.static_field(field);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::from(VariableRef::new_global()),
-                    Self::jvm_field_symbol(field),
+                    AccessPath::from(global),
+                    field,
                     value,
                 ))]
             }
