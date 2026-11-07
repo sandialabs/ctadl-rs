@@ -26,7 +26,7 @@ pub enum Error {
     #[error("bitcode error")]
     Bitcode(#[from] bitcode::Error),
     #[error("IR verify error")]
-    Verify(#[from] ctadl_ir::mir::VerifyErrors),
+    Verify(#[from] ctadl_ir::cir::VerifyErrors),
     #[error("source-info serialization error")]
     SourceInfoParquet(#[from] source_info::parquet_io::ParquetError),
 

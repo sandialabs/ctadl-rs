@@ -1,7 +1,7 @@
 //! The one path grammar: parser and printer for [`PathSegment`] sequences.
 //!
 //! A path is a sequence of [`PathSegment`]s, each a field name, a numeric offset, `deref` or
-//! `#value`; an access path ([`crate::mir::AccessPath`]) prints as its variable followed by its path. This
+//! `#value`; an access path ([`crate::cir::AccessPath`]) prints as its variable followed by its path. This
 //! module owns the *only* textual encoding of that sequence. The fact store's on-disk columns,
 //! model-generator ports, the IR's `Display` impls, and the test DSLs all go through here, so
 //! printing and parsing are exact inverses and a malformed path fails loudly instead of silently
@@ -33,7 +33,7 @@ use std::fmt;
 
 use internment::ArcIntern;
 
-use crate::mir::{Offset, PathSegment};
+use crate::cir::{Offset, PathSegment};
 
 /// The spelling of [`PathSegment::Deref`].
 pub const DEREF: &str = "deref";
@@ -130,10 +130,10 @@ pub fn parse_segments(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
     Ok(segments)
 }
 
-/// Parse a whole path and put it in normal form ([`crate::mir::path::normalize`]). This is what
+/// Parse a whole path and put it in normal form ([`crate::cir::path::normalize`]). This is what
 /// every consumer of textual paths should call: paths are compared only in normal form.
 pub fn parse_path(s: &str) -> Result<Vec<PathSegment>, PathSyntaxError> {
-    parse_segments(s).map(crate::mir::path::normalize)
+    parse_segments(s).map(crate::cir::path::normalize)
 }
 
 /// Parses the segment beginning at byte `at` (the leading `.` already consumed) and returns it

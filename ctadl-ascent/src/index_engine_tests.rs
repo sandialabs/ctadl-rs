@@ -6,9 +6,9 @@ use crate::facts::{CallTargetObject, FlowVariable, FunctionId, IdMap, InsnId, Pa
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::*;
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{CallEdges, CallObject, CallStyle};
-use ctadl_ir::mir::{AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
+use ctadl_ir::cir::builder::FunctionBuilder;
+use ctadl_ir::cir::call::{CallEdges, CallObject, CallStyle};
+use ctadl_ir::cir::{AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType};
 use std::num::NonZeroUsize;
 
 /// Lowers one C translation unit. This function and [`index_program`] are test helpers

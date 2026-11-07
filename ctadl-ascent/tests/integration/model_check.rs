@@ -13,7 +13,7 @@ use ctadl_ascent::models::ImportScope;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::project::{AnalysisProject, SubImports};
 use ctadl_ascent::query_engine::formatter::{SarifProfile, format_model_check_sarif};
-use ctadl_ir::mir::ProgramInfo;
+use ctadl_ir::cir::ProgramInfo;
 use tempfile::NamedTempFile;
 
 /// A native program with one two-parameter function per name.
@@ -23,8 +23,8 @@ fn program(names: &[&str]) -> ProgramInfo {
 
 /// [`program`], where each `(caller, callee)` pair is a direct call in the caller's body.
 fn program_with_calls(names: &[&str], calls: &[(&str, &str)]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{CallEdges, CallStyle};
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::call::{CallEdges, CallStyle};
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
 

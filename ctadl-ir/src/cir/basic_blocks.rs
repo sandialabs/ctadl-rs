@@ -4,9 +4,9 @@ use std::sync::{Arc, OnceLock};
 
 use smallvec::SmallVec;
 
+pub use crate::cir::{BasicBlockData, BasicBlockIdx};
 use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors};
 use crate::index::{idx::Idx, index_vec::IndexVec};
-pub use crate::mir::{BasicBlockData, BasicBlockIdx};
 
 /// Set of basic blocks.
 ///

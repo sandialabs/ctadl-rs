@@ -418,7 +418,7 @@ pub struct Context {
     out: Collected,
     /// The program's globals: one per class that owns a static field. Moved into the program when
     /// it is finished.
-    globals: ctadl_ir::mir::Globals,
+    globals: ctadl_ir::cir::Globals,
     /// Each class the assemblies define, as its global is named, with the assembly it is in and
     /// the file offset and size of its `TypeDef` row there: where the global is declared.
     /// Located when the program is finished, once every class has been lowered.

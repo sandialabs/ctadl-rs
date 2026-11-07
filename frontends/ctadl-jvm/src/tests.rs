@@ -1,6 +1,6 @@
 use super::import_class;
-use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::Dispatch;
+use ctadl_ir::cir::TerminatorKind;
+use ctadl_ir::cir::call::Dispatch;
 
 /// A class file for `Demo` with a `public static` method for each
 /// `(name, descriptor, bytecode)`.
@@ -187,7 +187,7 @@ fn receiverless_invokedynamic_extern_class_matches_its_signature() {
 /// The copies in the function whose name contains `name`, as `(dest, sources)` with a
 /// variable printed by name and `value(v)` for a value-only source.
 fn copies(info: &ctadl_ir::ProgramInfo, name: &str) -> Vec<(String, Vec<String>)> {
-    use ctadl_ir::{Exp, VariableRef, mir::StatementKind};
+    use ctadl_ir::{Exp, VariableRef, cir::StatementKind};
     let f = info
         .program
         .functions
@@ -326,8 +326,8 @@ fn method_handle_constant_is_a_function_reference() {
 /// handle, passing `x` (S11), so a handle constant resolves it.
 #[test]
 fn method_handle_invoke_is_an_indirect_call_through_the_handle() {
-    use ctadl_ir::mir::StatementKind;
-    use ctadl_ir::mir::call::CallStyle;
+    use ctadl_ir::cir::StatementKind;
+    use ctadl_ir::cir::call::CallStyle;
     fn utf8(s: &str) -> Vec<u8> {
         let mut out = vec![1];
         out.extend((s.len() as u16).to_be_bytes());

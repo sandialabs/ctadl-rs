@@ -149,7 +149,7 @@ order ever matters; the third is not.
    propagates into derivation order. Sorting these two makes `paths.parquet`
    byte-stable, and nothing else.
 3. Interned keys hash by address or id: `Symbol = ArcIntern<str>`
-   (`ctadl-ir/src/mir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
+   (`ctadl-ir/src/cir/mod.rs`) hashes `get_pointer()`, and `Path` hashes its
    interner id, which depends on the order paths were first interned. Every hash
    container keyed by a path or a field symbol therefore iterates in an
    order that moves per process. This is hasher-independent: ascent's relation

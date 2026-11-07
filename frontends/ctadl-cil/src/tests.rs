@@ -163,7 +163,7 @@ fn value_only_arithmetic() {
 #[test]
 fn an_emitter_declares_a_class_global_once() {
     use crate::method::Emitter;
-    use ctadl_ir::mir::{FunctionData, Globals};
+    use ctadl_ir::cir::{FunctionData, Globals};
     let mut fdat = FunctionData::default();
     let mut globals = Globals::default();
     let mut em = Emitter::with_globals(&mut fdat, &mut globals);

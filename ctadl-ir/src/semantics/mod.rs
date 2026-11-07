@@ -47,12 +47,12 @@ puts a program in it. Phi nodes are the copies of their operands.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-use crate::index::idx::Idx;
-use crate::mir::path::{self, PathClass};
-use crate::mir::{
+use crate::cir::path::{self, PathClass};
+use crate::cir::{
     AccessPath, BasicBlockIdx, CallEdges, CallObject, CallStyle, Exp, FunctionData, FunctionIdx,
     PathSegment, Program, SourceInfo, StatementKind, TerminatorKind, Variable, VariableRef,
 };
+use crate::index::idx::Idx;
 
 #[cfg(test)]
 mod tests;
@@ -201,7 +201,7 @@ pub fn evaluate_programs(programs: &[&Program], ports: &Ports, config: &Config) 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Owner {
     Instance(usize),
-    Global(crate::mir::Symbol),
+    Global(crate::cir::Symbol),
 }
 
 /// A variable of one instance.
@@ -290,7 +290,7 @@ impl<'a> Eval<'a> {
                 // The index is the program's own; the name is the identity.
                 (
                     Owner::Global(name),
-                    VariableRef::global(crate::mir::GlobalIdx::new(0)),
+                    VariableRef::global(crate::cir::GlobalIdx::new(0)),
                 )
             }
             _ => (Owner::Instance(inst), v.clone()),
@@ -623,7 +623,7 @@ impl<'a> Eval<'a> {
         let f = &self.programs[callee_program][callee];
         // `p_i = a_i`. Nothing is passed for a global (G5).
         for (idx, arg) in args.iter().enumerate().take(f.num_parameters()) {
-            let formal = VariableRef::new_parameter(crate::mir::ParameterIdx::new(idx));
+            let formal = VariableRef::new_parameter(crate::cir::ParameterIdx::new(idx));
             self.assign_exp(&self.var(child, &formal), &[], inst, arg);
         }
         // `r_j = ret_j`, for every return.

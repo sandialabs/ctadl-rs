@@ -3,7 +3,7 @@
 # Introduction
 
 Codegen is the process of generating Datalog code from CTADL IR. CTADL IR, the input, is expressed
-as a [`ctadl_ir::mir::ProgramInfo`]; [`crate::index_engine::IndexFacts`] is the output type. This
+as a [`ctadl_ir::cir::ProgramInfo`]; [`crate::index_engine::IndexFacts`] is the output type. This
 phase provides a hook in [`crate::models::codegen`] to run arbitrary code that generates models for
 indexing.
 
@@ -40,12 +40,12 @@ use smallvec::SmallVec;
 use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
-use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     call::{Dispatch, JavaDispatch, VirtualMethodTable},
     visit::Visitor,
     *,
 };
+use ctadl_ir::index::idx::Idx;
 
 #[cfg(test)]
 mod tests;
@@ -477,7 +477,7 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
-    /// The program's globals, by [`ctadl_ir::mir::GlobalIdx`].
+    /// The program's globals, by [`ctadl_ir::cir::GlobalIdx`].
     globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
@@ -1001,7 +1001,7 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     // `dest = value(p)` lowers to `dest.#value <- p`; `dest` itself gets
                     // nothing. `p.#value` comes along since `#value` absorbs itself
-                    // (`ctadl_ir::mir::PathSegment::Value`).
+                    // (`ctadl_ir::cir::PathSegment::Value`).
                     if let Exp::Value(ap) = src {
                         let value = dest
                             .1

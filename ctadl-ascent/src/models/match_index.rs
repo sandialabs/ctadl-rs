@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use hashbrown::hash_map::HashMap;
 
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::FunctionData;
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::cir::FunctionData;
+use ctadl_ir::cir::call::VirtualMethodTable;
 
 use super::spec::ImportScope;
 
@@ -39,7 +39,7 @@ pub struct ProgramMatchIndex<'p> {
     /// declares; see [`CallSigRow`](super::portcullis::relations::CallSigRow).
     pub(crate) dispatch: Option<DispatchUniverse<'p>>,
     /// The program's declared globals, which `global` ranges over.
-    pub(crate) globals: &'p ctadl_ir::mir::Globals,
+    pub(crate) globals: &'p ctadl_ir::cir::Globals,
 }
 
 /// The distinct signature keys of a program's Java and CIL call sites, owned.
@@ -61,9 +61,9 @@ impl DispatchKeys {
     /// Collects every distinct `(cls, simple_name, descriptor)` a `JavaCall` or a `CilCall` in
     /// `program` names. Sorted, so the matching that reads it does not depend on statement
     /// order.
-    pub fn from_program(program: &ctadl_ir::mir::Program) -> Self {
-        use ctadl_ir::mir::StatementKind;
-        use ctadl_ir::mir::call::CallStyle;
+    pub fn from_program(program: &ctadl_ir::cir::Program) -> Self {
+        use ctadl_ir::cir::StatementKind;
+        use ctadl_ir::cir::call::CallStyle;
         // Key -> the separator its method id puts between class and name.
         let mut keys: BTreeMap<(String, String, String), &'static str> = BTreeMap::new();
         for func in program.functions.iter() {

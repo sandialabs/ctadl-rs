@@ -18,7 +18,7 @@
 //!   those of the path before the trailing offset.
 //! - [`PathClass::Location`]: everything else. A cell carrying labels.
 
-use crate::mir::{Offset, PathSegment};
+use crate::cir::{Offset, PathSegment};
 
 /// What a normal-form path denotes (S3).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

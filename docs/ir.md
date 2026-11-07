@@ -19,7 +19,7 @@ Three implementations follow this document:
   used as an oracle on small programs.
 - The index (`ctadl-index`) and the query (`ctadl-ascent/src/query_engine`), the engines, which
   compute the same labeling compositionally and at scale, deviating only as the register says.
-- `ctadl_ir::mir::path`, the one implementation of the path equations.
+- `ctadl_ir::cir::path`, the one implementation of the path equations.
 
 ## Syntax
 
@@ -37,7 +37,7 @@ Three implementations follow this document:
 `deref` and `#value` are segment kinds, not field names. A field literally named `deref` or
 `#value` is written with its first character escaped, `.\deref`, `.\#value`; a field whose name
 contains `.`, or begins with `[`, escapes those characters (`.a\.b`, `.\[3]`). Offsets are
-decimal. `ctadl_ir::mir::path_syntax` is the grammar's one printer and parser, used by IR dumps,
+decimal. `ctadl_ir::cir::path_syntax` is the grammar's one printer and parser, used by IR dumps,
 the fact store, model ports and flowy alike.
 
 Offsets are always constants; there is no `[*]` and no variable offset. Fields are symbolic
@@ -102,7 +102,7 @@ the last result of every call and the last value of every return.
 
 ### Well-formedness
 
-`MirVerify` is the executable definition of a well-formed program. It rejects, among the
+`CirVerify` is the executable definition of a well-formed program. It rejects, among the
 structural errors: a path not in normal form; `value(..)` anywhere but as an assignment's
 source; a void path as an operand; an address as an assignment's destination (see below); a
 global the program does not declare; a versioned global; a copy into a global, a call result
@@ -291,8 +291,8 @@ documentation:
 
 ## Testing the definition
 
-- `ctadl-ir/src/mir/path.rs`: property tests of the equations and the classification.
-- `ctadl-ir/src/mir/tests.rs`: one test per verifier check.
+- `ctadl-ir/src/cir/path.rs`: property tests of the equations and the classification.
+- `ctadl-ir/src/cir/tests.rs`: one test per verifier check.
 - `frontends/ctadl-flowy/tests/semantics/*.flowy`: one program per rule, run on the reference
   implementation, each pinning its observable in an `// expect:` block.
 - `ctadl-ascent/tests/integration/reference_parity.rs`: the engines against the reference on the

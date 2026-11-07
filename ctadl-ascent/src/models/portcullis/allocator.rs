@@ -36,8 +36,8 @@ Every by-shape pick is reported as CTADL0109 (see `cli::index`).
 
 use hashbrown::{HashMap, HashSet};
 
-use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{AccessPath, Exp, FunctionData, PathSegment, StatementKind, Variable};
+use ctadl_ir::cir::call::{CallEdges, CallStyle};
+use ctadl_ir::cir::{AccessPath, Exp, FunctionData, PathSegment, StatementKind, Variable};
 
 use crate::facts::Str;
 

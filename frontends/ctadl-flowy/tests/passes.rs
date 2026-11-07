@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use common::{corpus, expected_error, rendered, tnt_programs};
-use ctadl_ir::mir::Program;
+use ctadl_ir::cir::Program;
 use ctadl_ir::semantics::{Config, Ports, evaluate_programs, ssa_form};
 use ctadl_ir::ssa::{self, EscapePolicy, Mem2Reg, Pipeline};
 

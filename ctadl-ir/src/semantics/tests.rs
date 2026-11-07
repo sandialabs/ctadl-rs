@@ -4,7 +4,7 @@
 use thin_vec::thin_vec;
 
 use super::*;
-use crate::mir::{
+use crate::cir::{
     AccessPath, BasicBlockData, ParameterIdx, ParameterType, ReturnType, Statement, Terminator,
 };
 

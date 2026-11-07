@@ -7,7 +7,7 @@ Nothing in this module knows what a `ProgramMatchIndex` is.
 
 use std::fmt;
 
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 
 use crate::models::FormalIndexTypeTag;
 

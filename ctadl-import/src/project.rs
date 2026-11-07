@@ -81,7 +81,7 @@ fn absolutize(path: &Path) -> PathBuf {
 /// into something wrong). History:
 ///
 /// - `1`: original format.
-/// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
+/// - `2`: CIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
 /// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
 ///   the `qualified-id` model constraint), changing the `bitcode` wire format of
@@ -158,7 +158,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
 ///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
 ///   to `Offset(3)`.
-/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::mir::path_syntax`),
+/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::cir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
 /// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
@@ -175,7 +175,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 /// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
 ///   which loading an index result now requires.
 /// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
-///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::mir::path`, with
+///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::cir::path`, with
 ///   `deref` and `#value` segments distinct from fields.
 /// - `8`: globals are variables (`docs/ir.md`, G1). `summary.parquet`'s roots are two columns each,
 ///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
@@ -1151,7 +1151,7 @@ impl ArtifactLanguage {
     ];
 
     /// The lowercase spelling a model generator's `in` block uses. Distinct from the
-    /// [`ctadl_ir::mir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
+    /// [`ctadl_ir::cir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
     /// from `apk` from `jar`, and `in` must.
     pub fn name(self) -> &'static str {
         match self {

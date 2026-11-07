@@ -1,6 +1,6 @@
 //! Stage 2 of source/sink matching: map name-based matched elements → `QueryEndpoint`s.
 //!
-//! Stage 1 (the Portcullis engine, [`crate::models::PortcullisMatcher`]) matches MIR elements —
+//! Stage 1 (the Portcullis engine, [`crate::models::PortcullisMatcher`]) matches CIR elements —
 //! function names, signatures, arity, regexes — and emits name-based
 //! [`EndpointMatch`](crate::models::EndpointMatch) rows. Stage 2, here, consumes those rows
 //! together with the index facts and resolves them into concrete
@@ -301,7 +301,7 @@ pub fn build_query_endpoints(
     }
 }
 
-/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::mir::PathSegment::Value).
+/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::cir::PathSegment::Value).
 fn strip_value(p: facts::Path) -> facts::Path {
     let segments: Vec<_> = p.iter().cloned().collect();
     match segments.split_last() {

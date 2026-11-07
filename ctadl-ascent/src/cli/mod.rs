@@ -123,7 +123,7 @@ const MERGED_METHOD_CALL_EDGES: usize = 300;
 /// a function `LC;->m(..)` beside a clone `LC$r8id<k>;->m(..)`, with a body of at least
 /// [`LARGE_MERGED_METHOD`] statements. Such a method is the union of every lambda merged into
 /// the class.
-fn large_live_merged_methods(program: &ctadl_ir::mir::Program) -> Vec<String> {
+fn large_live_merged_methods(program: &ctadl_ir::cir::Program) -> Vec<String> {
     let size: HashMap<&str, usize> = program
         .functions
         .iter()
@@ -687,7 +687,7 @@ pub fn index(
     let totals = codegen_report.totals();
     if totals.java_sites > 0 {
         log::info!("calls: {totals}");
-        for kind in ctadl_ir::mir::call::JavaDispatch::ALL {
+        for kind in ctadl_ir::cir::call::JavaDispatch::ALL {
             let b = &codegen_report.buckets[kind.index()];
             if b.java_sites == 0 {
                 log::info!("  {kind}: 0 sites");
@@ -1724,7 +1724,7 @@ fn load_and_map_summaries(
 
 /// Pretty-print the imported IR. With `filter`, only functions whose name contains that
 /// substring are printed; otherwise every function is printed. Uses the `Display` impls in
-/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes -- except that
+/// `ctadl_ir::cir`, so the output matches the in-memory AST the analysis consumes -- except that
 /// locals are resolved to their source names through each function's `Locals` table
 /// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
 pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
@@ -1770,7 +1770,7 @@ fn dump_one(
                 println!("// ---- {name} ----");
             }
             matched += 1;
-            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+            println!("{}", ctadl_ir::cir::WithLocalNames(func));
         }
     }
     matched
@@ -2374,7 +2374,7 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;
         // Resolve locals through each function's table: a dump full of `%L7` is unreadable,
         // since the name lives in `FunctionData::locals` rather than in the variable itself.
-        println!("{}", ctadl_ir::mir::WithLocalNames(&program));
+        println!("{}", ctadl_ir::cir::WithLocalNames(&program));
     } else if filename == crate::project::VMT_BITCODE_FILE {
         let vmt: ctadl_ir::call::VirtualMethodTable =
             bitcode::deserialize(&data).err_context(|| decode_failed("vmt"))?;

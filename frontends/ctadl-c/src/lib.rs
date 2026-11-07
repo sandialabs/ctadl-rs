@@ -87,9 +87,9 @@ use hashbrown::hash_set::HashSet;
 use ctadl_import::error::Error;
 
 use ctadl_ir::ThinVec;
+use ctadl_ir::cir::call::VirtualMethodTable;
+use ctadl_ir::cir::*;
 use ctadl_ir::index::index_vec::IndexVec;
-use ctadl_ir::mir::call::VirtualMethodTable;
-use ctadl_ir::mir::*;
 
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
@@ -286,7 +286,7 @@ const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
 /// `return;` in a non-`void` function).
 ///
 /// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
-/// arity ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the synthesized return
+/// arity ([`ctadl_ir::cir::VerifyError::InconsistentReturns`]), so the synthesized return
 /// reads a local that is never assigned: C says the value is indeterminate, and an unwritten
 /// local carries no taint, so no flow is invented.
 fn implicit_return(program: &mut Program, fidx: FunctionIdx) -> Terminator {
@@ -5271,7 +5271,7 @@ impl<'a> Context<'a> {
         Ok(self.dead_temp_path(program, scope_view))
     }
 
-    /// Reads the memory part of `ap` into a temporary with [`ctadl_ir::mir::read_into_temp`],
+    /// Reads the memory part of `ap` into a temporary with [`ctadl_ir::cir::read_into_temp`],
     /// appending the copy to the current block, and returns the temporary plus `ap`'s trailing
     /// offsets.
     fn emit_loads(
@@ -5283,7 +5283,7 @@ impl<'a> Context<'a> {
         let mut stmts = Vec::new();
         let allocator = &mut self.allocator;
         let locals = &mut program[scope_view.fidx].locals;
-        let v = ctadl_ir::mir::read_into_temp(ap, &mut stmts, || {
+        let v = ctadl_ir::cir::read_into_temp(ap, &mut stmts, || {
             VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp()))
         });
         for mut s in stmts {

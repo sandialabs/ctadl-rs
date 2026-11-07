@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use ctadl_flowy::FlowyProgram;
-use ctadl_ir::mir::Program;
+use ctadl_ir::cir::Program;
 use ctadl_ir::semantics::{Config, Observer, Outcome, Ports, Seed, evaluate, evaluate_programs};
 
 /// The corpus files, sorted.

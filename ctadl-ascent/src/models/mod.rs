@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::TaintDirection;
-use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
+use ctadl_ir::cir::call::{Dispatch, VirtualMethodTable};
 
 pub mod codegen;
 pub mod json_schema;

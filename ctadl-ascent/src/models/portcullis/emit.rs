@@ -28,7 +28,7 @@ files, each contribute their rows, deliberately: see [`ProgramModelMatches`]'s `
 
 use std::collections::BTreeSet;
 
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use hashbrown::{HashMap, HashSet};
 
 use crate::facts::TaintDirection;

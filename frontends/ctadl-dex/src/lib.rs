@@ -31,7 +31,7 @@ use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::notifications::Notifications;
-use ctadl_ir::mir::call::{
+use ctadl_ir::cir::call::{
     CallObject, Dispatch, FunctionNames, JavaClass, JavaDispatch, JavaMethod, JavaSignature,
     JavaSimpleName, VirtualMethodTable,
 };
@@ -179,7 +179,7 @@ struct Context {
     clone_statements: usize,
     /// The globals declared so far: one per class that owns a static field. Moved into the
     /// program at [`Context::finish`].
-    globals: ctadl_ir::mir::Globals,
+    globals: ctadl_ir::cir::Globals,
     /// Each class this import defines, as its global is named, with the dex file it is in and
     /// the offset of its `class_def_item` there: where the global is declared. Located
     /// in [`Context::finish`], once every class has been lowered.
@@ -198,7 +198,7 @@ struct EnclosingClass {
 impl Context {
     /// The class global `$Lcls;` and field `name` of the static field `pretty` names
     /// (`Lcls;->name:type`).
-    fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::mir::PathSegment) {
+    fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::cir::PathSegment) {
         let (class, rest) = pretty
             .split_once("->")
             .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
@@ -206,7 +206,7 @@ impl Context {
         let global = self.globals.declare(class, None);
         (
             VariableRef::global(global),
-            ctadl_ir::mir::PathSegment::field(name),
+            ctadl_ir::cir::PathSegment::field(name),
         )
     }
 
@@ -478,7 +478,7 @@ impl Context {
         // Compute successors for each basic block using dex-reader.
         let block_successors_vec = block_successors(code, &items);
 
-        // Ensure MIR has a block for each Dex basic block.
+        // Ensure CIR has a block for each Dex basic block.
         for _ in &bb_vec {
             fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
         }
@@ -492,7 +492,7 @@ impl Context {
         // All Java functions return 2 values: (normal_return, exception_return)
         fdat.return_type = ReturnType { arity: 2 };
 
-        // Populate each MIR block.
+        // Populate each CIR block.
         for (i, bb) in bb_vec.iter().enumerate() {
             let block_idx = BasicBlockIdx::new(i);
             let range = &items[bb.start..bb.end];
@@ -815,7 +815,7 @@ impl Context {
         if matches!(
             inst,
             Instruction::InvokePolymorphic(_) | Instruction::InvokePolymorphicRange(_)
-        ) && ctadl_ir::mir::call::is_method_handle_invoke(&cls, &simple_name)
+        ) && ctadl_ir::cir::call::is_method_handle_invoke(&cls, &simple_name)
         {
             let callee = args[0].access_path()?.clone();
             let style = CallStyle::FuncPtrCall {
@@ -1009,7 +1009,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::load(
                     dest,
                     source,
-                    ctadl_ir::mir::PathSegment::field("length"),
+                    ctadl_ir::cir::PathSegment::field("length"),
                 )));
                 return Ok(stmts);
             }
@@ -1083,7 +1083,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(object),
-                    ctadl_ir::mir::PathSegment::field(name),
+                    ctadl_ir::cir::PathSegment::field(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -1106,7 +1106,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::mir::PathSegment::field(name.clone()),
+                        ctadl_ir::cir::PathSegment::field(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -1124,7 +1124,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
                         array_var.clone(),
-                        ctadl_ir::mir::PathSegment::field("[]"),
+                        ctadl_ir::cir::PathSegment::field("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -1149,7 +1149,7 @@ impl Context {
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(array_var),
-                    ctadl_ir::mir::PathSegment::field("[]"),
+                    ctadl_ir::cir::PathSegment::field("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

@@ -15,7 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::{Idx, mir, mir::Offset};
+use ctadl_ir::{Idx, cir, cir::Offset};
 
 pub mod parquet;
 mod query_endpoint;
@@ -122,7 +122,7 @@ lazy_static::lazy_static! {
 /// them.
 #[derive(Clone, Debug)]
 pub struct PathNode {
-    head: mir::PathSegment,
+    head: cir::PathSegment,
     tail: Option<PathId>,
     /// The suffix hash `mix(head, tail's hash)`, so the hash of `segments · rest` folds from
     /// `rest`'s without walking it.
@@ -155,7 +155,7 @@ const EMPTY_PATH_HASH: u32 = 0;
 
 /// The suffix hash of `head · tail`, given `tail`'s.
 #[inline]
-pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
+pub(crate) fn suffix_hash(head: &cir::PathSegment, tail_hash: u32) -> u32 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     head.hash(&mut h);
@@ -167,7 +167,7 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 
 /// A path: a sequence of field/array accesses, with no variable.
 ///
-/// A path is the segment part of an access path (see [`mir::AccessPath`]); [`FlowVertex`] pairs
+/// A path is the segment part of an access path (see [`cir::AccessPath`]); [`FlowVertex`] pairs
 /// one with a variable. It is represented as a stack of accesses, innermost first. So the path of
 /// the access path x.foo.bar.baz, `.foo.bar.baz`, is represented as
 /// `cons(.foo, cons(.bar, cons(.baz)))`. Each cons cell is a
@@ -180,7 +180,7 @@ pub(crate) fn suffix_hash(head: &mir::PathSegment, tail_hash: u32) -> u32 {
 /// runs: sort with [`Path::content_cmp`] wherever the order is printed. serde, `Display` and
 /// [`Path::parse`] go through the content.
 ///
-/// A `Path` is always in the normal form of [`mir::path`]: contiguous runs of offset accesses are
+/// A `Path` is always in the normal form of [`cir::path`]: contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row, and `#value` absorbs itself and
 /// adjacent offsets. In effect, the offsets are "addresses of" the containing field.
 ///
@@ -232,7 +232,7 @@ impl Path {
     /// `head · tail`, which the caller has normalized: `head` and `tail`'s head are not both
     /// offsets, and `head` is not a zero offset.
     #[inline]
-    fn cons(head: mir::PathSegment, tail: Path) -> Path {
+    fn cons(head: cir::PathSegment, tail: Path) -> Path {
         let hash = suffix_hash(&head, tail.suffix_hash());
         Path::from_id(Some(PathId::intern(&PathNode {
             head,
@@ -254,16 +254,16 @@ impl Path {
 
     /// The first segment and the rest, in one arena read. `None` for the empty path.
     #[inline]
-    pub(crate) fn uncons(self) -> Option<(&'static mir::PathSegment, Path)> {
+    pub(crate) fn uncons(self) -> Option<(&'static cir::PathSegment, Path)> {
         self.node().map(|n| (&n.head, Path::from_id(n.tail)))
     }
 
     /// Creates a path from a sequence of accesses
-    /// The segments are put in normal form ([`mir::path::normalize`]), so every `Path` is normal.
-    pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
-        let items = mir::path::normalize(iter.into_iter().inspect(|item| {
+    /// The segments are put in normal form ([`cir::path::normalize`]), so every `Path` is normal.
+    pub fn from_accesses(iter: impl IntoIterator<Item = cir::PathSegment>) -> Self {
+        let items = cir::path::normalize(iter.into_iter().inspect(|item| {
             debug_assert!(
-                !matches!(item, mir::PathSegment::Field(s) if s.is_empty()),
+                !matches!(item, cir::PathSegment::Field(s) if s.is_empty()),
                 "Field(\"\") is not a representable path segment"
             );
         }));
@@ -331,7 +331,7 @@ impl Path {
     }
 
     /// Creates a path from a sequence of *field names*, every one of which becomes a
-    /// [`mir::PathSegment::Field`].
+    /// [`cir::PathSegment::Field`].
     ///
     /// This is deliberately named rather than a `FromIterator<S: AsRef<str>>` impl: an iterator
     /// of strings is exactly as plausible a spelling for "parse these as path segments",
@@ -340,25 +340,25 @@ impl Path {
     pub fn from_symbol_names(iter: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         Self::from_accesses(
             iter.into_iter()
-                .map(|name| mir::PathSegment::Field(ArcIntern::from(name.as_ref()))),
+                .map(|name| cir::PathSegment::Field(ArcIntern::from(name.as_ref()))),
         )
     }
 
-    /// Parses a path in the canonical grammar ([`mir::path_syntax`]).
+    /// Parses a path in the canonical grammar ([`cir::path_syntax`]).
     ///
     /// Not injective, and deliberately so: parsing normalizes through [`Path::from_accesses`],
     /// which sums adjacent offset runs and drops `Offset(0)`. So `".[1].[2]"` and `".[3]"` both
     /// yield `Offset(3)`, and `".x.[0]"` yields just `.x`. That is a *semantic* property of this
-    /// type (see the type docs), not a parsing one -- [`mir::parse_segments`] gives the segments
+    /// type (see the type docs), not a parsing one -- [`cir::parse_segments`] gives the segments
     /// exactly as written if you need them.
-    pub fn parse(s: &str) -> Result<Self, mir::PathSyntaxError> {
-        mir::parse_segments(s).map(Self::from_accesses)
+    pub fn parse(s: &str) -> Result<Self, cir::PathSyntaxError> {
+        cir::parse_segments(s).map(Self::from_accesses)
     }
 
     /// Returns the canonical string representation, e.g. `.foo.bar`, `.foo.[8]`, `.\[_elem_]`.
     /// The exact inverse of [`Path::parse`], modulo that parse's documented normalization.
     pub fn to_dot_string(&self) -> String {
-        mir::path_to_string(self.iter())
+        cir::path_to_string(self.iter())
     }
 
     /// Iterates from the innermost access out
@@ -391,7 +391,7 @@ impl Path {
     }
 
     /// True iff `self` starts with `port` structurally: `self` is `port` followed
-    /// by zero or more additional [`PathSegment`](mir::PathSegment) components,
+    /// by zero or more additional [`PathSegment`](cir::PathSegment) components,
     /// compared component-wise (innermost-first) with **no** offset arithmetic
     /// (unlike [`match_prefix`], whose last component merges offsets). An empty
     /// `port` matches every path.
@@ -418,7 +418,7 @@ impl Path {
     ///
     /// `rest` is a tail of this path, so it shares its storage; each `key` is interned anew.
     pub fn prefix_keys(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::with_capacity(comps.len() + 1);
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
@@ -438,14 +438,14 @@ impl Path {
     /// [`Path::prefix_keys`], so a wild match excludes it. A `#value` component splits the same
     /// way, `rest` beginning with `#value`, and matches every `key.[m]`.
     pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         let mut out = Vec::new();
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
         for k in 0..comps.len() {
             if matches!(
                 comps[k],
-                mir::PathSegment::Offset(_) | mir::PathSegment::Value
+                cir::PathSegment::Offset(_) | cir::PathSegment::Value
             ) {
                 let key = Path::from_accesses(comps[..k].iter().cloned());
                 out.push((key, rest));
@@ -462,8 +462,8 @@ impl Path {
     #[inline]
     pub fn wild_rest(&self, m: i64) -> Option<(i64, Path)> {
         match self.head()? {
-            mir::PathSegment::Offset(Offset(n)) if *n != m => Some((n - m, self.tail())),
-            mir::PathSegment::Value => Some((0, *self)),
+            cir::PathSegment::Offset(Offset(n)) if *n != m => Some((n - m, self.tail())),
+            cir::PathSegment::Value => Some((0, *self)),
             _ => None,
         }
     }
@@ -471,9 +471,9 @@ impl Path {
     /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
     /// path and for a path whose last component is a symbol.
     pub fn split_trailing_offset(&self) -> Option<(Path, i64)> {
-        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
         match comps.last() {
-            Some(mir::PathSegment::Offset(mir::Offset(m))) => {
+            Some(cir::PathSegment::Offset(cir::Offset(m))) => {
                 let m = *m;
                 let key = Path::from_accesses(comps[..comps.len() - 1].iter().cloned());
                 Some((key, m))
@@ -492,7 +492,7 @@ impl Path {
 
     /// The first component. `None` for the empty path.
     #[inline]
-    pub fn head(&self) -> Option<&'static mir::PathSegment> {
+    pub fn head(&self) -> Option<&'static cir::PathSegment> {
         self.node().map(|n| &n.head)
     }
 
@@ -500,7 +500,7 @@ impl Path {
     #[inline]
     pub fn head_offset(&self) -> Option<i64> {
         match self.head() {
-            Some(mir::PathSegment::Offset(mir::Offset(n))) => Some(*n),
+            Some(cir::PathSegment::Offset(cir::Offset(n))) => Some(*n),
             _ => None,
         }
     }
@@ -514,7 +514,7 @@ impl Path {
     /// This path with its first component replaced by `head`, which the caller has normalized
     /// against the tail as [`Path::cons`] requires. Not for the empty path.
     #[inline]
-    fn with_head(&self, head: mir::PathSegment) -> Path {
+    fn with_head(&self, head: cir::PathSegment) -> Path {
         debug_assert!(!self.is_empty());
         Path::cons(head, self.tail())
     }
@@ -525,7 +525,7 @@ impl Path {
 pub struct PathIter(Path);
 
 impl Iterator for PathIter {
-    type Item = &'static mir::PathSegment;
+    type Item = &'static cir::PathSegment;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -570,7 +570,7 @@ impl<'de> Deserialize<'de> for Path {
                 enum NodeData {
                     Nil,
                     Name(String),
-                    Cons { head: mir::PathSegment, tail: Node },
+                    Cons { head: cir::PathSegment, tail: Node },
                 }
                 Ok(Node(match NodeData::deserialize(deserializer)? {
                     NodeData::Nil => Path::EMPTY,
@@ -620,13 +620,13 @@ impl Heap {
 impl Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = String::new();
-        mir::write_path(&mut out, self.iter());
+        cir::write_path(&mut out, self.iter());
         f.write_str(&out)
     }
 }
 
 impl FromStr for Path {
-    type Err = mir::PathSyntaxError;
+    type Err = cir::PathSyntaxError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
@@ -739,9 +739,9 @@ impl Display for FormalIndex {
     }
 }
 
-impl TryFrom<mir::ParameterIdx> for FormalIndex {
+impl TryFrom<cir::ParameterIdx> for FormalIndex {
     type Error = Error;
-    fn try_from(p: mir::ParameterIdx) -> Result<FormalIndex, Self::Error> {
+    fn try_from(p: cir::ParameterIdx) -> Result<FormalIndex, Self::Error> {
         match p.index().try_into() {
             Ok(i) => Ok(FormalIndex(i)),
             Err(_e) => Err(Error::FactsConvert(
@@ -1434,10 +1434,10 @@ impl Display for FlowVariable {
     }
 }
 
-impl TryFrom<mir::ParameterIdx> for FlowVariable {
+impl TryFrom<cir::ParameterIdx> for FlowVariable {
     type Error = TryFromVariableError;
     #[inline]
-    fn try_from(idx: mir::ParameterIdx) -> Result<FlowVariable, Self::Error> {
+    fn try_from(idx: cir::ParameterIdx) -> Result<FlowVariable, Self::Error> {
         match idx.try_into() {
             Ok(i) => Ok(FlowVariableKind::Formal(i).into()),
             Err(_) => Err(TryFromVariableError::Param),
@@ -1453,28 +1453,28 @@ pub enum TryFromVariableError {
     Param,
 }
 
-impl TryFrom<&mir::Variable> for FlowVariable {
+impl TryFrom<&cir::Variable> for FlowVariable {
     type Error = TryFromVariableError;
     #[inline]
-    fn try_from(v: &mir::Variable) -> Result<FlowVariable, Self::Error> {
+    fn try_from(v: &cir::Variable) -> Result<FlowVariable, Self::Error> {
         match v {
-            mir::Variable::Local(_) => {
+            cir::Variable::Local(_) => {
                 let name = format!("{v}");
                 Ok(FlowVariableKind::Local(Str::from(name)).into())
             }
-            mir::Variable::Param(idx) => (*idx).try_into(),
-            mir::Variable::Global(_) => Err(TryFromVariableError::Global),
+            cir::Variable::Param(idx) => (*idx).try_into(),
+            cir::Variable::Global(_) => Err(TryFromVariableError::Global),
         }
     }
 }
 
-impl TryFrom<&mir::VariableRef> for FlowVariable {
+impl TryFrom<&cir::VariableRef> for FlowVariable {
     type Error = TryFromVariableError;
     /// If the variable has no version, tries to convert from a variable. Otherwise, *formats* the
     /// variable and returns a local. Every version var, in other words, becomes a local.
     #[inline]
-    fn try_from(v: &mir::VariableRef) -> Result<FlowVariable, Self::Error> {
-        let mir::VariableRef { variable, version } = v;
+    fn try_from(v: &cir::VariableRef) -> Result<FlowVariable, Self::Error> {
+        let cir::VariableRef { variable, version } = v;
         match version {
             None => variable.try_into(),
             Some(version) => {
@@ -1485,7 +1485,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
     }
 }
 
-/// An access path: a variable and its path. The fact-level form of [`mir::AccessPath`].
+/// An access path: a variable and its path. The fact-level form of [`cir::AccessPath`].
 ///
 /// The third field is padding: it makes the 4-byte [`Path`] fill the vertex's 16 bytes, so the
 /// LSM provider, which stores and compares a value's raw bytes, never reads an uninitialized one.
@@ -1600,12 +1600,12 @@ pub enum CallTargetObjectKind {
     FunctionId(FunctionId),
     Symbol(Symbol),
     /// A Lua class-table symbol (`lua$class$Account`), the projection of
-    /// [`ctadl_ir::mir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
+    /// [`ctadl_ir::cir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
     /// import and a JVM import sharing one fact base cannot collide in the
     /// `callee_resolvents` key space.
     LuaClass(Symbol),
     /// A .NET class (`[Asm]Ns.Type`), the projection of
-    /// [`ctadl_ir::mir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
+    /// [`ctadl_ir::cir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
     /// reason `LuaClass` is: a Xamarin app is Dex and CIL in one fact base.
     CilClass(Symbol),
 }
@@ -1880,10 +1880,10 @@ pub enum FormalType {
     Shared,
 }
 
-impl From<mir::ParameterType> for FormalType {
+impl From<cir::ParameterType> for FormalType {
     #[inline]
-    fn from(ty: mir::ParameterType) -> Self {
-        use mir::ParameterType::*;
+    fn from(ty: cir::ParameterType) -> Self {
+        use cir::ParameterType::*;
         match ty {
             Copied => FormalType::Copied,
             Shared => FormalType::Shared,
@@ -1922,7 +1922,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
 /// without rebuilding and re-interning `suffix`.
 ///
 /// Every `Path` in the system is built through [`Path::from_accesses`], which collapses runs of
-/// adjacent [`mir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
+/// adjacent [`cir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
 /// by [`match_prefix`] (a tail of an interned path, possibly with an offset-adjusted head) ever
 /// contains internal adjacent offsets. The *only* place `from_accesses` could merge is therefore
 /// the `new_prefix`/`suffix` junction — which this handles explicitly — so the result is
@@ -1930,13 +1930,13 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
 /// O(|new_prefix| + |suffix|) (and zero when `new_prefix` is empty, the common copy/load case).
 #[inline]
 fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
-    use mir::{Offset, PathSegment};
+    use cir::{Offset, PathSegment};
     // `new_prefix` is a short program path prefix (usually 0–2 components).
     let comps: Vec<PathSegment> = new_prefix.iter().cloned().collect();
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
-    // Junction rewriting, the equations of `ctadl_ir::mir::path` applied where the two meet.
+    // Junction rewriting, the equations of `ctadl_ir::cir::path` applied where the two meet.
     // Both sides are normal, so only the last component of `new_prefix` and the head of `suffix`
     // can combine, and at most once:
     // - two offsets sum, and a zero sum vanishes;
@@ -1973,7 +1973,7 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
 #[inline]
 pub fn match_prefix(path: &Path, prefix: &Path) -> Option<Path> {
     match_prefix_split(path, prefix).map(|(adjust, rest)| match adjust {
-        Some(adj) => Path::cons(mir::PathSegment::Offset(Offset(adj)), rest),
+        Some(adj) => Path::cons(cir::PathSegment::Offset(Offset(adj)), rest),
         None => rest,
     })
 }
@@ -1983,7 +1983,7 @@ pub fn match_prefix(path: &Path, prefix: &Path) -> Option<Path> {
 /// present only when `adjust` is `Some`. Interns nothing.
 #[inline]
 pub fn match_prefix_split(path: &Path, prefix: &Path) -> Option<(Option<i64>, Path)> {
-    use mir::PathSegment;
+    use cir::PathSegment;
     let mut path_seq = *path;
     let mut prefix_seq = *prefix;
 
@@ -2183,11 +2183,11 @@ mod tests {
         assert!(ids.functions().all(|(id, _)| id != GLOBAL_FRAME));
     }
 
-    /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `mir::path` on random
+    /// `Path`'s normalization, `prepend_onto` and `match_prefix` agree with `cir::path` on random
     /// segment lists: offset sums, `[0]`, and `#value` absorbing offsets on both sides.
     #[test]
-    fn agrees_with_mir_path() {
-        use mir::{PathSegment as S, path as mp};
+    fn agrees_with_cir_path() {
+        use cir::{PathSegment as S, path as mp};
         let mut state = 0x9e37_79b9u64;
         let mut next = move || {
             state = state
@@ -2320,8 +2320,8 @@ mod tests {
             .chain([
                 Path::from_symbol_names(["path_cmp/x", "path_cmp/y"]),
                 Path::from_accesses([
-                    mir::PathSegment::field("path_cmp/x"),
-                    mir::PathSegment::offset(3),
+                    cir::PathSegment::field("path_cmp/x"),
+                    cir::PathSegment::offset(3),
                 ]),
                 Path::EMPTY,
             ])
@@ -2380,7 +2380,7 @@ mod tests {
         // wants two accesses to may-alias (a non-constant subscript and the element it might be,
         // say) must spell them the same path -- that choice belongs to the frontend, not here.
         // Offsets, which the IR does give arithmetic meaning, are covered by the tests below.
-        use ctadl_ir::mir::PathSegment;
+        use ctadl_ir::cir::PathSegment;
         let sym = |s: &str| Path::from_accesses([PathSegment::field(s)]);
         let elem = sym("[_elem_]"); // the lua frontend's non-constant key
         let c0 = sym("[0]");
@@ -2425,7 +2425,7 @@ mod tests {
 
         // Test case: p23.substitute_prefix(p2, p1) where p23=.[1], p2='', p1=.[1] -> .[2]
         // This tests offset merging when matching empty prefix
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Create p23 = .[1]
         let p23 = Path::from_accesses([PathSegment::Offset(Offset(1))]);
@@ -2465,7 +2465,7 @@ mod tests {
     /// different path and slip past `paths()` feasibility gates the real forward chain failed.
     #[test]
     fn test_match_prefix_exact_offset_consumes_component() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
         let path = parse_path(".x.[2]");
@@ -2681,7 +2681,7 @@ mod tests {
     fn test_path_with_offsets() {
         // Test path with numeric offsets
         // Create a path manually with mixed PathSegment types
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
         let path = Path::from_accesses([
             PathSegment::Field(ArcIntern::from("foo")),
             PathSegment::Offset(Offset(42)),
@@ -2700,7 +2700,7 @@ mod tests {
     /// `Symbol("[3]")`) must come back as that symbol, not as the empty path or an offset.
     #[test]
     fn test_path_round_trip_corpus() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
         let sym = |s: &str| PathSegment::field(s);
         let off = |n: i64| PathSegment::Offset(Offset(n));
 
@@ -2736,7 +2736,7 @@ mod tests {
     /// they are pinned here rather than left to look like round-trip failures.
     #[test]
     fn test_path_parse_normalizes() {
-        use ctadl_ir::mir::{Offset, PathSegment};
+        use ctadl_ir::cir::{Offset, PathSegment};
 
         // Adjacent offsets are summed: a path holds at most one offset in a row.
         assert_eq!(
@@ -2779,7 +2779,7 @@ mod tests {
 
     #[test]
     fn test_path_parse_rejects_malformed() {
-        use ctadl_ir::mir::PathSyntaxErrorKind;
+        use ctadl_ir::cir::PathSyntaxErrorKind;
         assert_eq!(
             Path::parse("foo").unwrap_err().kind,
             PathSyntaxErrorKind::MissingLeadingDot
@@ -2850,7 +2850,7 @@ mod prefix_key_tests {
                         && let Some((adj, tail)) = rest.wild_rest(m)
                     {
                         found.push(Path::from_accesses(
-                            std::iter::once(mir::PathSegment::Offset(mir::Offset(adj)))
+                            std::iter::once(cir::PathSegment::Offset(cir::Offset(adj)))
                                 .chain(tail.iter().cloned()),
                         ));
                     }

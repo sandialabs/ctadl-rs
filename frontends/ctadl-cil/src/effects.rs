@@ -53,7 +53,7 @@ use cil_reader::flow::{
 };
 use cil_reader::model::TypeSig;
 use ctadl_ir::call::{CallObject, CilClass};
-use ctadl_ir::mir::PathSegment;
+use ctadl_ir::cir::PathSegment;
 use ctadl_ir::*;
 
 use crate::method::{Emitter, Lower, parameters};

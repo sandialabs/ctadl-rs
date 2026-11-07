@@ -8,7 +8,7 @@ once per import and dropped with it, exactly as the match index is: the engine k
 
 `fun`'s column is the IR name, the one identity a function has. Its `name`, `parent` and
 `signature` are what the import's name table
-([`VirtualMethodTable::names`](ctadl_ir::mir::call::VirtualMethodTable::names)) says, one value
+([`VirtualMethodTable::names`](ctadl_ir::cir::call::VirtualMethodTable::names)) says, one value
 each, so an attribute is a field of the row and never multiplies the solutions. The other names
 a frontend knows a function by (pcode's namespace-qualified name, say) are rows of `name_of`,
 together with the simple name: "some name of `F` is `x`" is a join a rule writes, not a
@@ -28,8 +28,8 @@ use std::ops::Range;
 
 use hashbrown::hash_map::HashMap;
 
-use ctadl_ir::mir::call::{CallEdges, CallStyle, Dispatch};
-use ctadl_ir::mir::{FunctionData, StatementKind, Variable};
+use ctadl_ir::cir::call::{CallEdges, CallStyle, Dispatch};
+use ctadl_ir::cir::{FunctionData, StatementKind, Variable};
 
 use crate::facts::Str;
 use crate::models::match_index::ProgramMatchIndex;
@@ -686,20 +686,20 @@ fn scan_bodies(
                     StatementKind::Assign { dest, sources } if needs.uses_field => {
                         let store = (!dest.is_pathless()).then_some(dest);
                         let reads = sources.iter().filter_map(|e| match e {
-                            ctadl_ir::mir::Exp::Path(ap) => Some(ap),
+                            ctadl_ir::cir::Exp::Path(ap) => Some(ap),
                             _ => None,
                         });
                         for ap in store.into_iter().chain(reads) {
                             for seg in &ap.segments {
                                 let name: &str = match seg {
-                                    ctadl_ir::mir::PathSegment::Field(name) => name,
-                                    ctadl_ir::mir::PathSegment::Value => {
-                                        ctadl_ir::mir::path_syntax::VALUE
+                                    ctadl_ir::cir::PathSegment::Field(name) => name,
+                                    ctadl_ir::cir::PathSegment::Value => {
+                                        ctadl_ir::cir::path_syntax::VALUE
                                     }
-                                    ctadl_ir::mir::PathSegment::Deref => {
-                                        ctadl_ir::mir::path_syntax::DEREF
+                                    ctadl_ir::cir::PathSegment::Deref => {
+                                        ctadl_ir::cir::path_syntax::DEREF
                                     }
-                                    ctadl_ir::mir::PathSegment::Offset(_) => continue,
+                                    ctadl_ir::cir::PathSegment::Offset(_) => continue,
                                 };
                                 fields.push((caller, Str::from(name)));
                             }

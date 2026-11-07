@@ -242,7 +242,7 @@ use hashbrown::hash_set::HashSet;
 use std::collections::BTreeMap;
 
 use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::call::{Dispatch, VirtualMethodTable};
+use ctadl_ir::cir::call::{Dispatch, VirtualMethodTable};
 
 /// The `RegisterNatives` table scan and its run attribution. [`ctadl_pcode`]'s crate docs say
 /// why the scan lives there.

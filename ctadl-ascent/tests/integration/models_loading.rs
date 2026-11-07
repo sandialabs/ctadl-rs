@@ -3,7 +3,7 @@ use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::test_vmt;
 use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
 use ctadl_ascent::models::{ProgramModelMatches, UnmatchedReason, try_load_models};
-use ctadl_ir::mir::ProgramInfo;
+use ctadl_ir::cir::ProgramInfo;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
@@ -257,7 +257,7 @@ fn test_endpoint_stats_merge_across_imports() {
 
 /// A native (binary-frontend) program with one 2-parameter function per name.
 fn native_program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
 
@@ -317,7 +317,7 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
 
 #[test]
 fn offset_port_produces_a_real_offset() {
-    use ctadl_ir::mir::{Offset, PathSegment};
+    use ctadl_ir::cir::{Offset, PathSegment};
 
     let paths = summary_paths_for("Argument(1).[8].deref", "Return");
     let expected = ctadl_ascent::facts::Path::from_accesses([
@@ -341,7 +341,7 @@ fn offset_port_produces_a_real_offset() {
 /// port can still name the synthetic array-element field the dex/jvm/lua frontends emit.
 #[test]
 fn escaped_bracketed_port_stays_a_symbol() {
-    use ctadl_ir::mir::PathSegment;
+    use ctadl_ir::cir::PathSegment;
 
     let paths = summary_paths_for(r"Argument(1).\[_elem_]", "Return");
     let expected = ctadl_ascent::facts::Path::from_accesses([PathSegment::field("[_elem_]")]);
@@ -399,7 +399,7 @@ fn accumulated_endpoint_paths(
 }
 
 fn path_of(segments: &[&str]) -> ctadl_ascent::facts::Path {
-    use ctadl_ir::mir::PathSegment;
+    use ctadl_ir::cir::PathSegment;
     ctadl_ascent::facts::Path::from_accesses(segments.iter().map(|s| PathSegment::field(*s)))
 }
 

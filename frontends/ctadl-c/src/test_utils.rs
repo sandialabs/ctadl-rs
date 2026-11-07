@@ -10,10 +10,10 @@ use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
 use ctadl_ascent::facts::Path;
+use ctadl_ir::cir::TerminatorKind;
+use ctadl_ir::cir::call::{CallEdges, CallStyle};
+use ctadl_ir::cir::{GlobalIdx, Globals, LocalIdx, Locals};
 use ctadl_ir::graph::{DirectedGraph, Successors};
-use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{GlobalIdx, Globals, LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -296,14 +296,14 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 
 // A debugging aid for inspecting parsed blocks.
 /// Parses the path tail of a DSL access-path string with the one canonical grammar
-/// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
+/// ([`ctadl_ir::cir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
 /// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
 /// behavior of silently dropping empty segments.
 #[track_caller]
 fn parse_path(s: &str) -> Vec<PathSegment> {
-    ctadl_ir::mir::parse_segments(s)
+    ctadl_ir::cir::parse_segments(s)
         .unwrap_or_else(|e| panic!("malformed access path {s:?} in test DSL: {e}"))
 }
 
@@ -331,10 +331,10 @@ fn split_variable_prefix(s: &str) -> (&str, &str) {
 }
 
 /// `$name.p` is the global `name` of `globals`, in the canonical grammar
-/// ([`ctadl_ir::mir::path_syntax::parse_global_access_path`]). A name `globals` does not declare
+/// ([`ctadl_ir::cir::path_syntax::parse_global_access_path`]). A name `globals` does not declare
 /// is a global no program has, so a check for it finds nothing.
 pub(crate) fn access_path_from_str(s: &str, locals: &Locals, globals: &Globals) -> AccessPath {
-    if let Some((name, path)) = ctadl_ir::mir::path_syntax::parse_global_access_path(s)
+    if let Some((name, path)) = ctadl_ir::cir::path_syntax::parse_global_access_path(s)
         .unwrap_or_else(|e| panic!("bad global access path {s:?}: {e}"))
     {
         let idx = globals.lookup(&name).unwrap_or(GlobalIdx::new(0xffff_ff00));
@@ -773,7 +773,7 @@ its path, so `.g.deref` is `$g.deref` (escaped like a field: `.count$one\.c.dere
 #[track_caller]
 fn global_path(field: &str) -> (fx::Root, Path) {
     let p: Path = field.parse().unwrap();
-    let Some(ctadl_ir::mir::PathSegment::Field(name)) = p.head() else {
+    let Some(ctadl_ir::cir::PathSegment::Field(name)) = p.head() else {
         panic!("a global path {field:?} starts with the global's name");
     };
     (

@@ -64,7 +64,7 @@ fn parses_ports_and_paths() {
         HeadKind::Sink { port, .. } => port.port.path.clone(),
         other => panic!("expected a sink, got {other:?}"),
     };
-    use ctadl_ir::mir::{Offset, PathSegment, Symbol};
+    use ctadl_ir::cir::{Offset, PathSegment, Symbol};
     assert_eq!(
         path_of(0),
         vec![
@@ -184,7 +184,7 @@ fn a_star_segment_is_an_error() {
 /// offset before it.
 #[test]
 fn port_paths_are_normalized() {
-    use ctadl_ir::mir::PathSegment;
+    use ctadl_ir::cir::PathSegment;
     let program = parse(
         r#"sink(F::arg(0).[0].f), sink(F::arg(0)[4][4].deref), sink(F::arg(0)[8].#value) :- fun(F);"#,
     );
@@ -1185,8 +1185,8 @@ fn a_bridge_is_one_rule_whatever_its_disjunctions() {
 }
 
 /// A native program of one-parameter functions with bodies, one per name.
-fn native_program(names: &[&str]) -> ctadl_ir::mir::ProgramInfo {
-    use ctadl_ir::mir::{
+fn native_program(names: &[&str]) -> ctadl_ir::cir::ProgramInfo {
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, ProgramInfo, Statement,
         StatementKind,
     };
@@ -1346,7 +1346,7 @@ fn a_java_array_element_segment_survives_the_round_trip() {
         HeadKind::Propagation { flow } => flow.src().port.path.clone(),
         other => panic!("expected a propagation, got {other:?}"),
     };
-    use ctadl_ir::mir::{PathSegment, Symbol};
+    use ctadl_ir::cir::{PathSegment, Symbol};
     assert_eq!(segments, vec![PathSegment::Field(Symbol::from("[]"))]);
 }
 

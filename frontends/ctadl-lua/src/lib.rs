@@ -8,7 +8,7 @@
 //! # What it does
 //!
 //! The lowering mirrors the C tree-sitter frontend (`ctadl_ascent::languages::tree_sitter_c`):
-//! walk the parse tree, build a [`Program`](ctadl_ir::mir::Program) of functions and
+//! walk the parse tree, build a [`Program`](ctadl_ir::cir::Program) of functions and
 //! basic blocks, and lower Lua assignments, calls, table constructors, field/index
 //! accesses, and control flow into IR statements.
 //!
@@ -94,9 +94,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
+use ctadl_ir::cir::call::{Dispatch, FunctionNames, VirtualMethodTable};
+use ctadl_ir::cir::*;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::call::{Dispatch, FunctionNames, VirtualMethodTable};
-use ctadl_ir::mir::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
@@ -2414,13 +2414,13 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Reads the memory part of `ap` into a temporary appended to `blk`
-    /// ([`ctadl_ir::mir::read_into_temp`]), and returns the temporary plus any trailing offsets.
+    /// ([`ctadl_ir::cir::read_into_temp`]), and returns the temporary plus any trailing offsets.
     fn emit_loads(&mut self, blk: BasicBlockIdx, ap: AccessPath) -> AccessPath {
         let mut stmts = Vec::new();
         let mut counter = self.temp_counter;
         let fidx = self.fidx;
         let locals = &mut self.program[fidx].locals;
-        let addr = ctadl_ir::mir::read_into_temp(ap, &mut stmts, || {
+        let addr = ctadl_ir::cir::read_into_temp(ap, &mut stmts, || {
             let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
             counter += 1;
             v
@@ -2591,7 +2591,7 @@ fn collect_label_names(src: &str, node: Node<'_>, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctadl_ir::mir::visit::Visitor;
+    use ctadl_ir::cir::visit::Visitor;
 
     /// Imports one in-memory file as module `m`.
     fn import_str(src: &str) -> ProgramInfo {

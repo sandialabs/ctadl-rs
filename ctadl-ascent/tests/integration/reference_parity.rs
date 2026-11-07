@@ -92,7 +92,7 @@ fn reference_observable(file: &Path) -> BTreeSet<String> {
             });
         }
     }
-    let programs: Vec<&ctadl_ir::mir::Program> =
+    let programs: Vec<&ctadl_ir::cir::Program> =
         progs.iter().map(|p| &p.program_info.program).collect();
     evaluate_programs(&programs, &ports, &Config::default())
         .observed

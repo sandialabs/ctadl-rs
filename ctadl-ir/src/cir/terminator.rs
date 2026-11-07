@@ -4,8 +4,8 @@ use std::fmt;
 
 use smallvec::SmallVec;
 
+use crate::cir::{BasicBlockIdx, Exp, SourceInfo, VariableRef};
 use crate::index::idx::Idx;
-use crate::mir::{BasicBlockIdx, Exp, SourceInfo, VariableRef};
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

@@ -7,8 +7,8 @@ use crate::facts::{FlowVariable, FlowVertex, TaintEndpoint};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexFacts, taint_index};
 use crate::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use ctadl_ir::cir::builder::FunctionBuilder;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::ssa;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
@@ -311,7 +311,7 @@ fn test_local_to_global_field() {
         .sites
         .get_function_id(fx::Function("param_to_global_field".into()))
         .unwrap();
-    let field = fx::Path::from_accesses([ctadl_ir::mir::PathSegment::field("field")]);
+    let field = fx::Path::from_accesses([ctadl_ir::cir::PathSegment::field("field")]);
     assert!(
         result.summary.contains(&(
             f_id,
@@ -554,7 +554,7 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
 //   return x;
 // }
 fn function_with_phi() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "phi_func".to_string(),
@@ -618,7 +618,7 @@ fn function_with_phi() -> FunctionData {
 //   return s;
 // }
 fn function_with_update() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "update_func".to_string(),
@@ -647,7 +647,7 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::PathSegment::field("field"),
+        ctadl_ir::cir::PathSegment::field("field"),
         Exp::variable(new_value.clone()),
     );
 
@@ -664,7 +664,7 @@ fn function_with_update() -> FunctionData {
 //   return;
 //}
 fn function_with_param_to_global_field() -> (Globals, FunctionData) {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "param_to_global_field".to_string(),
@@ -690,7 +690,7 @@ fn function_with_param_to_global_field() -> (Globals, FunctionData) {
     // This is the key assignment: g.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::PathSegment::field("field"),
+        ctadl_ir::cir::PathSegment::field("field"),
         Exp::variable(local_var.clone()),
     );
 
@@ -702,7 +702,7 @@ fn function_with_param_to_global_field() -> (Globals, FunctionData) {
 
 #[test]
 fn test_cap_algorithm() {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "cap_test".to_string(),
@@ -758,7 +758,7 @@ fn test_cap_algorithm() {
 /// that stopped seeing `new` would otherwise make RTA look brilliant instead of broken.
 #[test]
 fn rta_keeps_only_allocated_implementers() {
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     };
 
@@ -876,7 +876,7 @@ fn rta_keeps_only_allocated_implementers() {
 mod ladder {
     use super::*;
     use crate::models::{DispatchModel, Disposition, ProgramModelMatches};
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 
@@ -1370,7 +1370,7 @@ mod ladder {
 
 mod super_resolution {
     use super::*;
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 

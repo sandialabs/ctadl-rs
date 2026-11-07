@@ -16,8 +16,8 @@ use crate::query_engine::formatter;
 use crate::query_engine::{QueryEndpoint, QueryFacts, QueryResult, taint_analysis};
 use ctadl_flowy as flowy;
 use ctadl_flowy::{EndpointRequires, FlowSpec, Port, PortBase, SummaryRequires, SummarySpec};
+use ctadl_ir::cir::Variable;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::Variable;
 
 /// Loads flowy requirements for an import.
 fn load_requirements(
@@ -390,7 +390,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
-    // `#value` is terminal (`ctadl_ir::mir::PathSegment::Value`).
+    // `#value` is terminal (`ctadl_ir::cir::PathSegment::Value`).
     for (p,) in &index_result.paths {
         let segments: Vec<_> = p.iter().collect();
         if let Some(i) = segments.iter().position(|s| s.is_value())

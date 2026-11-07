@@ -5,8 +5,8 @@ use smallvec::smallvec;
 use crate::index::idx::Idx;
 
 thread_local! {
-    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
-        std::cell::RefCell::new(crate::mir::Locals::default());
+    static LOCALS: std::cell::RefCell<crate::cir::Locals> =
+        std::cell::RefCell::new(crate::cir::Locals::default());
 }
 
 fn intern(name: &str) -> VariableRef {

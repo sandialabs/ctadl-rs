@@ -1,6 +1,6 @@
 // Tests for CTADL IR verification errors
 use super::*;
-use crate::mir::{
+use crate::cir::{
     AccessPath, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FunctionIdx, Offset, ParameterIdx,
     Params, PathSegment, ReturnType, StatementKind, TerminatorKind, VariableRef,
 };
@@ -376,7 +376,7 @@ fn verify_rejects_unnormalized_path() {
 #[test]
 fn verify_rejects_misplaced_value() {
     let prog = program_with(vec![StatementKind::CallAssign {
-        style: crate::mir::CallStyle::Unknown,
+        style: crate::cir::CallStyle::Unknown,
         rets: Default::default(),
         args: [Exp::value(p0())].into_iter().collect(),
     }]);

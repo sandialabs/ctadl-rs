@@ -53,7 +53,7 @@ use source_info::ArtifactKey;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ctadl_import::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{FunctionNames, VirtualMethodTable};
+use ctadl_ir::cir::call::{FunctionNames, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -194,7 +194,7 @@ struct Context {
     /// The name of the import being lowered, which names its memory global.
     import_name: String,
     /// The import's memory global, `$<import>::ram`, declared by [`Self::process`].
-    memory: Option<ctadl_ir::mir::GlobalIdx>,
+    memory: Option<ctadl_ir::cir::GlobalIdx>,
     /// The address Ghidra loaded the image at, which spans are offsets from (see "Spans" in the
     /// crate docs); 0 when the facts do not say. Read by [`Self::process`].
     image_base: i64,
@@ -230,7 +230,7 @@ impl Context {
 
     /// Appends a write of `src` to the access path `dest`: a plain assign for a bare variable, or a
     /// field store (with any needed loads emitted for intermediate dereferences) via
-    /// [`mir::store_access_path`].
+    /// [`cir::store_access_path`].
     ///
     /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
     /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
@@ -495,7 +495,7 @@ impl Context {
                     for _ in 0..proto_data.parameters.len() {
                         func.params
                             .parameters
-                            .push(ctadl_ir::mir::ParameterType::Shared);
+                            .push(ctadl_ir::cir::ParameterType::Shared);
                     }
                 }
             } else {
@@ -1634,13 +1634,13 @@ impl Context {
                     locals.get_or_intern("unknown_callee"),
                 ))
             };
-            ctadl_ir::mir::call::CallStyle::FuncPtrCall {
+            ctadl_ir::cir::call::CallStyle::FuncPtrCall {
                 callee,
                 signature: None,
             }
         } else {
-            ctadl_ir::mir::call::CallStyle::DirectCall {
-                call_edges: ctadl_ir::mir::call::CallEdges::Explicit(call_edges),
+            ctadl_ir::cir::call::CallStyle::DirectCall {
+                call_edges: ctadl_ir::cir::call::CallEdges::Explicit(call_edges),
             }
         };
 
@@ -1738,7 +1738,7 @@ impl Context {
         Ok(exp)
     }
 
-    /// Reads the memory part of `ap` into a temporary with [`mir::read_into_temp`], appending
+    /// Reads the memory part of `ap` into a temporary with [`cir::read_into_temp`], appending
     /// the copy to `stmts`, and returns the temporary plus `ap`'s trailing offsets.
     fn load_ap(
         &mut self,
@@ -1746,7 +1746,7 @@ impl Context {
         ap: AccessPath,
         locals: &mut Locals,
     ) -> AccessPath {
-        mir::read_into_temp(ap, stmts, || self.create_temp(locals))
+        cir::read_into_temp(ap, stmts, || self.create_temp(locals))
     }
 
     fn get_lvalue(
