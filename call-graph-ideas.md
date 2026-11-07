@@ -137,7 +137,11 @@ storage below (`$g.deref`, `$C.f`) is memory and is not in the kernel.
 
 ### Extraction
 
-Extraction is linear and admits, after S5 normalization:
+Extraction is the pass that reads the post-SSA IR once and writes the input
+facts the Datalog rules run over; it does no analysis of its own, only a
+statement-by-statement translation, and it either admits a statement as one of
+the facts below or leaves it out. It is linear and admits, after S5
+normalization:
 
 ```text
 copy(d, s)              d = s with empty paths on both sides, and each phi operand
