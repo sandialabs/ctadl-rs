@@ -2168,6 +2168,7 @@ name = "dex-reader"
 version = "0.1.7"
 dependencies = [
  "log",
+ "rayon",
  "smallvec",
  "thiserror",
  "zip",
@@ -3368,15 +3369,15 @@ dependencies = [
  "ascent",
  "ascent_base",
  "csv",
- "datafusion",
  "flate2",
  "hashbrown 0.16.1",
  "internment",
  "log",
+ "memchr",
+ "rayon",
  "serde",
  "smallvec",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
