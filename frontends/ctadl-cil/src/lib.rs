@@ -53,9 +53,10 @@ the last value of every return: exceptions that may leave a method accumulate in
 `excout`. Value types are lowered like objects, so two copies of a struct alias
 (docs/limitations.md).
 
-Like the Dex front end, a [`Context`] is made once, given each assembly with
-[`Context::process`], and turned into one [`ProgramInfo`] by [`Context::finish`]: a
-multi-assembly application has one hierarchy. Referenced assemblies that are not imported
+Like the Dex front end, a [`Context`] is made once, given the assemblies with
+`Context::process`, and turned into one [`ProgramInfo`] by [`Context::finish`]: a
+multi-assembly application has one hierarchy. Method bodies are lowered in parallel, each on its
+own, and placed into the program in order, so the program does not depend on the thread count. Referenced assemblies that are not imported
 (the framework, by default) are still read for their metadata, from the input's directory
 and the framework's ([`ImportOptions::reference_dirs`]): base types' virtual methods, type
 forwarders, sealed and virtual flags. Nothing of theirs is lowered.
@@ -68,13 +69,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cil_reader::Module;
-use cil_reader::model::{AssemblyCache, DirectoryLoader, PdbSource, TypeDef};
+use cil_reader::model::{AssemblyCache, DirectoryLoader, MethodDef, MethodSig, PdbSource, TypeDef};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::call::{
     CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames, VirtualMethodTable,
 };
 use ctadl_ir::*;
 use hashbrown::HashMap;
+use rayon::prelude::*;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, SourceInfoBuilder};
 
@@ -148,13 +150,13 @@ pub fn import_assembly(path: &Path, opts: &ImportOptions) -> Result<ProgramInfo,
 /// Imports the application assemblies of a directory (a published app): every CLI image in
 /// it that is not part of the framework, unless [`ImportOptions::include_framework`].
 pub fn import_directory(dir: &Path, opts: &ImportOptions) -> Result<ProgramInfo, Error> {
-    let mut files = Vec::new();
+    let mut candidates = Vec::new();
     let entries =
         std::fs::read_dir(dir).err_context(|| format!("reading directory {}", dir.display()))?;
     for entry in entries {
         let path = entry?.path();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "dll" | "exe") || !is_cli_image(&path) {
+        if !matches!(ext, "dll" | "exe") {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -162,8 +164,12 @@ pub fn import_directory(dir: &Path, opts: &ImportOptions) -> Result<ProgramInfo,
             log::debug!("cil: skipping framework assembly {}", path.display());
             continue;
         }
-        files.push(path);
+        candidates.push(path);
     }
+    let mut files: Vec<PathBuf> = candidates
+        .into_par_iter()
+        .filter(|path| is_cli_image(path))
+        .collect();
     files.sort();
     if files.is_empty() {
         return Err(Error::NothingToImport {
@@ -183,17 +189,23 @@ pub fn import_files_with_stats(
     files: &[PathBuf],
     opts: &ImportOptions,
 ) -> Result<(ProgramInfo, Stats), Error> {
-    let mut datas = Vec::with_capacity(files.len());
-    for f in files {
-        datas.push(std::fs::read(f).err_context(|| format!("reading {}", f.display()))?);
-    }
-    let mut modules = Vec::with_capacity(files.len());
-    for (f, data) in files.iter().zip(&datas) {
-        modules.push(Module::read(data).err_context(|| format!("reading {}", f.display()))?);
-    }
+    // Collected whole and then checked in order, so that the error reported is the first file's.
+    let datas = files
+        .par_iter()
+        .map(|f| std::fs::read(f).err_context(|| format!("reading {}", f.display())))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, Error>>()?;
+    let modules = files
+        .par_iter()
+        .zip(&datas)
+        .map(|(f, data)| Module::read(data).err_context(|| format!("reading {}", f.display())))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, Error>>()?;
     // Symbols are optional: one that does not read costs the assembly its lines, not the import.
     let pdb_sources: Vec<Option<PdbSource>> = files
-        .iter()
+        .par_iter()
         .zip(&modules)
         .map(|(f, module)| {
             PdbSource::locate(module, f).unwrap_or_else(|e| {
@@ -219,27 +231,154 @@ pub fn import_files_with_stats(
     let loader = DirectoryLoader::new(dirs);
     let cache = AssemblyCache::new(&loader);
     let namer = Namer::new(&cache);
-    let mut ctx = Context::new();
-    for (i, ((f, module), source)) in files.iter().zip(&modules).zip(&pdb_sources).enumerate() {
-        let key = ArtifactKey {
-            path: f.to_string_lossy().to_string(),
-            sub_artifact_id: i.try_into().unwrap_or(u32::MAX),
-            hash: Vec::new(),
-            encoding: source_info::ArtifactEncoding::Binary,
-        };
-        let pdb = source.as_ref().and_then(|s| match s.read(module) {
-            Ok(pdb) => Some(pdb),
-            Err(e) => {
-                log::warn!("cil: {}: symbols ({}): {e}", f.display(), s.describe());
-                None
+    let assemblies: Vec<Assembly<'_, '_, '_, '_>> = files
+        .par_iter()
+        .zip(&modules)
+        .zip(&pdb_sources)
+        .enumerate()
+        .map(|(i, ((f, module), source))| {
+            let key = ArtifactKey {
+                path: f.to_string_lossy().to_string(),
+                sub_artifact_id: i.try_into().unwrap_or(u32::MAX),
+                hash: Vec::new(),
+                encoding: source_info::ArtifactEncoding::Binary,
+            };
+            let pdb = source.as_ref().and_then(|s| match s.read(module) {
+                Ok(pdb) => Some(pdb),
+                Err(e) => {
+                    log::warn!("cil: {}: symbols ({}): {e}", f.display(), s.describe());
+                    None
+                }
+            });
+            Assembly {
+                path: f,
+                names: ModNames::new(module, &namer),
+                spans: ModuleSpans::new(key, pdb),
             }
-        });
-        let mut spans = ModuleSpans::new(key, pdb);
-        ctx.process(module, &namer, &mut spans)
-            .err_context(|| format!("converting {}", f.display()))?;
-        ctx.out.stats.lines.add(spans.stats);
+        })
+        .collect();
+    let mut ctx = Context::new();
+    ctx.process(&assemblies)?;
+    for a in assemblies {
+        ctx.out.stats.lines.add(a.spans.into_stats());
     }
     ctx.finish_with_stats()
+}
+
+/// An assembly being imported.
+struct Assembly<'n, 'm, 'l, 'p> {
+    path: &'n Path,
+    names: ModNames<'n, 'm, 'm, 'l>,
+    spans: ModuleSpans<'p>,
+}
+
+/// What [`Context::scan_type`] reads of a type, apart from its methods' signatures and flags.
+struct TypeScan<'m> {
+    td: TypeDef<'m>,
+    cls: String,
+    aliases: hierarchy::Aliases,
+    /// Each method, with its key if its name decodes.
+    methods: cil_reader::Result<Vec<(MethodDef<'m>, Option<MethodKey>)>>,
+}
+
+/// Reads what the bookkeeping needs of a type that takes resolving other types.
+fn scan_type<'m>(names: &ModNames<'_, 'm, 'm, '_>, td: TypeDef<'m>) -> TypeScan<'m> {
+    TypeScan {
+        td,
+        cls: names.typedef_cls(&td),
+        aliases: hierarchy::aliases(names.namer, names.module, td),
+        methods: td.methods().map(|methods| {
+            methods
+                .into_iter()
+                .map(|md| (md, names.method_key(md.token())))
+                .collect()
+        }),
+    }
+}
+
+/// An override bridge's target, recorded as a callee before the job at `before_job` is placed:
+/// where the bookkeeping met it.
+struct PendingCallee {
+    before_job: usize,
+    key: MethodKey,
+    params: Vec<ParameterType>,
+}
+
+/// A method body for [`lower_job`] to lower, from [`Context::collect`].
+struct Job<'m> {
+    /// The assembly, by position.
+    assembly: usize,
+    fidx: FunctionIdx,
+    fid: String,
+    md: MethodDef<'m>,
+    sig: MethodSig,
+}
+
+/// What [`lower_job`] made of a [`Job`]: the function, with statements' span ids indexing
+/// `spans` (1 + position) and globals indexing `globals`; and what lowering recorded.
+struct Lowered {
+    assembly: usize,
+    fidx: FunctionIdx,
+    body: FunctionData,
+    spans: lines::SpanList,
+    globals: ctadl_ir::cir::Globals,
+    out: Collected,
+}
+
+/// Lowers a method on its own, for [`Context::place`] to put into the program.
+fn lower_job(assembly: &Assembly<'_, '_, '_, '_>, job: &Job<'_>) -> Result<Lowered, Error> {
+    let body = job
+        .md
+        .body()
+        .err_context(|| format!("converting {}", assembly.path.display()))?;
+    let mut fdat = FunctionData::default();
+    method::shape(&mut fdat, job.fid.clone(), method::parameters(&job.sig));
+    let mut lines = assembly
+        .spans
+        .method(job.md.token().rid(), body.code_file_offset());
+    let mut globals = ctadl_ir::cir::Globals::default();
+    let mut out = Collected::default();
+    method::lower_body(
+        &assembly.names,
+        &job.md,
+        &body,
+        &job.sig,
+        &mut fdat,
+        &mut globals,
+        &mut lines,
+        &mut out,
+    );
+    fdat.locals.drop_index();
+    Ok(Lowered {
+        assembly: job.assembly,
+        fidx: job.fidx,
+        body: fdat,
+        spans: lines.finish(),
+        globals,
+        out,
+    })
+}
+
+/// Rewrites a function [`lower_job`] lowered to the program's span ids and globals.
+struct Resolve<'a> {
+    spans: &'a [source_info::FileSpanId],
+    globals: &'a [ctadl_ir::cir::GlobalIdx],
+}
+
+impl ctadl_ir::cir::visit::MutVisitor for Resolve<'_> {
+    fn visit_statement(&mut self, statement: &mut Statement, location: ctadl_ir::cir::Location) {
+        let span = &mut statement.source_info.span_id;
+        if span.0 != 0 {
+            *span = self.spans[span.0 as usize - 1];
+        }
+        self.super_statement(statement, location);
+    }
+
+    fn visit_variable_ref(&mut self, variable_ref: &mut VariableRef) {
+        if let Variable::Global(g) = &mut variable_ref.variable {
+            *g = self.globals[g.index()];
+        }
+    }
 }
 
 /// Whether the file is a PE image with CLI metadata, as opposed to a native one.
@@ -444,47 +583,75 @@ impl Context {
         }
     }
 
-    /// Translates one assembly into the program, its spans from `spans`.
-    pub fn process<'m>(
-        &mut self,
-        module: &'m Module<'m>,
-        namer: &Namer<'m, '_>,
-        spans: &mut ModuleSpans<'_>,
-    ) -> Result<(), Error> {
-        let names = ModNames::new(module, namer);
-        self.out.stats.assemblies += 1;
-        log::debug!("cil: processing assembly {}", names.asm);
-        for td in module.all_types() {
-            self.process_type(&names, namer, module, td, spans)?;
+    /// Translates the assemblies into the program, in order.
+    ///
+    /// In three passes. The first reads each type on its own, on the current rayon pool: its
+    /// name, override aliases and method keys, the costly part of the bookkeeping. The second
+    /// goes through the types in order: the hierarchy, the VMT rows, a function for each method,
+    /// and a [`Job`] for each body. The third lowers the bodies on the rayon pool, each on its
+    /// own, and places them into the program in order ([`Context::place`]), so that the program
+    /// does not depend on how many threads lowered it.
+    fn process<'m>(&mut self, assemblies: &[Assembly<'_, 'm, '_, '_>]) -> Result<(), Error> {
+        let types: Vec<(usize, TypeDef<'m>)> = assemblies
+            .iter()
+            .enumerate()
+            .flat_map(|(a, asm)| asm.names.module.all_types().map(move |td| (a, td)))
+            .collect();
+        let scans: Vec<TypeScan<'m>> = types
+            .into_par_iter()
+            .map(|(a, td)| scan_type(&assemblies[a].names, td))
+            .collect();
+        let mut scans = scans.into_iter();
+        let mut jobs = Vec::new();
+        let mut callees = Vec::new();
+        let mut collected = Ok(());
+        'assemblies: for (a, asm) in assemblies.iter().enumerate() {
+            self.out.stats.assemblies += 1;
+            log::debug!("cil: processing assembly {}", asm.names.asm);
+            for scan in scans.by_ref().take(asm.names.module.all_types().len()) {
+                if let Err(e) = self.collect_type(a, asm, scan, &mut jobs, &mut callees) {
+                    collected = Err(e).err_context(|| format!("converting {}", asm.path.display()));
+                    break 'assemblies;
+                }
+            }
         }
-        Ok(())
+        // The bodies before a failing type are converted first: one of them may fail before it.
+        self.lower_and_place(assemblies, jobs, callees)?;
+        collected
     }
 
-    fn process_type<'m>(
+    /// The bookkeeping for one type: what is not a method body.
+    fn collect_type<'m>(
         &mut self,
-        names: &ModNames<'_, 'm, 'm, '_>,
-        namer: &Namer<'m, '_>,
-        module: &'m Module<'m>,
-        td: TypeDef<'m>,
-        spans: &mut ModuleSpans<'_>,
+        a: usize,
+        asm: &Assembly<'_, 'm, '_, '_>,
+        scan: TypeScan<'m>,
+        jobs: &mut Vec<Job<'m>>,
+        callees: &mut Vec<PendingCallee>,
     ) -> Result<(), Error> {
+        let TypeScan {
+            td,
+            cls,
+            aliases,
+            methods,
+        } = scan;
+        let module = asm.names.module;
         self.out.stats.types += 1;
-        let cls = names.typedef_cls(&td);
         if let Some((offset, size)) = module
             .metadata()
             .row_file_span(cil_reader::raw::Table::TypeDef, td.rid())
             && let Ok(offset) = u32::try_from(offset)
         {
             self.type_defs
-                .push((cls.clone(), spans.key.clone(), offset, size));
+                .push((cls.clone(), asm.spans.key.clone(), offset, size));
         }
         let mut parents = Vec::new();
         if let Some(base) = td.base_type()? {
-            parents.extend(names.tdor_cls(&base));
+            parents.extend(asm.names.tdor_cls(&base));
         }
         for i in td.interfaces()? {
             if let Some(iface) = i.interface {
-                parents.extend(names.tdor_cls(&iface));
+                parents.extend(asm.names.tdor_cls(&iface));
             }
         }
         let entry = self.table.hierarchy.entry(cls.clone()).or_default();
@@ -497,7 +664,6 @@ impl Context {
             self.table.interfaces.push(cls.clone());
         }
 
-        let aliases = hierarchy::aliases(namer, module, td);
         self.out
             .stats
             .missing_metadata
@@ -507,7 +673,12 @@ impl Context {
             if (&alias.simple, &alias.desc) == (&alias.target.simple, &alias.target.desc) {
                 continue;
             }
-            let target = self.out.callee(&alias.target, alias.params.clone());
+            let target = alias.target.fid();
+            callees.push(PendingCallee {
+                before_job: jobs.len(),
+                key: alias.target,
+                params: alias.params.clone(),
+            });
             self.out.bridges.push(Bridge {
                 key: MethodKey {
                     cls: cls.clone(),
@@ -520,8 +691,8 @@ impl Context {
             });
         }
 
-        for md in td.methods()? {
-            let Some(mkey) = names.method_key(md.token()) else {
+        for (md, mkey) in methods? {
+            let Some(mkey) = mkey else {
                 log::warn!("cil: {cls}: a method whose name does not decode");
                 continue;
             };
@@ -535,8 +706,11 @@ impl Context {
             let fidx = self.program.new_function();
             self.defined.insert(fid.clone(), fidx);
             self.out.stats.methods += 1;
-            let fdat = &mut self.program[fidx];
-            method::shape(fdat, fid.clone(), method::parameters(&sig));
+            method::shape(
+                &mut self.program[fidx],
+                fid.clone(),
+                method::parameters(&sig),
+            );
             if md.is_abstract()? {
                 self.table.abstract_methods.push((
                     cls.clone(),
@@ -562,21 +736,127 @@ impl Context {
                 ));
             }
             if md.has_body()? && md.rva()? != 0 {
-                let body = md.body()?;
                 self.out.stats.bodies += 1;
-                let mut lines = spans.method(md.token().rid(), body.code_file_offset());
-                method::lower_body(
-                    names,
-                    &md,
-                    &body,
-                    &sig,
-                    fdat,
-                    &mut self.globals,
-                    &mut lines,
-                    &mut self.spans,
-                    &mut self.out,
-                );
+                jobs.push(Job {
+                    assembly: a,
+                    fidx,
+                    fid,
+                    md,
+                    sig,
+                });
             }
+        }
+        Ok(())
+    }
+
+    /// Lowers `jobs` on the current rayon pool and places them into the program in order, with
+    /// the override bridges' targets among their callees where the bookkeeping met them.
+    ///
+    /// The jobs go in batches, so that only one batch of lowered bodies waits to be placed at a
+    /// time, and so that the next batch is lowered while this one is placed.
+    fn lower_and_place<'m>(
+        &mut self,
+        assemblies: &[Assembly<'_, 'm, '_, '_>],
+        jobs: Vec<Job<'m>>,
+        callees: Vec<PendingCallee>,
+    ) -> Result<(), Error> {
+        /// Bodies per batch: enough to keep every thread busy across uneven method sizes, few
+        /// enough that a batch of lowered bodies is a small part of the program.
+        const BATCH: usize = 4096;
+
+        let lower = |batch: &[Job<'m>]| -> Vec<Result<Lowered, Error>> {
+            batch
+                .par_iter()
+                .map(|job| lower_job(&assemblies[job.assembly], job))
+                .collect()
+        };
+        let mut callees = callees.into_iter().peekable();
+        let mut placed_jobs = 0;
+        let mut batches = jobs.chunks(BATCH);
+        let mut current = batches.next().map(lower);
+        while let Some(results) = current.take() {
+            let next_batch = batches.next();
+            let mut placed = Ok(());
+            rayon::scope(|scope| {
+                scope.spawn(|_| current = next_batch.map(lower));
+                placed = self.place(assemblies, results, &mut placed_jobs, &mut callees);
+            });
+            placed?;
+        }
+        for c in callees {
+            self.out.callee(&c.key, c.params);
+        }
+        Ok(())
+    }
+
+    /// Puts a batch of lowered bodies into the program, in order: records their callees,
+    /// interns their spans and declares their globals in the order lowering them in place
+    /// would have, then rewrites their statements to the program's ids (in parallel: each body
+    /// on its own), then moves them into their functions.
+    fn place(
+        &mut self,
+        assemblies: &[Assembly<'_, '_, '_, '_>],
+        batch: Vec<Result<Lowered, Error>>,
+        placed_jobs: &mut usize,
+        callees: &mut std::iter::Peekable<std::vec::IntoIter<PendingCallee>>,
+    ) -> Result<(), Error> {
+        struct Placed {
+            fidx: FunctionIdx,
+            body: FunctionData,
+            spans: Vec<source_info::FileSpanId>,
+            globals: Vec<ctadl_ir::cir::GlobalIdx>,
+        }
+
+        let mut placed = Vec::with_capacity(batch.len());
+        for lowered in batch {
+            while let Some(c) = callees.next_if(|c| c.before_job <= *placed_jobs) {
+                self.out.callee(&c.key, c.params);
+            }
+            *placed_jobs += 1;
+            let Lowered {
+                assembly,
+                fidx,
+                body,
+                spans,
+                globals,
+                out,
+            } = lowered?;
+            // The first callee recorded for a function id gives its stub's shape.
+            for (fid, callee) in out.ext {
+                self.out.ext.entry(fid).or_insert(callee);
+            }
+            self.out.thunks.extend(out.thunks);
+            let (stats, s) = (&mut self.out.stats, out.stats);
+            stats.opaque_effects += s.opaque_effects;
+            stats.unresolved_address_writes += s.unresolved_address_writes;
+            stats.address_disagreements += s.address_disagreements;
+            let spans = spans.intern(&mut self.spans, &assemblies[assembly].spans.key);
+            let globals = globals
+                .iter_enumerated()
+                .map(|(_, g)| self.globals.declare(&*g.name, None))
+                .collect();
+            placed.push(Placed {
+                fidx,
+                body,
+                spans,
+                globals,
+            });
+        }
+
+        placed.par_iter_mut().for_each(|p| {
+            let mut resolve = Resolve {
+                spans: &p.spans,
+                globals: &p.globals,
+            };
+            ctadl_ir::cir::visit::MutVisitor::visit_function_data(
+                &mut resolve,
+                p.fidx,
+                &mut p.body,
+            );
+        });
+
+        for p in placed {
+            self.program[p.fidx] = p.body;
         }
         Ok(())
     }

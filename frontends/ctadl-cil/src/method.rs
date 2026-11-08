@@ -51,7 +51,6 @@ use cil_reader::token::TokenType;
 use ctadl_ir::cir::{Globals, LocalIdx, PathSegment};
 use ctadl_ir::*;
 use smallvec::{SmallVec, smallvec};
-use source_info::SourceInfoBuilder;
 
 use crate::Collected;
 use crate::lines::MethodSpans;
@@ -71,7 +70,7 @@ pub struct Emitter<'f> {
     pub block: BasicBlockIdx,
     pub source_info: SourceInfo,
     fresh: u32,
-    /// The program's globals, where a static field's class is declared. `None` for a body
+    /// The globals, where a static field's class is declared. `None` for a body
     /// that names no static field.
     globals: Option<&'f mut Globals>,
 }
@@ -100,7 +99,7 @@ impl<'f> Emitter<'f> {
         let globals = self
             .globals
             .as_deref_mut()
-            .expect("an emitter that names a global has the program's globals");
+            .expect("an emitter that names a global has globals");
         VariableRef::global(globals.declare(name, None))
     }
 
@@ -264,7 +263,9 @@ pub struct Lower<'x, 'n, 'm, 'c, 'l> {
     pub cur: InsId,
 }
 
-/// Lowers one method with a body into `fdat`, whose shape is already set.
+/// Lowers one method with a body into `fdat`, whose shape is already set. Its spans are listed
+/// in `lines` and the globals it names declared in `globals`, both its own, so that methods can be
+/// lowered independently.
 #[allow(clippy::too_many_arguments)]
 pub fn lower_body<'n, 'm, 'c, 'l>(
     names: &ModNames<'n, 'm, 'c, 'l>,
@@ -274,7 +275,6 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     fdat: &mut FunctionData,
     globals: &mut Globals,
     lines: &mut MethodSpans<'_, '_>,
-    spans: &mut SourceInfoBuilder,
     out: &mut Collected,
 ) {
     let flow = MethodFlow::build_with(body, FLOW_OPTIONS);
@@ -327,7 +327,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
         em.block = BasicBlockIdx::new(b);
         lower.static_fnptrs.clear();
         if b == 0 {
-            em.source_info = lines.span(spans, block.start, 1);
+            em.source_info = lines.span(block.start, 1);
             let out = em.excout();
             em.assign(out, [empty()]);
         }
@@ -338,14 +338,14 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
             if handler.entry == Some(b)
                 && matches!(handler.kind, HandlerKind::Catch | HandlerKind::Filter)
             {
-                em.source_info = lines.span(spans, block.start, 1);
+                em.source_info = lines.span(block.start, 1);
                 let caught = em.var(Var::Caught(h));
                 let thrown = em.throwval();
                 em.assign(caught, [Exp::variable(thrown)]);
             }
         }
         for (index, ins) in block.instrs.iter().enumerate() {
-            em.source_info = lines.span(spans, ins.flow.offset, ins.flow.size.max(1));
+            em.source_info = lines.span(ins.flow.offset, ins.flow.size.max(1));
             let at = InsId { block: b, index };
             lower.cross_check(at, ins);
             lower.instruction(&mut em, at, ins);
