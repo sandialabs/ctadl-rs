@@ -202,7 +202,10 @@ mod tests {
         }
         let bytes = encode_program(&program).expect("encode");
         for len in [9, 17, bytes.len() - 1] {
-            assert!(decode_program(&bytes[..len]).is_err(), "decoded {len} bytes");
+            assert!(
+                decode_program(&bytes[..len]).is_err(),
+                "decoded {len} bytes"
+            );
         }
     }
 
