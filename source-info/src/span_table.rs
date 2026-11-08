@@ -14,21 +14,6 @@ impl Row for Span {
     fn key_eq(a: &Span, b: &Span) -> bool {
         a == b
     }
-
-    #[cfg(feature = "sled")]
-    fn key_bytes(span: &Span) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(9);
-        buf.extend_from_slice(&span.start.to_be_bytes());
-        match span.len {
-            SpanLen::Empty => buf.push(0),
-            SpanLen::ToLineEnd => buf.push(1),
-            SpanLen::ByteLen(n) => {
-                buf.push(2);
-                buf.extend_from_slice(&n.to_be_bytes());
-            }
-        }
-        buf
-    }
 }
 
 /// Table of raw spans with interning. IDs are 1-based.

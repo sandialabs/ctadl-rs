@@ -14,14 +14,6 @@ impl Row for FileSpan {
     fn key_eq(a: &(FileId, SpanId), b: &(FileId, SpanId)) -> bool {
         a == b
     }
-
-    #[cfg(feature = "sled")]
-    fn key_bytes(&(file, span): &(FileId, SpanId)) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8);
-        buf.extend_from_slice(&file.0.to_be_bytes());
-        buf.extend_from_slice(&span.0.to_be_bytes());
-        buf
-    }
 }
 
 /// Table of file spans with interning. IDs are 1-based.

@@ -4,14 +4,9 @@
 //! Instructions store only a `FileSpanId`. Source data lives in:
 //! Artifacts → Files → FileSpans → Instructions.
 
-#[cfg(all(feature = "sled", feature = "serde"))]
-compile_error!("features \"sled\" and \"serde\" are mutually exclusive");
-
 pub mod artifact;
 pub mod artifact_cache;
 pub mod builder;
-#[cfg(feature = "sled")]
-pub mod db;
 pub mod decode;
 pub mod error;
 pub mod file_span_table;
@@ -34,8 +29,6 @@ pub use artifact::{
 };
 pub use artifact_cache::ArtifactCache;
 pub use builder::SourceInfoBuilder;
-#[cfg(feature = "sled")]
-pub use db::init as init_db;
 pub use decode::{decode_source, read_source};
 pub use error::{ArtifactMissing, HashMismatch, ValidationError};
 pub use file_span_table::FileSpanTable;

@@ -189,19 +189,6 @@ impl Row for ArtifactRecord {
     fn key_eq(a: &ArtifactKeyRef<'_>, b: &ArtifactKeyRef<'_>) -> bool {
         a == b
     }
-
-    #[cfg(feature = "sled")]
-    fn key_bytes(key: &ArtifactKeyRef<'_>) -> Vec<u8> {
-        let path_bytes = key.path.as_bytes();
-        let path_len = path_bytes.len() as u32;
-        let mut buf = Vec::with_capacity(4 + path_bytes.len() + 4 + 1 + key.hash.len());
-        buf.extend_from_slice(&path_len.to_be_bytes());
-        buf.extend_from_slice(path_bytes);
-        buf.extend_from_slice(&key.sub_artifact_id.to_be_bytes());
-        buf.push(key.encoding.to_u8());
-        buf.extend_from_slice(key.hash);
-        buf
-    }
 }
 
 /// Table of artifacts with interning. IDs are 1-based; index 0 is reserved.

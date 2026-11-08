@@ -20,11 +20,6 @@ impl Row for FileEntry {
     fn key_eq(a: &ArtifactId, b: &ArtifactId) -> bool {
         a == b
     }
-
-    #[cfg(feature = "sled")]
-    fn key_bytes(artifact: &ArtifactId) -> Vec<u8> {
-        artifact.0.to_be_bytes().to_vec()
-    }
 }
 
 /// Table of files with interning by artifact. IDs are 1-based.
