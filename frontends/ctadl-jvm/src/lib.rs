@@ -508,7 +508,11 @@ impl Context {
                 program.globals.declare(&class, Some(span));
             }
         }
-        for (_sig, entry) in self.ext.drain() {
+        // Each extern gets a function, so the externs are taken in signature order: the hash
+        // map's order would number the functions differently from one import to the next.
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        for (_sig, entry) in ext {
             if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                 if !methods
                     .iter()
