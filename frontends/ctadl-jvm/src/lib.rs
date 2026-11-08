@@ -308,6 +308,36 @@ struct Lowered {
     ext: HashMap<String, Extern>,
 }
 
+/// A lowered body with the program's id for each of its spans and globals, as
+/// [`Importer::intern`] interned them.
+struct Placed {
+    fidx: FunctionIdx,
+    body: FunctionData,
+    spans: Vec<source_info::FileSpanId>,
+    globals: Vec<GlobalIdx>,
+}
+
+/// Rewrites each body in `placed` to the program's ids, in parallel.
+fn resolve(placed: &mut [Placed]) {
+    use rayon::prelude::*;
+    placed.par_iter_mut().for_each(|p| {
+        let mut resolve = Resolve {
+            spans: &p.spans,
+            globals: &p.globals,
+        };
+        cir::visit::MutVisitor::visit_function_data(&mut resolve, p.fidx, &mut p.body);
+    });
+}
+
+/// Moves each body in `placed`, once [`resolve`]d, into its function.
+fn put(program: &mut Program, placed: Vec<Placed>) {
+    for p in placed {
+        let slot = &mut program[p.fidx];
+        slot.blocks = p.body.blocks;
+        slot.locals = p.body.locals;
+    }
+}
+
 /// Rewrites a body lowered by [`Context::lower_job`] to the program's span ids and globals.
 struct Resolve<'a> {
     spans: &'a [source_info::FileSpanId],
@@ -478,9 +508,12 @@ impl Importer {
     /// Lowers `jobs` on the current rayon pool and places the results into the program in
     /// order.
     ///
-    /// The jobs go in batches, so that only one batch of lowered bodies waits to be placed at a
-    /// time, and so that the next batch is lowered while this one is placed. Once no batch still
-    /// to be lowered needs a class file, it is freed.
+    /// The jobs go in batches, so that only a couple of batches of lowered bodies wait to be
+    /// placed at a time. Placing a batch is three steps: interning its spans and globals
+    /// ([`Importer::intern`]), which is serial and must go in program order; rewriting its bodies
+    /// to the ids interned ([`resolve`]); and moving them into the program ([`put`]). While one
+    /// batch is interned, the next is lowered and the one before is rewritten. Once no batch
+    /// still to be lowered needs a class file, it is freed.
     fn lower_and_place(
         &mut self,
         classes: &mut [Class],
@@ -506,17 +539,32 @@ impl Importer {
         let mut batches = jobs.chunks(BATCH);
         let mut batch = batches.next();
         let mut current = batch.map(|batch| lower(classes, batch));
-        let (mut placing_time, mut total) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+        let mut interned = Vec::new();
+        let (mut interning, mut total) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         while let (Some(results), Some(placing)) = (current.take(), batch) {
             batch = batches.next();
-            // Lower the next batch while this one is placed.
             let started = std::time::Instant::now();
             let shared: &[Class] = classes;
+            let ProgramInfoBuilder {
+                program,
+                source_info_builder,
+                ..
+            } = &mut *builders;
+            let mut previous = std::mem::take(&mut interned);
             rayon::scope(|scope| {
                 scope.spawn(|_| current = batch.map(|batch| lower(shared, batch)));
-                self.place(shared, placing, results, &mut file, builders);
-                placing_time += started.elapsed();
+                scope.spawn(|_| resolve(&mut previous));
+                interned = self.intern(
+                    shared,
+                    placing,
+                    results,
+                    &mut file,
+                    source_info_builder,
+                    program,
+                );
+                interning += started.elapsed();
             });
+            put(program, previous);
             total += started.elapsed();
             // The batch after `batch` is the next to read the class files.
             let needed = batches
@@ -528,29 +576,29 @@ impl Importer {
             }
             freed = needed;
         }
+        resolve(&mut interned);
+        put(&mut builders.program, interned);
         log::debug!(
             target: "ctadl_jvm::timing",
-            "placing: {placing_time:.2?} of {total:.2?} lowering and placing"
+            "interning: {interning:.2?} of {total:.2?} lowering and placing"
         );
     }
 
-    /// Puts a batch of lowered bodies into the program, in order: interns their spans and
-    /// declares their globals in the order lowering them in place would have, then rewrites
-    /// their statements to use the program's ids (in parallel: each body on its own), then moves
-    /// them into their functions. A body jvm-reader could not decode leaves its function a
-    /// declaration, so calls to it still resolve.
+    /// Interns the spans and declares the globals of a batch of lowered bodies, in the order
+    /// lowering them in place would have, and merges the methods they call into
+    /// [`Importer::ext`]. A body jvm-reader could not decode is left out, which leaves its
+    /// function a declaration, so calls to it still resolve.
     ///
     /// `file` is the class file whose spans were interned last, with its id.
-    fn place(
+    fn intern(
         &mut self,
         classes: &[Class],
         jobs: &[Job],
         results: Vec<Result<Lowered, ClassFileError>>,
         file: &mut Option<(usize, source_info::FileId)>,
-        builders: &mut ProgramInfoBuilder,
-    ) {
-        use rayon::prelude::*;
-
+        source_info_builder: &mut source_info::SourceInfoBuilder,
+        program: &Program,
+    ) -> Vec<Placed> {
         let mut placed = Vec::with_capacity(results.len());
         for (job, lowered) in jobs.iter().zip(results) {
             let Lowered {
@@ -561,7 +609,7 @@ impl Importer {
             } = match lowered {
                 Ok(lowered) => lowered,
                 Err(e) => {
-                    let name = &builders.program[job.fidx].name;
+                    let name = &program[job.fidx].name;
                     log::warn!("{name}: importing without a body: {e}");
                     continue;
                 }
@@ -574,9 +622,7 @@ impl Importer {
                 let file = match *file {
                     Some((class, file)) if class == job.class => file,
                     _ => {
-                        let id = builders
-                            .source_info_builder
-                            .file_for(&classes[job.class].key);
+                        let id = source_info_builder.file_for(&classes[job.class].key);
                         *file = Some((job.class, id));
                         id
                     }
@@ -584,11 +630,7 @@ impl Importer {
                 spans
                     .iter()
                     .map(|&(start, len)| {
-                        builders.source_info_builder.span_in_file(
-                            file,
-                            start,
-                            SpanLen::ByteLen(len),
-                        )
+                        source_info_builder.span_in_file(file, start, SpanLen::ByteLen(len))
                     })
                     .collect()
             };
@@ -597,21 +639,14 @@ impl Importer {
                 .map(|(_, g)| self.globals.declare(&*g.name, None))
                 .collect();
             self.ext.extend(ext);
-            placed.push((job.fidx, body, spans, globals));
-        }
-
-        placed
-            .par_iter_mut()
-            .for_each(|(fidx, body, spans, globals)| {
-                let mut resolve = Resolve { spans, globals };
-                cir::visit::MutVisitor::visit_function_data(&mut resolve, *fidx, body);
+            placed.push(Placed {
+                fidx: job.fidx,
+                body,
+                spans,
+                globals,
             });
-
-        for (fidx, body, _, _) in placed {
-            let slot = &mut builders.program[fidx];
-            slot.blocks = body.blocks;
-            slot.locals = body.locals;
         }
+        placed
     }
 
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
