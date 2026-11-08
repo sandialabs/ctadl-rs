@@ -9,10 +9,10 @@
 //! `offsets[]` array, and a flat `values[]` array — each section aligned so that
 //! `bytemuck::cast_slice` can view it without copying. A map whose values are
 //! zero-sized is a set: each run holds a key at most once, with exactly one
-//! value, so its runs have no offsets or values sections, only keys and filters,
-//! and a flush or merge writes each key once. A run is `mmap`ed once and
-//! the mapping is held inside the run, so references handed out by `get_refs` /
-//! `iter_all_refs` stay valid for as long as the map is borrowed.
+//! value, so its runs have no offsets or values sections, only keys and
+//! filters. A run is `mmap`ed once and the mapping is held inside the run, so
+//! references handed out by `get_refs` / `iter_all_refs` stay valid for as long
+//! as the map is borrowed.
 //!
 //! On-disk bytes are written in **native** endianness (the `mmap` is reinterpreted
 //! directly), so a run file is only portable to machines of the same endianness.
@@ -211,7 +211,6 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     /// The `i`th key's values.
     fn values_of(&self, i: usize) -> &[V] {
         if size_of::<V>() == 0 {
-            // A set run's `values()` holds one value per key.
             return &self.values()[i..i + 1];
         }
         let offsets = self.offsets();
@@ -237,9 +236,6 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
 /// written in place: no intermediate buffers or scratch files, and no write
 /// syscalls. Entries short of the bound leave the tail of the key and offset
 /// sections unwritten, which costs address space but no disk.
-///
-/// A set's run (zero-sized values) has no offsets or values sections: it is
-/// written with `start_key` alone, and its value count is its key count.
 struct RunWriter {
     bytes: MmapMut,
     path: PathBuf,

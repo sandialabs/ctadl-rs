@@ -25,15 +25,10 @@
 //! `&Column`.
 //!
 //! A tuple is stored as one blob of `u64` words, with each column's bytes at a
-//! fixed offset given by the tuple's [`Layout`], which [`store_layout`] computes
-//! from the columns' sizes and alignments and the relation's prefix indices.
-//! Columns are packed at their natural widths: the prefix boundaries split the
-//! columns into segments, each starting on a word, and within a segment the
-//! columns are ordered by decreasing alignment, so no padding falls between
-//! them; the bytes from a segment's last column to the next word are zero.
-//! Every column sits at an offset aligned for its type, so a read hands out a
-//! `&Column` into the blob, and the bytes are written and read in native byte
-//! order.
+//! fixed offset given by the tuple's [`Layout`]. [`layout`] packs the columns at
+//! their natural widths and says how. Every column sits at an offset aligned for
+//! its type, so a read hands out a `&Column` into the blob, and the bytes are
+//! written and read in native byte order.
 //!
 //! For interned types the blob holds the handle's raw bits. This is only valid
 //! **within a single process run**: the run files are per-process temp files, and
@@ -357,15 +352,15 @@ lsm_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F);
 ///
 /// Keys and values are blobs of `KW` and `VW` words, laid out as tuples with no
 /// prefix boundaries, since the map reads them only whole. The widths must be
-/// the ones [`store_layout`] gives, which is checked at compile time.
+/// the ones [`layout`] gives, which is checked at compile time.
 pub struct LsmIndex<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> {
     map: MmapLsmMultiMap<[u64; KW], [u64; VW]>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> LsmIndex<K, V, KW, VW> {
-    const K_LAYOUT: Layout = store_layout(K::SIZES, K::ALIGNS, 0);
-    const V_LAYOUT: Layout = store_layout(V::SIZES, V::ALIGNS, 0);
+    const K_LAYOUT: Layout = layout(K::SIZES, K::ALIGNS, 0);
+    const V_LAYOUT: Layout = layout(V::SIZES, V::ALIGNS, 0);
     const WIDTHS_MATCH: () = assert!(
         KW == Self::K_LAYOUT.words && VW == Self::V_LAYOUT.words,
         "LsmIndex: KW and VW must be the key's and value's widths",
@@ -582,7 +577,7 @@ impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize, Rel> ToRelIndex
 /// Bit `k` of `PREFIXES` says some index reads the tuples by their first `k`
 /// columns (see [`prefix_mask`]); the runs keep a Bloom filter of those
 /// prefixes, so a read skips the runs that hold none of its prefix. Each tuple
-/// is a blob of `W` words, which must be the width [`store_layout`] gives for
+/// is a blob of `W` words, which must be the width [`layout`] gives for
 /// `T` and `PREFIXES`; that is checked at compile time.
 pub struct LsmStore<T: LsmTuple, const PREFIXES: u32, const W: usize> {
     set: MmapLsmMultiMap<[u64; W], ()>,
@@ -632,15 +627,13 @@ pub const fn prefix_mask(indices: &[&[usize]]) -> u32 {
 const MAX_COLS: usize = 6;
 
 /// Where each column of a tuple lives in its blob, for one set of prefix
-/// boundaries; computed by [`store_layout`].
+/// boundaries; computed by [`layout`].
 ///
 /// Offsets and segment ends are in bytes from the start of the blob. The blob
 /// is `words` `u64`s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
-    /// Byte offset of each column, in declared column order.
     offsets: [usize; MAX_COLS],
-    /// End of each segment, rounded up to a multiple of eight.
     seg_ends: [usize; MAX_COLS],
     /// The column index one past each segment's last column.
     seg_cols: [usize; MAX_COLS],
@@ -708,6 +701,10 @@ impl Layout {
 /// Within a segment, column order changes where a column lives, never which
 /// tuples share a prefix. Columns keep their alignment because reads hand out
 /// `&Column` into the blob, which is itself 8-aligned.
+///
+/// Every blob width and every set of column offsets the provider uses comes
+/// from here: a relation's tuples under its prefix mask, or an own index's keys
+/// or values with mask 0.
 ///
 /// The result depends only on the arguments, so a relation's layout is the
 /// same on every run and every build. Panics (at compile time, in a const
@@ -782,13 +779,6 @@ pub const fn layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout 
     out
 }
 
-/// The layout the provider stores a tuple in: of a relation's tuples under its
-/// prefix mask, or of an own index's keys or values with mask 0. Every blob
-/// width and every set of column offsets the provider uses comes from here.
-pub const fn store_layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout {
-    layout(sizes, aligns, prefixes)
-}
-
 /// Whether `a` followed by `b` is `whole`.
 const fn concat_eq(a: &[usize], b: &[usize], whole: &[usize]) -> bool {
     if a.len() + b.len() != whole.len() {
@@ -806,7 +796,7 @@ const fn concat_eq(a: &[usize], b: &[usize], whole: &[usize]) -> bool {
 }
 
 impl<T: LsmTuple, const PREFIXES: u32, const W: usize> LsmStore<T, PREFIXES, W> {
-    const LAYOUT: Layout = store_layout(T::SIZES, T::ALIGNS, PREFIXES);
+    const LAYOUT: Layout = layout(T::SIZES, T::ALIGNS, PREFIXES);
     const WIDTH_MATCHES: () = assert!(
         W == Self::LAYOUT.words,
         "LsmStore: W must be the tuple's width"
@@ -1464,7 +1454,7 @@ macro_rules! lsm_nary_rel_ind_common {
 #[macro_export]
 macro_rules! lsm_tuple_words {
     ($t:ty, $mask:expr) => {
-        $crate::ascent_provider::store_layout(
+        $crate::ascent_provider::layout(
             <$t as $crate::ascent_provider::LsmTuple>::SIZES,
             <$t as $crate::ascent_provider::LsmTuple>::ALIGNS,
             $mask,
@@ -1822,7 +1812,7 @@ mod store_tests {
         let n = T::SIZES.len();
         for inner in 0..1u32 << (n - 1) {
             let mask = inner << 1;
-            let layout = store_layout(T::SIZES, T::ALIGNS, mask);
+            let layout = layout(T::SIZES, T::ALIGNS, mask);
             let mut covered = vec![false; layout.words * 8];
             for (c, &off) in layout.offsets().iter().enumerate() {
                 covered[off..off + T::SIZES[c]].fill(true);
@@ -1870,7 +1860,7 @@ mod store_tests {
 
     #[test]
     fn arity_zero_is_one_zero_word() {
-        let layout = store_layout(<()>::SIZES, <()>::ALIGNS, 0);
+        let layout = layout(<()>::SIZES, <()>::ALIGNS, 0);
         assert_eq!(layout.words, 1);
         assert_eq!(encode_over(&(), &layout, 0), [0]);
     }
