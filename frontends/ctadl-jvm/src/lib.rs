@@ -272,7 +272,7 @@ struct Context {
     /// The methods the method being lowered calls; see [`Importer::ext`].
     ext: HashMap<String, Extern>,
     /// The offset and length of each instruction lowered so far, in order. The statements of an
-    /// instruction carry `1 +` its position here as their span id until [`Importer::place`]
+    /// instruction carry `1 +` its position here as their span id until [`Importer::intern`]
     /// interns the real one.
     spans: Vec<(u32, u32)>,
 }
@@ -470,10 +470,11 @@ impl Importer {
     ///
     /// Three passes. The first does all the bookkeeping -- function slots, VMT rows, parameters
     /// -- collecting a [`Job`] per method body: it describes the classes in parallel
-    /// ([`ClassRows::describe`]) and enters them into the program in class order. The second lowers the bodies on the current rayon pool, each into a function of its
-    /// own ([`Context::lower_job`]). The third places them into the program in order
-    /// ([`Importer::place`]), interning their spans and globals in exactly the order lowering
-    /// them one after another did, so the result does not depend on the thread count.
+    /// ([`ClassRows::describe`]) and enters them into the program in class order. The second
+    /// lowers the bodies on the current rayon pool, each into a function of its own
+    /// ([`Context::lower_job`]). The third places them into the program in order
+    /// ([`Importer::lower_and_place`]), interning their spans and globals in exactly the order
+    /// lowering them one after another did, so the result does not depend on the thread count.
     fn process(
         &mut self,
         classes: &mut [Class],
@@ -806,7 +807,7 @@ impl Context {
 
     /// Lowers the body of `job`'s method into a function of its own. Spans are recorded as
     /// instruction offsets and globals declared in a table of the job's own;
-    /// [`Importer::place`] resolves both. An error is jvm-reader's, decoding the method.
+    /// [`Importer::intern`] interns both. An error is jvm-reader's, decoding the method.
     fn lower_job(
         &mut self,
         parser: &ClassFileParser,
