@@ -731,6 +731,160 @@ pub const fn prefix_mask(indices: &[&[usize]]) -> u32 {
     mask
 }
 
+/// The most columns a tuple has.
+const MAX_COLS: usize = 6;
+
+/// Where each column of a tuple lives in its blob, for one set of prefix
+/// boundaries; computed by [`layout`].
+///
+/// Offsets and segment ends are in bytes from the start of the blob. The blob
+/// is `words` `u64`s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    /// Byte offset of each column, in declared column order.
+    offsets: [usize; MAX_COLS],
+    /// End of each segment, rounded up to a multiple of eight.
+    seg_ends: [usize; MAX_COLS],
+    /// The column index one past each segment's last column.
+    seg_cols: [usize; MAX_COLS],
+    n_cols: usize,
+    n_segs: usize,
+    /// The blob's width in words.
+    pub words: usize,
+}
+
+impl Layout {
+    /// The byte offset of each column, in declared column order.
+    pub const fn offsets(&self) -> &[usize] {
+        self.offsets.split_at(self.n_cols).0
+    }
+
+    /// The end of each segment in bytes, a multiple of eight, in order.
+    pub const fn seg_ends(&self) -> &[usize] {
+        self.seg_ends.split_at(self.n_segs).0
+    }
+
+    /// The number of columns.
+    pub const fn n_cols(&self) -> usize {
+        self.n_cols
+    }
+
+    /// The width in bytes of a prefix of the first `k` columns: the end of the
+    /// segment whose last column is `k - 1`, or 0 for `k == 0`.
+    ///
+    /// Panics unless `k` is 0, a prefix boundary or the number of columns.
+    pub const fn prefix_bytes(&self, k: usize) -> usize {
+        if k == 0 {
+            return 0;
+        }
+        let mut s = 0;
+        while s < self.n_segs {
+            if self.seg_cols[s] == k {
+                return self.seg_ends[s];
+            }
+            s += 1;
+        }
+        panic!("prefix_bytes: k is not a segment boundary");
+    }
+}
+
+/// The layout of a tuple whose columns have the given `sizes` and `aligns` (in
+/// declared order), under the prefix boundaries in `prefixes` (bit `k` for a
+/// prefix of `k` columns, as [`prefix_mask`] computes).
+///
+/// The rules:
+///
+/// 1. The bits `k` with `0 < k < n` (for `n` columns) split the columns into
+///    segments. Bit 0 (a scan) and bit `n` (the full tuple) split nothing.
+/// 2. Within a segment, columns are placed in order of decreasing alignment,
+///    ties in declared order. Every column then lands at a multiple of its
+///    alignment with no padding between columns, since each earlier column's
+///    size is a multiple of an alignment at least as large.
+/// 3. Each segment starts at a multiple of eight; the bytes from its last
+///    column to the next multiple of eight are padding.
+/// 4. The width is the last segment's end in words, at least one.
+///
+/// Segments start on words because the stores order blobs word by word, as
+/// native `u64`s: a word holding the end of one prefix and the start of the
+/// rest would interleave the bytes, and tuples sharing that prefix would not
+/// be contiguous. Whole-word prefixes also let prefix reads compare `u64`s.
+/// Within a segment, column order changes where a column lives, never which
+/// tuples share a prefix. Columns keep their alignment because reads hand out
+/// `&Column` into the blob, which is itself 8-aligned.
+///
+/// The result depends only on the arguments, so a relation's layout is the
+/// same on every run and every build. Panics (at compile time, in a const
+/// context) on more than six columns, mismatched lengths, an alignment that is
+/// not 1, 2, 4 or 8, or a size that is not a multiple of its alignment.
+pub const fn layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout {
+    let n = sizes.len();
+    assert!(n <= MAX_COLS, "layout: more than six columns");
+    assert!(
+        aligns.len() == n,
+        "layout: sizes and aligns differ in length"
+    );
+    let mut c = 0;
+    while c < n {
+        let a = aligns[c];
+        assert!(
+            a == 1 || a == 2 || a == 4 || a == 8,
+            "layout: alignment must divide 8"
+        );
+        assert!(
+            sizes[c].is_multiple_of(a),
+            "layout: size not a multiple of alignment"
+        );
+        c += 1;
+    }
+
+    let mut out = Layout {
+        offsets: [0; MAX_COLS],
+        seg_ends: [0; MAX_COLS],
+        seg_cols: [0; MAX_COLS],
+        n_cols: n,
+        n_segs: 0,
+        words: 0,
+    };
+    let mut start_col = 0;
+    let mut seg_start = 0;
+    loop {
+        // This segment is columns `start_col..end_col`.
+        let mut end_col = start_col + 1;
+        while end_col < n && prefixes & (1 << end_col) == 0 {
+            end_col += 1;
+        }
+        if end_col > n {
+            end_col = n;
+        }
+        // Stable selection by decreasing alignment.
+        let mut at = seg_start;
+        let mut align = 8;
+        while align >= 1 {
+            let mut c = start_col;
+            while c < end_col {
+                if aligns[c] == align {
+                    out.offsets[c] = at;
+                    at += sizes[c];
+                }
+                c += 1;
+            }
+            align /= 2;
+        }
+        let seg_end = at.next_multiple_of(8);
+        out.seg_ends[out.n_segs] = seg_end;
+        out.seg_cols[out.n_segs] = end_col;
+        out.n_segs += 1;
+        seg_start = seg_end;
+        start_col = end_col;
+        if start_col >= n {
+            break;
+        }
+    }
+    let words = seg_start / 8;
+    out.words = if words == 0 { 1 } else { words };
+    out
+}
+
 impl<T: LsmTuple, const PREFIXES: u32> LsmStore<T, PREFIXES> {
     /// The number of tuples.
     pub fn len(&self) -> usize {
@@ -1346,4 +1500,126 @@ pub mod provider {
         lsm_nary_rel_full_ind as rel_full_ind, lsm_nary_rel_ind as rel_ind,
         lsm_nary_rel_ind_common as rel_ind_common,
     };
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::{Layout, layout};
+
+    /// Proves `layout` evaluates at compile time.
+    const _: Layout = layout(&[4, 8, 4], &[4, 8, 4], 0);
+
+    /// One case: `(sizes, aligns, mask) -> (offsets, seg_ends, words)`.
+    type Case = (
+        &'static [usize],
+        &'static [usize],
+        u32,
+        &'static [usize],
+        &'static [usize],
+        usize,
+    );
+
+    const CASES: &[Case] = &[
+        // locals_key: FunctionId, FlowVariable, Path, Path, Path, probed by 3 columns.
+        (
+            &[4, 8, 4, 4, 4],
+            &[4, 8, 4, 4, 4],
+            1 << 3,
+            &[8, 0, 12, 16, 20],
+            &[16, 24],
+            3,
+        ),
+        // reach_vp: FunctionId, FlowVariable, Path, no inner boundary.
+        (&[4, 8, 4], &[4, 8, 4], 0, &[8, 0, 12], &[16], 2),
+        // Bits 0 and n (scan, full) split nothing.
+        (&[4, 8, 4], &[4, 8, 4], 1 | 1 << 3, &[8, 0, 12], &[16], 2),
+        // actual_param: PackedInsnSiteId, FormalIndex, FlowVertex (8-aligned).
+        (&[8, 2, 16], &[8, 2, 8], 0, &[0, 24, 8], &[32], 4),
+        // A segment that pads to a word before the next.
+        (&[4, 8], &[4, 8], 1 << 1, &[0, 8], &[8, 16], 2),
+        // 1, 2, 4, 8 and an 8-aligned 16 in one segment: 31 bytes, 4 words.
+        (
+            &[1, 2, 4, 8, 16],
+            &[1, 2, 4, 8, 8],
+            0,
+            &[30, 28, 24, 0, 8],
+            &[32],
+            4,
+        ),
+        // Several boundaries over five u32s: segments {0}, {1}, {2, 3}, {4}.
+        (
+            &[4, 4, 4, 4, 4],
+            &[4, 4, 4, 4, 4],
+            1 << 1 | 1 << 2 | 1 << 4,
+            &[0, 8, 16, 20, 24],
+            &[8, 16, 24, 32],
+            4,
+        ),
+        // Ties keep declared order.
+        (&[4, 4, 4], &[4, 4, 4], 0, &[0, 4, 8], &[16], 2),
+        // Arity 0 is still one word.
+        (&[], &[], 0, &[], &[0], 1),
+        // Six byte columns, every boundary.
+        (
+            &[1, 1, 1, 1, 1, 1],
+            &[1, 1, 1, 1, 1, 1],
+            0b11_1110,
+            &[0, 8, 16, 24, 32, 40],
+            &[8, 16, 24, 32, 40, 48],
+            6,
+        ),
+    ];
+
+    #[test]
+    fn layout_table() {
+        for &(sizes, aligns, mask, offsets, seg_ends, words) in CASES {
+            let l = layout(sizes, aligns, mask);
+            let case = format!("sizes {sizes:?} aligns {aligns:?} mask {mask:#b}");
+            assert_eq!(l.offsets(), offsets, "offsets, {case}");
+            assert_eq!(l.seg_ends(), seg_ends, "seg_ends, {case}");
+            assert_eq!(l.words, words, "words, {case}");
+            assert_eq!(l.n_cols(), sizes.len(), "n_cols, {case}");
+            // Every column is aligned, and no two columns overlap.
+            for c in 0..sizes.len() {
+                assert_eq!(offsets[c] % aligns[c], 0, "column {c} misaligned, {case}");
+                for d in 0..c {
+                    let disjoint =
+                        offsets[c] + sizes[c] <= offsets[d] || offsets[d] + sizes[d] <= offsets[c];
+                    assert!(disjoint, "columns {d} and {c} overlap, {case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn layout_prefix_bytes() {
+        let l = layout(&[4, 8, 4, 4, 4], &[4, 8, 4, 4, 4], 1 << 3);
+        assert_eq!(l.prefix_bytes(0), 0);
+        assert_eq!(l.prefix_bytes(3), 16);
+        assert_eq!(l.prefix_bytes(5), 24);
+
+        let l = layout(&[4; 5], &[4; 5], 1 << 1 | 1 << 2 | 1 << 4);
+        assert_eq!([1, 2, 4, 5].map(|k| l.prefix_bytes(k)), [8, 16, 24, 32]);
+
+        const K3: usize = layout(&[4, 8, 4, 4, 4], &[4, 8, 4, 4, 4], 1 << 3).prefix_bytes(3);
+        assert_eq!(K3, 16);
+    }
+
+    #[test]
+    #[should_panic(expected = "not a segment boundary")]
+    fn layout_prefix_bytes_inside_a_segment() {
+        layout(&[4, 8, 4], &[4, 8, 4], 0).prefix_bytes(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "more than six columns")]
+    fn layout_rejects_seven_columns() {
+        layout(&[1; 7], &[1; 7], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "alignment must divide 8")]
+    fn layout_rejects_align_16() {
+        layout(&[16], &[16], 0);
+    }
 }
