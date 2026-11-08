@@ -377,7 +377,7 @@ impl APKParser {
     /// only native libraries or only resources. Every class-level accessor below is then
     /// simply empty. A caller that has no use for such an APK checks [`Self::dex_count`].
     pub fn new(apk_bytes: &[u8]) -> DexResult<Self> {
-        let mut archive = ZipArchive::new(std::io::Cursor::new(apk_bytes))
+        let archive = ZipArchive::new(std::io::Cursor::new(apk_bytes))
             .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
 
         let mut names: Vec<String> = archive
@@ -388,21 +388,25 @@ impl APKParser {
             .collect();
         names.sort_by_cached_key(|n| dex_entry_sort_key(n));
 
-        let mut dex_files = Vec::with_capacity(names.len());
-        for name in &names {
-            let mut zip_file = archive.by_name(name).map_err(|_| {
-                crate::error::DexError::InvalidDex("failed to read DEX entry from APK")
-            })?;
-            let mut buf = Vec::new();
-            zip_file.read_to_end(&mut buf).map_err(|_| {
-                crate::error::DexError::InvalidDex("failed to decompress DEX entry")
-            })?;
-            parse_dex_header(&buf)?;
-            dex_files.push(ApkDexFile {
-                name: name.clone(),
-                buffer: buf,
-            });
-        }
+        // Each entry is inflated on a thread of its own, through its own clone of the archive
+        // (the clones share the parsed central directory). A large app has a dozen entries of
+        // around 10 MB each.
+        use rayon::prelude::*;
+        let dex_files = names
+            .into_par_iter()
+            .map(|name| {
+                let mut archive = archive.clone();
+                let mut zip_file = archive.by_name(&name).map_err(|_| {
+                    crate::error::DexError::InvalidDex("failed to read DEX entry from APK")
+                })?;
+                let mut buf = Vec::with_capacity(zip_file.size().try_into().unwrap_or(0));
+                zip_file.read_to_end(&mut buf).map_err(|_| {
+                    crate::error::DexError::InvalidDex("failed to decompress DEX entry")
+                })?;
+                parse_dex_header(&buf)?;
+                Ok(ApkDexFile { name, buffer: buf })
+            })
+            .collect::<DexResult<Vec<_>>>()?;
 
         Ok(Self { dex_files })
     }
@@ -422,8 +426,9 @@ impl APKParser {
 
     /// Return one `(filename, DexParser)` pair per DEX buffer. Parsers borrow from this APKParser.
     pub fn dex_parsers_with_filenames(&self) -> Vec<(&str, DexParser<'_>)> {
+        use rayon::prelude::*;
         self.dex_files
-            .iter()
+            .par_iter()
             .map(|dex| {
                 (
                     dex.name.as_str(),
