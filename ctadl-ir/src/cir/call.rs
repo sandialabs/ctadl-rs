@@ -350,6 +350,9 @@ pub enum Dispatch {
         ///
         /// Every declared method has a row, abstract and native ones included.
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+        /// Written in class-name order (see [`serialize_sorted_map`]), so the same import
+        /// encodes to the same bytes every time.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
         /// The interfaces *this import declares*.
         ///
@@ -396,6 +399,8 @@ pub enum Dispatch {
         /// - Fully-qualified function id the method lowers to (the IR function name)
         methods: Vec<(Symbol, Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
+        /// Written in class-name order, as the Java `hierarchy` is.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
     /// Table for the .NET (CIL) frontend. The first four columns mirror
@@ -412,6 +417,8 @@ pub enum Dispatch {
         /// synthesizes (see `ctadl-cil`'s `hierarchy.rs`).
         methods: Vec<(CilClass, CilSimpleName, CilSignature, CilMethod)>,
         /// Class -> its base type and the interfaces it implements, erased to open definitions.
+        /// Written in class-name order, as the Java `hierarchy` is.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<CilClass, SmallVec<[CilClass; 2]>>,
         /// The interfaces this import declares. See the column of the same name on
         /// [`Dispatch::Java`].
@@ -833,6 +840,48 @@ impl Display for Dispatch {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct JavaClass(pub Symbol);
+
+/// Serializes a map keyed by class in the order of the class names, rather than in the hash
+/// map's iteration order, which is seeded per process. It is still an ordinary map on the wire,
+/// so reading it back is unchanged.
+#[cfg(feature = "serde")]
+fn serialize_sorted_map<K, V, S>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    K: serde::Serialize + ClassName,
+    V: serde::Serialize,
+    S: serde::Serializer,
+{
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_unstable_by(|(a, _), (b, _)| a.class_name().cmp(b.class_name()));
+    serializer.collect_map(entries)
+}
+
+/// A class key, for [`serialize_sorted_map`] to order by.
+#[cfg(feature = "serde")]
+trait ClassName {
+    fn class_name(&self) -> &str;
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for JavaClass {
+    fn class_name(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for CilClass {
+    fn class_name(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for Symbol {
+    fn class_name(&self) -> &str {
+        self.as_ref()
+    }
+}
 
 impl Deref for JavaClass {
     type Target = Symbol;

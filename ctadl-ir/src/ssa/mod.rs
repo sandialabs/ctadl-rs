@@ -457,9 +457,11 @@ pub fn prune_unreachable_nodes(function: &mut FunctionData) {
         mapping.insert(old_idx, BasicBlockIdx::new(new_idx));
     }
 
-    let mut new_blocks = IndexVec::new();
+    // Moved out rather than cloned: the old blocks are dropped below anyway.
+    let mut old_blocks = std::mem::take(function.blocks.blocks_mut());
+    let mut new_blocks = IndexVec::with_capacity(reachable_indices.len());
     for &old_idx in &reachable_indices {
-        let mut data = function.blocks[old_idx].clone();
+        let mut data = std::mem::replace(&mut old_blocks[old_idx], BasicBlockData::new(None));
 
         // Update terminator targets
         if let Some(term) = &mut data.terminator

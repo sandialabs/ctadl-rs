@@ -108,6 +108,7 @@ parameters, and instructions.
 
 */
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::{fmt, fmt::Display};
 
@@ -481,8 +482,13 @@ pub struct LocalDecl {
 pub struct Locals {
     decls: IndexVec<LocalIdx, LocalDecl>,
     /// Transient name→index map used only during interning; rebuilt on demand after deserialize.
+    /// It holds indices into `decls` and hashes the names stored there, rather than a second
+    /// copy of every name: a program holds one table per function, and the copies were a
+    /// sizable share of an import's memory.
     #[cfg_attr(feature = "serde", serde(skip))]
-    by_name: HashMap<String, LocalIdx>,
+    by_name: hashbrown::HashTable<LocalIdx>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    hasher: hashbrown::DefaultHashBuilder,
 }
 
 impl Locals {
@@ -495,13 +501,19 @@ impl Locals {
         if self.by_name.is_empty() && !self.decls.is_empty() {
             self.rebuild_index();
         }
-        if let Some(&idx) = self.by_name.get(name) {
+        let Locals {
+            decls,
+            by_name,
+            hasher,
+        } = self;
+        let hash = hasher.hash_one(name);
+        if let Some(&idx) = by_name.find(hash, |&i| decls[i].name == name) {
             return idx;
         }
-        let idx = self.decls.push(LocalDecl {
+        let idx = decls.push(LocalDecl {
             name: name.to_string(),
         });
-        self.by_name.insert(name.to_string(), idx);
+        by_name.insert_unique(hash, idx, |&i| hasher.hash_one(decls[i].name.as_str()));
         idx
     }
 
@@ -539,10 +551,28 @@ impl Locals {
     /// this itself when it finds an unindexed table (the map is `#[serde(skip)]`, so a
     /// deserialized table has none), so callers only need it to pre-warm the map.
     pub fn rebuild_index(&mut self) {
-        self.by_name.clear();
-        for (idx, decl) in self.decls.iter_enumerated() {
-            self.by_name.entry(decl.name.clone()).or_insert(idx);
+        let Locals {
+            decls,
+            by_name,
+            hasher,
+        } = self;
+        by_name.clear();
+        for (idx, decl) in decls.iter_enumerated() {
+            let hash = hasher.hash_one(decl.name.as_str());
+            // The first declaration of a name wins, as interning would have given it.
+            if by_name
+                .find(hash, |&i| decls[i].name == decl.name)
+                .is_none()
+            {
+                by_name.insert_unique(hash, idx, |&i| hasher.hash_one(decls[i].name.as_str()));
+            }
         }
+    }
+
+    /// Frees the name index. A finished function is only read, and [`Self::get_or_intern`]
+    /// rebuilds the index if the table is ever extended again.
+    pub fn drop_index(&mut self) {
+        self.by_name = Default::default();
     }
 }
 
