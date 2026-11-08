@@ -480,7 +480,7 @@ fn import_one(
     let child = ArtifactImport::try_create(&task.name, ArtifactLanguage::Pcode, &task.dest)?;
     lower_native(&child, task, budget)?;
 
-    // `export_facts` records Ghidra's image base on the config and re-saves it, so
+    // `lower_facts` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.
     let mut child = ArtifactImport::load_by_name(&task.name)?;
     child.record_artifact_hash()?;
@@ -523,6 +523,11 @@ fn lower_native(
             return Err(e);
         }
         drop(grant);
+        // Nothing of the partial export may survive into the retry's.
+        let facts = child.import_path().join("facts");
+        if let Err(e) = std::fs::remove_dir_all(&facts) {
+            log::debug!("could not remove '{}': {e}", facts.display());
+        }
         log::info!(
             "'{}': Ghidra ran out of memory with a {} MiB heap; retrying alone with {} MiB",
             child.name,

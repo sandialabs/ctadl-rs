@@ -675,6 +675,24 @@ mod tests {
         assert_eq!(gunzip(&dir.path().join("FRESH.facts.gz")), b"x\t9\n");
     }
 
+    /// What Ghidra 12 logs when a decompiler task runs out of heap, which it then carries on past.
+    #[test]
+    fn an_out_of_memory_error_anywhere_in_the_log_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!ran_out_of_memory(dir.path()));
+        let log = dir.path().join(GHIDRA_LOG_NAME);
+        fs::write(&log, "INFO  analysis done\nINFO  REPORT: Import succeeded\n").unwrap();
+        assert!(!ran_out_of_memory(dir.path()));
+        fs::write(
+            &log,
+            "INFO  start\nERROR Unexpected exception getting Decompiler result \
+             (InternalResultListener) java.util.concurrent.ExecutionException: \
+             java.lang.OutOfMemoryError: Java heap space\nINFO  REPORT: Import succeeded\n",
+        )
+        .unwrap();
+        assert!(ran_out_of_memory(dir.path()));
+    }
+
     #[test]
     fn compress_leaves_non_facts_files_alone() {
         let dir = tempfile::tempdir().unwrap();
