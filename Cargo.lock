@@ -3377,6 +3377,7 @@ dependencies = [
  "rayon",
  "serde",
  "smallvec",
+ "tempfile",
  "thiserror",
 ]
 

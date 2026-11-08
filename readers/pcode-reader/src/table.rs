@@ -1,5 +1,5 @@
-//! Reading one fact table: decompressing it whole, then parsing its rows, in parallel for a big
-//! table.
+//! Reading one fact table: a window of its text at a time, each window's rows parsed in
+//! parallel.
 //!
 //! A table is Ghidra's tab-separated text with no header. Rows are parsed the way the `csv`
 //! crate parses them (empty lines are skipped, a field may be quoted), and every row must have
@@ -17,20 +17,53 @@ use crate::{PcodeError, Result};
 /// noise, small enough that the largest tables split across every thread.
 const CHUNK: usize = 1 << 20;
 
-/// The whole of `path`, inflated when `compressed`.
-pub(crate) fn load(path: &Path, compressed: bool) -> Result<Vec<u8>> {
-    let mut file = std::fs::File::open(path)?;
-    let len = file.metadata().map_or(0, |m| m.len() as usize);
-    let mut bytes = Vec::new();
-    if compressed {
-        // Fact text compresses about tenfold; reserving for that saves most of the regrowth.
-        bytes.reserve(len.saturating_mul(10));
-        flate2::read::MultiGzDecoder::new(std::io::BufReader::new(file)).read_to_end(&mut bytes)?;
+/// How many bytes of a table's text are read at a time. Every table is read at once, so this,
+/// not the size of the largest table, bounds the text in memory.
+const WINDOW: usize = 8 << 20;
+
+/// Each row of the table at `path` (named `filename`, for errors; inflated when
+/// `compressed`), as [`parse`] reads them, in file order.
+pub(crate) fn read<const N: usize, T, F>(
+    path: &Path,
+    compressed: bool,
+    filename: &str,
+    f: F,
+) -> Result<Vec<T>>
+where
+    T: Send,
+    F: Fn([&str; N]) -> Result<T> + Sync,
+{
+    let file = std::fs::File::open(path)?;
+    let mut reader: Box<dyn Read> = if compressed {
+        Box::new(flate2::read::MultiGzDecoder::new(std::io::BufReader::new(
+            file,
+        )))
     } else {
-        bytes.reserve(len);
-        file.read_to_end(&mut bytes)?;
+        Box::new(file)
+    };
+    let mut rows = Vec::new();
+    // The text read and not yet parsed: whole lines but for the last.
+    let mut window = Vec::with_capacity(WINDOW);
+    loop {
+        let read = (&mut reader).take(WINDOW as u64).read_to_end(&mut window)?;
+        let at_end = read < WINDOW;
+        if memchr::memchr2(b'"', b'\r', &window).is_some() {
+            // A quoted field may span lines, so the rest is read as one.
+            reader.read_to_end(&mut window)?;
+            rows.extend(parse_csv(filename, &window, &f)?);
+            return Ok(rows);
+        }
+        let end = if at_end {
+            window.len()
+        } else {
+            memchr::memrchr(b'\n', &window).map_or(0, |i| i + 1)
+        };
+        rows.extend(parse(filename, &window[..end], &f)?);
+        if at_end {
+            return Ok(rows);
+        }
+        window.drain(..end);
     }
-    Ok(bytes)
 }
 
 /// Each row of `table` (named `filename`, for errors), which must have `N` fields, mapped
@@ -188,6 +221,42 @@ mod tests {
                 .enumerate()
                 .all(|(i, (k, v))| *v == i as i64 && *k == format!("k{i}"))
         );
+    }
+
+    /// A table bigger than a window reads the same plain, gzipped, and with a quoted field
+    /// past the first window.
+    #[test]
+    fn a_table_reads_the_same_across_windows() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let mut text: String = (0..1_000_000).map(|i| format!("key{i}\t{i}\n")).collect();
+        assert!(text.len() > WINDOW);
+        let expected = pairs(&text);
+        let read_pairs = |path: &Path, compressed| {
+            read(path, compressed, "T.facts", |[a, b]| {
+                Ok((a.to_string(), int("T.facts", b)?))
+            })
+            .unwrap()
+        };
+
+        let plain = dir.path().join("T.facts");
+        std::fs::write(&plain, &text).unwrap();
+        assert!(read_pairs(&plain, false) == expected);
+
+        let gz = dir.path().join("T.facts.gz");
+        let mut encoder = flate2::write::GzEncoder::new(
+            std::fs::File::create(&gz).unwrap(),
+            flate2::Compression::fast(),
+        );
+        encoder.write_all(text.as_bytes()).unwrap();
+        encoder.finish().unwrap();
+        assert!(read_pairs(&gz, true) == expected);
+
+        text.push_str("\"quoted\tkey\"\t7\n");
+        std::fs::write(&plain, &text).unwrap();
+        let rows = read_pairs(&plain, false);
+        assert!(rows[..expected.len()] == expected[..]);
+        assert_eq!(rows[expected.len()..], [("quoted\tkey".to_string(), 7)]);
     }
 
     #[test]

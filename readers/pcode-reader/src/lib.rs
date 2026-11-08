@@ -229,8 +229,7 @@ impl PcodeFactsReader {
         let Some((path, compressed)) = self.resolve_fact_path(filename) else {
             return Ok(None);
         };
-        let bytes = table::load(&path, compressed)?;
-        table::parse(filename, &bytes, f).map(Some)
+        table::read(&path, compressed, filename, f).map(Some)
     }
 
     /// Like [`Self::rows_optional`], for a table that must be present.
