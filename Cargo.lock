@@ -1340,6 +1340,7 @@ dependencies = [
  "smallvec",
  "source-info",
  "tempfile",
+ "zip",
 ]
 
 [[package]]

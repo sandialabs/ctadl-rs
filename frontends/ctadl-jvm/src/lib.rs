@@ -93,12 +93,71 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
             (parser, key)
         })
         .collect();
+    let classes = one_definition_per_class(file, &parser, classes)?;
     let mut importer = Importer::default();
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     importer
         .process(&classes, &mut builders)
         .err_context(|| format!("converting class in jar: {}", file.display()))?;
     importer.finish(builders)
+}
+
+/// `classes`, the class files of the jar `parser` read, less all but one definition of each class
+/// the jar defines more than once.
+///
+/// A program has one function per method, so a class can be imported only once. A jar defines a
+/// class more than once when it is a multi-release jar, whose `META-INF/versions/<n>/` entries
+/// replace a base entry on a Java `<n>` runtime, or when a fat jar was assembled from libraries
+/// that bundle the same class. The definition kept is the first entry outside
+/// `META-INF/versions/`, the one every runtime can load, or failing that the first entry. The
+/// others are left out with a warning. Each class file keeps its own artifact key, so spans still
+/// point into the entry the definition came from.
+fn one_definition_per_class<'a>(
+    file: &Path,
+    parser: &JarFileParser,
+    classes: Vec<(&'a ClassFileParser, ArtifactKey)>,
+) -> Result<Vec<(&'a ClassFileParser, ArtifactKey)>, Error> {
+    let entries = parser.entry_names();
+    let is_versioned = |i: usize| entries[i].starts_with("META-INF/versions/");
+    let mut kept: HashMap<&str, usize> = HashMap::new();
+    for (i, (class, _)) in classes.iter().enumerate() {
+        let name = class
+            .class_name()
+            .err_context(|| format!("converting class in jar: {}", file.display()))?;
+        kept.entry(name)
+            .and_modify(|k| {
+                if is_versioned(*k) && !is_versioned(i) {
+                    *k = i;
+                }
+            })
+            .or_insert(i);
+    }
+    if kept.len() == classes.len() {
+        return Ok(classes);
+    }
+    log::warn!(
+        "{}: leaving out {} class file(s) that define a class another entry defines too",
+        file.display(),
+        classes.len() - kept.len()
+    );
+    Ok(classes
+        .into_iter()
+        .enumerate()
+        .filter(|(i, (class, _))| {
+            let name = class.class_name().expect("read above");
+            let k = kept[name];
+            if k != *i {
+                log::info!(
+                    "{}: leaving out {}, which defines {name} as {} does",
+                    file.display(),
+                    entries[*i],
+                    entries[k]
+                );
+            }
+            k == *i
+        })
+        .map(|(_, class)| class)
+        .collect())
 }
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
