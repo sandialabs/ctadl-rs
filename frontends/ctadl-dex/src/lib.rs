@@ -23,6 +23,7 @@ value.
 */
 
 use std::path::Path;
+use std::sync::Arc;
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
@@ -94,8 +95,9 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
     let parsers = parser.dex_parsers_with_filenames();
-    let mut ctx = Context::new();
-    ctx.merged = merged::MergedClasses::scan(&parsers.iter().map(|(_, p)| p).collect::<Vec<_>>());
+    let mut ctx = Importer::new(merged::MergedClasses::scan(
+        &parsers.iter().map(|(_, p)| p).collect::<Vec<_>>(),
+    ));
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     for (sub_artifact_id, (dex_file_name, parser)) in parsers.into_iter().enumerate() {
@@ -124,8 +126,7 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<DexImport, Error> {
         std::fs::read(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
     let parser =
         DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
-    let mut ctx = Context::new();
-    ctx.merged = merged::MergedClasses::scan(&[&parser]);
+    let mut ctx = Importer::new(merged::MergedClasses::scan(&[&parser]));
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
@@ -145,134 +146,93 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<DexImport, Error> {
 
 /// The translation of dex files into CTADL IR.
 ///
-/// The expectation is to call [`Context::new`], then [`Context::process`] possibly many times,
-/// then [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
+/// The expectation is to call [`Importer::new`], then [`Importer::process`] possibly many times,
+/// then [`Importer::finish`] exactly once. The reason is that we have to handle both multiple dex
 /// files and open programs, programs that call functions for which we don't have a definition.
 ///
-/// During `process`, the context records methods that are "external," meaning we haven't so
+/// During `process`, the importer records methods that are "external," meaning we haven't so
 /// far seen a definition for them. We also stub them out in the program. Since we might see a
 /// definition for them during a later call to process, we also clear those entries when we
 /// process the defined methods. We record the VMT entry for such methods in the
-/// [`Context::ext`] member.
+/// [`Importer::ext`] member.
 ///
 /// During `finish`, any methods still-undefined are added to the VMT using what we recorded
 /// during processing.
+#[derive(Debug)]
+struct Importer {
+    defined: HashMap<String, FunctionIdx>,
+    /// VMT entries for the externs seen so far.
+    ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+    /// The program's class-merged classes; see [`merged`].
+    merged: Arc<merged::MergedClasses>,
+    /// Statements in the clones of merged methods, for the guardrail in [`Importer::finish`].
+    clone_statements: usize,
+    /// The globals declared so far: one per class that owns a static field. Moved into the
+    /// program at [`Importer::finish`].
+    globals: ctadl_ir::cir::Globals,
+    /// Each class this import defines, as its global is named, with the dex file it is in and
+    /// the offset of its `class_def_item` there: where the global is declared. Located
+    /// in [`Importer::finish`], once every class has been lowered.
+    class_defs: Vec<(String, ArtifactKey, u32)>,
+}
+
+/// The lowering of method bodies into CTADL IR: what one thread needs to lower one method at a
+/// time ([`Context::lower_job`]). Everything that spans methods is [`Importer`]'s.
 #[derive(Debug)]
 struct Context {
     counter: Counter,
     call_result: Option<VariableRef>,
     catch_result: Option<VariableRef>,
+    /// The methods the bodies lowered so far call.
     call_to: HashSet<MethodId>,
-    defined: HashMap<String, FunctionIdx>,
-    /// VMT entries for the externs seen so far.
-    ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
-    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
-    enclosing: Option<EnclosingClass>,
+    /// The class whose method is being lowered.
+    enclosing: Option<Arc<EnclosingClass>>,
     /// The program's class-merged classes; see [`merged`].
-    merged: merged::MergedClasses,
+    merged: Arc<merged::MergedClasses>,
     /// The class each `new-instance` in the method being lowered allocates instead of the one it
     /// names, by pc.
     retag: HashMap<usize, String>,
     /// The pc of the instruction being lowered.
     pc: usize,
-    /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
-    clone_statements: usize,
-    /// The globals declared so far: one per class that owns a static field. Moved into the
-    /// program at [`Context::finish`].
+    /// The globals the method being lowered uses, in the order it first uses them.
     globals: ctadl_ir::cir::Globals,
-    /// Each class this import defines, as its global is named, with the dex file it is in and
-    /// the offset of its `class_def_item` there: where the global is declared. Located
-    /// in [`Context::finish`], once every class has been lowered.
-    class_defs: Vec<(String, ArtifactKey, u32)>,
-    /// What [`Context::static_field`] returned for each field id of the dex file being
-    /// processed. Cleared per file, since ids are per file.
+    /// What [`Context::static_field`] returned for each field id, for the method being lowered.
     static_fields: HashMap<u32, (VariableRef, ctadl_ir::cir::PathSegment)>,
-    /// What [`Context::instance_field`] returned for each field id of the dex file being
-    /// processed.
+    /// What [`Context::instance_field`] returned for each field id of the dex file being lowered.
     instance_fields: HashMap<u32, ctadl_ir::cir::PathSegment>,
+    /// The offset of each instruction lowered since the last time this was taken, in order. The
+    /// statements of an instruction carry `1 +` its position here as their span id until
+    /// [`Importer::place`] interns the real one.
+    spans: Vec<u32>,
 }
 
-/// What lowering an `invoke-super` needs to know about the class the call appears in.
-#[derive(Debug, Default)]
-struct EnclosingClass {
-    superclass: Option<Symbol>,
-    /// The interfaces the class directly implements. An `X.super.m()` names one of these, and
-    /// there lookup begins at the named interface rather than at the superclass.
-    interfaces: Vec<Symbol>,
-}
-
-impl Context {
-    /// The class global `$Lcls;` and field `name` of the static field `field_ids[idx]`, whose
-    /// pretty name is `Lcls;->name:type`. Declares the global on first use.
-    fn static_field(
-        &mut self,
-        parser: &DexParser<'_>,
-        idx: u32,
-    ) -> Result<(VariableRef, ctadl_ir::cir::PathSegment), DexError> {
-        if let Some(found) = self.static_fields.get(&idx) {
-            return Ok(found.clone());
-        }
-        let pretty = parser.field_pretty_name(idx as usize)?;
-        let (class, rest) = pretty
-            .split_once("->")
-            .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
-        let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
-        let global = self.globals.declare(class, None);
-        let found = (
-            VariableRef::global(global),
-            ctadl_ir::cir::PathSegment::field(name),
-        );
-        self.static_fields.insert(idx, found.clone());
-        Ok(found)
-    }
-
-    /// The field segment `<Lcls;->name:type>` an instance field access `field_ids[idx]` reads or
-    /// writes.
-    fn instance_field(
-        &mut self,
-        parser: &DexParser<'_>,
-        idx: u32,
-    ) -> Result<ctadl_ir::cir::PathSegment, DexError> {
-        if let Some(found) = self.instance_fields.get(&idx) {
-            return Ok(found.clone());
-        }
-        let pretty = parser.field_pretty_name(idx as usize)?;
-        let found = ctadl_ir::cir::PathSegment::field(format!("<{pretty}>"));
-        self.instance_fields.insert(idx, found.clone());
-        Ok(found)
-    }
-
-    fn new() -> Self {
+impl Importer {
+    fn new(merged: merged::MergedClasses) -> Self {
         Self {
-            counter: Default::default(),
-            call_result: Default::default(),
-            catch_result: Default::default(),
-            call_to: Default::default(),
             defined: Default::default(),
             ext: Default::default(),
-            enclosing: None,
-            merged: Default::default(),
-            retag: Default::default(),
+            merged: Arc::new(merged),
+            clone_statements: 0,
             globals: Default::default(),
             class_defs: Vec::new(),
-            static_fields: Default::default(),
-            instance_fields: Default::default(),
-            pc: 0,
-            clone_statements: 0,
         }
     }
 
     /// Process one dex file into the program. Stubs any methods that are called but not defined.
     ///
-    /// The implementation is gnarly and could be cleaned up.
+    /// Three passes. The first walks the classes and methods in file order and does all the
+    /// bookkeeping -- function slots, VMT rows, parameters -- collecting a [`Job`] per method
+    /// body. The second lowers the bodies on the current rayon pool, each into a function of
+    /// its own ([`Context::lower_job`]). The third places them into the program in file order
+    /// ([`Importer::place`]), interning their spans and globals in exactly the order lowering
+    /// them one after another did, so the result does not depend on the thread count.
     fn process(
         &mut self,
         parser: &DexParser<'_>,
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        self.static_fields.clear();
-        self.instance_fields.clear();
+        let mut jobs: Vec<Job> = Vec::new();
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
             self.class_defs
@@ -313,7 +273,7 @@ impl Context {
                     interfaces.push(JavaClass(class_name.into()));
                 }
             }
-            self.enclosing = Some(EnclosingClass {
+            let enclosing = Arc::new(EnclosingClass {
                 superclass: superclass_opt.map(|c| c.0),
                 interfaces: iface_vec.into_iter().map(|c| c.0).collect(),
             });
@@ -328,17 +288,17 @@ impl Context {
                 let sig = parser.method_signature(mi)?;
                 // we have the definition
                 self.ext.remove(&sig);
-                // Reset temporaries per function.
-                self.counter.reset();
                 // We may have encountered this method as an "extern" in a previous dex file - if
                 // so, we're parsing the definition, so add to the existing FunctionData.
-                let fdat = if let Some(fidx) = self.defined.get(&sig) {
-                    &mut builders.program[*fidx]
-                } else {
-                    let fidx = builders.program.new_function();
-                    self.defined.insert(sig.clone(), fidx);
-                    &mut builders.program[fidx]
+                let fidx = match self.defined.get(&sig) {
+                    Some(&fidx) => fidx,
+                    None => {
+                        let fidx = builders.program.new_function();
+                        self.defined.insert(sig.clone(), fidx);
+                        fidx
+                    }
                 };
+                let fdat = &mut builders.program[fidx];
                 fdat.name = sig.clone();
                 let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
                 builders.vmt.names.push(
@@ -411,33 +371,26 @@ impl Context {
                         }
                     }
 
-                    self.retag = self.merged.retags(&sig, None);
-                    if self
+                    let empty_union = self
                         .merged
                         .class(&class_name)
-                        .is_some_and(|c| c.empties_union(&sig))
-                    {
-                        empty_body(fdat);
-                    } else {
-                        self.lower_code(
-                            parser,
-                            &code,
-                            &artifact_key,
-                            &mut builders.source_info_builder,
-                            fdat,
-                            &HashMap::new(),
-                        )?;
-                    }
+                        .is_some_and(|c| c.empties_union(&sig));
                     let params = fdat.params.clone();
-                    self.split_merged(
-                        parser,
-                        &code,
-                        &artifact_key,
+                    let clones = self.plan_clones(
                         builders,
                         &sig,
                         (&class_name, &method_name, &method_descr),
-                        &params,
-                    )?;
+                    );
+                    jobs.push(Job {
+                        fidx,
+                        sig,
+                        class: class_name,
+                        code,
+                        params,
+                        empty_union,
+                        enclosing: enclosing.clone(),
+                        clones,
+                    });
                 } else {
                     // Method without code – no basic blocks should be generated.
                     // We just set the return type.
@@ -446,10 +399,11 @@ impl Context {
             }
         }
 
+        let call_to = self.lower_and_place(parser, &artifact_key, builders, jobs)?;
+
         // define extern funcs and parameters/return value
         {
-            // Drained so that a later `process` does not work on old data.
-            let mut call_to: Vec<_> = self.call_to.drain().collect();
+            let mut call_to: Vec<_> = call_to.into_iter().collect();
             call_to.sort();
             for extern_id in call_to {
                 let java_sig = parser
@@ -496,14 +450,414 @@ impl Context {
         Ok(())
     }
 
+    /// Allocates the functions the clones of merged method `sig` will fill, one per class id,
+    /// and writes their VMT rows: the bookkeeping half of splitting a merged class (see
+    /// [`merged`]), in the order lowering the clones one after another did it. Returns each
+    /// clone's slot and id; [`Context::lower_job`] lowers the bodies.
+    fn plan_clones(
+        &mut self,
+        builders: &mut ProgramInfoBuilder,
+        sig: &str,
+        (class, simple, descr): (&str, &str, &str),
+    ) -> Vec<(FunctionIdx, i64)> {
+        let Some(class_info) = self.merged.class(class) else {
+            return Vec::new();
+        };
+        if class_info.switches(sig).is_none() {
+            return Vec::new();
+        }
+        let ids: Vec<i64> = class_info.ids.iter().copied().collect();
+        let mut clones = Vec::with_capacity(ids.len());
+        for id in ids {
+            let split = merged::split_class(class, id);
+            let split_sig = merged::split_method(sig, &split);
+            let fidx = builders.program.new_function();
+            self.defined.insert(split_sig.clone(), fidx);
+            builders.vmt.names.push(
+                FunctionNames::new(split_sig.as_str(), simple)
+                    .with_parent(split.as_str())
+                    .with_signature(descr),
+            );
+            builders.program[fidx].name = split_sig.clone();
+            if let Dispatch::Java {
+                methods, hierarchy, ..
+            } = &mut builders.vmt.dispatch
+            {
+                methods.push((
+                    JavaClass(split.as_str().into()),
+                    JavaSimpleName(simple.into()),
+                    JavaSignature(descr.into()),
+                    JavaMethod(split_sig.as_str().into()),
+                ));
+                let parents = hierarchy
+                    .entry(JavaClass(split.as_str().into()))
+                    .or_default();
+                let parent = JavaClass(class.into());
+                if !parents.contains(&parent) {
+                    parents.push(parent);
+                }
+            }
+            clones.push((fidx, id));
+        }
+        clones
+    }
+
+    /// Lowers `jobs` on the current rayon pool and places the results into the program in
+    /// order. Returns the methods the bodies call, for the extern stubs.
+    ///
+    /// The jobs go in batches, so that only one batch of lowered bodies waits to be placed at a
+    /// time, and so that the next batch is lowered while this one is placed.
+    fn lower_and_place(
+        &mut self,
+        parser: &DexParser<'_>,
+        artifact_key: &ArtifactKey,
+        builders: &mut ProgramInfoBuilder,
+        jobs: Vec<Job>,
+    ) -> Result<HashSet<MethodId>, Error> {
+        use rayon::prelude::*;
+
+        /// Bodies per batch: enough to keep every thread busy across uneven method sizes, few
+        /// enough that a batch of lowered bodies is a small part of the program.
+        const BATCH: usize = 4096;
+
+        let merged = Arc::clone(&self.merged);
+        let lower = |batch: &[Job]| -> Vec<(Result<Lowered, Error>, HashSet<MethodId>)> {
+            batch
+                .par_iter()
+                .map_init(
+                    || Context::for_file(Arc::clone(&merged)),
+                    |ctx, job| {
+                        let lowered = ctx.lower_job(parser, job);
+                        (lowered, std::mem::take(&mut ctx.call_to))
+                    },
+                )
+                .collect()
+        };
+        let mut call_to = HashSet::new();
+        let mut file = None;
+        let mut batches = jobs.chunks(BATCH);
+        let mut current = batches.next().map(lower);
+        while let Some(results) = current.take() {
+            let next_batch = batches.next();
+            let mut placed = Ok(());
+            // Lower the next batch while this one is placed.
+            rayon::scope(|scope| {
+                scope.spawn(|_| current = next_batch.map(lower));
+                placed = (|| {
+                    for (lowered, called) in results {
+                        call_to.extend(called);
+                        self.place(lowered?, artifact_key, &mut file, builders);
+                    }
+                    Ok::<(), Error>(())
+                })();
+            });
+            placed?;
+        }
+        Ok(call_to)
+    }
+
+    /// Puts one lowered method, and its clones, into the program: interns its spans and declares
+    /// its globals, in the order lowering it in place would have, and rewrites its statements to
+    /// use their ids.
+    fn place(
+        &mut self,
+        lowered: Lowered,
+        artifact_key: &ArtifactKey,
+        file: &mut Option<source_info::FileId>,
+        builders: &mut ProgramInfoBuilder,
+    ) {
+        let Lowered {
+            bodies,
+            spans,
+            globals,
+            clone_statements,
+            empty_union,
+        } = lowered;
+        self.clone_statements += clone_statements;
+        let span_ids: Vec<Vec<source_info::FileSpanId>> = spans
+            .iter()
+            .map(|offsets| {
+                if offsets.is_empty() {
+                    return Vec::new();
+                }
+                // Looked up at the file's first span, not before: that is when interning a span
+                // in it numbered the artifact.
+                let file = *file
+                    .get_or_insert_with(|| builders.source_info_builder.file_for(artifact_key));
+                offsets
+                    .iter()
+                    .map(|&offset| {
+                        builders
+                            .source_info_builder
+                            .span_in_file(file, offset, SpanLen::ByteLen(2))
+                    })
+                    .collect()
+            })
+            .collect();
+        let globals: Vec<GlobalIdx> = globals
+            .iter_enumerated()
+            .map(|(_, g)| self.globals.declare(&*g.name, None))
+            .collect();
+        for (fidx, mut body, list) in bodies {
+            let slot = &mut builders.program[fidx];
+            // A method defined in an earlier dex file too is lowered on top of that definition.
+            let grafting = !slot.blocks.is_empty() || !slot.locals.is_empty();
+            let mut slot_locals = std::mem::take(&mut slot.locals);
+            let locals: Vec<LocalIdx> = if grafting {
+                body.locals
+                    .iter_enumerated()
+                    .map(|(_, l)| slot_locals.get_or_intern(&l.name))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut resolve = Resolve {
+                spans: &span_ids[list],
+                globals: &globals,
+                locals: &locals,
+            };
+            ctadl_ir::cir::visit::MutVisitor::visit_function_data(&mut resolve, fidx, &mut body);
+            if grafting {
+                slot_locals.drop_index();
+                slot.locals = slot_locals;
+                graft(slot, body, empty_union);
+            } else {
+                let name = std::mem::take(&mut slot.name);
+                *slot = body;
+                slot.name = name;
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        mut builders: ProgramInfoBuilder,
+    ) -> Result<(ProgramInfo, Notifications), Error> {
+        let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its `class_def_item`, if the program uses it.
+        for (class, key, offset) in self.class_defs.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
+        log::trace!("program: {program}");
+        let notifications = self
+            .merged
+            .guardrail_notifications(self.clone_statements, || {
+                program.functions.iter().map(statement_count).sum()
+            });
+        // Verify the generated program.
+        program.verify()?;
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        // Sort for determinism
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        for (_sig, entry) in ext {
+            if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
+                methods.push(entry);
+            }
+        }
+        builders.vmt.finish_names();
+        let source_info = builders.source_info_builder.finish();
+        log::trace!("source_info: {source_info}");
+        let vmt = builders.vmt;
+        Ok((
+            ProgramInfo {
+                program,
+                vmt,
+                source_info,
+            },
+            notifications,
+        ))
+    }
+}
+
+/// What lowering an `invoke-super` needs to know about the class the call appears in.
+#[derive(Debug, Default)]
+struct EnclosingClass {
+    superclass: Option<Symbol>,
+    /// The interfaces the class directly implements. An `X.super.m()` names one of these, and
+    /// there lookup begins at the named interface rather than at the superclass.
+    interfaces: Vec<Symbol>,
+}
+
+impl Context {
+    /// The class global `$Lcls;` and field `name` of the static field `field_ids[idx]`, whose
+    /// pretty name is `Lcls;->name:type`. Declares the global on first use.
+    fn static_field(
+        &mut self,
+        parser: &DexParser<'_>,
+        idx: u32,
+    ) -> Result<(VariableRef, ctadl_ir::cir::PathSegment), DexError> {
+        if let Some(found) = self.static_fields.get(&idx) {
+            return Ok(found.clone());
+        }
+        let pretty = parser.field_pretty_name(idx as usize)?;
+        let (class, rest) = pretty
+            .split_once("->")
+            .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
+        let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
+        let global = self.globals.declare(class, None);
+        let found = (
+            VariableRef::global(global),
+            ctadl_ir::cir::PathSegment::field(name),
+        );
+        self.static_fields.insert(idx, found.clone());
+        Ok(found)
+    }
+
+    /// The field segment `<Lcls;->name:type>` an instance field access `field_ids[idx]` reads or
+    /// writes.
+    fn instance_field(
+        &mut self,
+        parser: &DexParser<'_>,
+        idx: u32,
+    ) -> Result<ctadl_ir::cir::PathSegment, DexError> {
+        if let Some(found) = self.instance_fields.get(&idx) {
+            return Ok(found.clone());
+        }
+        let pretty = parser.field_pretty_name(idx as usize)?;
+        let found = ctadl_ir::cir::PathSegment::field(format!("<{pretty}>"));
+        self.instance_fields.insert(idx, found.clone());
+        Ok(found)
+    }
+
+    fn new() -> Self {
+        Self {
+            counter: Default::default(),
+            call_result: Default::default(),
+            catch_result: Default::default(),
+            call_to: Default::default(),
+            enclosing: None,
+            merged: Default::default(),
+            retag: Default::default(),
+            globals: Default::default(),
+            static_fields: Default::default(),
+            instance_fields: Default::default(),
+            spans: Vec::new(),
+            pc: 0,
+        }
+    }
+
+    /// A lowerer for the dex files of a program whose merged classes are `merged`.
+    fn for_file(merged: Arc<merged::MergedClasses>) -> Self {
+        Self {
+            merged,
+            ..Self::new()
+        }
+    }
+
+    /// Lowers one method body, and the clones a merged class splits it into, each into a
+    /// function of its own. Spans are recorded as instruction offsets and globals declared in a
+    /// table of the job's own; [`Importer::place`] resolves both.
+    fn lower_job(&mut self, parser: &DexParser<'_>, job: &Job) -> Result<Lowered, Error> {
+        self.counter.reset();
+        self.call_result = None;
+        self.catch_result = None;
+        self.globals = Default::default();
+        self.static_fields.clear();
+        self.spans.clear();
+        self.enclosing = Some(Arc::clone(&job.enclosing));
+        let mut out = Lowered::default();
+
+        let mut base = FunctionData {
+            params: job.params.clone(),
+            ..Default::default()
+        };
+        self.retag = self.merged.retags(&job.sig, None);
+        if job.empty_union {
+            empty_body(&mut base);
+        } else {
+            self.lower_code(parser, &job.code, &mut base, &HashMap::new())?;
+        }
+        base.locals.drop_index();
+        out.spans.push(std::mem::take(&mut self.spans));
+        out.bodies.push((job.fidx, base, 0));
+        out.empty_union = job.empty_union;
+
+        if !job.clones.is_empty() {
+            self.lower_clones(parser, job, &mut out)?;
+        }
+        out.globals = std::mem::take(&mut self.globals);
+        Ok(out)
+    }
+
+    /// Lowers the clones of merged method `job`, one per class id, into the class split off for
+    /// that id, with each switch on the id narrowed to that id's arm. See [`merged`].
+    ///
+    /// Every clone is the same lowering of the body but for the switch arm it keeps and the
+    /// classes its `new-instance`s allocate. So the body is lowered once, unnarrowed and
+    /// unretagged, and each clone is built out of that template, copying only the blocks its arm
+    /// reaches ([`instantiate_clone`]). Lowering every clone in full and pruning afterwards did
+    /// the whole body's work once per id. The template interns the same spans and globals, in
+    /// the same order, as lowering the first clone did.
+    fn lower_clones(
+        &mut self,
+        parser: &DexParser<'_>,
+        job: &Job,
+        out: &mut Lowered,
+    ) -> Result<(), Error> {
+        let merged = Arc::clone(&self.merged);
+        let switches = merged
+            .class(&job.class)
+            .and_then(|c| c.switches(&job.sig))
+            .expect("a job has clones only for a switching method of a merged class");
+        let mut template = FunctionData {
+            params: job.params.clone(),
+            ..Default::default()
+        };
+        self.counter.reset();
+        self.retag.clear();
+        let info = self.lower_code(parser, &job.code, &mut template, &HashMap::new())?;
+        let template_spans = out.spans.len();
+        out.spans.push(std::mem::take(&mut self.spans));
+        for &(fidx, id) in &job.clones {
+            self.counter.reset();
+            self.retag = merged.retags(&job.sig, Some(id));
+            let narrow = merged::narrowed(switches, id);
+            let (mut fdat, spans) = if info.clonable {
+                let fdat = instantiate_clone(&template, &info, &narrow, |pc, ty| {
+                    match self.retag.get(&pc) {
+                        Some(split) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                            JavaClass(split.as_str().into()),
+                        ))),
+                        None => Self::allocation_exp(parser, ty),
+                    }
+                });
+                (fdat, template_spans)
+            } else {
+                let mut fdat = FunctionData {
+                    params: job.params.clone(),
+                    ..Default::default()
+                };
+                self.lower_code(parser, &job.code, &mut fdat, &narrow)?;
+                // The narrowed switch leaves every other id's arm unreachable. Without this each
+                // clone stores the whole merged body, so a class with n ids stores it n times
+                // over. The index would prune the same blocks before SSA anyway; doing it here
+                // keeps them out of the stored program.
+                ctadl_ir::ssa::prune_unreachable_nodes(&mut fdat);
+                out.spans.push(std::mem::take(&mut self.spans));
+                (fdat, out.spans.len() - 1)
+            };
+            fdat.locals.drop_index();
+            out.clone_statements += statement_count(&fdat);
+            out.bodies.push((fidx, fdat, spans));
+        }
+        self.retag.clear();
+        Ok(())
+    }
+
     /// Lowers one method body into `fdat`, whose parameters are already set. `narrow` maps the pc
     /// of a switch to the pc it must jump to, for a clone of a merged class's method.
     fn lower_code(
         &mut self,
         parser: &DexParser<'_>,
         code: &CodeItem,
-        artifact_key: &ArtifactKey,
-        source_info_builder: &mut source_info::SourceInfoBuilder,
         fdat: &mut FunctionData,
         narrow: &HashMap<usize, usize>,
     ) -> Result<LowerInfo, Error> {
@@ -544,10 +898,9 @@ impl Context {
                 if let DecodedCodeItem::Instruction { inst, offset } = dci {
                     self.pc = *offset;
                     let item_offset = code.absolute_offset(dci);
-                    let source_info = SourceInfo::new(source_info_builder.span_for(
-                        artifact_key.clone(),
-                        item_offset.try_into().unwrap(),
-                        SpanLen::ByteLen(2),
+                    self.spans.push(item_offset.try_into().unwrap());
+                    let source_info = SourceInfo::new(source_info::FileSpanId(
+                        self.spans.len().try_into().unwrap(),
                     ));
                     if let Some(mut stmt) = self.decode_call(parser, code, inst, &mut fdat.locals) {
                         stmt.source_info = source_info;
@@ -675,165 +1028,6 @@ impl Context {
         }
         info.offset_to_bb = offset_to_bb;
         Ok(info)
-    }
-
-    /// Clones method `sig` of a class-merged class once per class id, into the class split off
-    /// for that id, with each switch on the id narrowed to that id's arm. See [`merged`].
-    #[allow(clippy::too_many_arguments)]
-    fn split_merged(
-        &mut self,
-        parser: &DexParser<'_>,
-        code: &CodeItem,
-        artifact_key: &ArtifactKey,
-        builders: &mut ProgramInfoBuilder,
-        sig: &str,
-        (class, simple, descr): (&str, &str, &str),
-        params: &Params,
-    ) -> Result<(), Error> {
-        let Some(class_info) = self.merged.class(class) else {
-            return Ok(());
-        };
-        let Some(switches) = class_info.switches(sig) else {
-            return Ok(());
-        };
-        let switches = switches.to_vec();
-        let ids: Vec<i64> = class_info.ids.iter().copied().collect();
-        if ids.is_empty() {
-            return Ok(());
-        }
-        // Every clone is the same lowering of `code` but for the switch arm it keeps and the
-        // classes its `new-instance`s allocate. Lower it once, unnarrowed and unretagged, and
-        // build each clone out of that template, copying only the blocks its arm reaches.
-        // Lowering every clone in full and pruning afterwards did the whole body's work once per
-        // id. The template interns the same spans and globals, in the same order, as lowering the
-        // first clone did.
-        let mut template = FunctionData {
-            params: params.clone(),
-            ..Default::default()
-        };
-        self.counter.reset();
-        self.retag.clear();
-        let info = self.lower_code(
-            parser,
-            code,
-            artifact_key,
-            &mut builders.source_info_builder,
-            &mut template,
-            &HashMap::new(),
-        )?;
-        for id in ids {
-            let split = merged::split_class(class, id);
-            let split_sig = merged::split_method(sig, &split);
-            self.counter.reset();
-            self.retag = self.merged.retags(sig, Some(id));
-            let fidx = builders.program.new_function();
-            self.defined.insert(split_sig.clone(), fidx);
-            builders.vmt.names.push(
-                FunctionNames::new(split_sig.as_str(), simple)
-                    .with_parent(split.as_str())
-                    .with_signature(descr),
-            );
-            let narrow = merged::narrowed(&switches, id);
-            if info.clonable {
-                let mut fdat = instantiate_clone(&template, &info, &narrow, |pc, ty| {
-                    match self.retag.get(&pc) {
-                        Some(split) => Some(Exp::new_object_ref(CallObject::JavaObject(
-                            JavaClass(split.as_str().into()),
-                        ))),
-                        None => Self::allocation_exp(parser, ty),
-                    }
-                });
-                fdat.name = split_sig.clone();
-                builders.program[fidx] = fdat;
-            } else {
-                let fdat = &mut builders.program[fidx];
-                fdat.name = split_sig.clone();
-                fdat.params = params.clone();
-                self.lower_code(
-                    parser,
-                    code,
-                    artifact_key,
-                    &mut builders.source_info_builder,
-                    fdat,
-                    &narrow,
-                )?;
-                // The narrowed switch leaves every other id's arm unreachable. Without this each
-                // clone stores the whole merged body, so a class with n ids stores it n times
-                // over. The index would prune the same blocks before SSA anyway; doing it here
-                // keeps them out of the stored program.
-                ctadl_ir::ssa::prune_unreachable_nodes(fdat);
-            }
-            let fdat = &mut builders.program[fidx];
-            fdat.locals.drop_index();
-            self.clone_statements += statement_count(fdat);
-            if let Dispatch::Java {
-                methods, hierarchy, ..
-            } = &mut builders.vmt.dispatch
-            {
-                methods.push((
-                    JavaClass(split.as_str().into()),
-                    JavaSimpleName(simple.into()),
-                    JavaSignature(descr.into()),
-                    JavaMethod(split_sig.as_str().into()),
-                ));
-                let parents = hierarchy
-                    .entry(JavaClass(split.as_str().into()))
-                    .or_default();
-                let parent = JavaClass(class.into());
-                if !parents.contains(&parent) {
-                    parents.push(parent);
-                }
-            }
-        }
-        self.retag.clear();
-        Ok(())
-    }
-
-    fn finish(
-        &mut self,
-        mut builders: ProgramInfoBuilder,
-    ) -> Result<(ProgramInfo, Notifications), Error> {
-        let mut program = builders.program;
-        program.globals = std::mem::take(&mut self.globals);
-        // A class's global is declared at its `class_def_item`, if the program uses it.
-        for (class, key, offset) in self.class_defs.drain(..) {
-            if program.globals.lookup(&class).is_some() {
-                let span = builders.source_info_builder.span_for(
-                    key,
-                    offset,
-                    SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN),
-                );
-                program.globals.declare(&class, Some(span));
-            }
-        }
-        log::trace!("program: {program}");
-        let notifications = self
-            .merged
-            .guardrail_notifications(self.clone_statements, || {
-                program.functions.iter().map(statement_count).sum()
-            });
-        // Verify the generated program.
-        program.verify()?;
-        let mut ext: Vec<_> = self.ext.drain().collect();
-        // Sort for determinism
-        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-        for (_sig, entry) in ext {
-            if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
-                methods.push(entry);
-            }
-        }
-        builders.vmt.finish_names();
-        let source_info = builders.source_info_builder.finish();
-        log::trace!("source_info: {source_info}");
-        let vmt = builders.vmt;
-        Ok((
-            ProgramInfo {
-                program,
-                vmt,
-                source_info,
-            },
-            notifications,
-        ))
     }
 
     /// Where an `invoke-super` naming `cls` begins method lookup.
@@ -1352,6 +1546,94 @@ impl Context {
 
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
+    }
+}
+
+/// One method body for [`Context::lower_job`] to lower, with everything it needs from the
+/// bookkeeping pass of [`Importer::process`].
+struct Job {
+    /// The function the body goes into.
+    fidx: FunctionIdx,
+    sig: String,
+    class: String,
+    code: CodeItem,
+    params: Params,
+    /// Whether the body is replaced by an empty one (see [`merged`]).
+    empty_union: bool,
+    enclosing: Arc<EnclosingClass>,
+    /// The function and class id of each clone of the body (see [`Importer::plan_clones`]).
+    clones: Vec<(FunctionIdx, i64)>,
+}
+
+/// What [`Context::lower_job`] made of a [`Job`].
+#[derive(Default)]
+struct Lowered {
+    /// Each function lowered, with the list in `spans` its statements' spans index.
+    bodies: Vec<(FunctionIdx, FunctionData, usize)>,
+    /// Instruction offsets, in the order lowering met them. A statement's span id is, for now,
+    /// 1 + its position in its list.
+    spans: Vec<Vec<u32>>,
+    /// The globals the bodies use, numbered in the order they first used them.
+    globals: ctadl_ir::cir::Globals,
+    clone_statements: usize,
+    /// Whether the method body is [`empty_body`]'s.
+    empty_union: bool,
+}
+
+/// Rewrites a function lowered by [`Context::lower_job`] to the program's numbering: the span
+/// ids, the globals, and -- for a body lowered on top of an earlier definition -- the locals.
+struct Resolve<'a> {
+    spans: &'a [source_info::FileSpanId],
+    globals: &'a [GlobalIdx],
+    /// Empty when the body keeps its own locals.
+    locals: &'a [LocalIdx],
+}
+
+impl ctadl_ir::cir::visit::MutVisitor for Resolve<'_> {
+    fn visit_statement(&mut self, statement: &mut Statement, location: ctadl_ir::cir::Location) {
+        let span = &mut statement.source_info.span_id;
+        if span.0 != 0 {
+            *span = self.spans[span.0 as usize - 1];
+        }
+        self.super_statement(statement, location);
+    }
+
+    fn visit_variable_ref(&mut self, variable_ref: &mut VariableRef) {
+        match &mut variable_ref.variable {
+            Variable::Global(g) => *g = self.globals[g.index()],
+            Variable::Local(l) if !self.locals.is_empty() => *l = self.locals[l.index()],
+            _ => {}
+        }
+    }
+}
+
+/// Puts `body` into `slot` the way lowering it in place onto an earlier definition of the same
+/// method did: [`Context::lower_code`] appends as many empty blocks as the body has, then fills
+/// blocks from the first on, appending to their statements and replacing their terminators;
+/// [`empty_body`] appends its one block. `body`'s locals are already `slot`'s.
+fn graft(slot: &mut FunctionData, body: FunctionData, empty_union: bool) {
+    slot.return_type = body.return_type;
+    let mut body_blocks = body.blocks;
+    let blocks = std::mem::take(body_blocks.blocks_mut());
+    if empty_union {
+        for data in blocks {
+            slot.blocks.blocks_mut().push(data);
+        }
+        return;
+    }
+    for _ in 0..blocks.len() {
+        slot.blocks.blocks_mut().push(BasicBlockData::new(None));
+    }
+    for (i, data) in blocks.into_iter().enumerate() {
+        let BasicBlockData {
+            statements,
+            terminator,
+        } = data;
+        let dst = &mut slot.blocks[BasicBlockIdx::new(i)];
+        for s in statements {
+            dst.push_back(s);
+        }
+        dst.terminator = terminator;
     }
 }
 
