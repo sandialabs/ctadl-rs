@@ -76,7 +76,8 @@ impl<T: Row> Index<T> {
         }
     }
 
-    /// Indexes `rows`, which already hold IDs 1, 2, ... in order.
+    /// Indexes `rows`, which already hold IDs 1, 2, ... in order and have distinct keys, as an
+    /// interned table's rows do.
     pub(crate) fn from_rows(rows: &[T]) -> Self {
         let mut index = Self::new();
         #[cfg(not(feature = "sled"))]

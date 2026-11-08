@@ -183,7 +183,11 @@ mod tests {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
-                let artifact = if x.is_multiple_of(4) { (x >> 8) as u32 % 7 } else { 0 };
+                let artifact = if x.is_multiple_of(4) {
+                    (x >> 8) as u32 % 7
+                } else {
+                    0
+                };
                 let start = (x >> 16) as u32 % 3000;
                 let len = match (x >> 40) % 3 {
                     0 => SpanLen::Empty,
