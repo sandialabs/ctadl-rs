@@ -34,35 +34,43 @@ where
     F: Fn([&str; N]) -> Result<T> + Sync,
 {
     let file = std::fs::File::open(path)?;
-    let mut reader: Box<dyn Read> = if compressed {
+    let mut reader: Box<dyn Read + Send> = if compressed {
         Box::new(flate2::read::MultiGzDecoder::new(std::io::BufReader::new(
             file,
         )))
     } else {
         Box::new(file)
     };
+    // Appends up to a window of text to `buf`; true at the end of the table.
+    let fill = |reader: &mut Box<dyn Read + Send>, buf: &mut Vec<u8>| -> Result<bool> {
+        Ok(reader.take(WINDOW as u64).read_to_end(buf)? < WINDOW)
+    };
     let mut rows = Vec::new();
     // The text read and not yet parsed: whole lines but for the last.
     let mut window = Vec::with_capacity(WINDOW);
+    let mut at_end = fill(&mut reader, &mut window)?;
     loop {
-        let read = (&mut reader).take(WINDOW as u64).read_to_end(&mut window)?;
-        let at_end = read < WINDOW;
         if memchr::memchr2(b'"', b'\r', &window).is_some() {
             // A quoted field may span lines, so the rest is read as one.
             reader.read_to_end(&mut window)?;
             rows.extend(parse_csv(filename, &window, &f)?);
             return Ok(rows);
         }
-        let end = if at_end {
-            window.len()
-        } else {
-            memchr::memrchr(b'\n', &window).map_or(0, |i| i + 1)
-        };
-        rows.extend(parse(filename, &window[..end], &f)?);
         if at_end {
+            rows.extend(parse(filename, &window, &f)?);
             return Ok(rows);
         }
-        window.drain(..end);
+        let end = memchr::memrchr(b'\n', &window).map_or(0, |i| i + 1);
+        let mut next = Vec::with_capacity(WINDOW + window.len() - end);
+        next.extend_from_slice(&window[end..]);
+        // Inflating a window is serial, so the next one is read while this one is parsed.
+        let (parsed, filled) = rayon::join(
+            || parse(filename, &window[..end], &f),
+            || fill(&mut reader, &mut next),
+        );
+        rows.extend(parsed?);
+        at_end = filled?;
+        window = next;
     }
 }
 

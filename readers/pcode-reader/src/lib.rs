@@ -251,12 +251,13 @@ impl PcodeFactsReader {
         Ok(self.rows_optional(filename, f)?.unwrap_or_default())
     }
 
-    /// Read all essential pcode facts. The tables are read in parallel, and so is each large
-    /// one.
+    /// Read all essential pcode facts. Tables are read in parallel, and so is each large one.
     pub fn read_all_facts(&self) -> Result<PcodeFacts> {
-        let (pcode_facts, (vnode_facts, (bb_facts, (vnode_hvar_facts, rest)))) = join!(
-            self.read_pcode_facts(),
-            self.read_vnode_facts(),
+        // The two largest groups of tables go first, one at a time, so that only one group's
+        // rows and intermediate maps are in memory at once.
+        let pcode_facts = self.read_pcode_facts()?;
+        let vnode_facts = self.read_vnode_facts()?;
+        let (bb_facts, (vnode_hvar_facts, rest)) = join!(
             self.read_bb_facts(),
             self.read_vnode_hvar_facts(),
             join!(
@@ -289,8 +290,8 @@ impl PcodeFactsReader {
         ) = rest;
         Ok(PcodeFacts {
             hfunc_facts: hfunc_facts?,
-            pcode_facts: pcode_facts?,
-            vnode_facts: vnode_facts?,
+            pcode_facts,
+            vnode_facts,
             bb_facts: bb_facts?,
             proto_facts: proto_facts?,
             symbol_hvar_facts: symbol_hvar_facts?,
