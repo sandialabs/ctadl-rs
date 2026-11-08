@@ -253,6 +253,8 @@ class Daemon:
             target_dir = self.root / "target-bench"
         env = {**self.env, "CARGO_TARGET_DIR": str(target_dir)}
         log = self.root / "builds" / sha / f"{target}.log"
+        if tier == "e":
+            cargo += ["-j", str(self.cfg["build"]["jobs_e"])]
         argv = ["nix", "develop", flake, "--command", *cargo]
         run = proc.launch(argv, cwd=src, env=env, log_path=log, time_file=log.with_suffix(".time"),
                           memguard=self.memguard, mem_cap_gib=self.cfg["build"]["mem_cap_gib"], tier=tier)

@@ -46,6 +46,9 @@ ignore_cpu = [
 [build]
 mem_cap_gib = 48
 est_gib = 16                # what the pool holds for a build
+# cargo -j for a build started on the e tier: the efficiency cores. rustc's codegen threads
+# draw from cargo's jobserver, so this bounds them too. On the p tier, cargo uses every core.
+jobs_e = 4
 timeout_s = 7200
 
 # When the machine is quiet, builds, pass units and sweep units share one pool, admitted while
