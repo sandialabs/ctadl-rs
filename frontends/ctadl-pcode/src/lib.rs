@@ -22,7 +22,7 @@ How pcode follows the front-end conventions of S19 in `docs/ir.md`:
   that overlaps an 8-byte read is lost.
 - A write to a frame address itself, `__stack_top.[k]`, is dropped, because every read of the
   varnode that holds the address resolves to the address too. See
-  `Context::push_assign_or_store`.
+  `Lowerer::push_assign_or_store`.
 
 # Spans
 
@@ -328,38 +328,60 @@ impl Context {
             },
         );
 
-        // Run and store constant propagation results
-        self.cp_results =
-            pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts);
-        timer.done("constant propagation");
-        self.global_vnodes = pcode_facts
-            .vnode_facts
-            .par_iter()
-            .filter(|(vn, _)| pcode_facts.is_global_vnode(vn))
-            .map(|(vn, _)| vn.clone())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .collect();
-        if self.int_arith == IntArith::Value {
-            self.vnode_kinds = pcode_facts
-                .vnode_facts
-                .par_iter()
-                .filter_map(|(vn, _)| Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?)))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .collect();
-            self.addr_vnodes = address_vnodes(&pcode_facts);
-            self.scaled_vnodes = pcode_facts
-                .pcode_facts
-                .values()
-                .filter(|op| matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT"))
-                .flat_map(|op| op.outputs.iter().cloned())
-                .collect();
+        // Constant propagation, and the classes of varnodes lowering looks up, are independent.
+        let int_arith = self.int_arith;
+        let (cp_results, (global_vnodes, value_classes)) = rayon::join(
+            || pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts),
+            || {
+                rayon::join(
+                    || {
+                        pcode_facts
+                            .vnode_facts
+                            .par_iter()
+                            .filter(|(vn, _)| pcode_facts.is_global_vnode(vn))
+                            .map(|(vn, _)| vn.clone())
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        (int_arith == IntArith::Value).then(|| {
+                            rayon::join(
+                                || {
+                                    pcode_facts
+                                        .vnode_facts
+                                        .par_iter()
+                                        .filter_map(|(vn, _)| {
+                                            Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?))
+                                        })
+                                        .collect::<Vec<_>>()
+                                },
+                                || {
+                                    let scaled = pcode_facts
+                                        .pcode_facts
+                                        .values()
+                                        .filter(|op| {
+                                            matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT")
+                                        })
+                                        .flat_map(|op| op.outputs.iter().cloned())
+                                        .collect();
+                                    (address_vnodes(&pcode_facts), scaled)
+                                },
+                            )
+                        })
+                    },
+                )
+            },
+        );
+        self.cp_results = cp_results;
+        self.global_vnodes = global_vnodes.into_iter().collect();
+        if let Some((vnode_kinds, (addr_vnodes, scaled_vnodes))) = value_classes {
+            self.vnode_kinds = vnode_kinds.into_iter().collect();
+            self.addr_vnodes = addr_vnodes;
+            self.scaled_vnodes = scaled_vnodes;
         }
+        timer.done("constant propagation and vnode classes");
         self.register_facts = pcode_facts.register_facts.clone();
 
         // Pre-pass: Create mapping from function names to HighFunc IDs for functions with pcode
-        timer.done("vnode classes");
         let name_to_func_map = self.create_name_to_func_mapping(&pcode_facts);
 
         // 1. Process functions first (metadata only)
@@ -372,6 +394,7 @@ impl Context {
 
         // 3. Process pcode instructions
         self.process_pcode_instructions(&pcode_facts, artifact_key, builders)?;
+        drop_in_background(pcode_facts);
         timer.done("instructions");
         if self.unlocated_instructions > 0 {
             log::warn!(
@@ -921,6 +944,7 @@ impl Context {
                 self.int_arith
             );
         }
+        drop_in_background(self);
         log::trace!("final program: {}", builders.program);
         // Verify the program
         builders.program.verify()?;
@@ -2043,12 +2067,18 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// How [`Context::handle_binop`] lowers integer arithmetic and comparisons, from
+/// Drops `value` on the rayon pool, off the import's critical path: dropping the facts
+/// releases millions of interned strings.
+fn drop_in_background<T: Send + 'static>(value: T) {
+    rayon::spawn(move || drop(value));
+}
+
+/// How [`Lowerer::handle_binop`] lowers integer arithmetic and comparisons, from
 /// `CTADL_EXP_INT_ARITH`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum IntArith {
     /// `value` (default): most operands supply only their value ([`Exp::Value`]), so a sum or
-    /// a comparison is not an alias of the memory behind its operands. [`Context::operand_flows`]
+    /// a comparison is not an alias of the memory behind its operands. [`Lowerer::operand_flows`]
     /// says which operands still merge.
     Value,
     /// `merge`: every operand flows into the result, so the result gets every path of every
@@ -2148,7 +2178,7 @@ fn base_operand(shapes: &[OperandShape]) -> Option<usize> {
     only(|s| s.pointer).or_else(|| only(|s| !s.scaled))
 }
 
-/// The number of each kind of source of arithmetic and comparisons in [`Context::handle_binop`].
+/// The number of each kind of source of arithmetic and comparisons in [`Lowerer::handle_binop`].
 #[derive(Clone, Copy, Debug, Default)]
 struct BinopSources {
     /// Whole-variable sources.
@@ -2183,7 +2213,8 @@ impl BinopSources {
 /// Propagation stops at every other operator, so an index scaled by a multiply or shift is not
 /// an address even when the scaled value is added to one.
 fn address_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::PcodeVarnode> {
-    let mut defs: BTreeMap<&pcode_reader::PcodeVarnode, &pcode_reader::PcodeData> = BTreeMap::new();
+    let mut defs: hashbrown::HashMap<&pcode_reader::PcodeVarnode, &pcode_reader::PcodeData> =
+        Default::default();
     let mut work: Vec<&pcode_reader::PcodeVarnode> = Vec::new();
     for op in facts.pcode_facts.values() {
         for out in &op.outputs {
@@ -2195,9 +2226,9 @@ fn address_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::Pc
             _ => {}
         }
     }
-    let mut seen = BTreeSet::new();
+    let mut seen = hashbrown::HashSet::new();
     while let Some(vn) = work.pop() {
-        if !seen.insert(vn.clone()) {
+        if !seen.insert(vn) {
             continue;
         }
         if let Some(op) = defs.get(vn)
@@ -2209,7 +2240,7 @@ fn address_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::Pc
             work.extend(op.inputs.iter());
         }
     }
-    seen
+    seen.into_iter().cloned().collect()
 }
 
 #[cfg(test)]
