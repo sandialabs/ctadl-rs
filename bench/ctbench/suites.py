@@ -22,20 +22,22 @@ def _phase(name, argv, timeout, after=None, env=None):
     return {"phase": name, "argv": argv, "after": after, "timeout_s": timeout, "env": env or {}}
 
 
-def _apk_phases(t, apk, *, model=None, import_flags=(), report=False):
-    """import -> [report] -> index -> query for one APK or XAPK."""
+def _apk_phases(t, apk, ghidra_home, *, model=None, import_flags=(), report=False):
+    """import -> [report] -> index -> query for one APK or XAPK. Ghidra analyzes its native
+    libraries; without GHIDRA_HOME, import skips them with only a warning."""
     m = ["-m", model] if model else []
+    env = {"GHIDRA_HOME": ghidra_home}
     phases = [_phase("import", ["{ctadl}", "--store", "{store}", "import", *import_flags,
-                                "-n", "app", apk], t["import"])]
+                                "-n", "app", apk], t["import"], env=env)]
     if report:
         phases.append(_phase("report", ["{ctadl}", "--store", "{store}", "report", "app",
                                         "--format", "json", "-o", "{work}/report.json"],
-                             t["report"], after="import"))
+                             t["report"], after="import", env=env))
     phases.append(_phase("index", ["{ctadl}", "--store", "{store}", "index", "app", *m],
-                         t["index"], after="import"))
+                         t["index"], after="import", env=env))
     phases.append(_phase("query", ["{ctadl}", "--store", "{store}", "query", "app", *m,
                                    "-o", "{work}/results.sarif", *PROFILE],
-                         t["query"], after="index"))
+                         t["query"], after="index", env=env))
     return phases
 
 
@@ -78,7 +80,8 @@ def benchmarks(cfg, inputs, conn, sha: str):
                 apk = str(Path(inputs["taintbench_apks"]) / f"{app}.apk")
                 model = str(apps_dir / app / "model.json")
                 yield (suite, app, s["order"], mem,
-                       _apk_phases(t, apk, model=model, import_flags=("-l", "apk")),
+                       _apk_phases(t, apk, inputs["ghidra_home"], model=model,
+                                   import_flags=("-l", "apk")),
                        {"kind": "taintbench", "app": app, "apps_dir": str(apps_dir)})
 
         elif suite == "android-icc":
@@ -86,7 +89,8 @@ def benchmarks(cfg, inputs, conn, sha: str):
                 spec = _json5_lite(spec_path.read_text())
                 apk = str(Path(inputs["android_icc_apks"]) / spec["apk"])
                 model = str(spec_path.parent / spec["model"])
-                phases = _apk_phases(t, apk, import_flags=("-l", "apk", "--no-native-libs"))
+                phases = _apk_phases(t, apk, inputs["ghidra_home"],
+                                     import_flags=("-l", "apk", "--no-native-libs"))
                 # As xtask's runner does: the model goes to query only.
                 phases[-1]["argv"][5:5] = ["-m", model]
                 yield (suite, spec_path.stem, s["order"], mem, phases,
@@ -97,7 +101,7 @@ def benchmarks(cfg, inputs, conn, sha: str):
             model = str(bench_repo / s["model"])
             for app in json.loads((bench_repo / s["list"]).read_text()):
                 yield (suite, app["bench"], s["order"], mem,
-                       _apk_phases(t, app["path"], model=model, report=True),
+                       _apk_phases(t, app["path"], inputs["ghidra_home"], model=model, report=True),
                        {"kind": "flows", "input_sha256": app["sha256"]})
 
         elif suite == "firmware7":
