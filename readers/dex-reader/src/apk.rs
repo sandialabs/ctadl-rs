@@ -225,6 +225,27 @@ pub fn has_dex_entries_of_file(path: &std::path::Path) -> DexResult<bool> {
         .any(|name| is_dex_entry_name(&name)))
 }
 
+/// The uncompressed size, in bytes, of every `classes*.dex` entry in the APK at `path` together,
+/// as the ZIP directory records it; nothing is decompressed. 0 for an APK with no Dex.
+///
+/// Lets a caller estimate what lowering the Dex will take before starting it.
+pub fn dex_size_of_file(path: &std::path::Path) -> DexResult<u64> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
+    let mut total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
+        if entry.name().is_ok_and(|name| is_dex_entry_name(&name)) {
+            total = total.saturating_add(entry.size());
+        }
+    }
+    Ok(total)
+}
+
 /// The `lib/<abi>/*.so` entries of an already-opened archive, sorted by entry name.
 fn collect_native_lib_entries<R: std::io::Read + std::io::Seek>(
     archive: &ZipArchive<R>,
@@ -789,6 +810,8 @@ mod native_lib_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app.apk");
         std::fs::write(&path, sample_apk()).unwrap();
+        // `classes.dex` in `sample_apk` holds 8 bytes.
+        assert_eq!(dex_size_of_file(&path).unwrap(), 8);
         let mut seen = Vec::new();
         for_each_native_lib_of_file(&path, "arm64-v8a", |entry, reader| {
             let mut bytes = Vec::new();

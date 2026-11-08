@@ -31,8 +31,8 @@ granted, but only when nothing else is running, so one huge library behaves as i
 own.
 
 Once Ghidra exits, a run keeps a smaller share, an estimate of what lowering its facts takes in
-this process. What the Dex half of an APK takes in this process is not counted: the budget
-bounds what the JVMs and the lowering add on top of it.
+this process. The Dex half of an APK is counted too, at an estimate from its Dex size, and only
+one is lowered at a time ([`Budget::dex_turn`]).
 
 # Order
 
@@ -67,6 +67,8 @@ pub struct Budget {
     memory_mib: u64,
     state: Mutex<State>,
     changed: Condvar,
+    /// Held while a Dex half is lowered; see [`Budget::dex_turn`].
+    dex: Mutex<()>,
     pool: rayon::ThreadPool,
 }
 
@@ -139,6 +141,7 @@ impl Budget {
             memory_mib: memory_mib.max(1),
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
+            dex: Mutex::new(()),
             pool,
         }
     }
@@ -151,6 +154,15 @@ impl Budget {
     /// The memory in the budget, in MiB.
     pub fn memory_mib(&self) -> u64 {
         self.memory_mib
+    }
+
+    /// Waits for, and holds until dropped, the one turn there is to lower a Dex half.
+    ///
+    /// Lowering one APK's Dex already keeps every thread of the pool busy, and takes gigabytes
+    /// for a large app, so two at once would only compete for the same cores while doubling the
+    /// memory. The splits of a bundle take turns; their native halves are not held up.
+    pub fn dex_turn(&self) -> MutexGuard<'_, ()> {
+        self.dex.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Runs `f` on the budget's rayon pool, so any rayon work inside it shares the budget's

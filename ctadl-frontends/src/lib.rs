@@ -269,12 +269,21 @@ fn import_apk(
         }
     };
     let path = &import.artifact_path;
-    if dex_reader::apk::has_dex_entries_of_file(path).unwrap_or(false) {
+    let dex_size = dex_reader::apk::dex_size_of_file(path).unwrap_or(0);
+    if dex_size > 0 {
+        // Asked for before the native half starts asking, so the Dex starts first.
+        let turn = budget.dex_turn();
+        let grant = budget.acquire(budget::Request {
+            cores: 1,
+            mib: dex_lowering_mib(dex_size),
+        });
         let (java, native) = std::thread::scope(|scope| {
             let native = budget::spawn_scoped(scope, || {
                 apk_native::import_native_libs_in(import, opts, Some(budget))
             });
             let java = budget.install(|| ctadl_dex::import_apk(path));
+            drop(grant);
+            drop(turn);
             (java, native.join())
         });
         let ctadl_dex::ApkImport {
@@ -339,6 +348,14 @@ fn import_apk(
         program_info,
         notifications,
     })
+}
+
+/// The memory, in MiB, lowering `dex_size` bytes of Dex takes in this process, for
+/// [`budget::Budget`]: about 56 bytes per byte of Dex, which is what large apps measure, plus a
+/// fixed part.
+#[cfg(feature = "apk")]
+fn dex_lowering_mib(dex_size: u64) -> u64 {
+    512 + dex_size.saturating_mul(56) / (1 << 20)
 }
 
 /// Runs [`import_artifact`] and then writes the result to the store. This is what `ctadl
