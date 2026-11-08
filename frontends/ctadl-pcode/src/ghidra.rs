@@ -457,6 +457,12 @@ pub fn remove_compressed_originals(paths: &[PathBuf]) -> Result<(), Error> {
     Ok(())
 }
 
+/// The deflate level fact tables are compressed at. Below the default of 6 because compressing
+/// is the largest cost of an import after Ghidra: on a firmware binary's tables, level 5 took
+/// 31% less time than 6 for files 2% larger, with no slower reading; level 7 took 22% more for
+/// 3% smaller.
+const FACTS_COMPRESSION: u32 = 5;
+
 /// Gzip a single `*.facts` file into a `*.facts.gz` sibling, via a `.tmp` and a
 /// rename.
 ///
@@ -493,7 +499,7 @@ fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
         .err_context(|| format!("creating compressed fact file: {}", tmp_path.display()))?;
 
     if len <= PIECE as u64 {
-        let mut encoder = GzEncoder::new(output, Compression::default());
+        let mut encoder = GzEncoder::new(output, Compression::new(FACTS_COMPRESSION));
         std::io::copy(&mut input, &mut encoder).err_context(compressing)?;
         encoder.finish().err_context(compressing)?;
     } else {
@@ -575,7 +581,7 @@ fn deflate_piece(piece: &[u8], finish: bool) -> std::io::Result<Vec<u8>> {
     } else {
         FlushCompress::Sync
     };
-    let mut compress = Compress::new(Compression::default(), false);
+    let mut compress = Compress::new(Compression::new(FACTS_COMPRESSION), false);
     let mut out = Vec::with_capacity(piece.len() / 4 + 64);
     let mut input = piece;
     loop {
