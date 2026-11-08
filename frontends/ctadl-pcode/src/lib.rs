@@ -139,9 +139,10 @@ pub fn lower_facts(import: &ctadl_import::project::ArtifactImport) -> Result<Pro
         },
         || lower_tables(import, &facts_dir),
     );
-    let program_info = program_info?;
+    // The plain tables go once their compressed copies are written, whether or not lowering
+    // succeeded: a failed import would otherwise keep both.
     ghidra::remove_compressed_originals(&compressed?)?;
-    Ok(program_info)
+    program_info
 }
 
 /// Lowers the fact tables in `facts_dir` to the program of `import`, and scans for its
