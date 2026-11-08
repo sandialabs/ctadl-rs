@@ -113,7 +113,6 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::{fmt, fmt::Display};
 
 use internment::ArcIntern;
-use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
 use crate::cir::call::VirtualMethodTable;
@@ -297,7 +296,7 @@ pub enum StatementKind {
     /// predecessor blocks.
     Phi {
         dest: VariableRef,
-        operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
+        operands: ThinVec<(BasicBlockIdx, VariableRef)>,
     },
 
     /// No operation
@@ -312,6 +311,12 @@ pub struct Statement {
     pub source_info: SourceInfo,
     pub kind: StatementKind,
 }
+
+// Statements are a large share of a program's memory, at import and at indexing. A field that
+// grows one of the variants past this belongs behind a pointer, as `Sources` and the call styles'
+// method refs are.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Statement>() <= 72);
 
 /// Source info attached to specific elements of the IR
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
