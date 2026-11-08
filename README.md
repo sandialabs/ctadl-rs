@@ -77,6 +77,9 @@ An APK also imports the native libraries packaged in it (`--no-native-libs`, `--
 control). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project
 (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). 
 
+An import runs on as many threads as there are cores, up to 16; `-j N` sets the count. The
+result does not depend on it: an import is the same, byte for byte, on any number of threads.
+
 ### The JNI bridge
 
 A Java `native` method has no body, and nothing names the function implementing it. Whenever a

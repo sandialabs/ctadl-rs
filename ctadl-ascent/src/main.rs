@@ -876,8 +876,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Most threads an import uses unless `-j` asks for more. Past this, lowering a large app gains
-/// little: placing its results in order and writing them are serial.
+/// Most threads an import uses unless `-j` asks for more.
 const IMPORT_THREADS_CAP: usize = 16;
 
 /// Sizes the rayon pool the import's front ends lower, verify and encode on: `jobs` threads, or
