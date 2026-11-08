@@ -94,16 +94,25 @@ pub fn import_pcode(
     import: &ctadl_import::project::ArtifactImport,
     jobs: usize,
 ) -> Result<ProgramInfo, Error> {
-    let path = &import.artifact_path;
-    let import_path = import.import_path();
-
     // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, &import_path, jobs)?;
+    ghidra::run_ghidra_export(&import.artifact_path, &import.import_path(), jobs)?;
+    import_facts(import)
+}
 
-    let facts_dir = import_path.join("facts");
+/// Everything [`import_pcode`] does after Ghidra has written the import's `facts/` directory:
+/// compresses the fact tables, lowers them to a program, and scans for `RegisterNatives`
+/// tables. Public so that the in-process work can be run and profiled on an existing import's
+/// facts without running Ghidra again; compressing is idempotent, so it can be run any number
+/// of times on one directory.
+#[doc(hidden)]
+pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+    let timer = PhaseTimer::start();
+    let path = &import.artifact_path;
+    let facts_dir = import.import_path().join("facts");
 
     // Gzip the fact tables Ghidra just produced; the reader below handles either variant.
     ghidra::compress_facts_dir(&facts_dir)?;
+    timer.done("compress facts");
 
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover
@@ -117,6 +126,7 @@ pub fn import_pcode(
         updated.image_base = Some(image_base);
         updated.save()?;
     }
+    timer.done("image base");
 
     let mut ctx = Context::new();
     ctx.import_name = import.name.clone();
@@ -129,7 +139,7 @@ pub fn import_pcode(
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&facts_dir, key, &mut builders)?;
+    ctx.process(&facts_dir, key, &mut builders, &timer)?;
 
     // Recover this library's `RegisterNatives` tables and write them beside the import's other
     // artifacts. Here, rather than earlier or later, because this is the first point at which
@@ -138,8 +148,27 @@ pub fn import_pcode(
     // in. Scanning is unconditional and costs milliseconds; `--no-jni-registry` ignores the
     // result at index time, which is what makes a clean A/B possible without re-importing.
     jni_registry::scan_import(import, image_base, &ctx.entry_points)?;
+    timer.done("jni registry scan");
 
-    ctx.finish(builders)
+    let program_info = ctx.finish(builders);
+    timer.done("finish");
+    program_info
+}
+
+/// Logs how long each phase of an import took, under the `ctadl_pcode::timing` target at debug
+/// level.
+struct PhaseTimer(std::cell::Cell<std::time::Instant>);
+
+impl PhaseTimer {
+    fn start() -> Self {
+        Self(std::cell::Cell::new(std::time::Instant::now()))
+    }
+
+    fn done(&self, phase: &str) {
+        let now = std::time::Instant::now();
+        let took = now - self.0.replace(now);
+        log::debug!(target: "ctadl_pcode::timing", "{phase}: {took:.2?}");
+    }
 }
 
 enum VnodeRep {
@@ -268,6 +297,7 @@ impl Context {
         facts_dir: &Path,
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
+        timer: &PhaseTimer,
     ) -> Result<(), Error> {
         let reader = PcodeFactsReader::new(facts_dir);
         self.image_base = reader
@@ -289,6 +319,7 @@ impl Context {
             .read_all_facts()
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
             .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
+        timer.done("read facts");
 
         // Synthesize stack top varnode and add it to facts
         let stack_top_vn = pcode_reader::PcodeVarnode::from("__stack_top");
@@ -315,6 +346,7 @@ impl Context {
         // Run and store constant propagation results
         self.cp_results =
             pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts);
+        timer.done("constant propagation");
         self.global_vnodes = pcode_facts
             .vnode_facts
             .keys()
@@ -341,16 +373,20 @@ impl Context {
         self.bb_facts = pcode_facts.bb_facts.clone();
 
         // Pre-pass: Create mapping from function names to HighFunc IDs for functions with pcode
+        timer.done("vnode classes");
         let name_to_func_map = self.create_name_to_func_mapping(&pcode_facts);
 
         // 1. Process functions first (metadata only)
         self.process_functions(&pcode_facts, &name_to_func_map, builders)?;
+        timer.done("functions");
 
         // 2. Process basic blocks and map parameters (function by function)
         self.process_all_blocks(&pcode_facts, builders)?;
+        timer.done("blocks");
 
         // 3. Process pcode instructions
         self.process_pcode_instructions(&pcode_facts, artifact_key, builders)?;
+        timer.done("instructions");
         if self.unlocated_instructions > 0 {
             log::warn!(
                 "pcode: {}: {} instruction(s) more than 4 GiB from the image base {:#x}, or \
