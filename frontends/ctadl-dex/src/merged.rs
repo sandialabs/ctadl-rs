@@ -195,7 +195,7 @@ impl MergedClasses {
         use rayon::prelude::*;
         // Every class of every file is analyzed in parallel, and the results are taken file by
         // file in order: a class defined twice keeps its last definition, and an error in a file
-        // ends that file's scan where scanning its classes one after another did.
+        // ends that file's scan at its first failing class.
         let started = std::time::Instant::now();
         let classes: Vec<_> = parsers
             .par_iter()
@@ -414,8 +414,6 @@ impl MergedClasses {
             .collect()
     }
 
-    /// Candidates: a class with a `final int` instance field that its constructors store and
-    /// its methods switch on.
     /// What [`MergedClasses::scan_class`] finds in each class of a file, in file order.
     fn scan_classes(parser: &DexParser<'_>) -> Vec<ClassScan> {
         use rayon::prelude::*;
@@ -437,92 +435,88 @@ impl MergedClasses {
         Ok(())
     }
 
-    /// The merged class `class_def` defines, if it is one.
-    fn scan_class(
-        parser: &DexParser<'_>,
-        class_def: &dex_reader::types::ClassDef,
-    ) -> Result<Option<(String, MergedClass)>, dex_reader::error::DexError> {
+    /// The merged class `class_def` defines, if it is one. Candidates: a class with a `final int`
+    /// instance field that its constructors store and its methods switch on.
+    fn scan_class(parser: &DexParser<'_>, class_def: &dex_reader::types::ClassDef) -> ClassScan {
         let cp = parser.constant_pool();
-        {
-            let class_data = parser.class_data(class_def)?;
-            let fields: Vec<u32> = class_data
-                .instance_fields
-                .iter()
-                .filter(|f| ACC_FINAL.is_set_in(f.access_flags))
-                .filter(|f| {
-                    // An `int` field whose pretty name `Lcls;->name:I` can be read, checked
-                    // without formatting that name.
-                    parser.get_field(f.field_idx as usize).is_some_and(|fid| {
-                        let descriptor = |idx: u16| {
-                            cp.type_ids
-                                .get(idx as usize)
-                                .and_then(|t| t.descriptor_str(&cp.strings).ok())
-                        };
-                        descriptor(fid.type_idx) == Some("I")
-                            && descriptor(fid.class_idx).is_some()
-                            && cp.strings.get_str(fid.name_idx as usize).is_ok()
-                    })
+        let class_data = parser.class_data(class_def)?;
+        let fields: Vec<u32> = class_data
+            .instance_fields
+            .iter()
+            .filter(|f| ACC_FINAL.is_set_in(f.access_flags))
+            .filter(|f| {
+                // An `int` field whose pretty name `Lcls;->name:I` can be read, checked
+                // without formatting that name.
+                parser.get_field(f.field_idx as usize).is_some_and(|fid| {
+                    let descriptor = |idx: u16| {
+                        cp.type_ids
+                            .get(idx as usize)
+                            .and_then(|t| t.descriptor_str(&cp.strings).ok())
+                    };
+                    descriptor(fid.type_idx) == Some("I")
+                        && descriptor(fid.class_idx).is_some()
+                        && cp.strings.get_str(fid.name_idx as usize).is_ok()
                 })
-                .map(|f| f.field_idx)
-                .collect();
-            if fields.is_empty() {
-                return Ok(None);
-            }
-            let class_name = parser.class_name(class_def)?;
-            for field in fields {
-                let mut class = MergedClass {
-                    field,
-                    ctors: HashMap::new(),
-                    switched: HashMap::new(),
-                    ids: BTreeSet::new(),
-                    final_class: ACC_FINAL.is_set_in(class_def.access_flags),
-                    allocs: 0,
-                    known_allocs: 0,
-                    closed: false,
+            })
+            .map(|f| f.field_idx)
+            .collect();
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        let class_name = parser.class_name(class_def)?;
+        for field in fields {
+            let mut class = MergedClass {
+                field,
+                ctors: HashMap::new(),
+                switched: HashMap::new(),
+                ids: BTreeSet::new(),
+                final_class: ACC_FINAL.is_set_in(class_def.access_flags),
+                allocs: 0,
+                known_allocs: 0,
+                closed: false,
+            };
+            for enc in &class_data.direct_methods {
+                let Some(code) = parser.method_code(enc)? else {
+                    continue;
                 };
-                for enc in &class_data.direct_methods {
-                    let Some(code) = parser.method_code(enc)? else {
-                        continue;
-                    };
-                    let mi = parser.get_method(enc.method_idx as usize).unwrap();
-                    if parser.method_name(mi)? != "<init>" {
-                        continue;
-                    }
-                    let facts = analyze(parser, &code, Some(field));
-                    // One store, from an argument or a constant. A constructor that delegates to
-                    // another (`this(..)`) stores nothing itself; its sites keep the merged class.
-                    let id = match facts.id_stores.as_slice() {
-                        [Some(Val::Param(n))] if *n > 0 => IdArg::Slot(*n as usize),
-                        [Some(Val::Const(c))] => IdArg::Const(*c),
-                        _ => continue,
-                    };
-                    if let IdArg::Const(c) = id {
-                        class.ids.insert(c);
-                    }
-                    class.ctors.insert(parser.method_signature(mi)?, id);
-                }
-                if class.ctors.is_empty() {
+                let mi = parser.get_method(enc.method_idx as usize).unwrap();
+                if parser.method_name(mi)? != "<init>" {
                     continue;
                 }
-                for enc in &class_data.virtual_methods {
-                    let Some(code) = parser.method_code(enc)? else {
-                        continue;
-                    };
-                    let facts = analyze(parser, &code, Some(field));
-                    if facts.switches.is_empty() {
-                        continue;
-                    }
-                    for s in &facts.switches {
-                        class.ids.extend(s.arms.iter().map(|(k, _)| *k));
-                    }
-                    let mi = parser.get_method(enc.method_idx as usize).unwrap();
-                    class
-                        .switched
-                        .insert(parser.method_signature(mi)?, facts.switches);
+                let facts = analyze(parser, &code, Some(field));
+                // One store, from an argument or a constant. A constructor that delegates to
+                // another (`this(..)`) stores nothing itself; its sites keep the merged class.
+                let id = match facts.id_stores.as_slice() {
+                    [Some(Val::Param(n))] if *n > 0 => IdArg::Slot(*n as usize),
+                    [Some(Val::Const(c))] => IdArg::Const(*c),
+                    _ => continue,
+                };
+                if let IdArg::Const(c) = id {
+                    class.ids.insert(c);
                 }
-                if !class.switched.is_empty() {
-                    return Ok(Some((class_name, class)));
+                class.ctors.insert(parser.method_signature(mi)?, id);
+            }
+            if class.ctors.is_empty() {
+                continue;
+            }
+            for enc in &class_data.virtual_methods {
+                let Some(code) = parser.method_code(enc)? else {
+                    continue;
+                };
+                let facts = analyze(parser, &code, Some(field));
+                if facts.switches.is_empty() {
+                    continue;
                 }
+                for s in &facts.switches {
+                    class.ids.extend(s.arms.iter().map(|(k, _)| *k));
+                }
+                let mi = parser.get_method(enc.method_idx as usize).unwrap();
+                class
+                    .switched
+                    .insert(parser.method_signature(mi)?, facts.switches);
+            }
+            if !class.switched.is_empty() {
+                return Ok(Some((class_name, class)));
             }
         }
         Ok(None)

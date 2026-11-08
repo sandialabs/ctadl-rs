@@ -12,7 +12,7 @@ use super::Exp;
 ///
 /// Nearly every assignment has exactly one source, so that one is held inline and any other
 /// number on the heap. This keeps the type the size of one [`Exp`], which keeps
-/// [`Statement`](super::Statement) small: statements are a large share of a program's memory.
+/// [`Statement`](super::Statement) small.
 ///
 /// Equality, hashing, ordering of elements, `Debug` and the serialized form are those of the
 /// slice, whichever way it is held.

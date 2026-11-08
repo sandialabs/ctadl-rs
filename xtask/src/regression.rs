@@ -1808,17 +1808,17 @@ fn check_pcode_facts(facts: &Path) -> Result<Outcome> {
 fn fact_rows(facts: &Path, table: &str) -> Result<Vec<Vec<String>>> {
     use std::io::Read;
     let plain = facts.join(format!("{table}.facts"));
-    let mut text = String::new();
-    if plain.is_file() {
-        text = std::fs::read_to_string(&plain)
-            .with_context(|| format!("reading {}", plain.display()))?;
+    let text = if plain.is_file() {
+        std::fs::read_to_string(&plain).with_context(|| format!("reading {}", plain.display()))?
     } else {
         let gz = facts.join(format!("{table}.facts.gz"));
         let file = std::fs::File::open(&gz).with_context(|| format!("opening {}", gz.display()))?;
+        let mut text = String::new();
         flate2::read::MultiGzDecoder::new(file)
             .read_to_string(&mut text)
             .with_context(|| format!("reading {}", gz.display()))?;
-    }
+        text
+    };
     Ok(text
         .lines()
         .map(|line| line.split('\t').map(str::to_string).collect())

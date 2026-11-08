@@ -88,9 +88,9 @@ impl SourceInfoBuilder {
     /// looked up.
     ///
     /// Pass the result to [`Self::span_in_file`] to intern spans in that artifact without
-    /// looking the key up again. Interning the artifact here gives it the next artifact ID, just
-    /// as the first [`Self::span_for`] with `key` would; calling this for an artifact before or
-    /// instead of that first `span_for` numbers the artifacts and files differently.
+    /// looking the key up again. A new artifact and its file get the next IDs here, just as in
+    /// [`Self::span_for`], so the order of the first calls for each key, through either method,
+    /// decides the numbering.
     pub fn file_for(&mut self, key: &ArtifactKey) -> FileId {
         if let Some((last, file)) = &self.last_file
             && last == key
@@ -115,7 +115,7 @@ impl SourceInfoBuilder {
     }
 
     fn intern_file(&mut self, key: &ArtifactKey) -> FileId {
-        let artifact_id: ArtifactId = self.artifacts.get_or_intern_artifact_ref(key);
+        let artifact_id: ArtifactId = self.artifacts.get_or_intern_artifact(key);
         self.files.get_or_intern_file(artifact_id)
     }
 }

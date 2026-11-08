@@ -55,9 +55,8 @@ the last value of every return: exceptions that may leave a method accumulate in
 
 Like the Dex front end, a [`Context`] is made once, given the assemblies with
 `Context::process`, and turned into one [`ProgramInfo`] by [`Context::finish`]: a
-multi-assembly application has one hierarchy. Method bodies are lowered in parallel, each on
-its own, and placed into the program in order, so the program does not depend on the thread
-count. Referenced assemblies that are not imported (the framework, by default) are still read
+multi-assembly application has one hierarchy. Method bodies are lowered in parallel (see
+`Context::process`). Referenced assemblies that are not imported (the framework, by default) are still read
 for their metadata, from the input's directory and the framework's
 ([`ImportOptions::reference_dirs`]): base types' virtual methods, type forwarders, sealed and
 virtual flags. Nothing of theirs is lowered.
@@ -527,8 +526,7 @@ fn version_key(p: &Path) -> Vec<u64> {
 /// thunks it needs, and counts for the import summary.
 #[derive(Debug, Default)]
 pub struct Collected {
-    /// Every callee, by function id, with the shape its stub gets if nothing defines it. Stubs
-    /// are made in function id order.
+    /// Every callee, by function id, with the shape its stub gets if nothing defines it.
     pub ext: HashMap<String, (MethodKey, Vec<ParameterType>)>,
     /// Thunk function id -> the static method it calls.
     pub thunks: BTreeMap<String, String>,

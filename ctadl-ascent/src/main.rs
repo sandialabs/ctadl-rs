@@ -15,6 +15,7 @@ use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism, Storag
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
+use ctadl_frontends::budget::DEFAULT_MAX_CORES;
 
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
@@ -891,16 +892,13 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Most threads an import uses unless `-j` asks for more.
-const IMPORT_THREADS_CAP: usize = 16;
-
 /// Sizes the rayon pool the import's front ends lower, verify and encode on: `jobs` threads, or
-/// with `0`, as many as there are cores, up to [`IMPORT_THREADS_CAP`].
+/// with `0`, as many as there are cores, up to [`DEFAULT_MAX_CORES`].
 fn init_import_threads(jobs: usize) {
     let threads = match jobs {
         0 => std::thread::available_parallelism()
             .map_or(1, usize::from)
-            .min(IMPORT_THREADS_CAP),
+            .min(DEFAULT_MAX_CORES),
         n => n,
     };
     if let Err(e) = rayon::ThreadPoolBuilder::new()

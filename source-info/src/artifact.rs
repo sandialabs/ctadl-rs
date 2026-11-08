@@ -208,14 +208,9 @@ impl ArtifactTable {
         }
     }
 
-    /// Returns the artifact ID for the given key, interning a new record if needed.
-    /// IDs are 1-based.
-    pub fn get_or_intern_artifact(&mut self, key: ArtifactKey) -> ArtifactId {
-        self.get_or_intern_artifact_ref(&key)
-    }
-
-    /// Like [`Self::get_or_intern_artifact`], but copies `key` only when the artifact is new.
-    pub fn get_or_intern_artifact_ref(&mut self, key: &ArtifactKey) -> ArtifactId {
+    /// Returns the artifact ID for the given key, interning a new record if needed, and copies
+    /// `key` only when the artifact is new. IDs are 1-based.
+    pub fn get_or_intern_artifact(&mut self, key: &ArtifactKey) -> ArtifactId {
         let id = self
             .index
             .get_or_insert_with(&mut self.artifacts, key.as_key_ref(), || ArtifactRecord {

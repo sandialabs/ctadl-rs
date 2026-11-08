@@ -206,9 +206,7 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
 
 /// A class file to import, with the key of the artifact it is in.
 struct Class {
-    /// `None` once the class's method bodies are lowered: [`Importer::lower_and_place`] frees each
-    /// class file as soon as it is done with it, since all of them together are a sizable share
-    /// of an import's memory.
+    /// `None` once [`Importer::lower_and_place`] has freed it.
     parser: Option<ClassFileParser>,
     key: ArtifactKey,
 }
@@ -272,8 +270,8 @@ struct Context {
     /// The methods the method being lowered calls; see [`Importer::ext`].
     ext: HashMap<String, Extern>,
     /// The offset and length of each instruction lowered so far, in order. The statements of an
-    /// instruction carry `1 +` its position here as their span id until [`Importer::intern`]
-    /// interns the real one.
+    /// instruction carry `1 +` its position here as their span id until [`resolve`] rewrites it
+    /// to the one [`Importer::intern`] interned.
     spans: Vec<(u32, u32)>,
 }
 
@@ -333,9 +331,7 @@ impl ClassRows {
             }
         );
         let mut parents = SmallVec::new();
-        if let Some(jc) = superclass.clone() {
-            parents.push(jc)
-        };
+        parents.extend(superclass.clone());
         let mut direct_interfaces = Vec::new();
         for type_idx in &class_def.interfaces {
             let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
@@ -474,7 +470,7 @@ impl Importer {
     /// lowers the bodies on the current rayon pool, each into a function of its own
     /// ([`Context::lower_job`]). The third places them into the program in order
     /// ([`Importer::lower_and_place`]), interning their spans and globals in exactly the order
-    /// lowering them one after another did, so the result does not depend on the thread count.
+    /// lowering them one after another would, so the result does not depend on the thread count.
     fn process(
         &mut self,
         classes: &mut [Class],
@@ -575,7 +571,8 @@ impl Importer {
     /// ([`Importer::intern`]), which is serial and must go in program order; rewriting its bodies
     /// to the ids interned ([`resolve`]); and moving them into the program ([`put`]). While one
     /// batch is interned, the next is lowered and the one before is rewritten. Once no batch
-    /// still to be lowered needs a class file, it is freed.
+    /// still to be lowered needs a class file, it is freed: all class files together are a
+    /// sizable share of an import's memory.
     fn lower_and_place(
         &mut self,
         classes: &mut [Class],
@@ -613,7 +610,7 @@ impl Importer {
                 ..
             } = &mut *builders;
             let mut previous = std::mem::take(&mut interned);
-            // Merged in program order, beside the interning rather than in it.
+            // Merged beside the interning rather than in it.
             let called: Vec<_> = results
                 .iter_mut()
                 .filter_map(|lowered| Some(std::mem::take(&mut lowered.as_mut().ok()?.ext)))
@@ -687,8 +684,8 @@ impl Importer {
             let spans: Vec<source_info::FileSpanId> = if spans.is_empty() {
                 Vec::new()
             } else {
-                // Looked up at the class's first span, not before: that is when interning a span
-                // in it numbered the artifact.
+                // Looked up at the class's first span, not before: an artifact is numbered when
+                // the first span in it is interned.
                 let file = match *file {
                     Some((class, file)) if class == job.class => file,
                     _ => {

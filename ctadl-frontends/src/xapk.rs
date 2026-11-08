@@ -23,7 +23,8 @@ and record the result on the parent.
 
 The splits are independent imports -- each writes only its own import directory and config,
 and its native libraries' -- so they are imported concurrently, under one [`Budget`] that their
-native libraries share. A split's import starts as soon as it is extracted; the extractions
+native libraries share. Their Dex halves take turns ([`Budget::dex_turn`]); their native halves
+do not wait for them. A split's import starts as soon as it is extracted; the extractions
 take turns, since they are bound by the disk. The bundle's own config is written only after
 every split is done (`record_sub_imports`, by the caller). The sub-import list, the messages this
 module writes, and which error is returned when splits fail, all follow the split order, whatever
@@ -92,9 +93,7 @@ pub(crate) fn import_bundle_in(
         }
     };
 
-    // Each split is extracted and then imported, on its own worker, so the first splits'
-    // imports start while the rest are still being written. The writes themselves take turns:
-    // they are bound by the disk, which interleaved writes only slow down.
+    // Interleaved writes only slow down.
     let extracting = std::sync::Mutex::new(());
     let extract_one = |entry: &SplitApkEntry| -> Result<Split, Error> {
         let _turn = extracting.lock().unwrap_or_else(|e| e.into_inner());
@@ -145,9 +144,8 @@ pub(crate) fn import_bundle_in(
         |index, result| results[index] = Some(result),
     );
     // Everything below happens in split order, which is known only now that every split has been
-    // looked into: an extraction failure first, in entry order, as when every split was
-    // extracted before any was imported; then each split's result. After a failure, the splits
-    // that were not started have no result.
+    // looked into: an extraction failure first, in entry order; then each split's result. After a
+    // failure, the splits that were not started have no result.
     let mut done = Vec::with_capacity(results.len());
     for result in results.into_iter().map_while(|result| result) {
         done.push(result?);

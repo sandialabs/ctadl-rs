@@ -206,8 +206,9 @@ pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode
     }
 
     let stack_top_vn = PcodeVarnode::from("__stack_top");
-    // Numbering the varnodes in `vnode_facts` first, in its order, keeps the result in key
-    // order but for varnodes that only instructions mention.
+    // The varnodes in `vnode_facts` are numbered first, in its order, so a varnode's id is its
+    // position there (the loop over it below relies on this), and the result is in key order
+    // but for varnodes that only instructions mention.
     let mut varnodes = Varnodes::default();
     varnodes.ids.reserve(facts.vnode_facts.len());
     for vn in facts.vnode_facts.keys() {
@@ -527,12 +528,12 @@ mod tests {
         let c4 = PcodeVarnode::from("c4");
 
         // Define varnodes
-        for (vn, _name, space, offset) in [
-            (&t, "t", "register", None),
-            (&t1, "t1", "register", None),
-            (&t2, "t2", "register", None),
-            (&c2, "2", "const", Some(2)),
-            (&c4, "4", "const", Some(4)),
+        for (vn, space, offset) in [
+            (&t, "register", None),
+            (&t1, "register", None),
+            (&t2, "register", None),
+            (&c2, "const", Some(2)),
+            (&c4, "const", Some(4)),
         ] {
             facts.vnode_facts.insert(
                 vn.clone(),

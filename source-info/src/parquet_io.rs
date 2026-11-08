@@ -248,9 +248,6 @@ fn write_file_spans_file(dir: &Path, file_spans: &[FileSpan]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Write all five tables as standalone Parquet files into `dir`.
-///
-/// The span and file-span tables are usually much the largest, and each file is independent of
-/// the others, so those two are written on their own threads while this one writes the rest.
 pub fn write_parquet(
     dir: &Path,
     metadata: &ArtifactMetadata,
@@ -259,6 +256,8 @@ pub fn write_parquet(
     spans: &[Span],
     file_spans: &[FileSpan],
 ) -> Result<()> {
+    // The span and file-span tables are usually much the largest, and each file is independent
+    // of the others, so those two are written on their own threads while this one writes the rest.
     std::thread::scope(|s| {
         let spans = s.spawn(|| write_spans_file(dir, spans));
         let file_spans = s.spawn(|| write_file_spans_file(dir, file_spans));

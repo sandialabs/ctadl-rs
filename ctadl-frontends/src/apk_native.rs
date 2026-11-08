@@ -34,10 +34,10 @@ auto-analysis cost a fixed amount whatever the library's size, so they run concu
 [`Budget`] of cores and memory. The biggest library starts first, since it is the one most
 likely to finish last. A library's share of the budget follows its size:
 
-* **Cores**: [`ghidra_cores`], the library's share of the budget's cores by size among the
+* **Cores**: `ghidra_cores`, the library's share of the budget's cores by size among the
   APK's libraries -- so a dozen small libraries run side by side on a core each, and one that
   is most of the APK's native code gets most of the cores.
-* **Heap**: [`ghidra_heap_mib`], which grows with the library and stops at Ghidra's default cap.
+* **Heap**: `ghidra_heap_mib`, which grows with the library and stops at Ghidra's default cap.
   A library alone in its APK keeps that default, as do the retries below.
 
 A run that runs out of heap anyway is retried once with the default cap and the whole budget to
@@ -45,8 +45,8 @@ itself. Ghidra keeps going after an analysis task runs out of memory, and export
 got, so a heap cap that is too small would otherwise change the imported program rather than
 fail.
 
-Results are reported, and the sub-import list built, in entry order, the order the serial loop
-used, whatever order the runs finish in. The log lines the runs write themselves (Ghidra's
+Results are reported, and the sub-import list built, in entry order, whatever order the runs
+finish in. The log lines the runs write themselves (Ghidra's
 progress, say) interleave; each names the library it is about.
 
 # Native-only APKs
@@ -247,8 +247,6 @@ pub(crate) fn import_native_libs_in(
             &own_budget
         }
     };
-    // A library alone in its APK has nothing to share the budget with, so it keeps Ghidra's
-    // default heap, as a single run always has.
     let alone = libs.iter().filter(|lib| lib.object_size.is_some()).count() == 1;
     let total_size: u64 = libs.iter().filter_map(|lib| lib.object_size).sum();
     let mut tasks = Vec::new();
@@ -275,8 +273,7 @@ pub(crate) fn import_native_libs_in(
         });
     }
 
-    // Biggest first, so the library most likely to finish last starts first; ties in entry
-    // order, so the start order is fixed too.
+    // Ties in entry order, so the start order is fixed too.
     let mut start_order: Vec<usize> = (0..tasks.len()).collect();
     start_order.sort_by_key(|&i| std::cmp::Reverse(tasks[i].size));
 
@@ -440,7 +437,7 @@ fn ghidra_cores(size: u64, total_size: u64, cores: usize) -> usize {
 /// The memory, in MiB, the in-process half of an import holds for a library of `size` bytes:
 /// its facts read back and lowered to IR. An estimate, counted against the budget while it runs:
 /// about 1 KiB per byte of library, which is what lowering a 24 MiB library takes. Never more than
-/// the Ghidra run's share ([`ghidra_heap_mib`] grows faster), so the share only ever shrinks.
+/// the Ghidra run's share (`ghidra_heap_mib` grows faster), so the share only ever shrinks.
 #[cfg(feature = "pcode")]
 fn lowering_mib(size: u64) -> u64 {
     512 + size / 1024

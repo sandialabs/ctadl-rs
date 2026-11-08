@@ -237,12 +237,11 @@ impl<'a> StringTable<'a> {
 
 /// The decoded entries of a [`StringTable`], filled lazily.
 ///
-/// Lowering a Dex file asks for the same few strings -- class descriptors, method and field
-/// names -- once per instruction that names them, and decoding modified UTF-8 into a fresh
-/// `String` each time made the decoder one of the import's largest sources of allocation. Each
-/// slot is a [`OnceLock`](std::sync::OnceLock), so threads lowering different methods of one
-/// file share a table without locking. The slots are allocated on first use, sized to the
-/// table, so a table nobody reads costs nothing.
+/// A caller typically asks for the same few strings -- class descriptors, method and field
+/// names -- many times, so each entry is decoded once and kept. Each slot is a
+/// [`OnceLock`](std::sync::OnceLock), so threads lowering different methods of one file share a
+/// table without locking. The slots are allocated on first use, sized to the table, so a table
+/// nobody reads costs nothing.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct StringCache(
     std::sync::Arc<std::sync::OnceLock<Box<[std::sync::OnceLock<DecodedString>]>>>,

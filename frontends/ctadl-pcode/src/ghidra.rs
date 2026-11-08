@@ -181,10 +181,10 @@ pub fn run_ghidra_export_source(
     limits: GhidraLimits,
 ) -> Result<(), Error> {
     let jobs = limits.jobs;
+    let facts_dir = output_dir.join("facts");
     // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
-    let facts_dir = output_dir.join("facts");
     // Facts another version of the script exported are exported again.
     if std::env::var_os("CTADL_REUSE_FACTS").is_some()
         && std::fs::read_dir(&facts_dir)
@@ -462,9 +462,8 @@ pub fn remove_compressed_originals(paths: &[PathBuf]) -> Result<(), Error> {
 }
 
 /// The deflate level fact tables are compressed at. Below the default of 6 because compressing
-/// is the largest cost of an import after Ghidra: on a firmware binary's tables, level 5 took
-/// 31% less time than 6 for files 2% larger, with no slower reading; level 7 took 22% more for
-/// 3% smaller.
+/// is the largest cost of an import after Ghidra: a level lower saves much more time than it
+/// costs in size, and reading is no slower.
 const FACTS_COMPRESSION: u32 = 5;
 
 /// Gzip a single `*.facts` file into a `*.facts.gz` sibling, via a `.tmp` and a

@@ -161,10 +161,9 @@ pub struct PcodeData {
 }
 
 /// Varnode data
-#[derive(Debug, Clone)]
 ///
-/// A large binary has tens of millions of varnodes, so this holds only what lowering reads:
-/// not whether Ghidra calls it an address, for instance.
+/// A large binary has tens of millions of varnodes, so this holds only what lowering reads.
+#[derive(Debug, Clone)]
 pub struct VnodeData {
     /// The varnode's readable name within its function: its high variable's name, if it has
     /// one, then a colon and its number, e.g. `local_10:1234`. A key into
@@ -253,10 +252,9 @@ impl PcodeFactsReader {
     /// actually exists on disk.
     ///
     /// The plain `<filename>` is preferred when present (returning `false` for
-    /// "compressed"); otherwise the gzipped `<filename>.gz` is used. A plain table is
-    /// either one Ghidra just wrote, which a `.gz` left by an earlier export may be older
-    /// than and which is still being compressed while it is read, or one someone
-    /// unpacked by hand; either way it is current, and reading it skips inflating it.
+    /// "compressed"): a `.gz` beside it may be from an earlier export or still being written,
+    /// and reading the plain table skips inflating it. Otherwise the gzipped `<filename>.gz` is
+    /// used.
     /// Returns `None` if neither variant exists.
     fn resolve_fact_path(&self, filename: &str) -> Option<(PathBuf, bool)> {
         let plain = self.facts_dir.join(filename);
@@ -375,7 +373,7 @@ impl PcodeFactsReader {
     }
 
     /// Read the program's image base: the address Ghidra loaded the artifact at.
-    /// Returns `None` if the fact is absent (older fact sets predate it).
+    /// Returns `None` when the table is absent.
     pub fn read_image_base(&self) -> Result<Option<i64>> {
         const FILE: &str = "PROGRAM_IMAGE_BASE.facts";
         let rows = self.rows_optional(FILE, |[base]| table::int(FILE, base))?;
@@ -662,8 +660,7 @@ impl PcodeFactsReader {
             )))
         );
 
-        let sizes = sizes?;
-        let (spaces, addresses, offsets) = (spaces?, addresses?, offsets?);
+        let (spaces, sizes, addresses, offsets) = (spaces?, sizes?, addresses?, offsets?);
         let (spaces, (sizes, (addresses, offsets))) = join!(
             sorted(spaces),
             last_wins(sizes),
@@ -808,8 +805,7 @@ impl PcodeFactsReader {
 
     /// Read VNODE_HVAR facts, mapping each varnode to the high variable it belongs to.
     ///
-    /// Optional: returns an empty map when the fact file is absent, as it is in older
-    /// fact sets.
+    /// Optional: an empty map when the table is absent.
     pub fn read_vnode_hvar_facts(&self) -> Result<BTreeMap<PcodeVarnode, HighVariable>> {
         let facts = self.rows_or_empty("VNODE_HVAR.facts", |[vn, h]| {
             Ok((PcodeVarnode::from(vn), HighVariable::from(h)))
@@ -820,25 +816,16 @@ impl PcodeFactsReader {
     /// Read HVAR_CLASS facts, giving Ghidra's storage classification for each high
     /// variable (`global`, `constant`, `other`, ...).
     ///
-    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
-    ///
-    /// A variable Ghidra classes otherwise is also `global` when its address has a symbol;
-    /// then it is `global`, whatever order the rows are in.
+    /// A variable can have two rows, Ghidra's class and `global` when its address has a
+    /// symbol; then it is `global`, whatever order the rows are in.
     pub fn read_hvar_class_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
         let facts = self.rows_or_empty("HVAR_CLASS.facts", |[h, class]| {
             Ok((HighVariable::from(h), class.to_string()))
         })?;
         let mut classes: BTreeMap<HighVariable, String> = BTreeMap::new();
         for (h, class) in facts {
-            match classes.entry(h) {
-                std::collections::btree_map::Entry::Vacant(e) => {
-                    e.insert(class);
-                }
-                std::collections::btree_map::Entry::Occupied(mut e) => {
-                    if e.get() != "global" {
-                        e.insert(class);
-                    }
-                }
+            if classes.get(&h).is_none_or(|old| old != "global") {
+                classes.insert(h, class);
             }
         }
         Ok(classes)
@@ -846,8 +833,6 @@ impl PcodeFactsReader {
 
     /// Read HVAR_TYPE facts, giving the id of the data type Ghidra assigned each high
     /// variable.
-    ///
-    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
     pub fn read_hvar_type_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
         let facts = self.rows_or_empty("HVAR_TYPE.facts", |[h, ty]| {
             Ok((HighVariable::from(h), ty.to_string()))

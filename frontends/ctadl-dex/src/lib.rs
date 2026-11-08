@@ -233,7 +233,7 @@ impl Importer {
     /// body. The second lowers the bodies on the current rayon pool, each into a function of
     /// its own ([`Context::lower_job`]). The third places them into the program in file order
     /// ([`Importer::place`]), interning their spans and globals in exactly the order lowering
-    /// them one after another did, so the result does not depend on the thread count.
+    /// them one after another would, so the result does not depend on the thread count.
     fn process(
         &mut self,
         parser: &DexParser<'_>,
@@ -464,7 +464,7 @@ impl Importer {
 
     /// Allocates the functions the clones of merged method `sig` will fill, one per class id,
     /// and writes their VMT rows: the bookkeeping half of splitting a merged class (see
-    /// [`merged`]), in the order lowering the clones one after another did it. Returns each
+    /// [`merged`]), in the order lowering the clones one after another would. Returns each
     /// clone's slot and id; [`Context::lower_job`] lowers the bodies.
     fn plan_clones(
         &mut self,
@@ -857,8 +857,6 @@ impl Context {
     /// table of the job's own; [`Importer::place`] resolves both.
     fn lower_job(&mut self, parser: &DexParser<'_>, job: &Job) -> Result<Lowered, Error> {
         self.counter.reset();
-        self.call_result = None;
-        self.catch_result = None;
         self.globals = Default::default();
         self.static_fields.clear();
         self.spans.clear();
@@ -893,9 +891,9 @@ impl Context {
     /// Every clone is the same lowering of the body but for the switch arm it keeps and the
     /// classes its `new-instance`s allocate. So the body is lowered once, unnarrowed and
     /// unretagged, and each clone is built out of that template, copying only the blocks its arm
-    /// reaches ([`instantiate_clone`]). Lowering every clone in full and pruning afterwards did
-    /// the whole body's work once per id. The template interns the same spans and globals, in
-    /// the same order, as lowering the first clone did.
+    /// reaches ([`instantiate_clone`]). Lowering every clone in full and pruning afterwards would
+    /// do the whole body's work once per id. The template interns the same spans and globals, in
+    /// the same order, as lowering the first clone would.
     fn lower_clones(
         &mut self,
         parser: &DexParser<'_>,
@@ -989,8 +987,8 @@ impl Context {
         // What `dataflow_to_assign_into` makes of one instruction, reused across instructions.
         let mut stmts = Vec::new();
         // The statements of the block being lowered, moved into it in one exactly sized
-        // allocation once the block is done: pushing them one by one grew each block's deque by
-        // doubling, which cost both the reallocations and up to half of every block's memory.
+        // allocation once the block is done: pushing them one by one would grow each block's deque
+        // by doubling, which costs both the reallocations and up to half of every block's memory.
         let mut block_stmts: Vec<Statement> = Vec::new();
         let mut info = LowerInfo {
             last_pc: Vec::with_capacity(bb_vec.len()),
@@ -1727,7 +1725,7 @@ impl ctadl_ir::cir::visit::MutVisitor for Resolve<'_> {
 }
 
 /// Puts `body` into `slot` the way lowering it in place onto an earlier definition of the same
-/// method did: [`Context::lower_code`] appends as many empty blocks as the body has, then fills
+/// method would: [`Context::lower_code`] appends as many empty blocks as the body has, then fills
 /// blocks from the first on, appending to their statements and replacing their terminators;
 /// [`empty_body`] appends its one block. `body`'s locals are already `slot`'s.
 fn graft(slot: &mut FunctionData, body: FunctionData, empty_union: bool) {

@@ -313,8 +313,8 @@ pub struct Statement {
 }
 
 // Statements are a large share of a program's memory, at import and at indexing. A field that
-// grows one of the variants past this belongs behind a pointer, as `Sources` and the call styles'
-// method refs are.
+// grows one of the variants past this belongs behind a pointer, as the call styles' method refs
+// and `Sources`' many-source case are.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<Statement>() <= 72);
 
@@ -487,8 +487,7 @@ pub struct Locals {
     decls: IndexVec<LocalIdx, LocalDecl>,
     /// Transient name→index map used only during interning; rebuilt on demand after deserialize.
     /// It holds indices into `decls` and hashes the names stored there, rather than a second
-    /// copy of every name: a program holds one table per function, and the copies were a
-    /// sizable share of an import's memory.
+    /// copy of every name: a program holds one table per function.
     #[cfg_attr(feature = "serde", serde(skip))]
     by_name: hashbrown::HashTable<LocalIdx>,
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -522,9 +521,7 @@ impl Locals {
     }
 
     /// [`Self::get_or_intern`] for the name `prefix` followed by `n` in decimal (`v3`, `stack12`),
-    /// built on the stack. Front ends look such a name up for every operand of every
-    /// instruction, and formatting each into a `String` of its own only to find it already
-    /// interned was an allocation per operand.
+    /// built on the stack rather than allocated.
     pub fn get_or_intern_numbered(&mut self, prefix: &str, n: u32) -> LocalIdx {
         use std::fmt::Write;
         let mut name = StackName {
@@ -1707,10 +1704,11 @@ impl Program {
         use rayon::prelude::*;
         let globals_len = self.globals.len();
         let functions = &self.functions.functions.raw;
-        let bodies_ok = functions.par_chunks(256).enumerate().all(|(chunk, fs)| {
+        const CHUNK: usize = 256;
+        let bodies_ok = functions.par_chunks(CHUNK).enumerate().all(|(chunk, fs)| {
             let mut visitor = CirVerify::for_globals(globals_len);
             for (i, f) in fs.iter().enumerate() {
-                visitor.visit_function_data(FunctionIdx::new(chunk * 256 + i), f);
+                visitor.visit_function_data(FunctionIdx::new(chunk * CHUNK + i), f);
             }
             visitor.take_error().is_ok()
         });

@@ -665,16 +665,14 @@ fn static_sites(program: &ProgramInfo) -> BTreeSet<(String, String)> {
                     CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(edges),
                     } => edges.iter().map(|e| e.to_string()).collect(),
-                    CallStyle::JavaCall { method, .. } => {
-                        let (cls, simple_name, descriptor) =
-                            (&method.cls, &method.simple_name, &method.descriptor);
-                        vec![format!("{cls}->{simple_name}{descriptor}")]
-                    }
-                    CallStyle::CilCall { method, .. } => {
-                        let (cls, simple_name, descriptor) =
-                            (&method.cls, &method.simple_name, &method.descriptor);
-                        vec![format!("{cls}::{simple_name}{descriptor}")]
-                    }
+                    CallStyle::JavaCall { method, .. } => vec![format!(
+                        "{}->{}{}",
+                        method.cls, method.simple_name, method.descriptor
+                    )],
+                    CallStyle::CilCall { method, .. } => vec![format!(
+                        "{}::{}{}",
+                        method.cls, method.simple_name, method.descriptor
+                    )],
                     CallStyle::LuaCall { method, .. } => vec![method.to_string()],
                     _ => Vec::new(),
                 };

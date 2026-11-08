@@ -43,8 +43,7 @@ small ones that fit around it.
 
 use std::sync::{Condvar, Mutex, MutexGuard};
 
-/// The core budget when `-j` does not set one: past this, a Ghidra run gains little from more
-/// threads.
+/// The core budget when `-j` does not set one.
 pub const DEFAULT_MAX_CORES: usize = 16;
 
 /// The environment variable that sets the memory budget, in the JVM's `-Xmx` syntax: a number
@@ -56,9 +55,8 @@ pub const MEMORY_ENV: &str = "CTADL_IMPORT_MEMORY";
 pub const JVM_OVERHEAD_MIB: u64 = 1024;
 
 /// The stack of every thread an import runs on here. The front ends recurse over the programs
-/// they lower, and ran on the main thread before they ran here, so their threads get at least
-/// the main thread's stack (8 MiB on Linux and macOS) rather than the 2 MiB a spawned thread
-/// gets by default.
+/// they lower, so their threads get at least the main thread's stack (8 MiB on Linux and macOS)
+/// rather than the 2 MiB a spawned thread gets by default.
 const STACK_SIZE: usize = 16 << 20;
 
 /// Cores and memory to share among concurrent imports. See the module docs.
@@ -160,7 +158,7 @@ impl Budget {
     ///
     /// Lowering one APK's Dex already keeps every thread of the pool busy, and takes gigabytes
     /// for a large app, so two at once would only compete for the same cores while doubling the
-    /// memory. The splits of a bundle take turns; their native halves are not held up.
+    /// memory.
     pub fn dex_turn(&self) -> MutexGuard<'_, ()> {
         self.dex.lock().unwrap_or_else(|e| e.into_inner())
     }

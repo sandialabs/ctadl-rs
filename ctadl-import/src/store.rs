@@ -37,7 +37,7 @@ pub enum SourceInfoMode {
 /// layout they are written in.
 ///
 /// The three are independent, so each is encoded and written on its own thread, and each is freed
-/// as soon as it has been encoded rather than when the last one is written.
+/// as soon as it has been written rather than when the last one is.
 pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> Result<(), Error> {
     let ProgramInfo {
         program,
@@ -76,8 +76,7 @@ pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> 
     ArtifactImport::mark_complete(&import.name)
 }
 
-/// Writes the program IR to `path`, encoding it a few frames at a time on the rayon pool
-/// ([`encode::encode_program_to`]).
+/// Writes the program IR to `path`.
 fn write_program(program: Program, path: &Path) -> Result<(), Error> {
     let file = std::fs::File::create(path)
         .map_err(Error::Io)

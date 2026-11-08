@@ -90,9 +90,8 @@ zip = { version = "9.0.5", default-features = false }
 percent-encoding = "2.3"
 
 [features]
-# Use jemalloc as the global allocator instead of the system's. On a large Dex import on macOS it
-# took 13-21% less CPU time, with the same peak memory or up to 11% less; its effect on indexing
-# has not been measured, so it is off by default.
+# Use jemalloc as the global allocator instead of the system's. It speeds up imports; its effect
+# on indexing has not been measured, so it is off by default.
 jemalloc = ["dep:tikv-jemallocator"]
 
 [lints]

@@ -125,8 +125,8 @@ pub enum CallStyle {
 
 /// The method a [`CallStyle::JavaCall`] names.
 ///
-/// A call holds it interned rather than inline: it is most of a call's size, statements are a
-/// large share of a program's memory, and many call sites name the same method. It serializes
+/// A call holds it interned rather than inline: it is most of a call's size (see the size bound
+/// on [`Statement`](super::Statement)), and many call sites name the same method. It serializes
 /// as its fields, so an encoded call is the same as if they were the call's own.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -373,8 +373,6 @@ pub enum Dispatch {
         ///
         /// Every declared method has a row, abstract and native ones included.
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
-        /// Written in class-name order (see [`serialize_sorted_map`]), so the same import
-        /// encodes to the same bytes every time.
         #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
         /// The interfaces *this import declares*.
@@ -422,7 +420,6 @@ pub enum Dispatch {
         /// - Fully-qualified function id the method lowers to (the IR function name)
         methods: Vec<(Symbol, Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
-        /// Written in class-name order, as the Java `hierarchy` is.
         #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
@@ -440,7 +437,6 @@ pub enum Dispatch {
         /// synthesizes (see `ctadl-cil`'s `hierarchy.rs`).
         methods: Vec<(CilClass, CilSimpleName, CilSignature, CilMethod)>,
         /// Class -> its base type and the interfaces it implements, erased to open definitions.
-        /// Written in class-name order, as the Java `hierarchy` is.
         #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<CilClass, SmallVec<[CilClass; 2]>>,
         /// The interfaces this import declares. See the column of the same name on
@@ -865,8 +861,8 @@ impl Display for Dispatch {
 pub struct JavaClass(pub Symbol);
 
 /// Serializes a map keyed by class in the order of the class names, rather than in the hash
-/// map's iteration order, which is seeded per process. It is still an ordinary map on the wire,
-/// so reading it back is unchanged.
+/// map's iteration order, which is seeded per process, so the same import encodes to the same
+/// bytes every time. It is still an ordinary map on the wire, so reading it back is unchanged.
 #[cfg(feature = "serde")]
 fn serialize_sorted_map<K, V, S>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
 where

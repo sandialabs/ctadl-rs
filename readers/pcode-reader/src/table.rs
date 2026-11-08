@@ -174,8 +174,7 @@ fn wrong_width(filename: &str, n: usize, row: &str) -> PcodeError {
     PcodeError::invalid_fact_format(filename, format!("expected {n} fields in row: {row:?}"))
 }
 
-/// An integer field. An empty field is 0, as it was when tables were read as Arrow columns,
-/// where an empty field is null and a null integer reads as 0.
+/// An integer field. An empty field is 0.
 pub(crate) fn int(filename: &str, field: &str) -> Result<i64> {
     if field.is_empty() {
         return Ok(0);

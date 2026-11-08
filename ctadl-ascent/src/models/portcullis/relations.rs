@@ -738,16 +738,14 @@ fn callee_strings(style: &CallStyle, data: &FunctionData) -> Vec<Str> {
         CallStyle::DirectCall {
             call_edges: CallEdges::Explicit(edges),
         } => edges.iter().map(|e| Str::from(e.as_str())).collect(),
-        CallStyle::JavaCall { method, .. } => {
-            let (cls, simple_name, descriptor) =
-                (&method.cls, &method.simple_name, &method.descriptor);
-            vec![Str::from(format!("{cls}->{simple_name}{descriptor}"))]
-        }
-        CallStyle::CilCall { method, .. } => {
-            let (cls, simple_name, descriptor) =
-                (&method.cls, &method.simple_name, &method.descriptor);
-            vec![Str::from(format!("{cls}::{simple_name}{descriptor}"))]
-        }
+        CallStyle::JavaCall { method, .. } => vec![Str::from(format!(
+            "{}->{}{}",
+            method.cls, method.simple_name, method.descriptor
+        ))],
+        CallStyle::CilCall { method, .. } => vec![Str::from(format!(
+            "{}::{}{}",
+            method.cls, method.simple_name, method.descriptor
+        ))],
         CallStyle::LuaCall { method, .. } => vec![Str::from(method.as_ref())],
         CallStyle::FuncPtrCall { callee, .. } => {
             // The variable the program text calls through: a local resolves through the

@@ -270,10 +270,8 @@ impl<'a> DexParser<'a> {
         method.vmt_triple(&self.strings, &self.type_ids, &self.proto_ids, self.data)
     }
 
-    /// The names of `method_ids[idx]`, built once and then borrowed: the lowering asks for a
-    /// method's names at every call to it, and formatting them afresh each time was a large
-    /// share of the import's allocation. The same strings as [`DexParser::method_triple`] and
-    /// [`DexParser::method_signature`].
+    /// The names of `method_ids[idx]`, built on first use and then borrowed. The same strings as
+    /// [`DexParser::method_triple`] and [`DexParser::method_signature`].
     pub fn method_names(&self, idx: usize) -> DexResult<MethodNames<'_>> {
         let method = self
             .method_ids

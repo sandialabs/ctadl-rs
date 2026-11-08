@@ -35,12 +35,11 @@ const FUNCTIONS_PER_FRAME: usize = 2048;
 #[cfg(feature = "serde")]
 pub fn encode_program(p: &Program) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
-    match encode_frames(p, |bytes| {
+    let Ok(()) = encode_frames(p, |bytes| {
         out.extend_from_slice(bytes);
         Ok::<(), std::convert::Infallible>(())
-    })? {
-        Ok(()) => Ok(out),
-    }
+    })?;
+    Ok(out)
 }
 
 /// Writes a [`Program`] to `w` as [`encode_program`] encodes it, frame by frame, so that only a
@@ -94,9 +93,7 @@ fn encode_frames<E>(
 
 /// Decodes the bytes of an `ir-program.bitcode` file, its frames in parallel.
 ///
-/// Bytes that do not start with [`PROGRAM_MAGIC`] are decoded as one bitcode value, the layout
-/// before frames. `ctadl_import`'s format version check normally refuses such a file before it
-/// gets here.
+/// Bytes that do not start with [`PROGRAM_MAGIC`] are decoded as one bitcode [`Program`].
 #[cfg(feature = "serde")]
 pub fn decode_program(bytes: &[u8]) -> Result<Program, Error> {
     use rayon::prelude::*;

@@ -673,9 +673,9 @@ pub(crate) fn top_level_type<'a>(
     name: &str,
 ) -> Result<Option<TypeDef<'a>>> {
     // The last top-level type of that name, as a scan from the last row would find it, but
-    // through an index by name, built once: a scan of every row per lookup made resolution
-    // quadratic in the number of types. A row whose name does not read fails the lookup where
-    // the scan would have met it.
+    // through an index by name, built once: a scan of every row per lookup would make
+    // resolution quadratic in the number of types. A row whose name does not read fails the
+    // lookup where the scan would have met it.
     let index = m.lazy.types_by_name.get_or_init(|| {
         let mut index = TypesByName::default();
         for rid in (1..=m.md.row_count(Table::TypeDef)).rev() {

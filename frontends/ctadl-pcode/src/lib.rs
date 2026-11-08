@@ -124,8 +124,7 @@ pub fn ghidra_ran_out_of_memory(import: &ctadl_import::project::ArtifactImport) 
 /// profile the in-process work without Ghidra: compressing is idempotent.
 pub fn lower_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let facts_dir = import.import_path().join("facts");
-    // Gzip the fact tables Ghidra just produced while they are read and lowered. The reader
-    // reads the plain tables, so they are removed only once it is done.
+    // Gzip the fact tables Ghidra just produced while they are read and lowered.
     let (compressed, program_info) = rayon::join(
         || {
             let started = std::time::Instant::now();
@@ -257,9 +256,9 @@ struct Context {
     /// address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
     /// `process_functions`.
     entry_points: BTreeMap<i64, String>,
-    /// The IR name of the function a call to an address calls: the first function, in id order,
-    /// whose entry point or one of whose local entry points is that address. Built by
-    /// `process_functions`.
+    /// The IR name of the function a call to an address calls: the first function, in the order
+    /// of [`functions_in_order`], whose entry point or one of whose local entry points is that
+    /// address. Built by `process_functions`.
     function_at: hashbrown::HashMap<i64, String>,
     /// The name of the import being lowered, which names its memory global.
     import_name: String,
@@ -459,8 +458,8 @@ impl Context {
                 // This is the unique function with this name that has pcode
                 func_data.name.clone()
             } else {
-                // Collision or no pcode, use unique name by including ID
-                // Shorten the name if it already contains the ID to avoid redundancy
+                // Collision or no pcode: use the unique `id_name`, after the name unless it
+                // already contains it
                 if func_data.id_name.contains(&func_data.name) {
                     func_data.id_name.clone()
                 } else {
@@ -772,7 +771,7 @@ impl Context {
     ///
     /// Blocks are lowered in parallel, one job per function (and one per block of no known
     /// function), and placed so that the program is the one lowering them one at a time in
-    /// block-id order made: spans are interned and temporaries numbered in that order.
+    /// [`blocks_in_order`] made: spans are interned and temporaries numbered in that order.
     fn process_pcode_instructions(
         &mut self,
         pcode_facts: &pcode_reader::PcodeFacts,
@@ -798,7 +797,7 @@ impl Context {
 
         let mut jobs: Vec<Job<'_>> = Vec::new();
         let mut job_of_func: hashbrown::HashMap<FunctionIdx, usize> = Default::default();
-        // Each block's job and its place in the job, in block-id order.
+        // Each block's job and its place in the job, in the order of `blocks_in_order`.
         let mut order: Vec<(usize, usize)> = Vec::with_capacity(pcode_facts.bb_facts.len());
         for (bb_id, bb_data) in blocks_in_order(pcode_facts) {
             let func = self.functions.get(&bb_data.hfunc).copied();
@@ -869,7 +868,7 @@ impl Context {
             jobs.push(lowered);
         }
 
-        // Number the temporaries and intern the spans in block-id order.
+        // Number the temporaries and intern the spans in the order of `blocks_in_order`.
         let file = builders.source_info_builder.file_for(&artifact_key);
         let mut next_temp = 0;
         for (job, place) in order {
@@ -2093,9 +2092,6 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// Drops `value` on a thread of its own, off the import's critical path: dropping the facts
-/// releases millions of interned strings. Not on the rayon pool, where a thread waiting in a
-/// `join` would pick the drop up and wait for it.
 /// The functions, in the order they are lowered: by readable identity (`Foo::bar@00101000`),
 /// which keeps the program the same whatever numbers the exporter gave them.
 fn functions_in_order(facts: &pcode_reader::PcodeFacts) -> Vec<&pcode_reader::HighFunc> {
@@ -2146,6 +2142,9 @@ fn blocks_in_order(
     blocks
 }
 
+/// Drops `value` on a thread of its own, off the import's critical path: dropping the facts
+/// releases millions of interned strings. Not on the rayon pool, where a thread waiting in a
+/// `join` would pick the drop up and wait for it.
 fn drop_in_background<T: Send + 'static>(value: T) {
     std::thread::spawn(move || drop(value));
 }
