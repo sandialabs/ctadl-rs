@@ -312,15 +312,13 @@ impl Context {
             .find(|r| r.is_stack_pointer && r.size == WORD_SIZE)
             .map(|r| (r.name.clone(), Some(r.size)))
             .unwrap_or_else(|| ("stack".to_string(), Some(8)));
-        self.sp_name = Some(sp_name.clone());
+        self.sp_name = Some(sp_name);
 
         pcode_facts.vnode_facts.insert(
             stack_top_vn.clone(),
             pcode_reader::VnodeData {
-                name: sp_name,
                 size: sp_size,
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -621,7 +619,7 @@ impl Context {
                     if let Some(rep) = pcode_facts.get_symbol_representative(&param.symbol) {
                         let vnode_data = pcode_facts.vnode_facts.get(rep);
                         let dest = if let Some(data) = vnode_data
-                            && data.space.as_deref() == Some("stack")
+                            && data.space() == Some("stack")
                             && let Some(addr) = &data.address
                         {
                             // Stack parameter - bind to the canonical stack slot
@@ -1696,7 +1694,7 @@ impl<'a> Lowerer<'a> {
         let Some(vnode_data) = vnode_facts.get(vnode_id) else {
             panic!("no data for vnode");
         };
-        let space = vnode_data.space.as_deref();
+        let space = vnode_data.space();
 
         if space == Some("const") {
             if let Some(address) = &vnode_data.address {
@@ -1830,7 +1828,7 @@ impl<'a> Lowerer<'a> {
         let (call_edges, actual_args) = if !pcode.inputs.is_empty() {
             let target_vnode = &pcode.inputs[0];
             let edges = if let Some(vnode_data) = vnode_facts.get(target_vnode)
-                && vnode_data.space.as_deref() == Some("ram")
+                && vnode_data.space() == Some("ram")
             {
                 self.resolve_call_target(target_vnode, vnode_facts)
             } else {
@@ -2279,19 +2277,17 @@ mod tests {
         scaled: false,
     };
 
-    /// A register varnode `name`, or a constant varnode when `constant` is given.
-    fn vnode(name: &str, constant: Option<i64>) -> pcode_reader::VnodeData {
+    /// A register varnode, or a constant varnode when `constant` is given.
+    fn vnode(constant: Option<i64>) -> pcode_reader::VnodeData {
         pcode_reader::VnodeData {
-            name: name.to_string(),
             size: Some(8),
-            is_address: false,
             space: Some(
                 if constant.is_some() {
                     "const"
                 } else {
                     "register"
                 }
-                .to_string(),
+                .into(),
             ),
             address: None,
             constant_offset: constant,
@@ -2312,7 +2308,7 @@ mod tests {
             ("eight", Some(8)),
         ]
         .into_iter()
-        .map(|(n, c)| (pcode_reader::PcodeVarnode::from(n), vnode(n, c)))
+        .map(|(n, c)| (pcode_reader::PcodeVarnode::from(n), vnode(c)))
         .collect();
         let mut inputs: SmallVec<[pcode_reader::PcodeVarnode; 2]> =
             smallvec!["p".into(), index.into()];
@@ -2321,11 +2317,9 @@ mod tests {
         }
         let pcode = pcode_reader::PcodeData {
             mnemonic: mnemonic.into(),
-            opcode: None,
             inputs,
             outputs: smallvec!["q".into()],
             bb_id: None,
-            index: 0,
             target: None,
         };
         let mut locals = Locals::default();

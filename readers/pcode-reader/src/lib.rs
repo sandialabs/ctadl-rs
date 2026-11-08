@@ -100,6 +100,11 @@ define_interned_newtype! {
     HighVariable
 }
 
+define_interned_newtype! {
+    /// The address space a varnode lives in (`ram`, `register`, `stack`, `const`, ...)
+    AddressSpace
+}
+
 /// Pcode instruction target address (i64)
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Deserialize)]
 #[repr(transparent)]
@@ -142,23 +147,29 @@ pub struct ProtoParameter {
 #[derive(Debug, Clone)]
 pub struct PcodeData {
     pub mnemonic: PcodeMnemonic,
-    pub opcode: Option<String>,
     pub inputs: SmallVec<[PcodeVarnode; 2]>,
     pub outputs: SmallVec<[PcodeVarnode; 1]>,
     pub bb_id: Option<PcodeBlockBasic>,
-    pub index: i64,
     pub target: Option<PcodeAddress>,
 }
 
 /// Varnode data
 #[derive(Debug, Clone)]
+///
+/// A large binary has tens of millions of varnodes, so this holds only what lowering reads:
+/// not the varnode's name, nor whether Ghidra calls it an address.
 pub struct VnodeData {
-    pub name: String,
     pub size: Option<i64>,
-    pub is_address: bool,
-    pub space: Option<String>,
+    pub space: Option<AddressSpace>,
     pub address: Option<PcodeAddress>,
     pub constant_offset: Option<i64>,
+}
+
+impl VnodeData {
+    /// The name of the varnode's address space.
+    pub fn space(&self) -> Option<&str> {
+        self.space.as_ref().map(|space| &***space)
+    }
 }
 
 /// Register data
@@ -264,7 +275,6 @@ impl PcodeFactsReader {
                 self.read_hfunc_facts(),
                 self.read_proto_facts(),
                 self.read_symbol_hvar_facts(),
-                self.read_hvar_name_facts(),
                 self.read_hvar_representative_facts(),
                 self.read_hvar_class_facts(),
                 self.read_hvar_type_facts(),
@@ -279,11 +289,8 @@ impl PcodeFactsReader {
                 (
                     symbol_hvar_facts,
                     (
-                        hvar_name_facts,
-                        (
-                            hvar_representative_facts,
-                            (hvar_class_facts, (hvar_type_facts, (type_kinds, register_facts))),
-                        ),
+                        hvar_representative_facts,
+                        (hvar_class_facts, (hvar_type_facts, (type_kinds, register_facts))),
                     ),
                 ),
             ),
@@ -295,7 +302,6 @@ impl PcodeFactsReader {
             bb_facts: bb_facts?,
             proto_facts: proto_facts?,
             symbol_hvar_facts: symbol_hvar_facts?,
-            hvar_name_facts: hvar_name_facts?,
             hvar_representative_facts: hvar_representative_facts?,
             vnode_hvar_facts: vnode_hvar_facts?,
             hvar_class_facts: hvar_class_facts?,
@@ -481,16 +487,11 @@ impl PcodeFactsReader {
     /// Read PCODE facts
     pub fn read_pcode_facts(&self) -> Result<BTreeMap<PcodeInstruction, PcodeData>> {
         const INPUT: &str = "PCODE_INPUT.facts";
-        const INDEX: &str = "PCODE_INDEX.facts";
         const TARGET: &str = "PCODE_TARGET.facts";
-        let (mnemonics, (opcodes, (inputs, (outputs, (indices, (targets, (parents, bbs))))))) = join!(
+        let (mnemonics, (inputs, (outputs, (targets, (parents, bbs))))) = join!(
             self.rows_or_empty("PCODE_MNEMONIC.facts", |[i, m]| Ok((
                 PcodeInstruction::from(i),
                 PcodeMnemonic::from(m)
-            ))),
-            self.rows_or_empty("PCODE_OPCODE.facts", |[i, op]| Ok((
-                PcodeInstruction::from(i),
-                op.to_string()
             ))),
             self.rows_or_empty(INPUT, |[i, n, vn]| Ok((
                 PcodeInstruction::from(i),
@@ -500,10 +501,6 @@ impl PcodeFactsReader {
             self.rows_or_empty("PCODE_OUTPUT.facts", |[i, vn]| Ok((
                 PcodeInstruction::from(i),
                 PcodeVarnode::from(vn)
-            ))),
-            self.rows_or_empty(INDEX, |[i, n]| Ok((
-                PcodeInstruction::from(i),
-                table::int(INDEX, n)?
             ))),
             self.rows_or_empty(TARGET, |[i, a]| Ok((
                 PcodeInstruction::from(i),
@@ -516,11 +513,10 @@ impl PcodeFactsReader {
             self.rows_or_empty("BB_HFUNC.facts", |[bb, _]| Ok(PcodeBlockBasic::from(bb)))
         );
 
-        let (mnemonics, opcodes, inputs, outputs) = (mnemonics?, opcodes?, inputs?, outputs?);
-        let (indices, targets, parents, bbs) = (indices?, targets?, parents?, bbs?);
-        let (mnemonics, (opcodes, (inputs, (outputs, (indices, (targets, (parents, bb_ids))))))) = join!(
+        let (mnemonics, inputs, outputs) = (mnemonics?, inputs?, outputs?);
+        let (targets, parents, bbs) = (targets?, parents?, bbs?);
+        let (mnemonics, (inputs, (outputs, (targets, (parents, bb_ids))))) = join!(
             sorted(mnemonics),
-            last_wins(opcodes),
             {
                 let mut inputs_by_inst: HashMap<
                     PcodeInstruction,
@@ -545,7 +541,6 @@ impl PcodeFactsReader {
                 }
                 outputs_by_inst
             },
-            last_wins(indices),
             last_wins(targets),
             last_wins(parents),
             bbs.into_iter().collect::<HashSet<PcodeBlockBasic>>()
@@ -556,14 +551,12 @@ impl PcodeFactsReader {
             .map(|(inst_id, mnemonic)| {
                 let data = PcodeData {
                     mnemonic,
-                    opcode: opcodes.get(&inst_id).cloned(),
                     inputs: inputs.get(&inst_id).cloned().unwrap_or_default(),
                     outputs: outputs.get(&inst_id).cloned().unwrap_or_default(),
                     bb_id: parents
                         .get(&inst_id)
                         .filter(|id| bb_ids.contains(*id))
                         .cloned(),
-                    index: indices.get(&inst_id).copied().unwrap_or(0),
                     target: targets.get(&inst_id).cloned(),
                 };
                 (inst_id, data)
@@ -577,19 +570,16 @@ impl PcodeFactsReader {
         const SIZE: &str = "VNODE_SIZE.facts";
         const ADDRESS: &str = "VNODE_ADDRESS.facts";
         const OFFSET: &str = "VNODE_OFFSET_N.facts";
-        let (names, (sizes, (is_address, (spaces, (addresses, offsets))))) = join!(
-            self.rows_or_empty("VNODE_NAME.facts", |[vn, name]| Ok((
-                PcodeVarnode::from(vn),
-                name.to_string()
-            ))),
+        // Every varnode has a name, so the names say which varnodes there are.
+        let (names, (sizes, (spaces, (addresses, offsets)))) = join!(
+            self.rows_or_empty("VNODE_NAME.facts", |[vn, _]| Ok(PcodeVarnode::from(vn))),
             self.rows_or_empty(SIZE, |[vn, n]| Ok((
                 PcodeVarnode::from(vn),
                 table::int(SIZE, n)?
             ))),
-            self.rows_or_empty("VNODE_IS_ADDRESS.facts", |[vn]| Ok(PcodeVarnode::from(vn))),
             self.rows_or_empty("VNODE_SPACE.facts", |[vn, space]| Ok((
                 PcodeVarnode::from(vn),
-                space.to_string()
+                AddressSpace::from(space)
             ))),
             self.rows_or_empty(ADDRESS, |[vn, a]| Ok((
                 PcodeVarnode::from(vn),
@@ -601,12 +591,11 @@ impl PcodeFactsReader {
             )))
         );
 
-        let (names, sizes, is_address) = (names?, sizes?, is_address?);
+        let (mut names, sizes) = (names?, sizes?);
         let (spaces, addresses, offsets) = (spaces?, addresses?, offsets?);
-        let (names, (sizes, (is_address, (spaces, (addresses, offsets))))) = join!(
-            sorted(names),
+        let (_, (sizes, (spaces, (addresses, offsets)))) = join!(
+            names.par_sort(),
             last_wins(sizes),
-            is_address.into_iter().collect::<HashSet<PcodeVarnode>>(),
             last_wins(spaces),
             last_wins(addresses),
             last_wins(offsets)
@@ -614,11 +603,9 @@ impl PcodeFactsReader {
 
         let rows: Vec<(PcodeVarnode, VnodeData)> = names
             .into_par_iter()
-            .map(|(vnode_id, name)| {
+            .map(|vnode_id| {
                 let data = VnodeData {
-                    name,
                     size: sizes.get(&vnode_id).copied(),
-                    is_address: is_address.contains(&vnode_id),
                     space: spaces.get(&vnode_id).cloned(),
                     address: addresses.get(&vnode_id).cloned(),
                     constant_offset: offsets.get(&vnode_id).copied(),
@@ -838,7 +825,6 @@ pub struct PcodeFacts {
     pub bb_facts: BTreeMap<PcodeBlockBasic, BBData>,
     pub proto_facts: BTreeMap<HighProto, ProtoData>,
     pub symbol_hvar_facts: BTreeMap<HighSymbol, Vec<HighVariable>>,
-    pub hvar_name_facts: BTreeMap<HighVariable, String>,
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
     pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
     pub hvar_class_facts: BTreeMap<HighVariable, String>,
@@ -891,7 +877,7 @@ impl PcodeFacts {
     pub fn is_global_vnode(&self, vnode: &PcodeVarnode) -> bool {
         self.vnode_facts
             .get(vnode)
-            .is_some_and(|data| data.space.as_deref() == Some("ram"))
+            .is_some_and(|data| data.space() == Some("ram"))
             && self
                 .vnode_hvar_facts
                 .get(vnode)
