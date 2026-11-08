@@ -134,15 +134,23 @@ pub(crate) fn import_bundle_in(
             let imported = import_split(&split.name, &split.path, opts, budget);
             Ok(SplitResult { split, imported })
         },
-        |_| false,
+        // A split that cannot be extracted or imported fails the bundle, so nothing after it
+        // is started: a split that merely holds no code does not.
+        |result| match result {
+            Err(_) => true,
+            Ok(SplitResult { imported, .. }) => {
+                imported.as_ref().is_err_and(|e| !is_nothing_to_import(e))
+            }
+        },
         |index, result| results[index] = Some(result),
     );
     // Everything below happens in split order, which is known only now that every split has been
     // looked into: an extraction failure first, in entry order, as when every split was
-    // extracted before any was imported; then each split's result.
+    // extracted before any was imported; then each split's result. After a failure, the splits
+    // that were not started have no result.
     let mut done = Vec::with_capacity(results.len());
-    for result in results {
-        done.push(result.expect("run_ordered reports every item when nothing stops it")?);
+    for result in results.into_iter().map_while(|result| result) {
+        done.push(result?);
     }
     order_splits(&mut done);
 
