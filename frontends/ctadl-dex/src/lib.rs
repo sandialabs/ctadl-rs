@@ -601,6 +601,24 @@ impl Importer {
             empty_union: bool,
         }
 
+        // A dex file may define one method twice, and the second definition is then lowered on
+        // top of the first: whether a body is grafted is decided by what is already in its
+        // function. So when two bodies of a batch go into the same function, place the batch one
+        // method at a time.
+        if batch.len() > 1 {
+            let mut targets = HashSet::new();
+            let repeats = batch
+                .iter()
+                .filter_map(|(lowered, _)| lowered.as_ref().ok())
+                .flat_map(|lowered| lowered.bodies.iter().map(|(fidx, _, _)| *fidx))
+                .any(|fidx| !targets.insert(fidx));
+            if repeats {
+                for one in batch {
+                    self.place(vec![one], artifact_key, file, builders, call_to)?;
+                }
+                return Ok(());
+            }
+        }
         let mut placed = Vec::with_capacity(batch.len());
         for (lowered, called) in batch {
             call_to.extend(called);
