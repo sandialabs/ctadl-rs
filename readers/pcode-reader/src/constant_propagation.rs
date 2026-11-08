@@ -6,8 +6,9 @@ The constant propagation uses a simple domain where each varnode `x` maps to `op
 meaning that "varnode `x` is equal to `y` plus the constant `c`". If `option(y)` is none it means
 that `x = c`. As a special case, the initial value for each varnode is `x = x + 0`.
 
-Constant propagation is implemented with relatively simple datalog rules and through lattice-aware
-arithmetic operations on [`SymbolicProp`].
+Constant propagation is one rule per instruction, from its inputs' values to its output's, using
+lattice-aware arithmetic operations on [`SymbolicProp`], solved to a fixpoint by
+[`compute_constant_propagation`].
 
 # Assumptions
 
@@ -15,8 +16,8 @@ arithmetic operations on [`SymbolicProp`].
   gets modified in a "non-standard" way in the function.
 */
 use crate::{PcodeFacts, PcodeVarnode};
-use ascent::ascent;
-use ascent::lattice::Lattice;
+use ascent_base::lattice::Lattice;
+use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
@@ -126,67 +127,96 @@ impl SymbolicProp {
     }
 }
 
-ascent! {
-    pub struct ConstantPropagationProgram;
-
-    // Inputs
-    relation copy_op(PcodeVarnode, PcodeVarnode);
-    relation add_op(PcodeVarnode, PcodeVarnode, PcodeVarnode);
-    relation sub_op(PcodeVarnode, PcodeVarnode, PcodeVarnode);
-    relation ptradd_op(PcodeVarnode, PcodeVarnode, PcodeVarnode, i64); // out, base, index, size
-    relation ptrsub_op(PcodeVarnode, PcodeVarnode, PcodeVarnode); // out, base, offset
-
-    relation initial_value(PcodeVarnode, SymbolicProp);
-
-    // Lattice relation for propagation
-    lattice variable_prop(PcodeVarnode, SymbolicProp);
-
-    // Initial values (constants or self-references)
-    variable_prop(v, val.clone()) <-- initial_value(v, val);
-
-    // Rules
-    variable_prop(out, val.clone()) <--
-        copy_op(out, inp),
-        variable_prop(inp, val);
-
-    // INT_ADD
-    variable_prop(out, val1.add(val2)) <--
-        add_op(out, in1, in2),
-        variable_prop(in1, val1),
-        variable_prop(in2, val2);
-
-    // INT_SUB
-    variable_prop(out, val1.sub(val2)) <--
-        sub_op(out, in1, in2),
-        variable_prop(in1, val1),
-        variable_prop(in2, val2);
-
-    // PTRADD: out = base + index * size
-    variable_prop(out, val_base.ptradd(val_idx, *sz)) <--
-        ptradd_op(out, base, index, sz),
-        variable_prop(base, val_base),
-        variable_prop(index, val_idx);
-
-    // PTRSUB: out = base + offset (ptrsub is logically an add)
-    variable_prop(out, val_base.add(val_off)) <--
-        ptrsub_op(out, base, offset),
-        variable_prop(base, val_base),
-        variable_prop(offset, val_off);
+/// One instruction's rule: a varnode index for the output, then for each input, and a
+/// `PTRADD`'s element size.
+#[derive(Clone, Copy)]
+enum Op {
+    /// `out ⊒ a`
+    Copy(u32, u32),
+    /// `out ⊒ a + b`
+    Add(u32, u32, u32),
+    /// `out ⊒ a - b`
+    Sub(u32, u32, u32),
+    /// `out ⊒ a + b * size`
+    PtrAdd(u32, u32, u32, i64),
+    /// `out ⊒ a + b`, a `PTRSUB`
+    PtrSub(u32, u32, u32),
 }
 
-pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode, SymbolicProp> {
-    let mut prog = ConstantPropagationProgram::default();
-
-    let mut defined_vars = BTreeSet::new();
-    for pcode in facts.pcode_facts.values() {
-        for out in &pcode.outputs {
-            defined_vars.insert(out.clone());
+impl Op {
+    fn output(self) -> u32 {
+        match self {
+            Op::Copy(out, ..)
+            | Op::Add(out, ..)
+            | Op::Sub(out, ..)
+            | Op::PtrAdd(out, ..)
+            | Op::PtrSub(out, ..) => out,
         }
     }
 
+    fn inputs(self) -> impl Iterator<Item = u32> {
+        let (a, b) = match self {
+            Op::Copy(_, a) => (a, None),
+            Op::Add(_, a, b) | Op::Sub(_, a, b) | Op::PtrAdd(_, a, b, _) | Op::PtrSub(_, a, b) => {
+                (a, Some(b))
+            }
+        };
+        std::iter::once(a).chain(b)
+    }
+
+    /// The value the rule derives for its output from `values`, once its inputs have one.
+    fn eval(self, values: &[Option<SymbolicProp>]) -> Option<SymbolicProp> {
+        let value = |i: u32| values[i as usize].as_ref();
+        Some(match self {
+            Op::Copy(_, a) => value(a)?.clone(),
+            Op::Add(_, a, b) | Op::PtrSub(_, a, b) => value(a)?.add(value(b)?),
+            Op::Sub(_, a, b) => value(a)?.sub(value(b)?),
+            Op::PtrAdd(_, a, b, size) => value(a)?.ptradd(value(b)?, size),
+        })
+    }
+}
+
+/// Varnodes numbered densely, for [`compute_constant_propagation`].
+#[derive(Default)]
+struct Varnodes<'f> {
+    ids: HashMap<&'f PcodeVarnode, u32>,
+    names: Vec<&'f PcodeVarnode>,
+}
+
+impl<'f> Varnodes<'f> {
+    fn id(&mut self, vn: &'f PcodeVarnode) -> u32 {
+        *self.ids.entry(vn).or_insert_with(|| {
+            self.names.push(vn);
+            (self.names.len() - 1) as u32
+        })
+    }
+}
+
+/// Runs constant propagation over every instruction in `facts`: each varnode's value is the
+/// least one that is at least its initial value and what every instruction writing it derives
+/// from its inputs' values.
+///
+/// The rules are monotone in the lattice, so the fixpoint does not depend on the order they
+/// are applied in. A worklist applies them: an instruction is re-evaluated when one of its
+/// inputs' value changes, which, with a lattice this short, is at most twice per input.
+pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode, SymbolicProp> {
+    let mut defined_vars: HashSet<&PcodeVarnode> = HashSet::new();
+    for pcode in facts.pcode_facts.values() {
+        defined_vars.extend(pcode.outputs.iter());
+    }
+
     let stack_top_vn = PcodeVarnode::from("__stack_top");
-    prog.initial_value.push((
-        stack_top_vn.clone(),
+    // Numbering the varnodes in `vnode_facts` first, in its order, keeps the result in key
+    // order but for varnodes that only instructions mention.
+    let mut varnodes = Varnodes::default();
+    varnodes.ids.reserve(facts.vnode_facts.len());
+    for vn in facts.vnode_facts.keys() {
+        varnodes.id(vn);
+    }
+
+    let mut initial_value: Vec<(u32, SymbolicProp)> = Vec::with_capacity(facts.vnode_facts.len());
+    initial_value.push((
+        varnodes.id(&stack_top_vn),
         SymbolicProp::Value(Some(stack_top_vn.clone()), 0),
     ));
 
@@ -198,30 +228,23 @@ pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode
         .collect();
 
     // Fill initial values and operations
-    for (vnode, data) in &facts.vnode_facts {
-        let is_const_space = data.space.as_deref() == Some("const");
-        let is_stack_space = data.space.as_deref() == Some("stack");
-        let is_register_space = data.space.as_deref() == Some("register");
+    for (id, (vnode, data)) in facts.vnode_facts.iter().enumerate() {
+        let id = id as u32;
+        let is_const_space = data.space() == Some("const");
+        let is_stack_space = data.space() == Some("stack");
+        let is_register_space = data.space() == Some("register");
 
         if is_const_space {
             if let Some(offset) = data.constant_offset {
-                prog.initial_value
-                    .push((vnode.clone(), SymbolicProp::Value(None, offset)));
+                initial_value.push((id, SymbolicProp::Value(None, offset)));
             } else if let Some(addr) = &data.address {
-                prog.initial_value
-                    .push((vnode.clone(), SymbolicProp::Value(None, addr.0)));
+                initial_value.push((id, SymbolicProp::Value(None, addr.0)));
             }
         } else if is_stack_space {
             if let Some(offset) = data.constant_offset {
-                prog.initial_value.push((
-                    vnode.clone(),
-                    SymbolicProp::Value(Some(stack_top_vn.clone()), offset),
-                ));
+                initial_value.push((id, SymbolicProp::Value(Some(stack_top_vn.clone()), offset)));
             } else if let Some(addr) = &data.address {
-                prog.initial_value.push((
-                    vnode.clone(),
-                    SymbolicProp::Value(Some(stack_top_vn.clone()), addr.0),
-                ));
+                initial_value.push((id, SymbolicProp::Value(Some(stack_top_vn.clone()), addr.0)));
             }
         } else if !defined_vars.contains(vnode) {
             let is_sp = is_register_space
@@ -230,63 +253,100 @@ pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode
                     .as_ref()
                     .is_some_and(|addr| sp_offsets.contains(&addr.0));
             if is_sp {
-                prog.initial_value.push((
-                    vnode.clone(),
-                    SymbolicProp::Value(Some(stack_top_vn.clone()), 0),
-                ));
+                initial_value.push((id, SymbolicProp::Value(Some(stack_top_vn.clone()), 0)));
             } else {
                 // Variables that are NOT defined in this function (parameters, globals, etc.)
                 // start as "self + 0"
-                prog.initial_value
-                    .push((vnode.clone(), SymbolicProp::Value(Some(vnode.clone()), 0)));
+                initial_value.push((id, SymbolicProp::Value(Some(vnode.clone()), 0)));
             }
         }
     }
 
+    let mut ops = Vec::new();
     for pcode in facts.pcode_facts.values() {
         if pcode.outputs.is_empty() {
             continue;
         }
-        let out = pcode.outputs[0].clone();
+        let out = varnodes.id(&pcode.outputs[0]);
+        let mut input = |i: usize| varnodes.id(&pcode.inputs[i]);
 
         let mnemonic = pcode.mnemonic.deref().deref();
         match mnemonic {
             "COPY" | "MULTIEQUAL" | "INDIRECT" | "CAST" | "TRUNC" | "INT_SEXT" | "INT_ZEXT" => {
-                for input in &pcode.inputs {
-                    prog.copy_op.push((out.clone(), input.clone()));
+                for i in 0..pcode.inputs.len() {
+                    ops.push(Op::Copy(out, input(i)));
                 }
             }
-            "INT_ADD" if pcode.inputs.len() >= 2 => {
-                prog.add_op
-                    .push((out, pcode.inputs[0].clone(), pcode.inputs[1].clone()));
-            }
-            "INT_SUB" if pcode.inputs.len() >= 2 => {
-                prog.sub_op
-                    .push((out, pcode.inputs[0].clone(), pcode.inputs[1].clone()));
-            }
+            "INT_ADD" if pcode.inputs.len() >= 2 => ops.push(Op::Add(out, input(0), input(1))),
+            "INT_SUB" if pcode.inputs.len() >= 2 => ops.push(Op::Sub(out, input(0), input(1))),
             "PTRADD" if pcode.inputs.len() >= 3 => {
-                let base = pcode.inputs[0].clone();
-                let index = pcode.inputs[1].clone();
                 let size_vn = &pcode.inputs[2];
                 if let Some(addr) = facts
                     .vnode_facts
                     .get(size_vn)
                     .and_then(|data| data.address.as_ref())
                 {
-                    prog.ptradd_op.push((out, base, index, addr.0));
+                    ops.push(Op::PtrAdd(out, input(0), input(1), addr.0));
                 }
             }
-            "PTRSUB" if pcode.inputs.len() >= 2 => {
-                prog.ptrsub_op
-                    .push((out, pcode.inputs[0].clone(), pcode.inputs[1].clone()));
-            }
+            "PTRSUB" if pcode.inputs.len() >= 2 => ops.push(Op::PtrSub(out, input(0), input(1))),
             _ => {}
         }
     }
 
-    prog.run();
+    // The instructions reading each varnode, `readers[starts[v]..starts[v + 1]]`.
+    let n = varnodes.names.len();
+    let mut starts = vec![0u32; n + 1];
+    for op in &ops {
+        for input in op.inputs() {
+            starts[input as usize + 1] += 1;
+        }
+    }
+    for v in 0..n {
+        starts[v + 1] += starts[v];
+    }
+    let mut readers = vec![0u32; starts[n] as usize];
+    let mut next = starts.clone();
+    for (i, op) in ops.iter().enumerate() {
+        for input in op.inputs() {
+            readers[next[input as usize] as usize] = i as u32;
+            next[input as usize] += 1;
+        }
+    }
 
-    prog.variable_prop.into_iter().collect()
+    let mut values: Vec<Option<SymbolicProp>> = vec![None; n];
+    let mut work = Vec::new();
+    let join = |values: &mut [Option<SymbolicProp>], work: &mut Vec<u32>, v: u32, value| {
+        let changed = match &mut values[v as usize] {
+            Some(old) => old.join_mut(value),
+            slot @ None => {
+                *slot = Some(value);
+                true
+            }
+        };
+        if changed {
+            work.push(v);
+        }
+    };
+    for (v, value) in initial_value {
+        join(&mut values, &mut work, v, value);
+    }
+    while let Some(v) = work.pop() {
+        let (start, end) = (starts[v as usize] as usize, starts[v as usize + 1] as usize);
+        for &op in &readers[start..end] {
+            let op = ops[op as usize];
+            if let Some(value) = op.eval(&values) {
+                join(&mut values, &mut work, op.output(), value);
+            }
+        }
+    }
+
+    varnodes
+        .names
+        .into_iter()
+        .zip(values)
+        .filter_map(|(vn, value)| Some((vn.clone(), value?)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -306,10 +366,8 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
-                name: "v1".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -318,10 +376,8 @@ mod tests {
         facts.vnode_facts.insert(
             c5.clone(),
             VnodeData {
-                name: "5".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(5)),
                 constant_offset: None,
             },
@@ -330,10 +386,8 @@ mod tests {
         facts.vnode_facts.insert(
             v2.clone(),
             VnodeData {
-                name: "v2".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -342,10 +396,8 @@ mod tests {
         facts.vnode_facts.insert(
             v3.clone(),
             VnodeData {
-                name: "v3".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -357,11 +409,9 @@ mod tests {
             inst1.clone(),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![v1.clone(), c5.clone()],
                 outputs: smallvec::smallvec![v2.clone()],
                 bb_id: None,
-                index: 0,
                 target: None,
             },
         );
@@ -372,11 +422,9 @@ mod tests {
             inst2.clone(),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![v2.clone(), c5.clone()],
                 outputs: smallvec::smallvec![v3.clone()],
                 bb_id: None,
-                index: 1,
                 target: None,
             },
         );
@@ -409,10 +457,8 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
-                name: "v1".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -421,10 +467,8 @@ mod tests {
         facts.vnode_facts.insert(
             k10.clone(),
             VnodeData {
-                name: "known10".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: None,
                 constant_offset: Some(10),
             },
@@ -433,10 +477,8 @@ mod tests {
         facts.vnode_facts.insert(
             v2.clone(),
             VnodeData {
-                name: "v2".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -448,11 +490,9 @@ mod tests {
             inst1.clone(),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![v1.clone(), k10.clone()],
                 outputs: smallvec::smallvec![v2.clone()],
                 bb_id: None,
-                index: 0,
                 target: None,
             },
         );
@@ -480,7 +520,7 @@ mod tests {
         let c4 = PcodeVarnode::from("c4");
 
         // Define varnodes
-        for (vn, name, space, offset) in [
+        for (vn, _name, space, offset) in [
             (&t, "t", "register", None),
             (&t1, "t1", "register", None),
             (&t2, "t2", "register", None),
@@ -490,10 +530,8 @@ mod tests {
             facts.vnode_facts.insert(
                 vn.clone(),
                 VnodeData {
-                    name: name.to_string(),
                     size: Some(8),
-                    is_address: false,
-                    space: Some(space.to_string()),
+                    space: Some(space.into()),
                     address: offset.map(PcodeAddress),
                     constant_offset: None,
                 },
@@ -505,11 +543,9 @@ mod tests {
             PcodeInstruction::from("i1"),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![t.clone(), c2.clone()],
                 outputs: smallvec::smallvec![t1.clone()],
                 bb_id: None,
-                index: 0,
                 target: None,
             },
         );
@@ -519,11 +555,9 @@ mod tests {
             PcodeInstruction::from("i2"),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![t1.clone(), c4.clone()],
                 outputs: smallvec::smallvec![t2.clone()],
                 bb_id: None,
-                index: 1,
                 target: None,
             },
         );
@@ -545,10 +579,8 @@ mod tests {
         facts.vnode_facts.insert(
             stack_vn.clone(),
             VnodeData {
-                name: "stack_vn".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("stack".to_string()),
+                space: Some("stack".into()),
                 address: Some(PcodeAddress(-16)),
                 constant_offset: None,
             },
@@ -557,10 +589,8 @@ mod tests {
         facts.vnode_facts.insert(
             c8.clone(),
             VnodeData {
-                name: "8".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(8)),
                 constant_offset: None,
             },
@@ -569,10 +599,8 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
-                name: "v1".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: None,
                 constant_offset: None,
             },
@@ -583,11 +611,9 @@ mod tests {
             PcodeInstruction::from("i1"),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("INT_ADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![stack_vn.clone(), c8.clone()],
                 outputs: smallvec::smallvec![v1.clone()],
                 bb_id: None,
-                index: 0,
                 target: None,
             },
         );
@@ -620,10 +646,8 @@ mod tests {
         facts.vnode_facts.insert(
             rsp.clone(),
             VnodeData {
-                name: "RSP".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("register".to_string()),
+                space: Some("register".into()),
                 address: Some(PcodeAddress(32)),
                 constant_offset: None,
             },
@@ -652,10 +676,8 @@ mod tests {
         facts.vnode_facts.insert(
             base.clone(),
             VnodeData {
-                name: "base".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(1000)),
                 constant_offset: None,
             },
@@ -665,10 +687,8 @@ mod tests {
         facts.vnode_facts.insert(
             index.clone(),
             VnodeData {
-                name: "index".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(2)),
                 constant_offset: None,
             },
@@ -678,10 +698,8 @@ mod tests {
         facts.vnode_facts.insert(
             size_vn.clone(),
             VnodeData {
-                name: "size".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(4)),
                 constant_offset: None,
             },
@@ -691,10 +709,8 @@ mod tests {
         facts.vnode_facts.insert(
             offset.clone(),
             VnodeData {
-                name: "offset".to_string(),
                 size: Some(8),
-                is_address: false,
-                space: Some("const".to_string()),
+                space: Some("const".into()),
                 address: Some(PcodeAddress(50)),
                 constant_offset: None,
             },
@@ -705,11 +721,9 @@ mod tests {
             PcodeInstruction::from("i1"),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("PTRADD"),
-                opcode: None,
                 inputs: smallvec::smallvec![base.clone(), index.clone(), size_vn.clone()],
                 outputs: smallvec::smallvec![out_ptradd.clone()],
                 bb_id: None,
-                index: 0,
                 target: None,
             },
         );
@@ -719,11 +733,9 @@ mod tests {
             PcodeInstruction::from("i2"),
             PcodeData {
                 mnemonic: PcodeMnemonic::from("PTRSUB"),
-                opcode: None,
                 inputs: smallvec::smallvec![base.clone(), offset.clone()],
                 outputs: smallvec::smallvec![out_ptrsub.clone()],
                 bb_id: None,
-                index: 1,
                 target: None,
             },
         );
