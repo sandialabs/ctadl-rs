@@ -200,19 +200,20 @@ impl PcodeFactsReader {
     /// Resolve a logical fact filename (e.g. `PCODE_INPUT.facts`) to the file that
     /// actually exists on disk.
     ///
-    /// A gzipped `<filename>.gz` is preferred when present (returning `true` for
-    /// "compressed"); otherwise the plain `<filename>` is used. Preferring `.gz`
-    /// but falling back to the plain file is what lets someone manually `gunzip`
-    /// files in the store and still have everything read correctly. Returns `None`
-    /// if neither variant exists.
+    /// The plain `<filename>` is preferred when present (returning `false` for
+    /// "compressed"); otherwise the gzipped `<filename>.gz` is used. A plain table is
+    /// either one Ghidra just wrote, which a `.gz` left by an earlier export may be older
+    /// than and which is still being compressed while it is read, or one someone
+    /// unpacked by hand; either way it is current, and reading it skips inflating it.
+    /// Returns `None` if neither variant exists.
     fn resolve_fact_path(&self, filename: &str) -> Option<(PathBuf, bool)> {
-        let gz = self.facts_dir.join(format!("{filename}.gz"));
-        if gz.exists() {
-            return Some((gz, true));
-        }
         let plain = self.facts_dir.join(filename);
         if plain.exists() {
             return Some((plain, false));
+        }
+        let gz = self.facts_dir.join(format!("{filename}.gz"));
+        if gz.exists() {
+            return Some((gz, true));
         }
         None
     }

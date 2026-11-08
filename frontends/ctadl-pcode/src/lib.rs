@@ -57,6 +57,7 @@ use ctadl_ir::cir::call::{FunctionNames, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
+use rayon::prelude::*;
 
 pub mod ghidra;
 
@@ -106,18 +107,40 @@ pub fn import_pcode(
 /// of times on one directory.
 #[doc(hidden)]
 pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+    let facts_dir = import.import_path().join("facts");
+    // Gzip the fact tables Ghidra just produced while they are read and lowered. The reader
+    // reads the plain tables, so they are removed only once it is done.
+    let (compressed, program_info) = rayon::join(
+        || {
+            let started = std::time::Instant::now();
+            let compressed = ghidra::compress_facts_keeping_originals(&facts_dir);
+            log::debug!(
+                target: "ctadl_pcode::timing",
+                "compress facts (alongside the phases below): {:.2?}",
+                started.elapsed()
+            );
+            compressed
+        },
+        || lower_facts(import, &facts_dir),
+    );
+    let program_info = program_info?;
+    ghidra::remove_compressed_originals(&compressed?)?;
+    Ok(program_info)
+}
+
+/// Lowers the fact tables in `facts_dir` to the program of `import`, and scans for its
+/// `RegisterNatives` tables.
+fn lower_facts(
+    import: &ctadl_import::project::ArtifactImport,
+    facts_dir: &Path,
+) -> Result<ProgramInfo, Error> {
     let timer = PhaseTimer::start();
     let path = &import.artifact_path;
-    let facts_dir = import.import_path().join("facts");
-
-    // Gzip the fact tables Ghidra just produced; the reader below handles either variant.
-    ghidra::compress_facts_dir(&facts_dir)?;
-    timer.done("compress facts");
 
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover
     // section-relative offsets regardless of the base Ghidra chose.
-    let image_base = PcodeFactsReader::new(&facts_dir)
+    let image_base = PcodeFactsReader::new(facts_dir)
         .read_image_base()
         .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
         .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
@@ -139,7 +162,7 @@ pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&facts_dir, key, &mut builders, &timer)?;
+    ctx.process(facts_dir, key, &mut builders, &timer)?;
 
     // Recover this library's `RegisterNatives` tables and write them beside the import's other
     // artifacts. Here, rather than earlier or later, because this is the first point at which
@@ -189,8 +212,6 @@ struct Context {
     functions: BTreeMap<pcode_reader::HighFunc, FunctionIdx>,
     /// Basic block mapping: (function ID, pcode block ID) -> CTADL basic block index
     basic_blocks: BTreeMap<(pcode_reader::HighFunc, pcode_reader::PcodeBlockBasic), BasicBlockIdx>,
-    /// Basic block facts for function lookup
-    bb_facts: BTreeMap<pcode_reader::PcodeBlockBasic, pcode_reader::BBData>,
     /// Mapping from instruction address to basic block
     address_to_bb: BTreeMap<i64, (pcode_reader::HighFunc, BasicBlockIdx)>,
     /// Constant propagation results
@@ -209,17 +230,18 @@ struct Context {
     /// Under [`IntArith::Value`], the outputs of `INT_MULT` and `INT_LEFT`: values that look
     /// like a scaled index rather than a base when added to an address.
     scaled_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
-    /// Logged at the end of the import.
+    /// Logged at the end of the import; the sum of every [`Lowerer`]'s.
     binop_sources: BinopSources,
     /// Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
-    /// Current function being processed
-    current_hfunc: Option<pcode_reader::HighFunc>,
     /// Function entry address -> the fully-qualified IR name of the function there. Keyed by the
     /// address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
     /// `process_functions`.
     entry_points: BTreeMap<i64, String>,
-    counter: i64,
+    /// The IR name of the function a call to an address calls: the first function, in id order,
+    /// whose entry point or one of whose local entry points is that address. Built by
+    /// `process_functions`.
+    function_at: hashbrown::HashMap<i64, String>,
     /// The name of the import being lowered, which names its memory global.
     import_name: String,
     /// The import's memory global, `$<import>::ram`, declared by [`Self::process`].
@@ -236,7 +258,6 @@ impl Context {
         Self {
             functions: Default::default(),
             basic_blocks: Default::default(),
-            bb_facts: Default::default(),
             address_to_bb: Default::default(),
             cp_results: Default::default(),
             sp_name: None,
@@ -247,49 +268,13 @@ impl Context {
             scaled_vnodes: Default::default(),
             binop_sources: Default::default(),
             register_facts: Default::default(),
-            current_hfunc: None,
             entry_points: Default::default(),
-            counter: 0,
+            function_at: Default::default(),
             import_name: "pcode".to_string(),
             memory: None,
             image_base: 0,
             unlocated_instructions: 0,
         }
-    }
-
-    /// Appends a write of `src` to the access path `dest`: a plain assign for a bare variable, or a
-    /// field store (with any needed loads emitted for intermediate dereferences) via
-    /// [`cir::store_access_path`].
-    ///
-    /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
-    /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
-    /// means writing the memory *at* that address. That dereference is a pcode-level detail, so we
-    /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
-    /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
-    ///
-    /// A write into the frame itself, `__stack_top.[k].deref := src`, is a store like any other.
-    /// The frame is memory, so `mem2reg` is what makes a slot flow-sensitive.
-    ///
-    /// A `dest` that is a frame address, `__stack_top.[k]`, writes nothing. It comes from a
-    /// register or temporary that holds the address (the stack pointer, or `&local` that constant
-    /// propagation resolved), and every read of that varnode resolves to the address too
-    /// ([`Self::convert_vnode`]). Writing it to the slot at that address would overwrite the slot.
-    fn push_assign_or_store(
-        &mut self,
-        stmts: &mut Vec<Statement>,
-        mut dest: AccessPath,
-        src: Exp,
-        locals: &mut Locals,
-    ) {
-        if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
-            if let Variable::Local(base) = dest.base.variable
-                && locals.name(base) == ssa::STACK_TOP
-            {
-                return;
-            }
-            dest.push(PathSegment::Deref);
-        }
-        stmts.push(Statement::new_kind(StatementKind::assign(dest, [src])));
     }
 
     fn process(
@@ -349,15 +334,19 @@ impl Context {
         timer.done("constant propagation");
         self.global_vnodes = pcode_facts
             .vnode_facts
-            .keys()
-            .filter(|vn| pcode_facts.is_global_vnode(vn))
-            .cloned()
+            .par_iter()
+            .filter(|(vn, _)| pcode_facts.is_global_vnode(vn))
+            .map(|(vn, _)| vn.clone())
+            .collect::<Vec<_>>()
+            .into_iter()
             .collect();
         if self.int_arith == IntArith::Value {
             self.vnode_kinds = pcode_facts
                 .vnode_facts
-                .keys()
-                .filter_map(|vn| Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?)))
+                .par_iter()
+                .filter_map(|(vn, _)| Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?)))
+                .collect::<Vec<_>>()
+                .into_iter()
                 .collect();
             self.addr_vnodes = address_vnodes(&pcode_facts);
             self.scaled_vnodes = pcode_facts
@@ -368,9 +357,6 @@ impl Context {
                 .collect();
         }
         self.register_facts = pcode_facts.register_facts.clone();
-
-        // Store bb_facts for later use
-        self.bb_facts = pcode_facts.bb_facts.clone();
 
         // Pre-pass: Create mapping from function names to HighFunc IDs for functions with pcode
         timer.done("vnode classes");
@@ -558,6 +544,21 @@ impl Context {
                 self.entry_points.insert(entry_point.0, fq_name);
             }
         }
+
+        for (func_id, func_data) in hfunc_facts {
+            let Some(&func_idx) = self.functions.get(func_id) else {
+                continue;
+            };
+            for address in func_data
+                .entry_point
+                .iter()
+                .chain(&func_data.local_entry_points)
+            {
+                self.function_at
+                    .entry(address.0)
+                    .or_insert_with(|| builders.program[func_idx].name.clone());
+            }
+        }
         Ok(())
     }
 
@@ -603,6 +604,10 @@ impl Context {
         let mut sorted_hfuncs: Vec<_> = self.functions.keys().cloned().collect();
         sorted_hfuncs.sort(); // Determinism
 
+        let mut basic_blocks = BTreeMap::new();
+        let mut address_to_bb = BTreeMap::new();
+        let lowerer = Lowerer::new(self);
+
         for hfunc_id in sorted_hfuncs {
             let func_idx = self.functions[&hfunc_id];
             let func_data = &pcode_facts.hfunc_facts[&hfunc_id];
@@ -632,13 +637,13 @@ impl Context {
                         {
                             // Stack parameter - bind to the canonical stack slot
                             // `__stack_top.[offset].deref`.
-                            Self::stack_slot_path(addr.0, &mut func.locals)
+                            Lowerer::stack_slot_path(addr.0, &mut func.locals)
                         } else {
                             // Other parameter (register, etc.) - bind to local variable
-                            self.get_lvalue(rep, &pcode_facts.vnode_facts, &mut func.locals)?
+                            lowerer.get_lvalue(rep, &pcode_facts.vnode_facts, &mut func.locals)?
                         };
                         let mut stmts = Vec::new();
-                        self.push_assign_or_store(
+                        lowerer.push_assign_or_store(
                             &mut stmts,
                             dest,
                             VariableRef::new_parameter(ParameterIdx::new(i)).into(),
@@ -715,8 +720,7 @@ impl Context {
 
                 for bb_id in sorted_bb_ids {
                     let bb_idx = func.blocks.new_block();
-                    self.basic_blocks
-                        .insert((hfunc_id.clone(), bb_id.clone()), bb_idx);
+                    basic_blocks.insert((hfunc_id.clone(), bb_id.clone()), bb_idx);
                     if entry_bb_idx.is_none() {
                         entry_bb_idx = Some(bb_idx);
                     }
@@ -727,8 +731,7 @@ impl Context {
                         && let Some(pcode) = pcode_facts.pcode_facts.get(first_inst_id)
                         && let Some(address) = &pcode.target
                     {
-                        self.address_to_bb
-                            .insert(address.0, (hfunc_id.clone(), bb_idx));
+                        address_to_bb.insert(address.0, (hfunc_id.clone(), bb_idx));
                     }
                 }
             }
@@ -744,125 +747,419 @@ impl Context {
             }
         }
 
+        self.basic_blocks = basic_blocks;
+        self.address_to_bb = address_to_bb;
         Ok(())
     }
 
+    /// Lowers every block's instructions and terminator, then puts them into the program.
+    ///
+    /// Blocks are lowered in parallel, one job per function (and one per block of no known
+    /// function), and placed so that the program is the one lowering them one at a time in
+    /// block-id order made: spans are interned and temporaries numbered in that order.
     fn process_pcode_instructions(
         &mut self,
         pcode_facts: &pcode_reader::PcodeFacts,
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Create a mapping from basic blocks to their functions
-        let mut bb_to_function: BTreeMap<pcode_reader::PcodeBlockBasic, FunctionIdx> =
-            BTreeMap::new();
-        for (bb_id, bb_data) in &self.bb_facts {
-            if let Some(func_idx) = self.functions.get(&bb_data.hfunc) {
-                bb_to_function.insert(bb_id.clone(), *func_idx);
-            }
+        /// The blocks of one function, or one block of no known function, with the locals
+        /// table they are lowered into.
+        struct Job<'f> {
+            func: Option<FunctionIdx>,
+            blocks: Vec<(&'f pcode_reader::PcodeBlockBasic, &'f pcode_reader::BBData)>,
+            return_arity: usize,
+            locals: Locals,
         }
 
-        // Collect all basic block IDs and their data first to avoid borrow issues
-        let mut bb_facts_vec: Vec<(pcode_reader::PcodeBlockBasic, pcode_reader::BBData)> = self
-            .bb_facts
-            .iter()
-            .map(|(bb_id, bb_data)| (bb_id.clone(), bb_data.clone()))
+        /// A lowered [`Job`].
+        struct Lowered<'f> {
+            func: Option<FunctionIdx>,
+            blocks: Vec<(&'f pcode_reader::PcodeBlockBasic, LoweredBlock)>,
+            locals: Locals,
+            temps: Vec<LocalIdx>,
+        }
+
+        let mut jobs: Vec<Job<'_>> = Vec::new();
+        let mut job_of_func: hashbrown::HashMap<FunctionIdx, usize> = Default::default();
+        // Each block's job and its place in the job, in block-id order.
+        let mut order: Vec<(usize, usize)> = Vec::with_capacity(pcode_facts.bb_facts.len());
+        for (bb_id, bb_data) in &pcode_facts.bb_facts {
+            let func = self.functions.get(&bb_data.hfunc).copied();
+            let job = match func {
+                Some(func_idx) => *job_of_func.entry(func_idx).or_insert_with(|| {
+                    let func = &mut builders.program[func_idx];
+                    jobs.push(Job {
+                        func: Some(func_idx),
+                        blocks: Vec::new(),
+                        return_arity: func.return_type.arity as usize,
+                        locals: std::mem::take(&mut func.locals),
+                    });
+                    jobs.len() - 1
+                }),
+                None => {
+                    jobs.push(Job {
+                        func: None,
+                        blocks: Vec::new(),
+                        return_arity: 0,
+                        locals: Locals::default(),
+                    });
+                    jobs.len() - 1
+                }
+            };
+            order.push((job, jobs[job].blocks.len()));
+            jobs[job].blocks.push((bb_id, bb_data));
+        }
+
+        let ctx = &*self;
+        let lowered: Vec<Result<(Lowered<'_>, BinopSources, usize), Error>> = jobs
+            .into_par_iter()
+            .map(|job| {
+                let mut lowerer = Lowerer::new(ctx);
+                let mut locals = job.locals;
+                let blocks = job
+                    .blocks
+                    .iter()
+                    .map(|&(bb_id, bb_data)| {
+                        let block = lowerer.lower_block(
+                            bb_data,
+                            pcode_facts,
+                            job.return_arity,
+                            &mut locals,
+                        )?;
+                        Ok((bb_id, block))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let Lowerer {
+                    temps,
+                    binop_sources,
+                    unlocated_instructions,
+                    ..
+                } = lowerer;
+                let lowered = Lowered {
+                    func: job.func,
+                    blocks,
+                    locals,
+                    temps,
+                };
+                Ok((lowered, binop_sources, unlocated_instructions))
+            })
             .collect();
-        bb_facts_vec.sort_by_key(|(id, _)| id.clone()); // Determinism
+        let mut jobs = Vec::with_capacity(lowered.len());
+        for result in lowered {
+            let (lowered, binop_sources, unlocated_instructions) = result?;
+            self.binop_sources.add(binop_sources);
+            self.unlocated_instructions += unlocated_instructions;
+            jobs.push(lowered);
+        }
 
-        let mut bb_statements: BTreeMap<
-            (pcode_reader::HighFunc, pcode_reader::PcodeBlockBasic),
-            Vec<Statement>,
-        > = BTreeMap::new();
-        let mut bb_terminators: BTreeMap<
-            (pcode_reader::HighFunc, pcode_reader::PcodeBlockBasic),
-            Terminator,
-        > = BTreeMap::new();
+        // Number the temporaries and intern the spans in block-id order.
+        let file = builders.source_info_builder.file_for(&artifact_key);
+        let mut next_temp = 0;
+        for (job, place) in order {
+            let block = &mut jobs[job].blocks[place].1;
+            block.first_temp = next_temp;
+            next_temp += block.temps.len();
+            block.span_ids = block
+                .spans
+                .iter()
+                .map(|&offset| {
+                    builders.source_info_builder.span_in_file(
+                        file,
+                        offset,
+                        source_info::SpanLen::ByteLen(1),
+                    )
+                })
+                .collect();
+        }
 
-        for (bb_id, bb_data) in bb_facts_vec {
-            self.current_hfunc = Some(bb_data.hfunc.clone());
-            let mut statements = Vec::new();
-
-            let func_idx_opt = bb_to_function.get(&bb_id).copied();
-            let return_arity = func_idx_opt
-                .map(|fidx| builders.program[fidx].return_type.arity)
-                .unwrap_or(0);
-
-            // Interning locals requires `&mut` to the function's table while `&builders.program`
-            // is held immutably (to resolve call targets), so take the table out for the duration
-            // of statement generation and put it back at the end of the iteration.
-            let mut locals = func_idx_opt
-                .map(|fidx| std::mem::take(&mut builders.program[fidx].locals))
-                .unwrap_or_default();
-
-            // Use the sorted instruction indices from BBData
-            for (_, inst_id) in &bb_data.instruction_indices {
-                if let Some(pcode) = pcode_facts.pcode_facts.get(inst_id) {
-                    for mut stmt in self.pcode_to_statement(
-                        pcode,
-                        &pcode_facts.vnode_facts,
-                        &pcode_facts.hfunc_facts,
-                        &builders.program,
-                        &mut locals,
-                    )? {
-                        if let Some(addr) = &pcode.target {
-                            match image_offset(addr.0, self.image_base) {
-                                Some(offset) => {
-                                    stmt.source_info =
-                                        SourceInfo::new(builders.source_info_builder.span_for(
-                                            artifact_key.clone(),
-                                            offset,
-                                            source_info::SpanLen::ByteLen(1),
-                                        ));
-                                }
-                                None => self.unlocated_instructions += 1,
-                            }
-                        }
-                        statements.push(stmt);
+        jobs.par_iter_mut().for_each(|job| {
+            if job.func.is_some() {
+                job.locals = number_temps(&job.locals, &job.temps, &job.blocks);
+            }
+            for (_, block) in &mut job.blocks {
+                for stmt in &mut block.statements {
+                    let span = &mut stmt.source_info.span_id;
+                    if *span != source_info::NO_SPAN {
+                        *span = block.span_ids[span.0 as usize - 1];
                     }
                 }
             }
+        });
 
-            bb_statements.insert((bb_data.hfunc.clone(), bb_id.clone()), statements);
-
-            // Determine terminator
-            let mut terminator = None;
-            if let Some((_, last_inst_id)) = bb_data.instruction_indices.last()
-                && let Some(pcode) = pcode_facts.pcode_facts.get(last_inst_id)
-            {
-                match pcode.mnemonic.as_ref() {
-                    "RETURN" => {
-                        let mut args = smallvec![];
-                        if pcode.inputs.len() >= 2 {
-                            // The return value may be a field read, which lowers to loads. They
-                            // must execute before the (separately stored) terminator, so append
-                            // them to the end of this block's already-inserted statements.
-                            let mut ret_stmts = Vec::new();
-                            let arg = self.get_exp(
-                                &mut ret_stmts,
-                                &pcode.inputs[1],
-                                &pcode_facts.vnode_facts,
-                                &mut locals,
-                            )?;
-                            if !ret_stmts.is_empty()
-                                && let Some(block_stmts) =
-                                    bb_statements.get_mut(&(bb_data.hfunc.clone(), bb_id.clone()))
-                            {
-                                block_stmts.extend(ret_stmts);
-                            }
-                            args.push(arg);
-                        }
-                        // Ensure return arity matches
-                        while args.len() < return_arity as usize {
-                            args.push(Exp::new_bytes(Vec::new()));
-                        }
-                        args.truncate(return_arity as usize);
-                        terminator = Some(Terminator::new_kind(TerminatorKind::Return { args }));
+        for job in jobs {
+            let Some(func_idx) = job.func else {
+                continue;
+            };
+            let func = &mut builders.program[func_idx];
+            func.locals = job.locals;
+            for (bb_id, block) in job.blocks {
+                let hfunc = &pcode_facts.bb_facts[bb_id].hfunc;
+                if let Some(&bb_idx) = self.basic_blocks.get(&(hfunc.clone(), bb_id.clone())) {
+                    let bb = &mut func[bb_idx];
+                    for stmt in block.statements {
+                        bb.statements.push_back(stmt);
                     }
-                    "BRANCH" => {
-                        // For BRANCH, we prefer out_edges or tout_edges
-                        let mut targets = smallvec![];
-                        for out in bb_data.out_edges.iter().chain(bb_data.tout_edges.iter()) {
+                    bb.terminator = Some(block.terminator);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finish(self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
+        if self.int_arith != IntArith::Merge {
+            let BinopSources {
+                variable,
+                value,
+                other,
+            } = self.binop_sources;
+            log::info!(
+                "pcode: int arith {:?}: arithmetic and comparison sources: \
+                 {variable} variable, {value} value, {other} other",
+                self.int_arith
+            );
+        }
+        log::trace!("final program: {}", builders.program);
+        // Verify the program
+        builders.program.verify()?;
+        builders.vmt.finish_names();
+
+        Ok(ProgramInfo {
+            program: builders.program,
+            vmt: builders.vmt,
+            source_info: builders.source_info_builder.finish(),
+        })
+    }
+}
+
+/// One block, lowered by [`Lowerer::lower_block`].
+struct LoweredBlock {
+    statements: Vec<Statement>,
+    terminator: Terminator,
+    /// The temporaries the block made, as positions in its lowerer's [`Lowerer::temps`].
+    temps: std::ops::Range<usize>,
+    /// The program-wide number of the block's first temporary.
+    first_temp: usize,
+    /// The offset of each span the block's statements have, in order. A statement's span id is
+    /// its position here plus one until the spans are interned into `span_ids`.
+    spans: Vec<u32>,
+    span_ids: Vec<source_info::FileSpanId>,
+}
+
+/// `locals` with each of `temps`, the temporaries a [`Lowerer`] made, renamed to `temp_<n>`
+/// for its program-wide number `n`, which `blocks` say.
+fn number_temps(
+    locals: &Locals,
+    temps: &[LocalIdx],
+    blocks: &[(&pcode_reader::PcodeBlockBasic, LoweredBlock)],
+) -> Locals {
+    let mut numbers = vec![0; temps.len()];
+    for (_, block) in blocks {
+        for (k, n) in block.temps.clone().enumerate() {
+            numbers[n] = block.first_temp + k;
+        }
+    }
+    // Every temporary is a new local, so they come in the order the table holds them.
+    let mut temps = temps.iter().zip(numbers).peekable();
+    let mut renamed = Locals::default();
+    for (idx, _) in locals.iter_enumerated() {
+        let new = match temps.next_if(|&(&temp, _)| temp == idx) {
+            Some((_, n)) => renamed.get_or_intern(&format!("temp_{n}")),
+            None => renamed.get_or_intern(locals.name(idx)),
+        };
+        debug_assert_eq!(new, idx);
+    }
+    renamed
+}
+
+/// Lowers instructions against a finished [`Context`], keeping what lowering changes, so that
+/// functions can be lowered in parallel, each by its own.
+struct Lowerer<'a> {
+    ctx: &'a Context,
+    /// The temporaries made so far, in order (see [`Self::create_temp`]).
+    temps: Vec<LocalIdx>,
+    binop_sources: BinopSources,
+    /// Instructions with no span because their offset from the image base is not a `u32`.
+    unlocated_instructions: usize,
+}
+
+impl Deref for Lowerer<'_> {
+    type Target = Context;
+
+    fn deref(&self) -> &Context {
+        self.ctx
+    }
+}
+
+impl<'a> Lowerer<'a> {
+    fn new(ctx: &'a Context) -> Self {
+        Self {
+            ctx,
+            temps: Vec::new(),
+            binop_sources: BinopSources::default(),
+            unlocated_instructions: 0,
+        }
+    }
+
+    /// Appends a write of `src` to the access path `dest`: a plain assign for a bare variable, or a
+    /// field store (with any needed loads emitted for intermediate dereferences) via
+    /// [`cir::store_access_path`].
+    ///
+    /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
+    /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
+    /// means writing the memory *at* that address. That dereference is a pcode-level detail, so we
+    /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
+    /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
+    ///
+    /// A write into the frame itself, `__stack_top.[k].deref := src`, is a store like any other.
+    /// The frame is memory, so `mem2reg` is what makes a slot flow-sensitive.
+    ///
+    /// A `dest` that is a frame address, `__stack_top.[k]`, writes nothing. It comes from a
+    /// register or temporary that holds the address (the stack pointer, or `&local` that constant
+    /// propagation resolved), and every read of that varnode resolves to the address too
+    /// ([`Self::convert_vnode`]). Writing it to the slot at that address would overwrite the slot.
+    fn push_assign_or_store(
+        &self,
+        stmts: &mut Vec<Statement>,
+        mut dest: AccessPath,
+        src: Exp,
+        locals: &mut Locals,
+    ) {
+        if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
+            if let Variable::Local(base) = dest.base.variable
+                && locals.name(base) == ssa::STACK_TOP
+            {
+                return;
+            }
+            dest.push(PathSegment::Deref);
+        }
+        stmts.push(Statement::new_kind(StatementKind::assign(dest, [src])));
+    }
+
+    /// Lowers the instructions of the block `bb_data` of a function returning `return_arity`
+    /// values, and its terminator.
+    fn lower_block(
+        &mut self,
+        bb_data: &pcode_reader::BBData,
+        pcode_facts: &pcode_reader::PcodeFacts,
+        return_arity: usize,
+        locals: &mut Locals,
+    ) -> Result<LoweredBlock, Error> {
+        let first_temp = self.temps.len();
+        let mut statements = Vec::new();
+        let mut spans = Vec::new();
+
+        // Use the sorted instruction indices from BBData
+        for (_, inst_id) in &bb_data.instruction_indices {
+            if let Some(pcode) = pcode_facts.pcode_facts.get(inst_id) {
+                for mut stmt in self.pcode_to_statement(pcode, &pcode_facts.vnode_facts, locals)? {
+                    if let Some(addr) = &pcode.target {
+                        match image_offset(addr.0, self.image_base) {
+                            Some(offset) => {
+                                spans.push(offset);
+                                stmt.source_info =
+                                    SourceInfo::new(source_info::FileSpanId(spans.len() as u32));
+                            }
+                            None => self.unlocated_instructions += 1,
+                        }
+                    }
+                    statements.push(stmt);
+                }
+            }
+        }
+
+        // Determine terminator
+        let mut terminator = None;
+        if let Some((_, last_inst_id)) = bb_data.instruction_indices.last()
+            && let Some(pcode) = pcode_facts.pcode_facts.get(last_inst_id)
+        {
+            match pcode.mnemonic.as_ref() {
+                "RETURN" => {
+                    let mut args = smallvec![];
+                    if pcode.inputs.len() >= 2 {
+                        // The return value may be a field read, which lowers to loads. They
+                        // must execute before the terminator, so append them to the end of
+                        // this block's statements.
+                        let arg = self.get_exp(
+                            &mut statements,
+                            &pcode.inputs[1],
+                            &pcode_facts.vnode_facts,
+                            locals,
+                        )?;
+                        args.push(arg);
+                    }
+                    // Ensure return arity matches
+                    while args.len() < return_arity {
+                        args.push(Exp::new_bytes(Vec::new()));
+                    }
+                    args.truncate(return_arity);
+                    terminator = Some(Terminator::new_kind(TerminatorKind::Return { args }));
+                }
+                "BRANCH" => {
+                    // For BRANCH, we prefer out_edges or tout_edges
+                    let mut targets = smallvec![];
+                    for out in bb_data.out_edges.iter().chain(bb_data.tout_edges.iter()) {
+                        if let Some(target_bb) =
+                            self.basic_blocks.get(&(bb_data.hfunc.clone(), out.clone()))
+                            && !targets.contains(target_bb)
+                        {
+                            targets.push(*target_bb);
+                        }
+                    }
+                    if targets.is_empty()
+                        && let Some(target_bb) = self.resolve_branch_target(
+                            &bb_data.hfunc,
+                            pcode,
+                            &pcode_facts.vnode_facts,
+                        )
+                    {
+                        targets.push(target_bb);
+                    }
+
+                    if !targets.is_empty() {
+                        terminator = Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
+                    }
+                }
+                "CBRANCH" => {
+                    let mut targets = smallvec![];
+
+                    // CBRANCH typically has two targets: True and False.
+                    // Ghidra provides these in tout_edges and fout_edges.
+                    for tout in &bb_data.tout_edges {
+                        if let Some(target_bb) = self
+                            .basic_blocks
+                            .get(&(bb_data.hfunc.clone(), tout.clone()))
+                            && !targets.contains(target_bb)
+                        {
+                            targets.push(*target_bb);
+                        }
+                    }
+                    for fout in &bb_data.fout_edges {
+                        if let Some(target_bb) = self
+                            .basic_blocks
+                            .get(&(bb_data.hfunc.clone(), fout.clone()))
+                            && !targets.contains(target_bb)
+                        {
+                            targets.push(*target_bb);
+                        }
+                    }
+
+                    // Fallback to resolve_branch_target and out_edges if needed
+                    if targets.len() < 2
+                        && let Some(target_bb) = self.resolve_branch_target(
+                            &bb_data.hfunc,
+                            pcode,
+                            &pcode_facts.vnode_facts,
+                        )
+                        && !targets.contains(&target_bb)
+                    {
+                        targets.push(target_bb);
+                    }
+
+                    if targets.len() < 2 {
+                        for out in &bb_data.out_edges {
                             if let Some(target_bb) =
                                 self.basic_blocks.get(&(bb_data.hfunc.clone(), out.clone()))
                                 && !targets.contains(target_bb)
@@ -870,129 +1167,48 @@ impl Context {
                                 targets.push(*target_bb);
                             }
                         }
-                        if targets.is_empty()
-                            && let Some(target_bb) = self.resolve_branch_target(
-                                &bb_data.hfunc,
-                                pcode,
-                                &pcode_facts.vnode_facts,
-                            )
-                        {
-                            targets.push(target_bb);
-                        }
-
-                        if !targets.is_empty() {
-                            terminator =
-                                Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
-                        }
                     }
-                    "CBRANCH" => {
-                        let mut targets = smallvec![];
 
-                        // CBRANCH typically has two targets: True and False.
-                        // Ghidra provides these in tout_edges and fout_edges.
-                        for tout in &bb_data.tout_edges {
-                            if let Some(target_bb) = self
-                                .basic_blocks
-                                .get(&(bb_data.hfunc.clone(), tout.clone()))
-                                && !targets.contains(target_bb)
-                            {
-                                targets.push(*target_bb);
-                            }
-                        }
-                        for fout in &bb_data.fout_edges {
-                            if let Some(target_bb) = self
-                                .basic_blocks
-                                .get(&(bb_data.hfunc.clone(), fout.clone()))
-                                && !targets.contains(target_bb)
-                            {
-                                targets.push(*target_bb);
-                            }
-                        }
-
-                        // Fallback to resolve_branch_target and out_edges if needed
-                        if targets.len() < 2
-                            && let Some(target_bb) = self.resolve_branch_target(
-                                &bb_data.hfunc,
-                                pcode,
-                                &pcode_facts.vnode_facts,
-                            )
-                            && !targets.contains(&target_bb)
-                        {
-                            targets.push(target_bb);
-                        }
-
-                        if targets.len() < 2 {
-                            for out in &bb_data.out_edges {
-                                if let Some(target_bb) =
-                                    self.basic_blocks.get(&(bb_data.hfunc.clone(), out.clone()))
-                                    && !targets.contains(target_bb)
-                                {
-                                    targets.push(*target_bb);
-                                }
-                            }
-                        }
-
-                        if !targets.is_empty() {
-                            terminator =
-                                Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // If no explicit terminator (e.g. normal fallthrough block), use edges from BB_OUT
-            if terminator.is_none() && !bb_data.out_edges.is_empty() {
-                let mut targets = smallvec![];
-                for out in &bb_data.out_edges {
-                    if let Some(target_bb) =
-                        self.basic_blocks.get(&(bb_data.hfunc.clone(), out.clone()))
-                    {
-                        targets.push(*target_bb);
+                    if !targets.is_empty() {
+                        terminator = Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
                     }
                 }
-                if !targets.is_empty() {
-                    terminator = Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
-                }
-            }
-
-            // Default to return if still no terminator
-            let terminator = terminator.unwrap_or_else(|| {
-                let mut args = smallvec![];
-                while args.len() < return_arity as usize {
-                    args.push(Exp::new_bytes(Vec::new()));
-                }
-                Terminator::new_kind(TerminatorKind::Return { args })
-            });
-            bb_terminators.insert((bb_data.hfunc.clone(), bb_id), terminator);
-
-            // Restore the function's locals table now that generation for this block is done.
-            if let Some(fidx) = func_idx_opt {
-                builders.program[fidx].locals = locals;
+                _ => {}
             }
         }
 
-        // Now add statements and terminators to ALL basic blocks
-        for ((hfunc_id, bb_id), bb_idx) in &self.basic_blocks {
-            if let Some(func_idx) = self.functions.get(hfunc_id) {
-                let func = &mut builders.program[*func_idx];
-                let bb = &mut func[*bb_idx];
-
-                // Add statements if any exist for this basic block
-                if let Some(statements) = bb_statements.get(&(hfunc_id.clone(), bb_id.clone())) {
-                    for stmt in statements {
-                        bb.statements.push_back(stmt.clone());
-                    }
+        // If no explicit terminator (e.g. normal fallthrough block), use edges from BB_OUT
+        if terminator.is_none() && !bb_data.out_edges.is_empty() {
+            let mut targets = smallvec![];
+            for out in &bb_data.out_edges {
+                if let Some(target_bb) =
+                    self.basic_blocks.get(&(bb_data.hfunc.clone(), out.clone()))
+                {
+                    targets.push(*target_bb);
                 }
-
-                // Add terminator
-                if let Some(terminator) = bb_terminators.get(&(hfunc_id.clone(), bb_id.clone())) {
-                    bb.terminator = Some(terminator.clone());
-                }
+            }
+            if !targets.is_empty() {
+                terminator = Some(Terminator::new_kind(TerminatorKind::Goto { targets }));
             }
         }
 
-        Ok(())
+        // Default to return if still no terminator
+        let terminator = terminator.unwrap_or_else(|| {
+            let mut args = smallvec![];
+            while args.len() < return_arity {
+                args.push(Exp::new_bytes(Vec::new()));
+            }
+            Terminator::new_kind(TerminatorKind::Return { args })
+        });
+
+        Ok(LoweredBlock {
+            statements,
+            terminator,
+            temps: first_temp..self.temps.len(),
+            first_temp: 0,
+            spans,
+            span_ids: Vec::new(),
+        })
     }
 
     fn resolve_branch_target(
@@ -1038,8 +1254,6 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-        hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
-        program: &Program,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
         match &**pcode.mnemonic {
@@ -1052,9 +1266,7 @@ impl Context {
             }
             "LOAD" => self.handle_load_operation(pcode, vnode_facts, locals),
             "STORE" => self.handle_store_operation(pcode, vnode_facts, locals),
-            "CALL" | "CALLIND" => {
-                self.handle_call_operation(pcode, vnode_facts, hfunc_facts, program, locals)
-            }
+            "CALL" | "CALLIND" => self.handle_call_operation(pcode, vnode_facts, locals),
             "RETURN" | "BRANCH" | "CBRANCH" | "BRANCHIND" => {
                 // Control flow is handled in process_pcode_instructions for terminators
                 Ok(Vec::new())
@@ -1066,9 +1278,9 @@ impl Context {
             | "INT_SBORROW" | "BOOL_AND" | "BOOL_OR" | "BOOL_XOR" | "FLOAT_ADD" | "FLOAT_SUB"
             | "FLOAT_MULT" | "FLOAT_DIV" | "FLOAT_EQUAL" | "FLOAT_NOTEQUAL" | "FLOAT_LESS"
             | "FLOAT_LESSEQUAL" | "FLOAT_NAN" | "PIECE" | "SUBPIECE" => {
-                self.handle_binop(pcode, vnode_facts, program, hfunc_facts, locals)
+                self.handle_binop(pcode, vnode_facts, locals)
             }
-            "PTRSUB" => self.handle_ptrsub(pcode, vnode_facts, program, hfunc_facts, locals),
+            "PTRSUB" => self.handle_ptrsub(pcode, vnode_facts, locals),
             "PTRADD" => self.handle_ptradd(pcode, vnode_facts, locals),
             _ => {
                 // For now, treat unknown operations as no-ops
@@ -1082,8 +1294,6 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-        _program: &Program,
-        _hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
         let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
@@ -1216,8 +1426,6 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-        program: &Program,
-        hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
         let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
@@ -1236,7 +1444,7 @@ impl Context {
         if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
-            if let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program) {
+            if let Some(func_name) = self.function_at.get(&addr).cloned() {
                 let mut stmts = Vec::new();
                 self.push_assign_or_store(
                     &mut stmts,
@@ -1588,7 +1796,7 @@ impl Context {
     /// Resolve an offset expression using constant propagation results if available.
     /// If offset = x + c, returns an access path for x with the offset `[c]`.
     fn resolve_mem_exp(
-        &mut self,
+        &self,
         _space_id: &pcode_reader::PcodeVarnode,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
@@ -1617,8 +1825,6 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-        hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
-        program: &Program,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
         let outputs: Result<SmallVec<[AccessPath; 4]>, _> = pcode
@@ -1636,7 +1842,7 @@ impl Context {
             let edges = if let Some(vnode_data) = vnode_facts.get(target_vnode)
                 && vnode_data.space.as_deref() == Some("ram")
             {
-                self.resolve_call_target(target_vnode, vnode_facts, hfunc_facts, program)
+                self.resolve_call_target(target_vnode, vnode_facts)
             } else {
                 ctadl_ir::thin_vec![]
             };
@@ -1698,37 +1904,11 @@ impl Context {
         Ok(stmts)
     }
 
-    fn resolve_address_to_func_name(
-        &self,
-        addr: i64,
-        hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
-        program: &Program,
-    ) -> Option<String> {
-        for (func_id, func_data) in hfunc_facts {
-            if let Some(entry_point) = &func_data.entry_point
-                && entry_point.0 == addr
-                && let Some(target_func_idx) = self.functions.get(func_id)
-            {
-                return Some(program[*target_func_idx].name.clone());
-            }
-            for local_ep in &func_data.local_entry_points {
-                if local_ep.0 == addr
-                    && let Some(target_func_idx) = self.functions.get(func_id)
-                {
-                    return Some(program[*target_func_idx].name.clone());
-                }
-            }
-        }
-        None
-    }
-
     /// Try to resolve call target by checking if the address matches any function entry points or local entry points
     fn resolve_call_target(
         &self,
         target_vnode: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-        hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
-        program: &Program,
     ) -> ctadl_ir::ThinVec<String> {
         let address = if let Some(vnode_data) = vnode_facts.get(target_vnode) {
             vnode_data.address.as_ref().map(|addr| addr.0)
@@ -1737,7 +1917,7 @@ impl Context {
         };
 
         if let Some(addr) = address
-            && let Some(name) = self.resolve_address_to_func_name(addr, hfunc_facts, program)
+            && let Some(name) = self.function_at.get(&addr).cloned()
         {
             return ctadl_ir::thin_vec![name];
         }
@@ -1786,7 +1966,7 @@ impl Context {
     }
 
     fn get_lvalue(
-        &mut self,
+        &self,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
         locals: &mut Locals,
@@ -1853,35 +2033,13 @@ impl Context {
         Exp::new_bytes(bytes)
     }
 
+    /// A new temporary. Temporaries are numbered across the whole program, which a lowerer of
+    /// one function cannot know, so it gives each a name that no varnode has and records it;
+    /// [`Context::process_pcode_instructions`] renames them once every block is lowered.
     fn create_temp(&mut self, locals: &mut Locals) -> VariableRef {
-        let n = self.counter;
-        self.counter += 1;
-        VariableRef::new_local_idx(locals.get_or_intern(&format!("temp_{}", n)))
-    }
-
-    fn finish(self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
-        if self.int_arith != IntArith::Merge {
-            let BinopSources {
-                variable,
-                value,
-                other,
-            } = self.binop_sources;
-            log::info!(
-                "pcode: int arith {:?}: arithmetic and comparison sources: \
-                 {variable} variable, {value} value, {other} other",
-                self.int_arith
-            );
-        }
-        log::trace!("final program: {}", builders.program);
-        // Verify the program
-        builders.program.verify()?;
-        builders.vmt.finish_names();
-
-        Ok(ProgramInfo {
-            program: builders.program,
-            vmt: builders.vmt,
-            source_info: builders.source_info_builder.finish(),
-        })
+        let idx = locals.get_or_intern(&format!("\0temp{}", self.temps.len()));
+        self.temps.push(idx);
+        VariableRef::new_local_idx(idx)
     }
 }
 
@@ -2003,6 +2161,12 @@ struct BinopSources {
 }
 
 impl BinopSources {
+    fn add(&mut self, other: BinopSources) {
+        self.variable += other.variable;
+        self.value += other.value;
+        self.other += other.other;
+    }
+
     fn count(&mut self, exp: &Exp) {
         match exp {
             Exp::Path(ap) if ap.is_pathless() => self.variable += 1,
@@ -2115,15 +2279,10 @@ mod tests {
             target: None,
         };
         let mut locals = Locals::default();
+        let mut lowerer = Lowerer::new(&ctx);
         let stmts = match mnemonic {
-            "PTRADD" => ctx.handle_ptradd(&pcode, &vnode_facts, &mut locals),
-            "PTRSUB" => ctx.handle_ptrsub(
-                &pcode,
-                &vnode_facts,
-                &Program::default(),
-                &BTreeMap::new(),
-                &mut locals,
-            ),
+            "PTRADD" => lowerer.handle_ptradd(&pcode, &vnode_facts, &mut locals),
+            "PTRSUB" => lowerer.handle_ptrsub(&pcode, &vnode_facts, &mut locals),
             _ => unreachable!(),
         }
         .unwrap();
@@ -2299,7 +2458,7 @@ mod tests {
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(dir.path(), key, &mut builders)
+        ctx.process(dir.path(), key, &mut builders, &PhaseTimer::start())
             .expect("the facts lower");
         let info = ctx.finish(builders).expect("the program finishes");
         let memory = info
@@ -2331,7 +2490,7 @@ mod tests {
             let mut ctx = Context::new();
             ctx.import_name = import.to_string();
             ctx.memory = Some(program.declare_global(memory_global_name(import), None));
-            paths.push(ctx.global_path(4096));
+            paths.push(Lowerer::new(&ctx).global_path(4096));
         }
         assert_ne!(paths[0], paths[1]);
         let _names = program.global_names_guard();
