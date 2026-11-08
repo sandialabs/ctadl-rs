@@ -226,7 +226,10 @@ impl MethodSpans<'_, '_> {
             .and_then(|point| self.in_document(&point));
         let span =
             span.unwrap_or_else(|| (0, self.code_file_offset + offset, SpanLen::ByteLen(size)));
-        self.list.spans.push(span);
+        // The instructions of one sequence point share its span: listed once, it is interned once.
+        if self.list.spans.last() != Some(&span) {
+            self.list.spans.push(span);
+        }
         SourceInfo::new(FileSpanId(self.list.spans.len() as u32))
     }
 
