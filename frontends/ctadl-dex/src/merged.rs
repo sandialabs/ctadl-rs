@@ -393,8 +393,30 @@ impl MergedClasses {
     /// Candidates: a class with a `final int` instance field that its constructors store and
     /// its methods switch on.
     fn scan_classes(&mut self, parser: &DexParser<'_>) -> Result<(), dex_reader::error::DexError> {
+        use rayon::prelude::*;
+        // Each class is analyzed on its own, in parallel; the results are taken in file order,
+        // so a class defined twice keeps its last definition and an error stops the scan where
+        // it did when the classes were analyzed one after another.
+        let found: Vec<_> = parser
+            .class_defs
+            .par_iter()
+            .map(|class_def| Self::scan_class(parser, class_def))
+            .collect();
+        for class in found {
+            if let Some((name, class)) = class? {
+                self.classes.insert(name, class);
+            }
+        }
+        Ok(())
+    }
+
+    /// The merged class `class_def` defines, if it is one.
+    fn scan_class(
+        parser: &DexParser<'_>,
+        class_def: &dex_reader::types::ClassDef,
+    ) -> Result<Option<(String, MergedClass)>, dex_reader::error::DexError> {
         let cp = parser.constant_pool();
-        for class_def in parser.classes() {
+        {
             let class_data = parser.class_data(class_def)?;
             let fields: Vec<u32> = class_data
                 .instance_fields
@@ -409,7 +431,7 @@ impl MergedClasses {
                 .map(|f| f.field_idx)
                 .collect();
             if fields.is_empty() {
-                continue;
+                return Ok(None);
             }
             let class_name = parser.class_name(class_def)?;
             for field in fields {
@@ -464,12 +486,11 @@ impl MergedClasses {
                         .insert(parser.method_signature(mi)?, facts.switches);
                 }
                 if !class.switched.is_empty() {
-                    self.classes.insert(class_name, class);
-                    break;
+                    return Ok(Some((class_name, class)));
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Construction sites: a `new-instance` of a merged class whose constructor call passes a
@@ -484,9 +505,12 @@ impl MergedClasses {
                 .is_some_and(|d| self.classes.contains_key(d.as_str())),
             _ => false,
         };
-        let mut found = Vec::new();
-        let mut allocs: HashMap<String, usize> = HashMap::new();
-        for class_def in parser.classes() {
+        let per_class = |class_def: &dex_reader::types::ClassDef| -> Result<
+            (Vec<(String, usize, Site)>, HashMap<String, usize>),
+            dex_reader::error::DexError,
+        > {
+            let mut found = Vec::new();
+            let mut allocs: HashMap<String, usize> = HashMap::new();
             let class_data = parser.class_data(class_def)?;
             let own_field = self
                 .classes
@@ -609,6 +633,20 @@ impl MergedClasses {
                         },
                     ));
                 }
+            }
+            Ok((found, allocs))
+        };
+        // Each class is scanned in parallel and the results are combined in file order. An
+        // error leaves this dex file's sites out entirely, as it did before.
+        use rayon::prelude::*;
+        let per_class: Vec<_> = parser.class_defs.par_iter().map(per_class).collect();
+        let mut found = Vec::new();
+        let mut allocs: HashMap<String, usize> = HashMap::new();
+        for class in per_class {
+            let (class_found, class_allocs) = class?;
+            found.extend(class_found);
+            for (class, n) in class_allocs {
+                *allocs.entry(class).or_default() += n;
             }
         }
         for (class, n) in allocs {

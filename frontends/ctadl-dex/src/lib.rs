@@ -90,14 +90,20 @@ pub struct ApkImport {
 /// [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
+    let timer = PhaseTimer::start();
     let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    timer.done("read APK");
     let parser =
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
+    // The dex files are inflated out of it; the rest of the APK is not needed again.
+    drop(data);
     let dex_count = parser.dex_count();
     let parsers = parser.dex_parsers_with_filenames();
+    timer.done("unpack and parse dex files");
     let mut ctx = Importer::new(merged::MergedClasses::scan(
         &parsers.iter().map(|(_, p)| p).collect::<Vec<_>>(),
     ));
+    timer.done("scan merged classes");
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     for (sub_artifact_id, (dex_file_name, parser)) in parsers.into_iter().enumerate() {
@@ -111,8 +117,10 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
         };
         ctx.process(&parser, key, &mut builders)
             .err_context(|| format!("converting '{}' in APK: {}", dex_file_name, file.display()))?;
+        timer.done(dex_file_name);
     }
     let (program_info, notifications) = ctx.finish(builders)?;
+    timer.done("finish");
     Ok(ApkImport {
         program_info,
         notifications,
@@ -232,6 +240,7 @@ impl Importer {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        let bookkeeping = PhaseTimer::start();
         let mut jobs: Vec<Job> = Vec::new();
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
@@ -399,7 +408,10 @@ impl Importer {
             }
         }
 
+        bookkeeping.done(&format!("bookkeeping, {} jobs", jobs.len()));
+        let timer = PhaseTimer::start();
         let call_to = self.lower_and_place(parser, &artifact_key, builders, jobs)?;
+        timer.done("lower and place");
 
         // define extern funcs and parameters/return value
         {
@@ -537,96 +549,150 @@ impl Importer {
         let mut file = None;
         let mut batches = jobs.chunks(BATCH);
         let mut current = batches.next().map(lower);
+        let (mut placing, mut waiting) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         while let Some(results) = current.take() {
             let next_batch = batches.next();
             let mut placed = Ok(());
             // Lower the next batch while this one is placed.
+            let started = std::time::Instant::now();
             rayon::scope(|scope| {
                 scope.spawn(|_| current = next_batch.map(lower));
-                placed = (|| {
-                    for (lowered, called) in results {
-                        call_to.extend(called);
-                        self.place(lowered?, artifact_key, &mut file, builders);
-                    }
-                    Ok::<(), Error>(())
-                })();
+                placed = self.place(results, artifact_key, &mut file, builders, &mut call_to);
+                placing += started.elapsed();
             });
+            waiting += started.elapsed();
             placed?;
         }
+        log::debug!(
+            target: "ctadl_dex::timing",
+            "placing: {placing:.2?} of {waiting:.2?} lowering and placing"
+        );
         Ok(call_to)
     }
 
-    /// Puts one lowered method, and its clones, into the program: interns its spans and declares
-    /// its globals, in the order lowering it in place would have, and rewrites its statements to
-    /// use their ids.
+    /// Puts a batch of lowered methods, and their clones, into the program, in order: interns
+    /// their spans and declares their globals in the order lowering them in place would have,
+    /// then rewrites their statements to use the program's ids (in parallel: each body on its
+    /// own), then moves them into their functions.
     fn place(
         &mut self,
-        lowered: Lowered,
+        batch: Vec<(Result<Lowered, Error>, HashSet<MethodId>)>,
         artifact_key: &ArtifactKey,
         file: &mut Option<source_info::FileId>,
         builders: &mut ProgramInfoBuilder,
-    ) {
-        let Lowered {
-            bodies,
-            spans,
-            globals,
-            clone_statements,
-            empty_union,
-        } = lowered;
-        self.clone_statements += clone_statements;
-        let span_ids: Vec<Vec<source_info::FileSpanId>> = spans
-            .iter()
-            .map(|offsets| {
-                if offsets.is_empty() {
-                    return Vec::new();
+        call_to: &mut HashSet<MethodId>,
+    ) -> Result<(), Error> {
+        use rayon::prelude::*;
+
+        /// One lowered method with the program's ids for what it uses.
+        struct Placed {
+            /// Each function, with the span list it uses, the program's local for each of its
+            /// locals (when lowered on top of an earlier definition), and that definition's
+            /// locals table.
+            bodies: Vec<(
+                FunctionIdx,
+                FunctionData,
+                usize,
+                Vec<LocalIdx>,
+                Option<Locals>,
+            )>,
+            spans: Vec<Vec<source_info::FileSpanId>>,
+            globals: Vec<GlobalIdx>,
+            empty_union: bool,
+        }
+
+        let mut placed = Vec::with_capacity(batch.len());
+        for (lowered, called) in batch {
+            call_to.extend(called);
+            let Lowered {
+                bodies,
+                spans,
+                globals,
+                clone_statements,
+                empty_union,
+            } = lowered?;
+            self.clone_statements += clone_statements;
+            let spans: Vec<Vec<source_info::FileSpanId>> = spans
+                .iter()
+                .map(|offsets| {
+                    if offsets.is_empty() {
+                        return Vec::new();
+                    }
+                    // Looked up at the file's first span, not before: that is when interning a
+                    // span in it numbered the artifact.
+                    let file = *file
+                        .get_or_insert_with(|| builders.source_info_builder.file_for(artifact_key));
+                    offsets
+                        .iter()
+                        .map(|&offset| {
+                            builders.source_info_builder.span_in_file(
+                                file,
+                                offset,
+                                SpanLen::ByteLen(2),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let globals: Vec<GlobalIdx> = globals
+                .iter_enumerated()
+                .map(|(_, g)| self.globals.declare(&*g.name, None))
+                .collect();
+            let bodies = bodies
+                .into_iter()
+                .map(|(fidx, body, list)| {
+                    let slot = &mut builders.program[fidx];
+                    // A method defined in an earlier dex file too is lowered on top of that
+                    // definition, interning its locals into that definition's table.
+                    if slot.blocks.is_empty() && slot.locals.is_empty() {
+                        return (fidx, body, list, Vec::new(), None);
+                    }
+                    let mut slot_locals = std::mem::take(&mut slot.locals);
+                    let locals = body
+                        .locals
+                        .iter_enumerated()
+                        .map(|(_, l)| slot_locals.get_or_intern(&l.name))
+                        .collect();
+                    slot_locals.drop_index();
+                    (fidx, body, list, locals, Some(slot_locals))
+                })
+                .collect();
+            placed.push(Placed {
+                bodies,
+                spans,
+                globals,
+                empty_union,
+            });
+        }
+
+        placed.par_iter_mut().for_each(|p| {
+            for (fidx, body, list, locals, _) in &mut p.bodies {
+                let mut resolve = Resolve {
+                    spans: &p.spans[*list],
+                    globals: &p.globals,
+                    locals,
+                };
+                ctadl_ir::cir::visit::MutVisitor::visit_function_data(&mut resolve, *fidx, body);
+            }
+        });
+
+        for p in placed {
+            for (fidx, body, _, _, slot_locals) in p.bodies {
+                let slot = &mut builders.program[fidx];
+                match slot_locals {
+                    Some(slot_locals) => {
+                        slot.locals = slot_locals;
+                        graft(slot, body, p.empty_union);
+                    }
+                    None => {
+                        let name = std::mem::take(&mut slot.name);
+                        *slot = body;
+                        slot.name = name;
+                    }
                 }
-                // Looked up at the file's first span, not before: that is when interning a span
-                // in it numbered the artifact.
-                let file = *file
-                    .get_or_insert_with(|| builders.source_info_builder.file_for(artifact_key));
-                offsets
-                    .iter()
-                    .map(|&offset| {
-                        builders
-                            .source_info_builder
-                            .span_in_file(file, offset, SpanLen::ByteLen(2))
-                    })
-                    .collect()
-            })
-            .collect();
-        let globals: Vec<GlobalIdx> = globals
-            .iter_enumerated()
-            .map(|(_, g)| self.globals.declare(&*g.name, None))
-            .collect();
-        for (fidx, mut body, list) in bodies {
-            let slot = &mut builders.program[fidx];
-            // A method defined in an earlier dex file too is lowered on top of that definition.
-            let grafting = !slot.blocks.is_empty() || !slot.locals.is_empty();
-            let mut slot_locals = std::mem::take(&mut slot.locals);
-            let locals: Vec<LocalIdx> = if grafting {
-                body.locals
-                    .iter_enumerated()
-                    .map(|(_, l)| slot_locals.get_or_intern(&l.name))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let mut resolve = Resolve {
-                spans: &span_ids[list],
-                globals: &globals,
-                locals: &locals,
-            };
-            ctadl_ir::cir::visit::MutVisitor::visit_function_data(&mut resolve, fidx, &mut body);
-            if grafting {
-                slot_locals.drop_index();
-                slot.locals = slot_locals;
-                graft(slot, body, empty_union);
-            } else {
-                let name = std::mem::take(&mut slot.name);
-                *slot = body;
-                slot.name = name;
             }
         }
+        Ok(())
     }
 
     fn finish(
@@ -674,6 +740,22 @@ impl Importer {
             },
             notifications,
         ))
+    }
+}
+
+/// Logs how long each phase of an import took, under the `ctadl_dex::timing` target at debug
+/// level.
+struct PhaseTimer(std::cell::Cell<std::time::Instant>);
+
+impl PhaseTimer {
+    fn start() -> Self {
+        Self(std::cell::Cell::new(std::time::Instant::now()))
+    }
+
+    fn done(&self, phase: &str) {
+        let now = std::time::Instant::now();
+        let took = now - self.0.replace(now);
+        log::debug!(target: "ctadl_dex::timing", "{phase}: {took:.2?}");
     }
 }
 
@@ -861,6 +943,10 @@ impl Context {
         fdat: &mut FunctionData,
         narrow: &HashMap<usize, usize>,
     ) -> Result<LowerInfo, Error> {
+        // A call's result is read by the instruction after it, in the same body. Left over from
+        // the previous body, it would name a local of that body's table.
+        self.call_result = None;
+        self.catch_result = None;
         let items = decode_code_item(code);
         // Compute Dex basic blocks.
         let bb_vec = basic_blocks(code, &items);
@@ -884,6 +970,10 @@ impl Context {
 
         // What `dataflow_to_assign_into` makes of one instruction, reused across instructions.
         let mut stmts = Vec::new();
+        // The statements of the block being lowered, moved into it in one exactly sized
+        // allocation once the block is done: pushing them one by one grew each block's deque by
+        // doubling, which cost both the reallocations and up to half of every block's memory.
+        let mut block_stmts: Vec<Statement> = Vec::new();
         let mut info = LowerInfo {
             last_pc: Vec::with_capacity(bb_vec.len()),
             offset_to_bb: HashMap::new(),
@@ -904,7 +994,7 @@ impl Context {
                     ));
                     if let Some(mut stmt) = self.decode_call(parser, code, inst, &mut fdat.locals) {
                         stmt.source_info = source_info;
-                        fdat.blocks[block_idx].push_back(stmt);
+                        block_stmts.push(stmt);
                     } else {
                         self.dataflow_to_assign_into(
                             parser,
@@ -921,7 +1011,7 @@ impl Context {
                             {
                                 info.new_instances.push(NewInstanceSite {
                                     block: block_idx,
-                                    stmt: fdat.blocks[block_idx].len(),
+                                    stmt: fdat.blocks[block_idx].len() + block_stmts.len(),
                                     pc: *offset,
                                     ty: f.idx,
                                 });
@@ -931,9 +1021,17 @@ impl Context {
                         }
                         for mut stmt in stmts.drain(..) {
                             stmt.source_info = source_info;
-                            fdat.blocks[block_idx].push_back(stmt);
+                            block_stmts.push(stmt);
                         }
                     }
+                }
+            }
+            let block = &mut fdat.blocks[block_idx];
+            if block.is_empty() {
+                block.statements = block_stmts.drain(..).collect();
+            } else {
+                for stmt in block_stmts.drain(..) {
+                    block.push_back(stmt);
                 }
             }
 
