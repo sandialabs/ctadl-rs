@@ -81,7 +81,7 @@ fn encode_frames<E>(
     for group in chunks.chunks(batch) {
         let encoded: Vec<Vec<u8>> = group
             .par_iter()
-            .map(|fs| bitcode::serialize(fs))
+            .map(bitcode::serialize)
             .collect::<Result<_, _>>()?;
         for bytes in encoded {
             if let Err(e) = frame(&bytes) {

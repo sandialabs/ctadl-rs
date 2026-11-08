@@ -1810,7 +1810,7 @@ fn instantiate_clone(
     let mut out = FunctionData {
         name: String::new(),
         params: template.params.clone(),
-        return_type: template.return_type.clone(),
+        return_type: template.return_type,
         blocks: Default::default(),
         locals: template.locals.clone(),
     };
@@ -1864,7 +1864,7 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRe
     if let Some(pidx) = code_item.reg_to_p(reg.0.try_into().expect("reg too big")) {
         VariableRef::new_parameter(pidx.into())
     } else {
-        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('v', reg.0.into())))
+        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('v', reg.0)))
     }
 }
 
