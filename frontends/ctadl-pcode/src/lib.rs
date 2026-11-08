@@ -97,16 +97,14 @@ pub fn import_pcode(
 ) -> Result<ProgramInfo, Error> {
     // Run Ghidra to generate facts
     ghidra::run_ghidra_export(&import.artifact_path, &import.import_path(), jobs)?;
-    import_facts(import)
+    lower_facts(import)
 }
 
-/// Everything [`import_pcode`] does after Ghidra has written the import's `facts/` directory:
-/// compresses the fact tables, lowers them to a program, and scans for `RegisterNatives`
-/// tables. Public so that the in-process work can be run and profiled on an existing import's
-/// facts without running Ghidra again; compressing is idempotent, so it can be run any number
-/// of times on one directory.
-#[doc(hidden)]
-pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+/// Everything [`import_pcode`] does after Ghidra has written the import's `facts/` directory, in
+/// this process: compresses the fact tables, lowers them to a program, and scans for
+/// `RegisterNatives` tables. It can be run again on an existing import's facts, to rerun or
+/// profile the in-process work without Ghidra: compressing is idempotent.
+pub fn lower_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let facts_dir = import.import_path().join("facts");
     // Gzip the fact tables Ghidra just produced while they are read and lowered. The reader
     // reads the plain tables, so they are removed only once it is done.
@@ -121,7 +119,7 @@ pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
             );
             compressed
         },
-        || lower_facts(import, &facts_dir),
+        || lower_tables(import, &facts_dir),
     );
     let program_info = program_info?;
     ghidra::remove_compressed_originals(&compressed?)?;
@@ -130,7 +128,7 @@ pub fn import_facts(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
 
 /// Lowers the fact tables in `facts_dir` to the program of `import`, and scans for its
 /// `RegisterNatives` tables.
-fn lower_facts(
+fn lower_tables(
     import: &ctadl_import::project::ArtifactImport,
     facts_dir: &Path,
 ) -> Result<ProgramInfo, Error> {
@@ -334,49 +332,17 @@ impl Context {
             || pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts),
             || {
                 rayon::join(
-                    || {
-                        pcode_facts
-                            .vnode_facts
-                            .par_iter()
-                            .filter(|(vn, _)| pcode_facts.is_global_vnode(vn))
-                            .map(|(vn, _)| vn.clone())
-                            .collect::<Vec<_>>()
-                    },
-                    || {
-                        (int_arith == IntArith::Value).then(|| {
-                            rayon::join(
-                                || {
-                                    pcode_facts
-                                        .vnode_facts
-                                        .par_iter()
-                                        .filter_map(|(vn, _)| {
-                                            Some((vn.clone(), pcode_facts.vnode_type_kind(vn)?))
-                                        })
-                                        .collect::<Vec<_>>()
-                                },
-                                || {
-                                    let scaled = pcode_facts
-                                        .pcode_facts
-                                        .values()
-                                        .filter(|op| {
-                                            matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT")
-                                        })
-                                        .flat_map(|op| op.outputs.iter().cloned())
-                                        .collect();
-                                    (address_vnodes(&pcode_facts), scaled)
-                                },
-                            )
-                        })
-                    },
+                    || global_vnodes(&pcode_facts),
+                    || (int_arith == IntArith::Value).then(|| ValueClasses::of(&pcode_facts)),
                 )
             },
         );
         self.cp_results = cp_results;
-        self.global_vnodes = global_vnodes.into_iter().collect();
-        if let Some((vnode_kinds, (addr_vnodes, scaled_vnodes))) = value_classes {
-            self.vnode_kinds = vnode_kinds.into_iter().collect();
-            self.addr_vnodes = addr_vnodes;
-            self.scaled_vnodes = scaled_vnodes;
+        self.global_vnodes = global_vnodes;
+        if let Some(classes) = value_classes {
+            self.vnode_kinds = classes.vnode_kinds;
+            self.addr_vnodes = classes.addr_vnodes;
+            self.scaled_vnodes = classes.scaled_vnodes;
         }
         timer.done("constant propagation and vnode classes");
         self.register_facts = pcode_facts.register_facts.clone();
@@ -2202,6 +2168,59 @@ impl BinopSources {
             Exp::Path(ap) if ap.is_pathless() => self.variable += 1,
             Exp::Value(_) => self.value += 1,
             _ => self.other += 1,
+        }
+    }
+}
+
+/// The varnodes Ghidra classifies as storage for a global variable; see
+/// [`pcode_reader::PcodeFacts::is_global_vnode`].
+fn global_vnodes(facts: &pcode_reader::PcodeFacts) -> BTreeSet<pcode_reader::PcodeVarnode> {
+    let globals: Vec<_> = facts
+        .vnode_facts
+        .par_iter()
+        .filter(|(vn, _)| facts.is_global_vnode(vn))
+        .map(|(vn, _)| vn.clone())
+        .collect();
+    globals.into_iter().collect()
+}
+
+/// What lowering under [`IntArith::Value`] needs to know about varnodes; the fields of
+/// [`Context`] of the same names say what each is.
+struct ValueClasses {
+    vnode_kinds: BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::TypeKind>,
+    addr_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
+    scaled_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
+}
+
+impl ValueClasses {
+    fn of(facts: &pcode_reader::PcodeFacts) -> Self {
+        let (vnode_kinds, (addr_vnodes, scaled_vnodes)) = rayon::join(
+            || {
+                let kinds: Vec<_> = facts
+                    .vnode_facts
+                    .par_iter()
+                    .filter_map(|(vn, _)| Some((vn.clone(), facts.vnode_type_kind(vn)?)))
+                    .collect();
+                kinds.into_iter().collect()
+            },
+            || {
+                rayon::join(
+                    || address_vnodes(facts),
+                    || {
+                        facts
+                            .pcode_facts
+                            .values()
+                            .filter(|op| matches!(&**op.mnemonic, "INT_MULT" | "INT_LEFT"))
+                            .flat_map(|op| op.outputs.iter().cloned())
+                            .collect()
+                    },
+                )
+            },
+        );
+        Self {
+            vnode_kinds,
+            addr_vnodes,
+            scaled_vnodes,
         }
     }
 }
