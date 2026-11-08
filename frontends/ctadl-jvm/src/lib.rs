@@ -71,8 +71,10 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
 mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
+    let timer = PhaseTimer::start();
     let parser =
         JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
+    timer.done("read and parse jar");
     log::info!(
         "{}: {} class file(s)",
         file.display(),
@@ -99,10 +101,30 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     importer
         .process(&classes, &mut builders)
         .err_context(|| format!("converting class in jar: {}", file.display()))?;
+    timer.done("process");
     // The class files are lowered; free them before verifying the program.
     drop(classes);
     drop(parser);
-    importer.finish(builders)
+    timer.done("free class files");
+    let info = importer.finish(builders);
+    timer.done("finish");
+    info
+}
+
+/// Logs how long each phase of an import took, under the `ctadl_jvm::timing` target at debug
+/// level.
+struct PhaseTimer(std::cell::Cell<std::time::Instant>);
+
+impl PhaseTimer {
+    fn start() -> Self {
+        Self(std::cell::Cell::new(std::time::Instant::now()))
+    }
+
+    fn done(&self, phase: &str) {
+        let now = std::time::Instant::now();
+        let took = now - self.0.replace(now);
+        log::debug!(target: "ctadl_jvm::timing", "{phase}: {took:.2?}");
+    }
 }
 
 /// `classes`, the class files of the jar `parser` read, less all but one definition of each class
@@ -188,8 +210,8 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
 #[derive(Debug, Default)]
 struct Importer {
     /// The methods the bodies call, by signature, for the extern stubs. Merged from each body's
-    /// [`Context::ext`] in program order, so that a later call decides how a method is called,
-    /// as it did when the bodies were lowered one after another.
+    /// [`Context::ext`] in program order, so that the last call in program order decides how a
+    /// method is called, whatever the thread count.
     ext: HashMap<String, Extern>,
     /// The globals declared so far: one per class that owns a static field. Moved into the
     /// program at [`Importer::finish`].
@@ -307,6 +329,7 @@ impl Importer {
         classes: &[(&ClassFileParser, ArtifactKey)],
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        let timer = PhaseTimer::start();
         let mut jobs = Vec::new();
         for (class, (parser, artifact_key)) in classes.iter().enumerate() {
             for class_def in parser.classes() {
@@ -364,37 +387,40 @@ impl Importer {
                     interfaces: direct_interfaces,
                 });
                 for enc in parser.methods() {
-                    let sig = parser.method_signature(enc)?;
-                    let method_name = parser.method_name(enc)?;
+                    let method_name = parser.class_file().get_utf8(enc.name_index)?;
+                    // The descriptor alone, e.g. "(I)I".
+                    let java_sig = parser.class_file().get_utf8(enc.descriptor_index)?;
                     let fidx = builders.program.new_function();
                     let fdat = &mut builders.program[fidx];
 
-                    // -----------------------------------------------------------------
-                    // Collect Java virtual method information for the VMT. `java_sig` is the
-                    // descriptor alone, e.g. "(I)I"; `full_name` is `class->name(descriptor)`.
-                    let java_sig = parser.method_proto(enc)?;
-                    let full_name: String = class_name.to_owned() + "->" + &sig;
-                    fdat.name = full_name.clone();
-
                     let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
-                    for p in jvm_descriptor_to_params(&java_sig, is_instance) {
+                    for p in jvm_descriptor_to_params(java_sig, is_instance) {
                         fdat.params.push(p);
                     }
 
                     // All JVM functions model (normal_return, exception_return) like DEX.
                     fdat.return_type = ReturnType { arity: 2 };
 
+                    // -----------------------------------------------------------------
+                    // Collect Java virtual method information for the VMT, each name interned
+                    // once for all the rows that name it.
+                    let full_name = format!("{class_name}->{method_name}{java_sig}");
+                    let owner = JavaClass(enclosing.name.clone());
+                    let simple = JavaSimpleName(Symbol::from(method_name));
+                    let descriptor = JavaSignature(Symbol::from(java_sig));
+                    let method = JavaMethod(Symbol::from(full_name.as_str()));
+                    fdat.name = full_name;
                     builders.vmt.names.push(
-                        FunctionNames::new(full_name.as_str(), method_name.as_str())
-                            .with_parent(class_name.as_str())
-                            .with_signature(java_sig.as_str()),
+                        FunctionNames::new(method.0.clone(), simple.0.clone())
+                            .with_parent(owner.0.clone())
+                            .with_signature(descriptor.0.clone()),
                     );
                     if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
                         methods.push((
-                            JavaClass(class_name.to_string().into()),
-                            JavaSimpleName(method_name.clone().into()),
-                            JavaSignature(java_sig.clone().into()),
-                            JavaMethod(full_name.clone().into()),
+                            owner.clone(),
+                            simple.clone(),
+                            descriptor.clone(),
+                            method.clone(),
                         ));
                     }
                     if enc.access_flags & JVM_ACC_ABSTRACT != 0
@@ -402,24 +428,14 @@ impl Importer {
                             abstract_methods, ..
                         } = &mut builders.vmt.dispatch
                     {
-                        abstract_methods.push((
-                            JavaClass(class_name.to_string().into()),
-                            JavaSimpleName(method_name.clone().into()),
-                            JavaSignature(java_sig.clone().into()),
-                        ));
+                        abstract_methods.push((owner.clone(), simple.clone(), descriptor.clone()));
                     }
                     // Native methods are also listed in `natives`. They are already in
                     // `methods` above: this frontend walks every declared method, code or not.
                     if enc.access_flags & JVM_ACC_NATIVE != 0
                         && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
                     {
-                        natives.push((
-                            JavaClass(class_name.to_string().into()),
-                            JavaSimpleName(method_name.clone().into()),
-                            JavaSignature(java_sig.clone().into()),
-                            JavaMethod(full_name.clone().into()),
-                            !is_instance,
-                        ));
+                        natives.push((owner, simple, descriptor, method, !is_instance));
                     }
 
                     if enc.code.is_some() {
@@ -435,7 +451,9 @@ impl Importer {
                 }
             }
         }
+        timer.done(&format!("bookkeeping, {} jobs", jobs.len()));
         self.lower_and_place(classes, builders, &jobs);
+        timer.done("lower and place");
         Ok(())
     }
 
