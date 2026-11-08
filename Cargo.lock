@@ -5019,6 +5019,7 @@ dependencies = [
  "ctadl-import",
  "ctadl-ir",
  "dex-reader",
+ "flate2",
  "json5",
  "jvm-reader",
  "regex",

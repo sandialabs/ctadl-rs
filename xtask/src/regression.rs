@@ -713,8 +713,11 @@ fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result
     let needs_jni = cases.iter().any(|c| matches!(c.kind, Kind::Jni { .. }));
     let needs_dex = needs_jni || cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
     let needs_jvm = cases.iter().any(|c| matches!(c.kind, Kind::Jvm { .. }));
-    let needs_pcode =
-        ghidra_selected || needs_jni || cases.iter().any(|c| matches!(c.kind, Kind::Pcode { .. }));
+    let needs_pcode = ghidra_selected
+        || needs_jni
+        || cases
+            .iter()
+            .any(|c| matches!(c.kind, Kind::Pcode { .. } | Kind::PcodeFacts { .. }));
     if needs_dex && exec::which("dex-reader").is_none() {
         bail!("`dex-reader` not found on PATH");
     }
@@ -883,6 +886,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             query,
             models,
         } => run_pcode(&case.name, source, query, models, worker),
+        Kind::PcodeFacts { source } => run_pcode_facts(&case.name, source, worker),
         Kind::C {
             source,
             query,
@@ -1711,6 +1715,114 @@ fn run_pcode(
 
     let outcome = check_pcode_case(query, &sarif, &obj, &work, &addr2line)?;
     with_valid_sarif(&work, &[&sarif], outcome)
+}
+
+/// Compiles `source` and exports it with Ghidra, then checks the facts with
+/// [`check_pcode_facts`].
+fn run_pcode_facts(name: &str, source: &Path, worker: &Worker) -> Result<Outcome> {
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    let (cc, _) = pick_toolchain("x86_64");
+    let obj = work.join("case.o");
+    let mut compile = Command::new(&cc);
+    compile
+        .current_dir(&work)
+        .args(["-g", "-O0", "-c"])
+        .arg(source)
+        .arg("-o")
+        .arg(&obj);
+    exec::run_checked(compile, &cc)?;
+
+    run_ctadl_env(
+        &work,
+        &state,
+        &worker.ghidra_env,
+        &[
+            "import",
+            "-l",
+            "pcode",
+            &obj.to_string_lossy(),
+            "-n",
+            "case",
+        ],
+    )?;
+    check_pcode_facts(&state.join("ctadl/imports/case/facts"))
+}
+
+/// Pass criterion for a [`Kind::PcodeFacts`] case: the export gives each of a function's
+/// high variables its own id, and the case has some that would share one if ids were names.
+///
+/// The reader keeps one type per high variable, so variables that share an id share a type,
+/// and which one they get depends on the order the export wrote the rows in.
+fn check_pcode_facts(facts: &Path) -> Result<Outcome> {
+    let mut types: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for row in fact_rows(facts, "HVAR_TYPE")? {
+        if let [hvar, ty] = &row[..] {
+            types.entry(hvar.clone()).or_default().insert(ty.clone());
+        }
+    }
+    let several: Vec<_> = types.iter().filter(|(_, tys)| tys.len() > 1).collect();
+    if !several.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "high variables with several types: {several:?}"
+        )));
+    }
+
+    // A varnode's name is its high variable's name, a colon and its number.
+    let names: BTreeMap<String, String> = fact_rows(facts, "VNODE_NAME")?
+        .into_iter()
+        .filter_map(|row| match &row[..] {
+            [vnode, name] => Some((vnode.clone(), name.rsplit_once(':')?.0.to_string())),
+            _ => None,
+        })
+        .collect();
+    // (function, name) -> the types of the high variables of that name.
+    let mut by_name: BTreeMap<(String, String), BTreeMap<String, Option<String>>> = BTreeMap::new();
+    for row in fact_rows(facts, "VNODE_HVAR")? {
+        let [vnode, hvar] = &row[..] else { continue };
+        let (Some(name), Some((func, _))) = (names.get(vnode), hvar.split_once(':')) else {
+            continue;
+        };
+        let ty = types.get(hvar).and_then(|tys| tys.first().cloned());
+        by_name
+            .entry((func.to_string(), name.clone()))
+            .or_default()
+            .insert(hvar.clone(), ty);
+    }
+    let shared = by_name
+        .values()
+        .any(|hvars| hvars.len() > 1 && hvars.values().collect::<BTreeSet<_>>().len() > 1);
+    if !shared {
+        return Ok(Outcome::Fail(
+            "no two high variables of a function share a name and differ in type, so the case \
+             does not test what it is for"
+                .to_string(),
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+/// The rows of the table `table` in the facts directory `facts`, gzipped or not.
+fn fact_rows(facts: &Path, table: &str) -> Result<Vec<Vec<String>>> {
+    use std::io::Read;
+    let plain = facts.join(format!("{table}.facts"));
+    let mut text = String::new();
+    if plain.is_file() {
+        text = std::fs::read_to_string(&plain)
+            .with_context(|| format!("reading {}", plain.display()))?;
+    } else {
+        let gz = facts.join(format!("{table}.facts.gz"));
+        let file = std::fs::File::open(&gz).with_context(|| format!("opening {}", gz.display()))?;
+        flate2::read::MultiGzDecoder::new(file)
+            .read_to_string(&mut text)
+            .with_context(|| format!("reading {}", gz.display()))?;
+    }
+    Ok(text
+        .lines()
+        .map(|line| line.split('\t').map(str::to_string).collect())
+        .collect())
 }
 
 /// Pcode pass criterion over one case's SARIF: every `expected_lines` entry is
