@@ -4,7 +4,6 @@ use dex_reader::instructions::{
     Format11n, Format21h, Format21s, Format31i, Format51l, Instruction,
 };
 use dex_reader::types::CodeItem;
-use std::sync::OnceLock;
 
 fn dummy_parser() -> DexParser<'static> {
     DexParser {
@@ -12,10 +11,7 @@ fn dummy_parser() -> DexParser<'static> {
         header: Default::default(),
         map_list: Default::default(),
         map_items_by_type: std::collections::HashMap::new(),
-        strings: dex_reader::types::StringTable {
-            data: &[],
-            string_ids: vec![],
-        },
+        strings: dex_reader::types::StringTable::new(&[], vec![]),
         type_ids: vec![],
         proto_ids: vec![],
         field_ids: vec![],
@@ -23,9 +19,7 @@ fn dummy_parser() -> DexParser<'static> {
         class_defs: vec![],
         call_site_ids: None,
         method_handles: None,
-        cache: dex_reader::parser::Cache {
-            pool: OnceLock::new(),
-        },
+        cache: Default::default(),
     }
 }
 
@@ -212,10 +206,7 @@ fn new_instance_assign() {
     let mut parser = dummy_parser();
     parser.data = data;
     parser.type_ids = vec![TypeId { descriptor_idx: 0 }];
-    parser.strings = StringTable {
-        data,
-        string_ids: vec![StringId { string_data_off: 0 }],
-    };
+    parser.strings = StringTable::new(data, vec![StringId { string_data_off: 0 }]);
 
     let inst = Instruction::NewInstance(Format21c {
         a: Reg(0),
@@ -260,16 +251,16 @@ fn parser_with_field() -> DexParser<'static> {
     let data: &'static [u8] = b"\x05LBar;\0\x05LFoo;\0\x02cb\0";
     let mut parser = dummy_parser();
     parser.data = data;
-    parser.strings = StringTable {
+    parser.strings = StringTable::new(
         data,
-        string_ids: vec![
+        vec![
             StringId { string_data_off: 0 },
             StringId { string_data_off: 7 },
             StringId {
                 string_data_off: 14,
             },
         ],
-    };
+    );
     parser.type_ids = vec![TypeId { descriptor_idx: 0 }, TypeId { descriptor_idx: 1 }];
     parser.field_ids = vec![FieldId {
         class_idx: 1,
@@ -459,7 +450,7 @@ fn parser_with_strings(strings: &[&str]) -> DexParser<'static> {
     let data: &'static [u8] = Box::leak(data.into_boxed_slice());
     let mut parser = dummy_parser();
     parser.data = data;
-    parser.strings = StringTable { data, string_ids };
+    parser.strings = StringTable::new(data, string_ids);
     parser
 }
 

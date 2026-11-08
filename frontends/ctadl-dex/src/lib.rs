@@ -184,6 +184,12 @@ struct Context {
     /// the offset of its `class_def_item` there: where the global is declared. Located
     /// in [`Context::finish`], once every class has been lowered.
     class_defs: Vec<(String, ArtifactKey, u32)>,
+    /// What [`Context::static_field`] returned for each field id of the dex file being
+    /// processed. Cleared per file, since ids are per file.
+    static_fields: HashMap<u32, (VariableRef, ctadl_ir::cir::PathSegment)>,
+    /// What [`Context::instance_field`] returned for each field id of the dex file being
+    /// processed.
+    instance_fields: HashMap<u32, ctadl_ir::cir::PathSegment>,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -196,18 +202,44 @@ struct EnclosingClass {
 }
 
 impl Context {
-    /// The class global `$Lcls;` and field `name` of the static field `pretty` names
-    /// (`Lcls;->name:type`).
-    fn static_field(&mut self, pretty: &str) -> (VariableRef, ctadl_ir::cir::PathSegment) {
+    /// The class global `$Lcls;` and field `name` of the static field `field_ids[idx]`, whose
+    /// pretty name is `Lcls;->name:type`. Declares the global on first use.
+    fn static_field(
+        &mut self,
+        parser: &DexParser<'_>,
+        idx: u32,
+    ) -> Result<(VariableRef, ctadl_ir::cir::PathSegment), DexError> {
+        if let Some(found) = self.static_fields.get(&idx) {
+            return Ok(found.clone());
+        }
+        let pretty = parser.field_pretty_name(idx as usize)?;
         let (class, rest) = pretty
             .split_once("->")
             .unwrap_or_else(|| panic!("a field reference has a class: {pretty}"));
         let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
         let global = self.globals.declare(class, None);
-        (
+        let found = (
             VariableRef::global(global),
             ctadl_ir::cir::PathSegment::field(name),
-        )
+        );
+        self.static_fields.insert(idx, found.clone());
+        Ok(found)
+    }
+
+    /// The field segment `<Lcls;->name:type>` an instance field access `field_ids[idx]` reads or
+    /// writes.
+    fn instance_field(
+        &mut self,
+        parser: &DexParser<'_>,
+        idx: u32,
+    ) -> Result<ctadl_ir::cir::PathSegment, DexError> {
+        if let Some(found) = self.instance_fields.get(&idx) {
+            return Ok(found.clone());
+        }
+        let pretty = parser.field_pretty_name(idx as usize)?;
+        let found = ctadl_ir::cir::PathSegment::field(format!("<{pretty}>"));
+        self.instance_fields.insert(idx, found.clone());
+        Ok(found)
     }
 
     fn new() -> Self {
@@ -223,6 +255,8 @@ impl Context {
             retag: Default::default(),
             globals: Default::default(),
             class_defs: Vec::new(),
+            static_fields: Default::default(),
+            instance_fields: Default::default(),
             pc: 0,
             clone_statements: 0,
         }
@@ -237,6 +271,8 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        self.static_fields.clear();
+        self.instance_fields.clear();
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
             self.class_defs
@@ -470,7 +506,7 @@ impl Context {
         source_info_builder: &mut source_info::SourceInfoBuilder,
         fdat: &mut FunctionData,
         narrow: &HashMap<usize, usize>,
-    ) -> Result<(), Error> {
+    ) -> Result<LowerInfo, Error> {
         let items = decode_code_item(code);
         // Compute Dex basic blocks.
         let bb_vec = basic_blocks(code, &items);
@@ -492,6 +528,14 @@ impl Context {
         // All Java functions return 2 values: (normal_return, exception_return)
         fdat.return_type = ReturnType { arity: 2 };
 
+        // What `dataflow_to_assign_into` makes of one instruction, reused across instructions.
+        let mut stmts = Vec::new();
+        let mut info = LowerInfo {
+            last_pc: Vec::with_capacity(bb_vec.len()),
+            offset_to_bb: HashMap::new(),
+            new_instances: Vec::new(),
+            clonable: true,
+        };
         // Populate each CIR block.
         for (i, bb) in bb_vec.iter().enumerate() {
             let block_idx = BasicBlockIdx::new(i);
@@ -509,9 +553,30 @@ impl Context {
                         stmt.source_info = source_info;
                         fdat.blocks[block_idx].push_back(stmt);
                     } else {
-                        for mut stmt in
-                            self.dataflow_to_assign(parser, code, inst, &mut fdat.locals)?
-                        {
+                        self.dataflow_to_assign_into(
+                            parser,
+                            code,
+                            inst,
+                            &mut fdat.locals,
+                            &mut stmts,
+                        )?;
+                        if let Instruction::NewInstance(f) = inst {
+                            // A site a clone of a merged method may retag; see `LowerInfo`.
+                            if stmts.len() == 1
+                                && matches!(stmts[0].kind, StatementKind::Assign { .. })
+                                && Self::allocation_exp(parser, f.idx).is_some()
+                            {
+                                info.new_instances.push(NewInstanceSite {
+                                    block: block_idx,
+                                    stmt: fdat.blocks[block_idx].len(),
+                                    pc: *offset,
+                                    ty: f.idx,
+                                });
+                            } else {
+                                info.clonable = false;
+                            }
+                        }
+                        for mut stmt in stmts.drain(..) {
                             stmt.source_info = source_info;
                             fdat.blocks[block_idx].push_back(stmt);
                         }
@@ -527,6 +592,7 @@ impl Context {
                     None
                 }
             });
+            info.last_pc.push(last.map(|(pc, _)| pc));
             let last_inst = last.map(|(_, inst)| inst);
             let arm = last
                 .and_then(|(pc, _)| narrow.get(&pc))
@@ -607,7 +673,8 @@ impl Context {
             };
             fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
         }
-        Ok(())
+        info.offset_to_bb = offset_to_bb;
+        Ok(info)
     }
 
     /// Clones method `sig` of a class-merged class once per class id, into the class split off
@@ -631,6 +698,29 @@ impl Context {
         };
         let switches = switches.to_vec();
         let ids: Vec<i64> = class_info.ids.iter().copied().collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        // Every clone is the same lowering of `code` but for the switch arm it keeps and the
+        // classes its `new-instance`s allocate. Lower it once, unnarrowed and unretagged, and
+        // build each clone out of that template, copying only the blocks its arm reaches.
+        // Lowering every clone in full and pruning afterwards did the whole body's work once per
+        // id. The template interns the same spans and globals, in the same order, as lowering the
+        // first clone did.
+        let mut template = FunctionData {
+            params: params.clone(),
+            ..Default::default()
+        };
+        self.counter.reset();
+        self.retag.clear();
+        let info = self.lower_code(
+            parser,
+            code,
+            artifact_key,
+            &mut builders.source_info_builder,
+            &mut template,
+            &HashMap::new(),
+        )?;
         for id in ids {
             let split = merged::split_class(class, id);
             let split_sig = merged::split_method(sig, &split);
@@ -643,22 +733,38 @@ impl Context {
                     .with_parent(split.as_str())
                     .with_signature(descr),
             );
+            let narrow = merged::narrowed(&switches, id);
+            if info.clonable {
+                let mut fdat = instantiate_clone(&template, &info, &narrow, |pc, ty| {
+                    match self.retag.get(&pc) {
+                        Some(split) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                            JavaClass(split.as_str().into()),
+                        ))),
+                        None => Self::allocation_exp(parser, ty),
+                    }
+                });
+                fdat.name = split_sig.clone();
+                builders.program[fidx] = fdat;
+            } else {
+                let fdat = &mut builders.program[fidx];
+                fdat.name = split_sig.clone();
+                fdat.params = params.clone();
+                self.lower_code(
+                    parser,
+                    code,
+                    artifact_key,
+                    &mut builders.source_info_builder,
+                    fdat,
+                    &narrow,
+                )?;
+                // The narrowed switch leaves every other id's arm unreachable. Without this each
+                // clone stores the whole merged body, so a class with n ids stores it n times
+                // over. The index would prune the same blocks before SSA anyway; doing it here
+                // keeps them out of the stored program.
+                ctadl_ir::ssa::prune_unreachable_nodes(fdat);
+            }
             let fdat = &mut builders.program[fidx];
-            fdat.name = split_sig.clone();
-            fdat.params = params.clone();
-            self.lower_code(
-                parser,
-                code,
-                artifact_key,
-                &mut builders.source_info_builder,
-                fdat,
-                &merged::narrowed(&switches, id),
-            )?;
-            // The narrowed switch leaves every other id's arm unreachable. Without this each
-            // clone stores the whole merged body, so a class with n ids stores it n times over.
-            // The index would prune the same blocks
-            // before SSA anyway; doing it here keeps them out of the stored program.
-            ctadl_ir::ssa::prune_unreachable_nodes(fdat);
+            fdat.locals.drop_index();
             self.clone_statements += statement_count(fdat);
             if let Dispatch::Java {
                 methods, hierarchy, ..
@@ -800,8 +906,8 @@ impl Context {
 
         // Resolve the callee name (human‑readable signature).
         let mi = parser.get_method(method_idx.0 as usize)?;
-        let (cls, simple_name, descriptor) = parser.method_triple(mi).ok()?;
-        let method_id = parser.method_signature(mi).ok()?;
+        let names = parser.method_names(method_idx.0 as usize).ok()?;
+        let (cls, simple_name, descriptor) = (names.class, names.name, names.descriptor);
 
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
@@ -815,7 +921,7 @@ impl Context {
         if matches!(
             inst,
             Instruction::InvokePolymorphic(_) | Instruction::InvokePolymorphicRange(_)
-        ) && ctadl_ir::cir::call::is_method_handle_invoke(&cls, &simple_name)
+        ) && ctadl_ir::cir::call::is_method_handle_invoke(cls, simple_name)
         {
             let callee = args[0].access_path()?.clone();
             let style = CallStyle::FuncPtrCall {
@@ -827,7 +933,9 @@ impl Context {
         self.call_to.insert(*mi);
         let style = match dispatch {
             None => CallStyle::DirectCall {
-                call_edges: CallEdges::Explicit([method_id].into_iter().collect()),
+                call_edges: CallEdges::Explicit(
+                    [names.signature.to_string()].into_iter().collect(),
+                ),
             },
             Some(dispatch) => {
                 let cls: Symbol = cls.into();
@@ -876,7 +984,7 @@ impl Context {
     /// type cannot be read.
     fn allocation_exp(parser: &DexParser<'_>, idx: TypeIdx) -> Option<Exp> {
         let tid = parser.constant_pool().type_ids.get(idx.0 as usize)?;
-        let desc = tid.descriptor(&parser.constant_pool().strings).ok()?;
+        let desc = tid.descriptor_str(&parser.constant_pool().strings).ok()?;
         Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
             desc.into(),
         ))))
@@ -912,6 +1020,8 @@ impl Context {
         )))
     }
 
+    /// [`Context::dataflow_to_assign_into`] into a fresh vector.
+    #[cfg(test)]
     fn dataflow_to_assign(
         &mut self,
         parser: &DexParser<'_>,
@@ -919,8 +1029,21 @@ impl Context {
         inst: &Instruction,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, DexError> {
+        let mut stmts = Vec::new();
+        self.dataflow_to_assign_into(parser, code_item, inst, locals, &mut stmts)?;
+        Ok(stmts)
+    }
+
+    /// Appends to `stmts` the statements a non-call instruction lowers to.
+    fn dataflow_to_assign_into(
+        &mut self,
+        parser: &DexParser<'_>,
+        code_item: &CodeItem,
+        inst: &Instruction,
+        locals: &mut Locals,
+        stmts: &mut Vec<Statement>,
+    ) -> Result<(), DexError> {
         let DataFlow { source, dest } = inst.data_flow();
-        let mut stmts: Vec<Statement> = Vec::new();
 
         if let Some(const_exp) = match inst {
             // 8-bit signed constant
@@ -943,15 +1066,23 @@ impl Context {
             // constant may legally hold unpaired UTF-16 surrogates -- packed
             // lexer tables do -- and no `str` can.
             Instruction::ConstString(f) => {
-                if let Ok(s) = parser.constant_pool().strings.get_lossy(f.idx.0 as usize) {
-                    Some(Exp::new_str(&s))
+                if let Ok(s) = parser
+                    .constant_pool()
+                    .strings
+                    .get_lossy_str(f.idx.0 as usize)
+                {
+                    Some(Exp::new_str(s))
                 } else {
                     None
                 }
             }
             Instruction::ConstStringJumbo(f) => {
-                if let Ok(s) = parser.constant_pool().strings.get_lossy(f.idx.0 as usize) {
-                    Some(Exp::new_str(&s))
+                if let Ok(s) = parser
+                    .constant_pool()
+                    .strings
+                    .get_lossy_str(f.idx.0 as usize)
+                {
+                    Some(Exp::new_str(s))
                 } else {
                     None
                 }
@@ -959,9 +1090,9 @@ impl Context {
             // Class constant – resolved to its descriptor string
             Instruction::ConstClass(f) => {
                 if let Some(tid) = parser.constant_pool().type_ids.get(f.idx.0 as usize)
-                    && let Ok(desc) = tid.descriptor(&parser.constant_pool().strings)
+                    && let Ok(desc) = tid.descriptor_str(&parser.constant_pool().strings)
                 {
-                    Some(Exp::new_str(&desc))
+                    Some(Exp::new_str(desc))
                 } else {
                     None
                 }
@@ -999,7 +1130,7 @@ impl Context {
                     [const_exp.clone()],
                 )));
             }
-            return Ok(stmts);
+            return Ok(());
         }
 
         match inst {
@@ -1011,7 +1142,7 @@ impl Context {
                     source,
                     ctadl_ir::cir::PathSegment::field("length"),
                 )));
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::SPut(f)
             | Instruction::SPutObject(f)
@@ -1020,8 +1151,7 @@ impl Context {
             | Instruction::SPutBoolean(f)
             | Instruction::SPutShort(f)
             | Instruction::SPutWide(f) => {
-                let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(parser, f.idx.0)?;
                 let temp_var = self.counter.temp(locals);
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
@@ -1036,7 +1166,7 @@ impl Context {
                     field,
                     temp_var.into(),
                 )));
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::SGet(f)
             | Instruction::SGetObject(f)
@@ -1045,8 +1175,7 @@ impl Context {
             | Instruction::SGetBoolean(f)
             | Instruction::SGetShort(f)
             | Instruction::SGetWide(f) => {
-                let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let (global, field) = self.static_field(&fld.pretty_name(parser.constant_pool())?);
+                let (global, field) = self.static_field(parser, f.idx.0)?;
                 for dest in dest
                     .iter()
                     .cloned()
@@ -1058,7 +1187,7 @@ impl Context {
                         field.clone(),
                     )));
                 }
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::IPut(f)
             | Instruction::IPutBoolean(f)
@@ -1078,15 +1207,14 @@ impl Context {
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let object = reg_to_var(code_item, f.b, locals);
-                let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let name = self.instance_field(parser, f.idx.0)?;
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::from(object),
-                    ctadl_ir::cir::PathSegment::field(name),
+                    name,
                     temp_var.into(),
                 )));
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::IGet(f)
             | Instruction::IGetBoolean(f)
@@ -1096,8 +1224,7 @@ impl Context {
             | Instruction::IGetObject(f)
             | Instruction::IGetWide(f) => {
                 let object = reg_to_var(code_item, f.b, locals);
-                let fld = parser.get_field(f.idx.0 as usize).unwrap();
-                let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
+                let name = self.instance_field(parser, f.idx.0)?;
                 for dest in dest
                     .iter()
                     .cloned()
@@ -1106,10 +1233,10 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::cir::PathSegment::field(name.clone()),
+                        name.clone(),
                     )));
                 }
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::AGet(f)
             | Instruction::AGetBoolean(f)
@@ -1127,7 +1254,7 @@ impl Context {
                         ctadl_ir::cir::PathSegment::field("[]"),
                     )));
                 }
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::APut(f)
             | Instruction::APutBoolean(f)
@@ -1152,7 +1279,7 @@ impl Context {
                     ctadl_ir::cir::PathSegment::field("[]"),
                     temp_var.into(),
                 )));
-                return Ok(stmts);
+                return Ok(());
             }
             Instruction::Throw(f) => {
                 let src_var = reg_to_var(code_item, f.a, locals);
@@ -1160,7 +1287,7 @@ impl Context {
                     Context::except(locals),
                     [src_var.into()],
                 )));
-                return Ok(stmts);
+                return Ok(());
             }
             _ => {
                 // Flows all the sources to each dest; only their values, for arithmetic.
@@ -1215,7 +1342,7 @@ impl Context {
             }
         }
 
-        Ok(stmts)
+        Ok(())
     }
 
     /// The `retval` temporary a call returns into and `move-result` reads.
@@ -1226,6 +1353,112 @@ impl Context {
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
     }
+}
+
+/// What [`Context::lower_code`] records about a body beyond the body itself, for building the
+/// clones of a merged method out of one lowering of it ([`instantiate_clone`]).
+#[derive(Debug)]
+struct LowerInfo {
+    /// Per block, the pc of its last instruction: where a narrowed switch would sit.
+    last_pc: Vec<Option<usize>>,
+    /// The block each instruction offset that starts a block starts.
+    offset_to_bb: HashMap<usize, BasicBlockIdx>,
+    /// Every `new-instance`, where its statement is.
+    new_instances: Vec<NewInstanceSite>,
+    /// Whether every `new-instance` lowered to the one assignment a retag would rewrite. When
+    /// one did not (its type could not be read), clones are lowered in full instead.
+    clonable: bool,
+}
+
+/// A `new-instance` in a lowered body: statement `stmt` of `block`, at `pc`, allocating `ty`.
+#[derive(Debug)]
+struct NewInstanceSite {
+    block: BasicBlockIdx,
+    stmt: usize,
+    pc: usize,
+    ty: TypeIdx,
+}
+
+/// One clone of a merged method, built from `template`, its unnarrowed and unretagged lowering:
+/// each switch `narrow` names jumps straight to its arm, each `new-instance` allocates what
+/// `allocation(pc, type)` says, and only the blocks reachable from the start are kept.
+///
+/// The result is exactly what lowering the clone with `narrow` and then running
+/// [`ctadl_ir::ssa::prune_unreachable_nodes`] gives: the same blocks in the same order, found by
+/// the same depth-first walk, and the same locals, since the full lowering interned every
+/// local of the body either way.
+fn instantiate_clone(
+    template: &FunctionData,
+    info: &LowerInfo,
+    narrow: &HashMap<usize, usize>,
+    mut allocation: impl FnMut(usize, TypeIdx) -> Option<Exp>,
+) -> FunctionData {
+    let blocks = &template.blocks;
+    let n = ctadl_ir::graph::DirectedGraph::num_nodes(blocks);
+    let narrowed: Vec<Option<BasicBlockIdx>> = (0..n)
+        .map(|i| {
+            let pc = info.last_pc.get(i).copied().flatten()?;
+            info.offset_to_bb.get(narrow.get(&pc)?).copied()
+        })
+        .collect();
+    let successors = |b: BasicBlockIdx| -> SmallVec<[BasicBlockIdx; 4]> {
+        match narrowed[b.index()] {
+            Some(arm) => smallvec![arm],
+            None => blocks[b].terminator().successors().collect(),
+        }
+    };
+
+    // The walk `ctadl_ir::graph::reachable` makes.
+    let mut reach: Vec<BasicBlockIdx> = Vec::new();
+    let mut seen = vec![false; n];
+    let mut stack = vec![BasicBlockIdx::START_BLOCK];
+    while let Some(b) = stack.pop() {
+        if !std::mem::replace(&mut seen[b.index()], true) {
+            reach.push(b);
+            stack.extend(successors(b));
+        }
+    }
+    // Pruning leaves the numbering alone when nothing is unreachable.
+    if reach.len() == n {
+        reach = (0..n).map(BasicBlockIdx::new).collect();
+    }
+    let mut renumber = vec![None; n];
+    for (new, old) in reach.iter().enumerate() {
+        renumber[old.index()] = Some(BasicBlockIdx::new(new));
+    }
+
+    let mut out = FunctionData {
+        name: String::new(),
+        params: template.params.clone(),
+        return_type: template.return_type.clone(),
+        blocks: Default::default(),
+        locals: template.locals.clone(),
+    };
+    for &old in &reach {
+        let mut data = blocks[old].clone();
+        if let Some(arm) = narrowed[old.index()] {
+            data.terminator = Some(Terminator::new_kind(TerminatorKind::Goto {
+                targets: smallvec![arm],
+            }));
+        }
+        if let Some(term) = &mut data.terminator
+            && let TerminatorKind::Goto { targets } = &mut term.kind
+        {
+            for t in targets {
+                *t = renumber[t.index()].expect("a successor of a reachable block is reachable");
+            }
+        }
+        for site in info.new_instances.iter().filter(|s| s.block == old) {
+            if let Some(stmt) = data.iter_mut().nth(site.stmt)
+                && let StatementKind::Assign { sources, .. } = &mut stmt.kind
+                && let Some(exp) = allocation(site.pc, site.ty)
+            {
+                sources[0] = exp;
+            }
+        }
+        out.blocks.blocks_mut().push(data);
+    }
+    out
 }
 
 /// Whether `inst` computes its result from its operands' values and shares no memory with them
@@ -1251,7 +1484,42 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRe
     if let Some(pidx) = code_item.reg_to_p(reg.0.try_into().expect("reg too big")) {
         VariableRef::new_parameter(pidx.into())
     } else {
-        VariableRef::new_local_idx(locals.get_or_intern(&format!("v{}", reg.0)))
+        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('v', reg.0.into())))
+    }
+}
+
+/// `prefix` followed by `n` in decimal, built on the stack: names like `v12` and `t3` are
+/// looked up once per operand, and formatting each into a fresh `String` only to drop it again
+/// on the (usual) hit was a measurable share of the import's allocation.
+fn numbered_name(prefix: char, n: u32) -> NumberedName {
+    let mut buf = [0u8; 11];
+    buf[0] = prefix as u8;
+    let mut digits = [0u8; 10];
+    let mut len = 0;
+    let mut n = n;
+    loop {
+        digits[len] = b'0' + (n % 10) as u8;
+        len += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for i in 0..len {
+        buf[1 + i] = digits[len - 1 - i];
+    }
+    NumberedName { buf, len: 1 + len }
+}
+
+struct NumberedName {
+    buf: [u8; 11],
+    len: usize,
+}
+
+impl std::ops::Deref for NumberedName {
+    type Target = str;
+    fn deref(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len]).expect("ASCII")
     }
 }
 
@@ -1276,6 +1544,6 @@ impl Counter {
     /// Make a new temporary with 't' prefix
     fn temp(&mut self, locals: &mut Locals) -> VariableRef {
         let i = self.next();
-        VariableRef::new_local_idx(locals.get_or_intern(&format!("t{i}")))
+        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('t', i)))
     }
 }
