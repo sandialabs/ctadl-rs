@@ -80,6 +80,12 @@ impl JarFileParser {
         &self.entry_names
     }
 
+    /// The class file parsers, one per .class entry in the JAR (in order), for a caller that
+    /// frees each once it is done with it.
+    pub fn into_class_parsers(self) -> Vec<ClassFileParser> {
+        self.parsers
+    }
+
     /// Slice of class file parsers, one per .class entry in the JAR (in order).
     pub fn class_parsers(&self) -> &[ClassFileParser] {
         &self.parsers

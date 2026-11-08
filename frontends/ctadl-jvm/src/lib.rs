@@ -36,7 +36,7 @@ use ctadl_ir::cir::call::{
 use ctadl_ir::*;
 
 use jvm_reader::flow::{CallInfo, CallKind, ConstantValue, DataflowInfo, Location};
-use jvm_reader::{ClassFileError, ClassFileParser, JarFileParser, MethodInfo};
+use jvm_reader::{ClassFileError, ClassFileParser, JarFileParser};
 
 const JVM_ACC_STATIC: u16 = 0x0008;
 const JVM_ACC_NATIVE: u16 = 0x0100;
@@ -80,32 +80,31 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
         file.display(),
         parser.class_parsers().len()
     );
+    let keep = one_definition_per_class(file, &parser)?;
     let path = file.to_string_lossy().to_string();
-    let classes: Vec<_> = parser
-        .class_parsers()
-        .iter()
+    let mut classes: Vec<Class> = parser
+        .into_class_parsers()
+        .into_iter()
+        .zip(keep)
         .enumerate()
-        .map(|(sub_artifact_id, parser)| {
-            let key = ArtifactKey {
+        .filter(|(_, (_, keep))| *keep)
+        .map(|(sub_artifact_id, (parser, _))| Class {
+            parser: Some(parser),
+            key: ArtifactKey {
                 path: path.clone(),
                 sub_artifact_id: sub_artifact_id.try_into().unwrap(),
                 hash: Vec::new(),
                 encoding: source_info::ArtifactEncoding::Binary,
-            };
-            (parser, key)
+            },
         })
         .collect();
-    let classes = one_definition_per_class(file, &parser, classes)?;
     let mut importer = Importer::default();
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     importer
-        .process(&classes, &mut builders)
+        .process(&mut classes, &mut builders)
         .err_context(|| format!("converting class in jar: {}", file.display()))?;
-    timer.done("process");
-    // The class files are lowered; free them before verifying the program.
     drop(classes);
-    drop(parser);
-    timer.done("free class files");
+    timer.done("process");
     let info = importer.finish(builders);
     timer.done("finish");
     info
@@ -127,8 +126,8 @@ impl PhaseTimer {
     }
 }
 
-/// `classes`, the class files of the jar `parser` read, less all but one definition of each class
-/// the jar defines more than once.
+/// Which class files of the jar `parser` read to import: all but one definition of each class the
+/// jar defines more than once are left out.
 ///
 /// A program has one function per method, so a class can be imported only once. A jar defines a
 /// class more than once when it is a multi-release jar, whose `META-INF/versions/<n>/` entries
@@ -137,15 +136,12 @@ impl PhaseTimer {
 /// `META-INF/versions/`, the one every runtime can load, or failing that the first entry. The
 /// others are left out with a warning. Each class file keeps its own artifact key, so spans still
 /// point into the entry the definition came from.
-fn one_definition_per_class<'a>(
-    file: &Path,
-    parser: &JarFileParser,
-    classes: Vec<(&'a ClassFileParser, ArtifactKey)>,
-) -> Result<Vec<(&'a ClassFileParser, ArtifactKey)>, Error> {
+fn one_definition_per_class(file: &Path, parser: &JarFileParser) -> Result<Vec<bool>, Error> {
+    let classes = parser.class_parsers();
     let entries = parser.entry_names();
     let is_versioned = |i: usize| entries[i].starts_with("META-INF/versions/");
     let mut kept: HashMap<&str, usize> = HashMap::new();
-    for (i, (class, _)) in classes.iter().enumerate() {
+    for (i, class) in classes.iter().enumerate() {
         let name = class
             .class_name()
             .err_context(|| format!("converting class in jar: {}", file.display()))?;
@@ -158,7 +154,7 @@ fn one_definition_per_class<'a>(
             .or_insert(i);
     }
     if kept.len() == classes.len() {
-        return Ok(classes);
+        return Ok(vec![true; classes.len()]);
     }
     log::warn!(
         "{}: leaving out {} class file(s) that define a class another entry defines too",
@@ -166,22 +162,21 @@ fn one_definition_per_class<'a>(
         classes.len() - kept.len()
     );
     Ok(classes
-        .into_iter()
+        .iter()
         .enumerate()
-        .filter(|(i, (class, _))| {
+        .map(|(i, class)| {
             let name = class.class_name().expect("read above");
             let k = kept[name];
-            if k != *i {
+            if k != i {
                 log::info!(
                     "{}: leaving out {}, which defines {name} as {} does",
                     file.display(),
-                    entries[*i],
+                    entries[i],
                     entries[k]
                 );
             }
-            k == *i
+            k == i
         })
-        .map(|(_, class)| class)
         .collect())
 }
 
@@ -199,10 +194,31 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
+    let mut classes = [Class {
+        parser: Some(parser),
+        key,
+    }];
     importer
-        .process(&[(&parser, key)], &mut builders)
+        .process(&mut classes, &mut builders)
         .err_context(|| format!("converting class file: {}", file.display()))?;
     importer.finish(builders)
+}
+
+/// A class file to import, with the key of the artifact it is in.
+struct Class {
+    /// `None` once the class's method bodies are lowered: [`Importer::lower_and_place`] frees each
+    /// class file as soon as it is done with it, since all of them together are a sizable share
+    /// of an import's memory.
+    parser: Option<ClassFileParser>,
+    key: ArtifactKey,
+}
+
+impl Class {
+    fn parser(&self) -> &ClassFileParser {
+        self.parser
+            .as_ref()
+            .expect("a class file is freed only once its method bodies are lowered")
+    }
 }
 
 /// What spans the classes of an import: the program's globals, the externs the bodies call, and
@@ -273,10 +289,11 @@ struct EnclosingClass {
 
 /// One method body for [`Context::lower_job`] to lower, with what the bookkeeping pass of
 /// [`Importer::process`] found out about it.
-struct Job<'a> {
+struct Job {
     /// The index of the class file the method is in.
     class: usize,
-    method: &'a MethodInfo,
+    /// The index of the method among the class's.
+    method: usize,
     /// The function the body goes into.
     fidx: FunctionIdx,
     enclosing: Arc<EnclosingClass>,
@@ -326,12 +343,13 @@ impl Importer {
     /// them one after another did, so the result does not depend on the thread count.
     fn process(
         &mut self,
-        classes: &[(&ClassFileParser, ArtifactKey)],
+        classes: &mut [Class],
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         let timer = PhaseTimer::start();
         let mut jobs = Vec::new();
-        for (class, (parser, artifact_key)) in classes.iter().enumerate() {
+        for (class, c) in classes.iter().enumerate() {
+            let (parser, artifact_key) = (c.parser(), &c.key);
             for class_def in parser.classes() {
                 let class_name = jvm_class_symbol(parser.class_name()?);
                 self.class_headers.push((
@@ -386,7 +404,7 @@ impl Importer {
                     superclass: superclass_opt.map(|c| c.0),
                     interfaces: direct_interfaces,
                 });
-                for enc in parser.methods() {
+                for (method_index, enc) in parser.methods().enumerate() {
                     let method_name = parser.class_file().get_utf8(enc.name_index)?;
                     // The descriptor alone, e.g. "(I)I".
                     let java_sig = parser.class_file().get_utf8(enc.descriptor_index)?;
@@ -441,7 +459,7 @@ impl Importer {
                     if enc.code.is_some() {
                         jobs.push(Job {
                             class,
-                            method: enc,
+                            method: method_index,
                             fidx,
                             enclosing: Arc::clone(&enclosing),
                         });
@@ -461,12 +479,13 @@ impl Importer {
     /// order.
     ///
     /// The jobs go in batches, so that only one batch of lowered bodies waits to be placed at a
-    /// time, and so that the next batch is lowered while this one is placed.
+    /// time, and so that the next batch is lowered while this one is placed. Once no batch still
+    /// to be lowered needs a class file, it is freed.
     fn lower_and_place(
         &mut self,
-        classes: &[(&ClassFileParser, ArtifactKey)],
+        classes: &mut [Class],
         builders: &mut ProgramInfoBuilder,
-        jobs: &[Job<'_>],
+        jobs: &[Job],
     ) {
         use rayon::prelude::*;
 
@@ -474,26 +493,45 @@ impl Importer {
         /// enough that a batch of lowered bodies is a small part of the program.
         const BATCH: usize = 4096;
 
-        let lower = |batch: &[Job<'_>]| -> Vec<Result<Lowered, ClassFileError>> {
+        let lower = |classes: &[Class], batch: &[Job]| -> Vec<Result<Lowered, ClassFileError>> {
             batch
                 .par_iter()
                 .map_init(Context::default, |ctx, job| {
-                    ctx.lower_job(classes[job.class].0, job)
+                    ctx.lower_job(classes[job.class].parser(), job)
                 })
                 .collect()
         };
         let mut file = None;
+        let mut freed = 0;
         let mut batches = jobs.chunks(BATCH);
         let mut batch = batches.next();
-        let mut current = batch.map(lower);
+        let mut current = batch.map(|batch| lower(classes, batch));
+        let (mut placing_time, mut total) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         while let (Some(results), Some(placing)) = (current.take(), batch) {
             batch = batches.next();
             // Lower the next batch while this one is placed.
+            let started = std::time::Instant::now();
+            let shared: &[Class] = classes;
             rayon::scope(|scope| {
-                scope.spawn(|_| current = batch.map(lower));
-                self.place(classes, placing, results, &mut file, builders);
+                scope.spawn(|_| current = batch.map(|batch| lower(shared, batch)));
+                self.place(shared, placing, results, &mut file, builders);
+                placing_time += started.elapsed();
             });
+            total += started.elapsed();
+            // The batch after `batch` is the next to read the class files.
+            let needed = batches
+                .clone()
+                .next()
+                .map_or(classes.len(), |next| next[0].class);
+            for class in &mut classes[freed..needed] {
+                class.parser = None;
+            }
+            freed = needed;
         }
+        log::debug!(
+            target: "ctadl_jvm::timing",
+            "placing: {placing_time:.2?} of {total:.2?} lowering and placing"
+        );
     }
 
     /// Puts a batch of lowered bodies into the program, in order: interns their spans and
@@ -505,8 +543,8 @@ impl Importer {
     /// `file` is the class file whose spans were interned last, with its id.
     fn place(
         &mut self,
-        classes: &[(&ClassFileParser, ArtifactKey)],
-        jobs: &[Job<'_>],
+        classes: &[Class],
+        jobs: &[Job],
         results: Vec<Result<Lowered, ClassFileError>>,
         file: &mut Option<(usize, source_info::FileId)>,
         builders: &mut ProgramInfoBuilder,
@@ -536,7 +574,9 @@ impl Importer {
                 let file = match *file {
                     Some((class, file)) if class == job.class => file,
                     _ => {
-                        let id = builders.source_info_builder.file_for(&classes[job.class].1);
+                        let id = builders
+                            .source_info_builder
+                            .file_for(&classes[job.class].key);
                         *file = Some((job.class, id));
                         id
                     }
@@ -668,15 +708,16 @@ impl Context {
     fn lower_job(
         &mut self,
         parser: &ClassFileParser,
-        job: &Job<'_>,
+        job: &Job,
     ) -> Result<Lowered, ClassFileError> {
         self.enclosing = Some(Arc::clone(&job.enclosing));
         self.spans.clear();
         self.globals = Default::default();
         self.ext.clear();
-        let code_attr = job.method.code.as_ref().expect("a job's method has code");
+        let method = &parser.class_file().methods[job.method];
+        let code_attr = method.code.as_ref().expect("a job's method has code");
         let basic_blocks = parser
-            .basic_blocks_with_stack_slots(job.method)?
+            .basic_blocks_with_stack_slots(method)?
             .expect("Non-empty function");
         let mut fdat = FunctionData::default();
         fdat.blocks
