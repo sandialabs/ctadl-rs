@@ -602,7 +602,7 @@ impl Importer {
         let mut current = batch.map(|batch| lower(classes, batch));
         let mut interned = Vec::new();
         let (mut interning, mut total) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
-        while let (Some(results), Some(placing)) = (current.take(), batch) {
+        while let (Some(mut results), Some(placing)) = (current.take(), batch) {
             batch = batches.next();
             let started = std::time::Instant::now();
             let shared: &[Class] = classes;
@@ -612,10 +612,18 @@ impl Importer {
                 ..
             } = &mut *builders;
             let mut previous = std::mem::take(&mut interned);
+            // Merged in program order, beside the interning rather than in it.
+            let called: Vec<_> = results
+                .iter_mut()
+                .filter_map(|lowered| Some(std::mem::take(&mut lowered.as_mut().ok()?.ext)))
+                .collect();
+            let ext = &mut self.ext;
             rayon::scope(|scope| {
                 scope.spawn(|_| current = batch.map(|batch| lower(shared, batch)));
                 scope.spawn(|_| resolve(&mut previous));
-                interned = self.intern(
+                scope.spawn(|_| called.into_iter().for_each(|called| ext.extend(called)));
+                interned = Self::intern(
+                    &mut self.globals,
                     shared,
                     placing,
                     results,
@@ -645,14 +653,14 @@ impl Importer {
         );
     }
 
-    /// Interns the spans and declares the globals of a batch of lowered bodies, in the order
-    /// lowering them in place would have, and merges the methods they call into
-    /// [`Importer::ext`]. A body jvm-reader could not decode is left out, which leaves its
-    /// function a declaration, so calls to it still resolve.
+    /// Interns the spans of a batch of lowered bodies and declares their globals in `globals`, in
+    /// the order lowering them in place would have. A body jvm-reader could not decode is left
+    /// out, which leaves its function a declaration, so calls to it still resolve.
     ///
     /// `file` is the class file whose spans were interned last, with its id.
+    #[allow(clippy::too_many_arguments)]
     fn intern(
-        &mut self,
+        globals_table: &mut cir::Globals,
         classes: &[Class],
         jobs: &[Job],
         results: Vec<Result<Lowered, ClassFileError>>,
@@ -666,7 +674,7 @@ impl Importer {
                 body,
                 spans,
                 globals,
-                ext,
+                ext: _,
             } = match lowered {
                 Ok(lowered) => lowered,
                 Err(e) => {
@@ -697,9 +705,8 @@ impl Importer {
             };
             let globals: Vec<GlobalIdx> = globals
                 .iter_enumerated()
-                .map(|(_, g)| self.globals.declare(&*g.name, None))
+                .map(|(_, g)| globals_table.declare(&*g.name, None))
                 .collect();
-            self.ext.extend(ext);
             placed.push(Placed {
                 fidx: job.fidx,
                 body,
