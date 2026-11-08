@@ -4,8 +4,45 @@ use std::sync::OnceLock;
 use crate::{error::*, instructions::DispArg, parse_utils::*, types::*};
 
 /// Cache for lazily computed parser-derived data.
+#[derive(Default)]
 pub struct Cache<'a> {
     pub pool: OnceLock<DexConstantPool<'a>>,
+    /// Per `method_id`, its full signature, built on first use by [`DexParser::method_names`].
+    methods: OnceLock<Box<[OnceLock<CachedMethod>]>>,
+    /// Per `field_id`, its pretty name, built on first use by [`DexParser::field_pretty_name`].
+    fields: OnceLock<Box<[OnceLock<Box<str>>]>>,
+}
+
+/// A method's full signature `Lcls;->name(params)ret`, with where its parts end.
+struct CachedMethod {
+    signature: Box<str>,
+    class_len: usize,
+    name_len: usize,
+}
+
+/// The names of a method, borrowed from [`DexParser::method_names`]'s cache: the parts of
+/// [`DexParser::method_triple`] and the [`DexParser::method_signature`] they make.
+#[derive(Debug, Clone, Copy)]
+pub struct MethodNames<'s> {
+    /// `Lcls;->name(params)ret`.
+    pub signature: &'s str,
+    /// `Lcls;`.
+    pub class: &'s str,
+    /// `name`.
+    pub name: &'s str,
+    /// `(params)ret`.
+    pub descriptor: &'s str,
+}
+
+/// The slot for entry `idx` of a lazily allocated per-id table of `len` entries.
+fn cache_slot<T>(
+    table: &OnceLock<Box<[OnceLock<T>]>>,
+    idx: usize,
+    len: usize,
+) -> Option<&OnceLock<T>> {
+    table
+        .get_or_init(|| (0..len).map(|_| OnceLock::new()).collect())
+        .get(idx)
 }
 
 pub const DEX_MAGIC_035: &[u8; 8] = b"dex\n035\0";
@@ -103,9 +140,7 @@ impl<'a> DexParser<'a> {
             class_defs,
             call_site_ids,
             method_handles,
-            cache: Cache {
-                pool: OnceLock::new(),
-            },
+            cache: Cache::default(),
         })
     }
 
@@ -117,10 +152,7 @@ impl<'a> DexParser<'a> {
     fn build_constant_pool(&self) -> DexConstantPool<'a> {
         DexConstantPool::new(
             self.data,
-            StringTable {
-                data: self.data,
-                string_ids: self.strings.string_ids.clone(),
-            },
+            self.strings.share(),
             self.type_ids.clone(),
             self.proto_ids.clone(),
             self.field_ids.clone(),
@@ -236,6 +268,56 @@ impl<'a> DexParser<'a> {
 
     pub fn method_triple(&self, method: &MethodId) -> DexResult<(String, String, String)> {
         method.vmt_triple(&self.strings, &self.type_ids, &self.proto_ids, self.data)
+    }
+
+    /// The names of `method_ids[idx]`, built once and then borrowed: the lowering asks for a
+    /// method's names at every call to it, and formatting them afresh each time was a large
+    /// share of the import's allocation. The same strings as [`DexParser::method_triple`] and
+    /// [`DexParser::method_signature`].
+    pub fn method_names(&self, idx: usize) -> DexResult<MethodNames<'_>> {
+        let method = self
+            .method_ids
+            .get(idx)
+            .ok_or(DexError::InvalidDex("method_idx out of bounds"))?;
+        let slot =
+            cache_slot(&self.cache.methods, idx, self.method_ids.len()).expect("idx is in bounds");
+        let cached = match slot.get() {
+            Some(c) => c,
+            None => {
+                let (class, name, descriptor) = self.method_triple(method)?;
+                let signature = format!("{class}->{name}{descriptor}").into_boxed_str();
+                slot.get_or_init(|| CachedMethod {
+                    signature,
+                    class_len: class.len(),
+                    name_len: name.len(),
+                })
+            }
+        };
+        let sig = &*cached.signature;
+        let name_start = cached.class_len + 2;
+        let name_end = name_start + cached.name_len;
+        Ok(MethodNames {
+            signature: sig,
+            class: &sig[..cached.class_len],
+            name: &sig[name_start..name_end],
+            descriptor: &sig[name_end..],
+        })
+    }
+
+    /// The pretty name `Lcls;->name:type` of `field_ids[idx]`, built once and then borrowed.
+    /// The same string as [`FieldId::pretty_name`].
+    pub fn field_pretty_name(&self, idx: usize) -> DexResult<&str> {
+        let field = self
+            .field_ids
+            .get(idx)
+            .ok_or(DexError::InvalidDex("field_idx out of bounds"))?;
+        let slot =
+            cache_slot(&self.cache.fields, idx, self.field_ids.len()).expect("idx is in bounds");
+        if let Some(name) = slot.get() {
+            return Ok(name);
+        }
+        let name = field.pretty_name(self.constant_pool())?.into_boxed_str();
+        Ok(slot.get_or_init(|| name))
     }
 
     pub fn field_name(&self, field: &FieldId) -> DexResult<String> {
@@ -596,7 +678,7 @@ pub fn parse_string_ids<'a>(data: &'a [u8], header: &DexHeader) -> DexResult<Str
         string_ids.push(StringId { string_data_off });
     }
 
-    Ok(StringTable { data, string_ids })
+    Ok(StringTable::new(data, string_ids))
 }
 
 impl<'a> StringTable<'a> {
@@ -622,9 +704,43 @@ impl<'a> StringTable<'a> {
     /// one; string *constants* should use [`StringTable::get_lossy`] or
     /// [`DexString::code_units`] instead.
     pub fn get(&self, index: usize) -> DexResult<String> {
-        self.get_dex_string(index)?
-            .into_string()
-            .map_err(|e| e.with_string_index(index))
+        self.get_str(index).map(String::from)
+    }
+
+    /// [`StringTable::get`] without the copy: the entry is decoded once and kept, and every
+    /// later call borrows it.
+    pub fn get_str(&self, index: usize) -> DexResult<&str> {
+        let decoded = self.decoded(index)?;
+        if decoded.exact {
+            return Ok(&decoded.text);
+        }
+        // Not valid text: decode again for the error, which names the offending code unit.
+        // Rare enough not to be worth caching.
+        match self.get_dex_string(index)?.into_string() {
+            Err(e) => Err(e.with_string_index(index)),
+            Ok(_) => unreachable!("an entry that decodes exactly is cached as exact"),
+        }
+    }
+
+    /// [`StringTable::get_lossy`] without the copy.
+    pub fn get_lossy_str(&self, index: usize) -> DexResult<&str> {
+        Ok(&self.decoded(index)?.text)
+    }
+
+    /// Entry `index`, decoded on first use and kept.
+    fn decoded(&self, index: usize) -> DexResult<&DecodedString> {
+        let slot = self
+            .decoded
+            .slot(index, self.string_ids.len())
+            .ok_or(DexError::InvalidDex("string index out of bounds"))?;
+        if let Some(d) = slot.get() {
+            return Ok(d);
+        }
+        let s = self.get_dex_string(index)?;
+        let exact = !matches!(s, DexString::Utf16(_));
+        let text = s.to_string_lossy().into_owned().into_boxed_str();
+        // Another thread may have decoded the same entry meanwhile; both results are equal.
+        Ok(slot.get_or_init(|| DecodedString { text, exact }))
     }
 
     /// A string table entry with unpaired surrogates replaced by `U+FFFD`.
@@ -632,7 +748,7 @@ impl<'a> StringTable<'a> {
     /// For string constants and diagnostics, which must not fail just because
     /// the DEX file carries UTF-16 data a `str` cannot hold.
     pub fn get_lossy(&self, index: usize) -> DexResult<String> {
-        Ok(self.get_dex_string(index)?.to_string_lossy().into_owned())
+        self.get_lossy_str(index).map(String::from)
     }
 }
 
@@ -662,6 +778,11 @@ pub fn parse_type_ids(data: &[u8], header: &DexHeader) -> DexResult<Vec<TypeId>>
 impl TypeId {
     pub fn descriptor<'a>(&self, strings: &StringTable<'a>) -> DexResult<String> {
         strings.get(self.descriptor_idx as usize)
+    }
+
+    /// [`TypeId::descriptor`], borrowed from the table's decoded entries.
+    pub fn descriptor_str<'s>(&self, strings: &'s StringTable<'_>) -> DexResult<&'s str> {
+        strings.get_str(self.descriptor_idx as usize)
     }
 }
 

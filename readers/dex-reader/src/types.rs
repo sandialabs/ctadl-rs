@@ -207,11 +207,65 @@ pub struct StringId {
 pub struct StringTable<'a> {
     pub data: &'a [u8],
     pub string_ids: Vec<StringId>,
+    /// Each entry decoded once, on first use. See [`StringCache`].
+    pub(crate) decoded: StringCache,
 }
 
 impl<'a> StringTable<'a> {
+    pub fn new(data: &'a [u8], string_ids: Vec<StringId>) -> Self {
+        Self {
+            data,
+            string_ids,
+            decoded: StringCache::default(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.string_ids.len()
+    }
+
+    /// A copy of this table that shares its decoded entries, so neither copy decodes an entry
+    /// the other already has.
+    pub fn share(&self) -> Self {
+        Self {
+            data: self.data,
+            string_ids: self.string_ids.clone(),
+            decoded: self.decoded.clone(),
+        }
+    }
+}
+
+/// The decoded entries of a [`StringTable`], filled lazily.
+///
+/// Lowering a Dex file asks for the same few strings -- class descriptors, method and field
+/// names -- once per instruction that names them, and decoding modified UTF-8 into a fresh
+/// `String` each time made the decoder one of the import's largest sources of allocation. Each
+/// slot is a [`OnceLock`](std::sync::OnceLock), so threads lowering different methods of one
+/// file share a table without locking. The slots are allocated on first use, sized to the
+/// table, so a table nobody reads costs nothing.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct StringCache(
+    std::sync::Arc<std::sync::OnceLock<Box<[std::sync::OnceLock<DecodedString>]>>>,
+);
+
+/// One decoded table entry: its text with unpaired surrogates replaced by `U+FFFD`, and whether
+/// that replacement left the text unchanged (it held no unpaired surrogate).
+#[derive(Debug)]
+pub(crate) struct DecodedString {
+    pub(crate) text: Box<str>,
+    pub(crate) exact: bool,
+}
+
+impl StringCache {
+    /// The slot for entry `index` of a table with `len` entries.
+    pub(crate) fn slot(
+        &self,
+        index: usize,
+        len: usize,
+    ) -> Option<&std::sync::OnceLock<DecodedString>> {
+        self.0
+            .get_or_init(|| (0..len).map(|_| std::sync::OnceLock::new()).collect())
+            .get(index)
     }
 }
 
