@@ -1,7 +1,7 @@
 //! `Module`: the root of the Cecil-shaped object model.
 
 use crate::error::{Error, Result};
-use crate::model::data::ModuleData;
+use crate::model::data::{ModuleData, TypesByName};
 use crate::model::handles::*;
 use crate::model::util::sha1;
 use crate::raw::heaps::Guid;
@@ -672,7 +672,24 @@ pub(crate) fn top_level_type<'a>(
     namespace: &str,
     name: &str,
 ) -> Result<Option<TypeDef<'a>>> {
-    for rid in (1..=m.md.row_count(Table::TypeDef)).rev() {
+    // The last top-level type of that name, as a scan from the last row would find it, but
+    // through an index by name, built once: a scan of every row per lookup made resolution
+    // quadratic in the number of types. A row whose name does not read fails the lookup where
+    // the scan would have met it.
+    let index = m.lazy.types_by_name.get_or_init(|| {
+        let mut index = TypesByName::default();
+        for rid in (1..=m.md.row_count(Table::TypeDef)).rev() {
+            match (TypeDef { m, rid }).name() {
+                Ok(n) => index.by_name.entry(n.into_owned()).or_default().push(rid),
+                Err(_) => index.unreadable.push(rid),
+            }
+        }
+        index
+    });
+    let named = index.by_name.get(name).map_or(&[][..], Vec::as_slice);
+    let mut rids: Vec<u32> = named.iter().chain(&index.unreadable).copied().collect();
+    rids.sort_unstable_by(|a, b| b.cmp(a));
+    for rid in rids {
         let t = TypeDef { m, rid };
         if t.name()? == name && t.namespace()? == namespace && !t.is_nested()? {
             return Ok(Some(t));

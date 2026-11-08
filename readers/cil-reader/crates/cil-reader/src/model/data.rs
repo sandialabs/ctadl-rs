@@ -81,6 +81,16 @@ pub(crate) struct LazyTables {
     /// Field/Method/Property/Event rid → the TypeDef whose list reads it
     /// last, in that order (see [`ModuleData::member_owner`]).
     pub member_owners: [Lazy<HashMap<u32, u32>>; 4],
+    /// TypeDef rids by name, for looking a type up by name.
+    pub types_by_name: OnceLock<TypesByName>,
+}
+
+/// Every TypeDef rid, by its name, in descending order; and, also in descending order, the rids
+/// whose name does not read.
+#[derive(Default)]
+pub(crate) struct TypesByName {
+    pub by_name: HashMap<String, Vec<u32>>,
+    pub unreadable: Vec<u32>,
 }
 
 #[derive(Default)]
