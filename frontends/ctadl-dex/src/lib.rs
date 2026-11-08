@@ -1882,42 +1882,7 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRe
     if let Some(pidx) = code_item.reg_to_p(reg.0.try_into().expect("reg too big")) {
         VariableRef::new_parameter(pidx.into())
     } else {
-        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('v', reg.0)))
-    }
-}
-
-/// `prefix` followed by `n` in decimal, built on the stack: names like `v12` and `t3` are
-/// looked up once per operand, and formatting each into a fresh `String` only to drop it again
-/// on the (usual) hit was a measurable share of the import's allocation.
-fn numbered_name(prefix: char, n: u32) -> NumberedName {
-    let mut buf = [0u8; 11];
-    buf[0] = prefix as u8;
-    let mut digits = [0u8; 10];
-    let mut len = 0;
-    let mut n = n;
-    loop {
-        digits[len] = b'0' + (n % 10) as u8;
-        len += 1;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    for i in 0..len {
-        buf[1 + i] = digits[len - 1 - i];
-    }
-    NumberedName { buf, len: 1 + len }
-}
-
-struct NumberedName {
-    buf: [u8; 11],
-    len: usize,
-}
-
-impl std::ops::Deref for NumberedName {
-    type Target = str;
-    fn deref(&self) -> &str {
-        std::str::from_utf8(&self.buf[..self.len]).expect("ASCII")
+        VariableRef::new_local_idx(locals.get_or_intern_numbered("v", reg.0))
     }
 }
 
@@ -1942,6 +1907,6 @@ impl Counter {
     /// Make a new temporary with 't' prefix
     fn temp(&mut self, locals: &mut Locals) -> VariableRef {
         let i = self.next();
-        VariableRef::new_local_idx(locals.get_or_intern(&numbered_name('t', i)))
+        VariableRef::new_local_idx(locals.get_or_intern_numbered("t", i))
     }
 }

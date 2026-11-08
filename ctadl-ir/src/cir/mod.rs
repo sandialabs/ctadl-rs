@@ -517,6 +517,22 @@ impl Locals {
         idx
     }
 
+    /// [`Self::get_or_intern`] for the name `prefix` followed by `n` in decimal (`v3`, `stack12`),
+    /// built on the stack. Front ends look such a name up for every operand of every
+    /// instruction, and formatting each into a `String` of its own only to find it already
+    /// interned was an allocation per operand.
+    pub fn get_or_intern_numbered(&mut self, prefix: &str, n: u32) -> LocalIdx {
+        use std::fmt::Write;
+        let mut name = StackName {
+            buf: [0; 32],
+            len: 0,
+        };
+        match write!(name, "{prefix}{n}") {
+            Ok(()) => self.get_or_intern(name.as_str()),
+            Err(_) => self.get_or_intern(&format!("{prefix}{n}")),
+        }
+    }
+
     /// The source name of the local at `i`.
     #[inline]
     pub fn name(&self, i: LocalIdx) -> &str {
@@ -573,6 +589,30 @@ impl Locals {
     /// rebuilds the index if the table is ever extended again.
     pub fn drop_index(&mut self) {
         self.by_name = Default::default();
+    }
+}
+
+/// A short name written into a fixed buffer; see [`Locals::get_or_intern_numbered`].
+struct StackName {
+    buf: [u8; 32],
+    len: usize,
+}
+
+impl StackName {
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len]).expect("written from strs")
+    }
+}
+
+impl std::fmt::Write for StackName {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        self.buf
+            .get_mut(self.len..end)
+            .ok_or(std::fmt::Error)?
+            .copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
     }
 }
 

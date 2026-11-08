@@ -1288,9 +1288,9 @@ impl Context {
             return None;
         }
         let survivor =
-            VariableRef::new_local_idx(locals.get_or_intern(&numbered("stack", survivor_idx)));
+            VariableRef::new_local_idx(locals.get_or_intern_numbered("stack", survivor_idx));
         let recv_var =
-            VariableRef::new_local_idx(locals.get_or_intern(&numbered("stack", *recv_idx)));
+            VariableRef::new_local_idx(locals.get_or_intern_numbered("stack", *recv_idx));
         Some(Self::assign_var(survivor, recv_var))
     }
 
@@ -1346,7 +1346,7 @@ impl Context {
 
     /// The temporary [`Self::stack_shuffle_statements`] saves stack slot `n` in.
     fn shuffle_temp(n: u32, locals: &mut Locals) -> VariableRef {
-        VariableRef::new_local_idx(locals.get_or_intern(&numbered("shuffle", n)))
+        VariableRef::new_local_idx(locals.get_or_intern_numbered("shuffle", n))
     }
 
     fn dataflow_to_statements(
@@ -1583,13 +1583,13 @@ impl Context {
     fn convert_location_to_var_ref(&self, loc: &Location, locals: &mut Locals) -> VariableRef {
         match loc {
             Location::StackSlot(n) => {
-                VariableRef::new_local_idx(locals.get_or_intern(&numbered("stack", *n)))
+                VariableRef::new_local_idx(locals.get_or_intern_numbered("stack", *n))
             }
             Location::StackInput(_) | Location::StackOutput => {
                 VariableRef::new_local_idx(locals.get_or_intern("Stack Local?"))
             }
             Location::Register(n) => {
-                VariableRef::new_local_idx(locals.get_or_intern(&numbered("reg", (*n).into())))
+                VariableRef::new_local_idx(locals.get_or_intern_numbered("reg", (*n).into()))
             }
             Location::Parameter(n) => VariableRef::new_parameter((*n).into()),
             Location::FieldRef(_) => {
@@ -1599,42 +1599,5 @@ impl Context {
             Location::ArrayElement { base, .. } => self.convert_location_to_var_ref(base, locals),
             _ => VariableRef::new_local_idx(locals.get_or_intern("unknownLocationType")),
         }
-    }
-}
-
-/// The local name `prefix` followed by `n` in decimal (`stack3`), built on the stack: a name is
-/// looked up for every operand of every instruction, so each in a `String` of its own was an
-/// allocation per operand.
-fn numbered(prefix: &str, n: u32) -> NumberedName {
-    use std::fmt::Write;
-    let mut name = NumberedName {
-        buf: [0; 24],
-        len: 0,
-    };
-    write!(name, "{prefix}{n}").expect("a local's prefix and number fit");
-    name
-}
-
-struct NumberedName {
-    buf: [u8; 24],
-    len: usize,
-}
-
-impl std::fmt::Write for NumberedName {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let end = self.len + s.len();
-        self.buf
-            .get_mut(self.len..end)
-            .ok_or(std::fmt::Error)?
-            .copy_from_slice(s.as_bytes());
-        self.len = end;
-        Ok(())
-    }
-}
-
-impl std::ops::Deref for NumberedName {
-    type Target = str;
-    fn deref(&self) -> &str {
-        std::str::from_utf8(&self.buf[..self.len]).expect("built from strs")
     }
 }
