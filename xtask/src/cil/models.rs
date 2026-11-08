@@ -551,9 +551,12 @@ fn program(rows: &[Row]) -> ProgramInfo {
             b.create_call(
                 CallStyle::CilCall {
                     receiver: recv.clone(),
-                    cls: r.cls.as_str().into(),
-                    simple_name: r.simple.as_deref().unwrap_or_default().into(),
-                    descriptor: r.desc.as_deref().unwrap_or_default().into(),
+                    method: ctadl_ir::cir::CilMethodRef {
+                        cls: r.cls.as_str().into(),
+                        simple_name: r.simple.as_deref().unwrap_or_default().into(),
+                        descriptor: r.desc.as_deref().unwrap_or_default().into(),
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),

@@ -40,6 +40,7 @@
 use cil_reader::model::{MethodDef, MethodSig, TypeDef};
 use cil_reader::token::MetadataToken;
 use cil_reader::{Entity, Module};
+use std::sync::Arc;
 
 use ctadl_ir::ParameterType;
 
@@ -134,17 +135,25 @@ impl<'c> Found<'c> {
             .collect()
     }
 
-    /// The type's virtual methods.
-    pub fn virtual_methods(&self, namer: &Namer<'c, '_>) -> Vec<VirtualMethod> {
-        let names = ModNames::new(self.module, namer);
-        let Ok(methods) = self.td.methods() else {
-            return Vec::new();
-        };
-        methods
-            .iter()
-            .filter(|m| m.is_virtual().unwrap_or(false))
-            .filter_map(|m| virtual_method(&names, m, self.args.as_deref()))
-            .collect()
+    /// The type's virtual methods. Remembered by the namer: a base type's are asked for again
+    /// for every type derived from it.
+    pub fn virtual_methods(&self, namer: &Namer<'c, '_>) -> Arc<[VirtualMethod]> {
+        let key = (
+            std::ptr::from_ref(self.module) as usize,
+            self.td.rid(),
+            self.args.clone(),
+        );
+        namer.virtual_methods(key, || {
+            let names = ModNames::new(self.module, namer);
+            let Ok(methods) = self.td.methods() else {
+                return Arc::from([]);
+            };
+            methods
+                .iter()
+                .filter(|m| m.is_virtual().unwrap_or(false))
+                .filter_map(|m| virtual_method(&names, m, self.args.as_deref()))
+                .collect()
+        })
     }
 
     pub fn is_sealed(&self) -> bool {
@@ -165,10 +174,10 @@ impl<'c> Found<'c> {
             let t = current?;
             if let Some(m) = t
                 .virtual_methods(namer)
-                .into_iter()
+                .iter()
                 .find(|m| m.name == name && m.inst_desc == inst_desc && !m.is_abstract)
             {
-                return Some(m);
+                return Some(m.clone());
             }
             current = t.base(namer);
         }
@@ -286,7 +295,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
             }
         }
     }
-    let chain_methods: Vec<Vec<VirtualMethod>> =
+    let chain_methods: Vec<Arc<[VirtualMethod]>> =
         chain.iter().map(|b| b.virtual_methods(namer)).collect();
     for m in own.iter().filter(|m| !m.newslot) {
         for methods in &chain_methods {
@@ -334,7 +343,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
         }
         seen.push(id);
         queue.extend(iface.interfaces(namer));
-        for b in iface.virtual_methods(namer) {
+        for b in iface.virtual_methods(namer).iter() {
             if explicit.contains(&(b.simple.clone(), b.own_desc.clone())) {
                 continue;
             }
@@ -342,7 +351,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
                 .iter()
                 .find(|m| m.name == b.name && m.inst_desc == b.inst_desc && !m.is_abstract)
             {
-                rows.push(alias(&b, m));
+                rows.push(alias(b, m));
             }
         }
     }

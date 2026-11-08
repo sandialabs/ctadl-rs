@@ -37,10 +37,9 @@ pub fn write_tables(
 pub fn read_tables(
     r: &mut impl Read,
 ) -> std::io::Result<(ArtifactTable, FileTable, SpanTable, FileSpanTable)> {
-    let (art_tree, file_tree, span_tree, fspan_tree) = crate::db::open_session_trees();
-    let artifacts = artifact::read_artifact_table(r, art_tree)?;
-    let files = file::read_file_table(r, file_tree)?;
-    let span_table = file_span::read_span_table(r, span_tree)?;
-    let spans = file_span::read_file_span_table(r, fspan_tree)?;
+    let artifacts = artifact::read_artifact_table(r)?;
+    let files = file::read_file_table(r)?;
+    let span_table = file_span::read_span_table(r)?;
+    let spans = file_span::read_file_span_table(r)?;
     Ok((artifacts, files, span_table, spans))
 }

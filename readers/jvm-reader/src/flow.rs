@@ -252,7 +252,6 @@ pub fn compute_basic_blocks_for_method<'a>(
 
     let mut instructions = Vec::new();
     let mut ctrl = Vec::new();
-    let mut pc_to_instr_index: HashMap<u32, usize> = HashMap::new();
 
     let mut pc: usize = 0;
     while pc < code_len {
@@ -336,8 +335,6 @@ pub fn compute_basic_blocks_for_method<'a>(
             _ => next_pc < code_len,
         };
 
-        let instr_index = instructions.len();
-        pc_to_instr_index.insert(this_pc_u32, instr_index);
         instructions.push(info);
         ctrl.push(InstrCtrl {
             pc: this_pc_u32,

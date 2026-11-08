@@ -478,7 +478,7 @@ fn verify_rejects_call_result_into_global() {
 fn verify_rejects_phi_over_global() {
     let prog = program_with(vec![StatementKind::Phi {
         dest: p0().with_version(1),
-        operands: smallvec![(BasicBlockIdx::START_BLOCK, g())],
+        operands: thin_vec::thin_vec![(BasicBlockIdx::START_BLOCK, g())],
     }]);
     let errs = errors_of(&prog);
     assert!(

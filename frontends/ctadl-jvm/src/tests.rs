@@ -444,3 +444,56 @@ fn a_static_field_is_a_field_of_its_class_global() {
         [0x00, 0x21, 0x00, 0x02, 0x00, 0x04]
     );
 }
+
+/// Writes a jar of `(entry name, class file)` pairs to `path`.
+fn write_jar(path: &std::path::Path, entries: &[(&str, Vec<u8>)]) {
+    use std::io::Write;
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(path).expect("create jar"));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, contents) in entries {
+        writer.start_file(*name, options).unwrap();
+        writer.write_all(contents).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// The names of the functions of a jar's import.
+fn function_names(path: &std::path::Path) -> Vec<String> {
+    let info = super::import_jar(path).expect("the jar imports");
+    info.program
+        .functions
+        .iter()
+        .map(|f| f.name.clone())
+        .collect()
+}
+
+/// A jar that defines a class twice imports one definition: the first entry's, unless that is a
+/// multi-release overlay and a base entry defines the class too.
+#[test]
+fn class_defined_twice_imports_one_definition() {
+    let ret = [0xb1];
+    let first = class_with_methods(&[("first", "()V", &ret)]);
+    let second = class_with_methods(&[("second", "()V", &ret)]);
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let path = dir.path().join("fat.jar");
+    write_jar(
+        &path,
+        &[
+            ("a/Demo.class", first.clone()),
+            ("b/Demo.class", second.clone()),
+        ],
+    );
+    assert_eq!(function_names(&path), ["LDemo;->first()V"]);
+
+    let path = dir.path().join("multi-release.jar");
+    write_jar(
+        &path,
+        &[
+            ("META-INF/versions/9/Demo.class", first),
+            ("Demo.class", second),
+        ],
+    );
+    assert_eq!(function_names(&path), ["LDemo;->second()V"]);
+}

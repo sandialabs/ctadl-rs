@@ -478,8 +478,8 @@ mod dispatch {
     use super::*;
     use crate::models::match_index::DispatchKeys;
     use ctadl_ir::cir::call::{
-        CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
-        VirtualMethodTable,
+        CallStyle, CilMethodRef, JavaClass, JavaDispatch, JavaMethod, JavaMethodRef, JavaSignature,
+        JavaSimpleName, VirtualMethodTable,
     };
     use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, Program, Statement, StatementKind, VariableRef,
@@ -504,11 +504,14 @@ mod dispatch {
                 b.create_call(
                     CallStyle::JavaCall {
                         receiver: x.clone(),
-                        cls: (*cls).into(),
-                        simple_name: (*name).into(),
-                        descriptor: (*desc).into(),
-                        dispatch: JavaDispatch::Interface,
-                        super_start: None,
+                        method: JavaMethodRef {
+                            cls: (*cls).into(),
+                            simple_name: (*name).into(),
+                            descriptor: (*desc).into(),
+                            dispatch: JavaDispatch::Interface,
+                            super_start: None,
+                        }
+                        .into(),
                     },
                     Vec::new(),
                     Vec::new(),
@@ -626,9 +629,12 @@ mod dispatch {
             b.create_call(
                 CallStyle::CilCall {
                     receiver: x,
-                    cls: CLS.into(),
-                    simple_name: "ToString".into(),
-                    descriptor: DESC.into(),
+                    method: CilMethodRef {
+                        cls: CLS.into(),
+                        simple_name: "ToString".into(),
+                        descriptor: DESC.into(),
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),

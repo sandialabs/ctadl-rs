@@ -77,6 +77,13 @@ An APK also imports the native libraries packaged in it (`--no-native-libs`, `--
 control). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project
 (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). 
 
+An import runs on as many threads as there are cores, up to 16; `-j N` sets the count. What
+ctadl itself produces does not depend on it: lowering gives the same bytes on any number of
+threads. Ghidra's disassembly of native code can differ with the number of threads it gets.
+An APK's native libraries and a bundle's splits are imported several at a time, within the
+core count and a memory budget, by default half the machine's RAM; set `CTADL_IMPORT_MEMORY`
+(e.g. `48G`) to change it.
+
 ### The JNI bridge
 
 A Java `native` method has no body, and nothing names the function implementing it. Whenever a

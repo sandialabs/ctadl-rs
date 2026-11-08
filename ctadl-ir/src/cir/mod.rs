@@ -108,11 +108,11 @@ parameters, and instructions.
 
 */
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::{fmt, fmt::Display};
 
 use internment::ArcIntern;
-use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
 use crate::cir::call::VirtualMethodTable;
@@ -120,7 +120,8 @@ pub use crate::cir::terminator::{Terminator, TerminatorKind};
 use crate::cir::visit::Visitor;
 pub use crate::cir::{
     basic_blocks::BasicBlocks,
-    call::{CallEdges, CallObject, CallStyle},
+    call::{CallEdges, CallObject, CallStyle, CilMethodRef, JavaMethodRef},
+    sources::Sources,
     verify::{CirVerify, VerifyError, VerifyErrors},
 };
 use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
@@ -139,6 +140,7 @@ pub mod encode;
 pub mod path;
 pub mod path_syntax;
 pub mod pos;
+mod sources;
 mod terminator;
 mod verify;
 pub mod visit;
@@ -278,10 +280,7 @@ pub enum StatementKind {
     ///
     /// The destination is never an address: [`StatementKind::assign`] rewrites `p.[k] = e` into
     /// `p = e.[-k]` (S5), and [`CirVerify`] rejects an address destination.
-    Assign {
-        dest: AccessPath,
-        sources: SmallVec<[Exp; 2]>,
-    },
+    Assign { dest: AccessPath, sources: Sources },
 
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
     /// Multiple values may be returned. Call handling is complex, depending on a number
@@ -297,7 +296,7 @@ pub enum StatementKind {
     /// predecessor blocks.
     Phi {
         dest: VariableRef,
-        operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
+        operands: ThinVec<(BasicBlockIdx, VariableRef)>,
     },
 
     /// No operation
@@ -312,6 +311,12 @@ pub struct Statement {
     pub source_info: SourceInfo,
     pub kind: StatementKind,
 }
+
+// Statements are a large share of a program's memory, at import and at indexing. A field that
+// grows one of the variants past this belongs behind a pointer, as the call styles' method refs
+// and `Sources`' many-source case are.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Statement>() <= 72);
 
 /// Source info attached to specific elements of the IR
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -481,8 +486,12 @@ pub struct LocalDecl {
 pub struct Locals {
     decls: IndexVec<LocalIdx, LocalDecl>,
     /// Transient name→index map used only during interning; rebuilt on demand after deserialize.
+    /// It holds indices into `decls` and hashes the names stored there, rather than a second
+    /// copy of every name: a program holds one table per function.
     #[cfg_attr(feature = "serde", serde(skip))]
-    by_name: HashMap<String, LocalIdx>,
+    by_name: hashbrown::HashTable<LocalIdx>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    hasher: hashbrown::DefaultHashBuilder,
 }
 
 impl Locals {
@@ -495,14 +504,34 @@ impl Locals {
         if self.by_name.is_empty() && !self.decls.is_empty() {
             self.rebuild_index();
         }
-        if let Some(&idx) = self.by_name.get(name) {
+        let Locals {
+            decls,
+            by_name,
+            hasher,
+        } = self;
+        let hash = hasher.hash_one(name);
+        if let Some(&idx) = by_name.find(hash, |&i| decls[i].name == name) {
             return idx;
         }
-        let idx = self.decls.push(LocalDecl {
+        let idx = decls.push(LocalDecl {
             name: name.to_string(),
         });
-        self.by_name.insert(name.to_string(), idx);
+        by_name.insert_unique(hash, idx, |&i| hasher.hash_one(decls[i].name.as_str()));
         idx
+    }
+
+    /// [`Self::get_or_intern`] for the name `prefix` followed by `n` in decimal (`v3`, `stack12`),
+    /// built on the stack rather than allocated.
+    pub fn get_or_intern_numbered(&mut self, prefix: &str, n: u32) -> LocalIdx {
+        use std::fmt::Write;
+        let mut name = StackName {
+            buf: [0; 32],
+            len: 0,
+        };
+        match write!(name, "{prefix}{n}") {
+            Ok(()) => self.get_or_intern(name.as_str()),
+            Err(_) => self.get_or_intern(&format!("{prefix}{n}")),
+        }
     }
 
     /// The source name of the local at `i`.
@@ -539,10 +568,52 @@ impl Locals {
     /// this itself when it finds an unindexed table (the map is `#[serde(skip)]`, so a
     /// deserialized table has none), so callers only need it to pre-warm the map.
     pub fn rebuild_index(&mut self) {
-        self.by_name.clear();
-        for (idx, decl) in self.decls.iter_enumerated() {
-            self.by_name.entry(decl.name.clone()).or_insert(idx);
+        let Locals {
+            decls,
+            by_name,
+            hasher,
+        } = self;
+        by_name.clear();
+        for (idx, decl) in decls.iter_enumerated() {
+            let hash = hasher.hash_one(decl.name.as_str());
+            // The first declaration of a name wins, as interning would have given it.
+            if by_name
+                .find(hash, |&i| decls[i].name == decl.name)
+                .is_none()
+            {
+                by_name.insert_unique(hash, idx, |&i| hasher.hash_one(decls[i].name.as_str()));
+            }
         }
+    }
+
+    /// Frees the name index. A finished function is only read, and [`Self::get_or_intern`]
+    /// rebuilds the index if the table is ever extended again.
+    pub fn drop_index(&mut self) {
+        self.by_name = Default::default();
+    }
+}
+
+/// A short name written into a fixed buffer; see [`Locals::get_or_intern_numbered`].
+struct StackName {
+    buf: [u8; 32],
+    len: usize,
+}
+
+impl StackName {
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len]).expect("written from strs")
+    }
+}
+
+impl std::fmt::Write for StackName {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        self.buf
+            .get_mut(self.len..end)
+            .ok_or(std::fmt::Error)?
+            .copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
     }
 }
 
@@ -1327,7 +1398,7 @@ impl StatementKind {
         I: IntoIterator<Item = Exp>,
     {
         let dest = dest.into();
-        let sources: SmallVec<[Exp; 2]> = srcs.into_iter().collect();
+        let sources: Sources = srcs.into_iter().collect();
         let (dest, sources) = rewrite_address_dest(dest, sources);
         StatementKind::Assign { dest, sources }
     }
@@ -1468,10 +1539,7 @@ pub fn read_into_temp(
 /// The S5 rewrite of an address destination: `p.[k] = e` is `p = e.[-k]`. A source access path
 /// gains the offset `[-k]`; a value source and a constant are unchanged, since
 /// `p.[k].#value = p.#value` and an address's labels are its base's (S3).
-fn rewrite_address_dest(
-    dest: AccessPath,
-    mut sources: SmallVec<[Exp; 2]>,
-) -> (AccessPath, SmallVec<[Exp; 2]>) {
+fn rewrite_address_dest(dest: AccessPath, mut sources: Sources) -> (AccessPath, Sources) {
     let AccessPath { base, segments } = dest;
     let segments = path::normalize(segments);
     let Some(PathSegment::Offset(_)) = segments.last() else {
@@ -1618,9 +1686,37 @@ impl Program {
     /// Verify that the CTADL IR program satisfies expected invariants. See the description of each
     /// error in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
+        if self.verifies_in_parallel() {
+            return Ok(());
+        }
+        // Something is wrong. Verify again on one thread, which reports exactly what is wrong, in
+        // order, with globals printed by name.
         let mut visitor = CirVerify::default();
         visitor.visit_program(self);
         visitor.take_error()
+    }
+
+    /// Whether [`Program::verify`] would find nothing wrong, checked on the rayon pool: each
+    /// function on its own, with the global count the program check uses, and the function
+    /// names for duplicates separately. A program the size of a large app takes seconds to
+    /// verify on one thread.
+    fn verifies_in_parallel(&self) -> bool {
+        use rayon::prelude::*;
+        let globals_len = self.globals.len();
+        let functions = &self.functions.functions.raw;
+        const CHUNK: usize = 256;
+        let bodies_ok = functions.par_chunks(CHUNK).enumerate().all(|(chunk, fs)| {
+            let mut visitor = CirVerify::for_globals(globals_len);
+            for (i, f) in fs.iter().enumerate() {
+                visitor.visit_function_data(FunctionIdx::new(chunk * CHUNK + i), f);
+            }
+            visitor.take_error().is_ok()
+        });
+        if !bodies_ok {
+            return false;
+        }
+        let mut names = hashbrown::HashSet::with_capacity(functions.len());
+        functions.iter().all(|f| names.insert(f.name.as_str()))
     }
 
     /// Verify a function. See the description of each error in the [`VerifyError`] enum.

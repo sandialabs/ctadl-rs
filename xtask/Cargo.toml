@@ -50,3 +50,5 @@ ctadl-import = { path = "../ctadl-import" }
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in
 # practice: dex-reader already builds `zip` to read APKs.
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# `Facts:*` cases read the gzipped fact tables a pcode import writes. Already built for zip.
+flate2 = "1"

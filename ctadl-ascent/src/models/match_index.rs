@@ -73,18 +73,12 @@ impl DispatchKeys {
                         continue;
                     };
                     let (cls, simple_name, descriptor, sep) = match style {
-                        CallStyle::JavaCall {
-                            cls,
-                            simple_name,
-                            descriptor,
-                            ..
-                        } => (cls, simple_name, descriptor, "->"),
-                        CallStyle::CilCall {
-                            cls,
-                            simple_name,
-                            descriptor,
-                            ..
-                        } => (cls, simple_name, descriptor, "::"),
+                        CallStyle::JavaCall { method, .. } => {
+                            (&method.cls, &method.simple_name, &method.descriptor, "->")
+                        }
+                        CallStyle::CilCall { method, .. } => {
+                            (&method.cls, &method.simple_name, &method.descriptor, "::")
+                        }
                         _ => continue,
                     };
                     keys.insert(

@@ -152,40 +152,30 @@ class DecompilerConfigurer implements DecompileConfigurer {
 
 }
 
+/**
+ * The tables this script writes: exactly the ones ctadl's pcode reader reads. Each is written
+ * to {@code <name>.facts}.
+ *
+ * Every entity id is built from small integers, which is most of what keeps the tables small:
+ * a function is its number (see {@link HighFunctionExporter#numberFunctions}), and a pcode op,
+ * varnode or basic block is that number, a colon, and a number Ghidra gives it within the
+ * function. {@code HFUNC_FUNC} and {@code VNODE_NAME} carry the readable names.
+ */
 enum PredicateFile {
-	LANGUAGE("CTADLLanguage"), HFUNC_LOCAL_EP("HFUNC_LOCAL_EP"), HFUNC_FUNC("HFUNC_FUNC"), HFUNC_TOSTR("HFUNC_TOSTR"),
-	HFUNC_PROTO("HFUNC_PROTO"), HFUNC_ISEP("HFUNC_ISEP"), HFUNC_ISEXT("HFUNC_ISEXT"), HFUNC_CSPEC("HFUNC_CSPEC"),
-	HFUNC_EP("HFUNC_EP"), HFUNC_LANG("HFUNC_LANG"), HFUNC_NAME("HFUNC_NAME"), HVAR_NAME("HVAR_NAME"),
-	HVAR_SIZE("HVAR_SIZE"), HVAR_CLASS("HVAR_CLASS"), HVAR_SCOPE("HVAR_SCOPE"), HVAR_TYPE("HVAR_TYPE"),
-	HVAR_REPRESENTATIVE("HVAR_REPRESENTATIVE"), PCODE_TOSTR("PCODE_TOSTR"), PCODE_MNEMONIC("PCODE_MNEMONIC"),
-	PCODE_OPCODE("PCODE_OPCODE"), PCODE_PARENT("PCODE_PARENT"), PCODE_TARGET("PCODE_TARGET"),
-	PCODE_INPUT_COUNT("PCODE_INPUT_COUNT"), PCODE_INPUT("PCODE_INPUT"), PCODE_OUTPUT("PCODE_OUTPUT"),
-	PCODE_NEXT("PCODE_NEXT"), PCODE_TIME("PCODE_TIME"), PCODE_INDEX("PCODE_INDEX"),
-	BB_PCODE_INDEX("BB_PCODE_INDEX"), VNODE_ADDRESS("VNODE_ADDRESS"),
-	VNODE_IS_ADDRESS("VNODE_IS_ADDRESS"), VNODE_IS_ADDRTIED("VNODE_IS_ADDRTIED"), VNODE_PC_ADDRESS("VNODE_PC_ADDRESS"),
-	VNODE_DESC("VNODE_DESC"), VNODE_OFFSET("VNODE_OFFSET"), VNODE_OFFSET_N("VNODE_OFFSET_N"), VNODE_SIZE("VNODE_SIZE"),
-	VNODE_NAME("VNODE_NAME"), VNODE_SPACE("VNODE_SPACE"), VNODE_TOSTR("VNODE_TOSTR"), VNODE_HVAR("VNODE_HVAR"),
-	VNODE_DEF("VNODE_DEF"), VNODE_HFUNC("VNODE_HFUNC"), REGISTER_OFF_NAME("REGISTER_OFF_NAME"), REGISTER_IS_SP("REGISTER_IS_SP"), TYPE_NAME("TYPE_NAME"), TYPE_LENGTH("TYPE_LENGTH"),
-	TYPE_POINTER("TYPE_POINTER"), TYPE_POINTER_BASE("TYPE_POINTER_BASE"), TYPE_ARRAY("TYPE_ARRAY"),
-	TYPE_ARRAY_BASE("TYPE_ARRAY_BASE"), TYPE_ARRAY_N("TYPE_ARRAY_N"),
-	TYPE_ARRAY_ELEMENT_LENGTH("TYPE_ARRAY_ELEMENT_LENGTH"), TYPE_STRUCT("TYPE_STRUCT"),
-	TYPE_STRUCT_FIELD("TYPE_STRUCT_FIELD"), TYPE_STRUCT_OFFSET("TYPE_STRUCT_OFFSET"),
-	TYPE_STRUCT_OFFSET_N("TYPE_STRUCT_OFFSET_N"), TYPE_STRUCT_FIELD_NAME("TYPE_STRUCT_FIELD_NAME"),
-	TYPE_STRUCT_FIELD_NAME_BY_OFFSET("TYPE_STRUCT_FIELD_NAME_BY_OFFSET"),
-	TYPE_STRUCT_FIELD_COUNT("TYPE_STRUCT_FIELD_COUNT"), TYPE_UNION("TYPE_UNION"), TYPE_UNION_FIELD("TYPE_UNION_FIELD"),
-	TYPE_UNION_OFFSET("TYPE_UNION_OFFSET"), TYPE_UNION_OFFSET_N("TYPE_UNION_OFFSET_N"),
-	TYPE_UNION_FIELD_NAME("TYPE_UNION_FIELD_NAME"), TYPE_UNION_FIELD_NAME_BY_OFFSET("TYPE_UNION_FIELD_NAME_BY_OFFSET"),
-	TYPE_UNION_FIELD_COUNT("TYPE_UNION_FIELD_COUNT"), TYPE_FUNC("TYPE_FUNC"), TYPE_FUNC_RET("TYPE_FUNC_RET"),
-	TYPE_FUNC_VARARGS("TYPE_FUNC_VARARGS"), TYPE_FUNC_PARAM_COUNT("TYPE_FUNC_PARAM_COUNT"),
-	TYPE_FUNC_PARAM("TYPE_FUNC_PARAM"), TYPE_BOOLEAN("TYPE_BOOLEAN"), TYPE_INTEGER("TYPE_INTEGER"),
-	TYPE_FLOAT("TYPE_FLOAT"), TYPE_ENUM("TYPE_ENUM"), BB_IN("BB_IN"), BB_LAST("BB_LAST"), BB_OUT("BB_OUT"),
-	BB_FOUT("BB_FOUT"), BB_TOUT("BB_TOUT"), BB_FIRST("BB_FIRST"), BB_HFUNC("BB_HFUNC"), BB_START("BB_START"),
-	PROTO_IS_CONSTRUCTOR("PROTO_IS_CONSTRUCTOR"), PROTO_IS_DESTRUCTOR("PROTO_IS_DESTRUCTOR"),
-	PROTO_IS_VARARG("PROTO_IS_VARARG"), PROTO_IS_INLINE("PROTO_IS_INLINE"), PROTO_IS_VOID("PROTO_IS_VOID"),
-	PROTO_HAS_THIS("PROTO_HAS_THIS"), PROTO_CALLING_CONVENTION("PROTO_CALLING_CONVENTION"),
-	PROTO_RETTYPE("PROTO_RETTYPE"), PROTO_PARAMETER("PROTO_PARAMETER"), PROTO_PARAMETER_COUNT("PROTO_PARAMETER_COUNT"),
-	PROTO_PARAMETER_DATATYPE("PROTO_PARAMETER_DATATYPE"), SYMBOL_HVAR("SYMBOL_HVAR"), SYMBOL_HFUNC("SYMBOL_HFUNC"),
-	DATA_STRING("DATA_STRING"), VTABLE("VTABLE"), SYMBOL_NAME("SYMBOL_NAME"), PROGRAM_FILE("PROGRAM_FILE"), PROGRAM_IMAGE_BASE("PROGRAM_IMAGE_BASE"), OFFSET_INDEX("OFFSET_INDEX"), SPACE_OFFSET("SPACE_OFFSET");
+	FACTS_VERSION("FACTS_VERSION"), HFUNC_LOCAL_EP("HFUNC_LOCAL_EP"), HFUNC_FUNC("HFUNC_FUNC"),
+	HFUNC_PROTO("HFUNC_PROTO"), HFUNC_ISEXT("HFUNC_ISEXT"), HFUNC_EP("HFUNC_EP"), HFUNC_NAME("HFUNC_NAME"),
+	HVAR_CLASS("HVAR_CLASS"), HVAR_TYPE("HVAR_TYPE"), HVAR_REPRESENTATIVE("HVAR_REPRESENTATIVE"),
+	PCODE_MNEMONIC("PCODE_MNEMONIC"), PCODE_PARENT("PCODE_PARENT"), PCODE_TARGET("PCODE_TARGET"),
+	PCODE_INPUT("PCODE_INPUT"), PCODE_OUTPUT("PCODE_OUTPUT"), BB_PCODE_INDEX("BB_PCODE_INDEX"),
+	VNODE_ADDRESS("VNODE_ADDRESS"), VNODE_OFFSET_N("VNODE_OFFSET_N"), VNODE_SIZE("VNODE_SIZE"),
+	VNODE_NAME("VNODE_NAME"), VNODE_SPACE("VNODE_SPACE"), VNODE_HVAR("VNODE_HVAR"),
+	REGISTER_OFF_NAME("REGISTER_OFF_NAME"), REGISTER_IS_SP("REGISTER_IS_SP"), TYPE_POINTER("TYPE_POINTER"),
+	TYPE_BOOLEAN("TYPE_BOOLEAN"), TYPE_INTEGER("TYPE_INTEGER"), TYPE_FLOAT("TYPE_FLOAT"), TYPE_ENUM("TYPE_ENUM"),
+	BB_LAST("BB_LAST"), BB_OUT("BB_OUT"), BB_FOUT("BB_FOUT"), BB_TOUT("BB_TOUT"),
+	BB_FIRST("BB_FIRST"), BB_HFUNC("BB_HFUNC"), BB_START("BB_START"), PROTO_IS_VARARG("PROTO_IS_VARARG"),
+	PROTO_IS_VOID("PROTO_IS_VOID"), PROTO_RETTYPE("PROTO_RETTYPE"), PROTO_PARAMETER("PROTO_PARAMETER"),
+	PROTO_PARAMETER_COUNT("PROTO_PARAMETER_COUNT"), SYMBOL_HVAR("SYMBOL_HVAR"),
+	PROGRAM_IMAGE_BASE("PROGRAM_IMAGE_BASE");
 
 	private final String name;
 
@@ -332,44 +322,44 @@ class Database {
 }
 
 
-class ItemCounter {
-    private final ConcurrentHashMap<String, Integer> seenItems = new ConcurrentHashMap<>();
-    private final AtomicInteger counter = new AtomicInteger(3);
-
-    public int getUniqueNumber(String item) {
-        return seenItems.computeIfAbsent(item, key -> counter.incrementAndGet());
-    }
-}
-
 class HighFunctionExporter {
+	/**
+	 * The version of the tables' format, written to {@code FACTS_VERSION}. ctadl reads only
+	 * tables of the version it expects, so raise it whenever a table changes meaning.
+	 */
+	static final String FACTS_VERSION = "3";
+
 	private final Database db = new Database();
 	private final Set<String> types = new HashSet<String>();
 	private Set<String> varnodes = new HashSet<String>();
-	private ItemCounter offsets = new ItemCounter();
-	private final HashMap<String, PredicateFile> componentPredicates = new HashMap<String, PredicateFile>();
 	private Map<HighVariable, VarnodeAST> extraGlobals = new HashMap<HighVariable, VarnodeAST>();
-	private final Writer debug;
 	private final String directory;
-	private final Set<Address> vtables = new HashSet<Address>();
+	/** Each function's number, its id in the tables. See {@link #numberFunctions}. */
+	private final Map<Address, Integer> functionNumbers = new HashMap<Address, Integer>();
 
 	String SEP = ":";
-	String TAB = "\t";
-	String QUOTE = "\"";
 
 	public HighFunctionExporter(String directory) throws IOException {
 		this.directory = directory;
-		for (PredicateFile pf : PredicateFile.values()) {
-			componentPredicates.put(pf.toString(), pf);
+	}
+
+	/**
+	 * Numbers {@code functions} in order of entry point, so that a function's id is the same
+	 * whatever order the decompiler finishes functions in.
+	 */
+	public void numberFunctions(Collection<Function> functions) {
+		List<Address> entries = new ArrayList<Address>();
+		for (Function f : functions) {
+			entries.add(f.getEntryPoint());
 		}
-		debug = new BufferedWriter(new FileWriter(new File(directory, "PcodeOps.facts")));
+		Collections.sort(entries);
+		for (Address entry : entries) {
+			functionNumbers.putIfAbsent(entry, functionNumbers.size());
+		}
 	}
 
 	public void writeFacts(boolean writeAll) throws IOException {
 		db.writeFacts(directory, writeAll);
-	}
-
-	public void writeDebug() throws IOException {
-		debug.close();
 	}
 
 	public Database getDatabase() {
@@ -401,7 +391,6 @@ class HighFunctionExporter {
 			}
 		}
 		HighFunction high = getHighFunction(res, f, decompiler);
-		debug("Starting function " + high.getFunction().getName());
 
 		// we want to make sure the pcode indexes are in source order.
 		// we accomplish this by sorting the basic blocks topologically.
@@ -423,112 +412,26 @@ class HighFunctionExporter {
 
 		HashSet<PcodeOp> set = new HashSet<PcodeOp>();
 		HashSet<Integer> bbset = new HashSet<Integer>();
-		int index = 0;
 		for (PcodeBlockBasicVertex v : DepthFirstSorter.preOrder(g)) {
 			PcodeBlockBasic bb = v.bb();
 			if (bbset.contains(bb.getIndex())) {
 				continue;
 			}
 			bbset.add(bb.getIndex());
-			debug("Starting basic block " + bb.getIndex());
 			int bbIndex = 0;
 			Iterator<PcodeOp> opiter = bb.getIterator();
 			while (opiter.hasNext()) {
 				PcodeOp op = opiter.next();
 				if (op != null) {
 					set.add(op);
-					exportPcode(high, index++, op);
+					exportPcode(high, op);
 					exportN(PredicateFile.BB_PCODE_INDEX, bbID(high, bb), bbIndex++, pcodeID(high, op));
 				}
 			}
-			debug("End basic block " + bb.getIndex());
 		}
 
 		exportPcodeOpSequence(high, set);
 		exportHighFunction(high);
-		debug("End function " + high.getFunction().getName());
-	}
-
-	private BigInteger readInteger(Program program, Address addr, int size) {
-		try {
-			byte[] dest = new byte[size];
-			program.getMemory().getBytes(addr, dest, 0, size);
-			if (!program.getLanguage().isBigEndian()) {
-				reverseBytes(dest);
-			}
-			return new BigInteger(dest);
-		} catch (MemoryAccessException e) {
-			debug("MemoryAccessException, skipping: " + e);
-			return BigInteger.ZERO;
-		}
-	}
-
-	private void reverseBytes(byte[] arr) {
-		for (int i = 0; i < arr.length / 2; i++) {
-			byte tmp = arr[i];
-			arr[i] = arr[arr.length - i - 1];
-			arr[arr.length - i - 1] = tmp;
-		}
-	}
-
-	public void processVTable(Program program, Symbol sym) {
-		StringBuilder className = new StringBuilder();
-		for (String s : sym.getPath()) {
-			className.append("::" + s);
-		}
-		Address addr = sym.getAddress();
-		if (program.getMemory().getBlock(addr).isExternalBlock())
-			return;
-		AddressFactory addrFactory = program.getAddressFactory();
-		int ptrBytes = program.getAddressFactory().getDefaultAddressSpace().getSize() / 8;
-
-		// Skip the first two pointers (class offset, type info) to get to the
-		// function pointer table
-		addr = addr.add(ptrBytes);
-		addr = addr.add(ptrBytes);
-		Address tableAddr = addr;
-
-		// Reads function pointer table
-		int funOffset = 0;
-		BigInteger funPtrInt;
-		Address funPtrAddr;
-		while (true) {
-			// Breaks if we hit another vtable (vtables is never populated)
-			if (vtables.contains(addr))
-				break;
-
-			// read next function pointer
-			funPtrInt = readInteger(program, addr, ptrBytes);
-			funPtrAddr = addrFactory.getAddress(addrFactory.getDefaultAddressSpace().getSpaceID(),
-					funPtrInt.longValue());
-
-			// The table ends when one of two things is true:
-			// 1. Reading a zero
-			if (funPtrInt.signum() == 0)
-				break;
-
-			export(PredicateFile.VTABLE, className.toString(), addressString(tableAddr),
-					Integer.toString(funOffset * ptrBytes), funPtrInt.toString());
-
-			// 2. if next block is different from ours, break
-			if (program.getMemory().getBlock(funPtrAddr) == null
-					|| program.getMemory().getBlock(funPtrAddr.add(ptrBytes)) == null)
-				break;
-			if (!program.getMemory().getBlock(funPtrAddr)
-					.equals(program.getMemory().getBlock(funPtrAddr.add(ptrBytes))))
-				break;
-
-			addr = addr.add(ptrBytes);
-			funOffset++;
-		}
-	}
-
-	public void processVTables(Program program) {
-		SymbolIterator vtableSymbols = program.getSymbolTable().getSymbols("vtable");
-		while (vtableSymbols.hasNext()) {
-			Symbol sym = vtableSymbols.next();
-			processVTable(program, sym);
-		}
 	}
 
 	private HighFunction getHighFunction(DecompileResults res, Function func, DecompInterface decompiler) {
@@ -561,15 +464,6 @@ class HighFunctionExporter {
 		db.add(pfile, key, val1, val2);
 	}
 
-	@SuppressWarnings("unused")
-	private void export(PredicateFile pfile, String key, String val1, String val2, String val3) {
-		db.add(pfile, key, val1, val2, val3);
-	}
-
-	private void exportL(PredicateFile pfile, String key, long value) {
-		db.add(pfile, key, Long.toString(value));
-	}
-
 	private void exportN(PredicateFile label, String key, int index, String value) {
 		if (value.equals("")) {
 			db.add(label, key, Integer.toString(index));
@@ -578,26 +472,11 @@ class HighFunctionExporter {
 		}
 	}
 
-	private void exportNL(PredicateFile label, String key, int index, long value) {
-		db.add(label, key, Integer.toString(index), Long.toString(value));
-	}
-
-	private void exportPcode(HighFunction hfn, int index, PcodeOp op) {
-		debug("<" + pcodeID(hfn, op) + "> [index: " + Integer.toString(index) + "]: " + op.toString());
-		SequenceNumber sn = op.getSeqnum();
-		String outstr = op.toString();
+	private void exportPcode(HighFunction hfn, PcodeOp op) {
 		String id = pcodeID(hfn, op);
-		if (sn != null) {
-			outstr = sn.getTarget() + SEP + String.valueOf(index) + SEP + sn.getTime();
-			export(PredicateFile.PCODE_TIME, id, Integer.toString(sn.getTime()));
-		}
-		export(PredicateFile.PCODE_INDEX, id, String.valueOf(index));
-		export(PredicateFile.PCODE_TOSTR, id, funcID(hfn.getFunction()) + SEP + outstr);
 		export(PredicateFile.PCODE_MNEMONIC, id, op.getMnemonic());
-		export(PredicateFile.PCODE_OPCODE, id, Integer.toString(op.getOpcode()));
 		export(PredicateFile.PCODE_PARENT, id, bbID(hfn, op.getParent()));
 		export(PredicateFile.PCODE_TARGET, id, addressString(op.getSeqnum().getTarget()));
-		exportN(PredicateFile.PCODE_INPUT_COUNT, id, op.getNumInputs(), "");
 		for (int i = 0; i < op.getNumInputs(); ++i) {
 			VarnodeAST vni = (VarnodeAST) op.getInput(i);
 			if (vni != null) {
@@ -614,14 +493,12 @@ class HighFunctionExporter {
 				}
 				exportN(PredicateFile.PCODE_INPUT, id, i, vnodeID(hfn, vni));
 				exportVarnode(hfn, vni);
-				debug("  input " + i + ": " + vnodeID(hfn, vni));
 			}
 		}
 		VarnodeAST vno = (VarnodeAST) op.getOutput();
 		if (vno != null) {
 			export(PredicateFile.PCODE_OUTPUT, id, vnodeID(hfn, vno));
 			exportVarnode(hfn, vno);
-			debug("  output: " + vnodeID(hfn, vno));
 		}
 	}
 
@@ -629,57 +506,39 @@ class HighFunctionExporter {
 		String id = vnodeID(hfn, vn);
 		if (!varnodes.add(id))
 			return;
+		HighVariable hv = vn.getHigh();
+		// The varnode's readable name, without its function: its high variable's name and its
+		// number. Taken before anything below can change the high variable's name.
+		String name = Integer.toString(vn.getUniqueId());
+		if (hv != null) {
+			name = hvarName(hfn, hv) + SEP + name;
+		}
+		export(PredicateFile.VNODE_NAME, id, name);
 		export(PredicateFile.VNODE_ADDRESS, id, addressString(vn.getAddress()));
-		if (vn.isAddress()) {
-			export(PredicateFile.VNODE_IS_ADDRESS, id);
-		}
-		if (vn.isAddrTied()) {
-			export(PredicateFile.VNODE_IS_ADDRTIED, id);
-		}
-		export(PredicateFile.VNODE_PC_ADDRESS, id, addressString(vn.getPCAddress()));
-		export(PredicateFile.VNODE_DESC, id, vn.toString());
-		export(PredicateFile.VNODE_NAME, id, "vn" + String.valueOf(vn.getUniqueId()));
 		long offset = vn.getOffset();
-		export(PredicateFile.VNODE_OFFSET, id, Long.toHexString(offset));
-		exportL(PredicateFile.VNODE_OFFSET_N, id, offset);
-                export(PredicateFile.OFFSET_INDEX, String.valueOf(offset),
-                    String.valueOf(offsets.getUniqueNumber(String.valueOf(offset))));
+		export(PredicateFile.VNODE_OFFSET_N, id, Long.toString(offset));
 		export(PredicateFile.VNODE_SIZE, id, Integer.toString(vn.getSize()));
 		export(PredicateFile.VNODE_SPACE, id, vn.getAddress().getAddressSpace().getName());
-		export(PredicateFile.VNODE_HFUNC, id, hfuncID(hfn));
-		HighVariable hv = vn.getHigh();
-		if (hv == null) {
-			export(PredicateFile.VNODE_TOSTR, id,
-					funcID(hfn.getFunction()) + SEP + vn.getPCAddress().toString() + SEP + vn.toString());
-		} else {
+		if (hv != null) {
 			if (hv instanceof HighConstant && hv.getDataType() instanceof Pointer) {
 				if (offset != 0) {
 					extraGlobals.put(hv, vn);
 				}
 			}
-			export(PredicateFile.VNODE_TOSTR, id,
-					funcID(hfn.getFunction()) + SEP + vn.getPCAddress().toString() + SEP + hvarName(hfn, hv));
 			export(PredicateFile.VNODE_HVAR, id, hvarID(hfn, hv));
 			exportHighVariable(hfn, hv, true);
-		}
-		if (vn.getDef() != null) {
-			export(PredicateFile.VNODE_DEF, id, pcodeID(hfn, vn.getDef()));
 		}
 	}
 
 	private void exportHighVariable(HighFunction hfn, HighVariable hv, boolean dontDescend) {
 		String id = hvarID(hfn, hv);
-		export(PredicateFile.HVAR_NAME, id, hvarName(hfn, hv));
-		export(PredicateFile.HVAR_SIZE, id, Integer.toString(hv.getSize()));
+		// Naming it records whether it is a global named by its address's symbol.
+		hvarName(hfn, hv);
 		if (hv instanceof HighGlobal) {
 			export(PredicateFile.HVAR_CLASS, id, "global");
 		}
 		if (hv instanceof HighLocal) {
 			export(PredicateFile.HVAR_CLASS, id, "local");
-			Address pcAddress = ((HighLocal) hv).getPCAddress();
-			if (pcAddress != null) {
-				export(PredicateFile.HVAR_SCOPE, id, addressString(pcAddress));
-			}
 		}
 		if (hv instanceof HighConstant) {
 			export(PredicateFile.HVAR_CLASS, id, "constant");
@@ -693,9 +552,7 @@ class HighFunctionExporter {
 			exportType(dataType);
 		}
 		if (hv.getSymbol() != null) {
-			String hsid = hsID(hfn, hv.getSymbol());
-			export(PredicateFile.SYMBOL_HVAR, hsid, hvarID(hfn, hv));
-			export(PredicateFile.SYMBOL_NAME, hsid, hv.getSymbol().getName());
+			export(PredicateFile.SYMBOL_HVAR, hsID(hfn, hv.getSymbol()), id);
 		}
 		if (!dontDescend) {
 			VarnodeAST representative = (VarnodeAST) hv.getRepresentative();
@@ -710,65 +567,18 @@ class HighFunctionExporter {
 		}
 	}
 
+	/** Records whether the type `dataType` names, through its typedefs, is a pointer or scalar. */
 	private void exportType(DataType dataType) {
 		String id = dtID(dataType);
 		if (!types.add(id))
 			return;
 
-		export(PredicateFile.TYPE_NAME, id, id);
-		exportN(PredicateFile.TYPE_LENGTH, id, dataType.getLength(), "");
 		while (dataType instanceof TypeDef) {
 			TypeDef typedef = (TypeDef) dataType;
 			dataType = typedef.getBaseDataType();
 		}
 		if (dataType instanceof Pointer) {
 			export(PredicateFile.TYPE_POINTER, id);
-			DataType baseType = ((Pointer) dataType).getDataType();
-			if (baseType != null) {
-				export(PredicateFile.TYPE_POINTER_BASE, id, dtID(baseType));
-				exportType(baseType);
-			}
-		}
-		if (dataType instanceof Array) {
-			export(PredicateFile.TYPE_ARRAY, id);
-			Array arr = (Array) dataType;
-			export(PredicateFile.TYPE_ARRAY_BASE, id, dtID(arr.getDataType()));
-			exportN(PredicateFile.TYPE_ARRAY_N, id, arr.getNumElements(), "");
-			exportN(PredicateFile.TYPE_ARRAY_ELEMENT_LENGTH, id, arr.getElementLength(), "");
-			exportType(arr.getDataType());
-		}
-		if (dataType instanceof Structure) {
-			export(PredicateFile.TYPE_STRUCT, id);
-			Structure struct = (Structure) dataType;
-			exportN(PredicateFile.TYPE_STRUCT_FIELD_COUNT, id, struct.getNumComponents(), "");
-			for (int i = 0; i < struct.getNumComponents(); i++) {
-				DataTypeComponent dtc = struct.getComponent(i);
-				exportComponent("TYPE_STRUCT", id, i, dtc);
-			}
-		}
-		if (dataType instanceof Union) {
-			export(PredicateFile.TYPE_UNION, id);
-			Union union = (Union) dataType;
-			exportN(PredicateFile.TYPE_UNION_FIELD_COUNT, id, union.getNumComponents(), "");
-			for (int i = 0; i < union.getNumComponents(); i++) {
-				DataTypeComponent dtc = union.getComponent(i);
-				exportComponent("TYPE_UNION", id, i, dtc);
-			}
-		}
-		if (dataType instanceof FunctionDefinition) {
-			export(PredicateFile.TYPE_FUNC, id);
-			FunctionDefinition fd = (FunctionDefinition) dataType;
-			export(PredicateFile.TYPE_FUNC_RET, id, fd.getReturnType().toString());
-			exportType(fd.getReturnType());
-			if (fd.hasVarArgs()) {
-				export(PredicateFile.TYPE_FUNC_VARARGS, id);
-			}
-			ParameterDefinition[] arguments = fd.getArguments();
-			exportN(PredicateFile.TYPE_FUNC_PARAM_COUNT, id, arguments.length, "");
-			for (int i = 0; i < arguments.length; i++) {
-				exportN(PredicateFile.TYPE_FUNC_PARAM, id, i, arguments[i].toString());
-				exportType(arguments[i].getDataType());
-			}
 		}
 		if (dataType instanceof BooleanDataType) {
 			export(PredicateFile.TYPE_BOOLEAN, id);
@@ -784,27 +594,6 @@ class HighFunctionExporter {
 		}
 	}
 
-	private void exportComponent(String label, String id, int i, DataTypeComponent dtc) {
-		String dtcid = dtID(dtc.getDataType());
-		exportN(componentPredicates.get(label + "_FIELD"), id, i, dtcid);
-		exportNL(componentPredicates.get(label + "_OFFSET"), id, i, dtc.getOffset());
-		exportNL(componentPredicates.get(label + "_OFFSET_N"), id, i, dtc.getOffset());
-		if (dtc.getFieldName() != null && !dtc.getFieldName().isEmpty()) {
-			exportN(componentPredicates.get(label + "_FIELD_NAME"), id, i, dtc.getFieldName());
-			exportN(componentPredicates.get(label + "_FIELD_NAME_BY_OFFSET"), id, dtc.getOffset(), dtc.getFieldName());
-		}
-		exportType(dtc.getDataType());
-	}
-
-	boolean isString(String mnemonic) {
-		if (mnemonic.equals(new String("ds")) || mnemonic.equals(new String("unicode"))
-				|| mnemonic.equals(new String("p_unicode")) || mnemonic.equals(new String("p_string"))
-				|| mnemonic.equals(new String("p_string255")) || mnemonic.equals(new String("mbcs"))) {
-			return true;
-		}
-		return false;
-	}
-
 	private void exportHighFunction(HighFunction hfn) {
 		Function f = hfn.getFunction();
 
@@ -813,9 +602,6 @@ class HighFunctionExporter {
 			export(PredicateFile.BB_HFUNC, bbid, hfuncID(hfn));
 			if (bb.getStart() != null) {
 				export(PredicateFile.BB_START, bbid, addressString(bb.getStart()));
-			}
-			for (int i = 0; i < bb.getInSize(); i++) {
-				export(PredicateFile.BB_IN, bbid, bbID(hfn, bb.getIn(i)));
 			}
 			for (int i = 0; i < bb.getOutSize(); i++) {
 				export(PredicateFile.BB_OUT, bbid, bbID(hfn, bb.getOut(i)));
@@ -827,31 +613,25 @@ class HighFunctionExporter {
 		}
 		String id = hfuncID(hfn);
 		export(PredicateFile.HFUNC_NAME, id, hfn.getFunction().getName());
-		export(PredicateFile.HFUNC_FUNC, id, funcID(hfn.getFunction()));
-		export(PredicateFile.HFUNC_TOSTR, id, funcID(hfn.getFunction()));
-		export(PredicateFile.HFUNC_CSPEC, id, hfn.getCompilerSpec().toString());
-		export(PredicateFile.HFUNC_LANG, id, hfn.getLanguage().toString());
+		export(PredicateFile.HFUNC_FUNC, id, funcName(hfn.getFunction()));
 		export(PredicateFile.HFUNC_EP, id, addressString(hfn.getFunction().getEntryPoint()));
 		FunctionPrototype proto = hfn.getFunctionPrototype();
 		if (proto != null) {
-			export(PredicateFile.HFUNC_PROTO, id, funcID(hfn.getFunction()));
-			exportPrototype(hfn, proto, funcID(hfn.getFunction()));
+			// A function's prototype is identified by the function.
+			export(PredicateFile.HFUNC_PROTO, id, id);
+			exportPrototype(hfn, proto, id);
 		}
 		Function thunk = f.getThunkedFunction(false);
 		if (thunk != null && thunk.isExternal()) {
 			export(PredicateFile.HFUNC_ISEXT, id);
 		}
-		export(PredicateFile.HFUNC_ISEP, id);
 
 		Iterator<HighSymbol> symbols = hfn.getLocalSymbolMap().getSymbols();
 		while (symbols.hasNext()) {
 			HighSymbol hs = symbols.next();
-			String hsid = hsID(hfn, hs);
-			export(PredicateFile.SYMBOL_HFUNC, hsid, id);
-			export(PredicateFile.SYMBOL_NAME, hsid, hs.getName());
 			HighVariable hv = hs.getHighVariable();
 			if (hv != null) {
-				export(PredicateFile.SYMBOL_HVAR, hsid, hvarID(hfn, hv));
+				export(PredicateFile.SYMBOL_HVAR, hsID(hfn, hs), hvarID(hfn, hv));
 				exportHighVariable(hfn, hv, false);
 			}
 		}
@@ -873,22 +653,6 @@ class HighFunctionExporter {
 		}
 	}
 
-	public void exportAddressSpaces(Program program) {
-		for (AddressSpace space : program.getAddressFactory().getAddressSpaces()) {
-			export(PredicateFile.SPACE_OFFSET, space.getName(), Integer.toString(space.getSpaceID()));
-		}
-	}
-
-	public void exportDefinedData(Program p) {
-		DataIterator dataIter = p.getListing().getDefinedData(p.getMinAddress(), true);
-		for (Data d : dataIter) {
-			if (!isString(d.getMnemonicString()))
-				continue;
-			Address addr = d.getAddress();
-			export(PredicateFile.DATA_STRING, addressString(addr), d.getValue().toString());
-		}
-	}
-
 	private void exportPrototype(HighFunction hfn, FunctionPrototype proto, String id) {
 		exportN(PredicateFile.PROTO_PARAMETER_COUNT, id, proto.getNumParams(), "");
 		for (int i = 0; i < proto.getNumParams(); i++) {
@@ -898,44 +662,29 @@ class HighFunctionExporter {
 			if (pvar != null) {
 				exportHighVariable(hfn, pvar, true);
 				export(PredicateFile.SYMBOL_HVAR, hsid, hvarID(hfn, pvar));
-				export(PredicateFile.SYMBOL_NAME, hsid, param.getName());
 				VarnodeAST rep = (VarnodeAST) pvar.getRepresentative();
 				export(PredicateFile.HVAR_REPRESENTATIVE, hvarID(hfn, pvar), vnodeID(hfn, rep));
 				exportVarnode(hfn, rep);
 			} else {
-				// fake out a HighVar
+				// fake out a HighVar, with ids that cannot be a real one's: a real high variable's
+				// and a real varnode's id is its function, a colon and a number.
 				String vnid = hsid + SEP + "0";
-				export(PredicateFile.HVAR_NAME, hsid, param.getName());
 				export(PredicateFile.SYMBOL_HVAR, hsid, hsid);
-				export(PredicateFile.SYMBOL_NAME, hsid, param.getName());
 				export(PredicateFile.HVAR_REPRESENTATIVE, hsid, vnid);
 				export(PredicateFile.VNODE_HVAR, vnid, hsid);
-				export(PredicateFile.VNODE_HFUNC, vnid, hfuncID(param.getHighFunction()));
 				export(PredicateFile.VNODE_SPACE, vnid, "fake");
 				export(PredicateFile.VNODE_NAME, vnid, param.getName() + SEP + "0");
 			}
 			exportN(PredicateFile.PROTO_PARAMETER, id, i, hsid);
-			export(PredicateFile.PROTO_PARAMETER_DATATYPE, hsid, dtID(param.getDataType()));
-			exportType(param.getDataType());
 		}
 		DataType returnType = proto.getReturnType();
 		if (returnType != null) {
 			export(PredicateFile.PROTO_RETTYPE, id, dtID(returnType));
-			exportType(returnType);
 		}
-		export(PredicateFile.PROTO_CALLING_CONVENTION, id, hfn.getFunction().getCallingConventionName());
 		if (proto.hasNoReturn())
 			export(PredicateFile.PROTO_IS_VOID, id);
-		if (proto.hasThisPointer())
-			export(PredicateFile.PROTO_HAS_THIS, id);
 		if (proto.isVarArg())
 			export(PredicateFile.PROTO_IS_VARARG, id);
-		if (proto.isInline())
-			export(PredicateFile.PROTO_IS_INLINE, id);
-		if (proto.isConstructor())
-			export(PredicateFile.PROTO_IS_CONSTRUCTOR, id);
-		if (proto.isDestructor())
-			export(PredicateFile.PROTO_IS_DESTRUCTOR, id);
 	}
 
 	private void exportPcodeOpSequence(HighFunction hfn, HashSet<PcodeOp> set) {
@@ -957,9 +706,6 @@ class HighFunctionExporter {
 				if (prev == null && set.contains(next)) {
 					first.put(parent, next);
 				}
-				if (prev != null && set.contains(prev) && set.contains(next)) {
-					export(PredicateFile.PCODE_NEXT, pcodeID(hfn, prev), pcodeID(hfn, next));
-				}
 				prev = next;
 			}
 			if (next != null && set.contains(next)) {
@@ -976,25 +722,32 @@ class HighFunctionExporter {
 		}
 	}
 
+	/** A pcode op: its function and its sequence number's time, which is unique in the function. */
 	private String pcodeID(HighFunction hfn, PcodeOp op) {
 		SequenceNumber sn = op.getSeqnum();
 		if (sn != null) {
-			return hfuncID(hfn) + SEP + sn.getTarget() + SEP + sn.getTime();
+			return hfuncID(hfn) + SEP + sn.getTime();
 		}
 		return hfuncID(hfn) + SEP + "NO_SEQNUM" + SEP + op.toString();
 	}
 
+	/** A varnode: its function and its unique id, which is unique in the function. */
 	private String vnodeID(HighFunction hfn, VarnodeAST vn) {
-		HighVariable hv = vn.getHigh();
-		if (hv == null) {
-			return hfuncID(hfn) + SEP + Integer.toString(vn.getUniqueId());
-		} else {
-			return hfuncID(hfn) + SEP + hvarName(hfn, hv) + SEP + Integer.toString(vn.getUniqueId());
-		}
+		return hfuncID(hfn) + SEP + Integer.toString(vn.getUniqueId());
 	}
 
+	/**
+	 * A high variable: its function and its representative varnode's number. A varnode belongs
+	 * to one high variable, so no two of a function's high variables share it, as they can share
+	 * a name: Ghidra names every unnamed constant after its address, and the pieces of a split
+	 * stack variable after the variable.
+	 */
 	private String hvarID(HighFunction hfn, HighVariable hv) {
-		return hfuncID(hfn) + SEP + hvarName(hfn, hv);
+		VarnodeAST rep = (VarnodeAST) hv.getRepresentative();
+		if (rep == null) {
+			return hfuncID(hfn) + SEP + hvarName(hfn, hv);
+		}
+		return hfuncID(hfn) + SEP + Integer.toString(rep.getUniqueId());
 	}
 
 	private String hvarName(HighFunction hf, HighVariable hv) {
@@ -1010,7 +763,7 @@ class HighFunctionExporter {
 			if (symbol == null) {
 				return addr.toString();
 			}
-			export(PredicateFile.HVAR_CLASS, hfuncID(hf) + SEP + symbol.getName(), "global");
+			export(PredicateFile.HVAR_CLASS, hvarID(hf, hv), "global");
 			return symbol.getName();
 		}
 		return hv.getName();
@@ -1020,7 +773,20 @@ class HighFunctionExporter {
 		return hfuncID(hfn) + SEP + hs.getName();
 	}
 
+	/** A function's id: its number. See {@link #numberFunctions}. */
 	public String funcID(Function fn) {
+		Integer number = functionNumbers.get(fn.getEntryPoint());
+		if (number == null) {
+			// Not one of the functions numbered up front. Not expected, but give it a number
+			// none of those has.
+			number = functionNumbers.size();
+			functionNumbers.put(fn.getEntryPoint(), number);
+		}
+		return Integer.toString(number);
+	}
+
+	/** A function's readable name: its name, with namespace, at its entry point. */
+	public String funcName(Function fn) {
 		return fn.getName(true) + "@" + fn.getEntryPoint();
 	}
 
@@ -1029,11 +795,12 @@ class HighFunctionExporter {
 		return funcID(f);
 	}
 
+	/** A basic block: its function and its start address. */
 	private String bbID(HighFunction hfn, PcodeBlock bb) {
 		if (bb.getStart() != null) {
-			return hfuncID(hfn) + SEP + "block" + SEP + bb.getStart();
+			return hfuncID(hfn) + SEP + addressString(bb.getStart());
 		}
-		return hfuncID(hfn) + SEP + "unknown block";
+		return hfuncID(hfn) + SEP + "unknown";
 	}
 
 	private String dtID(DataType dt) {
@@ -1042,21 +809,11 @@ class HighFunctionExporter {
 		}
 		return dt.toString();
 	}
-
-	private void debug(String s) {
-		try {
-			this.debug.write(s);
-			this.debug.write('\n');
-		} catch (IOException e) {
-			throw new RuntimeException(e.toString());
-		}
-	}
 }
 
 public class ExportPcode extends GhidraScript {
 
 	File outputDirectory;
-	boolean DEBUG = false;
 
 	@Override
 	protected void run() throws Exception {
@@ -1075,8 +832,7 @@ public class ExportPcode extends GhidraScript {
 		long startTime = System.nanoTime();
 
 		HighFunctionExporter ex = new HighFunctionExporter(outputDirectory.getAbsolutePath());
-		ex.getDatabase().add(PredicateFile.LANGUAGE, "PCODE");
-		ex.getDatabase().add(PredicateFile.PROGRAM_FILE, getProgramFile().toString());
+		ex.getDatabase().add(PredicateFile.FACTS_VERSION, HighFunctionExporter.FACTS_VERSION);
 		// The base address Ghidra loaded this program at. Instruction addresses in
 		// the facts are absolute (include this base); subtracting it recovers the
 		// section-relative offset used by addr2line/DWARF.
@@ -1112,28 +868,24 @@ public class ExportPcode extends GhidraScript {
 			toProcess.add(f);
 		});
 		List<Function> toProcessList = new ArrayList<Function>(toProcess);
+		ex.numberFunctions(toProcessList);
 
 		Collections.sort(toProcessList,
 				(o1, o2) -> -Long.compare(o1.getBody().getNumAddresses(), o2.getBody().getNumAddresses()));
 
 		monitor.initialize(toProcess.size());
 
-		// dump defined data once
-		ex.exportDefinedData(currentProgram);
 		ex.exportRegisterInfo(currentProgram);
-		ex.exportAddressSpaces(currentProgram);
 		ex.writeFacts(true);
 
 		ParallelDecompiler.decompileFunctions(callback, toProcessList, monitor);
 
-		ex.processVTables(currentProgram);
 		// waiting until the end to write all datatypes TYPE_ may not save much time.
 		// It could save time if the structures are complicated, so constantly
 		// traversing
 		// structure references all over again every 50 functions. Might not be worth
 		// it.
 		ex.writeFacts(true);
-		ex.writeDebug();
 
 		long endTime = System.nanoTime();
 		long duration = (endTime - startTime) / 1000000;

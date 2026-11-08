@@ -21,14 +21,17 @@
 //! through a `TypeSpec` names the generic type definition, and a `MethodSpec` names its
 //! method.
 
-use std::cell::RefCell;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use cil_reader::model::{
     AssemblyCache, AssemblyName, MemberRefSig, MethodSig, TypeDef, TypeDefOrRef, TypeSig,
 };
 use cil_reader::token::{MetadataToken, TokenType};
 use cil_reader::{Entity, Module};
-use hashbrown::HashMap;
+use hashbrown::{Equivalent, HashMap};
+
+use crate::hierarchy::VirtualMethod;
 
 /// The class of a method or field the frontend cannot name: a member reference whose parent is
 /// a generic parameter, say. Still a class, so a row keyed on it is well formed.
@@ -61,19 +64,42 @@ impl MethodKey {
     }
 }
 
-/// Assembly canonicalization, shared by every module of an import. Forwarders come from the
-/// assemblies the cache can load: the processed ones and the metadata-only references.
+/// Assembly canonicalization, shared by every module of an import and by the threads lowering
+/// them. Forwarders come from the assemblies the cache can load: the processed ones and the
+/// metadata-only references.
 pub struct Namer<'c, 'l> {
     cache: &'c AssemblyCache<'l>,
     /// `(assembly, full name)` -> the assembly the type really lives in.
-    forwards: RefCell<HashMap<(String, String), String>>,
+    forwards: RwLock<HashMap<(String, String), String>>,
+    /// Each type's virtual methods, by its module's address, its rid and the generic arguments
+    /// it was reached with ([`crate::hierarchy::Found::virtual_methods`]).
+    virtuals: RwLock<HashMap<VirtualsKey, Arc<[VirtualMethod]>>>,
+}
+
+type VirtualsKey = (usize, u32, Option<Vec<String>>);
+
+/// A `forwards` key, borrowed: looked up without building the owned key. Hashes as the
+/// `(String, String)` it stands for.
+struct ForwardKey<'a>(&'a str, &'a str);
+
+impl Hash for ForwardKey<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.0, self.1).hash(state);
+    }
+}
+
+impl Equivalent<(String, String)> for ForwardKey<'_> {
+    fn equivalent(&self, key: &(String, String)) -> bool {
+        self.0 == key.0 && self.1 == key.1
+    }
 }
 
 impl<'c, 'l> Namer<'c, 'l> {
     pub fn new(cache: &'c AssemblyCache<'l>) -> Self {
         Namer {
             cache,
-            forwards: RefCell::new(HashMap::new()),
+            forwards: RwLock::new(HashMap::new()),
+            virtuals: RwLock::new(HashMap::new()),
         }
     }
 
@@ -84,8 +110,12 @@ impl<'c, 'l> Namer<'c, 'l> {
     /// The assembly `full_name` (a top-level `Ns.Type`) lives in when referenced through
     /// `asm`: `asm` itself unless `asm` forwards it.
     pub fn canonical_assembly(&self, asm: &str, full_name: &str) -> String {
-        let key = (asm.to_string(), full_name.to_string());
-        if let Some(found) = self.forwards.borrow().get(&key) {
+        if let Some(found) = self
+            .forwards
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&ForwardKey(asm, full_name))
+        {
             return found.clone();
         }
         let mut current = asm.to_string();
@@ -95,8 +125,35 @@ impl<'c, 'l> Namer<'c, 'l> {
                 _ => break,
             }
         }
-        self.forwards.borrow_mut().insert(key, current.clone());
+        self.forwards
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((asm.to_string(), full_name.to_string()), current.clone());
         current
+    }
+
+    /// The virtual methods remembered under `key`, made by `make` if there are none yet.
+    pub(crate) fn virtual_methods(
+        &self,
+        key: VirtualsKey,
+        make: impl FnOnce() -> Arc<[VirtualMethod]>,
+    ) -> Arc<[VirtualMethod]> {
+        if let Some(found) = self
+            .virtuals
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+        {
+            return Arc::clone(found);
+        }
+        let made = make();
+        Arc::clone(
+            self.virtuals
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(key)
+                .or_insert(made),
+        )
     }
 
     /// The assembly `asm` forwards `full_name` to, if it does.

@@ -12,24 +12,32 @@ with no line), and in a document that is missing or changed, the span is the ins
 
 Lines are counted at `\n`, as the SARIF formatter's line map counts them; columns count UTF-16
 code units, as the compiler wrote them, and are converted to UTF-8 bytes here.
+
+Methods are lowered on several threads, so a method's spans are not interned as they are met:
+[`MethodSpans`] lists them, and a statement's span id is, until the method is placed in the
+program, 1 + its span's position in that list ([`SpanList::intern`]).
 */
 
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use cil_reader::model::pdb::hash_algorithm;
 use cil_reader::model::{PortablePdb, SequencePoint};
 use ctadl_ir::SourceInfo;
 use hashbrown::HashMap;
-use source_info::{ArtifactEncoding, ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::{ArtifactEncoding, ArtifactKey, FileId, FileSpanId, SourceInfoBuilder, SpanLen};
 
-/// Spans for one assembly's instructions.
+/// A document, loaded by the first method that needs it; `None` where unusable.
+type Document = Arc<OnceLock<Option<SourceFile>>>;
+
+/// Spans for one assembly's instructions, shared by the threads lowering its methods.
 pub struct ModuleSpans<'p> {
     /// The assembly's own bytes.
     pub key: ArtifactKey,
     pdb: Option<PortablePdb<'p>>,
-    /// Documents by rid, loaded on first use; `None` where unusable.
-    docs: HashMap<u32, Option<SourceFile>>,
-    pub stats: LineStats,
+    /// Documents by rid.
+    docs: Mutex<HashMap<u32, Document>>,
+    stats: Mutex<LineStats>,
 }
 
 /// What source lines an import found.
@@ -71,13 +79,24 @@ impl<'p> ModuleSpans<'p> {
         ModuleSpans {
             key,
             pdb,
-            docs: HashMap::new(),
-            stats,
+            docs: Mutex::new(HashMap::new()),
+            stats: Mutex::new(stats),
         }
     }
 
+    /// What this assembly's methods found.
+    pub fn into_stats(self) -> LineStats {
+        self.stats
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn stats(&self) -> std::sync::MutexGuard<'_, LineStats> {
+        self.stats.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// The spans of the method with MethodDef `rid`, whose code starts at `code_file_offset`.
-    pub fn method(&mut self, rid: u32, code_file_offset: u32) -> MethodSpans<'_, 'p> {
+    pub fn method(&self, rid: u32, code_file_offset: u32) -> MethodSpans<'_, 'p> {
         let points = match &self.pdb {
             Some(pdb) => pdb.sequence_points(rid).unwrap_or_else(|e| {
                 log::debug!("cil: sequence points of method 0x{rid:x}: {e}");
@@ -86,32 +105,41 @@ impl<'p> ModuleSpans<'p> {
             None => Vec::new(),
         };
         if !points.is_empty() {
-            self.stats.methods_with_lines += 1;
+            self.stats().methods_with_lines += 1;
         }
         MethodSpans {
             module: self,
             points,
             code_file_offset,
+            docs: Vec::new(),
+            list: SpanList::default(),
         }
     }
 
-    fn document(&mut self, rid: u32) -> Option<&SourceFile> {
-        if !self.docs.contains_key(&rid) {
-            let loaded = self.load(rid);
-            self.docs.insert(rid, loaded);
-        }
-        self.docs.get(&rid).and_then(Option::as_ref)
+    fn document(&self, rid: u32) -> Document {
+        let doc = Arc::clone(
+            self.docs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(rid)
+                .or_default(),
+        );
+        // Loaded outside the map's lock; a thread that wants it meanwhile waits for it here.
+        doc.get_or_init(|| self.load(rid));
+        doc
     }
 
-    fn load(&mut self, rid: u32) -> Option<SourceFile> {
+    fn load(&self, rid: u32) -> Option<SourceFile> {
         let doc = self.pdb.as_ref()?.document(rid).ok()?;
-        let unusable = |stats: &mut LineStats, why| {
+        let unusable = |why| {
             log::debug!("cil: no source lines from {}: {why}", doc.name);
-            stats.unusable_documents.push((doc.name.clone(), why));
+            self.stats()
+                .unusable_documents
+                .push((doc.name.clone(), why));
             None
         };
         let Ok(text) = std::fs::read(Path::new(&doc.name)) else {
-            return unusable(&mut self.stats, "not found");
+            return unusable("not found");
         };
         let matches = if doc.hash_algorithm == hash_algorithm::SHA1 {
             use sha1::Digest;
@@ -123,9 +151,9 @@ impl<'p> ModuleSpans<'p> {
             true
         };
         if !matches {
-            return unusable(&mut self.stats, "changed since the build");
+            return unusable("changed since the build");
         }
-        self.stats.documents.push(doc.name.clone());
+        self.stats().documents.push(doc.name.clone());
         let mut line_starts = vec![0u32];
         line_starts.extend(
             text.iter()
@@ -146,35 +174,97 @@ impl<'p> ModuleSpans<'p> {
     }
 }
 
+/// The spans one method's statements use, in the order lowering met them, not yet interned.
+#[derive(Default)]
+pub struct SpanList {
+    /// The documents the spans are in, after the assembly itself.
+    files: Vec<ArtifactKey>,
+    /// Each span: its file (0 for the assembly, `n` for `files[n - 1]`), start and length.
+    spans: Vec<(u32, u32, SpanLen)>,
+}
+
+impl SpanList {
+    /// Interns the spans into `builder`, in order, the assembly's under `module`: the id each
+    /// gets, by position.
+    pub fn intern(&self, builder: &mut SourceInfoBuilder, module: &ArtifactKey) -> Vec<FileSpanId> {
+        // A file is looked up at its first span: that is when interning a span in it numbers it.
+        let mut files: Vec<Option<FileId>> = vec![None; self.files.len() + 1];
+        self.spans
+            .iter()
+            .map(|&(f, start, len)| {
+                let file = *files[f as usize].get_or_insert_with(|| {
+                    builder.file_for(match f {
+                        0 => module,
+                        n => &self.files[n as usize - 1],
+                    })
+                });
+                builder.span_in_file(file, start, len)
+            })
+            .collect()
+    }
+}
+
 /// Spans for one method body's instructions.
 pub struct MethodSpans<'m, 'p> {
-    module: &'m mut ModuleSpans<'p>,
+    module: &'m ModuleSpans<'p>,
     /// In IL order.
     points: Vec<SequencePoint>,
     code_file_offset: u32,
+    /// The documents this method's points are in, by rid, with their file in `list`.
+    docs: Vec<(u32, Document, u32)>,
+    list: SpanList,
 }
 
 impl MethodSpans<'_, '_> {
-    /// The span of the `size` bytes of IL at `offset`.
-    pub fn span(&mut self, builder: &mut SourceInfoBuilder, offset: u32, size: u32) -> SourceInfo {
+    /// The span of the `size` bytes of IL at `offset`, as an id into [`Self::finish`]'s list.
+    pub fn span(&mut self, offset: u32, size: u32) -> SourceInfo {
         let covering = self.points.partition_point(|p| p.offset <= offset);
-        if let Some(point) = covering.checked_sub(1).map(|i| self.points[i])
-            && !point.is_hidden()
-            && let Some(file) = self.module.document(point.document)
-            && let Some((start, end)) = file.byte_range(&point)
-        {
-            let len = if end > start {
-                SpanLen::ByteLen(end - start)
-            } else {
-                SpanLen::Empty
-            };
-            return SourceInfo::new(builder.span_for(file.key.clone(), start, len));
+        let span = covering
+            .checked_sub(1)
+            .map(|i| self.points[i])
+            .filter(|point| !point.is_hidden())
+            .and_then(|point| self.in_document(&point));
+        let span =
+            span.unwrap_or_else(|| (0, self.code_file_offset + offset, SpanLen::ByteLen(size)));
+        // The instructions of one sequence point share its span: listed once, it is interned once.
+        if self.list.spans.last() != Some(&span) {
+            self.list.spans.push(span);
         }
-        SourceInfo::new(builder.span_for(
-            self.module.key.clone(),
-            self.code_file_offset + offset,
-            SpanLen::ByteLen(size),
-        ))
+        SourceInfo::new(FileSpanId(self.list.spans.len() as u32))
+    }
+
+    /// The span of `point` in its document, if that is usable.
+    fn in_document(&mut self, point: &SequencePoint) -> Option<(u32, u32, SpanLen)> {
+        let at = match self
+            .docs
+            .iter()
+            .position(|(rid, ..)| *rid == point.document)
+        {
+            Some(at) => at,
+            None => {
+                let doc = self.module.document(point.document);
+                self.docs.push((point.document, doc, 0));
+                self.docs.len() - 1
+            }
+        };
+        let (_, doc, file) = &mut self.docs[at];
+        let source = doc.get()?.as_ref()?;
+        let (start, end) = source.byte_range(point)?;
+        if *file == 0 {
+            self.list.files.push(source.key.clone());
+            *file = self.list.files.len() as u32;
+        }
+        let len = if end > start {
+            SpanLen::ByteLen(end - start)
+        } else {
+            SpanLen::Empty
+        };
+        Some((*file, start, len))
+    }
+
+    /// The spans [`Self::span`] gave out.
+    pub fn finish(self) -> SpanList {
+        self.list
     }
 }
 

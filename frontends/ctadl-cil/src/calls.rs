@@ -46,13 +46,15 @@
 //! method reaches only that declaration.
 
 use cil_reader::Entity;
-use cil_reader::flow::delegate::{self, DelegateOp, ModuleTypes};
+use cil_reader::flow::delegate::{self, DelegateOp, ModuleTypes, TypeOracle};
 use cil_reader::flow::{BoundIns, CallKind, CallSite, InsId, MethodOp, TypeOp, Var};
 use cil_reader::model::{ResolvedMember, TypeSig};
-use cil_reader::token::TokenType;
+use cil_reader::token::{MetadataToken, TokenType};
 use ctadl_ir::call::CallObject;
 use ctadl_ir::cir::PathSegment;
 use ctadl_ir::*;
+use hashbrown::HashMap;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::hierarchy::resolve_type;
 use crate::method::{Emitter, Lower, parameters};
@@ -71,7 +73,7 @@ enum Virtual {
 }
 
 /// What a call resolves to in loaded metadata.
-struct Target {
+pub(crate) struct Target {
     key: MethodKey,
     params: Vec<ParameterType>,
     is_virtual: bool,
@@ -79,9 +81,74 @@ struct Target {
     sealed: bool,
 }
 
+/// What an assembly's calls resolve to, by the token the call names, shared by the threads
+/// lowering its methods: resolving a method or a type looks it up by name, maybe in another
+/// assembly, and a method calls what others call.
+#[derive(Default)]
+pub struct Resolved {
+    targets: Sharded<Option<Arc<Target>>>,
+    /// Whether each type is a delegate type, as [`ModuleTypes`] tells.
+    delegates: Sharded<Option<bool>>,
+}
+
+/// A map by token, sharded, so that threads seldom wait on one another.
+struct Sharded<V>([RwLock<HashMap<MetadataToken, V>>; 16]);
+
+impl<V> Default for Sharded<V> {
+    fn default() -> Self {
+        Sharded(std::array::from_fn(|_| RwLock::default()))
+    }
+}
+
+impl<V: Clone> Sharded<V> {
+    /// The value for `token`, made by `make` if it is not there yet.
+    fn get_or(&self, token: MetadataToken, make: impl FnOnce() -> V) -> V {
+        let shard = &self.0[token.rid() as usize % self.0.len()];
+        if let Some(found) = shard
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&token)
+        {
+            return found.clone();
+        }
+        let made = make();
+        shard
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(token)
+            .or_insert(made)
+            .clone()
+    }
+}
+
+/// [`ModuleTypes`], with whether a type is a delegate remembered in [`Resolved`].
+struct Oracle<'a, 'm, 's, 'l> {
+    types: ModuleTypes<'m, 's, 'l>,
+    resolved: &'a Resolved,
+}
+
+impl TypeOracle for Oracle<'_, '_, '_, '_> {
+    fn declaring_type(&self, method: &MethodOp) -> Option<TypeOp> {
+        self.types.declaring_type(method)
+    }
+
+    fn method_name(&self, method: &MethodOp) -> Option<String> {
+        self.types.method_name(method)
+    }
+
+    fn is_delegate(&self, ty: &TypeOp) -> Option<bool> {
+        self.resolved
+            .delegates
+            .get_or(ty.token, || self.types.is_delegate(ty))
+    }
+}
+
 impl Lower<'_, '_, '_, '_, '_> {
     pub fn call(&mut self, em: &mut Emitter<'_>, at: InsId, ins: &BoundIns, site: &CallSite<Var>) {
-        let oracle = ModuleTypes::with_cache(self.module, self.namer.cache());
+        let oracle = Oracle {
+            types: ModuleTypes::with_cache(self.module, self.namer.cache()),
+            resolved: self.resolved,
+        };
         match delegate::classify(site, &oracle) {
             Some(DelegateOp::Invoke) => return self.delegate_invoke(em, at, ins, site),
             Some(DelegateOp::Ctor { target, fnptr }) => {
@@ -175,7 +242,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 }
                 CallStyle::FuncPtrCall {
                     callee: AccessPath::from(em.var(*callee)),
-                    signature: Some(self.names.descriptor(&site.sig, None)),
+                    signature: Some(self.names.descriptor(&site.sig, None).as_str().into()),
                 }
             }
         };
@@ -305,9 +372,12 @@ impl Lower<'_, '_, '_, '_, '_> {
                 }
                 return Virtual::Dispatch(CallStyle::CilCall {
                     receiver: recv,
-                    cls: cls.as_str().into(),
-                    simple_name: imp.simple.as_str().into(),
-                    descriptor: imp.own_desc.as_str().into(),
+                    method: CilMethodRef {
+                        cls: cls.as_str().into(),
+                        simple_name: imp.simple.as_str().into(),
+                        descriptor: imp.own_desc.as_str().into(),
+                    }
+                    .into(),
                 });
             }
         }
@@ -323,9 +393,12 @@ impl Lower<'_, '_, '_, '_, '_> {
         self.out.callee(&key, parameters(&m.sig));
         Virtual::Dispatch(CallStyle::CilCall {
             receiver: recv,
-            cls: key.cls.as_str().into(),
-            simple_name: key.simple.as_str().into(),
-            descriptor: key.desc.as_str().into(),
+            method: CilMethodRef {
+                cls: key.cls.as_str().into(),
+                simple_name: key.simple.as_str().into(),
+                descriptor: key.desc.as_str().into(),
+            }
+            .into(),
         })
     }
 
@@ -359,7 +432,13 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// What `m` resolves to in loaded metadata, else its key as the token names it.
-    fn target(&mut self, m: &MethodOp) -> Option<Target> {
+    fn target(&mut self, m: &MethodOp) -> Option<Arc<Target>> {
+        self.resolved
+            .targets
+            .get_or(m.token, || self.resolve_target(m).map(Arc::new))
+    }
+
+    fn resolve_target(&self, m: &MethodOp) -> Option<Target> {
         let mut token = m.token;
         if let Ok(Some(Entity::MethodSpec(ms))) = self.module.lookup_token(token)
             && let Ok(inner) = ms.method_token()
@@ -420,7 +499,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
         let style = CallStyle::FuncPtrCall {
             callee: AccessPath::from(m),
-            signature: Some(self.names.descriptor(&site.sig, None)),
+            signature: Some(self.names.descriptor(&site.sig, None).as_str().into()),
         };
         self.emit_call(em, style, args, site.result, copy_outs);
     }

@@ -124,7 +124,9 @@ fn absolutize(path: &Path) -> PathBuf {
 /// - `14`: a program declares its globals (`Program::globals`), and `Variable::Global` names one
 ///   in place of the one global heap `$globals`. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`, and every front end's global lowering changed.
-pub const IMPORT_FORMAT_VERSION: &str = "14";
+/// - `15`: `ir-program.bitcode` is a sequence of frames, the globals and then the functions a
+///   few thousand at a time, each its own bitcode value (`ctadl_ir::encode::encode_program`).
+pub const IMPORT_FORMAT_VERSION: &str = "15";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
