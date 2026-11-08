@@ -2031,10 +2031,11 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// Drops `value` on the rayon pool, off the import's critical path: dropping the facts
-/// releases millions of interned strings.
+/// Drops `value` on a thread of its own, off the import's critical path: dropping the facts
+/// releases millions of interned strings. Not on the rayon pool, where a thread waiting in a
+/// `join` would pick the drop up and wait for it.
 fn drop_in_background<T: Send + 'static>(value: T) {
-    rayon::spawn(move || drop(value));
+    std::thread::spawn(move || drop(value));
 }
 
 /// How [`Lowerer::handle_binop`] lowers integer arithmetic and comparisons, from
