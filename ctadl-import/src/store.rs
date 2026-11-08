@@ -12,7 +12,9 @@ through [`ArtifactImport::load`], so an out-of-date store fails with
 
 use ctadl_ir::cir::call::VirtualMethodTable;
 use ctadl_ir::graph::is_connected;
-use ctadl_ir::{ProgramInfo, encode, ssa};
+use ctadl_ir::{Program, ProgramInfo, encode, ssa};
+use source_info::SourceInfo;
+use std::path::Path;
 
 use crate::error::{Error, ErrorContext};
 use crate::project::{ArtifactImport, IMPORT_CONFIG_FILE, StorePaths};
@@ -33,57 +35,82 @@ pub enum SourceInfoMode {
 /// Writes a [`ProgramInfo`] into the directory for `import`. That means three things: the
 /// program, the virtual method table, and the source info. [`crate::project`] describes the
 /// layout they are written in.
-pub fn save_program_info(
-    mut program_info: ProgramInfo,
-    import: &ArtifactImport,
-) -> Result<(), Error> {
-    program_info
-        .vmt
-        .check_names(
-            program_info
-                .program
-                .functions
-                .iter()
-                .map(|f| f.name.as_str()),
-        )
+///
+/// The three are independent, so each is encoded and written on its own thread, and each is freed
+/// as soon as it has been encoded rather than when the last one is written.
+pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> Result<(), Error> {
+    let ProgramInfo {
+        program,
+        vmt,
+        source_info,
+    } = program_info;
+    vmt.check_names(program.functions.iter().map(|f| f.name.as_str()))
         .map_err(Error::Names)?;
-    let path = &import.program_path();
-    let obj = std::mem::take(&mut program_info.program);
-    for f in obj.functions.iter() {
-        if f.blocks.is_empty() {
-            continue;
-        }
-        // Disassembled binaries often have functions with blocks that cannot be reached from
-        // the entry block. Ghidra leaves these behind when it recovers the control-flow graph.
-        // This is not an import error. Indexing drops unreachable blocks before the SSA and
-        // dominator pass; see `--prune-unreachable-cfg-nodes`, which is on by default. So log
-        // it here, but do not reject the function.
-        if !is_connected(&f.blocks) {
-            log::debug!("function has blocks unreachable from entry: {}", f.name);
+    if log::log_enabled!(log::Level::Debug) {
+        for f in program.functions.iter() {
+            if f.blocks.is_empty() {
+                continue;
+            }
+            // Disassembled binaries often have functions with blocks that cannot be reached from
+            // the entry block. Ghidra leaves these behind when it recovers the control-flow
+            // graph. This is not an import error. Indexing drops unreachable blocks before the
+            // SSA and dominator pass; see `--prune-unreachable-cfg-nodes`, which is on by
+            // default. So log it here, but do not reject the function.
+            if !is_connected(&f.blocks) {
+                log::debug!("function has blocks unreachable from entry: {}", f.name);
+            }
         }
     }
-    let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
-    std::fs::write(path, data)
-        .map_err(Error::Io)
-        .err_context(|| format!("writing program: {}", path.display()))?;
-    log::debug!("wrote {}", path.display());
+    std::thread::scope(|s| {
+        let program = s.spawn(|| write_program(program, &import.program_path()));
+        let source_info = s.spawn(|| write_source_info(source_info, &import.source_info_dir()));
+        let vmt = write_vmt(vmt, &import.vmt_path());
+        let program = program
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p));
+        let source_info = source_info
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p));
+        program.and(vmt).and(source_info)
+    })?;
+    ArtifactImport::mark_complete(&import.name)
+}
 
-    let path = &import.vmt_path();
-    let obj = std::mem::take(&mut program_info.vmt);
-    let data = encode::encode_vmt(&obj).map_err(Error::Bitcode)?;
+/// Writes the program IR to `path`.
+///
+/// bitcode lays a value out column by column, so it cannot write the encoding until it has seen
+/// the whole program; the encoding is built in memory and then written.
+fn write_program(program: Program, path: &Path) -> Result<(), Error> {
+    let data = encode::encode_program(&program).map_err(Error::Bitcode)?;
+    // Freeing a large program takes a while, and nothing needs to wait for it, so it is freed on
+    // another thread while the file is written.
+    std::thread::scope(|s| {
+        s.spawn(move || drop(program));
+        std::fs::write(path, data)
+            .map_err(Error::Io)
+            .err_context(|| format!("writing program: {}", path.display()))
+    })?;
+    log::debug!("wrote {}", path.display());
+    Ok(())
+}
+
+/// Writes the virtual method table to `path`.
+fn write_vmt(vmt: VirtualMethodTable, path: &Path) -> Result<(), Error> {
+    let data = encode::encode_vmt(&vmt).map_err(Error::Bitcode)?;
+    drop(vmt);
     std::fs::write(path, data)
         .map_err(Error::Io)
         .err_context(|| format!("writing vmt: {}", path.display()))?;
     log::debug!("wrote {}", path.display());
+    Ok(())
+}
 
-    let path = import.source_info_dir();
-    let obj = std::mem::take(&mut program_info.source_info);
-    std::fs::create_dir_all(&path)
+/// Writes the source info as parquet into the directory `path`.
+fn write_source_info(source_info: SourceInfo, path: &Path) -> Result<(), Error> {
+    std::fs::create_dir_all(path)
         .err_context(|| format!("creating source info dir: {}", path.display()))?;
-    source_info::write_parquet_source_info(&path, &obj)
-        .err_context(|| format!("writing source info: {}", path.display()))?;
-
-    ArtifactImport::mark_complete(&import.name)
+    source_info::write_parquet_source_info(path, &source_info)
+        .err_context(|| format!("writing source info: {}", path.display()))
 }
 
 /// Returns [`Error::IncompleteImport`] unless `import`, or the config stored for it on disk, is

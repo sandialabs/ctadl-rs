@@ -122,19 +122,18 @@ mod tests {
             hash_len: 32,
             version: 1,
         };
-        let (art_tree, file_tree, span_tree, fspan_tree) = crate::db::open_session_trees();
-        let mut artifacts = ArtifactTable::new(metadata, art_tree);
+        let mut artifacts = ArtifactTable::new(metadata);
         artifacts.artifacts.push(ArtifactRecord {
             canonical_path: "/x.rs".to_string(),
             sub_artifact_id: 0,
             encoding: ArtifactEncoding::Utf8,
             content_hash: vec![0; 32],
         });
-        let mut files = FileTable::new(file_tree);
+        let mut files = FileTable::new();
         let fid = files.get_or_intern_file(ArtifactId(1));
-        let mut span_table = SpanTable::new(span_tree);
+        let mut span_table = SpanTable::new();
         let sid = span_table.get_or_intern(span_start, span_len);
-        let mut file_spans = FileSpanTable::new(fspan_tree);
+        let mut file_spans = FileSpanTable::new();
         let _ = file_spans.get_or_intern(fid, sid);
         (artifacts, files, file_spans, span_table)
     }

@@ -2,7 +2,7 @@
 //! (canonical_path, sub_artifact_id, content_hash, encoding).
 
 use crate::ids::ArtifactId;
-use crate::store::{ArtifactsStore, KvStore};
+use crate::index::{Index, Row};
 
 /// Algorithm used for content hashing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -153,51 +153,91 @@ pub struct ArtifactKey {
     pub encoding: ArtifactEncoding,
 }
 
+/// The fields of an artifact that identify it, borrowed from an [`ArtifactKey`] or an
+/// [`ArtifactRecord`], so that a key can be looked up without copying it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ArtifactKeyRef<'a> {
+    path: &'a str,
+    sub_artifact_id: u32,
+    hash: &'a [u8],
+    encoding: ArtifactEncoding,
+}
+
+impl ArtifactKey {
+    pub(crate) fn as_key_ref(&self) -> ArtifactKeyRef<'_> {
+        ArtifactKeyRef {
+            path: &self.path,
+            sub_artifact_id: self.sub_artifact_id,
+            hash: &self.hash,
+            encoding: self.encoding,
+        }
+    }
+}
+
+impl Row for ArtifactRecord {
+    type Key<'a> = ArtifactKeyRef<'a>;
+
+    fn key(&self) -> ArtifactKeyRef<'_> {
+        ArtifactKeyRef {
+            path: &self.canonical_path,
+            sub_artifact_id: self.sub_artifact_id,
+            hash: &self.content_hash,
+            encoding: self.encoding,
+        }
+    }
+
+    fn key_eq(a: &ArtifactKeyRef<'_>, b: &ArtifactKeyRef<'_>) -> bool {
+        a == b
+    }
+
+    #[cfg(feature = "sled")]
+    fn key_bytes(key: &ArtifactKeyRef<'_>) -> Vec<u8> {
+        let path_bytes = key.path.as_bytes();
+        let path_len = path_bytes.len() as u32;
+        let mut buf = Vec::with_capacity(4 + path_bytes.len() + 4 + 1 + key.hash.len());
+        buf.extend_from_slice(&path_len.to_be_bytes());
+        buf.extend_from_slice(path_bytes);
+        buf.extend_from_slice(&key.sub_artifact_id.to_be_bytes());
+        buf.push(key.encoding.to_u8());
+        buf.extend_from_slice(key.hash);
+        buf
+    }
+}
+
 /// Table of artifacts with interning. IDs are 1-based; index 0 is reserved.
 #[derive(Debug)]
 pub struct ArtifactTable {
     pub metadata: ArtifactMetadata,
     pub artifacts: Vec<ArtifactRecord>,
-    store: Box<dyn KvStore>,
-}
-
-fn artifact_key_bytes(key: &ArtifactKey) -> Vec<u8> {
-    let path_bytes = key.path.as_bytes();
-    let path_len = path_bytes.len() as u32;
-    let mut buf = Vec::with_capacity(4 + path_bytes.len() + 4 + 1 + key.hash.len());
-    buf.extend_from_slice(&path_len.to_be_bytes());
-    buf.extend_from_slice(path_bytes);
-    buf.extend_from_slice(&key.sub_artifact_id.to_be_bytes());
-    buf.push(key.encoding.to_u8());
-    buf.extend_from_slice(&key.hash);
-    buf
+    index: Index<ArtifactRecord>,
 }
 
 impl ArtifactTable {
-    pub fn new(metadata: ArtifactMetadata, store: ArtifactsStore) -> Self {
+    pub fn new(metadata: ArtifactMetadata) -> Self {
         Self {
             metadata,
             artifacts: Vec::new(),
-            store: store.0,
+            index: Index::new(),
         }
     }
 
     /// Returns the artifact ID for the given key, interning a new record if needed.
     /// IDs are 1-based.
     pub fn get_or_intern_artifact(&mut self, key: ArtifactKey) -> ArtifactId {
-        let key_bytes = artifact_key_bytes(&key);
-        if let Some(val) = self.store.get(&key_bytes) {
-            return ArtifactId(u32::from_be_bytes(val));
-        }
-        let id = ArtifactId(self.artifacts.len() as u32 + 1);
-        self.artifacts.push(ArtifactRecord {
-            canonical_path: key.path,
-            sub_artifact_id: key.sub_artifact_id,
-            encoding: key.encoding,
-            content_hash: key.hash,
-        });
-        self.store.insert(&key_bytes, id.0.to_be_bytes());
-        id
+        self.get_or_intern_artifact_ref(&key)
+    }
+
+    /// Like [`Self::get_or_intern_artifact`], but copies `key` only when the artifact is new.
+    pub fn get_or_intern_artifact_ref(&mut self, key: &ArtifactKey) -> ArtifactId {
+        let id = self
+            .index
+            .get_or_insert_with(&mut self.artifacts, key.as_key_ref(), || ArtifactRecord {
+                canonical_path: key.path.clone(),
+                sub_artifact_id: key.sub_artifact_id,
+                encoding: key.encoding,
+                content_hash: key.hash.clone(),
+            });
+        ArtifactId(id)
     }
 
     pub fn get(&self, id: ArtifactId) -> Option<&ArtifactRecord> {
@@ -205,27 +245,12 @@ impl ArtifactTable {
     }
 
     /// Builds a table from metadata and records (e.g. when deserializing). Assigns IDs 1, 2, ...
-    pub fn from_records(
-        metadata: ArtifactMetadata,
-        artifacts: Vec<ArtifactRecord>,
-        store: ArtifactsStore,
-    ) -> Self {
-        for (i, rec) in artifacts.iter().enumerate() {
-            let key = ArtifactKey {
-                path: rec.canonical_path.clone(),
-                sub_artifact_id: rec.sub_artifact_id,
-                hash: rec.content_hash.clone(),
-                encoding: rec.encoding,
-            };
-            let id = ArtifactId((i + 1) as u32);
-            store
-                .0
-                .insert(&artifact_key_bytes(&key), id.0.to_be_bytes());
-        }
+    pub fn from_records(metadata: ArtifactMetadata, artifacts: Vec<ArtifactRecord>) -> Self {
+        let index = Index::from_rows(&artifacts);
         Self {
             metadata,
             artifacts,
-            store: store.0,
+            index,
         }
     }
 }

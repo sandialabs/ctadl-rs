@@ -4006,6 +4006,7 @@ version = "0.1.7"
 dependencies = [
  "arrow",
  "datafusion",
+ "hashbrown 0.16.1",
  "parquet",
  "serde",
  "serde-sarif",
