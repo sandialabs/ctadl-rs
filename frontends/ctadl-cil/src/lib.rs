@@ -266,6 +266,13 @@ pub fn import_files_with_stats(
     for a in assemblies {
         ctx.out.stats.lines.add(a.spans.into_stats());
     }
+    // The program owns everything it needs: the assemblies and what was read for them go before
+    // it is finished.
+    drop(namer);
+    drop(cache);
+    drop(pdb_sources);
+    drop(modules);
+    drop(datas);
     let timer = PhaseTimer::start();
     let finished = ctx.finish_with_stats();
     timer.done("finishing");
@@ -998,24 +1005,24 @@ impl Context {
         }
         program.verify()?;
         let Table {
-            names: function_names,
+            names: mut function_names,
             mut methods,
             hierarchy,
             mut interfaces,
             mut abstract_methods,
             mut pinvokes,
         } = self.table;
-        methods.sort();
+        methods.par_sort_unstable();
         methods.dedup();
-        interfaces.sort();
+        interfaces.par_sort_unstable();
         interfaces.dedup();
-        abstract_methods.sort();
+        abstract_methods.par_sort_unstable();
         abstract_methods.dedup();
-        pinvokes.sort();
+        pinvokes.par_sort_unstable();
         pinvokes.dedup();
         let dispatch = Dispatch::Cil {
             methods: methods
-                .into_iter()
+                .into_par_iter()
                 .map(|(c, s, d, f)| {
                     (
                         CilClass(c.as_str().into()),
@@ -1037,11 +1044,11 @@ impl Context {
                 })
                 .collect(),
             interfaces: interfaces
-                .into_iter()
+                .into_par_iter()
                 .map(|c| CilClass(c.as_str().into()))
                 .collect(),
             abstract_methods: abstract_methods
-                .into_iter()
+                .into_par_iter()
                 .map(|(c, s, d)| {
                     (
                         CilClass(c.as_str().into()),
@@ -1051,7 +1058,7 @@ impl Context {
                 })
                 .collect(),
             pinvokes: pinvokes
-                .into_iter()
+                .into_par_iter()
                 .map(|(c, s, d, f, m, e)| {
                     (
                         CilClass(c.as_str().into()),
@@ -1064,6 +1071,9 @@ impl Context {
                 })
                 .collect(),
         };
+        // Sorted as `finish_names` sorts them, stably, but in parallel: that sort then finds them
+        // in order.
+        function_names.par_sort_by(|a, b| a.fq.cmp(&b.fq));
         let mut vmt = VirtualMethodTable {
             names: function_names,
             dispatch,
