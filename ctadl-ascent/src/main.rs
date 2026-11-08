@@ -1,3 +1,8 @@
+/// The global allocator, when built with the `jemalloc` feature (see Cargo.toml).
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
