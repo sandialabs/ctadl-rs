@@ -1,6 +1,5 @@
 // JAR file support. JAR is ZIP with .class entries (and META-INF, etc.).
 
-use std::fs::File;
 use std::path::Path;
 
 use zip::ZipArchive;
@@ -16,39 +15,69 @@ use crate::types::{ClassFile, CodeAttribute, CpEntry, FieldInfo, MethodInfo};
 /// but over all .class files in the JAR in sequence.
 pub struct JarFileParser {
     parsers: Vec<ClassFileParser>,
+    /// The archive path of each class file, in the order of `parsers`.
+    entry_names: Vec<String>,
 }
 
 impl JarFileParser {
     /// Open and parse a JAR file from the given path. Only .class entries are parsed.
     pub fn open(path: &Path) -> ClassFileResult<Self> {
-        let file = File::open(path).map_err(ClassFileError::Io)?;
-        Self::from_reader(file)
+        let data = std::fs::read(path).map_err(ClassFileError::Io)?;
+        Self::from_bytes(&data)
     }
 
     /// Parse a JAR from an already-open reader (e.g. for testing or in-memory ZIPs).
-    pub fn from_reader<R: std::io::Read + std::io::Seek>(reader: R) -> ClassFileResult<Self> {
-        let mut archive =
-            ZipArchive::new(reader).map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-        let mut parsers = Vec::new();
+    pub fn from_reader<R: std::io::Read + std::io::Seek>(mut reader: R) -> ClassFileResult<Self> {
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data).map_err(ClassFileError::Io)?;
+        Self::from_bytes(&data)
+    }
+
+    /// Parse a JAR held in memory. The class files are inflated and parsed on the current rayon
+    /// pool, each thread reading the archive through a cursor of its own. The classes are in
+    /// archive order whatever the thread count, and so is the error: the first failing entry's.
+    pub fn from_bytes(data: &[u8]) -> ClassFileResult<Self> {
+        use rayon::prelude::*;
+
+        let archive = ZipArchive::new(std::io::Cursor::new(data))
+            .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
+        let mut entries = Vec::new();
         for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
+            let name = archive
+                .name_for_index(i)
+                .expect("an index below the archive's length names an entry")
                 .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-            let name = entry
-                .name()
-                .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-            if !name.ends_with(".class") {
-                continue;
+            if name.ends_with(".class") {
+                entries.push((i, name.into_owned()));
             }
-            let name = name.to_string();
-            let mut data = Vec::new();
-            std::io::copy(&mut entry, &mut data).map_err(ClassFileError::Io)?;
-            // Name the entry: without it a whole-JAR failure says only what went
-            // wrong, not which of the thousands of classes it went wrong in.
-            let parser = ClassFileParser::parse(&data).map_err(|e| e.in_entry(&name))?;
-            parsers.push(parser);
         }
-        Ok(Self { parsers })
+        let parsers: Vec<ClassFileResult<ClassFileParser>> = entries
+            .par_iter()
+            .map_init(
+                || archive.clone(),
+                |archive, (i, name)| {
+                    let mut entry = archive
+                        .by_index(*i)
+                        .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
+                    let mut data = Vec::with_capacity(entry.size().try_into().unwrap_or(0));
+                    std::io::copy(&mut entry, &mut data).map_err(ClassFileError::Io)?;
+                    // Name the entry: without it a whole-JAR failure says only what went
+                    // wrong, not which of the thousands of classes it went wrong in.
+                    ClassFileParser::parse(&data).map_err(|e| e.in_entry(name))
+                },
+            )
+            .collect();
+        let parsers = parsers.into_iter().collect::<ClassFileResult<Vec<_>>>()?;
+        let entry_names = entries.into_iter().map(|(_, name)| name).collect();
+        Ok(Self {
+            parsers,
+            entry_names,
+        })
+    }
+
+    /// The archive path of each class file, in the order of [`Self::class_parsers`].
+    pub fn entry_names(&self) -> &[String] {
+        &self.entry_names
     }
 
     /// Slice of class file parsers, one per .class entry in the JAR (in order).

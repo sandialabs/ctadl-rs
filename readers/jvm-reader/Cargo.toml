@@ -7,4 +7,5 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+rayon = "1.10"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }

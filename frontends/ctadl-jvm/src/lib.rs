@@ -21,6 +21,7 @@ slot assigns its `Param` variable, which SSA versions; version 0 is the incoming
 */
 
 use std::path::Path;
+use std::sync::Arc;
 
 use hashbrown::HashSet;
 use hashbrown::hash_map::HashMap;
@@ -35,7 +36,7 @@ use ctadl_ir::cir::call::{
 use ctadl_ir::*;
 
 use jvm_reader::flow::{CallInfo, CallKind, ConstantValue, DataflowInfo, Location};
-use jvm_reader::{ClassFileParser, JarFileParser};
+use jvm_reader::{ClassFileError, ClassFileParser, JarFileParser, MethodInfo};
 
 const JVM_ACC_STATIC: u16 = 0x0008;
 const JVM_ACC_NATIVE: u16 = 0x0100;
@@ -72,25 +73,32 @@ mod tests;
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     let parser =
         JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
-    let mut ctx = Context::new();
-    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
-
     log::info!(
         "{}: {} class file(s)",
         file.display(),
         parser.class_parsers().len()
     );
-    for (sub_artifact_id, parser) in parser.class_parsers().iter().enumerate() {
-        let key = ArtifactKey {
-            path: file.to_string_lossy().to_string(),
-            sub_artifact_id: sub_artifact_id.try_into().unwrap(),
-            hash: Vec::new(),
-            encoding: source_info::ArtifactEncoding::Binary,
-        };
-        ctx.process(parser, key, &mut builders)
-            .err_context(|| format!("converting class in jar: {}", file.display()))?;
-    }
-    ctx.finish(builders)
+    let path = file.to_string_lossy().to_string();
+    let classes: Vec<_> = parser
+        .class_parsers()
+        .iter()
+        .enumerate()
+        .map(|(sub_artifact_id, parser)| {
+            let key = ArtifactKey {
+                path: path.clone(),
+                sub_artifact_id: sub_artifact_id.try_into().unwrap(),
+                hash: Vec::new(),
+                encoding: source_info::ArtifactEncoding::Binary,
+            };
+            (parser, key)
+        })
+        .collect();
+    let mut importer = Importer::default();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
+    importer
+        .process(&classes, &mut builders)
+        .err_context(|| format!("converting class in jar: {}", file.display()))?;
+    importer.finish(builders)
 }
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
@@ -98,7 +106,7 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
         std::fs::read(file).err_context(|| format!("reading class file: {}", file.display()))?;
     let parser = ClassFileParser::parse(&data)
         .err_context(|| format!("parsing class file: {}", file.display()))?;
-    let mut ctx = Context::new();
+    let mut importer = Importer::default();
     let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
@@ -107,36 +115,66 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&parser, key, &mut builders)
+    importer
+        .process(&[(&parser, key)], &mut builders)
         .err_context(|| format!("converting class file: {}", file.display()))?;
-    ctx.finish(builders)
+    importer.finish(builders)
 }
 
-#[derive(Debug)]
-struct Context {
-    /// VMT entries for the externs seen so far.
-    ext: HashMap<
-        String,
-        (
-            JavaClass,
-            JavaSimpleName,
-            JavaSignature,
-            JavaMethod,
-            Vec<ParameterType>,
-            ReturnType,
-        ),
-    >,
-    call_result: Option<VariableRef>,
-    catch_result: Option<VariableRef>,
-    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
-    enclosing: Option<EnclosingClass>,
+/// What spans the classes of an import: the program's globals, the externs the bodies call, and
+/// the class headers. Lowering one method body at a time is [`Context`]'s.
+#[derive(Debug, Default)]
+struct Importer {
+    /// The methods the bodies call, by signature, for the extern stubs. Merged from each body's
+    /// [`Context::ext`] in program order, so that a later call decides how a method is called,
+    /// as it did when the bodies were lowered one after another.
+    ext: HashMap<String, Extern>,
     /// The globals declared so far: one per class that owns a static field. Moved into the
-    /// program at [`Context::finish`].
+    /// program at [`Importer::finish`].
     globals: cir::Globals,
     /// Each class this import defines, as its global is named, with the class file it is in and
     /// the offset of its header there: where the global is declared. Located in
-    /// [`Context::finish`], once every class has been lowered.
+    /// [`Importer::finish`], once every class has been lowered.
     class_headers: Vec<(String, ArtifactKey, u32)>,
+}
+
+/// A method some body calls, as [`Importer::finish`] stubs it if no class defines it: where its
+/// signature `Lcls;->name(desc)` splits into class, simple name and descriptor, and whether it
+/// takes a receiver.
+#[derive(Clone, Copy, Debug)]
+struct Extern {
+    class_len: u32,
+    name_len: u32,
+    is_instance: bool,
+}
+
+impl Extern {
+    /// The class, simple name and descriptor of the method `sig` names.
+    fn split<'s>(&self, sig: &'s str) -> (&'s str, &'s str, &'s str) {
+        let class_end = self.class_len as usize;
+        let name_end = class_end + 2 + self.name_len as usize;
+        (
+            &sig[..class_end],
+            &sig[class_end + 2..name_end],
+            &sig[name_end..],
+        )
+    }
+}
+
+/// The lowering of method bodies into CIR: what one thread needs to lower one method at a time
+/// ([`Context::lower_job`]). Everything that spans methods is [`Importer`]'s.
+#[derive(Debug, Default)]
+struct Context {
+    /// The class whose method is being lowered.
+    enclosing: Option<Arc<EnclosingClass>>,
+    /// The globals the method being lowered uses, in the order it first uses them.
+    globals: cir::Globals,
+    /// The methods the method being lowered calls; see [`Importer::ext`].
+    ext: HashMap<String, Extern>,
+    /// The offset and length of each instruction lowered so far, in order. The statements of an
+    /// instruction carry `1 +` its position here as their span id until [`Importer::place`]
+    /// interns the real one.
+    spans: Vec<(u32, u32)>,
 }
 
 /// What lowering an `invokespecial` needs to know about the class the call appears in.
@@ -149,7 +187,378 @@ struct EnclosingClass {
     interfaces: Vec<Symbol>,
 }
 
+/// One method body for [`Context::lower_job`] to lower, with what the bookkeeping pass of
+/// [`Importer::process`] found out about it.
+struct Job<'a> {
+    /// The index of the class file the method is in.
+    class: usize,
+    method: &'a MethodInfo,
+    /// The function the body goes into.
+    fidx: FunctionIdx,
+    enclosing: Arc<EnclosingClass>,
+}
+
+/// What [`Context::lower_job`] made of a [`Job`]: the body's blocks and locals, with its spans
+/// and globals numbered as [`Context`] describes.
+struct Lowered {
+    body: FunctionData,
+    spans: Vec<(u32, u32)>,
+    globals: cir::Globals,
+    ext: HashMap<String, Extern>,
+}
+
+/// Rewrites a body lowered by [`Context::lower_job`] to the program's span ids and globals.
+struct Resolve<'a> {
+    spans: &'a [source_info::FileSpanId],
+    globals: &'a [GlobalIdx],
+}
+
+impl cir::visit::MutVisitor for Resolve<'_> {
+    fn visit_statement(&mut self, statement: &mut Statement, location: cir::Location) {
+        let span = &mut statement.source_info.span_id;
+        if span.0 != 0 {
+            *span = self.spans[span.0 as usize - 1];
+        }
+        self.super_statement(statement, location);
+    }
+
+    fn visit_variable_ref(&mut self, variable_ref: &mut VariableRef) {
+        if let Variable::Global(g) = &mut variable_ref.variable {
+            *g = self.globals[g.index()];
+        }
+    }
+}
+
 type DupSlotPair = (u32, u32);
+
+impl Importer {
+    /// Imports `classes`, each with the key of the artifact it is in.
+    ///
+    /// Three passes. The first walks the classes and methods in order and does all the
+    /// bookkeeping -- function slots, VMT rows, parameters -- collecting a [`Job`] per method
+    /// body. The second lowers the bodies on the current rayon pool, each into a function of its
+    /// own ([`Context::lower_job`]). The third places them into the program in order
+    /// ([`Importer::place`]), interning their spans and globals in exactly the order lowering
+    /// them one after another did, so the result does not depend on the thread count.
+    fn process(
+        &mut self,
+        classes: &[(&ClassFileParser, ArtifactKey)],
+        builders: &mut ProgramInfoBuilder,
+    ) -> Result<(), Error> {
+        let mut jobs = Vec::new();
+        for (class, (parser, artifact_key)) in classes.iter().enumerate() {
+            for class_def in parser.classes() {
+                let class_name = jvm_class_symbol(parser.class_name()?);
+                self.class_headers.push((
+                    class_name.clone(),
+                    artifact_key.clone(),
+                    class_def.header_offset,
+                ));
+                log::trace!("Class: {}", class_name);
+                // Populate class hierarchy information for the VMT.
+                // Immediate superclass (if any) and immediate super‑interfaces.
+                let superclass_opt = if class_def.super_class != 0 {
+                    parser
+                        .get_class_name(class_def.super_class)
+                        .ok()
+                        .map(|name| JavaClass(jvm_class_symbol(name).into()))
+                } else {
+                    None
+                };
+                log::trace!(
+                    "Superclass: {}",
+                    match superclass_opt {
+                        Some(JavaClass(ref s)) => s.to_string(),
+                        None => "None".to_string(),
+                    }
+                );
+
+                let mut iface_vec = SmallVec::new();
+                if let Some(jc) = superclass_opt.clone() {
+                    iface_vec.push(jc)
+                };
+                let mut direct_interfaces = Vec::new();
+                for type_idx in &class_def.interfaces {
+                    let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
+                    iface_vec.push(JavaClass(iface.clone().into()));
+                    direct_interfaces.push(Symbol::from(iface.as_str()));
+                    log::trace!("Interface: {}", iface);
+                }
+
+                if let Dispatch::Java {
+                    hierarchy,
+                    interfaces,
+                    ..
+                } = &mut builders.vmt.dispatch
+                {
+                    hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
+                    if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
+                        interfaces.push(JavaClass(class_name.to_string().into()));
+                    }
+                }
+                let enclosing = Arc::new(EnclosingClass {
+                    name: Symbol::from(class_name.as_str()),
+                    superclass: superclass_opt.map(|c| c.0),
+                    interfaces: direct_interfaces,
+                });
+                for enc in parser.methods() {
+                    let sig = parser.method_signature(enc)?;
+                    let method_name = parser.method_name(enc)?;
+                    let fidx = builders.program.new_function();
+                    let fdat = &mut builders.program[fidx];
+
+                    // -----------------------------------------------------------------
+                    // Collect Java virtual method information for the VMT. `java_sig` is the
+                    // descriptor alone, e.g. "(I)I"; `full_name` is `class->name(descriptor)`.
+                    let java_sig = parser.method_proto(enc)?;
+                    let full_name: String = class_name.to_owned() + "->" + &sig;
+                    fdat.name = full_name.clone();
+
+                    let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
+                    for p in jvm_descriptor_to_params(&java_sig, is_instance) {
+                        fdat.params.push(p);
+                    }
+
+                    // All JVM functions model (normal_return, exception_return) like DEX.
+                    fdat.return_type = ReturnType { arity: 2 };
+
+                    builders.vmt.names.push(
+                        FunctionNames::new(full_name.as_str(), method_name.as_str())
+                            .with_parent(class_name.as_str())
+                            .with_signature(java_sig.as_str()),
+                    );
+                    if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
+                        methods.push((
+                            JavaClass(class_name.to_string().into()),
+                            JavaSimpleName(method_name.clone().into()),
+                            JavaSignature(java_sig.clone().into()),
+                            JavaMethod(full_name.clone().into()),
+                        ));
+                    }
+                    if enc.access_flags & JVM_ACC_ABSTRACT != 0
+                        && let Dispatch::Java {
+                            abstract_methods, ..
+                        } = &mut builders.vmt.dispatch
+                    {
+                        abstract_methods.push((
+                            JavaClass(class_name.to_string().into()),
+                            JavaSimpleName(method_name.clone().into()),
+                            JavaSignature(java_sig.clone().into()),
+                        ));
+                    }
+                    // Native methods are also listed in `natives`. They are already in
+                    // `methods` above: this frontend walks every declared method, code or not.
+                    if enc.access_flags & JVM_ACC_NATIVE != 0
+                        && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
+                    {
+                        natives.push((
+                            JavaClass(class_name.to_string().into()),
+                            JavaSimpleName(method_name.clone().into()),
+                            JavaSignature(java_sig.clone().into()),
+                            JavaMethod(full_name.clone().into()),
+                            !is_instance,
+                        ));
+                    }
+
+                    if enc.code.is_some() {
+                        jobs.push(Job {
+                            class,
+                            method: enc,
+                            fidx,
+                            enclosing: Arc::clone(&enclosing),
+                        });
+                    } else {
+                        log::trace!("No code for function {}", method_name)
+                    }
+                }
+            }
+        }
+        self.lower_and_place(classes, builders, &jobs);
+        Ok(())
+    }
+
+    /// Lowers `jobs` on the current rayon pool and places the results into the program in
+    /// order.
+    ///
+    /// The jobs go in batches, so that only one batch of lowered bodies waits to be placed at a
+    /// time, and so that the next batch is lowered while this one is placed.
+    fn lower_and_place(
+        &mut self,
+        classes: &[(&ClassFileParser, ArtifactKey)],
+        builders: &mut ProgramInfoBuilder,
+        jobs: &[Job<'_>],
+    ) {
+        use rayon::prelude::*;
+
+        /// Bodies per batch: enough to keep every thread busy across uneven method sizes, few
+        /// enough that a batch of lowered bodies is a small part of the program.
+        const BATCH: usize = 4096;
+
+        let lower = |batch: &[Job<'_>]| -> Vec<Result<Lowered, ClassFileError>> {
+            batch
+                .par_iter()
+                .map_init(Context::default, |ctx, job| {
+                    ctx.lower_job(classes[job.class].0, job)
+                })
+                .collect()
+        };
+        let mut file = None;
+        let mut batches = jobs.chunks(BATCH);
+        let mut batch = batches.next();
+        let mut current = batch.map(lower);
+        while let (Some(results), Some(placing)) = (current.take(), batch) {
+            batch = batches.next();
+            // Lower the next batch while this one is placed.
+            rayon::scope(|scope| {
+                scope.spawn(|_| current = batch.map(lower));
+                self.place(classes, placing, results, &mut file, builders);
+            });
+        }
+    }
+
+    /// Puts a batch of lowered bodies into the program, in order: interns their spans and
+    /// declares their globals in the order lowering them in place would have, then rewrites
+    /// their statements to use the program's ids (in parallel: each body on its own), then moves
+    /// them into their functions. A body jvm-reader could not decode leaves its function a
+    /// declaration, so calls to it still resolve.
+    ///
+    /// `file` is the class file whose spans were interned last, with its id.
+    fn place(
+        &mut self,
+        classes: &[(&ClassFileParser, ArtifactKey)],
+        jobs: &[Job<'_>],
+        results: Vec<Result<Lowered, ClassFileError>>,
+        file: &mut Option<(usize, source_info::FileId)>,
+        builders: &mut ProgramInfoBuilder,
+    ) {
+        use rayon::prelude::*;
+
+        let mut placed = Vec::with_capacity(results.len());
+        for (job, lowered) in jobs.iter().zip(results) {
+            let Lowered {
+                body,
+                spans,
+                globals,
+                ext,
+            } = match lowered {
+                Ok(lowered) => lowered,
+                Err(e) => {
+                    let name = &builders.program[job.fidx].name;
+                    log::warn!("{name}: importing without a body: {e}");
+                    continue;
+                }
+            };
+            let spans: Vec<source_info::FileSpanId> = if spans.is_empty() {
+                Vec::new()
+            } else {
+                // Looked up at the class's first span, not before: that is when interning a span
+                // in it numbered the artifact.
+                let file = match *file {
+                    Some((class, file)) if class == job.class => file,
+                    _ => {
+                        let id = builders.source_info_builder.file_for(&classes[job.class].1);
+                        *file = Some((job.class, id));
+                        id
+                    }
+                };
+                spans
+                    .iter()
+                    .map(|&(start, len)| {
+                        builders.source_info_builder.span_in_file(
+                            file,
+                            start,
+                            SpanLen::ByteLen(len),
+                        )
+                    })
+                    .collect()
+            };
+            let globals: Vec<GlobalIdx> = globals
+                .iter_enumerated()
+                .map(|(_, g)| self.globals.declare(&*g.name, None))
+                .collect();
+            self.ext.extend(ext);
+            placed.push((job.fidx, body, spans, globals));
+        }
+
+        placed
+            .par_iter_mut()
+            .for_each(|(fidx, body, spans, globals)| {
+                let mut resolve = Resolve { spans, globals };
+                cir::visit::MutVisitor::visit_function_data(&mut resolve, *fidx, body);
+            });
+
+        for (fidx, body, _, _) in placed {
+            let slot = &mut builders.program[fidx];
+            slot.blocks = body.blocks;
+            slot.locals = body.locals;
+        }
+    }
+
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
+        let mut program = builders.program;
+        program.globals = std::mem::take(&mut self.globals);
+        // A class's global is declared at its class header, if the program uses it.
+        for (class, key, offset) in self.class_headers.drain(..) {
+            if program.globals.lookup(&class).is_some() {
+                let span = builders.source_info_builder.span_for(
+                    key,
+                    offset,
+                    SpanLen::ByteLen(jvm_reader::types::ClassFile::HEADER_LEN),
+                );
+                program.globals.declare(&class, Some(span));
+            }
+        }
+        // Each extern gets a function, so the externs are taken in signature order: the hash
+        // map's order would number the functions differently from one import to the next.
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
+            let defined: HashSet<JavaMethod> = methods.iter().map(|m| m.3.clone()).collect();
+            for (sig, entry) in ext {
+                let method = JavaMethod(sig.as_str().into());
+                if defined.contains(&method) {
+                    log::trace!("skipping defined method: {sig}");
+                    continue;
+                }
+                log::trace!("adding external method: {sig}");
+                let (class, name, descr) = entry.split(&sig);
+                methods.push((
+                    JavaClass(class.into()),
+                    JavaSimpleName(name.into()),
+                    JavaSignature(descr.into()),
+                    method,
+                ));
+                builders.vmt.names.push(
+                    FunctionNames::new(sig.as_str(), name)
+                        .with_parent(class)
+                        .with_signature(descr),
+                );
+                // Add empty definition
+                let fidx = program.new_function();
+                let fdat = &mut program.functions[fidx];
+                for p in jvm_descriptor_to_params(descr, entry.is_instance) {
+                    fdat.params.push(p);
+                }
+                fdat.return_type = ReturnType { arity: 2 };
+                fdat.name = sig;
+            }
+        }
+
+        log::trace!("program: {program}");
+        // Verify the generated program.
+        program.verify()?;
+
+        builders.vmt.finish_names();
+        let source_info = builders.source_info_builder.finish();
+        log::trace!("source_info: {source_info}");
+        let vmt = builders.vmt;
+        Ok(ProgramInfo {
+            program,
+            vmt,
+            source_info,
+        })
+    }
+}
 
 impl Context {
     /// Where an `invokespecial` naming `cls.name` begins method lookup.
@@ -173,397 +582,173 @@ impl Context {
         enclosing.superclass.clone()
     }
 
-    fn new() -> Self {
-        Self {
-            ext: Default::default(),
-            call_result: None,
-            catch_result: None,
-            enclosing: None,
-            globals: Default::default(),
-            class_headers: Vec::new(),
-        }
-    }
-
-    fn process(
+    /// Lowers the body of `job`'s method into a function of its own. Spans are recorded as
+    /// instruction offsets and globals declared in a table of the job's own;
+    /// [`Importer::place`] resolves both. An error is jvm-reader's, decoding the method.
+    fn lower_job(
         &mut self,
         parser: &ClassFileParser,
-        artifact_key: ArtifactKey,
-        builders: &mut ProgramInfoBuilder,
-    ) -> Result<(), Error> {
-        for class_def in parser.classes() {
-            let class_name = jvm_class_symbol(parser.class_name()?);
-            self.class_headers.push((
-                class_name.clone(),
-                artifact_key.clone(),
-                class_def.header_offset,
-            ));
-            log::trace!("Class: {}", class_name);
-            // Populate class hierarchy information for the VMT.
-            // Immediate superclass (if any) and immediate super‑interfaces.
-            let superclass_opt = if class_def.super_class != 0 {
-                parser
-                    .get_class_name(class_def.super_class)
-                    .ok()
-                    .map(|name| JavaClass(jvm_class_symbol(name).into()))
-            } else {
-                None
-            };
-            log::trace!(
-                "Superclass: {}",
-                match superclass_opt {
-                    Some(JavaClass(ref s)) => s.to_string(),
-                    None => "None".to_string(),
-                }
-            );
+        job: &Job<'_>,
+    ) -> Result<Lowered, ClassFileError> {
+        self.enclosing = Some(Arc::clone(&job.enclosing));
+        self.spans.clear();
+        self.globals = Default::default();
+        self.ext.clear();
+        let code_attr = job.method.code.as_ref().expect("a job's method has code");
+        let basic_blocks = parser
+            .basic_blocks_with_stack_slots(job.method)?
+            .expect("Non-empty function");
+        let mut fdat = FunctionData::default();
 
-            let mut iface_vec = SmallVec::new();
-            if let Some(jc) = superclass_opt.clone() {
-                iface_vec.push(jc)
-            };
-            let mut direct_interfaces = Vec::new();
-            for type_idx in &class_def.interfaces {
-                let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
-                iface_vec.push(JavaClass(iface.clone().into()));
-                direct_interfaces.push(Symbol::from(iface.as_str()));
-                log::trace!("Interface: {}", iface);
+        let handler_pcs: HashSet<u32> = code_attr
+            .exception_table
+            .iter()
+            .map(|e| e.handler_pc as u32)
+            .collect();
+
+        let mut dup_slot_pairs: HashSet<DupSlotPair> = HashSet::new();
+        // The statements of the block being lowered, moved into it in one exactly sized
+        // allocation once the block is done, rather than grown by doubling.
+        let mut block_stmts: Vec<Statement> = Vec::new();
+
+        for bb in basic_blocks.blocks() {
+            // Exception handler entry: model MoveException (thrown value → stack slot).
+            if handler_pcs.contains(&bb.start_pc) {
+                let dest = VariableRef::new_local_idx(fdat.locals.get_or_intern("stack0"));
+                let except = Self::except(&mut fdat.locals);
+                block_stmts.push(Statement::new_kind(StatementKind::Assign {
+                    dest: dest.into(),
+                    sources: smallvec![Exp::from(AccessPath::from(except),)],
+                }));
             }
 
-            if let Dispatch::Java {
-                hierarchy,
-                interfaces,
-                ..
-            } = &mut builders.vmt.dispatch
-            {
-                hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
-                if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
-                    interfaces.push(JavaClass(class_name.to_string().into()));
-                }
-            }
-            self.enclosing = Some(EnclosingClass {
-                name: Symbol::from(class_name.as_str()),
-                superclass: superclass_opt.map(|c| c.0),
-                interfaces: direct_interfaces,
-            });
-            for enc in parser.methods() {
-                let sig = parser.method_signature(enc)?;
-                let method_name = parser.method_name(enc)?;
-                let fidx = builders.program.new_function();
-                let fdat = &mut builders.program[fidx];
+            let block_instrs = bb.instructions(&basic_blocks);
 
-                // ---------------------------------------------------------------------
-                // Collect Java virtual method information for the VMT. `java_sig` is the
-                // descriptor alone, e.g. "(I)I"; `full_name` is `class->name(descriptor)`.
-                let java_sig = parser.method_proto(enc)?;
-                let full_name: String = class_name.to_owned() + "->" + &sig;
-                fdat.name = full_name.clone();
-
-                let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
-                for p in jvm_descriptor_to_params(&java_sig, is_instance) {
-                    fdat.params.push(p);
-                }
-
-                // All JVM functions model (normal_return, exception_return) like DEX.
-                fdat.return_type = ReturnType { arity: 2 };
-
-                builders.vmt.names.push(
-                    FunctionNames::new(full_name.as_str(), method_name.as_str())
-                        .with_parent(class_name.as_str())
-                        .with_signature(java_sig.as_str()),
-                );
-                if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
-                    methods.push((
-                        JavaClass(class_name.to_string().into()),
-                        JavaSimpleName(method_name.clone().into()),
-                        JavaSignature(java_sig.clone().into()),
-                        JavaMethod(full_name.clone().into()),
-                    ));
-                }
-                if enc.access_flags & JVM_ACC_ABSTRACT != 0
-                    && let Dispatch::Java {
-                        abstract_methods, ..
-                    } = &mut builders.vmt.dispatch
-                {
-                    abstract_methods.push((
-                        JavaClass(class_name.to_string().into()),
-                        JavaSimpleName(method_name.clone().into()),
-                        JavaSignature(java_sig.clone().into()),
-                    ));
-                }
-                // Native methods are also listed in `natives`. They are already in `methods`
-                // above: this frontend walks every declared method, code or not.
-                if enc.access_flags & JVM_ACC_NATIVE != 0
-                    && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
-                {
-                    natives.push((
-                        JavaClass(class_name.to_string().into()),
-                        JavaSimpleName(method_name.clone().into()),
-                        JavaSignature(java_sig.clone().into()),
-                        JavaMethod(full_name.clone().into()),
-                        !is_instance,
-                    ));
-                }
-
-                // ---------------------------------------------------------------------
-                match &enc.code {
-                    None => {
-                        log::trace!("No code for function {}", method_name)
+            // Add statements to the basic block
+            for instr in block_instrs.iter() {
+                self.spans.push((instr.file_byte_offset, instr.byte_length));
+                let source_info = SourceInfo::new(source_info::FileSpanId(
+                    self.spans.len().try_into().unwrap(),
+                ));
+                if let Some(call_info) = &instr.call {
+                    let mut stmt = self
+                        .decode_call(call_info, &mut fdat.locals)
+                        .expect("Call should be there");
+                    stmt.source_info = source_info;
+                    block_stmts.push(stmt);
+                    // A long or double result takes two slots, and each carries the value, as
+                    // a `lload` writes both.
+                    for ret_loc in Self::call_result_slots(call_info) {
+                        let dest = self.convert_location_to_var_ref(&ret_loc, &mut fdat.locals);
+                        let ret = Self::ret(&mut fdat.locals);
+                        let mut assign = Statement::new_kind(StatementKind::Assign {
+                            dest: dest.into(),
+                            sources: smallvec![Exp::from(AccessPath::from(ret),)],
+                        });
+                        assign.source_info = source_info;
+                        block_stmts.push(assign);
                     }
-                    Some(code_attr) => {
-                        log::trace!("Processing code for function {}", method_name);
-                        // A method jvm-reader cannot decode keeps its declaration, so calls
-                        // to it still resolve, but gets no body. Failing here would fail the
-                        // import of every other method in the class or JAR.
-                        let basic_blocks = match parser.basic_blocks_with_stack_slots(enc) {
-                            Ok(blocks) => blocks.expect("Non-empty function"),
-                            Err(e) => {
-                                log::warn!("{full_name}: importing without a body: {e}");
-                                continue;
-                            }
-                        };
-
-                        let handler_pcs: HashSet<u32> = code_attr
-                            .exception_table
-                            .iter()
-                            .map(|e| e.handler_pc as u32)
-                            .collect();
-
-                        let mut dup_slot_pairs: HashSet<DupSlotPair> = HashSet::new();
-
-                        for bb in basic_blocks.clone().blocks() {
-                            let mut bb_data = BasicBlockData::new(None);
-
-                            // Exception handler entry: model MoveException (thrown value → stack slot).
-                            if handler_pcs.contains(&bb.start_pc) {
-                                let dest =
-                                    VariableRef::new_local_idx(fdat.locals.get_or_intern("stack0"));
-                                let except = Self::except(&mut fdat.locals);
-                                bb_data.push_back(Statement::new_kind(StatementKind::Assign {
-                                    dest: dest.into(),
-                                    sources: smallvec![Exp::from(AccessPath::from(except),)],
-                                }));
-                            }
-
-                            let block_instrs = bb.instructions(&basic_blocks);
-
-                            // Add statements to the basic block
-                            for instr in block_instrs.iter() {
-                                let source_info =
-                                    SourceInfo::new(builders.source_info_builder.span_for(
-                                        artifact_key.clone(),
-                                        instr.file_byte_offset,
-                                        SpanLen::ByteLen(instr.byte_length),
-                                    ));
-                                match &instr.call {
-                                    None => {}
-                                    Some(call_info) => {
-                                        let mut stmt = self
-                                            .decode_call(parser, call_info, &mut fdat.locals)
-                                            .expect("Call should be there");
-                                        stmt.source_info = source_info;
-                                        bb_data.push_back(stmt);
-                                        // A long or double result takes two slots, and each
-                                        // carries the value, as a `lload` writes both.
-                                        for ret_loc in Self::call_result_slots(call_info) {
-                                            let dest = self.convert_location_to_var_ref(
-                                                &ret_loc,
-                                                &mut fdat.locals,
-                                            );
-                                            let ret = Self::ret(&mut fdat.locals);
-                                            let mut assign =
-                                                Statement::new_kind(StatementKind::Assign {
-                                                    dest: dest.into(),
-                                                    sources: smallvec![Exp::from(
-                                                        AccessPath::from(ret),
-                                                    )],
-                                                });
-                                            assign.source_info = source_info;
-                                            bb_data.push_back(assign);
-                                        }
-                                        if let Some(mut link) = Self::init_survivor_link(
-                                            call_info,
-                                            &dup_slot_pairs,
-                                            &mut fdat.locals,
-                                        ) {
-                                            link.source_info = source_info;
-                                            bb_data.push_back(link);
-                                        }
-                                    }
-                                }
-                                let dup_stmts = if Self::is_stack_shuffle_opcode(instr.opcode) {
-                                    Some(self.stack_shuffle_statements(
-                                        &instr.dataflow,
-                                        &mut fdat.locals,
-                                    ))
-                                } else {
-                                    None
-                                };
-                                if let Some(stmts) = dup_stmts {
-                                    Self::record_dup_slot_pairs(
-                                        &mut dup_slot_pairs,
-                                        &instr.dataflow,
-                                    );
-                                    for mut stmt in stmts {
-                                        stmt.source_info = source_info;
-                                        bb_data.push_back(stmt);
-                                    }
-                                } else {
-                                    for df in &instr.dataflow {
-                                        for mut stmt in self.dataflow_to_statements(
-                                            instr.opcode,
-                                            df,
-                                            &mut fdat.locals,
-                                        ) {
-                                            stmt.source_info = source_info;
-                                            bb_data.push_back(stmt);
-                                        }
-                                    }
-                                }
-                            }
-
-                            let empty_exp = || Exp::new_bytes(Vec::new());
-                            let term = match block_instrs.last() {
-                                Some(instr) => match instr.opcode {
-                                    0xbf => {
-                                        let succs = bb
-                                            .successors
-                                            .iter()
-                                            .map(|&b| BasicBlockIdx::new(b))
-                                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
-                                        if succs.is_empty() {
-                                            let except = Self::except(&mut fdat.locals);
-                                            TerminatorKind::Return {
-                                                args: smallvec![
-                                                    empty_exp(),
-                                                    Exp::from(AccessPath::from(except)),
-                                                ],
-                                            }
-                                        } else {
-                                            TerminatorKind::Goto { targets: succs }
-                                        }
-                                    }
-                                    0xac..=0xb0 => TerminatorKind::Return {
-                                        args: smallvec![
-                                            self.convert_location_to_exp(
-                                                instr
-                                                    .return_value
-                                                    .as_ref()
-                                                    .expect("a value return names its value"),
-                                                &mut fdat.locals,
-                                            ),
-                                            empty_exp(),
-                                        ],
-                                    },
-                                    0xb1 => {
-                                        let e = empty_exp();
-                                        TerminatorKind::Return {
-                                            args: smallvec![e.clone(), e],
-                                        }
-                                    }
-                                    _ => {
-                                        if bb.successors.is_empty() {
-                                            let e = empty_exp();
-                                            TerminatorKind::Return {
-                                                args: smallvec![e.clone(), e],
-                                            }
-                                        } else {
-                                            TerminatorKind::Goto {
-                                                targets: bb
-                                                    .successors
-                                                    .iter()
-                                                    .map(|&b| BasicBlockIdx::new(b))
-                                                    .collect::<SmallVec<[BasicBlockIdx; 4]>>(),
-                                            }
-                                        }
-                                    }
-                                },
-                                None => {
-                                    let e = empty_exp();
-                                    TerminatorKind::Return {
-                                        args: smallvec![e.clone(), e],
-                                    }
-                                }
-                            };
-                            bb_data.terminator = Some(Terminator::new_kind(term));
-                            fdat.blocks.blocks_mut().push(bb_data);
+                    if let Some(mut link) =
+                        Self::init_survivor_link(call_info, &dup_slot_pairs, &mut fdat.locals)
+                    {
+                        link.source_info = source_info;
+                        block_stmts.push(link);
+                    }
+                }
+                if Self::is_stack_shuffle_opcode(instr.opcode) {
+                    let stmts = self.stack_shuffle_statements(&instr.dataflow, &mut fdat.locals);
+                    Self::record_dup_slot_pairs(&mut dup_slot_pairs, &instr.dataflow);
+                    for mut stmt in stmts {
+                        stmt.source_info = source_info;
+                        block_stmts.push(stmt);
+                    }
+                } else {
+                    for df in &instr.dataflow {
+                        for mut stmt in
+                            self.dataflow_to_statements(instr.opcode, df, &mut fdat.locals)
+                        {
+                            stmt.source_info = source_info;
+                            block_stmts.push(stmt);
                         }
                     }
                 }
             }
-        }
 
-        Ok(())
-    }
-
-    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
-        let mut program = builders.program;
-        program.globals = std::mem::take(&mut self.globals);
-        // A class's global is declared at its class header, if the program uses it.
-        for (class, key, offset) in self.class_headers.drain(..) {
-            if program.globals.lookup(&class).is_some() {
-                let span = builders.source_info_builder.span_for(
-                    key,
-                    offset,
-                    SpanLen::ByteLen(jvm_reader::types::ClassFile::HEADER_LEN),
-                );
-                program.globals.declare(&class, Some(span));
-            }
-        }
-        // Each extern gets a function, so the externs are taken in signature order: the hash
-        // map's order would number the functions differently from one import to the next.
-        let mut ext: Vec<_> = self.ext.drain().collect();
-        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-        for (_sig, entry) in ext {
-            if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
-                if !methods
-                    .iter()
-                    .any(|(_class_name, _simple_name, _signature, defined_method)| {
-                        &entry.3 == defined_method
-                    })
-                {
-                    log::trace!("adding external method: {}", entry.3);
-                    methods.push((
-                        entry.0.clone(),
-                        entry.1.clone(),
-                        entry.2.clone(),
-                        entry.3.clone(),
-                    ));
-
-                    builders.vmt.names.push(
-                        FunctionNames::new(entry.3.0.clone(), entry.1.0.clone())
-                            .with_parent(entry.0.0.clone())
-                            .with_signature(entry.2.0.clone()),
-                    );
-                    // Add empty definition
-                    let fidx = program.new_function();
-                    let fdat = &mut program.functions[fidx];
-                    let JavaMethod(name) = entry.3.clone();
-                    fdat.name = name.to_string();
-                    for p in entry.4 {
-                        fdat.params.push(p);
+            let empty_exp = || Exp::new_bytes(Vec::new());
+            let term = match block_instrs.last() {
+                Some(instr) => match instr.opcode {
+                    0xbf => {
+                        let succs = bb
+                            .successors
+                            .iter()
+                            .map(|&b| BasicBlockIdx::new(b))
+                            .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+                        if succs.is_empty() {
+                            let except = Self::except(&mut fdat.locals);
+                            TerminatorKind::Return {
+                                args: smallvec![empty_exp(), Exp::from(AccessPath::from(except)),],
+                            }
+                        } else {
+                            TerminatorKind::Goto { targets: succs }
+                        }
                     }
-                    fdat.return_type = entry.5;
-                } else {
-                    log::trace!("skipping defined method: {}", entry.3);
+                    0xac..=0xb0 => TerminatorKind::Return {
+                        args: smallvec![
+                            self.convert_location_to_exp(
+                                instr
+                                    .return_value
+                                    .as_ref()
+                                    .expect("a value return names its value"),
+                                &mut fdat.locals,
+                            ),
+                            empty_exp(),
+                        ],
+                    },
+                    0xb1 => {
+                        let e = empty_exp();
+                        TerminatorKind::Return {
+                            args: smallvec![e.clone(), e],
+                        }
+                    }
+                    _ => {
+                        if bb.successors.is_empty() {
+                            let e = empty_exp();
+                            TerminatorKind::Return {
+                                args: smallvec![e.clone(), e],
+                            }
+                        } else {
+                            TerminatorKind::Goto {
+                                targets: bb
+                                    .successors
+                                    .iter()
+                                    .map(|&b| BasicBlockIdx::new(b))
+                                    .collect::<SmallVec<[BasicBlockIdx; 4]>>(),
+                            }
+                        }
+                    }
+                },
+                None => {
+                    let e = empty_exp();
+                    TerminatorKind::Return {
+                        args: smallvec![e.clone(), e],
+                    }
                 }
-            }
+            };
+            let mut bb_data = BasicBlockData::new(Some(Terminator::new_kind(term)));
+            bb_data.statements = block_stmts.drain(..).collect();
+            fdat.blocks.blocks_mut().push(bb_data);
         }
-
-        log::trace!("program: {program}");
-        // Verify the generated program.
-        program.verify()?;
-
-        builders.vmt.finish_names();
-        let source_info = builders.source_info_builder.finish();
-        log::trace!("source_info: {source_info}");
-        let vmt = builders.vmt;
-        Ok(ProgramInfo {
-            program,
-            vmt,
-            source_info,
+        fdat.locals.drop_index();
+        Ok(Lowered {
+            body: fdat,
+            spans: std::mem::take(&mut self.spans),
+            globals: std::mem::take(&mut self.globals),
+            ext: std::mem::take(&mut self.ext),
         })
     }
 
-    /// Records the method `java_sig` as an extern in the VMT.
+    /// Records the method `java_sig`, which is `class_name->method_name` followed by `descr`, as
+    /// one the body calls.
     fn declare_extern(
         &mut self,
         java_sig: &str,
@@ -572,25 +757,24 @@ impl Context {
         descr: &str,
         is_instance: bool,
     ) {
-        self.ext.insert(
-            java_sig.to_owned(),
-            (
-                JavaClass(class_name.into()),
-                JavaSimpleName(method_name.into()),
-                JavaSignature(descr.into()),
-                JavaMethod(java_sig.into()),
-                jvm_descriptor_to_params(descr, is_instance),
-                ReturnType { arity: 2 },
-            ),
+        debug_assert_eq!(
+            java_sig.len(),
+            class_name.len() + 2 + method_name.len() + descr.len()
         );
+        let entry = Extern {
+            class_len: class_name.len().try_into().unwrap(),
+            name_len: method_name.len().try_into().unwrap(),
+            is_instance,
+        };
+        match self.ext.get_mut(java_sig) {
+            Some(found) => *found = entry,
+            None => {
+                self.ext.insert(java_sig.to_owned(), entry);
+            }
+        }
     }
 
-    fn decode_call(
-        &mut self,
-        _parser: &ClassFileParser,
-        call: &CallInfo,
-        locals: &mut Locals,
-    ) -> Option<Statement> {
+    fn decode_call(&mut self, call: &CallInfo, locals: &mut Locals) -> Option<Statement> {
         // Get call target
         let style = match &call.receiver {
             None => {
@@ -723,8 +907,6 @@ impl Context {
 
         let retval = Self::ret(locals);
         let throwval = Self::except(locals);
-        self.call_result = call.return_value.as_ref().map(|_| retval.clone());
-        self.catch_result = Some(throwval.clone());
 
         Statement::new_kind(StatementKind::CallAssign {
             style,
