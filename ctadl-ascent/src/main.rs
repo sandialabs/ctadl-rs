@@ -738,7 +738,11 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            init_import_threads(args.jobs.unwrap_or(0));
+            // The pool is the process's, and outlives the import into indexing and querying, so
+            // it is sized only on request; an APK's import budgets its own threads either way.
+            if let Some(jobs) = args.jobs {
+                init_import_threads(jobs);
+            }
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
