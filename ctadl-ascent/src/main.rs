@@ -947,6 +947,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
+    // The artifact's content hash is recorded once the import succeeds, so that a later import
+    // can tell this one is up to date. Hashing a large artifact takes a while, and the import
+    // only reads it, so hash it alongside. A Ghidra Server repository can't be content-hashed
+    // (it's remote); such artifacts are simply re-imported each time.
+    let hash = (!project::is_ghidra_server_url(&config.artifact_path)).then(|| {
+        let artifact = config.artifact_path.clone();
+        std::thread::spawn(move || project::hash_artifact(&artifact))
+    });
     cli::import(
         &config,
         cli::ImportOptions {
@@ -958,13 +966,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
-    // (e.g. the pcode importer records `image_base`), then record the artifact's
-    // content hash (and path) so a later import can tell the import is up to date.
+    // (e.g. the pcode importer records `image_base`), then record the hash.
     let mut config = project::ArtifactImport::load_by_name(name)?;
-    // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
-    // hash for it; such artifacts are simply re-imported each time.
-    if !project::is_ghidra_server_url(&config.artifact_path) {
-        config.record_artifact_hash()?;
+    if let Some(hash) = hash {
+        let hash = hash
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+        config.hash = Some(hash);
+        config.save()?;
     }
     Ok(name.to_string())
 }
