@@ -82,11 +82,14 @@ fn dispatch_caller() -> FunctionData {
         b.create_call(
             CallStyle::JavaCall {
                 receiver: recv,
-                cls: (*cls).into(),
-                simple_name: (*name).into(),
-                descriptor: (*desc).into(),
-                dispatch: JavaDispatch::Interface,
-                super_start: None,
+                method: ctadl_ir::cir::JavaMethodRef {
+                    cls: (*cls).into(),
+                    simple_name: (*name).into(),
+                    descriptor: (*desc).into(),
+                    dispatch: JavaDispatch::Interface,
+                    super_start: None,
+                }
+                .into(),
             },
             vec![result],
             vec![Exp::variable(

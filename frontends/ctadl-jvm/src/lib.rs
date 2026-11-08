@@ -1056,14 +1056,17 @@ impl Context {
                         self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
-                            cls: class_name.clone().into(),
-                            simple_name: method_name.clone().into(),
-                            descriptor: descr.clone().into(),
-                            // `invokedynamic` has no dispatch instruction to read: where it
-                            // goes is decided by a bootstrap method at run time. Recorded as
-                            // unknown rather than guessed at.
-                            dispatch: JavaDispatch::Unknown,
-                            super_start: None,
+                            method: JavaMethodRef {
+                                cls: class_name.clone().into(),
+                                simple_name: method_name.clone().into(),
+                                descriptor: descr.clone().into(),
+                                // `invokedynamic` has no dispatch instruction to read: where it
+                                // goes is decided by a bootstrap method at run time. Recorded as
+                                // unknown rather than guessed at.
+                                dispatch: JavaDispatch::Unknown,
+                                super_start: None,
+                            }
+                            .into(),
                         }
                     }
                     // other calls have a class name, method name, and descriptor
@@ -1093,25 +1096,28 @@ impl Context {
                         self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
-                            cls: class_name.clone().into(),
-                            simple_name: method_name.clone().into(),
-                            descriptor: descr.clone().into(),
-                            dispatch: match call.call_kind {
-                                CallKind::Interface => JavaDispatch::Interface,
-                                // `invokespecial` with a receiver: a `super.m()`, a private
-                                // method, or a constructor. All three are fixed at the named
-                                // class rather than found from the receiver.
-                                CallKind::Special => JavaDispatch::Super,
-                                CallKind::Virtual => JavaDispatch::Virtual,
-                                // Unreachable: `Dynamic` is the arm above and `Static` has no
-                                // receiver. Recorded honestly rather than asserted, since a
-                                // new `CallKind` should not make this arm lie.
-                                CallKind::Dynamic | CallKind::Static => JavaDispatch::Unknown,
-                            },
-                            super_start: match call.call_kind {
-                                CallKind::Special => self.super_start(&class_name, method_name),
-                                _ => None,
-                            },
+                            method: JavaMethodRef {
+                                cls: class_name.clone().into(),
+                                simple_name: method_name.clone().into(),
+                                descriptor: descr.clone().into(),
+                                dispatch: match call.call_kind {
+                                    CallKind::Interface => JavaDispatch::Interface,
+                                    // `invokespecial` with a receiver: a `super.m()`, a private
+                                    // method, or a constructor. All three are fixed at the named
+                                    // class rather than found from the receiver.
+                                    CallKind::Special => JavaDispatch::Super,
+                                    CallKind::Virtual => JavaDispatch::Virtual,
+                                    // Unreachable: `Dynamic` is the arm above and `Static` has no
+                                    // receiver. Recorded honestly rather than asserted, since a
+                                    // new `CallKind` should not make this arm lie.
+                                    CallKind::Dynamic | CallKind::Static => JavaDispatch::Unknown,
+                                },
+                                super_start: match call.call_kind {
+                                    CallKind::Special => self.super_start(&class_name, method_name),
+                                    _ => None,
+                                },
+                            }
+                            .into(),
                         }
                     }
                 }

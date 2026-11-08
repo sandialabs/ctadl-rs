@@ -1251,13 +1251,16 @@ impl Context {
                 let cls: Symbol = cls.into();
                 CallStyle::JavaCall {
                     receiver: args[0].variable_ref().unwrap().clone(),
-                    super_start: (dispatch == JavaDispatch::Super)
-                        .then(|| self.super_start(&cls))
-                        .flatten(),
-                    cls,
-                    simple_name: simple_name.into(),
-                    descriptor: descriptor.into(),
-                    dispatch,
+                    method: JavaMethodRef {
+                        super_start: (dispatch == JavaDispatch::Super)
+                            .then(|| self.super_start(&cls))
+                            .flatten(),
+                        cls,
+                        simple_name: simple_name.into(),
+                        descriptor: descriptor.into(),
+                        dispatch,
+                    }
+                    .into(),
                 }
             }
         };

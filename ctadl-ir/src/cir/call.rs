@@ -3,6 +3,7 @@ use std::{fmt, fmt::Display};
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
+use internment::ArcIntern;
 use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
@@ -91,26 +92,14 @@ pub enum CallStyle {
     /// C function pointer, a CIL delegate, a Java method handle.
     FuncPtrCall {
         callee: super::AccessPath,
-        signature: Option<String>,
+        signature: Option<Symbol>,
     },
     /// Java virtual call. At analysis time, this consults metadata in the
     /// [`Dispatch::Java`] enum.
     JavaCall {
         receiver: VariableRef,
-        cls: Symbol,
-        simple_name: Symbol,
-        descriptor: Symbol,
-        /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
-        dispatch: JavaDispatch,
-        /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
-        /// every other dispatch kind and for a `Super` site whose frontend could not
-        /// determine it.
-        ///
-        /// Kept beside `cls` rather than overwriting it: `cls` is what a model matches and
-        /// what `ctadl report` counts. The two differ because the instruction names the class
-        /// of the *method reference*, which for a Dalvik `invoke-super` may be the current
-        /// class rather than the superclass the runtime starts at.
-        super_start: Option<Symbol>,
+        /// The method the instruction names; see [`JavaMethodRef`].
+        method: ArcIntern<JavaMethodRef>,
     },
     /// Lua `recv:m(...)` (or `recv.m(recv, ...)`); resolved via the metatable
     /// (`__index`) chain. Unlike [`CallStyle::JavaCall`] there is **no static
@@ -129,10 +118,42 @@ pub enum CallStyle {
     /// interface method and a class method alike, and the table says which `cls` is.
     CilCall {
         receiver: VariableRef,
-        cls: Symbol,
-        simple_name: Symbol,
-        descriptor: Symbol,
+        /// The method the instruction names; see [`CilMethodRef`].
+        method: ArcIntern<CilMethodRef>,
     },
+}
+
+/// The method a [`CallStyle::JavaCall`] names.
+///
+/// A call holds it interned rather than inline: it is most of a call's size, statements are a
+/// large share of a program's memory, and many call sites name the same method. It serializes
+/// as its fields, so an encoded call is the same as if they were the call's own.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct JavaMethodRef {
+    pub cls: Symbol,
+    pub simple_name: Symbol,
+    pub descriptor: Symbol,
+    /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
+    pub dispatch: JavaDispatch,
+    /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
+    /// every other dispatch kind and for a `Super` site whose frontend could not
+    /// determine it.
+    ///
+    /// Kept beside `cls` rather than overwriting it: `cls` is what a model matches and
+    /// what `ctadl report` counts. The two differ because the instruction names the class
+    /// of the *method reference*, which for a Dalvik `invoke-super` may be the current
+    /// class rather than the superclass the runtime starts at.
+    pub super_start: Option<Symbol>,
+}
+
+/// The method a [`CallStyle::CilCall`] names, held interned as [`JavaMethodRef`] is.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CilMethodRef {
+    pub cls: Symbol,
+    pub simple_name: Symbol,
+    pub descriptor: Symbol,
 }
 
 impl CallStyle {
@@ -186,14 +207,14 @@ impl Display for CallStyle {
             DirectCall { call_edges } => {
                 write!(f, "direct-call {call_edges}")
             }
-            JavaCall {
-                receiver,
-                cls,
-                simple_name,
-                descriptor,
-                dispatch,
-                super_start,
-            } => {
+            JavaCall { receiver, method } => {
+                let JavaMethodRef {
+                    cls,
+                    simple_name,
+                    descriptor,
+                    dispatch,
+                    super_start,
+                } = &**method;
                 write!(
                     f,
                     "java-call {dispatch} {receiver}.<{cls}.{simple_name}{descriptor}>"
@@ -204,12 +225,14 @@ impl Display for CallStyle {
                 }
             }
             LuaCall { receiver, method } => write!(f, "lua-call {receiver}:{method}"),
-            CilCall {
-                receiver,
-                cls,
-                simple_name,
-                descriptor,
-            } => write!(f, "cil-call {receiver}.<{cls}::{simple_name}{descriptor}>"),
+            CilCall { receiver, method } => {
+                let CilMethodRef {
+                    cls,
+                    simple_name,
+                    descriptor,
+                } = &**method;
+                write!(f, "cil-call {receiver}.<{cls}::{simple_name}{descriptor}>")
+            }
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
                 None => write!(f, "funcptr-call {callee}"),

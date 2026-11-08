@@ -4676,7 +4676,7 @@ impl<'a> Context<'a> {
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,
-                    signature: (Some("indirect-call".to_string())),
+                    signature: Some("indirect-call".into()),
                 }
             }
             Variable::Param(idx) => {
@@ -4684,7 +4684,7 @@ impl<'a> Context<'a> {
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,
-                    signature: (Some("indirect-call".to_string())),
+                    signature: Some("indirect-call".into()),
                 }
             }
             // A global `g`'s storage is `$g.deref`, so the base being a global says nothing
@@ -4698,7 +4698,7 @@ impl<'a> Context<'a> {
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,
-                    signature: (Some("indirect-call".to_string())),
+                    signature: Some("indirect-call".into()),
                 }
             }
             Variable::Global(_) => CallStyle::DirectCall { call_edges },

@@ -121,7 +121,7 @@ pub use crate::cir::terminator::{Terminator, TerminatorKind};
 use crate::cir::visit::Visitor;
 pub use crate::cir::{
     basic_blocks::BasicBlocks,
-    call::{CallEdges, CallObject, CallStyle},
+    call::{CallEdges, CallObject, CallStyle, CilMethodRef, JavaMethodRef},
     sources::Sources,
     verify::{CirVerify, VerifyError, VerifyErrors},
 };

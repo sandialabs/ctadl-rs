@@ -242,7 +242,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 }
                 CallStyle::FuncPtrCall {
                     callee: AccessPath::from(em.var(*callee)),
-                    signature: Some(self.names.descriptor(&site.sig, None)),
+                    signature: Some(self.names.descriptor(&site.sig, None).as_str().into()),
                 }
             }
         };
@@ -372,9 +372,12 @@ impl Lower<'_, '_, '_, '_, '_> {
                 }
                 return Virtual::Dispatch(CallStyle::CilCall {
                     receiver: recv,
-                    cls: cls.as_str().into(),
-                    simple_name: imp.simple.as_str().into(),
-                    descriptor: imp.own_desc.as_str().into(),
+                    method: CilMethodRef {
+                        cls: cls.as_str().into(),
+                        simple_name: imp.simple.as_str().into(),
+                        descriptor: imp.own_desc.as_str().into(),
+                    }
+                    .into(),
                 });
             }
         }
@@ -390,9 +393,12 @@ impl Lower<'_, '_, '_, '_, '_> {
         self.out.callee(&key, parameters(&m.sig));
         Virtual::Dispatch(CallStyle::CilCall {
             receiver: recv,
-            cls: key.cls.as_str().into(),
-            simple_name: key.simple.as_str().into(),
-            descriptor: key.desc.as_str().into(),
+            method: CilMethodRef {
+                cls: key.cls.as_str().into(),
+                simple_name: key.simple.as_str().into(),
+                descriptor: key.desc.as_str().into(),
+            }
+            .into(),
         })
     }
 
@@ -493,7 +499,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
         let style = CallStyle::FuncPtrCall {
             callee: AccessPath::from(m),
-            signature: Some(self.names.descriptor(&site.sig, None)),
+            signature: Some(self.names.descriptor(&site.sig, None).as_str().into()),
         };
         self.emit_call(em, style, args, site.result, copy_outs);
     }

@@ -819,11 +819,14 @@ fn rta_keeps_only_allocated_implementers() {
     b.create_call(
         CallStyle::JavaCall {
             receiver: x,
-            cls: iface.clone(),
-            simple_name: m.clone(),
-            descriptor: desc.clone(),
-            dispatch: JavaDispatch::Interface,
-            super_start: None,
+            method: JavaMethodRef {
+                cls: iface.clone(),
+                simple_name: m.clone(),
+                descriptor: desc.clone(),
+                dispatch: JavaDispatch::Interface,
+                super_start: None,
+            }
+            .into(),
         },
         Vec::new(),
         Vec::new(),
@@ -1525,13 +1528,16 @@ mod super_resolution {
         b.create_call(
             CallStyle::JavaCall {
                 receiver: x,
-                // What the instruction names, and what CHA alone would resolve to both `LA;`
-                // and `LB;`.
-                cls: "LA;".into(),
-                simple_name: "m".into(),
-                descriptor: "()V".into(),
-                dispatch: JavaDispatch::Super,
-                super_start: Some("LA;".into()),
+                method: JavaMethodRef {
+                    // What the instruction names, and what CHA alone would resolve to both `LA;`
+                    // and `LB;`.
+                    cls: "LA;".into(),
+                    simple_name: "m".into(),
+                    descriptor: "()V".into(),
+                    dispatch: JavaDispatch::Super,
+                    super_start: Some("LA;".into()),
+                }
+                .into(),
             },
             Vec::new(),
             Vec::new(),

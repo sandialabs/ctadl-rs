@@ -2180,7 +2180,7 @@ impl<'a> Lowerer<'a> {
             args.insert(0, Exp::from(callee_ap.clone()));
             CallStyle::FuncPtrCall {
                 callee: callee_ap,
-                signature: Some("indirect-call".to_string()),
+                signature: Some("indirect-call".into()),
             }
         } else if let Some((receiver, method)) = lua_method {
             // Resolved later via the receiver's object facts + the Lua CHA. The receiver is

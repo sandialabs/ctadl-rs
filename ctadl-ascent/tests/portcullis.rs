@@ -1048,11 +1048,14 @@ fn java_call(cls: &str, name: &str, desc: &str) -> Statement {
     Statement::new_kind(StatementKind::CallAssign {
         style: CallStyle::JavaCall {
             receiver: VariableRef::new_local_idx(LocalIdx::new(0)),
-            cls: Symbol::from(cls),
-            simple_name: Symbol::from(name),
-            descriptor: Symbol::from(desc),
-            dispatch: ctadl_ir::cir::call::JavaDispatch::Interface,
-            super_start: None,
+            method: ctadl_ir::cir::JavaMethodRef {
+                cls: Symbol::from(cls),
+                simple_name: Symbol::from(name),
+                descriptor: Symbol::from(desc),
+                dispatch: ctadl_ir::cir::call::JavaDispatch::Interface,
+                super_start: None,
+            }
+            .into(),
         },
         rets: Default::default(),
         args: Default::default(),
