@@ -27,10 +27,13 @@
 //! A tuple is stored as one blob of `u64` words, with each column's bytes at a
 //! fixed offset given by the tuple's [`Layout`], which [`store_layout`] computes
 //! from the columns' sizes and alignments and the relation's prefix indices.
-//! Each column starts on a word of its own, in declared order, and the bytes
-//! after it up to the next word are zero. Every column sits at an offset aligned
-//! for its type, so a read hands out a `&Column` into the blob, and the bytes
-//! are written and read in native byte order.
+//! Columns are packed at their natural widths: the prefix boundaries split the
+//! columns into segments, each starting on a word, and within a segment the
+//! columns are ordered by decreasing alignment, so no padding falls between
+//! them; the bytes from a segment's last column to the next word are zero.
+//! Every column sits at an offset aligned for its type, so a read hands out a
+//! `&Column` into the blob, and the bytes are written and read in native byte
+//! order.
 //!
 //! For interned types the blob holds the handle's raw bits. This is only valid
 //! **within a single process run**: the run files are per-process temp files, and
@@ -773,48 +776,11 @@ pub const fn layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout 
     out
 }
 
-/// The layout that puts each column on words of its own: the columns in
-/// declared order, each at the next multiple of eight, with zero padding to the
-/// next word. Every column boundary is a segment boundary, so any prefix of
-/// the columns is a whole number of words.
-const fn slot_layout(sizes: &[usize], aligns: &[usize]) -> Layout {
-    let n = sizes.len();
-    assert!(n <= MAX_COLS, "layout: more than six columns");
-    assert!(
-        aligns.len() == n,
-        "layout: sizes and aligns differ in length"
-    );
-    let mut out = Layout {
-        offsets: [0; MAX_COLS],
-        seg_ends: [0; MAX_COLS],
-        seg_cols: [0; MAX_COLS],
-        n_cols: n,
-        n_segs: n,
-        words: 0,
-    };
-    let mut at = 0;
-    let mut c = 0;
-    while c < n {
-        let a = aligns[c];
-        assert!(
-            a == 1 || a == 2 || a == 4 || a == 8,
-            "layout: alignment must divide 8"
-        );
-        out.offsets[c] = at;
-        at = (at + sizes[c]).next_multiple_of(8);
-        out.seg_ends[c] = at;
-        out.seg_cols[c] = c + 1;
-        c += 1;
-    }
-    out.words = if at == 0 { 1 } else { at / 8 };
-    out
-}
-
 /// The layout the provider stores a tuple in: of a relation's tuples under its
 /// prefix mask, or of an own index's keys or values with mask 0. Every blob
 /// width and every set of column offsets the provider uses comes from here.
-pub const fn store_layout(sizes: &[usize], aligns: &[usize], _prefixes: u32) -> Layout {
-    slot_layout(sizes, aligns)
+pub const fn store_layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout {
+    layout(sizes, aligns, prefixes)
 }
 
 /// Whether `a` followed by `b` is `whole`.
@@ -1884,41 +1850,6 @@ mod store_tests {
         let layout = store_layout(<()>::SIZES, <()>::ALIGNS, 0);
         assert_eq!(layout.words, 1);
         assert_eq!(encode_over(&(), &layout, 0), [0]);
-    }
-
-    /// A tuple's blob with each column on words of its own: each column's
-    /// bytes, zero-padded to a multiple of eight, in column order.
-    fn slot_bytes<T: TestTuple>(t: &T) -> Vec<u8> {
-        let n = T::SIZES.len();
-        let mut out = Vec::new();
-        for (c, &size) in T::SIZES.iter().enumerate() {
-            // Column `c` at 0, alone; the others out of the way at 64.
-            let mut scratch = vec![0u64; 16];
-            let offsets: Vec<usize> = (0..n).map(|d| if d == c { 0 } else { 64 }).collect();
-            t.encode_at(bytemuck::cast_slice_mut(&mut scratch), &offsets);
-            let bytes: &[u8] = bytemuck::cast_slice(&scratch);
-            out.extend_from_slice(&bytes[..size.next_multiple_of(8)]);
-        }
-        out
-    }
-
-    #[test]
-    fn same_bytes_as_slots() {
-        type T6 = (u8, u16, u32, u64, Wide, Vtx);
-        const P: u32 = 1 << 2 | 1 << 4;
-        const W: usize = crate::lsm_tuple_words!(T6, P);
-        assert_eq!(W, 8);
-        type T3 = (u16, Vtx, u32);
-        const W3: usize = crate::lsm_tuple_words!(T3, 0);
-        assert_eq!(W3, 4);
-        for i in 0..8 {
-            let t = T6::sample(i);
-            let blob = LsmStore::<T6, P, W>::encode(&t);
-            assert_eq!(bytemuck::bytes_of(&blob), slot_bytes(&t));
-            let t = T3::sample(i);
-            let blob = LsmIndex::<T3, (), W3, 1>::encode_key(&t);
-            assert_eq!(bytemuck::bytes_of(&blob), slot_bytes(&t));
-        }
     }
 
     type C4 = (u32, u64, u16, u32);
