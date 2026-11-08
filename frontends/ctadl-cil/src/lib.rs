@@ -55,11 +55,12 @@ the last value of every return: exceptions that may leave a method accumulate in
 
 Like the Dex front end, a [`Context`] is made once, given the assemblies with
 `Context::process`, and turned into one [`ProgramInfo`] by [`Context::finish`]: a
-multi-assembly application has one hierarchy. Method bodies are lowered in parallel, each on its
-own, and placed into the program in order, so the program does not depend on the thread count. Referenced assemblies that are not imported
-(the framework, by default) are still read for their metadata, from the input's directory
-and the framework's ([`ImportOptions::reference_dirs`]): base types' virtual methods, type
-forwarders, sealed and virtual flags. Nothing of theirs is lowered.
+multi-assembly application has one hierarchy. Method bodies are lowered in parallel, each on
+its own, and placed into the program in order, so the program does not depend on the thread
+count. Referenced assemblies that are not imported (the framework, by default) are still read
+for their metadata, from the input's directory and the framework's
+([`ImportOptions::reference_dirs`]): base types' virtual methods, type forwarders, sealed and
+virtual flags. Nothing of theirs is lowered.
 
 An assembly's portable PDB (beside it, embedded, or in its own metadata) gives its instructions
 source lines; see `lines.rs`.
@@ -189,8 +190,8 @@ pub fn import_files_with_stats(
     files: &[PathBuf],
     opts: &ImportOptions,
 ) -> Result<(ProgramInfo, Stats), Error> {
-    // Collected whole and then checked in order, so that the error reported is the first file's.
     let timer = PhaseTimer::start();
+    // Collected whole and then checked in order, so that the error reported is the first file's.
     let datas = files
         .par_iter()
         .map(|f| std::fs::read(f).err_context(|| format!("reading {}", f.display())))
@@ -295,25 +296,52 @@ struct Assembly<'n, 'm, 'l, 'p> {
     resolved: calls::Resolved,
 }
 
-/// What [`Context::scan_type`] reads of a type, apart from its methods' signatures and flags.
+/// What [`scan_type`] reads of a type: what the bookkeeping needs that takes naming or
+/// decoding. Where reading fails, the error is kept for the bookkeeping to meet where it would
+/// have read it.
 struct TypeScan<'m> {
     td: TypeDef<'m>,
     cls: String,
+    /// The classes of its base type and interfaces.
+    parents: cil_reader::Result<Vec<String>>,
     aliases: hierarchy::Aliases,
-    /// Each method, with its key if its name decodes.
-    methods: cil_reader::Result<Vec<(MethodDef<'m>, Option<MethodKey>)>>,
+    /// Each method, with its key if its name decodes, and its signature.
+    methods: cil_reader::Result<Vec<ScannedMethod<'m>>>,
 }
 
-/// Reads what the bookkeeping needs of a type that takes resolving other types.
+struct ScannedMethod<'m> {
+    md: MethodDef<'m>,
+    key: Option<MethodKey>,
+    sig: cil_reader::Result<MethodSig>,
+}
+
+/// Reads a type for [`Context::collect_type`], on its own.
 fn scan_type<'m>(names: &ModNames<'_, 'm, 'm, '_>, td: TypeDef<'m>) -> TypeScan<'m> {
+    let parents = || -> cil_reader::Result<Vec<String>> {
+        let mut parents = Vec::new();
+        if let Some(base) = td.base_type()? {
+            parents.extend(names.tdor_cls(&base));
+        }
+        for i in td.interfaces()? {
+            if let Some(iface) = i.interface {
+                parents.extend(names.tdor_cls(&iface));
+            }
+        }
+        Ok(parents)
+    };
     TypeScan {
         td,
         cls: names.typedef_cls(&td),
+        parents: parents(),
         aliases: hierarchy::aliases(names.namer, names.module, td),
         methods: td.methods().map(|methods| {
             methods
                 .into_iter()
-                .map(|md| (md, names.method_key(md.token())))
+                .map(|md| ScannedMethod {
+                    md,
+                    key: names.method_key(md.token()),
+                    sig: md.signature(),
+                })
                 .collect()
         }),
     }
@@ -327,7 +355,7 @@ struct PendingCallee {
     params: Vec<ParameterType>,
 }
 
-/// A method body for [`lower_job`] to lower, from [`Context::collect`].
+/// A method body for [`lower_job`] to lower, from [`Context::collect_type`].
 struct Job<'m> {
     /// The assembly, by position.
     assembly: usize,
@@ -492,8 +520,9 @@ fn version_key(p: &Path) -> Vec<u64> {
 /// thunks it needs, and counts for the import summary.
 #[derive(Debug, Default)]
 pub struct Collected {
-    /// Every callee, by function id, with the shape its stub gets if nothing defines it.
-    pub ext: BTreeMap<String, (MethodKey, Vec<ParameterType>)>,
+    /// Every callee, by function id, with the shape its stub gets if nothing defines it. Stubs
+    /// are made in function id order.
+    pub ext: HashMap<String, (MethodKey, Vec<ParameterType>)>,
     /// Thunk function id -> the static method it calls.
     pub thunks: BTreeMap<String, String>,
     /// Override bridges to define, in the order their types were processed.
@@ -660,6 +689,7 @@ impl Context {
         let TypeScan {
             td,
             cls,
+            parents,
             aliases,
             methods,
         } = scan;
@@ -673,15 +703,7 @@ impl Context {
             self.type_defs
                 .push((cls.clone(), asm.spans.key.clone(), offset, size));
         }
-        let mut parents = Vec::new();
-        if let Some(base) = td.base_type()? {
-            parents.extend(asm.names.tdor_cls(&base));
-        }
-        for i in td.interfaces()? {
-            if let Some(iface) = i.interface {
-                parents.extend(asm.names.tdor_cls(&iface));
-            }
-        }
+        let parents = parents?;
         let entry = self.table.hierarchy.entry(cls.clone()).or_default();
         for p in parents {
             if !entry.contains(&p) {
@@ -719,7 +741,7 @@ impl Context {
             });
         }
 
-        for (md, mkey) in methods? {
+        for ScannedMethod { md, key: mkey, sig } in methods? {
             let Some(mkey) = mkey else {
                 log::warn!("cil: {cls}: a method whose name does not decode");
                 continue;
@@ -730,7 +752,7 @@ impl Context {
                 continue;
             }
             self.table.names.push(names_of(&fid, &mkey));
-            let sig = md.signature()?;
+            let sig = sig?;
             let fidx = self.program.new_function();
             self.defined.insert(fid.clone(), fidx);
             self.out.stats.methods += 1;
@@ -792,23 +814,27 @@ impl Context {
         /// enough that a batch of lowered bodies is a small part of the program.
         const BATCH: usize = 4096;
 
-        let lower = |batch: &[Job<'m>]| -> Vec<Result<Lowered, Error>> {
-            batch
-                .par_iter()
-                .map(|job| lower_job(&assemblies[job.assembly], job))
-                .collect()
+        // A batch's jobs are dropped once it is lowered.
+        let lower = |batch: Vec<Job<'m>>| -> Option<Vec<Result<Lowered, Error>>> {
+            (!batch.is_empty()).then(|| {
+                batch
+                    .par_iter()
+                    .map(|job| lower_job(&assemblies[job.assembly], job))
+                    .collect()
+            })
         };
         let mut callees = callees.into_iter().peekable();
         let mut placed_jobs = 0;
         let mut placing = std::time::Duration::ZERO;
-        let mut batches = jobs.chunks(BATCH);
-        let mut current = batches.next().map(lower);
+        let mut jobs = jobs.into_iter();
+        let mut take_batch = || jobs.by_ref().take(BATCH).collect::<Vec<_>>();
+        let mut current = lower(take_batch());
         while let Some(results) = current.take() {
-            let next_batch = batches.next();
+            let next_batch = take_batch();
             let mut placed = Ok(());
             let started = std::time::Instant::now();
             rayon::scope(|scope| {
-                scope.spawn(|_| current = next_batch.map(lower));
+                scope.spawn(|_| current = lower(next_batch));
                 placed = self.place(assemblies, results, &mut placed_jobs, &mut callees);
                 placing += started.elapsed();
             });
@@ -922,7 +948,8 @@ impl Context {
             self.table.methods.push((cls, simple, desc, fid));
             self.out.stats.bridges += 1;
         }
-        let ext = std::mem::take(&mut self.out.ext);
+        let mut ext: Vec<_> = std::mem::take(&mut self.out.ext).into_iter().collect();
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         for (fid, (key, params)) in &ext {
             if self.defined.contains_key(fid) {
                 continue;
