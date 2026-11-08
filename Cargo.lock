@@ -1210,7 +1210,9 @@ dependencies = [
  "ctadl-lua",
  "ctadl-pcode",
  "dex-reader",
+ "libc",
  "log",
+ "rayon",
 ]
 
 [[package]]
@@ -2171,6 +2173,7 @@ dependencies = [
  "log",
  "rayon",
  "smallvec",
+ "tempfile",
  "thiserror",
  "zip",
 ]

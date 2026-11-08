@@ -168,8 +168,14 @@ pub struct ImportArgs {
     /// decompile native code.
     ///
     /// `0`, the default, or `-j` with no value, lowers on as many threads as there are cores, up
-    /// to 16, and leaves Ghidra to itself, which uses every core the OS reports. Any other value
-    /// uses that many threads, and caps Ghidra, and the JVM it runs in, at that many.
+    /// to 16. An APK's native libraries and an app bundle's splits are imported several at once,
+    /// and share that many cores: each Ghidra run gets a share sized to its library. A single
+    /// native artifact's Ghidra run gets them all, or, with `0`, is left to itself, which uses
+    /// every core the OS reports. Ghidra's JVM is capped at the threads it is given.
+    ///
+    /// The Ghidra runs going at once also share a memory budget, half of physical memory unless
+    /// the CTADL_IMPORT_MEMORY environment variable sets it (`48G`, `4096M`); each run's heap
+    /// is capped at its share.
     #[arg(
         short = 'j',
         long,

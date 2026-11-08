@@ -32,6 +32,8 @@ outcome as importing an APK on a machine that has no Ghidra, which is common and
 
 #[cfg(feature = "apk")]
 pub mod apk_native;
+#[cfg(feature = "apk")]
+pub mod budget;
 #[cfg(feature = "flowy")]
 pub mod flowy;
 #[cfg(feature = "xapk")]
@@ -63,8 +65,11 @@ pub struct ImportOptions<'a> {
     /// Import a .NET directory's framework assemblies too, rather than only reading their
     /// metadata. Off by default.
     pub cil_include_framework: bool,
-    /// How many threads Ghidra may use to disassemble native code. `0`, the default, leaves
-    /// it to Ghidra, which uses every core the OS reports.
+    /// How many cores an import may use. For a single native artifact, this is how many
+    /// threads Ghidra may use. For an APK's native libraries or a bundle's splits, which are
+    /// imported several at once, it is the core budget they share (see [`budget`]). `0`, the
+    /// default, leaves a single Ghidra run every core the OS reports, and sets the shared
+    /// budget to [`budget::DEFAULT_MAX_CORES`] or the cores the OS reports, whichever is fewer.
     pub jobs: usize,
 }
 
@@ -113,8 +118,25 @@ pub struct Imported {
 /// native libraries or a bundle's split APKs. Those have to be finished before this function
 /// returns. Saving the result is up to the caller. See [`import_and_save`], or
 /// [`open_or_import`] for the whole round trip.
-// Only the container-format arms read `opts`, and the log line at the end cannot be reached in
-// a build with no language enabled at all. Both depend on the feature set, not on the code.
+pub fn import_artifact(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+) -> Result<Imported, Error> {
+    import_artifact_in(import, opts, None)
+}
+
+/// The budget a container's sub-imports run under when the container is itself one of several
+/// imports sharing one; `None` gives the container a budget of its own. See [`budget`].
+#[cfg(feature = "apk")]
+type BudgetRef<'a> = Option<&'a budget::Budget>;
+/// Without the `apk` feature no container is compiled in, and there is nothing to share.
+#[cfg(not(feature = "apk"))]
+type BudgetRef<'a> = Option<&'a std::convert::Infallible>;
+
+/// [`import_artifact`], with the budget a container's sub-imports run under.
+// Only the container-format arms read `opts` and `budget`, and the log line at the end cannot be
+// reached in a build with no language enabled at all. Both depend on the feature set, not on the
+// code.
 #[cfg_attr(not(feature = "apk"), allow(unused_variables))]
 #[cfg_attr(
     not(any(
@@ -130,9 +152,10 @@ pub struct Imported {
     )),
     allow(unreachable_code)
 )]
-pub fn import_artifact(
+fn import_artifact_in(
     import: &ArtifactImport,
     opts: ImportOptions<'_>,
+    budget: BudgetRef<'_>,
 ) -> Result<Imported, Error> {
     use ArtifactLanguage::*;
     log::info!(
@@ -157,7 +180,7 @@ pub fn import_artifact(
 
         #[cfg(feature = "apk")]
         Apk => {
-            let apk = import_apk(import, opts)?;
+            let apk = import_apk(import, opts, budget)?;
             notifications.extend(apk.notifications, None);
             apk.program_info
         }
@@ -166,7 +189,7 @@ pub fn import_artifact(
 
         #[cfg(feature = "xapk")]
         Xapk => {
-            let sub_imports = xapk::import_bundle(import, opts)?;
+            let sub_imports = xapk::import_bundle_in(import, opts, budget)?;
             record_sub_imports(import, sub_imports)?;
             ProgramInfo::default()
         }
@@ -224,17 +247,60 @@ pub fn import_artifact(
     })
 }
 
-/// Imports an APK: first the Java half from `classes*.dex`, then the native half from
-/// `lib/<abi>/`.
+/// Imports an APK: the Java half from `classes*.dex` and the native half from `lib/<abi>/`.
+///
+/// The two halves are independent, and the native half is mostly time spent waiting on Ghidra,
+/// so when the APK has Dex they run at the same time, under one [`budget::Budget`] (the caller's,
+/// or one built from `opts.jobs`). Otherwise -- no Dex, or a file whose ZIP directory cannot even
+/// be listed -- the Dex half runs first, which is cheap then, and is what fails quickly on a file
+/// that is not really an APK, before any native library is extracted or handed to Ghidra.
 #[cfg(feature = "apk")]
-fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Imported, Error> {
-    // Do the Dex half first. It is cheap, and it is what fails quickly on a file that is not
-    // really an APK, before any native library is extracted or handed to Ghidra.
+fn import_apk(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: BudgetRef<'_>,
+) -> Result<Imported, Error> {
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = budget::Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
+    let path = &import.artifact_path;
+    if dex_reader::apk::has_dex_entries_of_file(path).unwrap_or(false) {
+        let (java, native) = std::thread::scope(|scope| {
+            let native = budget::spawn_scoped(scope, || {
+                apk_native::import_native_libs_in(import, opts, Some(budget))
+            });
+            let java = budget.install(|| ctadl_dex::import_apk(path));
+            (java, native.join())
+        });
+        let ctadl_dex::ApkImport {
+            program_info,
+            notifications,
+            dex_count,
+        } = java?;
+        log::info!(
+            "{}: {} classes*.dex entr{}",
+            path.display(),
+            dex_count,
+            if dex_count == 1 { "y" } else { "ies" },
+        );
+        let native = native.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        record_sub_imports(import, native?)?;
+        return Ok(Imported {
+            program_info,
+            notifications,
+        });
+    }
+
     let ctadl_dex::ApkImport {
         program_info,
         notifications,
         dex_count,
-    } = ctadl_dex::import_apk(&import.artifact_path)?;
+    } = budget.install(|| ctadl_dex::import_apk(path))?;
     if dex_count > 0 {
         log::info!(
             "{}: {} classes*.dex entr{}",
@@ -265,7 +331,10 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Import
             );
         }
     }
-    record_sub_imports(import, apk_native::import_native_libs(import, opts)?)?;
+    record_sub_imports(
+        import,
+        apk_native::import_native_libs_in(import, opts, Some(budget))?,
+    )?;
     Ok(Imported {
         program_info,
         notifications,
@@ -277,10 +346,19 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Import
 /// unpacks. The notifications go to the import's `notifications.sarif`; with none, the file is
 /// removed, so an earlier import's do not outlive it.
 pub fn import_and_save(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
+    import_and_save_in(import, opts, None)
+}
+
+/// [`import_and_save`] under a budget shared with other imports; see [`import_artifact_in`].
+fn import_and_save_in(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: BudgetRef<'_>,
+) -> Result<(), Error> {
     let Imported {
         program_info,
         notifications,
-    } = import_artifact(import, opts)?;
+    } = import_artifact_in(import, opts, budget)?;
     let dir = import.import_path();
     if notifications.is_empty() {
         let path = dir.join(NOTIFICATIONS_FILE);

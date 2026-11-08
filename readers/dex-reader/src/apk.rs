@@ -171,6 +171,26 @@ pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<
     Ok(buf)
 }
 
+/// Decompresses one entry of an app bundle or APK into `out`, a buffer at a time, so the entry
+/// never has to fit in memory. Returns the number of bytes written.
+///
+/// # Errors
+///
+/// [`std::io::Error`] for anything that goes wrong, reading the archive or writing `out`.
+pub fn copy_bundle_entry(
+    path: &std::path::Path,
+    entry_name: &str,
+    out: &mut impl std::io::Write,
+) -> std::io::Result<u64> {
+    let invalid = |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what);
+    let mut archive = ZipArchive::new(std::fs::File::open(path)?)
+        .map_err(|_| invalid("not a valid ZIP archive"))?;
+    let mut entry = archive
+        .by_name(entry_name)
+        .map_err(|_| invalid("no such entry in ZIP archive"))?;
+    std::io::copy(&mut entry, out)
+}
+
 /// True when the APK at `path` carries at least one `classes*.dex` entry. Only the ZIP central
 /// directory is read; nothing is decompressed or parsed.
 ///
@@ -224,6 +244,30 @@ pub struct AbiChoice<'a> {
 /// If *no* ABI is usable, the plain preference order is returned: the caller's
 /// per-library reporting is what explains that case, and there is nothing better to pick.
 pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Option<AbiChoice<'a>> {
+    choose_abi(
+        ZipArchive::new(std::io::Cursor::new(apk_bytes)).ok(),
+        entries,
+    )
+}
+
+/// [`preferred_abi`] against an APK on disk. Only the central directory and the first bytes of
+/// the entries it looks at are read.
+pub fn preferred_abi_of_file<'a>(
+    path: &std::path::Path,
+    entries: &'a [NativeLibEntry],
+) -> Option<AbiChoice<'a>> {
+    let archive = std::fs::File::open(path)
+        .ok()
+        .and_then(|file| ZipArchive::new(file).ok());
+    choose_abi(archive, entries)
+}
+
+/// [`preferred_abi`] over an archive opened either way, or over `None` when it could not be
+/// opened.
+fn choose_abi<'a, R: std::io::Read + std::io::Seek>(
+    mut archive: Option<ZipArchive<R>>,
+    entries: &'a [NativeLibEntry],
+) -> Option<AbiChoice<'a>> {
     let plain = |entries: &'a [NativeLibEntry]| -> Option<&'a str> {
         for preferred in ABI_PREFERENCE {
             if let Some(entry) = entries.iter().find(|e| e.abi == *preferred) {
@@ -252,7 +296,6 @@ pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Opt
     rest.dedup();
     order.extend(rest);
 
-    let mut archive = ZipArchive::new(std::io::Cursor::new(apk_bytes)).ok();
     let mut unusable = Vec::new();
     for abi in order {
         let usable = entries
@@ -326,6 +369,34 @@ pub fn read_native_libs(apk_bytes: &[u8], abi: &str) -> DexResult<Vec<(NativeLib
     }
     out.sort_by(|(a, _), (b, _)| a.entry_name.cmp(&b.entry_name));
     Ok(out)
+}
+
+/// Streams every `lib/<abi>/*.so` entry for one ABI out of the APK at `path`, in entry-name
+/// order as in [`native_lib_entries`], handing `visit` each entry and a reader over its
+/// decompressed bytes.
+///
+/// The archive is read from the file, and each library is decompressed only as `visit` reads
+/// it, so neither the APK nor its libraries need to fit in memory at once. Stops at the first
+/// error, whether reading the archive or returned by `visit`.
+pub fn for_each_native_lib_of_file<E: From<crate::error::DexError>>(
+    path: &std::path::Path,
+    abi: &str,
+    mut visit: impl FnMut(&NativeLibEntry, &mut dyn Read) -> Result<(), E>,
+) -> Result<(), E> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
+    for entry in collect_native_lib_entries(&archive) {
+        if entry.abi != abi {
+            continue;
+        }
+        let mut zip_file = archive
+            .by_name(&entry.entry_name)
+            .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
+        visit(&entry, &mut zip_file)?;
+    }
+    Ok(())
 }
 
 /// True when `bytes` opens with an object-file magic a disassembler can load.
@@ -692,6 +763,34 @@ mod native_lib_tests {
         let choice = preferred_abi(&apk, &entries).unwrap();
         assert_eq!(choice.abi, "arm64-v8a");
         assert!(choice.unusable.is_empty());
+    }
+
+    /// The streaming reader sees the same libraries, in the same order, as the in-memory one.
+    #[test]
+    fn streams_only_the_requested_abis_libraries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.apk");
+        std::fs::write(&path, sample_apk()).unwrap();
+        let mut seen = Vec::new();
+        for_each_native_lib_of_file(&path, "arm64-v8a", |entry, reader| {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).unwrap();
+            seen.push((entry.file_name.clone(), bytes));
+            Ok::<(), crate::error::DexError>(())
+        })
+        .unwrap();
+        let expected: Vec<(String, Vec<u8>)> = read_native_libs(&sample_apk(), "arm64-v8a")
+            .unwrap()
+            .into_iter()
+            .map(|(e, bytes)| (e.file_name, bytes))
+            .collect();
+        assert_eq!(seen, expected);
+
+        let entries = native_lib_entries(&sample_apk()).unwrap();
+        assert_eq!(
+            preferred_abi_of_file(&path, &entries).map(|c| c.abi),
+            Some("arm64-v8a")
+        );
     }
 
     #[test]

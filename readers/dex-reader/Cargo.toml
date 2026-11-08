@@ -9,3 +9,6 @@ thiserror = "2"
 smallvec = "1"
 log = "0.4"
 rayon = "1.10"
+
+[dev-dependencies]
+tempfile = "3"

@@ -7,7 +7,8 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
-const MAXMEM: &str = "40G";
+/// The JVM heap cap, in MiB, of a Ghidra run that [`GhidraLimits`] does not cap further.
+pub const DEFAULT_MAX_HEAP_MIB: u64 = 40 * 1024;
 const LAUNCH_MODE: &str = "fg";
 /// Upper bound on the JVM's garbage-collector and JIT compiler threads.
 const MAX_JVM_HELPER_THREADS: usize = 4;
@@ -123,30 +124,63 @@ fn project_from_gpr(gpr: &Path) -> Result<GhidraSource, Error> {
     })
 }
 
+/// How much of the machine one Ghidra run may use.
+///
+/// [`Default`] is one run that has the machine to itself: every core and a
+/// [`DEFAULT_MAX_HEAP_MIB`] heap. A caller running several at once gives each a share.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GhidraLimits {
+    /// Caps the threads Ghidra analyzes and decompiles with. `0` leaves the count to Ghidra,
+    /// which sizes its pools from the cores the OS reports.
+    pub jobs: usize,
+    /// Caps the JVM heap, in MiB. `None` means [`DEFAULT_MAX_HEAP_MIB`].
+    pub max_heap_mib: Option<u64>,
+}
+
+impl GhidraLimits {
+    /// The cap on threads alone, with the default heap.
+    pub fn jobs(jobs: usize) -> Self {
+        Self {
+            jobs,
+            max_heap_mib: None,
+        }
+    }
+
+    /// The heap cap this run gets, in MiB.
+    pub fn heap_mib(&self) -> u64 {
+        self.max_heap_mib.unwrap_or(DEFAULT_MAX_HEAP_MIB)
+    }
+}
+
 /// Runs the pcode exporter against `artifact_path`, auto-detecting whether it is a
 /// binary to import, an existing local Ghidra project, or a Ghidra Server URL. See
 /// [`GhidraSource::detect`].
-///
-/// `jobs` caps the threads Ghidra analyzes and decompiles with. `0` leaves the count to
-/// Ghidra, which sizes its pools from the cores the OS reports.
 pub fn run_ghidra_export(
     artifact_path: &Path,
     output_dir: &Path,
-    jobs: usize,
+    limits: GhidraLimits,
 ) -> Result<(), Error> {
     let source = GhidraSource::detect(artifact_path)?;
-    run_ghidra_export_source(&source, output_dir, jobs)
+    run_ghidra_export_source(&source, output_dir, limits)
 }
 
 /// Runs the pcode exporter against an explicit [`GhidraSource`]. Binaries are
 /// imported into a throwaway project (which is deleted afterwards); existing
 /// projects and server repositories are opened read-only via `-process`, so the
-/// user's data is never modified. See [`run_ghidra_export`] for `jobs`.
+/// user's data is never modified.
+///
+/// # Errors
+///
+/// When Ghidra fails, produces no facts, or ran out of heap at any point -- even if it went on
+/// to exit cleanly, since an analysis that lost a task to the heap exports a partial program.
+/// [`ran_out_of_memory`] tells that last case apart, for a caller that can retry with a larger
+/// heap.
 pub fn run_ghidra_export_source(
     source: &GhidraSource,
     output_dir: &Path,
-    jobs: usize,
+    limits: GhidraLimits,
 ) -> Result<(), Error> {
+    let jobs = limits.jobs;
     // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
@@ -197,7 +231,7 @@ pub fn run_ghidra_export_source(
         LAUNCH_MODE,
         "jdk",
         "Ghidra-Headless",
-        MAXMEM,
+        &format!("{}M", limits.heap_mib()),
         &jvm_args(jobs),
         "ghidra.app.util.headless.AnalyzeHeadless",
     ]);
@@ -258,6 +292,15 @@ pub fn run_ghidra_export_source(
     log::debug!("Ghidra command: {:?}", command);
 
     let status = run_and_log(&mut command, &log_path)?;
+
+    if log_reports_out_of_memory(&log_path) {
+        return Err(Error::PcodeConversion(format!(
+            "Ghidra ran out of memory with a {} MiB heap (status: {status}); its output is in {}\n{}",
+            limits.heap_mib(),
+            log_path.display(),
+            log_tail(&log_path)
+        )));
+    }
 
     if !status.success() {
         return Err(Error::PcodeConversion(format!(
@@ -320,6 +363,31 @@ fn run_and_log(command: &mut Command, log_path: &Path) -> Result<ExitStatus, Err
         .status()?;
     Ok(status)
 }
+
+/// Whether the last Ghidra run into `output_dir` (an import directory, as given to
+/// [`run_ghidra_export`]) ran out of JVM heap.
+pub fn ran_out_of_memory(output_dir: &Path) -> bool {
+    log_reports_out_of_memory(&output_dir.join(GHIDRA_LOG_NAME))
+}
+
+/// Whether the Ghidra log at `log_path` reports a `java.lang.OutOfMemoryError`. Ghidra catches
+/// the error in an analysis task and carries on, so the exit status alone does not show it.
+fn log_reports_out_of_memory(log_path: &Path) -> bool {
+    use std::io::BufRead;
+    let Ok(file) = File::open(log_path) else {
+        return false;
+    };
+    std::io::BufReader::new(file)
+        .split(b'\n')
+        .map_while(Result::ok)
+        .any(|line| {
+            line.windows(OUT_OF_MEMORY.len())
+                .any(|w| w == OUT_OF_MEMORY.as_bytes())
+        })
+}
+
+/// What the JVM prints when a heap (or metaspace) allocation fails.
+const OUT_OF_MEMORY: &str = "java.lang.OutOfMemoryError";
 
 /// The last [`GHIDRA_LOG_TAIL_LINES`] lines of `log_path`, formatted for
 /// inclusion in an error message. Best-effort: an unreadable or empty log yields

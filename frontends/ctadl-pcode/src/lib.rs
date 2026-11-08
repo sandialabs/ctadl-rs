@@ -35,10 +35,10 @@ declared at offset 0, the image itself.
 
 # Why the JNI registry lives here
 
-[`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
+[`lower_facts`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
 [`ghidra::GhidraSource::detect`]. That is not an accident. The scan needs Ghidra's image base
-and its map of entry points, and those exist only while `import_pcode` is running. To separate
-them, the `detect` check would move up into `import_pcode`, which would pass an `is_binary:
+and its map of entry points, and those exist only while `lower_facts` is running. To separate
+them, the `detect` check would move up into `lower_facts`, which would pass an `is_binary:
 bool` down, and the registry would become an ELF scanner that stands on its own. That is about
 twenty lines of work, worth doing when something wants to read the registry without pcode.
 Nothing does today: `ctadl_ascent::languages::jni` reads the file the scan wrote, not the
@@ -89,18 +89,39 @@ pub fn memory_global_name(import_name: &str) -> String {
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts.
 ///
-/// `jobs` caps Ghidra's threads; see [`ghidra::run_ghidra_export`].
+/// `jobs` caps Ghidra's threads; see [`ghidra::GhidraLimits`]. This is [`export_facts`]
+/// followed by [`lower_facts`], for a caller that has no reason to separate them.
 pub fn import_pcode(
     import: &ctadl_import::project::ArtifactImport,
     jobs: usize,
 ) -> Result<ProgramInfo, Error> {
+    export_facts(import, ghidra::GhidraLimits::jobs(jobs))?;
+    lower_facts(import)
+}
+
+/// Runs Ghidra over the artifact and leaves its facts in the import directory.
+///
+/// This is the half of [`import_pcode`] that runs out of process, in Ghidra's JVM, and so the
+/// half whose threads and heap `limits` governs; this thread only waits for it. A caller that
+/// runs several imports at once budgets the two halves separately.
+pub fn export_facts(
+    import: &ctadl_import::project::ArtifactImport,
+    limits: ghidra::GhidraLimits,
+) -> Result<(), Error> {
+    ghidra::run_ghidra_export(&import.artifact_path, &import.import_path(), limits)
+}
+
+/// Whether the last [`export_facts`] for `import` failed because Ghidra ran out of heap, so a
+/// larger [`ghidra::GhidraLimits::max_heap_mib`] might succeed.
+pub fn ghidra_ran_out_of_memory(import: &ctadl_import::project::ArtifactImport) -> bool {
+    ghidra::ran_out_of_memory(&import.import_path())
+}
+
+/// Compresses the facts [`export_facts`] left in the import directory and lowers them to IR, in
+/// this process. The compression runs on the current rayon pool.
+pub fn lower_facts(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
-    let import_path = import.import_path();
-
-    // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, &import_path, jobs)?;
-
-    let facts_dir = import_path.join("facts");
+    let facts_dir = import.import_path().join("facts");
 
     // Gzip the fact tables Ghidra just produced; the reader below handles either variant.
     ghidra::compress_facts_dir(&facts_dir)?;
