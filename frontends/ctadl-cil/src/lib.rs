@@ -190,6 +190,7 @@ pub fn import_files_with_stats(
     opts: &ImportOptions,
 ) -> Result<(ProgramInfo, Stats), Error> {
     // Collected whole and then checked in order, so that the error reported is the first file's.
+    let timer = PhaseTimer::start();
     let datas = files
         .par_iter()
         .map(|f| std::fs::read(f).err_context(|| format!("reading {}", f.display())))
@@ -254,15 +255,36 @@ pub fn import_files_with_stats(
                 path: f,
                 names: ModNames::new(module, &namer),
                 spans: ModuleSpans::new(key, pdb),
+                resolved: calls::Resolved::default(),
             }
         })
         .collect();
+    timer.done("reading assemblies");
     let mut ctx = Context::new();
     ctx.process(&assemblies)?;
     for a in assemblies {
         ctx.out.stats.lines.add(a.spans.into_stats());
     }
-    ctx.finish_with_stats()
+    let timer = PhaseTimer::start();
+    let finished = ctx.finish_with_stats();
+    timer.done("finishing");
+    finished
+}
+
+/// Logs how long each phase of an import took, under the `ctadl_cil::timing` target at debug
+/// level.
+struct PhaseTimer(std::cell::Cell<std::time::Instant>);
+
+impl PhaseTimer {
+    fn start() -> Self {
+        Self(std::cell::Cell::new(std::time::Instant::now()))
+    }
+
+    fn done(&self, phase: &str) {
+        let now = std::time::Instant::now();
+        let took = now - self.0.replace(now);
+        log::debug!(target: "ctadl_cil::timing", "{phase}: {took:.2?}");
+    }
 }
 
 /// An assembly being imported.
@@ -270,6 +292,7 @@ struct Assembly<'n, 'm, 'l, 'p> {
     path: &'n Path,
     names: ModNames<'n, 'm, 'm, 'l>,
     spans: ModuleSpans<'p>,
+    resolved: calls::Resolved,
 }
 
 /// What [`Context::scan_type`] reads of a type, apart from its methods' signatures and flags.
@@ -346,6 +369,7 @@ fn lower_job(assembly: &Assembly<'_, '_, '_, '_>, job: &Job<'_>) -> Result<Lower
         &mut fdat,
         &mut globals,
         &mut lines,
+        &assembly.resolved,
         &mut out,
     );
     fdat.locals.drop_index();
@@ -592,6 +616,7 @@ impl Context {
     /// own, and places them into the program in order ([`Context::place`]), so that the program
     /// does not depend on how many threads lowered it.
     fn process<'m>(&mut self, assemblies: &[Assembly<'_, 'm, '_, '_>]) -> Result<(), Error> {
+        let timer = PhaseTimer::start();
         let types: Vec<(usize, TypeDef<'m>)> = assemblies
             .iter()
             .enumerate()
@@ -601,6 +626,7 @@ impl Context {
             .into_par_iter()
             .map(|(a, td)| scan_type(&assemblies[a].names, td))
             .collect();
+        timer.done("reading types");
         let mut scans = scans.into_iter();
         let mut jobs = Vec::new();
         let mut callees = Vec::new();
@@ -615,8 +641,10 @@ impl Context {
                 }
             }
         }
+        timer.done("bookkeeping");
         // The bodies before a failing type are converted first: one of them may fail before it.
         self.lower_and_place(assemblies, jobs, callees)?;
+        timer.done("lowering bodies");
         collected
     }
 
@@ -772,17 +800,21 @@ impl Context {
         };
         let mut callees = callees.into_iter().peekable();
         let mut placed_jobs = 0;
+        let mut placing = std::time::Duration::ZERO;
         let mut batches = jobs.chunks(BATCH);
         let mut current = batches.next().map(lower);
         while let Some(results) = current.take() {
             let next_batch = batches.next();
             let mut placed = Ok(());
+            let started = std::time::Instant::now();
             rayon::scope(|scope| {
                 scope.spawn(|_| current = next_batch.map(lower));
                 placed = self.place(assemblies, results, &mut placed_jobs, &mut callees);
+                placing += started.elapsed();
             });
             placed?;
         }
+        log::debug!(target: "ctadl_cil::timing", "placing bodies: {placing:.2?}");
         for c in callees {
             self.out.callee(&c.key, c.params);
         }

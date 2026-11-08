@@ -22,7 +22,7 @@
 //! method.
 
 use std::hash::{Hash, Hasher};
-use std::sync::{PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use cil_reader::model::{
     AssemblyCache, AssemblyName, MemberRefSig, MethodSig, TypeDef, TypeDefOrRef, TypeSig,
@@ -30,6 +30,8 @@ use cil_reader::model::{
 use cil_reader::token::{MetadataToken, TokenType};
 use cil_reader::{Entity, Module};
 use hashbrown::{Equivalent, HashMap};
+
+use crate::hierarchy::VirtualMethod;
 
 /// The class of a method or field the frontend cannot name: a member reference whose parent is
 /// a generic parameter, say. Still a class, so a row keyed on it is well formed.
@@ -69,7 +71,12 @@ pub struct Namer<'c, 'l> {
     cache: &'c AssemblyCache<'l>,
     /// `(assembly, full name)` -> the assembly the type really lives in.
     forwards: RwLock<HashMap<(String, String), String>>,
+    /// Each type's virtual methods, by its module's address, its rid and the generic arguments
+    /// it was reached with ([`crate::hierarchy::Found::virtual_methods`]).
+    virtuals: RwLock<HashMap<VirtualsKey, Arc<[VirtualMethod]>>>,
 }
+
+type VirtualsKey = (usize, u32, Option<Vec<String>>);
 
 /// A `forwards` key, borrowed: looked up without building the owned key. Hashes as the
 /// `(String, String)` it stands for.
@@ -92,6 +99,7 @@ impl<'c, 'l> Namer<'c, 'l> {
         Namer {
             cache,
             forwards: RwLock::new(HashMap::new()),
+            virtuals: RwLock::new(HashMap::new()),
         }
     }
 
@@ -122,6 +130,30 @@ impl<'c, 'l> Namer<'c, 'l> {
             .unwrap_or_else(PoisonError::into_inner)
             .insert((asm.to_string(), full_name.to_string()), current.clone());
         current
+    }
+
+    /// The virtual methods remembered under `key`, made by `make` if there are none yet.
+    pub(crate) fn virtual_methods(
+        &self,
+        key: VirtualsKey,
+        make: impl FnOnce() -> Arc<[VirtualMethod]>,
+    ) -> Arc<[VirtualMethod]> {
+        if let Some(found) = self
+            .virtuals
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+        {
+            return Arc::clone(found);
+        }
+        let made = make();
+        Arc::clone(
+            self.virtuals
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(key)
+                .or_insert(made),
+        )
     }
 
     /// The assembly `asm` forwards `full_name` to, if it does.
