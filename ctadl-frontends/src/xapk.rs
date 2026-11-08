@@ -23,17 +23,18 @@ and record the result on the parent.
 
 The splits are independent imports -- each writes only its own import directory and config,
 and its native libraries' -- so they are imported concurrently, under one [`Budget`] that their
-native libraries share. The bundle's own config is written only after every split is done
-(`record_sub_imports`, by the caller). The sub-import list, the messages this module writes, and
-which error is returned when splits fail, all follow the split order, whatever order the splits
-finish in.
+native libraries share. A split's import starts as soon as it is extracted; the extractions
+take turns, since they are bound by the disk. The bundle's own config is written only after
+every split is done (`record_sub_imports`, by the caller). The sub-import list, the messages this
+module writes, and which error is returned when splits fail, all follow the split order, whatever
+order the splits finish in.
 */
 
 use std::path::{Path, PathBuf};
 
-use std::io::Write;
-
-use dex_reader::apk::{copy_bundle_entry, has_dex_entries_of_file, split_apk_entries_of_file};
+use dex_reader::apk::{
+    SplitApkEntry, copy_bundle_entry, has_dex_entries_of_file, split_apk_entries_of_file,
+};
 
 use crate::ImportOptions;
 use crate::apk_native::sanitize;
@@ -82,17 +83,28 @@ pub(crate) fn import_bundle_in(
         .map_err(Error::Io)
         .err_context(|| format!("creating splits dir: '{}'", splits_dir.display()))?;
 
-    // Extract first, then import: which splits carry Dex is a property of their contents, and
-    // the import order depends on it.
-    let mut splits: Vec<Split> = Vec::new();
-    for entry in &entries {
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
+
+    // Each split is extracted and then imported, on its own worker, so the first splits'
+    // imports start while the rest are still being written. The writes themselves take turns:
+    // they are bound by the disk, which interleaved writes only slow down.
+    let extracting = std::sync::Mutex::new(());
+    let extract_one = |entry: &SplitApkEntry| -> Result<Split, Error> {
+        let _turn = extracting.lock().unwrap_or_else(|e| e.into_inner());
         // Built from the stem, never from the raw ZIP entry name, so a hostile entry cannot
         // write outside `splits_dir`. See `dex_reader::apk::SplitApkEntry`.
         let dest = splits_dir.join(format!("{}.apk", sanitize(&entry.stem)));
         let extract = || -> std::io::Result<()> {
-            let mut out = std::io::BufWriter::new(std::fs::File::create(&dest)?);
+            let mut out = std::fs::File::create(&dest)?;
             copy_bundle_entry(bundle, &entry.entry_name, &mut out)?;
-            out.flush()
+            Ok(())
         };
         extract().map_err(Error::Io).err_context(|| {
             format!(
@@ -105,79 +117,84 @@ pub(crate) fn import_bundle_in(
         let has_dex = has_dex_entries_of_file(&dest)
             .map_err(Error::Dex)
             .err_context(|| format!("listing '{}'", dest.display()))?;
-        splits.push(Split {
+        Ok(Split {
             name: sub_import_name(&parent.name, &entry.stem),
             path: dest,
             has_dex,
-        });
+        })
+    };
+    let mut results: Vec<Option<Result<SplitResult, Error>>> =
+        (0..entries.len()).map(|_| None).collect();
+    run_ordered(
+        &entries,
+        &(0..entries.len()).collect::<Vec<_>>(),
+        budget.cores(),
+        |entry| {
+            let split = extract_one(entry)?;
+            let imported = import_split(&split.name, &split.path, opts, budget);
+            Ok(SplitResult { split, imported })
+        },
+        |_| false,
+        |index, result| results[index] = Some(result),
+    );
+    // Everything below happens in split order, which is known only now that every split has been
+    // looked into: an extraction failure first, in entry order, as when every split was
+    // extracted before any was imported; then each split's result.
+    let mut done = Vec::with_capacity(results.len());
+    for result in results {
+        done.push(result.expect("run_ordered reports every item when nothing stops it")?);
     }
-    order_splits(&mut splits);
+    order_splits(&mut done);
 
     log::info!(
         "{}: {} split APK(s): {}",
         bundle.display(),
-        splits.len(),
-        splits
-            .iter()
-            .map(|split| split.name.as_str())
+        done.len(),
+        done.iter()
+            .map(|result| result.split.name.as_str())
             .collect::<Vec<_>>()
             .join(", "),
     );
 
-    let own_budget;
-    let budget = match budget {
-        Some(budget) => budget,
-        None => {
-            own_budget = Budget::from_jobs(opts.jobs);
-            &own_budget
-        }
-    };
-    // Started in split order, which puts the Dex-bearing splits first (see `order_splits`): they
-    // are the ones with work in this process to overlap with the others' Ghidra runs.
-    let start_order: Vec<usize> = (0..splits.len()).collect();
     let mut names = Vec::new();
     let mut skipped = 0usize;
-    let mut failure = None;
-    run_ordered(
-        &splits,
-        &start_order,
-        budget.cores(),
-        |Split { name, path, .. }| import_split(name, path, opts, budget),
-        |result| matches!(result, Err(e) if !is_nothing_to_import(e)),
-        |index, result| {
-            let name = &splits[index].name;
-            match result {
-                Ok(sub_imports) => {
-                    names.push(name.clone());
-                    names.extend(sub_imports);
-                }
-                Err(e) if is_nothing_to_import(&e) => {
-                    skipped += 1;
-                    // The import directory was created before the split turned out to hold
-                    // nothing; leaving it behind would put an entry in `ctadl inspect`'s listing
-                    // for every language and density a bundle ships, which on a real one is most
-                    // of the file.
-                    discard_import(name);
-                    log::debug!(
-                        "{}: skipping '{}': it holds no code",
-                        bundle.display(),
-                        name
-                    );
-                }
-                Err(e) => failure = Some(e),
+    let total = done.len();
+    for SplitResult { split, imported } in done {
+        match imported {
+            Ok(sub_imports) => {
+                names.push(split.name);
+                names.extend(sub_imports);
             }
-        },
-    );
-    if let Some(e) = failure {
-        return Err(e);
+            Err(e) if is_nothing_to_import(&e) => {
+                skipped += 1;
+                // The import directory was created before the split turned out to hold
+                // nothing; leaving it behind would put an entry in `ctadl inspect`'s listing
+                // for every language and density a bundle ships, which on a real one is most
+                // of the file.
+                discard_import(&split.name);
+                log::debug!(
+                    "{}: skipping '{}': it holds no code",
+                    bundle.display(),
+                    split.name
+                );
+            }
+            Err(e) => return Err(e),
+        }
     }
     log::info!(
         "{}: {} split(s) imported, {} resource-only split(s) skipped",
         bundle.display(),
-        splits.len() - skipped,
+        total - skipped,
         skipped,
     );
     Ok(names)
+}
+
+/// One split and what importing it did.
+struct SplitResult {
+    split: Split,
+    /// Its own sub-imports, as [`import_split`] returns them.
+    imported: Result<Vec<String>, Error>,
 }
 
 /// One extracted split, ready to import.
@@ -194,8 +211,8 @@ struct Split {
 /// scoping stays in import order and the Java half of a JNI boundary is observed before the native half.
 ///
 /// A stable sort, so the entry order -- already sorted by name -- decides within each group.
-fn order_splits(splits: &mut [Split]) {
-    splits.sort_by_key(|split| !split.has_dex);
+fn order_splits(splits: &mut [SplitResult]) {
+    splits.sort_by_key(|result| !result.split.has_dex);
 }
 
 /// Imports one extracted split as the APK sub-import `name`, returning *its* sub-imports (the

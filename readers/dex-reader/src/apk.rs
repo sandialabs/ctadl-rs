@@ -171,8 +171,10 @@ pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<
     Ok(buf)
 }
 
-/// Decompresses one entry of an app bundle or APK into `out`, a buffer at a time, so the entry
-/// never has to fit in memory. Returns the number of bytes written.
+/// Decompresses one entry of an app bundle or APK into `out`, [`COPY_BUFFER`] bytes at a time, so
+/// the entry never has to fit in memory. Returns the number of bytes written.
+///
+/// `out` is written in whole buffers, so it needs no buffering of its own.
 ///
 /// # Errors
 ///
@@ -188,8 +190,24 @@ pub fn copy_bundle_entry(
     let mut entry = archive
         .by_name(entry_name)
         .map_err(|_| invalid("no such entry in ZIP archive"))?;
-    std::io::copy(&mut entry, out)
+    // Not `io::copy`, whose 8 KiB buffer makes a split of a hundred megabytes cost tens of
+    // thousands of reads and writes.
+    let mut buf = vec![0u8; COPY_BUFFER];
+    let mut written = 0u64;
+    loop {
+        let n = match entry.read(&mut buf) {
+            Ok(0) => return Ok(written),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        out.write_all(&buf[..n])?;
+        written += n as u64;
+    }
 }
+
+/// The buffer [`copy_bundle_entry`] copies through.
+pub const COPY_BUFFER: usize = 1 << 20;
 
 /// True when the APK at `path` carries at least one `classes*.dex` entry. Only the ZIP central
 /// directory is read; nothing is decompressed or parsed.
