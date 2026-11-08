@@ -34,10 +34,9 @@ auto-analysis cost a fixed amount whatever the library's size, so they run concu
 [`Budget`] of cores and memory. The biggest library starts first, since it is the one most
 likely to finish last. A library's share of the budget follows its size:
 
-* **Cores**: at least one per [`BYTES_PER_GHIDRA_THREAD`], and at least an even split of the
-  cores free when it starts among the libraries not yet started -- so a dozen small libraries
-  run side by side on a core each, and the last ones spread out over the cores the others gave
-  back.
+* **Cores**: [`ghidra_cores`], the library's share of the budget's cores by size among the
+  APK's libraries -- so a dozen small libraries run side by side on a core each, and one that
+  is most of the APK's native code gets most of the cores.
 * **Heap**: [`ghidra_heap_mib`], which grows with the library and stops at Ghidra's default cap.
   A library alone in its APK keeps that default, as do the retries below.
 
@@ -238,9 +237,18 @@ pub(crate) fn import_native_libs_in(
             .join(", "),
     );
 
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
     // A library alone in its APK has nothing to share the budget with, so it keeps Ghidra's
     // default heap, as a single run always has.
     let alone = libs.iter().filter(|lib| lib.object_size.is_some()).count() == 1;
+    let total_size: u64 = libs.iter().filter_map(|lib| lib.object_size).sum();
     let mut tasks = Vec::new();
     for lib in libs {
         let Some(size) = lib.object_size else {
@@ -256,6 +264,7 @@ pub(crate) fn import_native_libs_in(
             dest: dest_dir.join(&lib.file_name),
             entry_name: lib.entry_name,
             size,
+            cores: ghidra_cores(size, total_size, budget.cores()),
             heap_mib: if alone {
                 DEFAULT_MAX_HEAP_MIB
             } else {
@@ -264,19 +273,10 @@ pub(crate) fn import_native_libs_in(
         });
     }
 
-    let own_budget;
-    let budget = match budget {
-        Some(budget) => budget,
-        None => {
-            own_budget = Budget::from_jobs(opts.jobs);
-            &own_budget
-        }
-    };
     // Biggest first, so the library most likely to finish last starts first; ties in entry
     // order, so the start order is fixed too.
     let mut start_order: Vec<usize> = (0..tasks.len()).collect();
     start_order.sort_by_key(|&i| std::cmp::Reverse(tasks[i].size));
-    let waiting = std::sync::atomic::AtomicUsize::new(tasks.len());
 
     let mut names = Vec::new();
     let (mut reused, mut failed) = (0usize, 0usize);
@@ -284,10 +284,7 @@ pub(crate) fn import_native_libs_in(
         &tasks,
         &start_order,
         budget.cores(),
-        |task| {
-            let after = waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-            import_one(task, after, opts, budget)
-        },
+        |task| import_one(task, opts, budget),
         |_| false,
         |index, result| {
             let task = &tasks[index];
@@ -423,18 +420,26 @@ fn ghidra_heap_mib(size: u64) -> u64 {
         .min(DEFAULT_MAX_HEAP_MIB)
 }
 
-/// How big a library has to be to start with one more Ghidra thread. Ghidra spends most of its
-/// time on a small library in work that does not run in parallel -- starting the JVM, loading
-/// the program, the analyzers that walk it in order -- so a small one gets one core, and only a
-/// library large enough to keep the parallel decompiler busy asks for more.
-#[cfg(feature = "pcode")]
-const BYTES_PER_GHIDRA_THREAD: u64 = 2 << 20;
+/// The threads a Ghidra run over a library of `size` bytes gets, out of a budget of `cores`
+/// shared among libraries of `total_size` bytes: its share by size, rounded down, and at least
+/// one.
+///
+/// Rounding down, because Ghidra spends most of its time on a small library in work that does
+/// not run in parallel -- starting the JVM, loading the program, the analyzers that walk it in
+/// order -- so another JVM is a better use of a core than another thread for a library that
+/// cannot keep one busy.
+fn ghidra_cores(size: u64, total_size: u64, cores: usize) -> usize {
+    let share = u128::from(size) * cores as u128 / u128::from(total_size.max(1));
+    usize::try_from(share).unwrap_or(cores).clamp(1, cores.max(1))
+}
 
 /// The memory, in MiB, the in-process half of an import holds for a library of `size` bytes:
-/// its facts read back and lowered to IR. An estimate, counted against the budget while it runs.
+/// its facts read back and lowered to IR. An estimate, counted against the budget while it runs:
+/// about 1 KiB per byte of library, which is what lowering a 24 MiB library takes. Never more than
+/// the Ghidra run's share ([`ghidra_heap_mib`] grows faster), so the share only ever shrinks.
 #[cfg(feature = "pcode")]
 fn lowering_mib(size: u64) -> u64 {
-    512 + size.saturating_mul(64) / (1 << 20)
+    512 + size / 1024
 }
 
 /// One library to import, and the share of the budget it asks for.
@@ -446,6 +451,9 @@ struct LibTask {
     /// The ZIP entry it came from, for messages.
     entry_name: String,
     size: u64,
+    /// The threads its Ghidra run gets.
+    #[cfg_attr(not(feature = "pcode"), allow(dead_code))]
+    cores: usize,
     /// The JVM heap cap its Ghidra run gets, in MiB.
     #[cfg_attr(not(feature = "pcode"), allow(dead_code))]
     heap_mib: u64,
@@ -458,10 +466,8 @@ enum Outcome {
 }
 
 /// Imports one extracted library as its pcode sub-import, under a share of `budget`.
-/// `waiting` is how many libraries, this one included, had yet to start when it did.
 fn import_one(
     task: &LibTask,
-    waiting: usize,
     opts: ImportOptions<'_>,
     budget: &Budget,
 ) -> Result<Outcome, Error> {
@@ -472,7 +478,7 @@ fn import_one(
     }
 
     let child = ArtifactImport::try_create(&task.name, ArtifactLanguage::Pcode, &task.dest)?;
-    lower_native(&child, task, waiting, budget)?;
+    lower_native(&child, task, budget)?;
 
     // `export_facts` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.
@@ -491,15 +497,13 @@ fn import_one(
 fn lower_native(
     child: &ArtifactImport,
     task: &LibTask,
-    waiting: usize,
     budget: &Budget,
 ) -> Result<(), Error> {
     use crate::budget::Request;
     use ctadl_pcode::ghidra::GhidraLimits;
 
     let request = Request {
-        min_cores: task.size.div_ceil(BYTES_PER_GHIDRA_THREAD).max(1) as usize,
-        sharing: waiting,
+        cores: task.cores,
         mib: task.heap_mib + crate::budget::JVM_OVERHEAD_MIB,
     };
     let mut grant = budget.acquire(request);
@@ -526,8 +530,7 @@ fn lower_native(
             DEFAULT_MAX_HEAP_MIB,
         );
         grant = budget.acquire(Request {
-            min_cores: budget.cores(),
-            sharing: 1,
+            cores: budget.cores(),
             mib: budget.memory_mib().max(DEFAULT_MAX_HEAP_MIB),
         });
         ctadl_pcode::export_facts(
@@ -550,7 +553,6 @@ fn lower_native(
 fn lower_native(
     _child: &ArtifactImport,
     _task: &LibTask,
-    _waiting: usize,
     _budget: &Budget,
 ) -> Result<(), Error> {
     unreachable!("import_native_libs returns early when the `pcode` feature is off")
@@ -605,6 +607,16 @@ mod tests {
             sub_import_name("app_a", "arm64-v8a", "libcrypto.so"),
             sub_import_name("app_b", "arm64-v8a", "libcrypto.so"),
         );
+    }
+
+    /// Cores follow size, rounded down, with at least one each and never more than the budget.
+    #[test]
+    fn ghidra_cores_are_a_share_by_size() {
+        assert_eq!(ghidra_cores(24 << 20, 25 << 20, 16), 15);
+        assert_eq!(ghidra_cores(1 << 20, 25 << 20, 16), 1);
+        assert_eq!(ghidra_cores(10, 10, 16), 16);
+        assert_eq!(ghidra_cores(0, 0, 16), 1);
+        assert_eq!(ghidra_cores(u64::MAX, u64::MAX, 4), 4);
     }
 
     /// The name becomes a directory, so nothing that could redirect a path survives.

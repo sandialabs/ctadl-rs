@@ -81,13 +81,8 @@ struct State {
 /// What one run asks a [`Budget`] for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Request {
-    /// The fewest cores the run can start with.
-    pub min_cores: usize,
-    /// How many runs, this one included, are still to share the cores that are free when this
-    /// one starts. The grant is at least `min_cores` and at least an even split of the free
-    /// cores among them, so the last runs of a batch spread out over the cores the earlier ones
-    /// gave back.
-    pub sharing: usize,
+    /// Cores. At least one is granted, and no more than the budget has.
+    pub cores: usize,
     /// Memory, in MiB.
     pub mib: u64,
 }
@@ -169,9 +164,9 @@ impl Budget {
         let mut state = self.lock();
         let ticket = state.next_ticket;
         state.next_ticket += 1;
-        let min_cores = request.min_cores.clamp(1, self.cores);
+        let cores = request.cores.clamp(1, self.cores);
         loop {
-            let fits = state.used_cores + min_cores <= self.cores
+            let fits = state.used_cores + cores <= self.cores
                 && state.used_mib + request.mib <= self.memory_mib;
             if state.serving == ticket && (fits || state.running == 0) {
                 break;
@@ -181,10 +176,6 @@ impl Budget {
                 .wait(state)
                 .expect("import budget lock poisoned");
         }
-        let free = self.cores.saturating_sub(state.used_cores);
-        let cores = (free / request.sharing.max(1))
-            .max(min_cores)
-            .min(free.max(min_cores));
         state.used_cores += cores;
         state.used_mib += request.mib;
         state.running += 1;
@@ -391,8 +382,7 @@ mod tests {
                     (&budget, &cores, &mib, &peak_cores, &peak_mib);
                 scope.spawn(move || {
                     let grant = budget.acquire(Request {
-                        min_cores: 1 + i % 2,
-                        sharing: 1,
+                        cores: 1 + i % 2,
                         mib: 1 + (i % 3) as u64,
                     });
                     let c = cores.fetch_add(grant.cores(), Ordering::SeqCst) + grant.cores();
@@ -415,8 +405,7 @@ mod tests {
     fn an_oversized_request_runs_alone() {
         let budget = Budget::new(2, 10);
         let grant = budget.acquire(Request {
-            min_cores: 8,
-            sharing: 1,
+            cores: 8,
             mib: 100,
         });
         assert_eq!(grant.cores(), 2);
@@ -444,29 +433,15 @@ mod tests {
         assert_eq!(seen, expected);
     }
 
-    /// The free cores are split among the runs still to come, so a lone last run gets them all.
+    /// Shrinking a grant makes room for the next request.
     #[test]
-    fn free_cores_are_shared_among_the_remaining_runs() {
+    fn a_shrunk_grant_makes_room() {
         let budget = Budget::new(8, 100);
-        let first = budget.acquire(Request {
-            min_cores: 1,
-            sharing: 4,
-            mib: 1,
-        });
-        assert_eq!(first.cores(), 2);
-        let mut second = budget.acquire(Request {
-            min_cores: 1,
-            sharing: 1,
-            mib: 1,
-        });
-        assert_eq!(second.cores(), 6);
-        second.shrink(1, 0);
-        let third = budget.acquire(Request {
-            min_cores: 1,
-            sharing: 1,
-            mib: 1,
-        });
-        assert_eq!(third.cores(), 5);
+        let mut first = budget.acquire(Request { cores: 6, mib: 90 });
+        first.shrink(1, 10);
+        let second = budget.acquire(Request { cores: 7, mib: 90 });
+        assert_eq!((first.cores(), first.mib()), (1, 10));
+        assert_eq!((second.cores(), second.mib()), (7, 90));
     }
 
     /// Results come back in index order whatever order the work finishes in -- here, the later
