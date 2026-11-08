@@ -62,7 +62,7 @@ pub type Result<T> = std::result::Result<T, PcodeError>;
 
 /// The version of the tables' format this reader reads, which `ExportPcode.java` writes to
 /// `FACTS_VERSION.facts`.
-pub const FACTS_VERSION: &str = "2";
+pub const FACTS_VERSION: &str = "3";
 
 define_interned_newtype! {
     /// Unique identifier for a high-level function
@@ -821,11 +821,27 @@ impl PcodeFactsReader {
     /// variable (`global`, `constant`, `other`, ...).
     ///
     /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
+    ///
+    /// A variable Ghidra classes otherwise is also `global` when its address has a symbol;
+    /// then it is `global`, whatever order the rows are in.
     pub fn read_hvar_class_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
         let facts = self.rows_or_empty("HVAR_CLASS.facts", |[h, class]| {
             Ok((HighVariable::from(h), class.to_string()))
         })?;
-        Ok(sorted(facts).into_iter().collect())
+        let mut classes: BTreeMap<HighVariable, String> = BTreeMap::new();
+        for (h, class) in facts {
+            match classes.entry(h) {
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(class);
+                }
+                std::collections::btree_map::Entry::Occupied(mut e) => {
+                    if e.get() != "global" {
+                        e.insert(class);
+                    }
+                }
+            }
+        }
+        Ok(classes)
     }
 
     /// Read HVAR_TYPE facts, giving the id of the data type Ghidra assigned each high

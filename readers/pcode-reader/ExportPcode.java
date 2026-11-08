@@ -327,7 +327,7 @@ class HighFunctionExporter {
 	 * The version of the tables' format, written to {@code FACTS_VERSION}. ctadl reads only
 	 * tables of the version it expects, so raise it whenever a table changes meaning.
 	 */
-	static final String FACTS_VERSION = "2";
+	static final String FACTS_VERSION = "3";
 
 	private final Database db = new Database();
 	private final Set<String> types = new HashSet<String>();
@@ -532,6 +532,8 @@ class HighFunctionExporter {
 
 	private void exportHighVariable(HighFunction hfn, HighVariable hv, boolean dontDescend) {
 		String id = hvarID(hfn, hv);
+		// Naming it records whether it is a global named by its address's symbol.
+		hvarName(hfn, hv);
 		if (hv instanceof HighGlobal) {
 			export(PredicateFile.HVAR_CLASS, id, "global");
 		}
@@ -664,8 +666,8 @@ class HighFunctionExporter {
 				export(PredicateFile.HVAR_REPRESENTATIVE, hvarID(hfn, pvar), vnodeID(hfn, rep));
 				exportVarnode(hfn, rep);
 			} else {
-				// fake out a HighVar, with a varnode whose id cannot be a real varnode's: those
-				// have one colon.
+				// fake out a HighVar, with ids that cannot be a real one's: a real high variable's
+				// and a real varnode's id is its function, a colon and a number.
 				String vnid = hsid + SEP + "0";
 				export(PredicateFile.SYMBOL_HVAR, hsid, hsid);
 				export(PredicateFile.HVAR_REPRESENTATIVE, hsid, vnid);
@@ -734,8 +736,18 @@ class HighFunctionExporter {
 		return hfuncID(hfn) + SEP + Integer.toString(vn.getUniqueId());
 	}
 
+	/**
+	 * A high variable: its function and its representative varnode's number. A varnode belongs
+	 * to one high variable, so no two of a function's high variables share it, as they can share
+	 * a name: Ghidra names every unnamed constant after its address, and the pieces of a split
+	 * stack variable after the variable.
+	 */
 	private String hvarID(HighFunction hfn, HighVariable hv) {
-		return hfuncID(hfn) + SEP + hvarName(hfn, hv);
+		VarnodeAST rep = (VarnodeAST) hv.getRepresentative();
+		if (rep == null) {
+			return hfuncID(hfn) + SEP + hvarName(hfn, hv);
+		}
+		return hfuncID(hfn) + SEP + Integer.toString(rep.getUniqueId());
 	}
 
 	private String hvarName(HighFunction hf, HighVariable hv) {
@@ -751,7 +763,7 @@ class HighFunctionExporter {
 			if (symbol == null) {
 				return addr.toString();
 			}
-			export(PredicateFile.HVAR_CLASS, hfuncID(hf) + SEP + symbol.getName(), "global");
+			export(PredicateFile.HVAR_CLASS, hvarID(hf, hv), "global");
 			return symbol.getName();
 		}
 		return hv.getName();
