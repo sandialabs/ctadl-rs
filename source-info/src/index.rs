@@ -68,9 +68,11 @@ impl<T: Row> Index<T> {
             .table
             .reserve(rows.len(), |&id| hasher.hash_one(row(rows, id).key()));
         for (i, r) in rows.iter().enumerate() {
-            index.table.insert_unique(hasher.hash_one(r.key()), i as u32 + 1, |&id| {
-                hasher.hash_one(row(rows, id).key())
-            });
+            index
+                .table
+                .insert_unique(hasher.hash_one(r.key()), i as u32 + 1, |&id| {
+                    hasher.hash_one(row(rows, id).key())
+                });
         }
         index
     }
