@@ -113,15 +113,17 @@ pub fn import_native_libs(
     parent: &ArtifactImport,
     opts: ImportOptions<'_>,
 ) -> Result<Vec<String>, Error> {
-    import_native_libs_in(parent, opts, None)
+    import_native_libs_in(parent, opts, None, None)
 }
 
 /// [`import_native_libs`] under `budget`, shared with whatever else the caller runs at the same
-/// time, or under a budget of its own built from `opts.jobs` when `None`.
+/// time, or under a budget of its own built from `opts.jobs` when `None`. Once `cancel` is set,
+/// no further library is started.
 pub(crate) fn import_native_libs_in(
     parent: &ArtifactImport,
     opts: ImportOptions<'_>,
     budget: Option<&Budget>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<String>, Error> {
     if !opts.native_libs {
         return Ok(Vec::new());
@@ -285,7 +287,7 @@ pub(crate) fn import_native_libs_in(
         &start_order,
         budget.cores(),
         |task| import_one(task, opts, budget),
-        |_| false,
+        |_| cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Acquire)),
         |index, result| {
             let task = &tasks[index];
             match result {

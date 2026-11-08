@@ -277,11 +277,17 @@ fn import_apk(
             cores: 1,
             mib: dex_lowering_mib(dex_size),
         });
+        // A Dex half that fails fails the import, so the native half starts no further library
+        // once it has.
+        let cancel = std::sync::atomic::AtomicBool::new(false);
         let (java, native) = std::thread::scope(|scope| {
             let native = budget::spawn_scoped(scope, || {
-                apk_native::import_native_libs_in(import, opts, Some(budget))
+                apk_native::import_native_libs_in(import, opts, Some(budget), Some(&cancel))
             });
             let java = budget.install(|| ctadl_dex::import_apk(path));
+            if java.is_err() {
+                cancel.store(true, std::sync::atomic::Ordering::Release);
+            }
             drop(grant);
             drop(turn);
             (java, native.join())
@@ -342,7 +348,7 @@ fn import_apk(
     }
     record_sub_imports(
         import,
-        apk_native::import_native_libs_in(import, opts, Some(budget))?,
+        apk_native::import_native_libs_in(import, opts, Some(budget), None)?,
     )?;
     Ok(Imported {
         program_info,
