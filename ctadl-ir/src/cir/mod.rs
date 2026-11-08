@@ -1648,9 +1648,36 @@ impl Program {
     /// Verify that the CTADL IR program satisfies expected invariants. See the description of each
     /// error in the [`VerifyError`] enum.
     pub fn verify(&self) -> Result<(), VerifyErrors> {
+        if self.verifies_in_parallel() {
+            return Ok(());
+        }
+        // Something is wrong. Verify again on one thread, which reports exactly what is wrong, in
+        // order, with globals printed by name.
         let mut visitor = CirVerify::default();
         visitor.visit_program(self);
         visitor.take_error()
+    }
+
+    /// Whether [`Program::verify`] would find nothing wrong, checked on the rayon pool: each
+    /// function on its own, with the global count the program check uses, and the function
+    /// names for duplicates separately. A program the size of a large app takes seconds to
+    /// verify on one thread.
+    fn verifies_in_parallel(&self) -> bool {
+        use rayon::prelude::*;
+        let globals_len = self.globals.len();
+        let functions = &self.functions.functions.raw;
+        let bodies_ok = functions.par_chunks(256).enumerate().all(|(chunk, fs)| {
+            let mut visitor = CirVerify::for_globals(globals_len);
+            for (i, f) in fs.iter().enumerate() {
+                visitor.visit_function_data(FunctionIdx::new(chunk * 256 + i), f);
+            }
+            visitor.take_error().is_ok()
+        });
+        if !bodies_ok {
+            return false;
+        }
+        let mut names = hashbrown::HashSet::with_capacity(functions.len());
+        functions.iter().all(|f| names.insert(f.name.as_str()))
     }
 
     /// Verify a function. See the description of each error in the [`VerifyError`] enum.

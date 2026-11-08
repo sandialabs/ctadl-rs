@@ -76,20 +76,17 @@ pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> 
     ArtifactImport::mark_complete(&import.name)
 }
 
-/// Writes the program IR to `path`.
-///
-/// bitcode lays a value out column by column, so it cannot write the encoding until it has seen
-/// the whole program; the encoding is built in memory and then written.
+/// Writes the program IR to `path`, encoding it a few frames at a time on the rayon pool
+/// ([`encode::encode_program_to`]).
 fn write_program(program: Program, path: &Path) -> Result<(), Error> {
-    let data = encode::encode_program(&program).map_err(Error::Bitcode)?;
-    // Freeing a large program takes a while, and nothing needs to wait for it, so it is freed on
-    // another thread while the file is written.
-    std::thread::scope(|s| {
-        s.spawn(move || drop(program));
-        std::fs::write(path, data)
-            .map_err(Error::Io)
-            .err_context(|| format!("writing program: {}", path.display()))
-    })?;
+    let file = std::fs::File::create(path)
+        .map_err(Error::Io)
+        .err_context(|| format!("writing program: {}", path.display()))?;
+    encode::encode_program_to(&program, std::io::BufWriter::with_capacity(1 << 20, file))
+        .map_err(Error::Io)
+        .err_context(|| format!("writing program: {}", path.display()))?;
+    // Freeing a large program takes a while, and nothing needs to wait for it.
+    std::thread::spawn(move || drop(program));
     log::debug!("wrote {}", path.display());
     Ok(())
 }
