@@ -2901,6 +2901,7 @@ dependencies = [
 name = "jvm-reader"
 version = "0.1.7"
 dependencies = [
+ "memmap2",
  "rayon",
  "zip",
 ]
