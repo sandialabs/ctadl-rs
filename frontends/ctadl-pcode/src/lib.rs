@@ -225,6 +225,8 @@ enum VnodeRep {
 
 #[derive(Debug)]
 struct Context {
+    /// The varnodes' names, taken from the facts (see [`Lowerer::local_name`]).
+    vnode_names: pcode_reader::VnodeNames,
     /// Function mapping: pcode function ID -> CTADL function index
     functions: BTreeMap<pcode_reader::HighFunc, FunctionIdx>,
     /// Basic block mapping: (function ID, pcode block ID) -> CTADL basic block index
@@ -273,6 +275,7 @@ struct Context {
 impl Context {
     fn new() -> Self {
         Self {
+            vnode_names: Default::default(),
             functions: Default::default(),
             basic_blocks: Default::default(),
             address_to_bb: Default::default(),
@@ -322,6 +325,7 @@ impl Context {
             .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
             .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
         timer.done("read facts");
+        self.vnode_names = std::mem::take(&mut pcode_facts.vnode_names);
 
         // Synthesize stack top varnode and add it to facts
         let stack_top_vn = pcode_reader::PcodeVarnode::from("__stack_top");
@@ -336,6 +340,7 @@ impl Context {
         pcode_facts.vnode_facts.insert(
             stack_top_vn.clone(),
             pcode_reader::VnodeData {
+                name: pcode_reader::VnodeNames::NONE,
                 size: sp_size,
                 space: Some("register".into()),
                 address: None,
@@ -442,9 +447,7 @@ impl Context {
         let hfunc_facts = &pcode_facts.hfunc_facts;
         let proto_facts = &pcode_facts.proto_facts;
 
-        // Sort function IDs for deterministic naming
-        let mut sorted_func_ids: Vec<_> = hfunc_facts.keys().collect();
-        sorted_func_ids.sort();
+        let sorted_func_ids = functions_in_order(pcode_facts);
 
         let mut used_names = BTreeSet::new();
 
@@ -458,10 +461,10 @@ impl Context {
             } else {
                 // Collision or no pcode, use unique name by including ID
                 // Shorten the name if it already contains the ID to avoid redundancy
-                if func_id.contains(&func_data.name) {
-                    func_id.to_string()
+                if func_data.id_name.contains(&func_data.name) {
+                    func_data.id_name.clone()
                 } else {
-                    format!("{}_{}", func_data.name, func_id)
+                    format!("{}_{}", func_data.name, func_data.id_name)
                 }
             };
 
@@ -487,8 +490,8 @@ impl Context {
                 stripped
             };
             // The namespace-qualified name, e.g. `Foo::bar`. Ghidra's exporter builds
-            // `func_id` as `getName(true) + "@" + entryPoint` (ExportPcode.java), so the
-            // qualification is recoverable only from the id: `func_data.name` is the bare
+            // `id_name` as `getName(true) + "@" + entryPoint` (ExportPcode.java), so the
+            // qualification is recoverable only from it: `func_data.name` is the bare
             // name and `func_name` above drops the namespace whenever the bare name happens
             // to be globally unique. Compute it here, outside that branch, so the value
             // never depends on which naming branch ran. Split on the LAST `@`: entry points
@@ -497,7 +500,7 @@ impl Context {
             // function's qualified name equals its simple name even on Mach-O, where
             // `simple_name` has stripped a leading `_`.
             let signature = Self::format_native_signature(func_data, proto_facts);
-            let func_id_str: &str = func_id;
+            let func_id_str: &str = &func_data.id_name;
             let qualified_raw = func_id_str
                 .rsplit_once('@')
                 .map_or(func_id_str, |(qualified, _entry_point)| qualified);
@@ -551,7 +554,8 @@ impl Context {
             }
         }
 
-        for (func_id, func_data) in hfunc_facts {
+        for func_id in functions_in_order(pcode_facts) {
+            let func_data = &hfunc_facts[func_id];
             let Some(&func_idx) = self.functions.get(func_id) else {
                 continue;
             };
@@ -607,14 +611,18 @@ impl Context {
         }
 
         // Process each function's blocks
-        let mut sorted_hfuncs: Vec<_> = self.functions.keys().cloned().collect();
-        sorted_hfuncs.sort(); // Determinism
+        let sorted_hfuncs: Vec<_> = functions_in_order(pcode_facts)
+            .into_iter()
+            .filter(|f| self.functions.contains_key(*f))
+            .cloned()
+            .collect();
 
         let mut basic_blocks = BTreeMap::new();
         let mut address_to_bb = BTreeMap::new();
-        let lowerer = Lowerer::new(self);
+        let mut lowerer = Lowerer::new(self);
 
         for hfunc_id in sorted_hfuncs {
+            lowerer.enter_function(pcode_facts, &hfunc_id);
             let func_idx = self.functions[&hfunc_id];
             let func_data = &pcode_facts.hfunc_facts[&hfunc_id];
             let func = &mut builders.program[func_idx];
@@ -685,7 +693,9 @@ impl Context {
             let mut entry_bb_idx = None;
             if let Some(bb_ids) = func_to_bbs.get(&hfunc_id) {
                 let mut sorted_bb_ids = bb_ids.clone();
-                sorted_bb_ids.sort(); // Determinism
+                sorted_bb_ids.sort_by(|a, b| {
+                    block_order_key(pcode_facts, a).cmp(&block_order_key(pcode_facts, b))
+                });
 
                 // Identify entry block by address or use the first one as fallback
                 let mut entry_bb_id = None;
@@ -790,7 +800,7 @@ impl Context {
         let mut job_of_func: hashbrown::HashMap<FunctionIdx, usize> = Default::default();
         // Each block's job and its place in the job, in block-id order.
         let mut order: Vec<(usize, usize)> = Vec::with_capacity(pcode_facts.bb_facts.len());
-        for (bb_id, bb_data) in &pcode_facts.bb_facts {
+        for (bb_id, bb_data) in blocks_in_order(pcode_facts) {
             let func = self.functions.get(&bb_data.hfunc).copied();
             let job = match func {
                 Some(func_idx) => *job_of_func.entry(func_idx).or_insert_with(|| {
@@ -990,6 +1000,9 @@ struct Lowerer<'a> {
     binop_sources: BinopSources,
     /// Instructions with no span because their offset from the image base is not a `u32`.
     unlocated_instructions: usize,
+    /// The readable identity of the function being lowered, which its locals' names start
+    /// with (see [`Self::local_name`]).
+    func_name: String,
 }
 
 impl Deref for Lowerer<'_> {
@@ -1007,6 +1020,31 @@ impl<'a> Lowerer<'a> {
             temps: Vec::new(),
             binop_sources: BinopSources::default(),
             unlocated_instructions: 0,
+            func_name: String::new(),
+        }
+    }
+
+    /// Lowers `func`'s varnodes from now on.
+    fn enter_function(&mut self, facts: &pcode_reader::PcodeFacts, func: &pcode_reader::HighFunc) {
+        let name = facts
+            .hfunc_facts
+            .get(func)
+            .map_or(&***func, |data| data.id_name.as_str());
+        if self.func_name != name {
+            self.func_name = name.to_string();
+        }
+    }
+
+    /// The name of the local a varnode of the current function is:
+    /// `<function>:<varnode name>`, e.g. `Foo::bar@00101000:local_10:1234`.
+    fn local_name(
+        &self,
+        vnode_id: &pcode_reader::PcodeVarnode,
+        vnode_data: &pcode_reader::VnodeData,
+    ) -> String {
+        match self.vnode_names.get(vnode_data.name) {
+            Some(name) => format!("{}:{name}", self.func_name),
+            None => vnode_id.to_string(),
         }
     }
 
@@ -1054,6 +1092,7 @@ impl<'a> Lowerer<'a> {
         return_arity: usize,
         locals: &mut Locals,
     ) -> Result<LoweredBlock, Error> {
+        self.enter_function(pcode_facts, &bb_data.hfunc);
         let first_temp = self.temps.len();
         let mut statements = Vec::new();
         let mut spans = Vec::new();
@@ -1771,11 +1810,15 @@ impl<'a> Lowerer<'a> {
             && space != Some("unique")
             && let Some(offset) = vnode_data.constant_offset
         {
-            let var = VariableRef::new_local_idx(locals.get_or_intern(&vnode_id.to_string()));
+            let var = VariableRef::new_local_idx(
+                locals.get_or_intern(&self.local_name(vnode_id, vnode_data)),
+            );
             return VnodeRep::Offset(var, offset);
         }
 
-        let var = VariableRef::new_local_idx(locals.get_or_intern(&vnode_id.to_string()));
+        let var = VariableRef::new_local_idx(
+            locals.get_or_intern(&self.local_name(vnode_id, vnode_data)),
+        );
         VnodeRep::Var(var)
     }
 
@@ -2053,6 +2096,56 @@ impl<'a> Lowerer<'a> {
 /// Drops `value` on a thread of its own, off the import's critical path: dropping the facts
 /// releases millions of interned strings. Not on the rayon pool, where a thread waiting in a
 /// `join` would pick the drop up and wait for it.
+/// The functions, in the order they are lowered: by readable identity (`Foo::bar@00101000`),
+/// which keeps the program the same whatever numbers the exporter gave them.
+fn functions_in_order(facts: &pcode_reader::PcodeFacts) -> Vec<&pcode_reader::HighFunc> {
+    let mut funcs: Vec<_> = facts.hfunc_facts.keys().collect();
+    funcs.sort_by_cached_key(|f| function_order_key(facts, f));
+    funcs
+}
+
+/// Where `func` goes in [`functions_in_order`]. A function the tables give no name has only
+/// its id.
+fn function_order_key<'f>(
+    facts: &'f pcode_reader::PcodeFacts,
+    func: &'f pcode_reader::HighFunc,
+) -> (&'f str, &'f pcode_reader::HighFunc) {
+    let name = facts
+        .hfunc_facts
+        .get(func)
+        .map_or(&***func, |data| data.id_name.as_str());
+    (name, func)
+}
+
+/// Where a block goes among blocks: in its function's place (see [`functions_in_order`]), then
+/// by start address, with the blocks that have none last.
+fn block_order_key<'f>(
+    facts: &'f pcode_reader::PcodeFacts,
+    bb: &'f pcode_reader::PcodeBlockBasic,
+) -> (
+    (&'f str, &'f pcode_reader::HighFunc),
+    Option<i64>,
+    &'f pcode_reader::PcodeBlockBasic,
+) {
+    let data = &facts.bb_facts[bb];
+    let start = data.start_address.as_ref().map(|a| a.0);
+    (
+        function_order_key(facts, &data.hfunc),
+        // `None` sorts first, and a block with no start goes last.
+        start.map_or(Some(i64::MAX), Some),
+        bb,
+    )
+}
+
+/// The blocks, in the order their instructions are lowered (see [`block_order_key`]).
+fn blocks_in_order(
+    facts: &pcode_reader::PcodeFacts,
+) -> Vec<(&pcode_reader::PcodeBlockBasic, &pcode_reader::BBData)> {
+    let mut blocks: Vec<_> = facts.bb_facts.iter().collect();
+    blocks.sort_by_cached_key(|(bb, _)| block_order_key(facts, bb));
+    blocks
+}
+
 fn drop_in_background<T: Send + 'static>(value: T) {
     std::thread::spawn(move || drop(value));
 }
@@ -2300,6 +2393,7 @@ mod tests {
     /// A register varnode, or a constant varnode when `constant` is given.
     fn vnode(constant: Option<i64>) -> pcode_reader::VnodeData {
         pcode_reader::VnodeData {
+            name: pcode_reader::VnodeNames::NONE,
             size: Some(8),
             space: Some(
                 if constant.is_some() {
@@ -2463,6 +2557,7 @@ mod tests {
         // Every table the reader reads, empty, and the image base.
         for name in [
             ".facts",
+            "FACTS_VERSION.facts",
             "BB_FIRST.facts",
             "BB_FOUT.facts",
             "BB_HFUNC.facts",
@@ -2472,18 +2567,16 @@ mod tests {
             "BB_START.facts",
             "BB_TOUT.facts",
             "HFUNC_EP.facts",
+            "HFUNC_FUNC.facts",
             "HFUNC_ISEXT.facts",
             "HFUNC_LOCAL_EP.facts",
             "HFUNC_NAME.facts",
             "HFUNC_PROTO.facts",
             "HVAR_CLASS.facts",
-            "HVAR_NAME.facts",
             "HVAR_REPRESENTATIVE.facts",
             "HVAR_TYPE.facts",
-            "PCODE_INDEX.facts",
             "PCODE_INPUT.facts",
             "PCODE_MNEMONIC.facts",
-            "PCODE_OPCODE.facts",
             "PCODE_OUTPUT.facts",
             "PCODE_PARENT.facts",
             "PCODE_TARGET.facts",
@@ -2503,7 +2596,6 @@ mod tests {
             "TYPE_POINTER.facts",
             "VNODE_ADDRESS.facts",
             "VNODE_HVAR.facts",
-            "VNODE_IS_ADDRESS.facts",
             "VNODE_NAME.facts",
             "VNODE_OFFSET_N.facts",
             "VNODE_SIZE.facts",
@@ -2512,6 +2604,11 @@ mod tests {
             std::fs::write(dir.path().join(name), "").unwrap();
         }
         std::fs::write(dir.path().join("PROGRAM_IMAGE_BASE.facts"), "1048576\n").unwrap();
+        std::fs::write(
+            dir.path().join("FACTS_VERSION.facts"),
+            format!("{}\n", pcode_reader::FACTS_VERSION),
+        )
+        .unwrap();
 
         let mut ctx = Context::new();
         ctx.import_name = "lib.so".to_string();

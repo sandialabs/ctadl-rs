@@ -366,6 +366,7 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -376,6 +377,7 @@ mod tests {
         facts.vnode_facts.insert(
             c5.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(5)),
@@ -386,6 +388,7 @@ mod tests {
         facts.vnode_facts.insert(
             v2.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -396,6 +399,7 @@ mod tests {
         facts.vnode_facts.insert(
             v3.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -457,6 +461,7 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -467,6 +472,7 @@ mod tests {
         facts.vnode_facts.insert(
             k10.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: None,
@@ -477,6 +483,7 @@ mod tests {
         facts.vnode_facts.insert(
             v2.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -530,6 +537,7 @@ mod tests {
             facts.vnode_facts.insert(
                 vn.clone(),
                 VnodeData {
+                    name: crate::VnodeNames::NONE,
                     size: Some(8),
                     space: Some(space.into()),
                     address: offset.map(PcodeAddress),
@@ -579,6 +587,7 @@ mod tests {
         facts.vnode_facts.insert(
             stack_vn.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("stack".into()),
                 address: Some(PcodeAddress(-16)),
@@ -589,6 +598,7 @@ mod tests {
         facts.vnode_facts.insert(
             c8.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(8)),
@@ -599,6 +609,7 @@ mod tests {
         facts.vnode_facts.insert(
             v1.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: None,
@@ -646,6 +657,7 @@ mod tests {
         facts.vnode_facts.insert(
             rsp.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("register".into()),
                 address: Some(PcodeAddress(32)),
@@ -676,6 +688,7 @@ mod tests {
         facts.vnode_facts.insert(
             base.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(1000)),
@@ -687,6 +700,7 @@ mod tests {
         facts.vnode_facts.insert(
             index.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(2)),
@@ -698,6 +712,7 @@ mod tests {
         facts.vnode_facts.insert(
             size_vn.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(4)),
@@ -709,6 +724,7 @@ mod tests {
         facts.vnode_facts.insert(
             offset.clone(),
             VnodeData {
+                name: crate::VnodeNames::NONE,
                 size: Some(8),
                 space: Some("const".into()),
                 address: Some(PcodeAddress(50)),

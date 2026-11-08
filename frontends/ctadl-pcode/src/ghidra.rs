@@ -185,10 +185,14 @@ pub fn run_ghidra_export_source(
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
     let facts_dir = output_dir.join("facts");
+    // Facts another version of the script exported are exported again.
     if std::env::var_os("CTADL_REUSE_FACTS").is_some()
         && std::fs::read_dir(&facts_dir)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false)
+        && pcode_reader::PcodeFactsReader::new(&facts_dir)
+            .check_version()
+            .is_ok()
     {
         log::info!(
             "CTADL_REUSE_FACTS set: reusing cached pcode facts in {}",

@@ -60,6 +60,10 @@ macro_rules! define_interned_newtype {
 /// Result type for pcode-reader operations.
 pub type Result<T> = std::result::Result<T, PcodeError>;
 
+/// The version of the tables' format this reader reads, which `ExportPcode.java` writes to
+/// `FACTS_VERSION.facts`.
+pub const FACTS_VERSION: &str = "2";
+
 define_interned_newtype! {
     /// Unique identifier for a high-level function
     HighFunc
@@ -120,6 +124,9 @@ impl Display for PcodeAddress {
 #[derive(Debug, Clone)]
 pub struct HFuncData {
     pub name: String,
+    /// The function's readable identity: its namespace-qualified name at its entry point, e.g.
+    /// `Foo::bar@00101000`. Unique, unlike `name`. Its id in the tables is only a number.
+    pub id_name: String,
     pub proto: Option<HighProto>,
     pub is_external: bool,
     pub entry_point: Option<PcodeAddress>,
@@ -157,12 +164,46 @@ pub struct PcodeData {
 #[derive(Debug, Clone)]
 ///
 /// A large binary has tens of millions of varnodes, so this holds only what lowering reads:
-/// not the varnode's name, nor whether Ghidra calls it an address.
+/// not whether Ghidra calls it an address, for instance.
 pub struct VnodeData {
+    /// The varnode's readable name within its function: its high variable's name, if it has
+    /// one, then a colon and its number, e.g. `local_10:1234`. A key into
+    /// [`PcodeFacts::vnode_names`], or [`VnodeNames::NONE`].
+    pub name: u32,
     pub size: Option<i64>,
     pub space: Option<AddressSpace>,
     pub address: Option<PcodeAddress>,
     pub constant_offset: Option<i64>,
+}
+
+/// The varnodes' names (see [`VnodeData::name`]), in one buffer: a varnode has tens of bytes
+/// of name, which allocated one by one would cost as much again.
+#[derive(Debug, Default)]
+pub struct VnodeNames {
+    text: String,
+    /// Where each name ends in `text`.
+    ends: Vec<usize>,
+}
+
+impl VnodeNames {
+    /// The name of a varnode that has none.
+    pub const NONE: u32 = u32::MAX;
+
+    /// The name `key` stands for.
+    pub fn get(&self, key: u32) -> Option<&str> {
+        let i = key as usize;
+        let end = *self.ends.get(i)?;
+        let start = i.checked_sub(1).map_or(0, |prev| self.ends[prev]);
+        Some(&self.text[start..end])
+    }
+
+    fn push(&mut self, name: &str) -> u32 {
+        let key = u32::try_from(self.ends.len()).expect("fewer than 2^32 varnodes");
+        assert_ne!(key, Self::NONE, "fewer than 2^32 - 1 varnodes");
+        self.text.push_str(name);
+        self.ends.push(self.text.len());
+        key
+    }
 }
 
 impl VnodeData {
@@ -264,10 +305,11 @@ impl PcodeFactsReader {
 
     /// Read all essential pcode facts. Tables are read in parallel, and so is each large one.
     pub fn read_all_facts(&self) -> Result<PcodeFacts> {
+        self.check_version()?;
         // The two largest groups of tables go first, one at a time, so that only one group's
         // rows and intermediate maps are in memory at once.
         let pcode_facts = self.read_pcode_facts()?;
-        let vnode_facts = self.read_vnode_facts()?;
+        let mut vnode_facts = self.read_vnode_facts()?;
         let (bb_facts, (vnode_hvar_facts, rest)) = join!(
             self.read_bb_facts(),
             self.read_vnode_hvar_facts(),
@@ -295,7 +337,10 @@ impl PcodeFactsReader {
                 ),
             ),
         ) = rest;
+        // Last, once the other tables' intermediate maps are gone.
+        let vnode_names = self.read_vnode_names(&mut vnode_facts)?;
         Ok(PcodeFacts {
+            vnode_names,
             hfunc_facts: hfunc_facts?,
             pcode_facts,
             vnode_facts,
@@ -309,6 +354,24 @@ impl PcodeFactsReader {
             type_kinds: type_kinds?,
             register_facts: register_facts?,
         })
+    }
+
+    /// Fails unless the tables are of [`FACTS_VERSION`]. Tables an older `ExportPcode.java`
+    /// wrote name things differently, and would be misread rather than fail to read.
+    pub fn check_version(&self) -> Result<()> {
+        const FILE: &str = "FACTS_VERSION.facts";
+        let version = self.rows_optional(FILE, |[v]| Ok(v.to_string()))?;
+        match version.as_deref() {
+            Some([v]) if v == FACTS_VERSION => Ok(()),
+            _ => Err(PcodeError::invalid_fact_format(
+                FILE,
+                format!(
+                    "the facts in {} are not of version {FACTS_VERSION}: they were exported by \
+                     another version of ExportPcode.java, and must be exported again",
+                    self.facts_dir.display()
+                ),
+            )),
+        }
     }
 
     /// Read the program's image base: the address Ghidra loaded the artifact at.
@@ -351,10 +414,14 @@ impl PcodeFactsReader {
     pub fn read_hfunc_facts(&self) -> Result<BTreeMap<HighFunc, HFuncData>> {
         const EP: &str = "HFUNC_EP.facts";
         const LOCAL_EP: &str = "HFUNC_LOCAL_EP.facts";
-        let (name_facts, (proto_facts, (isext_facts, (ep_facts, local_ep_facts)))) = join!(
+        let (name_facts, (id_name_facts, (proto_facts, (isext_facts, (ep_facts, local_ep_facts))))) = join!(
             self.rows("HFUNC_NAME.facts", |[f, name]| Ok((
                 HighFunc::from(f),
                 name.to_string()
+            ))),
+            self.rows("HFUNC_FUNC.facts", |[f, id_name]| Ok((
+                HighFunc::from(f),
+                id_name.to_string()
             ))),
             self.rows("HFUNC_PROTO.facts", |[f, proto]| Ok((
                 HighFunc::from(f),
@@ -369,6 +436,7 @@ impl PcodeFactsReader {
         );
 
         let name_map: BTreeMap<HighFunc, String> = name_facts?.into_iter().collect();
+        let mut id_name_map: HashMap<HighFunc, String> = id_name_facts?.into_iter().collect();
         let proto_map: BTreeMap<HighFunc, HighProto> = proto_facts?.into_iter().collect();
         let isext_set: BTreeSet<HighFunc> = isext_facts?.into_iter().collect();
 
@@ -399,11 +467,15 @@ impl PcodeFactsReader {
             let is_external = isext_set.contains(&func_id);
             let entry_point = ep_map.get(&func_id).cloned();
             let local_entry_points = local_ep_map.get(&func_id).cloned().unwrap_or_default();
+            let id_name = id_name_map
+                .remove(&func_id)
+                .unwrap_or_else(|| func_id.to_string());
 
             result.insert(
                 func_id,
                 HFuncData {
                     name,
+                    id_name,
                     proto,
                     is_external,
                     entry_point,
@@ -570,9 +642,8 @@ impl PcodeFactsReader {
         const SIZE: &str = "VNODE_SIZE.facts";
         const ADDRESS: &str = "VNODE_ADDRESS.facts";
         const OFFSET: &str = "VNODE_OFFSET_N.facts";
-        // Every varnode has a name, so the names say which varnodes there are.
-        let (names, (sizes, (spaces, (addresses, offsets)))) = join!(
-            self.rows_or_empty("VNODE_NAME.facts", |[vn, _]| Ok(PcodeVarnode::from(vn))),
+        // Every varnode has a space, so the spaces say which varnodes there are.
+        let (sizes, (spaces, (addresses, offsets))) = join!(
             self.rows_or_empty(SIZE, |[vn, n]| Ok((
                 PcodeVarnode::from(vn),
                 table::int(SIZE, n)?
@@ -591,22 +662,22 @@ impl PcodeFactsReader {
             )))
         );
 
-        let (mut names, sizes) = (names?, sizes?);
+        let sizes = sizes?;
         let (spaces, addresses, offsets) = (spaces?, addresses?, offsets?);
-        let (_, (sizes, (spaces, (addresses, offsets)))) = join!(
-            names.par_sort(),
+        let (spaces, (sizes, (addresses, offsets))) = join!(
+            sorted(spaces),
             last_wins(sizes),
-            last_wins(spaces),
             last_wins(addresses),
             last_wins(offsets)
         );
 
-        let rows: Vec<(PcodeVarnode, VnodeData)> = names
+        let rows: Vec<(PcodeVarnode, VnodeData)> = spaces
             .into_par_iter()
-            .map(|vnode_id| {
+            .map(|(vnode_id, space)| {
                 let data = VnodeData {
+                    name: VnodeNames::NONE,
                     size: sizes.get(&vnode_id).copied(),
-                    space: spaces.get(&vnode_id).cloned(),
+                    space: Some(space),
                     address: addresses.get(&vnode_id).cloned(),
                     constant_offset: offsets.get(&vnode_id).copied(),
                 };
@@ -614,6 +685,23 @@ impl PcodeFactsReader {
             })
             .collect();
         Ok(rows.into_iter().collect())
+    }
+
+    /// Reads `VNODE_NAME`, setting each varnode's name in `vnode_facts`, and returns the names.
+    pub fn read_vnode_names(
+        &self,
+        vnode_facts: &mut BTreeMap<PcodeVarnode, VnodeData>,
+    ) -> Result<VnodeNames> {
+        let rows = self.rows_or_empty("VNODE_NAME.facts", |[vn, name]| {
+            Ok((PcodeVarnode::from(vn), Box::<str>::from(name)))
+        })?;
+        let mut names = VnodeNames::default();
+        for (vnode_id, name) in rows {
+            if let Some(data) = vnode_facts.get_mut(&vnode_id) {
+                data.name = names.push(&name);
+            }
+        }
+        Ok(names)
     }
 
     /// Read BB (basic block) facts
@@ -708,14 +796,6 @@ impl PcodeFactsReader {
             m.entry(s).or_default().push(h);
         }
         Ok(m)
-    }
-
-    /// Read HVAR_NAME facts
-    pub fn read_hvar_name_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
-        let facts = self.rows("HVAR_NAME.facts", |[h, name]| {
-            Ok((HighVariable::from(h), name.to_string()))
-        })?;
-        Ok(sorted(facts).into_iter().collect())
     }
 
     /// Read HVAR_REPRESENTATIVE facts
@@ -819,6 +899,8 @@ pub enum TypeKind {
 
 #[derive(Debug, Default)]
 pub struct PcodeFacts {
+    /// The varnodes' names, which [`VnodeData::name`] are keys into.
+    pub vnode_names: VnodeNames,
     pub hfunc_facts: BTreeMap<HighFunc, HFuncData>,
     pub pcode_facts: BTreeMap<PcodeInstruction, PcodeData>,
     pub vnode_facts: BTreeMap<PcodeVarnode, VnodeData>,
