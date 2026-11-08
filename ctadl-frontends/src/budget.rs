@@ -30,6 +30,10 @@ gets follows its size (see `apk_native`); a share bigger than the whole budget i
 granted, but only when nothing else is running, so one huge library behaves as it would on its
 own.
 
+Once Ghidra exits, a run keeps a smaller share, an estimate of what lowering its facts takes in
+this process. What the Dex half of an APK takes in this process is not counted: the budget
+bounds what the JVMs and the lowering add on top of it.
+
 # Order
 
 Shares are granted strictly in the order they were asked for. A caller that asks for its
@@ -404,10 +408,7 @@ mod tests {
     #[test]
     fn an_oversized_request_runs_alone() {
         let budget = Budget::new(2, 10);
-        let grant = budget.acquire(Request {
-            cores: 8,
-            mib: 100,
-        });
+        let grant = budget.acquire(Request { cores: 8, mib: 100 });
         assert_eq!(grant.cores(), 2);
         assert_eq!(grant.mib(), 100);
     }

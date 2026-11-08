@@ -681,7 +681,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(!ran_out_of_memory(dir.path()));
         let log = dir.path().join(GHIDRA_LOG_NAME);
-        fs::write(&log, "INFO  analysis done\nINFO  REPORT: Import succeeded\n").unwrap();
+        fs::write(
+            &log,
+            "INFO  analysis done\nINFO  REPORT: Import succeeded\n",
+        )
+        .unwrap();
         assert!(!ran_out_of_memory(dir.path()));
         fs::write(
             &log,

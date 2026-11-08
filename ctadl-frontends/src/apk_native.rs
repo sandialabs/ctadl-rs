@@ -430,7 +430,9 @@ fn ghidra_heap_mib(size: u64) -> u64 {
 /// cannot keep one busy.
 fn ghidra_cores(size: u64, total_size: u64, cores: usize) -> usize {
     let share = u128::from(size) * cores as u128 / u128::from(total_size.max(1));
-    usize::try_from(share).unwrap_or(cores).clamp(1, cores.max(1))
+    usize::try_from(share)
+        .unwrap_or(cores)
+        .clamp(1, cores.max(1))
 }
 
 /// The memory, in MiB, the in-process half of an import holds for a library of `size` bytes:
@@ -466,11 +468,7 @@ enum Outcome {
 }
 
 /// Imports one extracted library as its pcode sub-import, under a share of `budget`.
-fn import_one(
-    task: &LibTask,
-    opts: ImportOptions<'_>,
-    budget: &Budget,
-) -> Result<Outcome, Error> {
+fn import_one(task: &LibTask, opts: ImportOptions<'_>, budget: &Budget) -> Result<Outcome, Error> {
     // Disassembling a library takes minutes, so reusing an unchanged one is the
     // difference between a re-import that is cheap and one that is not.
     if opts.skip_existing && ArtifactImport::is_up_to_date(&task.name, &task.dest)? {
@@ -494,11 +492,7 @@ fn import_one(
 /// function, and not the extraction and scheduling around it. When the feature is off,
 /// [`import_native_libs`] returns before anything calls this.
 #[cfg(feature = "pcode")]
-fn lower_native(
-    child: &ArtifactImport,
-    task: &LibTask,
-    budget: &Budget,
-) -> Result<(), Error> {
+fn lower_native(child: &ArtifactImport, task: &LibTask, budget: &Budget) -> Result<(), Error> {
     use crate::budget::Request;
     use ctadl_pcode::ghidra::GhidraLimits;
 
@@ -555,11 +549,7 @@ fn lower_native(
 }
 
 #[cfg(not(feature = "pcode"))]
-fn lower_native(
-    _child: &ArtifactImport,
-    _task: &LibTask,
-    _budget: &Budget,
-) -> Result<(), Error> {
+fn lower_native(_child: &ArtifactImport, _task: &LibTask, _budget: &Budget) -> Result<(), Error> {
     unreachable!("import_native_libs returns early when the `pcode` feature is off")
 }
 
