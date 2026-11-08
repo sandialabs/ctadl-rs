@@ -59,6 +59,11 @@ min_est_gib = 1
 [defaults]
 # memguard cap for every benchmark run (pass and sweep alike).
 mem_cap_gib = 16
+# Threads an import may give Ghidra (`import -j`). One run is one pool worker, and on the e tier
+# the sweep's workers_e runs share the efficiency cores. Fixed rather than chosen by tier, so
+# instruction counts do not depend on where a run started. The JVM's compiler threads come on
+# top, so a run still uses a little more than this.
+import_jobs = 1
 timeouts = { import = 21600, index = 7200, query = 3600, report = 3600 }
 
 [budget]

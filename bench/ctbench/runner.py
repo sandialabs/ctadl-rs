@@ -50,6 +50,9 @@ from pathlib import Path
 
 from . import activity, db as dbm, proc, score, suites
 
+# The ctadl-rs commit that gave `ctadl import` its `-j` (#167).
+IMPORT_JOBS_SHA = "c855674ac718a8be0fbf15c26491c16dfcffbae5"
+
 SWEEP = "firmware-sweep"
 
 
@@ -90,6 +93,7 @@ class Daemon:
         self.next_poll = 0.0
         self.next_gc = 0.0
         self.xtask: str | None = None
+        self.import_jobs_known: dict[str, bool] = {}
         self.xtask_retry_at = 0.0
         self.last_gate_state = None
         self.foreign_cpu: deque[tuple[float, activity.Snapshot]] = deque()
@@ -390,6 +394,14 @@ class Daemon:
         return self.conn.execute("SELECT count(*) FROM runs WHERE unit_id=? AND outcome='killed' "
                                  "AND reason LIKE 'user active%'", (unit_id,)).fetchone()[0]
 
+    def import_takes_jobs(self, sha: str) -> bool:
+        """Whether `sha`'s `ctadl import` has `-j`. Without it, Ghidra uses every core."""
+        if sha not in self.import_jobs_known:
+            self.import_jobs_known[sha] = subprocess.run(
+                [self.git, "-C", str(self.repo), "merge-base", "--is-ancestor", IMPORT_JOBS_SHA, sha],
+                capture_output=True, env=self.git_env).returncode == 0
+        return self.import_jobs_known[sha]
+
     def start_unit(self, u, tier: str, est_gib: float = 0.0) -> None:
         spec = json.loads(u["spec"])
         work = self.work_dir(u)
@@ -397,6 +409,9 @@ class Daemon:
         ctadl = self.conn.execute("SELECT build_out FROM commits WHERE sha=?", (u["sha"],)).fetchone()[0]
         fill = {"{ctadl}": ctadl, "{store}": str(work / "store")}
         argv = [fill.get(a, a).replace("{work}", str(work)) for a in spec["argv"]]
+        if u["phase"] == "import" and self.import_takes_jobs(u["sha"]):
+            i = argv.index("import") + 1
+            argv[i:i] = ["-j", str(self.cfg["defaults"]["import_jobs"])]
         run_id = self.conn.execute(
             "INSERT INTO runs(unit_id, started_at, start_tier, host_load) VALUES (?,?,?,?)",
             (u["id"], time.time(), tier, os.getloadavg()[0])).lastrowid
