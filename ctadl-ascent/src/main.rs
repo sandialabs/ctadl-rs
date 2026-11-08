@@ -159,10 +159,12 @@ pub struct ImportArgs {
     #[arg(long)]
     pub include_framework: bool,
 
-    /// Number of threads Ghidra may use to analyze and decompile native code.
+    /// Number of threads the import may use: to lower code, and for Ghidra to analyze and
+    /// decompile native code.
     ///
-    /// `0`, the default, or `-j` with no value, leaves it to Ghidra, which uses every core the
-    /// OS reports. Any other value caps Ghidra, and the JVM it runs in, at that many.
+    /// `0`, the default, or `-j` with no value, lowers on as many threads as there are cores, up
+    /// to 16, and leaves Ghidra to itself, which uses every core the OS reports. Any other value
+    /// uses that many threads, and caps Ghidra, and the JVM it runs in, at that many.
     #[arg(
         short = 'j',
         long,
@@ -673,6 +675,7 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.cmd {
         Command::Import(args) => {
+            init_import_threads(args.jobs);
             import_artifact_to_store(args).with_context(|| {
                 format!(
                     "importing artifact from: '{}'",
@@ -724,6 +727,7 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
+            init_import_threads(args.jobs.unwrap_or(0));
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
@@ -870,6 +874,27 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
         .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
+}
+
+/// Most threads an import uses unless `-j` asks for more. Past this, lowering a large app gains
+/// little: placing its results in order and writing them are serial.
+const IMPORT_THREADS_CAP: usize = 16;
+
+/// Sizes the rayon pool the import's front ends lower, verify and encode on: `jobs` threads, or
+/// with `0`, as many as there are cores, up to [`IMPORT_THREADS_CAP`].
+fn init_import_threads(jobs: usize) {
+    let threads = match jobs {
+        0 => std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(IMPORT_THREADS_CAP),
+        n => n,
+    };
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        log::debug!("the thread pool was already set up: {e}");
+    }
 }
 
 /// Imports artifacts into the store.
