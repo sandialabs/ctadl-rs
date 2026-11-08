@@ -847,7 +847,7 @@ impl Context {
                 let except = Self::except(&mut fdat.locals);
                 block_stmts.push(Statement::new_kind(StatementKind::Assign {
                     dest: dest.into(),
-                    sources: smallvec![Exp::from(AccessPath::from(except),)],
+                    sources: [Exp::from(AccessPath::from(except))].into(),
                 }));
             }
 
@@ -872,7 +872,7 @@ impl Context {
                         let ret = Self::ret(&mut fdat.locals);
                         let mut assign = Statement::new_kind(StatementKind::Assign {
                             dest: dest.into(),
-                            sources: smallvec![Exp::from(AccessPath::from(ret),)],
+                            sources: [Exp::from(AccessPath::from(ret))].into(),
                         });
                         assign.source_info = source_info;
                         block_stmts.push(assign);
@@ -1225,7 +1225,7 @@ impl Context {
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
         Statement::new_kind(StatementKind::Assign {
             dest: dest.into(),
-            sources: smallvec![Exp::from(AccessPath::from(src))],
+            sources: [Exp::from(AccessPath::from(src))].into(),
         })
     }
 
@@ -1372,7 +1372,7 @@ impl Context {
                     dest: self
                         .convert_location_to_var_ref(&data.destination, locals)
                         .into(),
-                    sources: smallvec![Self::allocation_exp(class_name)],
+                    sources: [Self::allocation_exp(class_name)].into(),
                 })]
             }
             // getstatic
@@ -1447,7 +1447,7 @@ impl Context {
                 let except = Self::except(locals);
                 smallvec![Statement::new_kind(StatementKind::Assign {
                     dest: except.into(),
-                    sources: smallvec![thrown],
+                    sources: [thrown].into(),
                 })]
             }
             // *aload
@@ -1480,7 +1480,7 @@ impl Context {
             }
             _ => {
                 let value_only = Self::is_value_only_opcode(opcode);
-                let mut sources = SmallVec::new();
+                let mut sources = Sources::new();
                 for source_loc in data.sources.iter() {
                     let source = self.convert_location_to_exp(source_loc, locals);
                     sources.push(match source {

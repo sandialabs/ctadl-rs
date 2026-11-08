@@ -122,6 +122,7 @@ use crate::cir::visit::Visitor;
 pub use crate::cir::{
     basic_blocks::BasicBlocks,
     call::{CallEdges, CallObject, CallStyle},
+    sources::Sources,
     verify::{CirVerify, VerifyError, VerifyErrors},
 };
 use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
@@ -140,6 +141,7 @@ pub mod encode;
 pub mod path;
 pub mod path_syntax;
 pub mod pos;
+mod sources;
 mod terminator;
 mod verify;
 pub mod visit;
@@ -279,10 +281,7 @@ pub enum StatementKind {
     ///
     /// The destination is never an address: [`StatementKind::assign`] rewrites `p.[k] = e` into
     /// `p = e.[-k]` (S5), and [`CirVerify`] rejects an address destination.
-    Assign {
-        dest: AccessPath,
-        sources: SmallVec<[Exp; 2]>,
-    },
+    Assign { dest: AccessPath, sources: Sources },
 
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
     /// Multiple values may be returned. Call handling is complex, depending on a number
@@ -1397,7 +1396,7 @@ impl StatementKind {
         I: IntoIterator<Item = Exp>,
     {
         let dest = dest.into();
-        let sources: SmallVec<[Exp; 2]> = srcs.into_iter().collect();
+        let sources: Sources = srcs.into_iter().collect();
         let (dest, sources) = rewrite_address_dest(dest, sources);
         StatementKind::Assign { dest, sources }
     }
@@ -1538,10 +1537,7 @@ pub fn read_into_temp(
 /// The S5 rewrite of an address destination: `p.[k] = e` is `p = e.[-k]`. A source access path
 /// gains the offset `[-k]`; a value source and a constant are unchanged, since
 /// `p.[k].#value = p.#value` and an address's labels are its base's (S3).
-fn rewrite_address_dest(
-    dest: AccessPath,
-    mut sources: SmallVec<[Exp; 2]>,
-) -> (AccessPath, SmallVec<[Exp; 2]>) {
+fn rewrite_address_dest(dest: AccessPath, mut sources: Sources) -> (AccessPath, Sources) {
     let AccessPath { base, segments } = dest;
     let segments = path::normalize(segments);
     let Some(PathSegment::Offset(_)) = segments.last() else {

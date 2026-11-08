@@ -431,7 +431,7 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
         let variable = VariableRef::new_parameter(idx);
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0).into(),
-            sources: smallvec![Exp::variable(variable)],
+            sources: Sources::one(Exp::variable(variable)),
         }));
     }
     log::trace!("assume that version 0 is initial version");

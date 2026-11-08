@@ -166,11 +166,11 @@ fn versioned_variables_are_untouched() {
     let mut f = one_block_function(vec![
         Statement::new_kind(StatementKind::Assign {
             dest: t.clone().into(),
-            sources: smallvec![Exp::variable(local("a").with_version(0))],
+            sources: [Exp::variable(local("a").with_version(0))].into(),
         }),
         Statement::new_kind(StatementKind::Assign {
             dest: x.into(),
-            sources: smallvec![Exp::variable(t)],
+            sources: [Exp::variable(t)].into(),
         }),
     ]);
     coalesce_function(&mut f);

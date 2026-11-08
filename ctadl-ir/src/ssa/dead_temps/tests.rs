@@ -241,7 +241,7 @@ fn versioned_locals_are_untouched() {
     // Already-SSA form: t_1 = a_0, t_1 unread. A no-op — the pass runs before SSA.
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::Assign {
         dest: local("t").with_version(1).into(),
-        sources: smallvec![Exp::variable(local("a").with_version(0))],
+        sources: [Exp::variable(local("a").with_version(0))].into(),
     })]);
     eliminate_dead_temps_function(&mut f);
     assert_eq!(block_kinds(&f, 0).len(), 1);

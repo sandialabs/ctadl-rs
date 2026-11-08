@@ -683,7 +683,7 @@ impl Context {
                         VariableRef::new_local_idx(func.locals.get_or_intern("__stack_top"));
                     let stmt = Statement::new_kind(StatementKind::Assign {
                         dest: sp_var.into(),
-                        sources: smallvec![Exp::variable(stack_top_var)],
+                        sources: [Exp::variable(stack_top_var)].into(),
                     });
                     func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                 }
