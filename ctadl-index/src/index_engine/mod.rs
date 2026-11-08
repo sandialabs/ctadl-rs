@@ -1068,6 +1068,9 @@ pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
 /// The store-backed relations every storage has, other than the [`CondStores`].
 pub struct StoreSizes {
     pub locals_key: usize,
+    /// The bytes each LSM-stored relation spends per row on its tuple, by relation name. Empty
+    /// for the storages that hold no relation in LSM stores.
+    pub bytes_per_row: Vec<(&'static str, usize)>,
 }
 
 /// What `run_engine!` does with the [`cond_trie`] stores of `locals`, `assign_like`, `edge_split`
@@ -2635,6 +2638,7 @@ macro_rules! trie_stores {
             fn store_sizes(&self) -> $crate::index_engine::StoreSizes {
                 $crate::index_engine::StoreSizes {
                     locals_key: self.__locals_key_ind_common.len(),
+                    bytes_per_row: Vec::new(),
                 }
             }
             fn dump_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
@@ -2771,18 +2775,24 @@ macro_rules! run_engine {
         let cond_sizes = prog.cond_sizes();
         log::debug!(
             "[relsizes] byods-backed (rows, conditional): assign_like {:?}, locals {:?}, \
-             edge_split {:?}, ext_dst {:?}; locals_key size: {}",
+             edge_split {:?}, ext_dst {:?}; locals_key size: {}; bytes per row: {:?}",
             cond_sizes.assign_like,
             cond_sizes.locals,
             cond_sizes.edge_split,
             cond_sizes.ext_dst,
-            sizes.locals_key
+            sizes.locals_key,
+            sizes.bytes_per_row
         );
         let locals_heap = prog.locals_heap_report();
         let mut profile = $crate::index_engine::profile::IndexProfile {
             reached_fixpoint,
             timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
             fixpoint_secs,
+            bytes_per_row: sizes
+                .bytes_per_row
+                .iter()
+                .map(|&(name, bytes)| (name.to_string(), bytes))
+                .collect(),
             ..$crate::index_engine::profile::IndexProfile::from_summaries(
                 &prog.relation_sizes_summary(),
                 &prog.scc_times_summary(),

@@ -366,6 +366,22 @@ pub struct LsmIndex<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> 
 impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> LsmIndex<K, V, KW, VW> {
     const K_LAYOUT: Layout = store_layout(K::SIZES, K::ALIGNS, 0);
     const V_LAYOUT: Layout = store_layout(V::SIZES, V::ALIGNS, 0);
+    const WIDTHS_MATCH: () = assert!(
+        KW == Self::K_LAYOUT.words && VW == Self::V_LAYOUT.words,
+        "LsmIndex: KW and VW must be the key's and value's widths",
+    );
+
+    /// The width in bytes of a key's blob.
+    pub const fn key_bytes() -> usize {
+        let () = Self::WIDTHS_MATCH;
+        KW * 8
+    }
+
+    /// The width in bytes of a value's blob.
+    pub const fn value_bytes() -> usize {
+        let () = Self::WIDTHS_MATCH;
+        VW * 8
+    }
 
     #[inline]
     fn encode_key(key: &K) -> [u64; KW] {
@@ -386,12 +402,7 @@ impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> Default
     for LsmIndex<K, V, KW, VW>
 {
     fn default() -> Self {
-        const {
-            assert!(
-                KW == Self::K_LAYOUT.words && VW == Self::V_LAYOUT.words,
-                "LsmIndex: KW and VW must be the key's and value's widths",
-            );
-        }
+        let () = Self::WIDTHS_MATCH;
         Self {
             map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()),
             _marker: PhantomData,
@@ -580,12 +591,7 @@ pub struct LsmStore<T: LsmTuple, const PREFIXES: u32, const W: usize> {
 
 impl<T: LsmTuple, const PREFIXES: u32, const W: usize> Default for LsmStore<T, PREFIXES, W> {
     fn default() -> Self {
-        const {
-            assert!(
-                W == Self::LAYOUT.words,
-                "LsmStore: W must be the tuple's width"
-            );
-        }
+        let () = Self::WIDTH_MATCHES;
         let mut lens: SmallVec<[usize; 2]> = SmallVec::new();
         for k in 1..T::SIZES.len() {
             if PREFIXES & (1 << k) != 0 {
@@ -801,6 +807,23 @@ const fn concat_eq(a: &[usize], b: &[usize], whole: &[usize]) -> bool {
 
 impl<T: LsmTuple, const PREFIXES: u32, const W: usize> LsmStore<T, PREFIXES, W> {
     const LAYOUT: Layout = store_layout(T::SIZES, T::ALIGNS, PREFIXES);
+    const WIDTH_MATCHES: () = assert!(
+        W == Self::LAYOUT.words,
+        "LsmStore: W must be the tuple's width"
+    );
+
+    /// The width in bytes of a tuple's blob.
+    ///
+    /// A `W` other than the width of `T` under `PREFIXES` does not compile:
+    ///
+    /// ```compile_fail
+    /// use lsm::ascent_provider::LsmStore;
+    /// LsmStore::<(u32, u64, u32, u32, u32), { 1 << 3 }, 2>::tuple_bytes();
+    /// ```
+    pub const fn tuple_bytes() -> usize {
+        let () = Self::WIDTH_MATCHES;
+        W * 8
+    }
 
     /// The number of tuples.
     pub fn len(&self) -> usize {
@@ -1976,5 +1999,16 @@ mod store_tests {
         check_prefix_1(&store, &tuples);
         check_prefix_2(&store, &tuples);
         check_prefix_3(&store, &tuples);
+    }
+
+    #[test]
+    fn blob_widths() {
+        // The first three columns, 16 bytes, are a segment; the last two fill a word.
+        assert_eq!(
+            LsmStore::<(u32, u64, u32, u32, u32), { 1 << 3 }, 3>::tuple_bytes(),
+            24
+        );
+        assert_eq!(LsmIndex::<(u32, u32), (u64, u16), 1, 2>::key_bytes(), 8);
+        assert_eq!(LsmIndex::<(u32, u32), (u64, u16), 1, 2>::value_bytes(), 16);
     }
 }
