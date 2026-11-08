@@ -287,6 +287,109 @@ struct EnclosingClass {
     interfaces: Vec<Symbol>,
 }
 
+/// What the bookkeeping pass of [`Importer::process`] enters into the program and VMT for one
+/// class, worked out from the class alone so that classes are described in parallel.
+struct ClassRows {
+    /// The class, as its global is named.
+    name: String,
+    header_offset: u32,
+    is_interface: bool,
+    /// The superclass, if there is one, then the interfaces the class directly implements.
+    parents: SmallVec<[JavaClass; 2]>,
+    enclosing: Arc<EnclosingClass>,
+    methods: Vec<MethodRow>,
+}
+
+/// One method's function, without its body, and its VMT rows, each name interned once for all
+/// the rows that name it.
+struct MethodRow {
+    function: FunctionData,
+    owner: JavaClass,
+    simple: JavaSimpleName,
+    descriptor: JavaSignature,
+    method: JavaMethod,
+    access_flags: u16,
+    has_code: bool,
+}
+
+impl ClassRows {
+    fn describe(parser: &ClassFileParser) -> Result<Self, Error> {
+        let class_def = parser.class_file();
+        let class_name = jvm_class_symbol(parser.class_name()?);
+        log::trace!("Class: {}", class_name);
+        let superclass = if class_def.super_class != 0 {
+            parser
+                .get_class_name(class_def.super_class)
+                .ok()
+                .map(|name| JavaClass(jvm_class_symbol(name).into()))
+        } else {
+            None
+        };
+        log::trace!(
+            "Superclass: {}",
+            match superclass {
+                Some(JavaClass(ref s)) => s.to_string(),
+                None => "None".to_string(),
+            }
+        );
+        let mut parents = SmallVec::new();
+        if let Some(jc) = superclass.clone() {
+            parents.push(jc)
+        };
+        let mut direct_interfaces = Vec::new();
+        for type_idx in &class_def.interfaces {
+            let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
+            parents.push(JavaClass(iface.clone().into()));
+            direct_interfaces.push(Symbol::from(iface.as_str()));
+            log::trace!("Interface: {}", iface);
+        }
+        let enclosing = Arc::new(EnclosingClass {
+            name: Symbol::from(class_name.as_str()),
+            superclass: superclass.map(|c| c.0),
+            interfaces: direct_interfaces,
+        });
+
+        let mut methods = Vec::with_capacity(class_def.methods.len());
+        for enc in &class_def.methods {
+            let method_name = class_def.get_utf8(enc.name_index)?;
+            // The descriptor alone, e.g. "(I)I".
+            let java_sig = class_def.get_utf8(enc.descriptor_index)?;
+            let full_name = format!("{class_name}->{method_name}{java_sig}");
+            let method = JavaMethod(Symbol::from(full_name.as_str()));
+            let mut function = FunctionData {
+                name: full_name,
+                // All JVM functions model (normal_return, exception_return) like DEX.
+                return_type: ReturnType { arity: 2 },
+                ..Default::default()
+            };
+            let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
+            for p in jvm_descriptor_to_params(java_sig, is_instance) {
+                function.params.push(p);
+            }
+            if enc.code.is_none() {
+                log::trace!("No code for function {}", method_name)
+            }
+            methods.push(MethodRow {
+                function,
+                owner: JavaClass(enclosing.name.clone()),
+                simple: JavaSimpleName(Symbol::from(method_name)),
+                descriptor: JavaSignature(Symbol::from(java_sig)),
+                method,
+                access_flags: enc.access_flags,
+                has_code: enc.code.is_some(),
+            });
+        }
+        Ok(Self {
+            name: class_name,
+            header_offset: class_def.header_offset,
+            is_interface: class_def.access_flags & JVM_ACC_INTERFACE != 0,
+            parents,
+            enclosing,
+            methods,
+        })
+    }
+}
+
 /// One method body for [`Context::lower_job`] to lower, with what the bookkeeping pass of
 /// [`Importer::process`] found out about it.
 struct Job {
@@ -365,9 +468,9 @@ type DupSlotPair = (u32, u32);
 impl Importer {
     /// Imports `classes`, each with the key of the artifact it is in.
     ///
-    /// Three passes. The first walks the classes and methods in order and does all the
-    /// bookkeeping -- function slots, VMT rows, parameters -- collecting a [`Job`] per method
-    /// body. The second lowers the bodies on the current rayon pool, each into a function of its
+    /// Three passes. The first does all the bookkeeping -- function slots, VMT rows, parameters
+    /// -- collecting a [`Job`] per method body: it describes the classes in parallel
+    /// ([`ClassRows::describe`]) and enters them into the program in class order. The second lowers the bodies on the current rayon pool, each into a function of its
     /// own ([`Context::lower_job`]). The third places them into the program in order
     /// ([`Importer::place`]), interning their spans and globals in exactly the order lowering
     /// them one after another did, so the result does not depend on the thread count.
@@ -376,126 +479,84 @@ impl Importer {
         classes: &mut [Class],
         builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
+        use rayon::prelude::*;
+
         let timer = PhaseTimer::start();
+        let described: Vec<Result<ClassRows, Error>> = classes
+            .par_iter()
+            .map(|c| ClassRows::describe(c.parser()))
+            .collect();
         let mut jobs = Vec::new();
-        for (class, c) in classes.iter().enumerate() {
-            let (parser, artifact_key) = (c.parser(), &c.key);
-            for class_def in parser.classes() {
-                let class_name = jvm_class_symbol(parser.class_name()?);
-                self.class_headers.push((
-                    class_name.clone(),
-                    artifact_key.clone(),
-                    class_def.header_offset,
-                ));
-                log::trace!("Class: {}", class_name);
-                // Populate class hierarchy information for the VMT.
-                // Immediate superclass (if any) and immediate super‑interfaces.
-                let superclass_opt = if class_def.super_class != 0 {
-                    parser
-                        .get_class_name(class_def.super_class)
-                        .ok()
-                        .map(|name| JavaClass(jvm_class_symbol(name).into()))
-                } else {
-                    None
-                };
-                log::trace!(
-                    "Superclass: {}",
-                    match superclass_opt {
-                        Some(JavaClass(ref s)) => s.to_string(),
-                        None => "None".to_string(),
-                    }
-                );
-
-                let mut iface_vec = SmallVec::new();
-                if let Some(jc) = superclass_opt.clone() {
-                    iface_vec.push(jc)
-                };
-                let mut direct_interfaces = Vec::new();
-                for type_idx in &class_def.interfaces {
-                    let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
-                    iface_vec.push(JavaClass(iface.clone().into()));
-                    direct_interfaces.push(Symbol::from(iface.as_str()));
-                    log::trace!("Interface: {}", iface);
+        for (class, (c, rows)) in classes.iter().zip(described).enumerate() {
+            let ClassRows {
+                name,
+                header_offset,
+                is_interface,
+                parents,
+                enclosing,
+                methods: method_rows,
+            } = rows?;
+            if let Dispatch::Java {
+                hierarchy,
+                interfaces,
+                ..
+            } = &mut builders.vmt.dispatch
+            {
+                let class = JavaClass(enclosing.name.clone());
+                if is_interface {
+                    interfaces.push(class.clone());
                 }
-
-                if let Dispatch::Java {
-                    hierarchy,
-                    interfaces,
+                hierarchy.insert(class, parents);
+            }
+            self.class_headers
+                .push((name, c.key.clone(), header_offset));
+            for (method_index, row) in method_rows.into_iter().enumerate() {
+                let MethodRow {
+                    function,
+                    owner,
+                    simple,
+                    descriptor,
+                    method,
+                    access_flags,
+                    has_code,
+                } = row;
+                let fidx = builders.program.functions.functions.push(function);
+                builders.vmt.names.push(
+                    FunctionNames::new(method.0.clone(), simple.0.clone())
+                        .with_parent(owner.0.clone())
+                        .with_signature(descriptor.0.clone()),
+                );
+                let Dispatch::Java {
+                    methods,
+                    abstract_methods,
+                    natives,
                     ..
                 } = &mut builders.vmt.dispatch
-                {
-                    hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
-                    if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
-                        interfaces.push(JavaClass(class_name.to_string().into()));
-                    }
+                else {
+                    unreachable!("a JVM import's VMT is Java's");
+                };
+                methods.push((
+                    owner.clone(),
+                    simple.clone(),
+                    descriptor.clone(),
+                    method.clone(),
+                ));
+                if access_flags & JVM_ACC_ABSTRACT != 0 {
+                    abstract_methods.push((owner.clone(), simple.clone(), descriptor.clone()));
                 }
-                let enclosing = Arc::new(EnclosingClass {
-                    name: Symbol::from(class_name.as_str()),
-                    superclass: superclass_opt.map(|c| c.0),
-                    interfaces: direct_interfaces,
-                });
-                for (method_index, enc) in parser.methods().enumerate() {
-                    let method_name = parser.class_file().get_utf8(enc.name_index)?;
-                    // The descriptor alone, e.g. "(I)I".
-                    let java_sig = parser.class_file().get_utf8(enc.descriptor_index)?;
-                    let fidx = builders.program.new_function();
-                    let fdat = &mut builders.program[fidx];
-
-                    let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
-                    for p in jvm_descriptor_to_params(java_sig, is_instance) {
-                        fdat.params.push(p);
-                    }
-
-                    // All JVM functions model (normal_return, exception_return) like DEX.
-                    fdat.return_type = ReturnType { arity: 2 };
-
-                    // -----------------------------------------------------------------
-                    // Collect Java virtual method information for the VMT, each name interned
-                    // once for all the rows that name it.
-                    let full_name = format!("{class_name}->{method_name}{java_sig}");
-                    let owner = JavaClass(enclosing.name.clone());
-                    let simple = JavaSimpleName(Symbol::from(method_name));
-                    let descriptor = JavaSignature(Symbol::from(java_sig));
-                    let method = JavaMethod(Symbol::from(full_name.as_str()));
-                    fdat.name = full_name;
-                    builders.vmt.names.push(
-                        FunctionNames::new(method.0.clone(), simple.0.clone())
-                            .with_parent(owner.0.clone())
-                            .with_signature(descriptor.0.clone()),
-                    );
-                    if let Dispatch::Java { methods, .. } = &mut builders.vmt.dispatch {
-                        methods.push((
-                            owner.clone(),
-                            simple.clone(),
-                            descriptor.clone(),
-                            method.clone(),
-                        ));
-                    }
-                    if enc.access_flags & JVM_ACC_ABSTRACT != 0
-                        && let Dispatch::Java {
-                            abstract_methods, ..
-                        } = &mut builders.vmt.dispatch
-                    {
-                        abstract_methods.push((owner.clone(), simple.clone(), descriptor.clone()));
-                    }
-                    // Native methods are also listed in `natives`. They are already in
-                    // `methods` above: this frontend walks every declared method, code or not.
-                    if enc.access_flags & JVM_ACC_NATIVE != 0
-                        && let Dispatch::Java { natives, .. } = &mut builders.vmt.dispatch
-                    {
-                        natives.push((owner, simple, descriptor, method, !is_instance));
-                    }
-
-                    if enc.code.is_some() {
-                        jobs.push(Job {
-                            class,
-                            method: method_index,
-                            fidx,
-                            enclosing: Arc::clone(&enclosing),
-                        });
-                    } else {
-                        log::trace!("No code for function {}", method_name)
-                    }
+                // Native methods are also listed in `natives`. They are already in `methods`
+                // above: this frontend walks every declared method, code or not.
+                if access_flags & JVM_ACC_NATIVE != 0 {
+                    let is_static = access_flags & JVM_ACC_STATIC != 0;
+                    natives.push((owner, simple, descriptor, method, is_static));
+                }
+                if has_code {
+                    jobs.push(Job {
+                        class,
+                        method: method_index,
+                        fidx,
+                        enclosing: Arc::clone(&enclosing),
+                    });
                 }
             }
         }
