@@ -659,6 +659,7 @@ impl Importer {
     /// out, which leaves its function a declaration, so calls to it still resolve.
     ///
     /// `file` is the class file whose spans were interned last, with its id.
+    #[allow(clippy::too_many_arguments)]
     fn intern(
         globals_table: &mut cir::Globals,
         classes: &[Class],

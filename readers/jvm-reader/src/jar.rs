@@ -21,14 +21,8 @@ pub struct JarFileParser {
 
 impl JarFileParser {
     /// Open and parse a JAR file from the given path. Only .class entries are parsed.
-    ///
-    /// The file is mapped rather than read: its pages are the page cache's, so a large jar adds
-    /// nothing to the import's own memory.
     pub fn open(path: &Path) -> ClassFileResult<Self> {
-        let file = std::fs::File::open(path).map_err(ClassFileError::Io)?;
-        // SAFETY: an artifact is not modified while it is imported. A jar truncated underneath
-        // the mapping faults on the missing pages rather than reading stale bytes.
-        let data = unsafe { memmap2::Mmap::map(&file) }.map_err(ClassFileError::Io)?;
+        let data = std::fs::read(path).map_err(ClassFileError::Io)?;
         Self::from_bytes(&data)
     }
 
