@@ -76,15 +76,14 @@ pub mod source_info;
 // them are `Copy`, fixed-width and free of padding. `Path` and a local `FlowVariable`'s `Str` are
 // 4-byte ids into interners that never free, so their bits stay valid for the whole process,
 // which is as long as the provider's run files live.
-lsm::lsm_col!(FunctionId, 1, [u32]);
-lsm::lsm_col!(FlowVariable, 1, [u64], valid = FlowVariable::is_valid);
-lsm::lsm_col!(Path, 1, [std::num::NonZeroU32], valid = Path::is_valid);
-lsm::lsm_col!(FormalIndex, 1, [i16]);
-lsm::lsm_col!(Root, 1, [u32], valid = Root::is_valid);
-lsm::lsm_col!(PackedInsnSiteId, 1, [[u8; 8]]);
+lsm::lsm_col!(FunctionId, [u32]);
+lsm::lsm_col!(FlowVariable, [u64], valid = FlowVariable::is_valid);
+lsm::lsm_col!(Path, [std::num::NonZeroU32], valid = Path::is_valid);
+lsm::lsm_col!(FormalIndex, [i16]);
+lsm::lsm_col!(Root, [u32], valid = Root::is_valid);
+lsm::lsm_col!(PackedInsnSiteId, [[u8; 8]]);
 lsm::lsm_col!(
     FlowVertex,
-    2,
     [FlowVariable, Path, crate::facts::VertexPad],
     valid = FlowVertex::is_valid
 );
