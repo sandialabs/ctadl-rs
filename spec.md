@@ -86,7 +86,12 @@ the work.
 
 - R7. **Peak memory.** The fixpoint part of a staged run peaks at the scheduler's footprint plus
   that of the workers it runs at once, each holding one batch and the program-wide path set. The peak does not grow with the number of
-  functions. Peak footprint of `ctadl index` is the larger of fact generation's and that.
+  functions, except in three parts:
+  - the scheduler's plan, which is O(functions + call edges);
+  - stage 2, which holds the frame edges;
+  - stage 3, which holds the final `assign_like` of the `intent_frame` functions.
+
+  These hold only outputs, never `locals`, and the benchmark (R15) reports their sizes. Peak footprint of `ctadl index` is the larger of fact generation's and that.
 - R8. **Budget.** The user can set the budget. The scheduler packs batches, and runs batches
   concurrently, so that their estimated memory stays within it. A batch that is running when the
   footprint exceeds the budget is stopped, split and rerun, so an underestimate costs time, not
