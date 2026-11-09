@@ -27,13 +27,15 @@ three things cross functions:
 1. **Functions, bottom-up.** Condense `call` into SCCs and process them in
    reverse topological order, packing whole SCCs into batches under a memory
    budget, by an estimate from its seeds. A batch still running when the
-   footprint passes the budget is stopped, split and rerun. A batch is seeded with its functions' facts and with its callees'
-   `summary` rows, read from disk. It writes its own `summary` rows, its
-   `assign_like` (including instantiated summaries) and its global-to-global
-   edges. Every function is computed exactly once. An SCC too large for the
-   budget is split and its parts iterated until its summaries stop growing.
-   Batches whose callees are all done are independent and may run
-   concurrently, within the budget.
+   footprint passes the budget is stopped, split and rerun. A batch is seeded
+   with its functions' facts and with its callees' `summary` rows, read from
+   disk. It writes its own `summary` rows, its `assign_like` (including
+   instantiated summaries) and its global-to-global edges. Every function is
+   computed once, except in a split SCC or a stopped batch. An SCC too large
+   for the budget is split and its parts iterated until its summaries stop
+   growing, callees first within each round and each part seeing the
+   summaries produced so far. Batches whose callees are all done are
+   independent and may run concurrently, within the budget.
 2. **Global frame.** The union of all global-to-global edges, deduplicated
    and written as `global_flow`. It runs no fixpoint: `global_flow` is the
    frame's edges, not their closure (the query closes them), and the frame's

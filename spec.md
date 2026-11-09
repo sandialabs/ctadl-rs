@@ -177,15 +177,22 @@ threads.
 
 ### D3. Split SCCs
 
-A split SCC's parts run as batches in rounds. In each round, a part is seeded with its
-callees' summaries:
+A split SCC's parts run as batches in rounds.
 
-- callees outside the SCC: final rows, from earlier batches;
-- callees in the other parts: the rows of the previous round.
+- **Order.** Within a round, parts run in an order that follows the SCC's internal `call` edges,
+  callees first as far as the cycle allows. The order is fixed by the plan.
+- **Seeds.** Each part is seeded with its callees' summaries:
+  - callees outside the SCC: final rows, from earlier batches;
+  - callees in other parts: their latest rows, from this round if they have already run in it,
+    otherwise from the previous round.
+- **Reruns.** A part reruns in a round only if a callee part's summaries grew since the part
+  last ran. Otherwise its latest outputs stand.
+- **End.** Rounds repeat until no part's `summary` grows. The rules are monotone, so the
+  result is the least fixpoint, the same as running the SCC whole. Each part's latest outputs
+  are the SCC's outputs.
+- **Logging.** The run logs the rounds, part reruns and time of each split SCC.
 
-Rounds repeat until no part's `summary` grows. The rules are monotone, so the result is the
-least fixpoint, the same as running the SCC whole. The last round's outputs are the SCC's
-outputs. A part need only rerun when a callee part's summaries grew.
+Parts of one SCC run one at a time. Other ready batches may run beside them within the budget.
 
 ### D4. Stage 2: global frame
 
@@ -302,7 +309,4 @@ output (Background).
 
 ## Concerns
 
-- C1. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
-  rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
-  only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
-  it as the price of fitting the budget, and logs rounds per split SCC.
+None open. Settled decisions are folded into the requirements, the design and `intent.md`.
