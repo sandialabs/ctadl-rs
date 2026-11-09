@@ -45,8 +45,10 @@ Callers:
   manifest and checks its counts.
 - The unit test `noto_binary_manifest_has_known_counts`
   (`android_manifest.rs:598`) reads `xtask/tests/dex/com.noto_54.apk`, and
-  `xtask/tests/dex/README.md:23-25` names that file as its only reader outside
-  xtask.
+  skips when it is absent. `xtask/tests/dex/README.md:23-25` names that file
+  as the APK's only reader outside xtask, but
+  `frontends/ctadl-dex/src/tests.rs:758` reads it too, and fails when it is
+  absent.
 
 `dex-reader` already depends on `zip`, `thiserror`, `smallvec`, `log` and
 `rayon` (`readers/dex-reader/Cargo.toml:6-11`), not on serde or any ctadl
@@ -96,9 +98,10 @@ it has 77 findings in eight files: 44 hidden-lifetime errors from
   component-name normalization, of the truncated-AXML error, and of the noto
   APK's counts run under `cargo test -p dex-reader`. The parquet round-trip
   test stays in `ctadl-ascent`.
-- R11. **Fixture ownership is current.** `xtask/tests/dex/README.md` names the
-  dex-reader test, not the ctadl-ascent file, as the fixture's reader outside
-  xtask.
+- R11. **Fixture ownership is current.** `xtask/tests/dex/README.md` names
+  the fixture's two readers outside xtask, the dex-reader test and the
+  ctadl-dex test, and says which of them skips when the file is absent. It
+  no longer names the ctadl-ascent file.
 
 **Lints**
 
