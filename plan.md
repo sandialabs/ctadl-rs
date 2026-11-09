@@ -17,18 +17,29 @@ Code, help text and docs written by these phases must not cite the spec's or the
 
 ## Order
 
-| Wave | Phases | Why |
+| Wave | Tracks | Why |
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
-| 1 | 1, 3 | 1 splits the rule source (`ctadl-index/src/index_engine/mod.rs`, engines); 3 adds the stage-file layer (new `ctadl-index/src/staged/`, `facts/parquet.rs`, `facts/schema.rs`); disjoint files |
-| 2 | 2, 4 | 2 refactors `EngineInput` (`mod.rs`, after 1); 4 is the planner and the fact shuffle (new files in `ctadl-index/src/staged/`, after 3) |
-| 3 | 5 | the staged run in-process, whole SCCs: needs 1's `intent_rules`, 2's slice input, 3's files, 4's plan |
-| 4 | 6 | split SCCs in rounds, floor down to one function |
-| 5 | 7, 8 | 7 runs workers as processes, under the budget; 8 is the in-process equivalence harness. 7 owns `ctadl-ascent/src/staged/`, `main.rs` and `cli/mod.rs`; 8 owns `ctadl-ascent/src/index_engine.rs` and the test files |
-| 6 | 9 | resume, which needs 7's scheduler |
-| 7 | 10 | the CLI runs staged on request: assembly into the index directory, notes, stats, dumps, flags |
+| 1 | 1 | splits the rule source (`ctadl-index/src/index_engine/mod.rs`, engines) |
+| 2 | A: 2. B: 3 then 4. C: prep | three worktrees. A refactors `EngineInput` (`mod.rs:1322-1785`); B adds the stage-file layer, planner and shuffle (new `ctadl-index/src/staged/`, `facts/parquet.rs`, `facts/schema.rs`); C does the prep below. C's only edit to `mod.rs` is `phys_footprint_mb` (`:801-804`), and it merges before A rebases |
+| 3 | 5a, then 5b | 5a: write the stage directory and run stage 1 in process, compared on `summary` and `assign`. 5b: stage 2, stage 3 and assembly, compared on all seven tables. Needs A, B and C's `compare.rs`. Checkpoint after 5a: ddg staged in process, peak against the largest batch |
+| 4 | 6 | split SCCs in rounds, floor down to one function. Checkpoint: rounds on the ring test and on real split SCCs |
+| 5 | 7a | the `index-worker` subcommand, the `Process` executor, footprint over stdout; launches gated on estimates only |
+| 6 | 7b, 8, 9 | 7b: kills, batch splitting, α correction (`executor.rs`, `plan.rs`). 8: the in-process equivalence harness (`ctadl-ascent/src/index_engine.rs`, CI). 9: resume (`run.rs`, `store.rs`), which needs only 7a's scheduler. Checkpoint after 7b: ddg under a budget |
+| 7 | 10 | the CLI runs staged on request: `cli::index` wiring, flags, `EngineRecord`, profile stages, the `index_options()` test helper |
 | 8 | 11 | staged becomes the default |
 | 9 | 12, 13 | 12 is `docs/spec.md`; 13 is the benchmark procedure (`docs/debugging.md`) and calibration (`ctadl-index/src/staged/plan.rs`) |
+
+Prep (track C) pulls forward the parts of later phases that do not depend on staging, one commit
+each. The phase sections below still describe them where they were; those phases skip them.
+- From Phase 8: `canonical()` and `assert_same_index` gain `global_flow` and `intent_pair`.
+- From Phase 5: `ctadl-ascent/src/staged/compare.rs`, the set-by-content table comparison (D10),
+  tested on two monolithic runs.
+- From Phase 10: `dump_outputs` and `fact-dump-diff.sh --outputs`, so Phases 5-9 can compare
+  tables on real projects before the CLI runs staged.
+- From Phase 10: `push_zero_assignment_notes` takes the summarized-function set, the resolved
+  calls and the external functions instead of `&IndexResult` (D9).
+- From Phase 7: the non-macOS `phys_footprint_mb` reads `/proc/self/statm`.
 
 Why this order:
 - **Rules first.** Phases 1 and 2 change no results. A regression after them has one cause, and
@@ -40,7 +51,7 @@ Why this order:
 - **The harness before the flip.** Phase 8 can compare every engine test's staged and
   monolithic outputs before Phase 11 makes staged the default. So the flip, which reroutes
   every test, is a one-line change whose effect is already measured.
-- **Shared files in wave 5.** Phase 7 changes how a staged run is executed
+- **Shared files in wave 6.** Phase 7b changes how a staged run is executed
   (`ctadl-ascent/src/staged/`). Phase 8 only calls it through `taint_index_with_config`
   (`ctadl-ascent/src/index_engine.rs`), which Phase 7 does not touch.
 
