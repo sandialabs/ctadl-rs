@@ -12,6 +12,8 @@ pub mod basic_blocks;
 
 pub mod apk;
 
+pub mod axml;
+
 pub mod smali;
 
 pub mod debug_info;

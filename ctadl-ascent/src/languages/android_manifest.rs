@@ -517,6 +517,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn axml_decoder_matches_engine_decoder() {
+        fn assert_same(bytes: &[u8]) {
+            let old = parse_manifest(bytes).unwrap();
+            let new = dex_reader::axml::parse_manifest(bytes).unwrap();
+            let old_nodes: Vec<_> = old.nodes.iter().map(|n| (n.id, n.tag.clone())).collect();
+            let new_nodes: Vec<_> = new.nodes.iter().map(|n| (n.id, n.tag.clone())).collect();
+            assert_eq!(old_nodes, new_nodes);
+            let old_children: Vec<_> = old
+                .children
+                .iter()
+                .map(|c| (c.parent_id, c.child_id))
+                .collect();
+            let new_children: Vec<_> = new
+                .children
+                .iter()
+                .map(|c| (c.parent_id, c.child_id))
+                .collect();
+            assert_eq!(old_children, new_children);
+            let old_attrs: Vec<_> = old
+                .attrs
+                .iter()
+                .map(|a| (a.node_id, a.key.clone(), a.value.clone()))
+                .collect();
+            let new_attrs: Vec<_> = new
+                .attrs
+                .iter()
+                .map(|a| (a.node_id, a.key.clone(), a.value.clone()))
+                .collect();
+            assert_eq!(old_attrs, new_attrs);
+            let old_components = old.components();
+            let new_components = new.components();
+            assert_eq!(old_components.len(), new_components.len());
+            for (o, n) in old_components.iter().zip(&new_components) {
+                assert_eq!(o.node_id, n.node_id);
+                assert_eq!(o.tag, n.tag);
+                assert_eq!(o.name, n.name);
+                assert_eq!(o.descriptor, n.descriptor);
+                assert_eq!(o.exported, n.exported);
+                assert_eq!(o.enabled, n.enabled);
+                assert_eq!(o.permission, n.permission);
+                assert_eq!(o.target_activity, n.target_activity);
+                assert_eq!(o.has_intent_filter, n.has_intent_filter);
+            }
+        }
+
+        assert_same(
+            br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+                <application>
+                    <activity android:name=".MainActivity" android:exported="true" />
+                </application>
+            </manifest>"#,
+        );
+        assert_same(
+            br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+                <application>
+                    <receiver android:name="Receiver" android:enabled="false" />
+                </application>
+            </manifest>"#,
+        );
+        assert_same(
+            br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+                <application>
+                    <activity android:name=".MainActivity">
+                        <intent-filter>
+                            <action android:name="android.intent.action.MAIN" />
+                            <category android:name="android.intent.category.LAUNCHER" />
+                        </intent-filter>
+                        <intent-filter>
+                            <action android:name="com.example.SEND" />
+                            <category android:name="android.intent.category.DEFAULT" />
+                        </intent-filter>
+                    </activity>
+                    <receiver android:name=".Receiver">
+                        <intent-filter>
+                            <action android:name="com.example.RECEIVE" />
+                        </intent-filter>
+                    </receiver>
+                </application>
+            </manifest>"#,
+        );
+
+        let truncated = 0x0008_0003u32.to_le_bytes();
+        let old_message = match parse_manifest(&truncated).unwrap_err() {
+            Error::AndroidManifest { message } => message,
+            other => panic!("unexpected error {other}"),
+        };
+        let new_err = dex_reader::axml::parse_manifest(&truncated).unwrap_err();
+        assert_eq!(old_message, new_err.to_string());
+
+        let apk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("xtask/tests/dex/com.noto_54.apk");
+        if !apk.exists() {
+            eprintln!("skipping noto manifest: {} is absent", apk.display());
+            return;
+        }
+        let bytes = dex_reader::apk::read_bundle_entry(&apk, "AndroidManifest.xml").unwrap();
+        assert_same(&bytes);
+    }
+
+    #[test]
     fn text_manifest_becomes_triples() {
         let manifest = parse_manifest(
             br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
