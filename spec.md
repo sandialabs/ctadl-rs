@@ -67,12 +67,14 @@ the work.
   sets, for every index table: `summary`, `assign`, `paths`, `external_function`,
   `global_flow`, `resolved_call` and `intent_pair`.
 - R2. **Independent of batching and order.** R1 holds for any batch plan the budget allows, down
-  to the minimum batch size (C2), and for input facts in any order.
+  to the minimum batch size (C1), and for input facts in any order.
 - R3. **Same tables.** The index directory has the same files, schemas and encodings as today.
   `INDEX_FORMAT_VERSION` does not change, and every reader (query, `--summary`, inspection)
   works unchanged. Each row appears once per table.
-- R4. **Rules unchanged.** Every stage runs `index_rules` as written, under the serial or the
-  parallel engine.
+- R4. **Rules written once.** Every rule keeps its meaning and is written once. The intent rules
+  (`const_reaches`, the label exchange, `intent_pair`, `resolved_call`) are their own rule
+  source, which the full program includes. Stage 1 runs the full program, under the serial or
+  the parallel engine. Stage 3 runs only the intent rules and computes no `locals`.
 - R5. **Fact generation and query unchanged.** Codegen, models, JNI, intent fact generation and
   `--summary` loading produce the same `IndexFacts`. The query side reads the same tables.
 
@@ -145,8 +147,9 @@ Batch inputs:
   its own functions are not seeded.
 - **Shared.** The program-wide `paths`/`path_set` and `config`.
 - **Not seeded:** the intent facts (`intent_frame`, `intent_send`, `intent_filter`,
-  `intent_component`). Stage 3 computes `const_reaches`, `intent_pair` and `resolved_call`. Those
-  rules feed nothing else (Background), so leaving them out changes no stage-1 output.
+  `intent_component`). The intent rules in the full program then derive nothing that reaches an
+  output. Stage 3 computes `const_reaches`, `intent_pair` and `resolved_call`. Those rules feed
+  nothing else (Background), so leaving the intent facts out changes no stage-1 output.
 
 Before the fixpoint, every `Path` and `Str` the batch reads is interned, as the freeze rule
 requires (`mod.rs:30-37`). The path set is interned once per process.
@@ -186,16 +189,24 @@ output (Background).
 
 ### D5. Stage 3: intent
 
-Stage 3 runs only when `intent_frame` is non-empty. It runs `index_rules` seeded with:
-
-- the final `assign_like` of the `intent_frame` functions, from stage 1, and the frame edges,
-  from stage 2;
-- those functions' `const_str_assign`, `intent_send` and `intent_frame`;
-- `intent_filter`, `intent_component`, the path set and `config`.
-
-It writes only `intent_pair` and `resolved_call`. It does not seed `formal_param`, `summary`,
-`call` or `actual_param`, and it writes no `assign` or `summary`, so it adds no rows that stage 1
-owns. Its cost is in C1.
+- **Rule sources.** The intent rules move out of `index_rules` (`mod.rs:1208-1245`,
+  `mod.rs:1320-1347`) into a second `ascent_source!`, `intent_rules`. It holds `const_reaches`,
+  `intent_pair`, `resolved_call`, `global_read`, `intent_frame(GLOBAL_FRAME)` and the
+  `global_label_*` rules. It declares every relation it reads.
+  - The engines' full programs include `intent_rules` first, then `index_rules`, so that
+    `index_rules`' storage declarations (`#[ds(...)]` on `assign_like`) win. Ascent keeps a
+    relation's last declaration, which the LSM engine already relies on
+    (`ctadl-index/engines/lsm/src/lib.rs:20`).
+  - A monolithic run therefore computes what it does today.
+- **Program.** Stage 3 runs a program that includes only `intent_rules`, on the serial engine.
+  It runs only when `intent_frame` is non-empty.
+- **Seeds:**
+  - the final `assign_like` of the `intent_frame` functions, from stage 1, and the frame edges,
+    from stage 2;
+  - those functions' `const_str_assign`, `intent_send` and `intent_frame`;
+  - `intent_filter`, `intent_component`, the path set and `config`.
+- **Outputs.** It writes only `intent_pair` and `resolved_call`, and computes no `locals`. Its
+  memory is bounded by its seeds and `const_reaches`.
 
 ### D6. Budget and estimates
 
@@ -203,8 +214,8 @@ owns. Its cost is in C1.
   `storage`.
 - A batch's estimate is a function of its seed sizes: `assign_like` rows, plus instantiated
   callee-summary rows, variables and formals. It is calibrated against `[mem cp]` and
-  `profile.json` measurements. C4 covers the choice of estimator.
-- The minimum batch size is a planner floor, below which a batch is never split (C2). The
+  `profile.json` measurements. C3 covers the choice of estimator.
+- The minimum batch size is a planner floor, below which a batch is never split (C1). The
   tests set it directly.
 
 ### D7. Stage directory and files
@@ -252,31 +263,19 @@ owns. Its cost is in C1.
 
 ## Concerns
 
-- C1. **Stage 3 recomputes work under "rules as written".**
-  - Seeding the frame edges makes `global_mention(GLOBAL_FRAME, _)` (`mod.rs:1060`) compute the
-    frame's whole `locals` closure, which no output needs and stage 2 skips.
-  - Seeding the `intent_frame` functions' `assign_like` recomputes their global-rooted `locals`.
-  - On an Android app with many `intent_frame` functions, stage 3 may be neither small nor
-    cheap.
-  - (a) Accept it: stage 3 is bounded by the frame plus those functions.
-  - (b) Factor the intent rules into their own `ascent_source` that both the full program and
-    stage 3 include. The rules are still written once, but stage 3 runs only them.
-  - (c) Fold the label exchange into stage 1. This is not possible: it is cyclic through the
-    whole frame.
-  - The spec assumes (a), with (b) if measurements show stage 3 dominating.
-- C2. **What is the minimum batch size?** The intent was edited from "down to one function" to
+- C1. **What is the minimum batch size?** The intent was edited from "down to one function" to
   "down to a minimum", without saying what the minimum is.
   - One function: the strongest test of D3, since every SCC is split.
   - One SCC: batches never split an SCC in tests, so D3 is tested only by SCCs over the budget.
   - A configured floor: tests pick it.
   - The spec assumes a configured floor whose smallest value is one function.
-- C3. **Default or opt-in.** The intent does not say whether staging replaces the monolithic
+- C2. **Default or opt-in.** The intent does not say whether staging replaces the monolithic
   run.
   - Make it the default, keeping the monolithic run as the reference for tests (R13).
   - Add it behind a flag, with the CLI otherwise unchanged.
   - The spec assumes a flag at first (`IndexConfig`, CLI `--staged` or a budget flag), with the
     monolithic run the default.
-- C4. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
+- C3. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
   the blowup is in `locals`, which the seeds do not predict. A batch could overshoot the budget
   by a large factor.
   - Estimate from seed sizes, calibrated (D6).
@@ -284,7 +283,7 @@ owns. Its cost is in C1.
   - Measure and re-split: abort a batch that exceeds the budget and rerun it split. This needs a
     per-batch memory guard.
   - The spec assumes calibrated seed sizes, with the budget documented as approximate.
-- C5. **In-process or a process per batch.** R9 requires that a stage *can* run in a fresh
+- C4. **In-process or a process per batch.** R9 requires that a stage *can* run in a fresh
   process. Running every batch in-process is simpler, but the allocator may not return freed
   pages, so the footprint might track the high-water mark rather than the current batch.
   Interners never free either, but they hold only the program-wide paths and strings.
@@ -293,12 +292,12 @@ owns. Its cost is in C1.
     fact-load cost per batch.
   - The spec assumes in-process, falling back to subprocesses if R14 shows the footprint does not
     fall.
-- C6. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
+- C5. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
   way to bound memory.
   - Staging rejects `--lsm`.
   - Each batch may run under LSM storage.
   - The spec assumes staging rejects `--lsm`.
-- C7. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C6. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.

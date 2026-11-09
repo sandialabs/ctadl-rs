@@ -45,8 +45,11 @@ resume after its last completed stage. Rows are keyed by function so a batch
 reads only its callees'. Outputs are streamed per stage, never gathered in
 memory; `IndexResult::try_save`'s tables are the union of the stage outputs.
 
-**Unchanged.** The rules: each stage runs `index_rules` as written, under the
-serial or parallel engine. Fact generation and the query side.
+**Unchanged.** The rules, each written once: functions run `index_rules`
+under the serial or parallel engine. The intent rules (`const_reaches`, the
+label exchange, `intent_pair`, `resolved_call`) are factored into their own
+rule source, which `index_rules` includes, so the intent stage runs only them
+and never computes `locals`. Fact generation and the query side.
 
 **Tests.** On every integration and engine test, the staged run's outputs
 equal the monolithic serial engine's as sets (`CTADL_DUMP_RELATIONS`,
