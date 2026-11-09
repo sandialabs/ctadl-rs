@@ -8,20 +8,12 @@ builds, passes the gate named in it, and is one commit.
 
 ## Corrections to the spec
 
-- P1. **The crate comment does not promise a lint opt-in.** D1 says the new
-  module opts back into clippy "as the crate comment already promises for code
-  it holds to workspace standards". The comment at
-  `readers/dex-reader/src/lib.rs:1-4` says the opposite: code changed since
-  the vendoring is held to the workspace's standards "by review and by its own
-  tests, not by this lint". Until settled, this plan keeps D1's
-  `#![warn(clippy::all)]` in `axml.rs` and has Phase 1 extend that comment to
-  say that `axml` is not vendored and opts back in.
-- P2. **The noto APK has two readers outside xtask.** R11 has the fixture
+- P1. **The noto APK has two readers outside xtask.** R11 has the fixture
   README name "the dex-reader test" as the fixture's reader outside xtask. But
   `frontends/ctadl-dex/src/tests.rs:758` (`a_class_global_is_declared_at_its_class_def_item`)
   also reads it, and does not skip when it is absent (`expect("the APK")`,
   `frontends/ctadl-dex/src/tests.rs:761`). The README's "only" at
-  `xtask/tests/dex/README.md:23-25` is already false. Until settled, Phase 3
+  `xtask/tests/dex/README.md:23-25` is already false. Until settled, Phase 4
   has the README name both tests, and say that only the dex-reader one skips.
 
 ## Order
@@ -29,13 +21,19 @@ builds, passes the gate named in it, and is one commit.
 | Wave | Phases | Why |
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
-| 1 | 1 | additive: `dex_reader::axml` with its tests; no callers yet |
-| 2 | 2 | switches every caller and deletes the old decoder; needs 1 |
-| 3 | 3 | fixture README; needs 2's test to exist in its final place |
+| 1 | 1 | lint dex-reader's existing code; no behavior change |
+| 2 | 2 | additive: `dex_reader::axml` with its tests; no callers yet; needs 1 |
+| 3 | 3 | switches every caller and deletes the old decoder; needs 2 |
+| 4 | 4 | fixture README; needs 3's test to exist in its final place |
 
-The work is a move, so it is nearly serial. Phase 1 adds the new module beside
-the old one, so the two decoders can be compared on the same inputs while both
-exist (J1). Phase 2 cannot be split: changing
+The work is a move, so it is nearly serial. Phase 1 turns the workspace lints
+on for dex-reader first, so the decoder arrives in a crate that is already
+linted, and so a regression in the vendored code is attributed to the lint
+fixes, not to the move. Phases 1 and 2 both edit
+`readers/dex-reader/src/lib.rs` and `readers/dex-reader/Cargo.toml`, which is
+another reason they are sequenced. Phase 2 adds the new module beside the old
+one, so the two decoders can be compared on the same inputs while both exist
+(J1). Phase 3 cannot be split: changing
 `ctadl_index::error::Error::AndroidManifest` to wrap `AxmlError` breaks every
 `Error::AndroidManifest { message }` in the old decoder, so the error change,
 the deletion and all the callers build only together. No two phases share a
@@ -70,17 +68,60 @@ this list.
 
 **Gate.** None; this phase records.
 
-## Phase 1: add `dex_reader::axml` (R1, R2, R3, R9, R10; D1, D2, D5)
+## Phase 1: lint dex-reader like the workspace (R12; D6)
 
 Depends on: 0.
+
+**What.** Turn on the workspace lints for dex-reader and fix every finding in
+its existing, mostly vendored code. No behavior change.
+
+**Files.**
+- `readers/dex-reader/Cargo.toml` — add `[lints]` / `workspace = true`, as
+  in `ctadl-ascent/Cargo.toml:90-91`.
+- `readers/dex-reader/src/lib.rs:1-5` — delete the comment and
+  `#![allow(clippy::all)]`.
+- The findings, measured on the current tree with
+  `cargo clippy -p dex-reader --all-targets`: 77 in total, by file
+  `src/instructions.rs` 42, `src/basic_blocks.rs` 15, `src/parser.rs` 12,
+  `src/smali.rs` 3, `src/parse_utils.rs` 2, and one each in `src/types.rs`,
+  `src/debug_info.rs`, `src/apk.rs` (all under `readers/dex-reader/`). By
+  kind: 44 `rust-2018-idioms` hidden lifetimes (add `<'_>`), 16 collapsible
+  `if`/`match`, 5 casts to the same type, and 12 others (redundant closures,
+  elidable lifetimes, manual reimplementations of std methods, a `len`
+  without `is_empty`). Start with `cargo clippy --fix -p dex-reader
+  --allow-dirty`, then fix the rest by hand. Fix rather than allow; an
+  item-level `#[allow]` only where the fix would change behavior, with a
+  comment saying why (D6). For `len` without `is_empty`, add `is_empty`.
+
+**Tests.**
+- Existing, unchanged and passing: `cargo test -p dex-reader`, and the
+  dex-reader regression checks, whose decoded output is the behavior this
+  phase must not change: every `dex:*` check (`dex:samples`, `dex:line-map`,
+  `dex:apk`, `dex:utf8-constants`, `dex:dexlib2-decode`, `dex:baksmali`,
+  `dex:baksmali-all-opcodes`, `dex:opcodes-replay`). Those that need a
+  toolchain absent from the dev shell may skip; compare with Phase 0.
+- Existing, still passing: `cargo test -p ctadl-dex`, which decodes the noto
+  APK through dex-reader.
+
+**Gate.**
+
+    cargo fmt --all -- --check
+    cargo clippy -- -Dwarnings
+    cargo clippy -p dex-reader --all-targets -- -Dwarnings
+    cargo test -p dex-reader -p ctadl-dex
+    cargo xtask regression --frontend dex --filter dex:
+
+## Phase 2: add `dex_reader::axml` (R1, R2, R3, R9, R10; D1, D2, D5)
+
+Depends on: 1.
 
 **What.** Add the module `dex_reader::axml`, a copy of the decoder, tree types
 and queries, with the decoder tests. Nothing calls it yet, and `ctadl-ascent`
 is unchanged apart from one temporary test. No behavior change.
 
 **Files.**
-- `readers/dex-reader/src/axml.rs` (new). Starts with `#![warn(clippy::all)]`
-  (D1, P1). Holds:
+- `readers/dex-reader/src/axml.rs` (new). No lint attribute of its own; the
+  crate is linted since Phase 1 (D6). Holds:
   - `AndroidManifest`, `ManifestNode`, `ManifestNodeChild`, `ManifestNodeAttr`
     as at `ctadl-ascent/src/languages/android_manifest.rs:8-32`, deriving
     `Debug, Clone, PartialEq, Eq` (plus `Default` on `AndroidManifest`), no
@@ -98,9 +139,9 @@ is unchanged apart from one temporary test. No behavior change.
   - `AxmlError` (D2):
     `#[derive(Debug, thiserror::Error)] #[error("{message}")] pub struct AxmlError { message: String }`.
     Naming the field `message` keeps the copied bodies otherwise identical.
-- `readers/dex-reader/src/lib.rs:18` — add `pub mod axml;` after `pub mod apk;`.
-  Extend the comment at `readers/dex-reader/src/lib.rs:1-4` with a sentence
-  that `axml` is not vendored and opts back into the lint (P1).
+- `readers/dex-reader/src/lib.rs` — add `pub mod axml;` after `pub mod apk;`
+  (`readers/dex-reader/src/lib.rs:18` before Phase 1 removes five lines
+  above it).
 - `readers/dex-reader/Cargo.toml:6-11` — add `roxmltree = "0.20"` (D4).
   `Cargo.lock` gains the edge from `dex-reader` to the existing `roxmltree`
   entry, and no new package version.
@@ -130,7 +171,7 @@ is unchanged apart from one temporary test. No behavior change.
   and `attrs`, mapped to tuples, are equal element by element, in order. Their
   `components()` are equal field by field. For the truncated input
   `0x0008_0003u32.to_le_bytes()`, the old error's message equals the new
-  error's `to_string()`. This test proves R6 and R8's message text; Phase 2
+  error's `to_string()`. This test proves R6 and R8's message text; Phase 3
   deletes it with the old decoder.
 - Existing, still passing: everything in `cargo test -p ctadl-ascent`.
 
@@ -141,9 +182,9 @@ is unchanged apart from one temporary test. No behavior change.
     cargo test -p dex-reader
     cargo test -p ctadl-ascent android_manifest
 
-## Phase 2: switch callers to `dex_reader::axml` and delete the old decoder (R4, R5, R6, R7, R8; D2, D3, D4)
+## Phase 3: switch callers to `dex_reader::axml` and delete the old decoder (R4, R5, R6, R7, R8; D2, D3, D4)
 
-Depends on: 1.
+Depends on: 2.
 
 **What.** Make `dex_reader::axml` the only decoder. The engine keeps only
 persistence and import. No behavior change: decoded output, stored tables and
@@ -187,7 +228,7 @@ rendered messages are as before.
   into `ctadl_index::error::Error` gives text that starts with
   `android manifest error: unexpected end of manifest` (R8).
 - Deleted: the temporary `axml_decoder_matches_engine_decoder`, and the
-  tests that moved in Phase 1.
+  tests that moved in Phase 2.
 - Existing, still passing: `activity_filters_require_default_category`
   (`android_intent.rs:1022`); the integration tests that import APKs with
   truncated AXML (`ctadl-ascent/tests/integration/cli.rs:1084`, `:1118`) and
@@ -203,9 +244,9 @@ rendered messages are as before.
     cargo test -p ctadl-index -p ctadl-ascent
     cargo xtask regression --frontend dex --filter manifest
 
-## Phase 3: fixture README (R11)
+## Phase 4: fixture README (R11)
 
-Depends on: 2.
+Depends on: 3.
 
 **What.** Docs only.
 
@@ -213,7 +254,7 @@ Depends on: 2.
 - `xtask/tests/dex/README.md:23-25` — say that outside xtask the APK is read
   by the unit test in `readers/dex-reader/src/axml.rs`, which skips when the
   file is absent, and by the test in `frontends/ctadl-dex/src/tests.rs`, which
-  does not (P2). Name files, not the spec's or this plan's numbers.
+  does not (P1). Name files, not the spec's or this plan's numbers.
 
 **Tests.** None.
 
@@ -224,17 +265,18 @@ prints nothing.
 
 | File | Change | Phase |
 | --- | --- | --- |
-| `readers/dex-reader/src/axml.rs` | new: types, queries, decoder, `AxmlError`, tests | 1 |
-| `readers/dex-reader/src/lib.rs` | declare `axml`; extend lint comment | 1 |
-| `readers/dex-reader/Cargo.toml` | add `roxmltree` | 1 |
-| `Cargo.lock` | `roxmltree` edge moves from ctadl-ascent to dex-reader | 1, 2 |
-| `ctadl-ascent/src/languages/android_manifest.rs` | temporary equivalence test; then only `save_manifest`, `load_manifest`, `import_from_apk` and their tests | 1, 2 |
-| `ctadl-index/src/error.rs` | `AndroidManifest` wraps `AxmlError` | 2 |
-| `ctadl-ascent/src/languages/android_intent.rs` | import from `dex_reader::axml`; `load_manifest` | 2 |
-| `ctadl-ascent/Cargo.toml` | drop `roxmltree` | 2 |
-| `xtask/src/dex.rs` | call `dex_reader::axml::parse_manifest` | 2 |
-| `xtask/src/apk.rs` | call `load_manifest` | 2 |
-| `xtask/tests/dex/README.md` | name the fixture's readers | 3 |
+| `readers/dex-reader/src/{instructions,basic_blocks,parser,smali,parse_utils,types,debug_info,apk}.rs` | lint fixes only | 1 |
+| `readers/dex-reader/src/lib.rs` | drop the clippy allow and its comment; declare `axml` | 1, 2 |
+| `readers/dex-reader/Cargo.toml` | take workspace lints; add `roxmltree` | 1, 2 |
+| `readers/dex-reader/src/axml.rs` | new: types, queries, decoder, `AxmlError`, tests | 2 |
+| `Cargo.lock` | `roxmltree` edge moves from ctadl-ascent to dex-reader | 2, 3 |
+| `ctadl-ascent/src/languages/android_manifest.rs` | temporary equivalence test; then only `save_manifest`, `load_manifest`, `import_from_apk` and their tests | 2, 3 |
+| `ctadl-index/src/error.rs` | `AndroidManifest` wraps `AxmlError` | 3 |
+| `ctadl-ascent/src/languages/android_intent.rs` | import from `dex_reader::axml`; `load_manifest` | 3 |
+| `ctadl-ascent/Cargo.toml` | drop `roxmltree` | 3 |
+| `xtask/src/dex.rs` | call `dex_reader::axml::parse_manifest` | 3 |
+| `xtask/src/apk.rs` | call `load_manifest` | 3 |
+| `xtask/tests/dex/README.md` | name the fixture's readers | 4 |
 
 Not touched: `ctadl-index/src/facts/schema.rs` (the `manifest_node*` tables,
 R7), `ctadl-ascent/src/cli/mod.rs`, `docs/spec.md`,
@@ -245,7 +287,9 @@ ctadl-ascent for `load_manifest` and the intent facts).
 
 - Every command under "Test commands used throughout" passes, and nothing
   fails that passed in Phase 0.
-- Phase 1's equivalence test passed on the commit that added it (R6, R8).
+- Phase 2's equivalence test passed on the commit that added it (R6, R8).
+- `git grep -n 'allow(clippy::all)' -- readers/dex-reader` prints nothing,
+  and `readers/dex-reader/Cargo.toml` has `[lints] workspace = true` (R12).
 - `git grep -n roxmltree -- ctadl-ascent` prints nothing (R4).
 - `git grep -nE 'parse_binary_manifest|parse_text_manifest|read_chunk_header' -- ctadl-ascent`
   prints nothing (R4).
@@ -256,6 +300,12 @@ ctadl-ascent for `load_manifest` and the intent facts).
 
 ## Judgment calls
 
-- J1. **Equivalence test while both decoders exist.** Phase 1 adds a
-  temporary test comparing old and new decoder output, and Phase 2 deletes
+- J1. **Equivalence test while both decoders exist.** Phase 2 adds a
+  temporary test comparing old and new decoder output, and Phase 3 deletes
   it. The alternative is to trust the verbatim copy and the pinned counts.
+
+## Deferred
+
+- The comment at `xtask/Cargo.toml:23-25` says dex-reader is
+  workspace-excluded. It is a workspace member (`Cargo.toml:18`). Outside this
+  spec.
