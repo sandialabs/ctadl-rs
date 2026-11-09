@@ -83,8 +83,8 @@ the work.
 
 ### Memory
 
-- R7. **Peak memory.** The fixpoint part of a staged run peaks at the largest set of batches it
-  runs at once, plus the program-wide path set. The peak does not grow with the number of
+- R7. **Peak memory.** The fixpoint part of a staged run peaks at the scheduler's footprint plus
+  that of the workers it runs at once, each holding one batch and the program-wide path set. The peak does not grow with the number of
   functions. Peak footprint of `ctadl index` is the larger of fact generation's and that.
 - R8. **Budget.** The user can set the budget. The scheduler packs batches, and runs batches
   concurrently, so that their estimated memory stays within it. A batch that is running when the
@@ -169,9 +169,10 @@ Its `locals` and the relations derived from it, including the partial frame `loc
 dropped. Rows of a function are written by exactly one batch, so `summary` and per-function
 `assign` are disjoint across batches. Frame edges may repeat across batches.
 
-Batches whose callees are all done run concurrently when their estimates fit the budget
-together (R8). Each runs the serial engine. A batch that runs alone may use the parallel
-engine on the run's `-j` threads.
+Each batch runs in its own worker process (D7). Batches whose callees are all done run
+concurrently when their estimates fit the budget together (R8). Each worker runs the serial
+engine, except that a worker running alone may use the parallel engine on the run's `-j`
+threads.
 
 ### D3. Split SCCs
 
@@ -223,21 +224,39 @@ output (Background).
 - **Estimate.** A batch's estimate is a function of its seed sizes: `assign_like` rows,
   instantiated callee-summary rows, variables and formals. It is calibrated against `[mem cp]`
   and `profile.json` measurements. The planner packs by it.
-- **Enforcement.** While batches run, the scheduler polls the process footprint
-  (`phys_footprint_mb`, `mod.rs:813`). That function returns -1 off macOS (`mod.rs:811`), so
-  Linux needs its own reading (resident set size from `/proc/self/statm`).
-  - Over the budget, it starts no new batch. It stops the running batch with the
-    most derived rows at its next fixpoint iteration, discards its work, splits it in two (by
-    SCC, or by function within an SCC), and requeues the halves.
-  - A batch of one function is never stopped.
-  - A stopped batch's results are discarded whole, so stopping cannot change outputs (R1).
-  - Ascent 0.8 offers only a time check between iterations (`run_timeout`, `mod.rs:1681`). The
-    stop needs a check at the same point that a flag can trip, or a batch in its own process
-    that can be killed (C1).
+- **Enforcement.** The scheduler sums the running workers' footprints (D7).
+  - Over the budget, it starts no new worker. It kills the worker with the largest footprint,
+    splits its batch in two (by SCC, or by function within an SCC), and requeues the halves.
+  - A worker running a batch of one function is never killed.
+  - A killed worker leaves no completion marker, and its files are discarded, so a kill cannot
+    change outputs (R1).
 - A configured floor bounds how small the planner makes a batch. Its smallest value is one
   function, which splits every recursive SCC. The tests sweep it down to one.
 
-### D7. Stage directory and files
+### D7. Workers
+
+- **Scheduler and workers.** `ctadl index` is the scheduler: it plans, launches workers, runs
+  stage 2 and assembles the final tables. Each stage-1 batch, each split-SCC round's part, and
+  stage 3 runs in a worker: a fresh process running a hidden `ctadl` subcommand that takes the
+  stage directory and a batch id. A worker reads its inputs from the stage directory (R10),
+  writes its outputs and marker, and exits. Its memory is returned when it exits.
+- **Footprint.** Each worker samples its own footprint on a thread and reports it to the
+  scheduler over a pipe. On macOS it uses `phys_footprint_mb` (`mod.rs:813`). That returns -1
+  elsewhere (`mod.rs:811`), so Linux reads resident set size from `/proc/self/statm`. The
+  scheduler needs no access to another process's memory.
+- **Path set.** Every worker re-reads and re-interns the program-wide path set before its
+  fixpoint (`mod.rs:30-37`). That is a per-batch cost that grows with the program, so the
+  planner prefers fewer, larger batches. If it dominates, sharing the path set through a
+  memory-mapped file is a later optimization.
+- **Worker binary.** The scheduler launches the `ctadl` executable. The CLI uses
+  `std::env::current_exe()`. Library callers, including tests, name it in `IndexOptions`;
+  integration tests pass `env!("CARGO_BIN_EXE_ctadl")`. Engine tests that call
+  `taint_index_with_config` directly, with no binary, use an in-process executor that runs the
+  same worker entry point on a thread.
+- **Failure.** A worker that exits non-zero, other than by the scheduler's kill, fails the run
+  with its stderr. Completed batches stay on disk, for resume.
+
+### D8. Stage directory and files
 
 - **Location.** A directory under the project's `index/`, beside the final tables.
 - **Saved once, before stage 1.** The complete `IndexFacts`, including the members
@@ -252,7 +271,7 @@ output (Background).
 - **Run key.** A key over the facts and the configuration (engine, budget, alias rule, deref
   paths) is stored in the directory. A resumed run with a different key starts over.
 
-### D8. Final tables
+### D9. Final tables
 
 - **Assembly.** After stage 3, each final table is written by streaming the stage files into
   it, one row group at a time, through the existing `Writer` (`parquet.rs:174`).
@@ -263,7 +282,7 @@ output (Background).
 - **Commit.** The index stamp (`write_index_config`) is written last, as today (R13). The stage
   directory is then removed.
 
-### D9. Observability
+### D10. Observability
 
 - `IndexStats` and `profile.json` report summed totals over stages, and each stage's peak
   footprint, row counts and time.
@@ -272,7 +291,7 @@ output (Background).
   dumped, when asked, into one subdirectory per stage, since `dump.rs:242` refuses to
   overwrite.
 
-### D10. Tests
+### D11. Tests
 
 - A seeded shuffle of every `IndexFacts` vector, used by the staged equivalence tests (R14).
 - A staged mode for the shared test entry points: `taint_index_with_config` (via
@@ -282,22 +301,12 @@ output (Background).
 
 ## Concerns
 
-- C1. **In-process or a process per batch.** R10 requires that a stage *can* run in a fresh
-  process. Running every batch in-process is simpler, but the allocator may not return freed
-  pages, so the footprint might track the high-water mark rather than the current batch.
-  Interners never free either, but they hold only the program-wide paths and strings.
-  - Run in-process, and verify with R15 that the footprint falls between batches.
-  - Use a worker subprocess per batch. Memory is reclaimed for certain, and stopping an
-    over-budget batch (D6) is a kill rather than a new hook in Ascent's run loop. The cost is a
-    process start and a fact load per batch.
-  - The spec assumes in-process, falling back to subprocesses if R15 shows the footprint does not
-    fall.
-- C2. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
+- C1. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
   way to bound memory.
   - Staging rejects `--lsm`.
   - Each batch may run under LSM storage.
   - The spec assumes staging rejects `--lsm`.
-- C3. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C2. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.
