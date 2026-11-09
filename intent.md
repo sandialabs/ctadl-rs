@@ -43,9 +43,9 @@ three things cross functions:
    the frame, so it is not split.
 
 **On disk.** Stage files hold rows by content, in the encoding of the index's
-parquet tables, so any stage can start in a fresh process (each batch runs in its own worker
-process, so its memory is returned when it exits) and a run can
-resume after its last completed stage. Rows are keyed by function so a batch
+parquet tables, so any stage can start in a fresh process and a run can resume
+after its last completed stage. Each batch runs in its own worker process, so
+its memory is returned when it exits. Rows are keyed by function so a batch
 reads only its callees'. Outputs are streamed per stage, never gathered in
 memory; `IndexResult::try_save`'s tables are the union of the stage outputs.
 
