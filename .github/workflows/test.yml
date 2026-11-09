@@ -39,7 +39,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy -- -Dwarnings
+        run: cargo clippy --workspace -- -Dwarnings
 
       - name: Run workspace tests
         run: cargo test --workspace --verbose

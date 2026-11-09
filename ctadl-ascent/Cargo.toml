@@ -19,57 +19,56 @@ bitcode = { version = "0.6", features = ["serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5", features = ["cargo", "derive", "wrap_help"] }
 csv = "1.3.*"
-ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"] }
-ctadl-c = { path = "../frontends/ctadl-c" }
-ctadl-dex = { path = "../frontends/ctadl-dex" }
-ctadl-cil = { path = "../frontends/ctadl-cil" }
-ctadl-frontends = { path = "../ctadl-frontends", features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
-ctadl-index = { path = "../ctadl-index" }
-ctadl-index-lsm = { path = "../ctadl-index/engines/lsm" }
-ctadl-index-par = { path = "../ctadl-index/engines/par" }
-ctadl-index-serial = { path = "../ctadl-index/engines/serial" }
-ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy", "cil"] }
-ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
-ctadl-jvm = { path = "../frontends/ctadl-jvm" }
-ctadl-lua = { path = "../frontends/ctadl-lua" }
-ctadl-pcode = { path = "../frontends/ctadl-pcode" }
-dex-reader = { path = "../readers/dex-reader" }
+ctadl-flowy = { workspace = true, features = ["serde"] }
+ctadl-c.workspace = true
+ctadl-dex.workspace = true
+ctadl-cil.workspace = true
+ctadl-frontends = { workspace = true, features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
+ctadl-index.workspace = true
+ctadl-index-lsm.workspace = true
+ctadl-index-par.workspace = true
+ctadl-index-serial.workspace = true
+ctadl-import = { workspace = true, features = ["dex", "jvm", "pcode", "ts", "flowy", "cil"] }
+ctadl-ir = { workspace = true, features = ["serde"] }
+ctadl-jvm.workspace = true
+ctadl-lua.workspace = true
+ctadl-pcode.workspace = true
+dex-reader.workspace = true
 env_logger = "0.11"
 flate2 = "1"
 hashbrown = "0.16"
 itertools = "0.14"
 json5 = "1.3"
-jvm-reader = { path = "../readers/jvm-reader" }
+jvm-reader.workspace = true
 lazy_static = "1"
 libc = "0.2"
 log = "0.4"
 log-once = "0.4"
-lsm = { path = "../lsm" }
+lsm.workspace = true
 object = { version = "0.37", default-features = false, features = ["read_core", "elf", "std"] }
 parquet = "59"
 paste = "1.0"
 peg = "0.8"
-pcode-reader = { path = "../readers/pcode-reader" }
+pcode-reader.workspace = true
 rayon = "1.10"
 regex = "1.12"
 roxmltree = "0.20"
 serde = { version = "1.0", features = ["derive"] }
-rustc_graphviz = { path = "../rustc_graphviz" }
+rustc_graphviz.workspace = true
 serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
-source-info = { path = "../source-info", features = ["serde"] }
+source-info = { workspace = true, features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
 thiserror = "2"
 url = "2"
-trie = { path = "../trie" }
+trie.workspace = true
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 tree-sitter-lua = "0.5"
 tempfile = "3"
 which = "6"
 elsa = "1.11"
-immortal = { path = "../immortal" }
-
+immortal.workspace = true
 [dev-dependencies]
 test-log = "0.2.19"
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.

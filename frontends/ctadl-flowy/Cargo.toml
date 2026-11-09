@@ -6,13 +6,13 @@ version.workspace = true
 [lib]
 
 [dependencies]
-ctadl-ir = { path = "../../ctadl-ir" }
+ctadl-ir.workspace = true
 hashbrown = "0.16"
 internment = { version = "0.8", features = ["arc", "serde"] }
 log = "0.4"
 peg = "0.8"
 smallvec = "1"
-source-info = { path = "../../source-info" }
+source-info.workspace = true
 thiserror = "2"
 serde       = { version = "1", features = ["derive"], optional = true }
 

@@ -19,4 +19,4 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-cil-reader = { path = "../cil-reader" }
+cil-reader.workspace = true

@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 ascent = "0.8"
 ascent-byods-rels = "0.8"
-lsm = { path = "../.." }
+lsm.workspace = true
 bytemuck = "1"
 
 [dev-dependencies]

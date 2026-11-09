@@ -4,14 +4,14 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-ctadl-import = { path = "../../ctadl-import", features = ["jvm"] }
-ctadl-ir = { path = "../../ctadl-ir", features = ["serde"] }
+ctadl-import = { workspace = true, features = ["jvm"] }
+ctadl-ir = { workspace = true, features = ["serde"] }
 hashbrown = "0.16"
-jvm-reader = { path = "../../readers/jvm-reader" }
+jvm-reader.workspace = true
 log = "0.4"
 rayon = "1.10"
 smallvec = "1"
-source-info = { path = "../../source-info", features = ["serde"] }
+source-info = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"

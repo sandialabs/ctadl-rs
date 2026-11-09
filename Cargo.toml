@@ -25,8 +25,69 @@ members = [
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
     "trie",
+    "rustc_graphviz",
+    "source-info",
     "xtask",
 ]
+# Every member but `xtask`, so a bare `cargo build` or `cargo test` does not link it. `cargo
+# xtask` names the package and builds it; `--workspace` (as CI passes) includes it.
+default-members = [
+    "ctadl-ascent",
+    "ctadl-frontends",
+    "ctadl-import",
+    "ctadl-index",
+    "ctadl-index/engines/lsm",
+    "ctadl-index/engines/par",
+    "ctadl-index/engines/serial",
+    "ctadl-ir",
+    "frontends/ctadl-c",
+    "frontends/ctadl-cil",
+    "frontends/ctadl-dex",
+    "frontends/ctadl-flowy",
+    "frontends/ctadl-jvm",
+    "frontends/ctadl-lua",
+    "frontends/ctadl-pcode",
+    "readers/dex-reader",
+    "readers/jvm-reader",
+    "readers/pcode-reader",
+    "readers/cil-reader/crates/cil-reader",
+    "readers/cil-reader/crates/cil-dump",
+    "immortal",
+    "lsm",
+    "lsm/crates/ascent-tc-lsm-bench",
+    "trie",
+    "rustc_graphviz",
+    "source-info",
+]
+
+# The workspace's own crates, so each is named by path once. Members depend on them with
+# `<crate>.workspace = true`, adding `features` or `optional` there.
+[workspace.dependencies]
+cil-dump = { path = "readers/cil-reader/crates/cil-dump" }
+cil-reader = { path = "readers/cil-reader/crates/cil-reader" }
+ctadl-ascent = { path = "ctadl-ascent" }
+ctadl-c = { path = "frontends/ctadl-c" }
+ctadl-cil = { path = "frontends/ctadl-cil" }
+ctadl-dex = { path = "frontends/ctadl-dex" }
+ctadl-flowy = { path = "frontends/ctadl-flowy" }
+ctadl-frontends = { path = "ctadl-frontends" }
+ctadl-import = { path = "ctadl-import" }
+ctadl-index = { path = "ctadl-index" }
+ctadl-index-lsm = { path = "ctadl-index/engines/lsm" }
+ctadl-index-par = { path = "ctadl-index/engines/par" }
+ctadl-index-serial = { path = "ctadl-index/engines/serial" }
+ctadl-ir = { path = "ctadl-ir" }
+ctadl-jvm = { path = "frontends/ctadl-jvm" }
+ctadl-lua = { path = "frontends/ctadl-lua" }
+ctadl-pcode = { path = "frontends/ctadl-pcode" }
+dex-reader = { path = "readers/dex-reader" }
+immortal = { path = "immortal" }
+jvm-reader = { path = "readers/jvm-reader" }
+lsm = { path = "lsm" }
+pcode-reader = { path = "readers/pcode-reader" }
+rustc_graphviz = { path = "rustc_graphviz" }
+source-info = { path = "source-info" }
+trie = { path = "trie" }
 
 # One version for the whole tree. Every member takes it with
 # `version.workspace = true`, so a release tag names exactly one thing: this

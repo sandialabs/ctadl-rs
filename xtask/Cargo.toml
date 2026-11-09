@@ -17,24 +17,22 @@ serde_json = "1"
 # dropped from `expected_lines`).
 json5 = "1.3"
 # Used by the jvm-reader regression checks (compile .java -> exercise the
-# library on the resulting .class / .jar). jvm-reader is workspace-excluded, so
-# this is a plain path-dependency library; it does not re-add jvm-reader's bin.
-jvm-reader = { path = "../readers/jvm-reader" }
+# library on the resulting .class / .jar).
+jvm-reader.workspace = true
 # Likewise for the dex-reader checks (compile .java -> .dex, parse it, plus a
-# real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
-# the distro; only its library is pulled in here.
-dex-reader = { path = "../readers/dex-reader" }
+# real-world APK).
+dex-reader.workspace = true
 # The cil:* checks read Mono.Cecil's test corpus with cil-reader and diff the
 # dumps against CecilDump's; `cil-dump` holds the dump format. The parity rules
 # (corpus, goldens) live here, in src/cil/parity.rs.
-cil-reader = { path = "../readers/cil-reader/crates/cil-reader" }
-cil-dump = { path = "../readers/cil-reader/crates/cil-dump" }
+cil-reader.workspace = true
+cil-dump.workspace = true
 # The `cil:frontend` and `cil:taint` checks run the CIL frontend and the SSA pipeline in
 # process.
-ctadl-cil = { path = "../frontends/ctadl-cil" }
-ctadl-ir = { path = "../ctadl-ir" }
+ctadl-cil.workspace = true
+ctadl-ir.workspace = true
 # `cil:frontend` resolves the span a global is declared at.
-source-info = { path = "../source-info" }
+source-info.workspace = true
 # `cil:models` reads the accepted-miss file's function-id patterns. Already built for
 # ctadl-ascent.
 regex = "1.12"
@@ -42,9 +40,9 @@ regex = "1.12"
 # such as `intent_pair.parquet` -- through the analyzer's own loaders rather than
 # re-implementing them. This is the one heavy dependency here: it builds the
 # whole analyzer.
-ctadl-ascent = { path = "../ctadl-ascent" }
+ctadl-ascent.workspace = true
 # `apk:merged-classes` reads the `notifications.sarif` an import writes, through the module that
 # writes it. Already built for ctadl-ascent.
-ctadl-import = { path = "../ctadl-import" }
+ctadl-import.workspace = true
 # `Facts:*` cases read the gzipped fact tables a pcode import writes.
 flate2 = "1"
