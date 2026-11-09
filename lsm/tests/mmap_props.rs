@@ -5,9 +5,6 @@
 //!
 //! Keys come from a small space so that keys, prefixes and values repeat, and
 //! limits are small so that a few dozen inserts flush and merge many runs.
-//!
-//! Each test runs 32 cases unless `PROPTEST_CASES` says otherwise; the
-//! `lsm-property-tests` flake check runs many more each night.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;

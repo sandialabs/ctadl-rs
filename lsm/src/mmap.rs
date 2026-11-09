@@ -128,9 +128,7 @@ fn align8(n: usize) -> usize {
 }
 
 /// A single immutable run, memory-mapped. Holds no decoded keys or values — only
-/// the mapping plus the section offsets parsed from the header. A run of a set
-/// (zero-sized `V`) has empty offsets and values sections, and holds one value
-/// per key.
+/// the mapping plus the section offsets parsed from the header.
 #[derive(Debug)]
 struct MmapRun<K, V> {
     bytes: Mmap,

@@ -269,8 +269,7 @@ unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
 /// A tuple of [`LsmCol`] columns, written into a blob at given offsets and read
 /// back in place as a tuple of borrowed columns.
 ///
-/// The offsets come from a [`Layout`]: a store's layout for its whole tuples,
-/// and a slice of it for the key or value columns of a prefix index.
+/// The offsets are a [`Layout`]'s, or a slice of them.
 pub trait LsmTuple {
     /// Each column's `size_of`, in order.
     const SIZES: &'static [usize];
@@ -701,10 +700,6 @@ impl Layout {
 /// Within a segment, column order changes where a column lives, never which
 /// tuples share a prefix. Columns keep their alignment because reads hand out
 /// `&Column` into the blob, which is itself 8-aligned.
-///
-/// Every blob width and every set of column offsets the provider uses comes
-/// from here: a relation's tuples under its prefix mask, or an own index's keys
-/// or values with mask 0.
 ///
 /// The result depends only on the arguments, so a relation's layout is the
 /// same on every run and every build. Panics (at compile time, in a const

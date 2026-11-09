@@ -68,11 +68,9 @@ ascent! {
     relation by_be(u8, u8);
 
     mix(a, *b2, c, l, e) <-- mix(a, b, c, l, e), edge(b, b2, _);
-    // Probes `mix` by its first one, two and three columns.
     by_a(a, e, e2) <-- mix(a, _, _, _, e), mix(a, _, _, _, e2);
     by_ab(a, b, c2) <-- mix(a, b, _, _, _), mix(a, b, c2, _, _);
     by_abc(l, l2) <-- mix(a, b, c, l, _), mix(a, b, c, l2, _);
-    // Probes `mix` by columns 1 and 4, an index of its own.
     by_be(a, a2) <-- mix(a, b, _, _, e), mix(a2, b, _, _, e);
 }
 
