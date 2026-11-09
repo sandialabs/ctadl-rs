@@ -67,7 +67,7 @@ the work.
   sets, for every index table: `summary`, `assign`, `paths`, `external_function`,
   `global_flow`, `resolved_call` and `intent_pair`.
 - R2. **Independent of batching and order.** R1 holds for any batch plan the budget allows, down
-  to the minimum batch size (C1), and for input facts in any order.
+  to one function, and for input facts in any order.
 - R3. **Same tables.** The index directory has the same files, schemas and encodings as today.
   `INDEX_FORMAT_VERSION` does not change, and every reader (query, `--summary`, inspection)
   works unchanged. Each row appears once per table.
@@ -105,7 +105,7 @@ the work.
 ### Verification
 
 - R13. **Equivalence tests.** Every integration test and engine test that indexes also runs
-  staged, with shuffled facts and several batch sizes down to the minimum. It checks R1 by
+  staged, with shuffled facts and the batch floor swept down to one function. It checks R1 by
   comparing `CTADL_DUMP_RELATIONS` output relations with those of the monolithic serial engine
   (`scripts/fact-dump-diff.sh`).
 - R14. **Memory benchmark.** A documented procedure runs a large target staged under
@@ -214,9 +214,9 @@ output (Background).
   `storage`.
 - A batch's estimate is a function of its seed sizes: `assign_like` rows, plus instantiated
   callee-summary rows, variables and formals. It is calibrated against `[mem cp]` and
-  `profile.json` measurements. C3 covers the choice of estimator.
-- The minimum batch size is a planner floor, below which a batch is never split (C1). The
-  tests set it directly.
+  `profile.json` measurements. C2 covers the choice of estimator.
+- A configured floor bounds how small the planner makes a batch. Its smallest value is one
+  function, which splits every recursive SCC. The tests sweep it down to one.
 
 ### D7. Stage directory and files
 
@@ -263,19 +263,13 @@ output (Background).
 
 ## Concerns
 
-- C1. **What is the minimum batch size?** The intent was edited from "down to one function" to
-  "down to a minimum", without saying what the minimum is.
-  - One function: the strongest test of D3, since every SCC is split.
-  - One SCC: batches never split an SCC in tests, so D3 is tested only by SCCs over the budget.
-  - A configured floor: tests pick it.
-  - The spec assumes a configured floor whose smallest value is one function.
-- C2. **Default or opt-in.** The intent does not say whether staging replaces the monolithic
+- C1. **Default or opt-in.** The intent does not say whether staging replaces the monolithic
   run.
   - Make it the default, keeping the monolithic run as the reference for tests (R13).
   - Add it behind a flag, with the CLI otherwise unchanged.
   - The spec assumes a flag at first (`IndexConfig`, CLI `--staged` or a budget flag), with the
     monolithic run the default.
-- C3. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
+- C2. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
   the blowup is in `locals`, which the seeds do not predict. A batch could overshoot the budget
   by a large factor.
   - Estimate from seed sizes, calibrated (D6).
@@ -283,7 +277,7 @@ output (Background).
   - Measure and re-split: abort a batch that exceeds the budget and rerun it split. This needs a
     per-batch memory guard.
   - The spec assumes calibrated seed sizes, with the budget documented as approximate.
-- C4. **In-process or a process per batch.** R9 requires that a stage *can* run in a fresh
+- C3. **In-process or a process per batch.** R9 requires that a stage *can* run in a fresh
   process. Running every batch in-process is simpler, but the allocator may not return freed
   pages, so the footprint might track the high-water mark rather than the current batch.
   Interners never free either, but they hold only the program-wide paths and strings.
@@ -292,12 +286,12 @@ output (Background).
     fact-load cost per batch.
   - The spec assumes in-process, falling back to subprocesses if R14 shows the footprint does not
     fall.
-- C5. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
+- C4. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
   way to bound memory.
   - Staging rejects `--lsm`.
   - Each batch may run under LSM storage.
   - The spec assumes staging rejects `--lsm`.
-- C6. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C5. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.
