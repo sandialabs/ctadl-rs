@@ -2,26 +2,10 @@
 
 Source: `intent.md`, `spec.md`. This plans the order in which the staged index fixpoint is built,
 the files each step changes and the tests that prove it. R* and D* numbers are the spec's. Where
-this plan and the spec disagree, the spec wins, except for the corrections listed below. Each
-phase builds, passes the gate named in it, and is one commit.
+this plan and the spec disagree, the spec wins. Each phase builds, passes the gate named in it, and is one commit.
 
 Code, help text and docs written by these phases must not cite the spec's or the plan's numbers
 (R16).
-
-## Corrections to the spec
-
-- P4. **What R7's bound leaves out.** R7 says the fixpoint part peaks at the scheduler's
-  footprint plus the running workers', and that the peak does not grow with the number of
-  functions. Three things do grow with the program:
-  - The scheduler keeps the plan's batch ids, dependencies and estimates: O(functions + call
-    edges), small per function (Phase 7 drops the facts and the call graph).
-  - Stage 2 holds every distinct frame edge, which is as many as the monolithic run's frame
-    rows.
-  - Stage 3 holds the final `assign_like` of every `intent_frame` function.
-
-  None of them holds `locals`. This plan assumes R7 reads "does not grow with the number of
-  functions, beyond the plan's O(functions + call edges) and stages 2 and 3, which hold only
-  outputs". Phase 13 measures all three.
 
 ## Order
 
