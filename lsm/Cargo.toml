@@ -5,13 +5,14 @@ edition = "2024"
 
 [dependencies]
 memmap2 = "0.9"
-bytemuck = "1"
+bytemuck = { version = "1", features = ["min_const_generics"] }
 hashbrown = "0.16"
 smallvec = "1"
 ascent = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "lsm_benchmarks"

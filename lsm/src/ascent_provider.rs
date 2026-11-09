@@ -20,14 +20,19 @@
 //! Reads from `MmapLsmMultiMap` hand back `&T` references straight into the
 //! mapping, so keys and values must be fixed-width `bytemuck::Pod`. Relation
 //! columns generally are *not* `Pod` (e.g. interned handles whose ids are only
-//! meaningful to their interner). Each column type implements [`LsmCol`], which encodes a
-//! value into a fixed number of `u64` "slots" and reinterprets those slots back
-//! as a `&Column`.
+//! meaningful to their interner). Each column type implements [`LsmCol`], which
+//! writes a value's bytes into a blob and reinterprets them in place as a
+//! `&Column`.
 //!
-//! For interned types the slot holds the handle's raw bits. This is only valid
-//! **within a single process run** (the run files are per-process temp files, and
-//! the interned values must outlive them) and assumes a **little-endian** target
-//! so that the value's bytes occupy the low end of each slot.
+//! A tuple is stored as one blob of `u64` words, with each column's bytes at a
+//! fixed offset given by the tuple's [`Layout`]. [`layout`] packs the columns at
+//! their natural widths and says how. Every column sits at an offset aligned for
+//! its type, so a read hands out a `&Column` into the blob, and the bytes are
+//! written and read in native byte order.
+//!
+//! For interned types the blob holds the handle's raw bits. This is only valid
+//! **within a single process run**: the run files are per-process temp files, and
+//! the interned values must outlive them.
 
 use std::iter::{Once, once};
 use std::marker::PhantomData;
@@ -37,10 +42,9 @@ use ascent::internal::{
     RelFullIndexRead, RelFullIndexWrite, RelIndexMerge, RelIndexRead, RelIndexReadAll,
     RelIndexWrite, ToRelIndex,
 };
-use bytemuck::{Pod, Zeroable};
 use smallvec::SmallVec;
 
-use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs, words};
+use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs};
 
 // ---------------------------------------------------------------------------
 // Process-wide per-map memtable limit.
@@ -72,60 +76,42 @@ pub fn memtable_limit() -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Slot storage: a no-padding concatenation of two `Pod`, 8-aligned blobs.
-// ---------------------------------------------------------------------------
-
-/// Concatenation of two slot blobs `A` and `B`, used to build the fixed-width
-/// key/value storage for a tuple out of its columns' per-column slot arrays.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct Cat<A, B>(pub A, pub B);
-
-// SAFETY: `Cat` is `#[repr(C)]`. In every use of this provider `A` and `B` are
-// `[u64; N]` arrays (or nested `Cat`s of such), which all have alignment 8 and a
-// size that is a multiple of 8. Therefore `B` lands at an 8-aligned offset with
-// no padding before it, and the whole struct has no trailing padding — every
-// byte is initialized, satisfying `Pod`'s contract.
-unsafe impl<A: Pod, B: Pod> Pod for Cat<A, B> {}
-// SAFETY: an all-zero bit pattern is valid for `A` and `B` (both `Zeroable`).
-unsafe impl<A: Zeroable, B: Zeroable> Zeroable for Cat<A, B> {}
-
-// ---------------------------------------------------------------------------
 // Column encoding.
 // ---------------------------------------------------------------------------
 
-/// Encodes a single relation column into fixed-width `u64` slots and back.
+/// A relation column, stored as its own bytes at an aligned offset of a tuple's
+/// blob and read back in place.
 ///
 /// # Safety
 ///
 /// Implementors must guarantee:
-/// * `size_of::<Self>() <= 8 * N` and `align_of::<Self>() <= 8`, where
-///   `Slots = [u64; N]`;
-/// * the target is little-endian, so the value's bytes written by `to_slots`
-///   occupy the low bytes that `ref_from` reinterprets;
-/// * every byte of the slots `to_slots` returns is initialized, and equal
-///   values give equal slots: the stores sort and deduplicate by slot bits;
-/// * any slot blob produced by `to_slots` from a live value remains a valid
-///   `Self` for as long as the slots are read back (process lifetime for
-///   interned types).
+/// * `align_of::<Self>() <= 8`, so that an offset aligned for `Self` in an
+///   8-aligned blob is aligned in memory;
+/// * `write_to` writes exactly the first `size_of::<Self>()` bytes of `dst`,
+///   every one initialized, and equal values write equal bytes: the stores sort
+///   and deduplicate by bytes;
+/// * bytes `write_to` wrote from a live value, at an offset aligned for `Self`,
+///   are a valid `Self` for as long as they are read back through `ref_at`
+///   (process lifetime for interned types).
 ///
-/// Use the [`lsm_col!`](crate::lsm_col) macro to implement this safely for a
-/// `Copy` type small enough to fit.
+/// Use the [`lsm_col!`](crate::lsm_col) macro to implement this for a `Copy`
+/// type without padding.
 pub unsafe trait LsmCol: Copy + 'static {
-    /// Fixed-width slot storage for one value of this column. Always `[u64; N]`.
-    type Slots: Pod + Ord + Copy;
+    /// Writes the value's `size_of::<Self>()` bytes to the start of `dst`.
+    /// Panics if `dst` is shorter.
+    fn write_to(self, dst: &mut [u8]);
 
-    /// Copies the value's bytes into freshly zeroed slots.
-    fn to_slots(self) -> Self::Slots;
-
-    /// Reinterprets stored slots as a reference to this column.
+    /// Reinterprets the bytes of `blob` at `offset` as a reference to this
+    /// column.
     ///
     /// # Safety
-    /// `s` must have been produced by [`LsmCol::to_slots`] of a still-live value.
-    unsafe fn ref_from(s: &Self::Slots) -> &Self;
+    /// `blob[offset..offset + size_of::<Self>()]` must hold bytes that
+    /// [`LsmCol::write_to`] wrote from a still-live value, and
+    /// `blob.as_ptr().add(offset)` must be aligned for `Self`.
+    unsafe fn ref_at(blob: &[u8], offset: usize) -> &Self;
 
     /// Whether every interned handle in this value was handed out by its interner.
-    /// `ref_from` asserts it in debug builds, since the slots bypassed the
+    /// `ref_at` asserts it in debug builds, since the stored bytes bypassed the
     /// interners' checked conversions.
     #[inline]
     fn is_valid(&self) -> bool {
@@ -133,43 +119,53 @@ pub unsafe trait LsmCol: Copy + 'static {
     }
 }
 
-/// Implements [`LsmCol`] for a `Copy` type that fits in `$n` eight-byte slots.
-///
-/// `$n` must satisfy `size_of::<$t>() <= 8 * $n` and `align_of::<$t>() <= 8`
-/// (both are checked at compile time). The target must be little-endian.
+/// Implements [`LsmCol`] for a `Copy` type without padding and with alignment
+/// at most 8.
 ///
 /// The bracketed list names the types of `$t`'s fields, or `$t` itself for a
 /// primitive. Their sizes must sum to `size_of::<$t>()`, which is checked at
-/// compile time: a value's bytes are copied into the slots and compared there,
-/// so a padding byte, which is uninitialized, must not exist.
+/// compile time: a value's bytes are copied into the blob and compared there,
+/// so a padding byte, which is uninitialized, must not exist. The alignment
+/// bound is checked at compile time too.
 ///
 /// `valid = f` names a `fn(&$t) -> bool` that becomes [`LsmCol::is_valid`], for
 /// a type that holds interned handles.
 ///
 /// ```
 /// # #[derive(Clone, Copy)] struct Pair(u32, u32);
-/// lsm::lsm_col!(Pair, 1, [u32, u32]);
+/// lsm::lsm_col!(Pair, [u32, u32]);
 /// ```
+///
+/// A type with padding:
 ///
 /// ```compile_fail
 /// # #[derive(Clone, Copy)] struct Padded(u64, u32);
-/// lsm::lsm_col!(Padded, 2, [u64, u32]);
+/// lsm::lsm_col!(Padded, [u64, u32]);
+/// ```
+///
+/// An incomplete field list:
+///
+/// ```compile_fail
+/// # #[derive(Clone, Copy)] struct Pair(u32, u32);
+/// lsm::lsm_col!(Pair, [u32]);
+/// ```
+///
+/// An alignment above 8:
+///
+/// ```compile_fail
+/// # #[derive(Clone, Copy)] #[repr(align(16))] struct Wide(u64, u64);
+/// lsm::lsm_col!(Wide, [u64, u64]);
 /// ```
 #[macro_export]
 macro_rules! lsm_col {
-    ($t:ty, $n:literal, [$($field:ty),+ $(,)?] $(, valid = $valid:expr)? $(,)?) => {
-        // SAFETY: the asserts below enforce the size/alignment invariants and that
-        // every byte is initialized; the caller is responsible for little-endianness
-        // and process-local validity.
+    ($t:ty, [$($field:ty),+ $(,)?] $(, valid = $valid:expr)? $(,)?) => {
+        // SAFETY: the asserts in `write_to` enforce that `$t` is at most
+        // 8-aligned and has no padding, so `write_to` copies `size_of::<$t>()`
+        // initialized bytes, the value's own. The caller is responsible for
+        // process-local validity.
         unsafe impl $crate::ascent_provider::LsmCol for $t {
-            type Slots = [u64; $n];
-
             #[inline]
-            fn to_slots(self) -> [u64; $n] {
-                const _: () = assert!(
-                    ::core::mem::size_of::<$t>() <= 8 * $n,
-                    "lsm_col!: type does not fit in the requested number of slots",
-                );
+            fn write_to(self, dst: &mut [u8]) {
                 const _: () = assert!(
                     ::core::mem::align_of::<$t>() <= 8,
                     "lsm_col!: type alignment exceeds 8",
@@ -178,24 +174,25 @@ macro_rules! lsm_col {
                     ::core::mem::size_of::<$t>() == 0 $(+ ::core::mem::size_of::<$field>())+,
                     "lsm_col!: type has padding, or the field list is incomplete",
                 );
-                let mut slots = [0u64; $n];
-                // SAFETY: `slots` has `8*$n >= size_of::<$t>()` bytes and is
-                // 8-aligned (>= align of `$t`); we copy the value's bytes into it.
-                unsafe {
-                    ::core::ptr::copy_nonoverlapping(
+                // SAFETY: `$t` has no padding (asserted above), so all of its
+                // `size_of` bytes are initialized.
+                let src = unsafe {
+                    ::core::slice::from_raw_parts(
                         &self as *const $t as *const u8,
-                        slots.as_mut_ptr() as *mut u8,
                         ::core::mem::size_of::<$t>(),
-                    );
-                }
-                slots
+                    )
+                };
+                dst[..::core::mem::size_of::<$t>()].copy_from_slice(src);
             }
 
             #[inline]
-            unsafe fn ref_from(s: &[u64; $n]) -> &$t {
-                // SAFETY: `s` is 8-aligned (>= align of `$t`) and its leading
-                // `size_of::<$t>()` bytes hold a valid `$t` written by `to_slots`.
-                let value = unsafe { &*(s.as_ptr() as *const $t) };
+            unsafe fn ref_at(blob: &[u8], offset: usize) -> &$t {
+                debug_assert!(offset + ::core::mem::size_of::<$t>() <= blob.len());
+                // SAFETY: by the caller's contract, the bytes at `offset` are in
+                // bounds, aligned for `$t`, and hold a valid `$t` that `write_to`
+                // wrote.
+                let value = unsafe { &*(blob.as_ptr().add(offset) as *const $t) };
+                debug_assert!((value as *const $t).is_aligned());
                 debug_assert!(
                     $crate::ascent_provider::LsmCol::is_valid(value),
                     "lsm_col!: read back a {} holding a handle that was never handed out",
@@ -214,60 +211,44 @@ macro_rules! lsm_col {
 }
 
 // Column encodings for the primitive integer types.
-lsm_col!(u8, 1, [u8]);
-lsm_col!(u16, 1, [u16]);
-lsm_col!(u32, 1, [u32]);
-lsm_col!(u64, 1, [u64]);
-lsm_col!(i8, 1, [i8]);
-lsm_col!(i16, 1, [i16]);
-lsm_col!(i32, 1, [i32]);
-lsm_col!(i64, 1, [i64]);
+lsm_col!(u8, [u8]);
+lsm_col!(u16, [u16]);
+lsm_col!(u32, [u32]);
+lsm_col!(u64, [u64]);
+lsm_col!(i8, [i8]);
+lsm_col!(i16, [i16]);
+lsm_col!(i32, [i32]);
+lsm_col!(i64, [i64]);
 
-// A pair of columns, for a relation that carries two values in one column. Its
-// slots are laid out as the pair itself, so a reference into them is a
-// `&(A, B)`. The pair may have padding: each field is written from its own
-// `to_slots` encoding into zeroed slots, so the padding bytes are zeros, never
+// A pair of columns, for a relation that carries two values in one column. It
+// is stored as the pair itself, so a reference into the blob is a `&(A, B)`.
+// The pair may have padding: `write_to` zeroes the pair's bytes and then writes
+// each field through its own `write_to`, so the padding bytes are zeros, never
 // uninitialized bytes copied from the value.
 //
-// SAFETY: `to_slots` asserts the pair fits the slots and is at most 8-aligned.
-// Every byte of the slots is initialized: zeroed, then overwritten with the
-// fields' initialized encodings, so equal pairs give equal slots. Validity of
-// the reinterpreted fields is inherited from `A`/`B`.
+// SAFETY: `write_to` asserts the pair is at most 8-aligned. It writes exactly
+// `size_of::<(A, B)>()` bytes, every one initialized: zeroed, then overwritten
+// with the fields' initialized bytes at their places in the pair, so equal pairs
+// give equal bytes. Validity of the reinterpreted fields is inherited from
+// `A`/`B`, and each field is aligned within an aligned pair.
 unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
-    type Slots = Cat<A::Slots, B::Slots>;
-
     #[inline]
-    fn to_slots(self) -> Self::Slots {
-        const {
-            assert!(size_of::<(A, B)>() <= size_of::<Cat<A::Slots, B::Slots>>());
-            assert!(align_of::<(A, B)>() <= 8);
-        }
-        let mut slots = Cat(A::Slots::zeroed(), B::Slots::zeroed());
-        let pair = &mut slots as *mut Self::Slots as *mut (A, B);
-        let (a, b) = (self.0.to_slots(), self.1.to_slots());
-        // SAFETY: the asserts above: `slots` is large enough and aligned for a
-        // `(A, B)`, so each field's place is in bounds. A field's encoding begins
-        // with its `size_of` value bytes (little-endian, `LsmCol`'s contract).
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                &a as *const A::Slots as *const u8,
-                std::ptr::addr_of_mut!((*pair).0) as *mut u8,
-                size_of::<A>(),
-            );
-            std::ptr::copy_nonoverlapping(
-                &b as *const B::Slots as *const u8,
-                std::ptr::addr_of_mut!((*pair).1) as *mut u8,
-                size_of::<B>(),
-            );
-        }
-        slots
+    fn write_to(self, dst: &mut [u8]) {
+        const { assert!(align_of::<(A, B)>() <= 8) }
+        let dst = &mut dst[..size_of::<(A, B)>()];
+        dst.fill(0);
+        self.0.write_to(&mut dst[std::mem::offset_of!((A, B), 0)..]);
+        self.1.write_to(&mut dst[std::mem::offset_of!((A, B), 1)..]);
     }
 
     #[inline]
-    unsafe fn ref_from(s: &Self::Slots) -> &Self {
-        // SAFETY: `s` is 8-aligned and holds the fields `to_slots` wrote from a
-        // live `(A, B)`.
-        let pair = unsafe { &*(s as *const Self::Slots as *const (A, B)) };
+    unsafe fn ref_at(blob: &[u8], offset: usize) -> &Self {
+        debug_assert!(offset + size_of::<(A, B)>() <= blob.len());
+        // SAFETY: by the caller's contract, the bytes at `offset` are in bounds,
+        // aligned for `(A, B)`, and hold the fields `write_to` wrote from a live
+        // pair.
+        let pair = unsafe { &*(blob.as_ptr().add(offset) as *const (A, B)) };
+        debug_assert!((pair as *const (A, B)).is_aligned());
         debug_assert!(
             pair.is_valid(),
             "LsmCol for (A, B): read back a handle that was never handed out"
@@ -282,295 +263,82 @@ unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
 }
 
 // ---------------------------------------------------------------------------
-// Tuple encoding: an N-column tuple <-> a single fixed-width slot blob.
+// Tuple encoding: an N-column tuple <-> its columns at a layout's offsets.
 // ---------------------------------------------------------------------------
 
-/// Encodes a whole key/value tuple into one fixed-width `Pod` slot blob and
-/// decodes it back into a tuple of borrowed columns.
+/// A tuple of [`LsmCol`] columns, written into a blob at given offsets and read
+/// back in place as a tuple of borrowed columns.
+///
+/// The offsets are a [`Layout`]'s, or a slice of them.
 pub trait LsmTuple {
-    /// The fixed-width slot storage for this tuple (a nested [`Cat`] of the
-    /// columns' [`LsmCol::Slots`]).
-    type Arr: Pod + Ord + Copy;
-    /// A tuple of references into a stored [`Self::Arr`]. Outlives `'a` because
-    /// it is a tuple of `&'a Column` (and columns are `'static`).
+    /// Each column's `size_of`, in order.
+    const SIZES: &'static [usize];
+    /// Each column's `align_of`, in order.
+    const ALIGNS: &'static [usize];
+
+    /// A tuple of references into a stored blob. Outlives `'a` because it is a
+    /// tuple of `&'a Column` (and columns are `'static`).
     type Ref<'a>: 'a
     where
         Self: 'a;
 
-    /// Encodes the tuple's columns into a slot blob.
-    fn encode(&self) -> Self::Arr;
+    /// Writes column `i` at `blob[offsets[i]..]`, leaving the other bytes alone.
+    fn encode_at(&self, blob: &mut [u8], offsets: &[usize]);
 
-    /// Reinterprets a stored slot blob as a tuple of column references.
+    /// Reinterprets the columns at `offsets` in `blob` as a tuple of column
+    /// references.
     ///
     /// # Safety
-    /// `a` must have been produced by [`LsmTuple::encode`] from live values.
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_>;
-
-    /// The width of each column's slots, in bytes.
-    const COLUMN_BYTES: &'static [usize];
+    /// For each column `i`, the bytes at `blob[offsets[i]..]` must satisfy
+    /// [`LsmCol::ref_at`]'s contract for that column's type: written by its
+    /// `write_to` from a live value, at an address aligned for it.
+    unsafe fn decode_at<'a>(blob: &'a [u8], offsets: &[usize]) -> Self::Ref<'a>;
 }
 
-// arity 0 — only ever a *key* (the "no index" full scan). Uses a one-slot
-// sentinel so the storage is never a zero-sized type.
+// Arity 0: only ever a key (the "no index" full scan), which has no columns.
 impl LsmTuple for () {
-    type Arr = [u64; 1];
+    const SIZES: &'static [usize] = &[];
+    const ALIGNS: &'static [usize] = &[];
     type Ref<'a>
         = ()
     where
         Self: 'a;
     #[inline]
-    fn encode(&self) -> [u64; 1] {
-        [0]
-    }
+    fn encode_at(&self, _blob: &mut [u8], _offsets: &[usize]) {}
     #[inline]
-    unsafe fn decode(_a: &[u64; 1]) {}
-    const COLUMN_BYTES: &'static [usize] = &[];
+    unsafe fn decode_at(_blob: &[u8], _offsets: &[usize]) {}
 }
 
-// Arities 1..=6. The `Arr` is a right-folded `Cat` of each column's slots, e.g.
-// arity-3 is `Cat<A, Cat<B, C>>`, so field `b` is `a.1.0`, `c` is `a.1.1`, etc.
-// `decode` is written as a real method (not a closure) so the output references
-// are tied to the lifetime of the input `&Self::Arr`.
-
-impl<A: LsmCol> LsmTuple for (A,) {
-    type Arr = A::Slots;
-    const COLUMN_BYTES: &'static [usize] = &[size_of::<A::Slots>()];
-    type Ref<'a>
-        = (&'a A,)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        self.0.to_slots()
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe { (A::ref_from(a),) }
-    }
-}
-
-impl<A: LsmCol, B: LsmCol> LsmTuple for (A, B) {
-    type Arr = Cat<A::Slots, B::Slots>;
-    const COLUMN_BYTES: &'static [usize] = &[size_of::<A::Slots>(), size_of::<B::Slots>()];
-    type Ref<'a>
-        = (&'a A, &'a B)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        Cat(self.0.to_slots(), self.1.to_slots())
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe { (A::ref_from(&a.0), B::ref_from(&a.1)) }
-    }
-}
-
-impl<A: LsmCol, B: LsmCol, C: LsmCol> LsmTuple for (A, B, C) {
-    type Arr = Cat<A::Slots, Cat<B::Slots, C::Slots>>;
-    const COLUMN_BYTES: &'static [usize] = &[
-        size_of::<A::Slots>(),
-        size_of::<B::Slots>(),
-        size_of::<C::Slots>(),
-    ];
-    type Ref<'a>
-        = (&'a A, &'a B, &'a C)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        Cat(self.0.to_slots(), Cat(self.1.to_slots(), self.2.to_slots()))
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe { (A::ref_from(&a.0), B::ref_from(&a.1.0), C::ref_from(&a.1.1)) }
-    }
-}
-
-impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol> LsmTuple for (A, B, C, D) {
-    type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, D::Slots>>>;
-    const COLUMN_BYTES: &'static [usize] = &[
-        size_of::<A::Slots>(),
-        size_of::<B::Slots>(),
-        size_of::<C::Slots>(),
-        size_of::<D::Slots>(),
-    ];
-    type Ref<'a>
-        = (&'a A, &'a B, &'a C, &'a D)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        Cat(
-            self.0.to_slots(),
-            Cat(self.1.to_slots(), Cat(self.2.to_slots(), self.3.to_slots())),
-        )
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe {
-            (
-                A::ref_from(&a.0),
-                B::ref_from(&a.1.0),
-                C::ref_from(&a.1.1.0),
-                D::ref_from(&a.1.1.1),
-            )
+/// Implements [`LsmTuple`] for the tuple of the given columns, each named by its
+/// tuple index and type parameter.
+macro_rules! lsm_tuple {
+    ($($i:tt $c:ident),+) => {
+        impl<$($c: LsmCol),+> LsmTuple for ($($c,)+) {
+            const SIZES: &'static [usize] = &[$(size_of::<$c>()),+];
+            const ALIGNS: &'static [usize] = &[$(align_of::<$c>()),+];
+            type Ref<'a>
+                = ($(&'a $c,)+)
+            where
+                Self: 'a;
+            #[inline]
+            fn encode_at(&self, blob: &mut [u8], offsets: &[usize]) {
+                $(self.$i.write_to(&mut blob[offsets[$i]..]);)+
+            }
+            #[inline]
+            unsafe fn decode_at<'a>(blob: &'a [u8], offsets: &[usize]) -> Self::Ref<'a> {
+                // SAFETY: forwarded from the caller, column by column.
+                unsafe { ($($c::ref_at(blob, offsets[$i]),)+) }
+            }
         }
-    }
+    };
 }
 
-impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol> LsmTuple for (A, B, C, D, E) {
-    type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, E::Slots>>>>;
-    const COLUMN_BYTES: &'static [usize] = &[
-        size_of::<A::Slots>(),
-        size_of::<B::Slots>(),
-        size_of::<C::Slots>(),
-        size_of::<D::Slots>(),
-        size_of::<E::Slots>(),
-    ];
-    type Ref<'a>
-        = (&'a A, &'a B, &'a C, &'a D, &'a E)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        Cat(
-            self.0.to_slots(),
-            Cat(
-                self.1.to_slots(),
-                Cat(self.2.to_slots(), Cat(self.3.to_slots(), self.4.to_slots())),
-            ),
-        )
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe {
-            (
-                A::ref_from(&a.0),
-                B::ref_from(&a.1.0),
-                C::ref_from(&a.1.1.0),
-                D::ref_from(&a.1.1.1.0),
-                E::ref_from(&a.1.1.1.1),
-            )
-        }
-    }
-}
-
-impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol, F: LsmCol> LsmTuple
-    for (A, B, C, D, E, F)
-{
-    type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, Cat<E::Slots, F::Slots>>>>>;
-    const COLUMN_BYTES: &'static [usize] = &[
-        size_of::<A::Slots>(),
-        size_of::<B::Slots>(),
-        size_of::<C::Slots>(),
-        size_of::<D::Slots>(),
-        size_of::<E::Slots>(),
-        size_of::<F::Slots>(),
-    ];
-    type Ref<'a>
-        = (&'a A, &'a B, &'a C, &'a D, &'a E, &'a F)
-    where
-        Self: 'a;
-    #[inline]
-    fn encode(&self) -> Self::Arr {
-        Cat(
-            self.0.to_slots(),
-            Cat(
-                self.1.to_slots(),
-                Cat(
-                    self.2.to_slots(),
-                    Cat(self.3.to_slots(), Cat(self.4.to_slots(), self.5.to_slots())),
-                ),
-            ),
-        )
-    }
-    #[inline]
-    unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        // SAFETY: forwarded from the caller: `a` came from `encode` of live
-        // values, so each field holds slots `to_slots` wrote for that column.
-        unsafe {
-            (
-                A::ref_from(&a.0),
-                B::ref_from(&a.1.0),
-                C::ref_from(&a.1.1.0),
-                D::ref_from(&a.1.1.1.0),
-                E::ref_from(&a.1.1.1.1.0),
-                F::ref_from(&a.1.1.1.1.1),
-            )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Borrowing iterators that decode slot blobs lazily.
-// ---------------------------------------------------------------------------
-
-/// Iterator over a key's values, decoding each stored slot blob into a tuple of
-/// column references on the fly. Cheap to clone (as Ascent's `IteratorType`
-/// requires) because the underlying [`ValsRefs`] is.
-pub struct ValIter<'a, V: LsmTuple> {
-    inner: ValsRefs<'a, V::Arr>,
-}
-
-impl<V: LsmTuple> Clone for ValIter<'_, V> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-impl<'a, V: LsmTuple + 'a> Iterator for ValIter<'a, V> {
-    type Item = V::Ref<'a>;
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: every stored blob was produced by `V::encode`.
-        self.inner.next().map(|a| unsafe { V::decode(a) })
-    }
-}
-
-/// Iterator over every `(key, values)` group of an [`LsmIndex`].
-pub struct AllIter<'a, K: LsmTuple, V: LsmTuple> {
-    inner: IterAllRefs<'a, K::Arr, V::Arr>,
-}
-
-impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> Iterator for AllIter<'a, K, V> {
-    type Item = (K::Ref<'a>, ValIter<'a, V>);
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|(k, vals)| {
-            // SAFETY: the stored key blob was produced by `K::encode`.
-            (unsafe { K::decode(k) }, ValIter { inner: vals })
-        })
-    }
-}
-
-/// Iterator over every tuple of an [`LsmStore`], as the full index's keys.
-pub struct FullAllIter<'a, T: LsmTuple> {
-    inner: KeysIter<'a, T::Arr, ()>,
-}
-
-impl<'a, T: LsmTuple + 'a> Iterator for FullAllIter<'a, T> {
-    type Item = (T::Ref<'a>, Once<()>);
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: the stored blob was produced by `T::encode`.
-        self.inner
-            .next()
-            .map(|k| (unsafe { T::decode(k) }, once(())))
-    }
-}
+lsm_tuple!(0 A);
+lsm_tuple!(0 A, 1 B);
+lsm_tuple!(0 A, 1 B, 2 C);
+lsm_tuple!(0 A, 1 B, 2 C, 3 D);
+lsm_tuple!(0 A, 1 B, 2 C, 3 D, 4 E);
+lsm_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F);
 
 // ---------------------------------------------------------------------------
 // An index whose key columns are not a prefix of the relation's: key ->
@@ -580,27 +348,134 @@ impl<'a, T: LsmTuple + 'a> Iterator for FullAllIter<'a, T> {
 /// An Ascent index for key columns `K` mapping to value columns `V`, backed by a
 /// single [`MmapLsmMultiMap`]. This is the n-ary analogue of the default
 /// provider's `RelIndexType1<K, V>` (a `HashMap<K, Vec<V>>`).
-pub struct LsmIndex<K: LsmTuple, V: LsmTuple> {
-    map: MmapLsmMultiMap<K::Arr, V::Arr>,
+///
+/// Keys and values are blobs of `KW` and `VW` words, laid out as tuples with no
+/// prefix boundaries, since the map reads them only whole. The widths must be
+/// the ones [`layout`] gives, which is checked at compile time.
+pub struct LsmIndex<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> {
+    map: MmapLsmMultiMap<[u64; KW], [u64; VW]>,
+    _marker: PhantomData<(K, V)>,
 }
 
-impl<K: LsmTuple, V: LsmTuple> Default for LsmIndex<K, V> {
+impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> LsmIndex<K, V, KW, VW> {
+    const K_LAYOUT: Layout = layout(K::SIZES, K::ALIGNS, 0);
+    const V_LAYOUT: Layout = layout(V::SIZES, V::ALIGNS, 0);
+    const WIDTHS_MATCH: () = assert!(
+        KW == Self::K_LAYOUT.words && VW == Self::V_LAYOUT.words,
+        "LsmIndex: KW and VW must be the key's and value's widths",
+    );
+
+    /// The width in bytes of a key's blob.
+    pub const fn key_bytes() -> usize {
+        let () = Self::WIDTHS_MATCH;
+        KW * 8
+    }
+
+    /// The width in bytes of a value's blob.
+    pub const fn value_bytes() -> usize {
+        let () = Self::WIDTHS_MATCH;
+        VW * 8
+    }
+
+    #[inline]
+    fn encode_key(key: &K) -> [u64; KW] {
+        let mut blob = [0; KW];
+        key.encode_at(bytemuck::bytes_of_mut(&mut blob), Self::K_LAYOUT.offsets());
+        blob
+    }
+
+    #[inline]
+    fn encode_value(value: &V) -> [u64; VW] {
+        let mut blob = [0; VW];
+        value.encode_at(bytemuck::bytes_of_mut(&mut blob), Self::V_LAYOUT.offsets());
+        blob
+    }
+}
+
+impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> Default
+    for LsmIndex<K, V, KW, VW>
+{
     fn default() -> Self {
+        let () = Self::WIDTHS_MATCH;
         Self {
             map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()),
+            _marker: PhantomData,
         }
     }
 }
 
-impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> RelIndexRead<'a> for LsmIndex<K, V> {
+/// Iterator over a key's values, decoding each stored blob into a tuple of
+/// column references on the fly. Cheap to clone (as Ascent's `IteratorType`
+/// requires) because the underlying [`ValsRefs`] is.
+pub struct ValIter<'a, K, V, const KW: usize, const VW: usize> {
+    inner: ValsRefs<'a, [u64; VW]>,
+    _marker: PhantomData<(K, V)>,
+}
+
+impl<K, V, const KW: usize, const VW: usize> Clone for ValIter<'_, K, V, KW, VW> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const KW: usize, const VW: usize> Iterator
+    for ValIter<'a, K, V, KW, VW>
+{
+    type Item = V::Ref<'a>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let offsets = LsmIndex::<K, V, KW, VW>::V_LAYOUT.offsets();
+        // SAFETY: every stored value blob was written by `encode_value`, with
+        // these offsets, from a live value.
+        self.inner
+            .next()
+            .map(|v| unsafe { V::decode_at(bytemuck::bytes_of(v), offsets) })
+    }
+}
+
+/// Iterator over every `(key, values)` group of an [`LsmIndex`].
+pub struct AllIter<'a, K, V, const KW: usize, const VW: usize> {
+    inner: IterAllRefs<'a, [u64; KW], [u64; VW]>,
+    _marker: PhantomData<(K, V)>,
+}
+
+impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const KW: usize, const VW: usize> Iterator
+    for AllIter<'a, K, V, KW, VW>
+{
+    type Item = (K::Ref<'a>, ValIter<'a, K, V, KW, VW>);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let offsets = LsmIndex::<K, V, KW, VW>::K_LAYOUT.offsets();
+        self.inner.next().map(|(k, vals)| {
+            // SAFETY: every stored key blob was written by `encode_key`, with
+            // these offsets, from a live key.
+            let key = unsafe { K::decode_at(bytemuck::bytes_of(k), offsets) };
+            let vals = ValIter {
+                inner: vals,
+                _marker: PhantomData,
+            };
+            (key, vals)
+        })
+    }
+}
+
+impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const KW: usize, const VW: usize> RelIndexRead<'a>
+    for LsmIndex<K, V, KW, VW>
+{
     type Key = K;
     type Value = V::Ref<'a>;
-    type IteratorType = ValIter<'a, V>;
+    type IteratorType = ValIter<'a, K, V, KW, VW>;
 
     #[inline]
     fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
-        let vals = self.map.get_refs(&key.encode())?;
-        Some(ValIter { inner: vals })
+        let vals = self.map.get_refs(&Self::encode_key(key))?;
+        Some(ValIter {
+            inner: vals,
+            _marker: PhantomData,
+        })
     }
 
     #[inline]
@@ -614,39 +489,49 @@ impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> RelIndexRead<'a> for LsmIndex<K, V>
     }
 }
 
-impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> RelIndexReadAll<'a> for LsmIndex<K, V> {
+impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const KW: usize, const VW: usize> RelIndexReadAll<'a>
+    for LsmIndex<K, V, KW, VW>
+{
     type Key = K::Ref<'a>;
     type Value = V::Ref<'a>;
-    type ValueIteratorType = ValIter<'a, V>;
-    type AllIteratorType = AllIter<'a, K, V>;
+    type ValueIteratorType = ValIter<'a, K, V, KW, VW>;
+    type AllIteratorType = AllIter<'a, K, V, KW, VW>;
 
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         AllIter {
             inner: self.map.iter_all_refs(),
+            _marker: PhantomData,
         }
     }
 }
 
-impl<K: LsmTuple, V: LsmTuple> RelIndexWrite for LsmIndex<K, V> {
+impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> RelIndexWrite
+    for LsmIndex<K, V, KW, VW>
+{
     type Key = K;
     type Value = V;
 
     #[inline]
     fn index_insert(&mut self, key: Self::Key, value: Self::Value) {
-        self.map.insert(key.encode(), value.encode());
+        self.map
+            .insert(Self::encode_key(&key), Self::encode_value(&value));
     }
 }
 
-impl<K: LsmTuple, V: LsmTuple> RelIndexMerge for LsmIndex<K, V> {
+impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize> RelIndexMerge
+    for LsmIndex<K, V, KW, VW>
+{
     fn move_index_contents(from: &mut Self, to: &mut Self) {
         to.map.absorb(&mut from.map);
     }
 }
 
-impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
+impl<K: LsmTuple, V: LsmTuple, const KW: usize, const VW: usize, Rel> ToRelIndex<Rel>
+    for LsmIndex<K, V, KW, VW>
+{
     type RelIndex<'a>
-        = &'a LsmIndex<K, V>
+        = &'a LsmIndex<K, V, KW, VW>
     where
         Self: 'a,
         Rel: 'a;
@@ -656,7 +541,7 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
     }
 
     type RelIndexWrite<'a>
-        = &'a mut LsmIndex<K, V>
+        = &'a mut LsmIndex<K, V, KW, VW>
     where
         Self: 'a,
         Rel: 'a;
@@ -670,10 +555,11 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
 // The shared store: one set of full tuples per relation, and the indices that
 // are views of it.
 //
-// A tuple's slot blob is its columns' `u64` words in column order, and the
-// blobs' order is the lexicographic order of those words. So the tuples whose
-// first `k` columns are given are one contiguous range of the set, and their
-// remaining columns are the tail words of each blob. Every index whose key
+// A tuple's blob is its columns' bytes at its layout's offsets, and the blobs'
+// order is the lexicographic order of their `u64` words. Every prefix index's
+// key columns end on a word boundary of the layout, so the tuples whose first
+// `k` columns are given are one contiguous range of the set, and their
+// remaining columns are in the words after the prefix. Every index whose key
 // columns are a prefix of the relation's (including the empty "none" index and
 // the full index itself) is therefore served by the one set, as a range read,
 // and only the other indices need storage of their own ([`LsmIndex`]).
@@ -689,21 +575,26 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
 ///
 /// Bit `k` of `PREFIXES` says some index reads the tuples by their first `k`
 /// columns (see [`prefix_mask`]); the runs keep a Bloom filter of those
-/// prefixes, so a read skips the runs that hold none of its prefix.
-pub struct LsmStore<T: LsmTuple, const PREFIXES: u32> {
-    set: MmapLsmMultiMap<T::Arr, ()>,
+/// prefixes, so a read skips the runs that hold none of its prefix. Each tuple
+/// is a blob of `W` words, which must be the width [`layout`] gives for
+/// `T` and `PREFIXES`; that is checked at compile time.
+pub struct LsmStore<T: LsmTuple, const PREFIXES: u32, const W: usize> {
+    set: MmapLsmMultiMap<[u64; W], ()>,
+    _marker: PhantomData<T>,
 }
 
-impl<T: LsmTuple, const PREFIXES: u32> Default for LsmStore<T, PREFIXES> {
+impl<T: LsmTuple, const PREFIXES: u32, const W: usize> Default for LsmStore<T, PREFIXES, W> {
     fn default() -> Self {
+        let () = Self::WIDTH_MATCHES;
         let mut lens: SmallVec<[usize; 2]> = SmallVec::new();
-        for k in 1..T::COLUMN_BYTES.len() {
+        for k in 1..T::SIZES.len() {
             if PREFIXES & (1 << k) != 0 {
-                lens.push(T::COLUMN_BYTES[..k].iter().sum());
+                lens.push(Self::LAYOUT.prefix_bytes(k));
             }
         }
         Self {
             set: MmapLsmMultiMap::with_memtable_limit(memtable_limit()).with_prefix_reads(&lens),
+            _marker: PhantomData,
         }
     }
 }
@@ -731,7 +622,194 @@ pub const fn prefix_mask(indices: &[&[usize]]) -> u32 {
     mask
 }
 
-impl<T: LsmTuple, const PREFIXES: u32> LsmStore<T, PREFIXES> {
+/// The most columns a tuple has.
+const MAX_COLS: usize = 6;
+
+/// Where each column of a tuple lives in its blob, for one set of prefix
+/// boundaries; computed by [`layout`].
+///
+/// Offsets and segment ends are in bytes from the start of the blob. The blob
+/// is `words` `u64`s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    offsets: [usize; MAX_COLS],
+    seg_ends: [usize; MAX_COLS],
+    /// The column index one past each segment's last column.
+    seg_cols: [usize; MAX_COLS],
+    n_cols: usize,
+    n_segs: usize,
+    /// The blob's width in words.
+    pub words: usize,
+}
+
+impl Layout {
+    /// The byte offset of each column, in declared column order.
+    pub const fn offsets(&self) -> &[usize] {
+        self.offsets.split_at(self.n_cols).0
+    }
+
+    /// The end of each segment in bytes, a multiple of eight, in order.
+    pub const fn seg_ends(&self) -> &[usize] {
+        self.seg_ends.split_at(self.n_segs).0
+    }
+
+    /// The number of columns.
+    pub const fn n_cols(&self) -> usize {
+        self.n_cols
+    }
+
+    /// The width in bytes of a prefix of the first `k` columns: the end of the
+    /// segment whose last column is `k - 1`, or 0 for `k == 0`.
+    ///
+    /// Panics unless `k` is 0, a prefix boundary or the number of columns.
+    pub const fn prefix_bytes(&self, k: usize) -> usize {
+        if k == 0 {
+            return 0;
+        }
+        let mut s = 0;
+        while s < self.n_segs {
+            if self.seg_cols[s] == k {
+                return self.seg_ends[s];
+            }
+            s += 1;
+        }
+        panic!("prefix_bytes: k is not a segment boundary");
+    }
+}
+
+/// The layout of a tuple whose columns have the given `sizes` and `aligns` (in
+/// declared order), under the prefix boundaries in `prefixes` (bit `k` for a
+/// prefix of `k` columns, as [`prefix_mask`] computes).
+///
+/// The rules:
+///
+/// 1. The bits `k` with `0 < k < n` (for `n` columns) split the columns into
+///    segments. Bit 0 (a scan) and bit `n` (the full tuple) split nothing.
+/// 2. Within a segment, columns are placed in order of decreasing alignment,
+///    ties in declared order. Every column then lands at a multiple of its
+///    alignment with no padding between columns, since each earlier column's
+///    size is a multiple of an alignment at least as large.
+/// 3. Each segment starts at a multiple of eight; the bytes from its last
+///    column to the next multiple of eight are padding.
+/// 4. The width is the last segment's end in words, at least one.
+///
+/// Segments start on words because the stores order blobs word by word, as
+/// native `u64`s: a word holding the end of one prefix and the start of the
+/// rest would interleave the bytes, and tuples sharing that prefix would not
+/// be contiguous. Whole-word prefixes also let prefix reads compare `u64`s.
+/// Within a segment, column order changes where a column lives, never which
+/// tuples share a prefix. Columns keep their alignment because reads hand out
+/// `&Column` into the blob, which is itself 8-aligned.
+///
+/// The result depends only on the arguments, so a relation's layout is the
+/// same on every run and every build. Panics (at compile time, in a const
+/// context) on more than six columns, mismatched lengths, an alignment that is
+/// not 1, 2, 4 or 8, or a size that is not a multiple of its alignment.
+pub const fn layout(sizes: &[usize], aligns: &[usize], prefixes: u32) -> Layout {
+    let n = sizes.len();
+    assert!(n <= MAX_COLS, "layout: more than six columns");
+    assert!(
+        aligns.len() == n,
+        "layout: sizes and aligns differ in length"
+    );
+    let mut c = 0;
+    while c < n {
+        let a = aligns[c];
+        assert!(
+            a == 1 || a == 2 || a == 4 || a == 8,
+            "layout: alignment must divide 8"
+        );
+        assert!(
+            sizes[c].is_multiple_of(a),
+            "layout: size not a multiple of alignment"
+        );
+        c += 1;
+    }
+
+    let mut out = Layout {
+        offsets: [0; MAX_COLS],
+        seg_ends: [0; MAX_COLS],
+        seg_cols: [0; MAX_COLS],
+        n_cols: n,
+        n_segs: 0,
+        words: 0,
+    };
+    let mut start_col = 0;
+    let mut seg_start = 0;
+    loop {
+        // This segment is columns `start_col..end_col`.
+        let mut end_col = start_col + 1;
+        while end_col < n && prefixes & (1 << end_col) == 0 {
+            end_col += 1;
+        }
+        if end_col > n {
+            end_col = n;
+        }
+        // Stable selection by decreasing alignment.
+        let mut at = seg_start;
+        let mut align = 8;
+        while align >= 1 {
+            let mut c = start_col;
+            while c < end_col {
+                if aligns[c] == align {
+                    out.offsets[c] = at;
+                    at += sizes[c];
+                }
+                c += 1;
+            }
+            align /= 2;
+        }
+        let seg_end = at.next_multiple_of(8);
+        out.seg_ends[out.n_segs] = seg_end;
+        out.seg_cols[out.n_segs] = end_col;
+        out.n_segs += 1;
+        seg_start = seg_end;
+        start_col = end_col;
+        if start_col >= n {
+            break;
+        }
+    }
+    let words = seg_start / 8;
+    out.words = if words == 0 { 1 } else { words };
+    out
+}
+
+/// Whether `a` followed by `b` is `whole`.
+const fn concat_eq(a: &[usize], b: &[usize], whole: &[usize]) -> bool {
+    if a.len() + b.len() != whole.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < whole.len() {
+        let x = if i < a.len() { a[i] } else { b[i - a.len()] };
+        if x != whole[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+impl<T: LsmTuple, const PREFIXES: u32, const W: usize> LsmStore<T, PREFIXES, W> {
+    const LAYOUT: Layout = layout(T::SIZES, T::ALIGNS, PREFIXES);
+    const WIDTH_MATCHES: () = assert!(
+        W == Self::LAYOUT.words,
+        "LsmStore: W must be the tuple's width"
+    );
+
+    /// The width in bytes of a tuple's blob.
+    ///
+    /// A `W` other than the width of `T` under `PREFIXES` does not compile:
+    ///
+    /// ```compile_fail
+    /// use lsm::ascent_provider::LsmStore;
+    /// LsmStore::<(u32, u64, u32, u32, u32), { 1 << 3 }, 2>::tuple_bytes();
+    /// ```
+    pub const fn tuple_bytes() -> usize {
+        let () = Self::WIDTH_MATCHES;
+        W * 8
+    }
+
     /// The number of tuples.
     pub fn len(&self) -> usize {
         self.set.len()
@@ -742,27 +820,47 @@ impl<T: LsmTuple, const PREFIXES: u32> LsmStore<T, PREFIXES> {
     }
 
     pub fn contains(&self, tuple: &T) -> bool {
-        self.set.contains_key(&tuple.encode())
+        self.set.contains_key(&Self::encode(tuple))
     }
 
     /// Every tuple, as column references, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = T::Ref<'_>> {
-        // SAFETY: every stored blob was produced by `T::encode`.
-        self.set.keys().map(|a| unsafe { T::decode(a) })
+        // SAFETY: the blobs come from the set.
+        self.set.keys().map(|blob| unsafe { Self::decode(blob) })
+    }
+
+    /// The tuple's blob: its columns at the layout's offsets, the rest zero.
+    #[inline]
+    fn encode(tuple: &T) -> [u64; W] {
+        let mut blob = [0; W];
+        tuple.encode_at(bytemuck::bytes_of_mut(&mut blob), Self::LAYOUT.offsets());
+        blob
+    }
+
+    /// The columns of a blob in the set.
+    ///
+    /// # Safety
+    /// `blob` must come from the set, whose blobs `encode` wrote from live
+    /// tuples.
+    #[inline]
+    unsafe fn decode(blob: &[u64; W]) -> T::Ref<'_> {
+        // SAFETY: `encode` wrote each column at its layout offset, which is
+        // aligned for the column within the 8-aligned blob, from a live tuple.
+        unsafe { T::decode_at(bytemuck::bytes_of(blob), Self::LAYOUT.offsets()) }
     }
 
     fn insert_if_not_present(&mut self, tuple: &T) -> bool {
-        let arr = tuple.encode();
-        if self.set.contains_key(&arr) {
+        let blob = Self::encode(tuple);
+        if self.set.contains_key(&blob) {
             false
         } else {
-            self.set.insert(arr, ());
+            self.set.insert(blob, ());
             true
         }
     }
 }
 
-impl<T: LsmTuple, const PREFIXES: u32> RelIndexMerge for LsmStore<T, PREFIXES> {
+impl<T: LsmTuple, const PREFIXES: u32, const W: usize> RelIndexMerge for LsmStore<T, PREFIXES, W> {
     // Ascent only moves `delta` into `total`, and a tuple enters `new` (the next
     // `delta`) only when neither `total` nor `delta` has it, so the two never
     // share a tuple: the runs move over without a membership check.
@@ -796,56 +894,60 @@ impl<T> Default for ToScan<T> {
 }
 
 /// The full index's read view.
-pub struct FullView<'a, T: LsmTuple, const P: u32>(&'a LsmStore<T, P>);
+pub struct FullView<'a, T: LsmTuple, const P: u32, const W: usize>(&'a LsmStore<T, P, W>);
 /// A prefix index's read view.
-pub struct PrefixView<'a, T: LsmTuple, K, V, const P: u32>(&'a LsmStore<T, P>, PhantomData<(K, V)>);
+pub struct PrefixView<'a, T: LsmTuple, K, V, const P: u32, const W: usize>(
+    &'a LsmStore<T, P, W>,
+    PhantomData<(K, V)>,
+);
 /// The "none" index's read view.
-pub struct ScanView<'a, T: LsmTuple, const P: u32>(&'a LsmStore<T, P>);
+pub struct ScanView<'a, T: LsmTuple, const P: u32, const W: usize>(&'a LsmStore<T, P, W>);
 
 /// The full index's write target: the one way tuples enter the store.
-pub struct FullWrite<'a, T: LsmTuple, const P: u32>(&'a mut LsmStore<T, P>);
+pub struct FullWrite<'a, T: LsmTuple, const P: u32, const W: usize>(&'a mut LsmStore<T, P, W>);
 /// The write target of a view index, which has nothing of its own to write.
 pub struct NoopWrite<K, V>(PhantomData<(K, V)>);
 
-impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToFull<T> {
+impl<T: LsmTuple, const P: u32, const W: usize> ToRelIndex<LsmStore<T, P, W>> for ToFull<T> {
     type RelIndex<'a>
-        = FullView<'a, T, P>
+        = FullView<'a, T, P, W>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
-    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P, W>) -> Self::RelIndex<'a> {
         FullView(store)
     }
 
     type RelIndexWrite<'a>
-        = FullWrite<'a, T, P>
+        = FullWrite<'a, T, P, W>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
     fn to_rel_index_write<'a>(
         &'a mut self,
-        store: &'a mut LsmStore<T, P>,
+        store: &'a mut LsmStore<T, P, W>,
     ) -> Self::RelIndexWrite<'a> {
         FullWrite(store)
     }
 }
 
-impl<T: LsmTuple, K: LsmTuple, V: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>>
-    for ToPrefix<T, K, V>
+impl<T: LsmTuple, K: LsmTuple, V: LsmTuple, const P: u32, const W: usize>
+    ToRelIndex<LsmStore<T, P, W>> for ToPrefix<T, K, V>
 {
     type RelIndex<'a>
-        = PrefixView<'a, T, K, V, P>
+        = PrefixView<'a, T, K, V, P, W>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
-    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P, W>) -> Self::RelIndex<'a> {
         const {
             assert!(
-                size_of::<K::Arr>() + size_of::<V::Arr>() == size_of::<T::Arr>(),
-                "a prefix index's key and value must split the tuple's slots",
+                concat_eq(K::SIZES, V::SIZES, T::SIZES)
+                    && concat_eq(K::ALIGNS, V::ALIGNS, T::ALIGNS),
+                "a prefix index's key and value columns must be the tuple's",
             );
         }
         PrefixView(store, PhantomData)
@@ -855,24 +957,24 @@ impl<T: LsmTuple, K: LsmTuple, V: LsmTuple, const P: u32> ToRelIndex<LsmStore<T,
         = NoopWrite<K, V>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
     fn to_rel_index_write<'a>(
         &'a mut self,
-        _store: &'a mut LsmStore<T, P>,
+        _store: &'a mut LsmStore<T, P, W>,
     ) -> Self::RelIndexWrite<'a> {
         NoopWrite(PhantomData)
     }
 }
 
-impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToScan<T> {
+impl<T: LsmTuple, const P: u32, const W: usize> ToRelIndex<LsmStore<T, P, W>> for ToScan<T> {
     type RelIndex<'a>
-        = ScanView<'a, T, P>
+        = ScanView<'a, T, P, W>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
-    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P, W>) -> Self::RelIndex<'a> {
         ScanView(store)
     }
 
@@ -880,11 +982,11 @@ impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToScan<T> {
         = NoopWrite<(), T>
     where
         Self: 'a,
-        LsmStore<T, P>: 'a;
+        LsmStore<T, P, W>: 'a;
     #[inline]
     fn to_rel_index_write<'a>(
         &'a mut self,
-        _store: &'a mut LsmStore<T, P>,
+        _store: &'a mut LsmStore<T, P, W>,
     ) -> Self::RelIndexWrite<'a> {
         NoopWrite(PhantomData)
     }
@@ -892,7 +994,9 @@ impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToScan<T> {
 
 // ---- write targets ----
 
-impl<T: LsmTuple + Clone, const P: u32> RelFullIndexWrite for FullWrite<'_, T, P> {
+impl<T: LsmTuple + Clone, const P: u32, const W: usize> RelFullIndexWrite
+    for FullWrite<'_, T, P, W>
+{
     type Key = T;
     type Value = ();
     #[inline]
@@ -901,7 +1005,7 @@ impl<T: LsmTuple + Clone, const P: u32> RelFullIndexWrite for FullWrite<'_, T, P
     }
 }
 
-impl<T: LsmTuple, const P: u32> RelIndexWrite for FullWrite<'_, T, P> {
+impl<T: LsmTuple, const P: u32, const W: usize> RelIndexWrite for FullWrite<'_, T, P, W> {
     type Key = T;
     type Value = ();
     #[inline]
@@ -910,7 +1014,7 @@ impl<T: LsmTuple, const P: u32> RelIndexWrite for FullWrite<'_, T, P> {
     }
 }
 
-impl<T: LsmTuple, const P: u32> RelIndexMerge for FullWrite<'_, T, P> {
+impl<T: LsmTuple, const P: u32, const W: usize> RelIndexMerge for FullWrite<'_, T, P, W> {
     #[inline(always)]
     fn move_index_contents(_from: &mut Self, _to: &mut Self) {}
     #[inline(always)]
@@ -933,7 +1037,9 @@ impl<K, V> RelIndexMerge for NoopWrite<K, V> {
 
 // ---- read views ----
 
-impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for FullView<'a, T, P> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> RelIndexRead<'a>
+    for FullView<'a, T, P, W>
+{
     type Key = T;
     type Value = ();
     type IteratorType = Once<()>;
@@ -951,7 +1057,9 @@ impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for FullView<'a, T, P>
     }
 }
 
-impl<'a, T: LsmTuple + 'a, const P: u32> RelFullIndexRead<'a> for FullView<'a, T, P> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> RelFullIndexRead<'a>
+    for FullView<'a, T, P, W>
+{
     type Key = T;
     #[inline]
     fn contains_key(&'a self, key: &T) -> bool {
@@ -959,33 +1067,58 @@ impl<'a, T: LsmTuple + 'a, const P: u32> RelFullIndexRead<'a> for FullView<'a, T
     }
 }
 
-impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a> for FullView<'a, T, P> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> RelIndexReadAll<'a>
+    for FullView<'a, T, P, W>
+{
     type Key = T::Ref<'a>;
     type Value = ();
     type ValueIteratorType = Once<()>;
-    type AllIteratorType = FullAllIter<'a, T>;
+    type AllIteratorType = FullAllIter<'a, T, P, W>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         FullAllIter {
-            inner: self.0.set.keys(),
+            keys: self.0.set.keys(),
+            _marker: PhantomData,
         }
     }
 }
 
-impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32> RelIndexRead<'a>
-    for PrefixView<'a, T, K, V, P>
+/// Iterator over every tuple of an [`LsmStore`], as the full index's keys.
+pub struct FullAllIter<'a, T, const P: u32, const W: usize> {
+    keys: KeysIter<'a, [u64; W], ()>,
+    _marker: PhantomData<T>,
+}
+
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> Iterator for FullAllIter<'a, T, P, W> {
+    type Item = (T::Ref<'a>, Once<()>);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: the blobs come from the store's set.
+        self.keys
+            .next()
+            .map(|blob| (unsafe { LsmStore::<T, P, W>::decode(blob) }, once(())))
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32, const W: usize>
+    RelIndexRead<'a> for PrefixView<'a, T, K, V, P, W>
 {
     type Key = K;
     type Value = V::Ref<'a>;
-    type IteratorType = SuffixIter<'a, T, V>;
+    type IteratorType = SuffixIter<'a, T, V, P, W>;
     #[inline]
     fn index_get(&'a self, key: &K) -> Option<Self::IteratorType> {
-        let prefix = key.encode();
-        let mut keys = self.0.set.keys_with_prefix(words(&prefix)).peekable();
+        let k = const { K::SIZES.len() };
+        let prefix_words =
+            const { LsmStore::<T, P, W>::LAYOUT.prefix_bytes(K::SIZES.len()) / size_of::<u64>() };
+        let mut blob = [0u64; W];
+        let offsets = &LsmStore::<T, P, W>::LAYOUT.offsets()[..k];
+        key.encode_at(bytemuck::bytes_of_mut(&mut blob), offsets);
+        let prefix = &blob[..prefix_words];
+        let mut keys = self.0.set.keys_with_prefix(prefix).peekable();
         keys.peek()?;
         Some(SuffixIter {
             keys,
-            skip: size_of::<K::Arr>(),
             _marker: PhantomData,
         })
     }
@@ -999,58 +1132,59 @@ impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32> Rel
     }
 }
 
-impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a>
-    for PrefixView<'a, T, K, V, P>
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32, const W: usize>
+    RelIndexReadAll<'a> for PrefixView<'a, T, K, V, P, W>
 {
     type Key = K::Ref<'a>;
     type Value = V::Ref<'a>;
-    type ValueIteratorType = SuffixIter<'a, T, V>;
-    type AllIteratorType = PrefixGroupsIter<'a, T, K, V>;
+    type ValueIteratorType = SuffixIter<'a, T, V, P, W>;
+    type AllIteratorType = PrefixGroupsIter<'a, T, K, V, P, W>;
     /// The tuples, grouped by prefix. A prefix the memtable and several runs
     /// hold comes as several groups, which suits Ascent: it reads an index whole
     /// to join each group against another relation, and joining a prefix's
     /// tuples in parts gives the same result.
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        let skip = size_of::<K::Arr>();
+        let prefix_words =
+            const { LsmStore::<T, P, W>::LAYOUT.prefix_bytes(K::SIZES.len()) / size_of::<u64>() };
         PrefixGroupsIter {
-            groups: self.0.set.prefix_groups(skip / size_of::<u64>()),
-            skip,
+            groups: self.0.set.prefix_groups(prefix_words),
             _marker: PhantomData,
         }
     }
 }
 
 /// The groups of a [`PrefixView`]'s `iter_all`.
-pub struct PrefixGroupsIter<'a, T: LsmTuple, K, V> {
-    groups: PrefixGroups<'a, T::Arr, ()>,
-    skip: usize,
-    _marker: PhantomData<(K, V)>,
+pub struct PrefixGroupsIter<'a, T, K, V, const P: u32, const W: usize> {
+    groups: PrefixGroups<'a, [u64; W], ()>,
+    _marker: PhantomData<(T, K, V)>,
 }
 
-impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a> Iterator
-    for PrefixGroupsIter<'a, T, K, V>
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32, const W: usize>
+    Iterator for PrefixGroupsIter<'a, T, K, V, P, W>
 {
-    type Item = (K::Ref<'a>, SuffixIter<'a, T, V>);
+    type Item = (K::Ref<'a>, SuffixIter<'a, T, V, P, W>);
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let (first, keys) = self.groups.next()?;
-        let head = &bytemuck::bytes_of(first)[..self.skip];
-        // SAFETY: `head` is the leading `K` slots of a blob `T::encode` wrote.
-        let key = unsafe { K::decode(bytemuck::from_bytes(head)) };
+        let offsets = &LsmStore::<T, P, W>::LAYOUT.offsets()[..const { K::SIZES.len() }];
+        // SAFETY: `first` is a blob of the set, which `LsmStore::encode` wrote
+        // from a live tuple whose first columns are `K`'s, at these offsets.
+        let key = unsafe { K::decode_at(bytemuck::bytes_of(first), offsets) };
         let values = SuffixIter {
             keys: keys.peekable(),
-            skip: self.skip,
             _marker: PhantomData,
         };
         Some((key, values))
     }
 }
 
-impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for ScanView<'a, T, P> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> RelIndexRead<'a>
+    for ScanView<'a, T, P, W>
+{
     type Key = ();
     type Value = T::Ref<'a>;
-    type IteratorType = ScanIter<'a, T>;
+    type IteratorType = ScanIter<'a, T, P, W>;
     #[inline]
     fn index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
         if self.0.is_empty() {
@@ -1058,6 +1192,7 @@ impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for ScanView<'a, T, P>
         }
         Some(ScanIter {
             keys: self.0.set.keys(),
+            _marker: PhantomData,
         })
     }
     #[inline]
@@ -1070,65 +1205,73 @@ impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for ScanView<'a, T, P>
     }
 }
 
-impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a> for ScanView<'a, T, P> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> RelIndexReadAll<'a>
+    for ScanView<'a, T, P, W>
+{
     type Key = ();
     type Value = T::Ref<'a>;
-    type ValueIteratorType = ScanIter<'a, T>;
-    type AllIteratorType = std::option::IntoIter<((), ScanIter<'a, T>)>;
+    type ValueIteratorType = ScanIter<'a, T, P, W>;
+    type AllIteratorType = std::option::IntoIter<((), ScanIter<'a, T, P, W>)>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         self.index_get(&()).map(|vals| ((), vals)).into_iter()
     }
 }
 
-/// The value columns of the tuples a prefix read found: each tuple's slots past
-/// its first `skip` bytes, decoded as a `V`.
-pub struct SuffixIter<'a, T: LsmTuple, V> {
-    keys: std::iter::Peekable<KeysIter<'a, T::Arr, ()>>,
-    skip: usize,
-    _marker: PhantomData<V>,
+/// The value columns of the tuples a prefix read found: each tuple's columns
+/// after the prefix, decoded as a `V` in place.
+pub struct SuffixIter<'a, T, V, const P: u32, const W: usize> {
+    keys: std::iter::Peekable<KeysIter<'a, [u64; W], ()>>,
+    _marker: PhantomData<(T, V)>,
 }
 
-impl<T: LsmTuple, V> Clone for SuffixIter<'_, T, V> {
+impl<T, V, const P: u32, const W: usize> Clone for SuffixIter<'_, T, V, P, W> {
     fn clone(&self) -> Self {
         Self {
             keys: self.keys.clone(),
-            skip: self.skip,
             _marker: PhantomData,
         }
     }
 }
 
-impl<'a, T: LsmTuple + 'a, V: LsmTuple + 'a> Iterator for SuffixIter<'a, T, V> {
+impl<'a, T: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32, const W: usize> Iterator
+    for SuffixIter<'a, T, V, P, W>
+{
     type Item = V::Ref<'a>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let tuple = self.keys.next()?;
-        let tail = &bytemuck::bytes_of(tuple)[self.skip..];
-        // SAFETY: `tail` is the trailing `V` slots of a blob `T::encode` wrote.
-        Some(unsafe { V::decode(bytemuck::from_bytes(tail)) })
+        let k = const { T::SIZES.len() - V::SIZES.len() };
+        let offsets = &LsmStore::<T, P, W>::LAYOUT.offsets()[k..];
+        // SAFETY: `tuple` is a blob of the set, which `LsmStore::encode` wrote
+        // from a live tuple whose last columns are `V`'s, at these offsets.
+        Some(unsafe { V::decode_at(bytemuck::bytes_of(tuple), offsets) })
     }
 }
 
 /// Every tuple of a store, decoded.
-pub struct ScanIter<'a, T: LsmTuple> {
-    keys: KeysIter<'a, T::Arr, ()>,
+pub struct ScanIter<'a, T, const P: u32, const W: usize> {
+    keys: KeysIter<'a, [u64; W], ()>,
+    _marker: PhantomData<T>,
 }
 
-impl<T: LsmTuple> Clone for ScanIter<'_, T> {
+impl<T, const P: u32, const W: usize> Clone for ScanIter<'_, T, P, W> {
     fn clone(&self) -> Self {
         Self {
             keys: self.keys.clone(),
+            _marker: PhantomData,
         }
     }
 }
 
-impl<'a, T: LsmTuple + 'a> Iterator for ScanIter<'a, T> {
+impl<'a, T: LsmTuple + 'a, const P: u32, const W: usize> Iterator for ScanIter<'a, T, P, W> {
     type Item = T::Ref<'a>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: every stored blob was produced by `T::encode`.
-        self.keys.next().map(|a| unsafe { T::decode(a) })
+        // SAFETY: the blobs come from the store's set.
+        self.keys
+            .next()
+            .map(|blob| unsafe { LsmStore::<T, P, W>::decode(blob) })
     }
 }
 
@@ -1290,7 +1433,28 @@ macro_rules! lsm_nary_rel_ind_common {
         $crate::ascent_provider::LsmStore<
             $field_types,
             { $crate::ascent_provider::prefix_mask(&[$(&[$($col),*]),*]) },
+            {
+                $crate::lsm_tuple_words!(
+                    $field_types,
+                    $crate::ascent_provider::prefix_mask(&[$(&[$($col),*]),*])
+                )
+            },
         >
+    };
+}
+
+/// The width in words of a blob holding tuples of type `$t` under the prefix
+/// mask `$mask`, as a const expression.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! lsm_tuple_words {
+    ($t:ty, $mask:expr) => {
+        $crate::ascent_provider::layout(
+            <$t as $crate::ascent_provider::LsmTuple>::SIZES,
+            <$t as $crate::ascent_provider::LsmTuple>::ALIGNS,
+            $mask,
+        )
+        .words
     };
 }
 
@@ -1334,7 +1498,12 @@ macro_rules! lsm_nary_index_for {
         $crate::ascent_provider::ToPrefix<$t, $key, $val>
     };
     ($ind:tt, $t:ty, $key:ty, $val:ty) => {
-        $crate::ascent_provider::LsmIndex<$key, $val>
+        $crate::ascent_provider::LsmIndex<
+            $key,
+            $val,
+            { $crate::lsm_tuple_words!($key, 0) },
+            { $crate::lsm_tuple_words!($val, 0) },
+        >
     };
 }
 
@@ -1346,4 +1515,485 @@ pub mod provider {
         lsm_nary_rel_full_ind as rel_full_ind, lsm_nary_rel_ind as rel_ind,
         lsm_nary_rel_ind_common as rel_ind_common,
     };
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::{Layout, layout};
+
+    /// Proves `layout` evaluates at compile time.
+    const _: Layout = layout(&[4, 8, 4], &[4, 8, 4], 0);
+
+    /// One case: `(sizes, aligns, mask) -> (offsets, seg_ends, words)`.
+    type Case = (
+        &'static [usize],
+        &'static [usize],
+        u32,
+        &'static [usize],
+        &'static [usize],
+        usize,
+    );
+
+    const CASES: &[Case] = &[
+        // locals_key: FunctionId, FlowVariable, Path, Path, Path, probed by 3 columns.
+        (
+            &[4, 8, 4, 4, 4],
+            &[4, 8, 4, 4, 4],
+            1 << 3,
+            &[8, 0, 12, 16, 20],
+            &[16, 24],
+            3,
+        ),
+        // reach_vp: FunctionId, FlowVariable, Path, no inner boundary.
+        (&[4, 8, 4], &[4, 8, 4], 0, &[8, 0, 12], &[16], 2),
+        // Bits 0 and n (scan, full) split nothing.
+        (&[4, 8, 4], &[4, 8, 4], 1 | 1 << 3, &[8, 0, 12], &[16], 2),
+        // actual_param: PackedInsnSiteId, FormalIndex, FlowVertex (8-aligned).
+        (&[8, 2, 16], &[8, 2, 8], 0, &[0, 24, 8], &[32], 4),
+        // A segment that pads to a word before the next.
+        (&[4, 8], &[4, 8], 1 << 1, &[0, 8], &[8, 16], 2),
+        // 1, 2, 4, 8 and an 8-aligned 16 in one segment: 31 bytes, 4 words.
+        (
+            &[1, 2, 4, 8, 16],
+            &[1, 2, 4, 8, 8],
+            0,
+            &[30, 28, 24, 0, 8],
+            &[32],
+            4,
+        ),
+        // Several boundaries over five u32s: segments {0}, {1}, {2, 3}, {4}.
+        (
+            &[4, 4, 4, 4, 4],
+            &[4, 4, 4, 4, 4],
+            1 << 1 | 1 << 2 | 1 << 4,
+            &[0, 8, 16, 20, 24],
+            &[8, 16, 24, 32],
+            4,
+        ),
+        // Ties keep declared order.
+        (&[4, 4, 4], &[4, 4, 4], 0, &[0, 4, 8], &[16], 2),
+        // Arity 0 is still one word.
+        (&[], &[], 0, &[], &[0], 1),
+        // Six byte columns, every boundary.
+        (
+            &[1, 1, 1, 1, 1, 1],
+            &[1, 1, 1, 1, 1, 1],
+            0b11_1110,
+            &[0, 8, 16, 24, 32, 40],
+            &[8, 16, 24, 32, 40, 48],
+            6,
+        ),
+    ];
+
+    #[test]
+    fn layout_table() {
+        for &(sizes, aligns, mask, offsets, seg_ends, words) in CASES {
+            let l = layout(sizes, aligns, mask);
+            let case = format!("sizes {sizes:?} aligns {aligns:?} mask {mask:#b}");
+            assert_eq!(l.offsets(), offsets, "offsets, {case}");
+            assert_eq!(l.seg_ends(), seg_ends, "seg_ends, {case}");
+            assert_eq!(l.words, words, "words, {case}");
+            assert_eq!(l.n_cols(), sizes.len(), "n_cols, {case}");
+            // Every column is aligned, and no two columns overlap.
+            for c in 0..sizes.len() {
+                assert_eq!(offsets[c] % aligns[c], 0, "column {c} misaligned, {case}");
+                for d in 0..c {
+                    let disjoint =
+                        offsets[c] + sizes[c] <= offsets[d] || offsets[d] + sizes[d] <= offsets[c];
+                    assert!(disjoint, "columns {d} and {c} overlap, {case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn layout_prefix_bytes() {
+        let l = layout(&[4, 8, 4, 4, 4], &[4, 8, 4, 4, 4], 1 << 3);
+        assert_eq!(l.prefix_bytes(0), 0);
+        assert_eq!(l.prefix_bytes(3), 16);
+        assert_eq!(l.prefix_bytes(5), 24);
+
+        let l = layout(&[4; 5], &[4; 5], 1 << 1 | 1 << 2 | 1 << 4);
+        assert_eq!([1, 2, 4, 5].map(|k| l.prefix_bytes(k)), [8, 16, 24, 32]);
+
+        const K3: usize = layout(&[4, 8, 4, 4, 4], &[4, 8, 4, 4, 4], 1 << 3).prefix_bytes(3);
+        assert_eq!(K3, 16);
+    }
+
+    #[test]
+    #[should_panic(expected = "not a segment boundary")]
+    fn layout_prefix_bytes_inside_a_segment() {
+        layout(&[4, 8, 4], &[4, 8, 4], 0).prefix_bytes(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "more than six columns")]
+    fn layout_rejects_seven_columns() {
+        layout(&[1; 7], &[1; 7], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "alignment must divide 8")]
+    fn layout_rejects_align_16() {
+        layout(&[16], &[16], 0);
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use std::fmt::Debug;
+
+    use super::*;
+
+    /// A 16-byte column.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct Wide(u64, u64);
+    crate::lsm_col!(Wide, [u64, u64]);
+
+    /// A column shaped like CTADL's `FlowVertex`: a word and two 4-byte fields.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct Vtx(u64, u32, u32);
+    crate::lsm_col!(Vtx, [u64, u32, u32]);
+
+    /// A column type with distinct sample values.
+    trait Sample: LsmCol + PartialEq + Debug {
+        fn sample(i: u64) -> Self;
+    }
+    impl Sample for u8 {
+        fn sample(i: u64) -> Self {
+            (i * 37 + 1) as u8
+        }
+    }
+    impl Sample for u16 {
+        fn sample(i: u64) -> Self {
+            (i * 4099 + 2) as u16
+        }
+    }
+    impl Sample for u32 {
+        fn sample(i: u64) -> Self {
+            (i * 65_537 + 3) as u32
+        }
+    }
+    impl Sample for u64 {
+        fn sample(i: u64) -> Self {
+            i.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1
+        }
+    }
+    impl Sample for Wide {
+        fn sample(i: u64) -> Self {
+            Wide(i + 5, !i)
+        }
+    }
+    impl Sample for Vtx {
+        fn sample(i: u64) -> Self {
+            Vtx(i + 7, (i * 3) as u32, (i * 11 + 1) as u32)
+        }
+    }
+    impl<A: Sample, B: Sample> Sample for (A, B) {
+        fn sample(i: u64) -> Self {
+            (A::sample(i), B::sample(i + 1))
+        }
+    }
+
+    /// A tuple the tests can build, copy out of a blob, and split.
+    trait TestTuple: LsmTuple + Copy + PartialEq + Debug + 'static {
+        /// A tuple whose column `c` is `sample(i + c)`.
+        fn sample(i: u64) -> Self;
+        /// This tuple with column `c` replaced by `sample(i)`.
+        fn vary(self, c: usize, i: u64) -> Self;
+        /// The tuple the references point to.
+        fn owned(r: Self::Ref<'_>) -> Self;
+        /// Checks every split of `blob`, this tuple's blob under `layout`, into
+        /// its first `k` and remaining columns.
+        fn check_splits(self, blob: &[u8], layout: &Layout, mask: u32);
+    }
+
+    impl TestTuple for () {
+        fn sample(_i: u64) -> Self {}
+        fn vary(self, _c: usize, _i: u64) -> Self {}
+        fn owned(_r: ()) -> Self {}
+        fn check_splits(self, _blob: &[u8], _layout: &Layout, _mask: u32) {}
+    }
+
+    /// Checks that `blob[..]` splits into `key` and `val` at `K`'s arity: they
+    /// decode in place, and at a prefix boundary the key's columns lie before
+    /// the prefix's end and the value's after it.
+    fn check_split<K: TestTuple, V: TestTuple>(
+        key: K,
+        val: V,
+        blob: &[u8],
+        layout: &Layout,
+        mask: u32,
+    ) {
+        let k = K::SIZES.len();
+        let (koffs, voffs) = layout.offsets().split_at(k);
+        // SAFETY: `blob` was encoded from a live tuple with `layout`.
+        let (kr, vr) = unsafe { (K::decode_at(blob, koffs), V::decode_at(blob, voffs)) };
+        assert_eq!(K::owned(kr), key, "key at split {k}, mask {mask:#b}");
+        assert_eq!(V::owned(vr), val, "value at split {k}, mask {mask:#b}");
+        if k == layout.n_cols() || mask & (1 << k) != 0 {
+            let end = layout.prefix_bytes(k);
+            assert_eq!(end % 8, 0);
+            for (c, &off) in koffs.iter().enumerate() {
+                assert!(off + K::SIZES[c] <= end, "key column {c} past {end}");
+            }
+            for &off in voffs {
+                assert!(off >= end, "value column at {off} before {end}");
+            }
+        }
+    }
+
+    /// Calls [`check_split`] for each split of the columns after `[$h ...]`.
+    macro_rules! splits {
+        ($t:ident, $blob:ident, $l:ident, $mask:ident, [$($h:tt $H:ident)*], []) => {};
+        (
+            $t:ident, $blob:ident, $l:ident, $mask:ident,
+            [$($h:tt $H:ident)*], [$n:tt $N:ident $($r:tt $R:ident)*]
+        ) => {
+            check_split::<($($H,)* $N,), ($($R,)*)>(
+                ($($t.$h,)* $t.$n,),
+                ($($t.$r,)*),
+                $blob,
+                $l,
+                $mask,
+            );
+            splits!($t, $blob, $l, $mask, [$($h $H)* $n $N], [$($r $R)*]);
+        };
+    }
+
+    macro_rules! test_tuple {
+        ($($i:tt $c:ident),+) => {
+            impl<$($c: Sample),+> TestTuple for ($($c,)+) {
+                fn sample(i: u64) -> Self {
+                    ($($c::sample(i + $i),)+)
+                }
+                fn vary(mut self, c: usize, i: u64) -> Self {
+                    match c {
+                        $($i => self.$i = $c::sample(i),)+
+                        _ => unreachable!(),
+                    }
+                    self
+                }
+                fn owned(r: Self::Ref<'_>) -> Self {
+                    ($(*r.$i,)+)
+                }
+                fn check_splits(self, blob: &[u8], layout: &Layout, mask: u32) {
+                    let t = self;
+                    splits!(t, blob, layout, mask, [], [$($i $c)+]);
+                }
+            }
+        };
+    }
+
+    test_tuple!(0 A);
+    test_tuple!(0 A, 1 B);
+    test_tuple!(0 A, 1 B, 2 C);
+    test_tuple!(0 A, 1 B, 2 C, 3 D);
+    test_tuple!(0 A, 1 B, 2 C, 3 D, 4 E);
+    test_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F);
+
+    /// `t`'s blob under `layout`, written over words of `fill`.
+    fn encode_over<T: LsmTuple>(t: &T, layout: &Layout, fill: u64) -> Vec<u64> {
+        let mut blob = vec![fill; layout.words];
+        t.encode_at(bytemuck::cast_slice_mut(&mut blob), layout.offsets());
+        blob
+    }
+
+    /// For every mask over `T`'s inner boundaries: decoding gives back the
+    /// tuple, whole and split at each boundary; pad bytes are zero; a column's
+    /// bytes do not depend on what the blob held; and blobs are equal exactly
+    /// when tuples are.
+    fn round_trip<T: TestTuple>() {
+        let n = T::SIZES.len();
+        for inner in 0..1u32 << (n - 1) {
+            let mask = inner << 1;
+            let layout = layout(T::SIZES, T::ALIGNS, mask);
+            let mut covered = vec![false; layout.words * 8];
+            for (c, &off) in layout.offsets().iter().enumerate() {
+                covered[off..off + T::SIZES[c]].fill(true);
+            }
+            for i in 0..16 {
+                let t = T::sample(i);
+                let zeros = encode_over(&t, &layout, 0);
+                let ones = encode_over(&t, &layout, u64::MAX);
+                let bytes: &[u8] = bytemuck::cast_slice(&zeros);
+                // SAFETY: `bytes` was encoded from a live tuple with `layout`.
+                let back = T::owned(unsafe { T::decode_at(bytes, layout.offsets()) });
+                assert_eq!(back, t, "mask {mask:#b}");
+                let ones: &[u8] = bytemuck::cast_slice(&ones);
+                for (b, &is_col) in covered.iter().enumerate() {
+                    if is_col {
+                        assert_eq!(bytes[b], ones[b], "byte {b} of {t:?}, mask {mask:#b}");
+                    } else {
+                        assert_eq!(bytes[b], 0, "pad byte {b} of {t:?}, mask {mask:#b}");
+                    }
+                }
+                t.check_splits(bytes, &layout, mask);
+                assert_eq!(encode_over(&T::sample(i), &layout, 0), zeros);
+                for c in 0..n {
+                    let u = t.vary(c, i + 1000);
+                    assert_ne!(u, t);
+                    assert_ne!(encode_over(&u, &layout, 0), zeros, "{u:?} vs {t:?}");
+                }
+            }
+        }
+    }
+
+    type P2 = (u32, u16);
+
+    #[test]
+    fn round_trips() {
+        round_trip::<(u8,)>();
+        round_trip::<(P2,)>();
+        round_trip::<(u16, Wide)>();
+        round_trip::<(u32, P2, u8)>();
+        round_trip::<(u64, u8, Wide, u16)>();
+        round_trip::<(Wide, u32, u16, P2, u64)>();
+        round_trip::<(u8, u16, u32, u64, P2, Wide)>();
+        round_trip::<(u8, Vtx, u8, u16, u8, u32)>();
+    }
+
+    #[test]
+    fn arity_zero_is_one_zero_word() {
+        let layout = layout(<()>::SIZES, <()>::ALIGNS, 0);
+        assert_eq!(layout.words, 1);
+        assert_eq!(encode_over(&(), &layout, 0), [0]);
+    }
+
+    type C4 = (u32, u64, u16, u32);
+
+    /// Reads `store` by its first `K::SIZES.len()` columns, by key and grouped,
+    /// and checks that each read gives exactly the tuples with that prefix.
+    fn check_prefix<K, V, const P: u32, const W: usize>(
+        store: &LsmStore<C4, P, W>,
+        tuples: &[C4],
+        split: fn(C4) -> (K, V),
+        join: fn(K, V) -> C4,
+    ) where
+        K: TestTuple + Ord,
+        V: TestTuple,
+    {
+        let marker = ToPrefix::<C4, K, V>::default();
+        let view = marker.to_rel_index(store);
+        let mut keys: Vec<K> = tuples.iter().map(|&t| split(t).0).collect();
+        keys.sort();
+        keys.dedup();
+        for &key in &keys {
+            let mut got: Vec<C4> = view
+                .index_get(&key)
+                .expect("a present prefix")
+                .map(|v| join(key, V::owned(v)))
+                .collect();
+            got.sort();
+            let mut want: Vec<C4> = tuples
+                .iter()
+                .copied()
+                .filter(|&t| split(t).0 == key)
+                .collect();
+            want.sort();
+            assert_eq!(got, want, "prefix {key:?}");
+        }
+        let absent = split((u32::MAX, u64::MAX, u16::MAX, u32::MAX)).0;
+        assert!(view.index_get(&absent).is_none());
+
+        let mut all: Vec<C4> = Vec::new();
+        for (kr, vals) in view.iter_all() {
+            let key = K::owned(kr);
+            all.extend(vals.map(|v| join(key, V::owned(v))));
+        }
+        all.sort();
+        let mut want = tuples.to_vec();
+        want.sort();
+        assert_eq!(all, want, "iter_all by {} columns", K::SIZES.len());
+    }
+
+    /// A store of shuffled tuples with a tiny memtable, so that they spread
+    /// over the memtable and many runs, after checking that the full index
+    /// reads them back.
+    fn filled_store<const P: u32, const W: usize>() -> (LsmStore<C4, P, W>, Vec<C4>) {
+        let mut tuples: Vec<C4> = (0..500u32)
+            .map(|i| (i % 5, (i % 7) as u64 * 1_000_000_007, (i % 3) as u16, i))
+            .collect();
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        for i in (1..tuples.len()).rev() {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            tuples.swap(i, (state >> 33) as usize % (i + 1));
+        }
+        set_memtable_limit(4);
+        let mut store = LsmStore::<C4, P, W>::default();
+        let mut full = ToFull::<C4>::default();
+        {
+            let mut write = full.to_rel_index_write(&mut store);
+            for t in &tuples {
+                assert!(write.insert_if_not_present(t, ()));
+            }
+            for t in &tuples[..50] {
+                assert!(!write.insert_if_not_present(t, ()));
+            }
+        }
+        assert_eq!(store.len(), tuples.len());
+        let view = full.to_rel_index(&store);
+        let mut all: Vec<C4> = view.iter_all().map(|(r, _)| C4::owned(r)).collect();
+        all.sort();
+        let mut want = tuples.clone();
+        want.sort();
+        assert_eq!(all, want);
+        (store, tuples)
+    }
+
+    fn check_prefix_1<const P: u32, const W: usize>(store: &LsmStore<C4, P, W>, tuples: &[C4]) {
+        check_prefix::<(u32,), (u64, u16, u32), P, W>(
+            store,
+            tuples,
+            |(a, b, c, d)| ((a,), (b, c, d)),
+            |(a,), (b, c, d)| (a, b, c, d),
+        );
+    }
+
+    fn check_prefix_2<const P: u32, const W: usize>(store: &LsmStore<C4, P, W>, tuples: &[C4]) {
+        check_prefix::<(u32, u64), (u16, u32), P, W>(
+            store,
+            tuples,
+            |(a, b, c, d)| ((a, b), (c, d)),
+            |(a, b), (c, d)| (a, b, c, d),
+        );
+    }
+
+    fn check_prefix_3<const P: u32, const W: usize>(store: &LsmStore<C4, P, W>, tuples: &[C4]) {
+        check_prefix::<(u32, u64, u16), (u32,), P, W>(
+            store,
+            tuples,
+            |(a, b, c, d)| ((a, b, c), (d,)),
+            |(a, b, c), (d,)| (a, b, c, d),
+        );
+    }
+
+    #[test]
+    fn one_prefix_is_contiguous() {
+        const P: u32 = 1 << 2;
+        let (store, tuples) = filled_store::<P, { crate::lsm_tuple_words!(C4, P) }>();
+        check_prefix_2(&store, &tuples);
+    }
+
+    #[test]
+    fn several_prefixes_are_contiguous() {
+        const P: u32 = 1 << 1 | 1 << 2 | 1 << 3;
+        let (store, tuples) = filled_store::<P, { crate::lsm_tuple_words!(C4, P) }>();
+        check_prefix_1(&store, &tuples);
+        check_prefix_2(&store, &tuples);
+        check_prefix_3(&store, &tuples);
+    }
+
+    #[test]
+    fn blob_widths() {
+        // The first three columns, 16 bytes, are a segment; the last two fill a word.
+        assert_eq!(
+            LsmStore::<(u32, u64, u32, u32, u32), { 1 << 3 }, 3>::tuple_bytes(),
+            24
+        );
+        assert_eq!(LsmIndex::<(u32, u32), (u64, u16), 1, 2>::key_bytes(), 8);
+        assert_eq!(LsmIndex::<(u32, u32), (u64, u16), 1, 2>::value_bytes(), 16);
+    }
 }

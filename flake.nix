@@ -252,9 +252,37 @@
                   mkdir -p "$out"
                 '';
 
+            # The LSM property tests at many more cases than the 32 each PR runs.
+            lsm-property-tests = naersk-lib.buildPackage {
+              src = ./.;
+              version = workspaceVersion;
+              name = "lsm-property-tests";
+              mode = "test";
+              # A separate dependency build would get `--test mmap_props`
+              # too, and its stub sources have no such target.
+              singleStep = true;
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "lsm"
+                ];
+              cargoTestOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "lsm"
+                  "--test"
+                  "mmap_props"
+                ];
+              PROPTEST_CASES = "4096";
+            };
+
           in
           {
-            inherit regression;
+            inherit regression lsm-property-tests;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
 
