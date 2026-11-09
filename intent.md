@@ -48,7 +48,6 @@ serial or parallel engine. Fact generation and the query side.
 
 **Tests.** On every integration and engine test, the staged run's outputs
 equal the monolithic serial engine's as sets (`CTADL_DUMP_RELATIONS`,
-`scripts/fact-dump-diff.sh`), with shuffled facts and any batch size down to
-one function. On a large target, under `memguard.sh`, the peak footprint
+`scripts/fact-dump-diff.sh`), with shuffled facts and any batch size down to a minimum. On a large target, under `memguard.sh`, the peak footprint
 tracks the largest batch rather than the program, and a run killed between
 stages resumes to the same result.
