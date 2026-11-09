@@ -112,8 +112,9 @@ the work.
 
 - R14. **Equivalence tests.** Every integration test and engine test that indexes also runs
   staged, with shuffled facts and the batch floor swept down to one function. It checks R1 by
-  comparing `CTADL_DUMP_RELATIONS` output relations with those of the monolithic serial engine
-  (`scripts/fact-dump-diff.sh`).
+  comparing the output tables, rendered by content, with those of the monolithic serial engine:
+  in-process for tests that index through the library, and with
+  `scripts/fact-dump-diff.sh --outputs` for runs of the CLI (D10).
 - R15. **Memory benchmark.** A documented procedure runs a large target staged under
   `memguard.sh`. It shows the peak footprint following the largest batch rather than the program
   (R7). It also shows a run killed between stages resuming to the same tables (R12).
@@ -308,10 +309,19 @@ output (Background).
 
 - `IndexStats` and `profile.json` report summed totals over stages, and each stage's peak
   footprint, row counts and time.
-- `CTADL_DUMP_RELATIONS` under a staged run dumps the output relations of the final tables, so
-  `fact-dump-diff.sh` compares a staged and a monolithic run on outputs. Per-stage scratch is
-  dumped, when asked, into one subdirectory per stage, since `dump.rs:242` refuses to
-  overwrite.
+- **Output dump.** With `CTADL_DUMP_RELATIONS` set, both the staged and the monolithic run
+  write the seven output tables, rendered by content as the dump renders them today, into
+  `outputs/` under the dump directory.
+  - The monolithic run still writes its full dump at the top level. It holds scratch relations
+    and no `global_flow` or `external_function` file, so it does not compare with a staged run.
+  - `fact-dump-diff.sh --outputs` compares only `outputs/`.
+- **Stage dumps.** Per-stage scratch is dumped only when `CTADL_DUMP_STAGES` is also set, into
+  `stages/<batch>/`. `dump.rs:242` refuses to overwrite, so two batches cannot share a
+  directory.
+- **In-process tests.** Tests that index through the library compare the two runs' tables with
+  a Rust helper. It renders the rows the same way and compares them as sets. This uses no
+  environment variable, which is process-wide and shared by tests running on threads of one
+  binary.
 
 ### D11. Tests
 
