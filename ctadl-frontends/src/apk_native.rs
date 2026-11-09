@@ -27,6 +27,28 @@ The sub-import names are recorded on the parent's [`ArtifactImport::sub_imports`
 * **Nothing fatal.** No Ghidra, or one library that fails to disassemble, degrades to
   a warning: an APK import that loses its native half is still a useful Dex import.
 
+# Several libraries at once
+
+The libraries are independent imports, and each one is a Ghidra run whose JVM startup and
+auto-analysis cost a fixed amount whatever the library's size, so they run concurrently under a
+[`Budget`] of cores and memory. The biggest library starts first, since it is the one most
+likely to finish last. A library's share of the budget follows its size:
+
+* **Cores**: `ghidra_cores`, the library's share of the budget's cores by size among the
+  APK's libraries -- so a dozen small libraries run side by side on a core each, and one that
+  is most of the APK's native code gets most of the cores.
+* **Heap**: `ghidra_heap_mib`, which grows with the library and stops at Ghidra's default cap.
+  A library alone in its APK keeps that default, as do the retries below.
+
+A run that runs out of heap anyway is retried once with the default cap and the whole budget to
+itself. Ghidra keeps going after an analysis task runs out of memory, and exports whatever it
+got, so a heap cap that is too small would otherwise change the imported program rather than
+fail.
+
+Results are reported, and the sub-import list built, in entry order, whatever order the runs
+finish in. The log lines the runs write themselves (Ghidra's
+progress, say) interleave; each names the library it is about.
+
 # Native-only APKs
 
 An Android App Bundle is distributed as several APKs -- a base one holding the Dex and
@@ -38,14 +60,16 @@ library. [`require_native_libs`] is what keeps that from also swallowing the spl
 hold only resources, which have no code in them in either language.
 */
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use dex_reader::apk::{
-    looks_like_object_file, native_lib_entries, native_lib_entries_of_file, preferred_abi,
-    read_native_libs,
+    for_each_native_lib_of_file, looks_like_object_file, native_lib_entries_of_file,
+    preferred_abi_of_file,
 };
 
 use crate::ImportOptions;
+use crate::budget::{Budget, run_ordered};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
@@ -89,15 +113,24 @@ pub fn import_native_libs(
     parent: &ArtifactImport,
     opts: ImportOptions<'_>,
 ) -> Result<Vec<String>, Error> {
+    import_native_libs_in(parent, opts, None, None)
+}
+
+/// [`import_native_libs`] under `budget`, shared with whatever else the caller runs at the same
+/// time, or under a budget of its own built from `opts.jobs` when `None`. Once `cancel` is set,
+/// no further library is started.
+pub(crate) fn import_native_libs_in(
+    parent: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: Option<&Budget>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, Error> {
     if !opts.native_libs {
         return Ok(Vec::new());
     }
 
     let apk_path = &parent.artifact_path;
-    let apk_bytes = std::fs::read(apk_path)
-        .map_err(Error::Io)
-        .err_context(|| format!("reading APK: '{}'", apk_path.display()))?;
-    let entries = native_lib_entries(&apk_bytes)
+    let entries = native_lib_entries_of_file(apk_path)
         .map_err(Error::Dex)
         .err_context(|| format!("listing native libraries in '{}'", apk_path.display()))?;
     if entries.is_empty() {
@@ -115,7 +148,7 @@ pub fn import_native_libs(
     let (abi, unusable) = match opts.native_abi {
         Some(abi) => (abi, Vec::new()),
         None => {
-            let choice = preferred_abi(&apk_bytes, &entries).expect("entries is non-empty");
+            let choice = preferred_abi_of_file(apk_path, &entries).expect("entries is non-empty");
             (choice.abi, choice.unusable)
         }
     };
@@ -174,14 +207,16 @@ pub fn import_native_libs(
         );
     }
 
-    let libs = read_native_libs(&apk_bytes, abi)
-        .map_err(Error::Dex)
-        .err_context(|| {
-            format!(
-                "extracting {abi} native libraries from '{}'",
-                apk_path.display()
-            )
-        })?;
+    let dest_dir = extracted_libs_dir(parent).join(abi);
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(Error::Io)
+        .err_context(|| format!("creating native library dir: '{}'", dest_dir.display()))?;
+    let libs = extract_native_libs(apk_path, abi, &dest_dir).err_context(|| {
+        format!(
+            "extracting {abi} native libraries from '{}'",
+            apk_path.display()
+        )
+    })?;
     if libs.is_empty() {
         log::warn!(
             "{}: no native libraries for ABI '{}'",
@@ -199,53 +234,83 @@ pub fn import_native_libs(
         if libs.len() == 1 { "y" } else { "ies" },
         abi,
         libs.iter()
-            .map(|(e, _)| e.file_name.as_str())
+            .map(|lib| lib.file_name.as_str())
             .collect::<Vec<_>>()
             .join(", "),
     );
-    // The APK is not needed past this point and can be tens of megabytes.
-    drop(apk_bytes);
 
-    let dest_dir = extracted_libs_dir(parent).join(abi);
-    std::fs::create_dir_all(&dest_dir)
-        .map_err(Error::Io)
-        .err_context(|| format!("creating native library dir: '{}'", dest_dir.display()))?;
-
-    let mut names = Vec::new();
-    let (mut reused, mut failed) = (0usize, 0usize);
-    for (entry, bytes) in libs {
-        if !looks_like_object_file(&bytes) {
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
+    let alone = libs.iter().filter(|lib| lib.object_size.is_some()).count() == 1;
+    let total_size: u64 = libs.iter().filter_map(|lib| lib.object_size).sum();
+    let mut tasks = Vec::new();
+    for lib in libs {
+        let Some(size) = lib.object_size else {
             log::warn!(
                 "{}: skipping '{}': not an object file a disassembler can load",
                 apk_path.display(),
-                entry.entry_name,
+                lib.entry_name,
             );
             continue;
-        }
-        // Built from `abi` and `file_name`, never from the raw entry name, so a hostile
-        // entry cannot write outside `dest_dir`. See `dex_reader::apk::NativeLibEntry`.
-        let dest = dest_dir.join(&entry.file_name);
-        let name = sub_import_name(&parent.name, abi, &entry.file_name);
-
-        match import_one(&dest, &bytes, &name, opts) {
-            Ok(Outcome::Imported) => names.push(name),
-            Ok(Outcome::Reused) => {
-                reused += 1;
-                names.push(name);
-            }
-            Err(e) => {
-                failed += 1;
-                // Not fatal: the Dex half of the APK is still worth having, and the JNI
-                // bridge reports the resulting unlinked methods at index time.
-                log::warn!(
-                    "{}: failed to import native library '{}' as '{}': {e}",
-                    apk_path.display(),
-                    entry.entry_name,
-                    name,
-                );
-            }
-        }
+        };
+        tasks.push(LibTask {
+            name: sub_import_name(&parent.name, abi, &lib.file_name),
+            dest: dest_dir.join(&lib.file_name),
+            entry_name: lib.entry_name,
+            size,
+            cores: ghidra_cores(size, total_size, budget.cores()),
+            heap_mib: if alone {
+                DEFAULT_MAX_HEAP_MIB
+            } else {
+                ghidra_heap_mib(size)
+            },
+        });
     }
+
+    // Ties in entry order, so the start order is fixed too.
+    let mut start_order: Vec<usize> = (0..tasks.len()).collect();
+    start_order.sort_by_key(|&i| std::cmp::Reverse(tasks[i].size));
+
+    let mut names = Vec::new();
+    let (mut reused, mut failed) = (0usize, 0usize);
+    run_ordered(
+        &tasks,
+        &start_order,
+        budget.cores(),
+        |task| import_one(task, opts, budget),
+        |_| cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Acquire)),
+        |index, result| {
+            let task = &tasks[index];
+            match result {
+                Ok(Outcome::Imported) => names.push(task.name.clone()),
+                Ok(Outcome::Reused) => {
+                    log::info!(
+                        "skipping native import '{}': destination exists and hash matches",
+                        task.name
+                    );
+                    reused += 1;
+                    names.push(task.name.clone());
+                }
+                Err(e) => {
+                    failed += 1;
+                    // Not fatal: the Dex half of the APK is still worth having, and the JNI
+                    // bridge reports the resulting unlinked methods at index time.
+                    log::warn!(
+                        "{}: failed to import native library '{}' as '{}': {e}",
+                        apk_path.display(),
+                        task.entry_name,
+                        task.name,
+                    );
+                }
+            }
+        },
+    );
 
     log::info!(
         "{}: {} native librar{} ready ({} imported, {} reused, {} failed)",
@@ -282,20 +347,117 @@ const NO_NATIVE_FRONTEND: &str =
 #[cfg(not(feature = "pcode"))]
 const NO_NATIVE_FRONTEND: &str = "this build was compiled without ctadl-frontends' `pcode` feature";
 
-/// Disassembles one extracted library and writes it to the store.
-///
-/// This is a separate function so that the `pcode` feature has to switch out only this one
-/// function, and not the extraction loop around it. When the feature is off,
-/// [`import_native_libs`] returns before anything calls this.
-#[cfg(feature = "pcode")]
-fn lower_native(child: &ArtifactImport, jobs: usize) -> Result<(), Error> {
-    let program_info = ctadl_pcode::import_pcode(child, jobs)?;
-    ctadl_import::save_program_info(program_info, child)
+/// One library extracted out of the APK by [`extract_native_libs`].
+struct ExtractedLib {
+    entry_name: String,
+    file_name: String,
+    /// Its size in bytes, or `None` when it is not an object file (see
+    /// [`looks_like_object_file`]) and so was not written out.
+    object_size: Option<u64>,
 }
 
+/// Writes every `lib/<abi>/*.so` entry of the APK at `apk_path` that is an object file to
+/// `dest_dir`, one at a time, so neither the APK nor its libraries are ever held in memory
+/// whole. Returns all of them, in entry order, the rest marked as not object files.
+///
+/// Every library is written before any import starts: the up-to-date check compares the
+/// *content* hash recorded by a previous import against the file on disk, so the file has to be
+/// the one this APK actually contains right now.
+fn extract_native_libs(
+    apk_path: &Path,
+    abi: &str,
+    dest_dir: &Path,
+) -> Result<Vec<ExtractedLib>, Error> {
+    let mut libs = Vec::new();
+    for_each_native_lib_of_file(apk_path, abi, |entry, reader| -> Result<(), Error> {
+        let mut magic = Vec::with_capacity(4);
+        reader.take(4).read_to_end(&mut magic)?;
+        let object_size = if looks_like_object_file(&magic) {
+            // Built from `abi` and `file_name`, never from the raw entry name, so a hostile
+            // entry cannot write outside `dest_dir`. See `dex_reader::apk::NativeLibEntry`.
+            let dest = dest_dir.join(&entry.file_name);
+            let mut write = || -> std::io::Result<u64> {
+                let mut file = std::io::BufWriter::new(std::fs::File::create(&dest)?);
+                file.write_all(&magic)?;
+                let rest = std::io::copy(reader, &mut file)?;
+                file.flush()?;
+                Ok(magic.len() as u64 + rest)
+            };
+            Some(write().err_context(|| format!("writing native library: '{}'", dest.display()))?)
+        } else {
+            None
+        };
+        libs.push(ExtractedLib {
+            entry_name: entry.entry_name.clone(),
+            file_name: entry.file_name.clone(),
+            object_size,
+        });
+        Ok(())
+    })?;
+    Ok(libs)
+}
+
+/// The JVM heap cap of Ghidra's default, used for a library that has the budget to itself.
+#[cfg(feature = "pcode")]
+const DEFAULT_MAX_HEAP_MIB: u64 = ctadl_pcode::ghidra::DEFAULT_MAX_HEAP_MIB;
 #[cfg(not(feature = "pcode"))]
-fn lower_native(_child: &ArtifactImport, _jobs: usize) -> Result<(), Error> {
-    unreachable!("import_native_libs returns early when the `pcode` feature is off")
+const DEFAULT_MAX_HEAP_MIB: u64 = 40 * 1024;
+
+/// The heap every Ghidra run gets, however small its library: the JVM, Ghidra's program
+/// database and its analyzers before the library adds anything.
+const MIN_GHIDRA_HEAP_MIB: u64 = 3 * 1024;
+
+/// The heap a Ghidra run gets per byte of library, on top of [`MIN_GHIDRA_HEAP_MIB`].
+/// Generous: a run that needs more than its cap is retried, alone, with the default, at the cost
+/// of the time the first attempt took.
+const GHIDRA_HEAP_PER_BYTE: u64 = 2048;
+
+/// The JVM heap cap, in MiB, for a Ghidra run over a library of `size` bytes that shares the
+/// budget with others.
+fn ghidra_heap_mib(size: u64) -> u64 {
+    (MIN_GHIDRA_HEAP_MIB + size.saturating_mul(GHIDRA_HEAP_PER_BYTE) / (1 << 20))
+        .min(DEFAULT_MAX_HEAP_MIB)
+}
+
+/// The threads a Ghidra run over a library of `size` bytes gets, out of a budget of `cores`
+/// shared among libraries of `total_size` bytes: its share by size, rounded down, and at least
+/// one.
+///
+/// Rounding down, because Ghidra spends most of its time on a small library in work that does
+/// not run in parallel -- starting the JVM, loading the program, the analyzers that walk it in
+/// order -- so another JVM is a better use of a core than another thread for a library that
+/// cannot keep one busy.
+fn ghidra_cores(size: u64, total_size: u64, cores: usize) -> usize {
+    let share = u128::from(size) * cores as u128 / u128::from(total_size.max(1));
+    usize::try_from(share)
+        .unwrap_or(cores)
+        .clamp(1, cores.max(1))
+}
+
+/// The memory, in MiB, the in-process half of an import holds for a library of `size` bytes:
+/// its facts read back and lowered to IR. An estimate, counted against the budget while it runs:
+/// about 1 KiB per byte of library, which is what lowering a 24 MiB library takes. Never more than
+/// the Ghidra run's share (`ghidra_heap_mib` grows faster), so the share only ever shrinks.
+#[cfg(feature = "pcode")]
+fn lowering_mib(size: u64) -> u64 {
+    512 + size / 1024
+}
+
+/// One library to import, and the share of the budget it asks for.
+struct LibTask {
+    /// The sub-import name.
+    name: String,
+    /// Where the library was extracted to.
+    dest: PathBuf,
+    /// The ZIP entry it came from, for messages.
+    entry_name: String,
+    size: u64,
+    /// The threads its Ghidra run gets.
+    #[cfg_attr(not(feature = "pcode"), allow(dead_code))]
+    cores: usize,
+    /// The JVM heap cap its Ghidra run gets, in MiB.
+    #[cfg_attr(not(feature = "pcode"), allow(dead_code))]
+    heap_mib: u64,
 }
 
 /// What [`import_one`] did, so the caller can report reuse separately from work.
@@ -304,36 +466,90 @@ enum Outcome {
     Reused,
 }
 
-/// Writes one extracted library to `dest` and imports it as the pcode sub-import
-/// `name`.
-fn import_one(
-    dest: &Path,
-    bytes: &[u8],
-    name: &str,
-    opts: ImportOptions<'_>,
-) -> Result<Outcome, Error> {
-    // Write before the up-to-date check: it compares the *content* hash recorded by the
-    // previous import against the file on disk, so the file has to be the one this APK
-    // actually contains right now.
-    std::fs::write(dest, bytes)
-        .map_err(Error::Io)
-        .err_context(|| format!("writing native library: '{}'", dest.display()))?;
-
+/// Imports one extracted library as its pcode sub-import, under a share of `budget`.
+fn import_one(task: &LibTask, opts: ImportOptions<'_>, budget: &Budget) -> Result<Outcome, Error> {
     // Disassembling a library takes minutes, so reusing an unchanged one is the
     // difference between a re-import that is cheap and one that is not.
-    if opts.skip_existing && ArtifactImport::is_up_to_date(name, dest)? {
-        log::info!("skipping native import '{name}': destination exists and hash matches");
+    if opts.skip_existing && ArtifactImport::is_up_to_date(&task.name, &task.dest)? {
         return Ok(Outcome::Reused);
     }
 
-    let child = ArtifactImport::try_create(name, ArtifactLanguage::Pcode, dest)?;
-    lower_native(&child, opts.jobs)?;
+    let child = ArtifactImport::try_create(&task.name, ArtifactLanguage::Pcode, &task.dest)?;
+    lower_native(&child, task, budget)?;
 
-    // `import_pcode` records Ghidra's image base on the config and re-saves it, so
+    // `lower_facts` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.
-    let mut child = ArtifactImport::load_by_name(name)?;
+    let mut child = ArtifactImport::load_by_name(&task.name)?;
     child.record_artifact_hash()?;
     Ok(Outcome::Imported)
+}
+
+/// Disassembles one extracted library and writes it to the store: Ghidra under a share of
+/// `budget` sized for the library, then the lowering to IR, in process, under a smaller one.
+///
+/// This is a separate function so that the `pcode` feature has to switch out only this one
+/// function, and not the extraction and scheduling around it. When the feature is off,
+/// [`import_native_libs`] returns before anything calls this.
+#[cfg(feature = "pcode")]
+fn lower_native(child: &ArtifactImport, task: &LibTask, budget: &Budget) -> Result<(), Error> {
+    use crate::budget::Request;
+    use ctadl_pcode::ghidra::GhidraLimits;
+
+    let request = Request {
+        cores: task.cores,
+        mib: task.heap_mib + crate::budget::JVM_OVERHEAD_MIB,
+    };
+    let mut grant = budget.acquire(request);
+    let limits = GhidraLimits {
+        jobs: grant.cores(),
+        max_heap_mib: Some(task.heap_mib),
+    };
+    log::debug!(
+        "'{}': {} byte(s), Ghidra gets {} thread(s) and a {} MiB heap",
+        child.name,
+        task.size,
+        limits.jobs,
+        task.heap_mib,
+    );
+    if let Err(e) = ctadl_pcode::export_facts(child, limits) {
+        if task.heap_mib >= DEFAULT_MAX_HEAP_MIB || !ctadl_pcode::ghidra_ran_out_of_memory(child) {
+            return Err(e);
+        }
+        drop(grant);
+        // Nothing of the partial export may survive into the retry's.
+        let facts = child.import_path().join("facts");
+        if let Err(e) = std::fs::remove_dir_all(&facts) {
+            log::debug!("could not remove '{}': {e}", facts.display());
+        }
+        log::info!(
+            "'{}': Ghidra ran out of memory with a {} MiB heap; retrying alone with {} MiB",
+            child.name,
+            task.heap_mib,
+            DEFAULT_MAX_HEAP_MIB,
+        );
+        grant = budget.acquire(Request {
+            cores: budget.cores(),
+            mib: budget.memory_mib().max(DEFAULT_MAX_HEAP_MIB),
+        });
+        ctadl_pcode::export_facts(
+            child,
+            GhidraLimits {
+                jobs: grant.cores(),
+                max_heap_mib: Some(DEFAULT_MAX_HEAP_MIB),
+            },
+        )?;
+    }
+    // Ghidra has exited. What is left runs in this process, mostly on this one thread.
+    grant.shrink(1, lowering_mib(task.size));
+    budget.install(|| {
+        let program_info = ctadl_pcode::lower_facts(child)?;
+        ctadl_import::save_program_info(program_info, child)
+    })
+}
+
+#[cfg(not(feature = "pcode"))]
+fn lower_native(_child: &ArtifactImport, _task: &LibTask, _budget: &Budget) -> Result<(), Error> {
+    unreachable!("import_native_libs returns early when the `pcode` feature is off")
 }
 
 /// The sub-import name for one library: `<parent>__<abi>__<stem>`.
@@ -385,6 +601,16 @@ mod tests {
             sub_import_name("app_a", "arm64-v8a", "libcrypto.so"),
             sub_import_name("app_b", "arm64-v8a", "libcrypto.so"),
         );
+    }
+
+    /// Cores follow size, rounded down, with at least one each and never more than the budget.
+    #[test]
+    fn ghidra_cores_are_a_share_by_size() {
+        assert_eq!(ghidra_cores(24 << 20, 25 << 20, 16), 15);
+        assert_eq!(ghidra_cores(1 << 20, 25 << 20, 16), 1);
+        assert_eq!(ghidra_cores(10, 10, 16), 16);
+        assert_eq!(ghidra_cores(0, 0, 16), 1);
+        assert_eq!(ghidra_cores(u64::MAX, u64::MAX, 4), 4);
     }
 
     /// The name becomes a directory, so nothing that could redirect a path survives.

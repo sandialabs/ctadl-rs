@@ -26,6 +26,10 @@ bitcode = { version = "0.6", features = ["serde"], optional = true }
 # already in `dex-reader::apk`, so the `apk` feature pulls it in whether or not the Dex lowering
 # is wanted.
 dex-reader = { path = "../readers/dex-reader", optional = true }
+# The budget an APK's native libraries and a bundle's splits are imported concurrently under: a
+# thread pool for the in-process work, and the machine's physical memory to size it from.
+libc = { version = "0.2", optional = true }
+rayon = { version = "1.10", optional = true }
 
 [features]
 # `xapk` is on by default. A bundle is a ZIP file of APKs,
@@ -38,7 +42,7 @@ jvm = ["dep:ctadl-jvm", "ctadl-import/jvm"]
 # IR needs `pcode` as well. Without `pcode`, the extraction step reports that this build has no
 # native front end and imports the Java half on its own. That is what already happens on a
 # machine with no Ghidra.
-apk = ["dex", "dep:dex-reader"]
+apk = ["dex", "dep:dex-reader", "dep:libc", "dep:rayon"]
 xapk = ["apk"]
 pcode = ["dep:ctadl-pcode", "ctadl-import/pcode"]
 lua = ["dep:ctadl-lua", "ctadl-import/ts"]

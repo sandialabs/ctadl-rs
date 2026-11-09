@@ -179,13 +179,13 @@ macro_rules! make_ast_visitor {
                     CallStyle::FuncPtrCall { callee, signature: _ } => {
                         self.visit_access_path(callee);
                     }
-                    CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _, dispatch: _, super_start: _ } => {
+                    CallStyle::JavaCall { receiver, method: _ } => {
                         self.visit_variable_ref(receiver)
                     },
                     CallStyle::LuaCall { receiver, method: _ } => {
                         self.visit_variable_ref(receiver)
                     },
-                    CallStyle::CilCall { receiver, cls: _, simple_name: _, descriptor: _ } => {
+                    CallStyle::CilCall { receiver, method: _ } => {
                         self.visit_variable_ref(receiver)
                     },
                     CallStyle::Unknown => (),

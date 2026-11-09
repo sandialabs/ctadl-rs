@@ -29,6 +29,9 @@ pub struct IndexProfile {
     pub update_indices_secs: f64,
     /// Tuple count of every relation, by name.
     pub relations: BTreeMap<String, usize>,
+    /// The bytes each LSM-stored relation spends per row on its tuple, by name; empty unless the
+    /// run used `Storage::Lsm`.
+    pub bytes_per_row: BTreeMap<String, usize>,
     pub sccs: Vec<SccProfile>,
     pub memory: MemoryProfile,
     /// How many times a rule asked the path set to split a path that is not in it. Each is a

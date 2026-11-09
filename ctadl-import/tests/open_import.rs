@@ -174,7 +174,28 @@ fn an_import_from_before_declared_globals_is_refused() {
 
     let err = open_import("stale_globals", ssa::Pipeline::none()).unwrap_err();
     let (_, found, expected) = incompatible_cause(&err);
-    assert_eq!((found.as_str(), expected.as_str()), ("13", "14"));
+    assert_eq!(
+        (found.as_str(), expected.as_str()),
+        ("13", IMPORT_FORMAT_VERSION)
+    );
+    assert!(full_message(&err).contains("re-import it"), "{err:?}");
+}
+
+/// An import written before programs were framed (format 14, one bitcode value for the whole
+/// program) is refused rather than decoded.
+#[test]
+fn an_import_from_before_framed_programs_is_refused() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("stale_frames", dir.path());
+    set_config_version(&import, "14");
+
+    let err = open_import("stale_frames", ssa::Pipeline::none()).unwrap_err();
+    let (_, found, expected) = incompatible_cause(&err);
+    assert_eq!(
+        (found.as_str(), expected.as_str()),
+        ("14", IMPORT_FORMAT_VERSION)
+    );
     assert!(full_message(&err).contains("re-import it"), "{err:?}");
 }
 

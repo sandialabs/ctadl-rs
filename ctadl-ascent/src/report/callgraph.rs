@@ -21,7 +21,7 @@ use crate::stats::{Distribution, top_n_share};
 use ctadl_ir::cir::visit::Visitor;
 use ctadl_ir::cir::{
     FunctionIdx, ProgramInfo, StatementKind, Symbol,
-    call::{CallStyle, JavaDispatch, TypeFacts},
+    call::{CallStyle, CilMethodRef, JavaDispatch, JavaMethodRef, TypeFacts},
 };
 use ctadl_ir::graph::{DirectedGraph, Successors, scc::Sccs};
 use ctadl_ir::index::idx::Idx;
@@ -916,14 +916,14 @@ fn walk(program: &ctadl_ir::cir::Program) -> Walk {
                             w.caller_direct[caller as usize].push(id);
                         }
                     }
-                    CallStyle::JavaCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        dispatch,
-                        super_start,
-                        receiver: _,
-                    } => {
+                    CallStyle::JavaCall { method, .. } => {
+                        let JavaMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                            dispatch,
+                            super_start,
+                        } = &**method;
                         w.census.virtual_ += 1;
                         let id = w.key(
                             (cls.clone(), simple_name.clone(), descriptor.clone()),
@@ -948,12 +948,12 @@ fn walk(program: &ctadl_ir::cir::Program) -> Walk {
                         );
                         w.caller_keys[caller as usize].push((id, JavaDispatch::Unknown));
                     }
-                    CallStyle::CilCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        receiver: _,
-                    } => {
+                    CallStyle::CilCall { method, .. } => {
+                        let CilMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                        } = &**method;
                         // `callvirt` has no dispatch kind of its own, the way Lua has none.
                         w.census.virtual_ += 1;
                         let id = w.key(
@@ -1773,7 +1773,7 @@ mod tests {
         CallObject, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
         VirtualMethodTable,
     };
-    use ctadl_ir::cir::{Exp, FunctionData, Program};
+    use ctadl_ir::cir::{Exp, FunctionData, JavaMethodRef, Program};
 
     /// A program with one interface `LI;` (one abstract `m()V`, so it is functional), two
     /// implementers, a class `LC;` with a subclass, and one caller making one call of each
@@ -1847,11 +1847,14 @@ mod tests {
             b.create_call(
                 CallStyle::JavaCall {
                     receiver: x.clone(),
-                    cls: cls.into(),
-                    simple_name: name.into(),
-                    descriptor: "()V".into(),
-                    dispatch,
-                    super_start: None,
+                    method: JavaMethodRef {
+                        cls: cls.into(),
+                        simple_name: name.into(),
+                        descriptor: "()V".into(),
+                        dispatch,
+                        super_start: None,
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),

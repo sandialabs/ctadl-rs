@@ -10,6 +10,7 @@ use ctadl_ascent::index_engine::{Parallelism, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
+use ctadl_frontends::budget::DEFAULT_MAX_CORES;
 
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
@@ -159,10 +160,18 @@ pub struct ImportArgs {
     #[arg(long)]
     pub include_framework: bool,
 
-    /// Number of threads Ghidra may use to analyze and decompile native code.
+    /// Number of threads the import may use: to lower code, and for Ghidra to analyze and
+    /// decompile native code.
     ///
-    /// `0`, the default, or `-j` with no value, leaves it to Ghidra, which uses every core the
-    /// OS reports. Any other value caps Ghidra, and the JVM it runs in, at that many.
+    /// `0`, the default, or `-j` with no value, lowers on as many threads as there are cores, up
+    /// to 16. An APK's native libraries and an app bundle's splits are imported several at once,
+    /// and share that many cores: each Ghidra run gets a share sized to its library. A single
+    /// native artifact's Ghidra run gets them all, or, with `0`, is left to itself, which uses
+    /// every core the OS reports. Ghidra's JVM is capped at the threads it is given.
+    ///
+    /// The Ghidra runs going at once also share a memory budget, half of physical memory unless
+    /// the CTADL_IMPORT_MEMORY environment variable sets it (`48G`, `4096M`); each run's heap
+    /// is capped at its share.
     #[arg(
         short = 'j',
         long,
@@ -654,6 +663,7 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.cmd {
         Command::Import(args) => {
+            init_import_threads(args.jobs);
             import_artifact_to_store(args).with_context(|| {
                 format!(
                     "importing artifact from: '{}'",
@@ -705,6 +715,11 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
+            // The pool is the process's, and outlives the import into indexing and querying, so
+            // it is sized only on request; an APK's import budgets its own threads either way.
+            if let Some(jobs) = args.jobs {
+                init_import_threads(jobs);
+            }
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
@@ -851,6 +866,23 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sizes the rayon pool the import's front ends lower, verify and encode on: `jobs` threads, or
+/// with `0`, as many as there are cores, up to [`DEFAULT_MAX_CORES`].
+fn init_import_threads(jobs: usize) {
+    let threads = match jobs {
+        0 => std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(DEFAULT_MAX_CORES),
+        n => n,
+    };
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        log::debug!("the thread pool was already set up: {e}");
+    }
+}
+
 /// Imports artifacts into the store.
 ///
 /// # Errors
@@ -897,6 +929,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
+    // The artifact's content hash is recorded once the import succeeds, so that a later import
+    // can tell this one is up to date. Hashing a large artifact takes a while, and the import
+    // only reads it, so hash it alongside. A Ghidra Server repository can't be content-hashed
+    // (it's remote); such artifacts are simply re-imported each time.
+    let hash = (!project::is_ghidra_server_url(&config.artifact_path)).then(|| {
+        let artifact = config.artifact_path.clone();
+        std::thread::spawn(move || project::hash_artifact(&artifact))
+    });
     cli::import(
         &config,
         cli::ImportOptions {
@@ -908,13 +948,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
-    // (e.g. the pcode importer records `image_base`), then record the artifact's
-    // content hash (and path) so a later import can tell the import is up to date.
+    // (e.g. the pcode importer records `image_base`), then record the hash.
     let mut config = project::ArtifactImport::load_by_name(name)?;
-    // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
-    // hash for it; such artifacts are simply re-imported each time.
-    if !project::is_ghidra_server_url(&config.artifact_path) {
-        config.record_artifact_hash()?;
+    if let Some(hash) = hash {
+        let hash = hash
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+        config.hash = Some(hash);
+        config.save()?;
     }
     Ok(name.to_string())
 }

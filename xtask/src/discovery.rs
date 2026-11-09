@@ -38,6 +38,9 @@ pub enum Kind {
         query: PathBuf,
         models: PathBuf,
     },
+    /// C compiled to an ELF object and exported by Ghidra, checked on the facts the export
+    /// writes rather than on a query's results. See `regression::check_pcode_facts`.
+    PcodeFacts { source: PathBuf },
     /// C parsed directly by the tree-sitter frontend, with source lines read
     /// straight off the SARIF regions (no compiler, no Ghidra).
     C {
@@ -113,7 +116,7 @@ impl Kind {
         match self {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
-            Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::Pcode { .. } | Kind::PcodeFacts { .. } => Frontend::Pcode,
             Kind::C { .. } => Frontend::C,
             Kind::Lua { .. } => Frontend::Lua,
             Kind::Jni { .. } => Frontend::Jni,
@@ -223,6 +226,7 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
+    cases.extend(discover_pcode_facts(&tests_dir.join("pcode-facts"))?);
     cases.extend(discover_lua(&tests_dir.join("lua"))?);
     cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
@@ -369,6 +373,26 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
                 source,
                 query,
                 models,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+/// Each `foo.c`, as the case `Facts:foo`.
+fn discover_pcode_facts(dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("c") {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Facts:{}", file_stem(&entry)?),
+            kind: Kind::PcodeFacts {
+                source: absolute(&entry)?,
             },
         });
     }
@@ -558,7 +582,9 @@ mod tests {
                     | Kind::C { models, .. }
                     | Kind::Lua { models, .. }
                     | Kind::Jni { models, .. } => models,
-                    Kind::AndroidIcc { .. } | Kind::Cil { .. } => continue,
+                    Kind::AndroidIcc { .. } | Kind::Cil { .. } | Kind::PcodeFacts { .. } => {
+                        continue;
+                    }
                 };
                 assert_eq!(
                     models.extension().and_then(|e| e.to_str()),

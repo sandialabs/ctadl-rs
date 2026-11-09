@@ -144,6 +144,27 @@ fn lsm_storage_matches_memory() {
         id_map,
     );
     lsm::ascent_provider::set_memtable_limit(lsm::ascent_provider::DEFAULT_MEMTABLE_LIMIT);
+    assert!(memory.stats.profile.bytes_per_row.is_empty());
+    // A change to a column type or an index list shows up here. `alias_of_formal` is read by
+    // its first two columns, whose 12 bytes pad to 16 before the third column's 4.
+    let bytes_per_row: Vec<_> = on_lsm
+        .stats
+        .profile
+        .bytes_per_row
+        .iter()
+        .map(|(rel, &bytes)| (rel.as_str(), bytes))
+        .collect();
+    assert_eq!(
+        bytes_per_row,
+        [
+            ("actual_param", 32),
+            ("alias_of_formal", 24),
+            ("locals_key", 24),
+            ("locals_key_wild", 24),
+            ("prog_store", 16),
+            ("reach_vp", 16),
+        ]
+    );
     assert_same_index(memory, on_lsm);
 }
 

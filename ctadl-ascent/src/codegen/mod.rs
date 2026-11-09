@@ -1037,14 +1037,14 @@ impl Visitor for CodegenVisitor<'_> {
                             self.facts.call.push((site, target));
                         }
                     }
-                    CallStyle::JavaCall {
-                        receiver,
-                        cls,
-                        simple_name,
-                        descriptor,
-                        dispatch,
-                        super_start,
-                    } => {
+                    CallStyle::JavaCall { receiver, method } => {
+                        let JavaMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                            dispatch,
+                            super_start,
+                        } = &**method;
                         let recv_var = self.trans_variable_ref(receiver);
                         self.facts.android_call_site.push((
                             site,
@@ -1058,12 +1058,12 @@ impl Visitor for CodegenVisitor<'_> {
                         let action = self.classify(&key, *dispatch, super_start.as_ref());
                         self.apply(site, recv_var, &key, *dispatch, action);
                     }
-                    CallStyle::CilCall {
-                        receiver,
-                        cls,
-                        simple_name,
-                        descriptor,
-                    } => {
+                    CallStyle::CilCall { receiver, method } => {
+                        let CilMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                        } = &**method;
                         // The `JavaCall` arm, keyed in the CIL space (`ChaLanguage::Cil`).
                         // The ladder's per-kind policy wants to know which sites dispatch
                         // through an interface; `interfaces` says.

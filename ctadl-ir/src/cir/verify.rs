@@ -224,6 +224,15 @@ pub struct CirVerify {
 }
 
 impl CirVerify {
+    /// A verifier for functions of a program that declares `globals_len` globals, as visiting
+    /// the program would set it up.
+    pub(crate) fn for_globals(globals_len: usize) -> Self {
+        Self {
+            globals_len: Some(globals_len),
+            ..Default::default()
+        }
+    }
+
     /// After calling the visitor on an AST element, call this to retrieve any error. Also clears
     /// the error state.
     #[inline]

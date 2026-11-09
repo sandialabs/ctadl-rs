@@ -4,10 +4,8 @@
 //! It's designed to be used by the CTADL pcode frontend to convert pcode facts
 //! into CTADL IR.
 
-use datafusion::arrow::array::{Int64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
-use datafusion::prelude::*;
+use hashbrown::{HashMap, HashSet};
+use rayon::prelude::*;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -20,6 +18,14 @@ pub use error::PcodeError;
 
 pub mod constant_propagation;
 pub mod error;
+mod table;
+
+/// Runs each expression on the rayon pool, in parallel, and returns their values as nested
+/// pairs: `join!(a, b, c)` is `(a, (b, c))`.
+macro_rules! join {
+    ($a:expr $(,)?) => { $a };
+    ($a:expr, $($rest:expr),+ $(,)?) => { rayon::join(|| $a, || join!($($rest),+)) };
+}
 
 /// Macro to generate newtype wrappers around `ArcIntern<str>`.
 /// Each newtype gets `From<impl AsRef<str>>`, `Deref` and `Display` implementations.
@@ -53,6 +59,10 @@ macro_rules! define_interned_newtype {
 
 /// Result type for pcode-reader operations.
 pub type Result<T> = std::result::Result<T, PcodeError>;
+
+/// The version of the tables' format this reader reads, which `ExportPcode.java` writes to
+/// `FACTS_VERSION.facts`.
+pub const FACTS_VERSION: &str = "3";
 
 define_interned_newtype! {
     /// Unique identifier for a high-level function
@@ -94,6 +104,11 @@ define_interned_newtype! {
     HighVariable
 }
 
+define_interned_newtype! {
+    /// The address space a varnode lives in (`ram`, `register`, `stack`, `const`, ...)
+    AddressSpace
+}
+
 /// Pcode instruction target address (i64)
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Deserialize)]
 #[repr(transparent)]
@@ -109,6 +124,9 @@ impl Display for PcodeAddress {
 #[derive(Debug, Clone)]
 pub struct HFuncData {
     pub name: String,
+    /// The function's readable identity: its namespace-qualified name at its entry point, e.g.
+    /// `Foo::bar@00101000`. Unique, unlike `name`. Its id in the tables is only a number.
+    pub id_name: String,
     pub proto: Option<HighProto>,
     pub is_external: bool,
     pub entry_point: Option<PcodeAddress>,
@@ -136,23 +154,62 @@ pub struct ProtoParameter {
 #[derive(Debug, Clone)]
 pub struct PcodeData {
     pub mnemonic: PcodeMnemonic,
-    pub opcode: Option<String>,
     pub inputs: SmallVec<[PcodeVarnode; 2]>,
     pub outputs: SmallVec<[PcodeVarnode; 1]>,
     pub bb_id: Option<PcodeBlockBasic>,
-    pub index: i64,
     pub target: Option<PcodeAddress>,
 }
 
 /// Varnode data
+///
+/// A large binary has tens of millions of varnodes, so this holds only what lowering reads.
 #[derive(Debug, Clone)]
 pub struct VnodeData {
-    pub name: String,
+    /// The varnode's readable name within its function: its high variable's name, if it has
+    /// one, then a colon and its number, e.g. `local_10:1234`. A key into
+    /// [`PcodeFacts::vnode_names`], or [`VnodeNames::NONE`].
+    pub name: u32,
     pub size: Option<i64>,
-    pub is_address: bool,
-    pub space: Option<String>,
+    pub space: Option<AddressSpace>,
     pub address: Option<PcodeAddress>,
     pub constant_offset: Option<i64>,
+}
+
+/// The varnodes' names (see [`VnodeData::name`]), in one buffer: a varnode has tens of bytes
+/// of name, which allocated one by one would cost as much again.
+#[derive(Debug, Default)]
+pub struct VnodeNames {
+    text: String,
+    /// Where each name ends in `text`.
+    ends: Vec<usize>,
+}
+
+impl VnodeNames {
+    /// The name of a varnode that has none.
+    pub const NONE: u32 = u32::MAX;
+
+    /// The name `key` stands for.
+    pub fn get(&self, key: u32) -> Option<&str> {
+        let i = key as usize;
+        let end = *self.ends.get(i)?;
+        let start = i.checked_sub(1).map_or(0, |prev| self.ends[prev]);
+        Some(&self.text[start..end])
+    }
+
+    fn push(&mut self, name: &str) -> u32 {
+        let key = u32::try_from(self.ends.len()).expect("fewer than 2^32 varnodes");
+        assert_ne!(key, Self::NONE, "fewer than 2^32 - 1 varnodes");
+        self.text.push_str(name);
+        self.ends.push(self.text.len());
+        key
+    }
+}
+
+impl VnodeData {
+    /// The name of the varnode's address space.
+    pub fn space(&self) -> Option<&str> {
+        self.space.as_ref().map(|space| &***space)
+    }
 }
 
 /// Register data
@@ -194,119 +251,152 @@ impl PcodeFactsReader {
     /// Resolve a logical fact filename (e.g. `PCODE_INPUT.facts`) to the file that
     /// actually exists on disk.
     ///
-    /// A gzipped `<filename>.gz` is preferred when present (returning `true` for
-    /// "compressed"); otherwise the plain `<filename>` is used. Preferring `.gz`
-    /// but falling back to the plain file is what lets someone manually `gunzip`
-    /// files in the store and still have everything read correctly. Returns `None`
-    /// if neither variant exists.
+    /// The plain `<filename>` is preferred when present (returning `false` for
+    /// "compressed"): a `.gz` beside it may be from an earlier export or still being written,
+    /// and reading the plain table skips inflating it. Otherwise the gzipped `<filename>.gz` is
+    /// used.
+    /// Returns `None` if neither variant exists.
     fn resolve_fact_path(&self, filename: &str) -> Option<(PathBuf, bool)> {
-        let gz = self.facts_dir.join(format!("{filename}.gz"));
-        if gz.exists() {
-            return Some((gz, true));
-        }
         let plain = self.facts_dir.join(filename);
         if plain.exists() {
             return Some((plain, false));
         }
+        let gz = self.facts_dir.join(format!("{filename}.gz"));
+        if gz.exists() {
+            return Some((gz, true));
+        }
         None
     }
 
-    /// Register a fact table with DataFusion, resolving to the compressed or plain
-    /// variant and configuring the CSV options accordingly. Does nothing if the
-    /// table's file is absent.
-    async fn register_fact_csv(
-        &self,
-        ctx: &SessionContext,
-        table: &str,
-        filename: &str,
-        fields: Vec<Field>,
-    ) -> Result<()> {
+    /// The rows of the table `filename`, each mapped through `f`, in file order; `None` when
+    /// the table is absent.
+    fn rows_optional<const N: usize, T, F>(&self, filename: &str, f: F) -> Result<Option<Vec<T>>>
+    where
+        T: Send,
+        F: Fn([&str; N]) -> Result<T> + Sync,
+    {
+        log::trace!("pcode: reading {filename}");
         let Some((path, compressed)) = self.resolve_fact_path(filename) else {
-            return Ok(());
+            return Ok(None);
         };
-        let schema = Schema::new(fields);
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?;
-        let mut options = CsvReadOptions::new()
-            .has_header(false)
-            .delimiter(b'\t')
-            .schema(&schema);
-        if compressed {
-            options = options
-                .file_extension(".facts.gz")
-                .file_compression_type(FileCompressionType::GZIP);
-        } else {
-            options = options.file_extension(".facts");
-        }
-        ctx.register_csv(table, path_str, options).await?;
-        Ok(())
+        table::read(&path, compressed, filename, f).map(Some)
     }
 
-    /// Read all essential pcode facts
-    pub fn read_all_facts(&self) -> Result<PcodeFacts> {
-        log::trace!("pcode: reading hfunc facts");
-        let hfunc_facts = self.read_hfunc_facts()?;
-        log::trace!("pcode: reading pcode facts");
-        let pcode_facts = self.read_pcode_facts()?;
-        log::trace!("pcode: reading vnode facts");
-        let vnode_facts = self.read_vnode_facts()?;
-        log::trace!("pcode: reading bb facts");
-        let bb_facts = self.read_bb_facts()?;
-        log::trace!("pcode: reading proto facts");
-        let proto_facts = self.read_proto_facts()?;
-        log::trace!("pcode: reading symbol hvar facts");
-        let symbol_hvar_facts = self.read_symbol_hvar_facts()?;
-        log::trace!("pcode: reading hvar name facts");
-        let hvar_name_facts = self.read_hvar_name_facts()?;
-        log::trace!("pcode: reading hvar representative facts");
-        let hvar_representative_facts = self.read_hvar_representative_facts()?;
-        log::trace!("pcode: reading vnode hvar facts");
-        let vnode_hvar_facts = self.read_vnode_hvar_facts()?;
-        log::trace!("pcode: reading hvar class facts");
-        let hvar_class_facts = self.read_hvar_class_facts()?;
-        log::trace!("pcode: reading hvar type facts");
-        let hvar_type_facts = self.read_hvar_type_facts()?;
-        let type_kinds = self.read_type_kinds()?;
-        log::trace!("pcode: reading register facts");
-        let register_facts = self.read_register_facts()?;
+    /// Like [`Self::rows_optional`], for a table that must be present.
+    fn rows<const N: usize, T, F>(&self, filename: &str, f: F) -> Result<Vec<T>>
+    where
+        T: Send,
+        F: Fn([&str; N]) -> Result<T> + Sync,
+    {
+        self.rows_optional(filename, f)?
+            .ok_or_else(|| PcodeError::missing_fact_file(self.facts_dir.join(filename)))
+    }
 
-        Ok(PcodeFacts {
+    /// Like [`Self::rows_optional`], with an absent table read as empty.
+    fn rows_or_empty<const N: usize, T, F>(&self, filename: &str, f: F) -> Result<Vec<T>>
+    where
+        T: Send,
+        F: Fn([&str; N]) -> Result<T> + Sync,
+    {
+        Ok(self.rows_optional(filename, f)?.unwrap_or_default())
+    }
+
+    /// Read all essential pcode facts. Tables are read in parallel, and so is each large one.
+    pub fn read_all_facts(&self) -> Result<PcodeFacts> {
+        self.check_version()?;
+        // The two largest groups of tables go first, one at a time, so that only one group's
+        // rows and intermediate maps are in memory at once.
+        let pcode_facts = self.read_pcode_facts()?;
+        let mut vnode_facts = self.read_vnode_facts()?;
+        let (bb_facts, (vnode_hvar_facts, rest)) = join!(
+            self.read_bb_facts(),
+            self.read_vnode_hvar_facts(),
+            join!(
+                self.read_hfunc_facts(),
+                self.read_proto_facts(),
+                self.read_symbol_hvar_facts(),
+                self.read_hvar_representative_facts(),
+                self.read_hvar_class_facts(),
+                self.read_hvar_type_facts(),
+                self.read_type_kinds(),
+                self.read_register_facts()
+            )
+        );
+        let (
             hfunc_facts,
+            (
+                proto_facts,
+                (
+                    symbol_hvar_facts,
+                    (
+                        hvar_representative_facts,
+                        (hvar_class_facts, (hvar_type_facts, (type_kinds, register_facts))),
+                    ),
+                ),
+            ),
+        ) = rest;
+        // Last, once the other tables' intermediate maps are gone.
+        let vnode_names = self.read_vnode_names(&mut vnode_facts)?;
+        Ok(PcodeFacts {
+            vnode_names,
+            hfunc_facts: hfunc_facts?,
             pcode_facts,
             vnode_facts,
-            bb_facts,
-            proto_facts,
-            symbol_hvar_facts,
-            hvar_name_facts,
-            hvar_representative_facts,
-            vnode_hvar_facts,
-            hvar_class_facts,
-            hvar_type_facts,
-            type_kinds,
-            register_facts,
+            bb_facts: bb_facts?,
+            proto_facts: proto_facts?,
+            symbol_hvar_facts: symbol_hvar_facts?,
+            hvar_representative_facts: hvar_representative_facts?,
+            vnode_hvar_facts: vnode_hvar_facts?,
+            hvar_class_facts: hvar_class_facts?,
+            hvar_type_facts: hvar_type_facts?,
+            type_kinds: type_kinds?,
+            register_facts: register_facts?,
         })
     }
 
+    /// Fails unless the tables are of [`FACTS_VERSION`]. Tables an older `ExportPcode.java`
+    /// wrote name things differently, and would be misread rather than fail to read.
+    pub fn check_version(&self) -> Result<()> {
+        const FILE: &str = "FACTS_VERSION.facts";
+        let version = self.rows_optional(FILE, |[v]| Ok(v.to_string()))?;
+        match version.as_deref() {
+            Some([v]) if v == FACTS_VERSION => Ok(()),
+            _ => Err(PcodeError::invalid_fact_format(
+                FILE,
+                format!(
+                    "the facts in {} are not of version {FACTS_VERSION}: they were exported by \
+                     another version of ExportPcode.java, and must be exported again",
+                    self.facts_dir.display()
+                ),
+            )),
+        }
+    }
+
     /// Read the program's image base: the address Ghidra loaded the artifact at.
-    /// Returns `None` if the fact is absent (older fact sets predate it).
+    /// Returns `None` when the table is absent.
     pub fn read_image_base(&self) -> Result<Option<i64>> {
-        let rows = self.read_csv_facts_optional::<i64>("PROGRAM_IMAGE_BASE.facts")?;
+        const FILE: &str = "PROGRAM_IMAGE_BASE.facts";
+        let rows = self.rows_optional(FILE, |[base]| table::int(FILE, base))?;
         Ok(rows.and_then(|rows| rows.into_iter().next()))
     }
 
     /// Read Register facts
     pub fn read_register_facts(&self) -> Result<Vec<RegisterData>> {
-        let off_name_facts = self
-            .read_csv_facts_optional::<(i64, i64, String)>("REGISTER_OFF_NAME.facts")?
-            .unwrap_or_default();
-        let is_sp_facts = self
-            .read_csv_facts_optional::<String>("REGISTER_IS_SP.facts")?
-            .unwrap_or_default();
-        let sp_set: BTreeSet<String> = is_sp_facts.into_iter().collect();
+        const FILE: &str = "REGISTER_OFF_NAME.facts";
+        let (off_name_facts, is_sp_facts) = join!(
+            self.rows_or_empty(FILE, |[offset, size, name]| {
+                Ok((
+                    table::int(FILE, offset)?,
+                    table::int(FILE, size)?,
+                    name.to_string(),
+                ))
+            }),
+            self.rows_or_empty("REGISTER_IS_SP.facts", |[name]| Ok(name.to_string()))
+        );
+        let sp_set: BTreeSet<String> = is_sp_facts?.into_iter().collect();
 
         let mut result = Vec::new();
-        for (offset, size, name) in off_name_facts {
+        for (offset, size, name) in off_name_facts? {
             let is_stack_pointer = sp_set.contains(&name);
             result.push(RegisterData {
                 offset,
@@ -320,41 +410,44 @@ impl PcodeFactsReader {
 
     /// Read HFUNC (function) facts
     pub fn read_hfunc_facts(&self) -> Result<BTreeMap<HighFunc, HFuncData>> {
-        let mut result = BTreeMap::new();
+        const EP: &str = "HFUNC_EP.facts";
+        const LOCAL_EP: &str = "HFUNC_LOCAL_EP.facts";
+        let (name_facts, (id_name_facts, (proto_facts, (isext_facts, (ep_facts, local_ep_facts))))) = join!(
+            self.rows("HFUNC_NAME.facts", |[f, name]| Ok((
+                HighFunc::from(f),
+                name.to_string()
+            ))),
+            self.rows("HFUNC_FUNC.facts", |[f, id_name]| Ok((
+                HighFunc::from(f),
+                id_name.to_string()
+            ))),
+            self.rows("HFUNC_PROTO.facts", |[f, proto]| Ok((
+                HighFunc::from(f),
+                HighProto::from(proto)
+            ))),
+            self.rows("HFUNC_ISEXT.facts", |[f]| Ok(HighFunc::from(f))),
+            self.rows(EP, |[f, ep]| Ok((HighFunc::from(f), table::int(EP, ep)?))),
+            self.rows(LOCAL_EP, |[ep, local]| Ok((
+                table::int(LOCAL_EP, ep)?,
+                table::int(LOCAL_EP, local)?
+            )))
+        );
 
-        let name_facts = self.read_csv_facts::<(HighFunc, String)>("HFUNC_NAME.facts")?;
-
-        let proto_facts = self.read_csv_facts::<(HighFunc, HighProto)>("HFUNC_PROTO.facts")?;
-
-        let isext_facts = self.read_csv_facts::<HighFunc>("HFUNC_ISEXT.facts")?;
-
-        // Convert to more usable formats
-        let mut name_map: BTreeMap<HighFunc, String> = BTreeMap::new();
-        for (func_id, name) in name_facts {
-            name_map.insert(func_id, name);
-        }
-
-        let mut proto_map: BTreeMap<HighFunc, HighProto> = BTreeMap::new();
-        for (func_id, proto) in proto_facts {
-            proto_map.insert(func_id, proto);
-        }
-
-        let isext_set: BTreeSet<HighFunc> = isext_facts.into_iter().collect();
-
-        let ep_facts = self.read_csv_facts::<(HighFunc, i64)>("HFUNC_EP.facts")?;
+        let name_map: BTreeMap<HighFunc, String> = name_facts?.into_iter().collect();
+        let mut id_name_map: HashMap<HighFunc, String> = id_name_facts?.into_iter().collect();
+        let proto_map: BTreeMap<HighFunc, HighProto> = proto_facts?.into_iter().collect();
+        let isext_set: BTreeSet<HighFunc> = isext_facts?.into_iter().collect();
 
         let mut ep_map: BTreeMap<HighFunc, PcodeAddress> = BTreeMap::new();
         let mut ep_to_func_map: BTreeMap<PcodeAddress, HighFunc> = BTreeMap::new();
-        for (func_id, ep_address_val) in ep_facts {
+        for (func_id, ep_address_val) in ep_facts? {
             let ep_address = PcodeAddress(ep_address_val);
             ep_map.insert(func_id.clone(), ep_address.clone());
             ep_to_func_map.insert(ep_address, func_id);
         }
 
-        let local_ep_facts = self.read_csv_facts::<(i64, i64)>("HFUNC_LOCAL_EP.facts")?;
-
         let mut local_ep_map: BTreeMap<HighFunc, Vec<PcodeAddress>> = BTreeMap::new();
-        for (ep_val, local_ep_val) in local_ep_facts {
+        for (ep_val, local_ep_val) in local_ep_facts? {
             let ep = PcodeAddress(ep_val);
             let local_ep = PcodeAddress(local_ep_val);
             // Find the function ID that has this entry point using the reverse map
@@ -366,17 +459,21 @@ impl PcodeFactsReader {
             }
         }
 
-        // Combine the facts
+        let mut result = BTreeMap::new();
         for (func_id, name) in name_map {
             let proto = proto_map.get(&func_id).cloned();
             let is_external = isext_set.contains(&func_id);
             let entry_point = ep_map.get(&func_id).cloned();
             let local_entry_points = local_ep_map.get(&func_id).cloned().unwrap_or_default();
+            let id_name = id_name_map
+                .remove(&func_id)
+                .unwrap_or_else(|| func_id.to_string());
 
             result.insert(
                 func_id,
                 HFuncData {
                     name,
+                    id_name,
                     proto,
                     is_external,
                     entry_point,
@@ -390,39 +487,33 @@ impl PcodeFactsReader {
 
     /// Read PROTO (prototype) facts
     pub fn read_proto_facts(&self) -> Result<BTreeMap<HighProto, ProtoData>> {
-        let mut result = BTreeMap::new();
+        const COUNT: &str = "PROTO_PARAMETER_COUNT.facts";
+        const PARAM: &str = "PROTO_PARAMETER.facts";
+        let (param_count_facts, (param_facts, (rettype_facts, (vararg_facts, void_facts)))) = join!(
+            self.rows(COUNT, |[p, n]| Ok((HighProto::from(p), count(COUNT, n)?))),
+            self.rows(PARAM, |[p, i, s]| Ok((
+                HighProto::from(p),
+                count(PARAM, i)?,
+                HighSymbol::from(s)
+            ))),
+            self.rows("PROTO_RETTYPE.facts", |[p, ty]| Ok((
+                HighProto::from(p),
+                ty.to_string()
+            ))),
+            self.rows("PROTO_IS_VARARG.facts", |[p]| Ok(HighProto::from(p))),
+            self.rows("PROTO_IS_VOID.facts", |[p]| Ok(HighProto::from(p)))
+        );
 
-        let param_count_facts =
-            self.read_csv_facts::<(HighProto, usize)>("PROTO_PARAMETER_COUNT.facts")?;
-
-        let param_facts =
-            self.read_csv_facts::<(HighProto, usize, HighSymbol)>("PROTO_PARAMETER.facts")?;
-
-        let mut param_count_map: BTreeMap<HighProto, usize> = BTreeMap::new();
-        for (proto_id, count) in param_count_facts {
-            param_count_map.insert(proto_id, count);
-        }
-
+        let param_count_map: BTreeMap<HighProto, usize> = param_count_facts?.into_iter().collect();
         let mut param_map: BTreeMap<HighProto, Vec<(usize, HighSymbol)>> = BTreeMap::new();
-        for (proto_id, index, symbol) in param_facts {
+        for (proto_id, index, symbol) in param_facts? {
             param_map.entry(proto_id).or_default().push((index, symbol));
         }
+        let rettype_map: BTreeMap<HighProto, String> = rettype_facts?.into_iter().collect();
+        let vararg_set: BTreeSet<HighProto> = vararg_facts?.into_iter().collect();
+        let void_set: BTreeSet<HighProto> = void_facts?.into_iter().collect();
 
-        let rettype_facts = self.read_csv_facts::<(HighProto, String)>("PROTO_RETTYPE.facts")?;
-
-        let mut rettype_map: BTreeMap<HighProto, String> = BTreeMap::new();
-        for (proto_id, rettype) in rettype_facts {
-            rettype_map.insert(proto_id, rettype);
-        }
-
-        let vararg_facts = self.read_csv_facts::<HighProto>("PROTO_IS_VARARG.facts")?;
-
-        let void_facts = self.read_csv_facts::<HighProto>("PROTO_IS_VOID.facts")?;
-
-        let vararg_set: BTreeSet<HighProto> = vararg_facts.into_iter().collect();
-        let void_set: BTreeSet<HighProto> = void_facts.into_iter().collect();
-
-        // Combine the facts
+        let mut result = BTreeMap::new();
         for (proto_id, param_count) in param_count_map {
             let parameters = self.build_parameters(&proto_id, param_count, &param_map);
 
@@ -465,822 +556,238 @@ impl PcodeFactsReader {
 
     /// Read PCODE facts
     pub fn read_pcode_facts(&self) -> Result<BTreeMap<PcodeInstruction, PcodeData>> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { self.read_pcode_facts_async().await })
-    }
+        const INPUT: &str = "PCODE_INPUT.facts";
+        const TARGET: &str = "PCODE_TARGET.facts";
+        let (mnemonics, (inputs, (outputs, (targets, (parents, bbs))))) = join!(
+            self.rows_or_empty("PCODE_MNEMONIC.facts", |[i, m]| Ok((
+                PcodeInstruction::from(i),
+                PcodeMnemonic::from(m)
+            ))),
+            self.rows_or_empty(INPUT, |[i, n, vn]| Ok((
+                PcodeInstruction::from(i),
+                table::int(INPUT, n)?,
+                PcodeVarnode::from(vn)
+            ))),
+            self.rows_or_empty("PCODE_OUTPUT.facts", |[i, vn]| Ok((
+                PcodeInstruction::from(i),
+                PcodeVarnode::from(vn)
+            ))),
+            self.rows_or_empty(TARGET, |[i, a]| Ok((
+                PcodeInstruction::from(i),
+                PcodeAddress(table::int(TARGET, a)?)
+            ))),
+            self.rows_or_empty("PCODE_PARENT.facts", |[i, bb]| Ok((
+                PcodeInstruction::from(i),
+                PcodeBlockBasic::from(bb)
+            ))),
+            self.rows_or_empty("BB_HFUNC.facts", |[bb, _]| Ok(PcodeBlockBasic::from(bb)))
+        );
 
-    async fn read_pcode_facts_async(&self) -> Result<BTreeMap<PcodeInstruction, PcodeData>> {
-        let ctx = SessionContext::new();
-
-        // Register all pcode related tables
-        let tables = [
-            (
-                "PCODE_MNEMONIC.facts",
-                "pcode_mnemonic",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "PCODE_OPCODE.facts",
-                "pcode_opcode",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "PCODE_INPUT.facts",
-                "pcode_input",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                    Field::new("c2", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "PCODE_OUTPUT.facts",
-                "pcode_output",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "PCODE_INDEX.facts",
-                "pcode_index",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-            (
-                "PCODE_TARGET.facts",
-                "pcode_target",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-            (
-                "PCODE_PARENT.facts",
-                "pcode_parent",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_HFUNC.facts",
-                "bb_hfunc",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-        ];
-
-        for (file, table, fields) in tables {
-            self.register_fact_csv(&ctx, table, file, fields).await?;
-        }
-
-        let mut mnemonic_map = BTreeMap::new();
-        if ctx.table_exist("pcode_mnemonic")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_mnemonic").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    mnemonic_map.insert(
-                        PcodeInstruction::from(c0.value(i)),
-                        PcodeMnemonic::from(c1.value(i)),
-                    );
+        let (mnemonics, inputs, outputs) = (mnemonics?, inputs?, outputs?);
+        let (targets, parents, bbs) = (targets?, parents?, bbs?);
+        let (mnemonics, (inputs, (outputs, (targets, (parents, bb_ids))))) = join!(
+            sorted(mnemonics),
+            {
+                let mut inputs_by_inst: HashMap<
+                    PcodeInstruction,
+                    SmallVec<[(i64, PcodeVarnode); 2]>,
+                > = HashMap::new();
+                for (inst, index, vn) in inputs {
+                    inputs_by_inst.entry(inst).or_default().push((index, vn));
                 }
-            }
-        }
-
-        let mut opcodes_by_inst = BTreeMap::new();
-        if ctx.table_exist("pcode_opcode")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_opcode").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    opcodes_by_inst
-                        .insert(PcodeInstruction::from(c0.value(i)), c1.value(i).to_string());
+                inputs_by_inst
+                    .into_iter()
+                    .map(|(inst, mut inputs)| {
+                        inputs.sort_by_key(|&(index, _)| index);
+                        (inst, inputs.into_iter().map(|(_, vn)| vn).collect())
+                    })
+                    .collect::<HashMap<PcodeInstruction, SmallVec<[PcodeVarnode; 2]>>>()
+            },
+            {
+                let mut outputs_by_inst: HashMap<PcodeInstruction, SmallVec<[PcodeVarnode; 1]>> =
+                    HashMap::new();
+                for (inst, vn) in outputs {
+                    outputs_by_inst.entry(inst).or_default().push(vn);
                 }
-            }
-        }
+                outputs_by_inst
+            },
+            last_wins(targets),
+            last_wins(parents),
+            bbs.into_iter().collect::<HashSet<PcodeBlockBasic>>()
+        );
 
-        let mut inputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 2]>> =
-            BTreeMap::new();
-        if ctx.table_exist("pcode_input")? {
-            let df = ctx
-                .sql("SELECT c0, c1, c2 FROM pcode_input ORDER BY c0, c1")
-                .await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                // Column 1 is index, but we ordered by it, so we can just push
-                let c2 = batch
-                    .column(2)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    inputs_by_inst
-                        .entry(PcodeInstruction::from(c0.value(i)))
-                        .or_default()
-                        .push(PcodeVarnode::from(c2.value(i)));
-                }
-            }
-        }
-
-        let mut outputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 1]>> =
-            BTreeMap::new();
-        if ctx.table_exist("pcode_output")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_output").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    outputs_by_inst
-                        .entry(PcodeInstruction::from(c0.value(i)))
-                        .or_default()
-                        .push(PcodeVarnode::from(c1.value(i)));
-                }
-            }
-        }
-
-        let mut indices_by_inst = BTreeMap::new();
-        if ctx.table_exist("pcode_index")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_index").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    indices_by_inst.insert(PcodeInstruction::from(c0.value(i)), c1.value(i));
-                }
-            }
-        }
-
-        let mut targets_by_inst = BTreeMap::new();
-        if ctx.table_exist("pcode_target")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_target").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    targets_by_inst.insert(
-                        PcodeInstruction::from(c0.value(i)),
-                        PcodeAddress(c1.value(i)),
-                    );
-                }
-            }
-        }
-
-        let mut parent_map = BTreeMap::new();
-        if ctx.table_exist("pcode_parent")? {
-            let df = ctx.sql("SELECT c0, c1 FROM pcode_parent").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    parent_map.insert(
-                        PcodeInstruction::from(c0.value(i)),
-                        PcodeBlockBasic::from(c1.value(i)),
-                    );
-                }
-            }
-        }
-
-        let mut bb_ids = BTreeSet::new();
-        if ctx.table_exist("bb_hfunc")? {
-            let df = ctx.sql("SELECT DISTINCT c0 FROM bb_hfunc").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    bb_ids.insert(PcodeBlockBasic::from(c0.value(i)));
-                }
-            }
-        }
-
-        let mut result = BTreeMap::new();
-        for (inst_id, mnemonic) in mnemonic_map {
-            let opcode = opcodes_by_inst.get(&inst_id).cloned();
-            let inputs = inputs_by_inst.get(&inst_id).cloned().unwrap_or_default();
-            let outputs = outputs_by_inst.get(&inst_id).cloned().unwrap_or_default();
-            let index = indices_by_inst.get(&inst_id).copied().unwrap_or(0);
-            let target = targets_by_inst.get(&inst_id).cloned();
-            let bb_id = parent_map
-                .get(&inst_id)
-                .filter(|id| bb_ids.contains(*id))
-                .cloned();
-
-            result.insert(
-                inst_id,
-                PcodeData {
+        let rows: Vec<(PcodeInstruction, PcodeData)> = mnemonics
+            .into_par_iter()
+            .map(|(inst_id, mnemonic)| {
+                let data = PcodeData {
                     mnemonic,
-                    opcode,
-                    inputs,
-                    outputs,
-                    bb_id,
-                    index,
-                    target,
-                },
-            );
-        }
-
-        Ok(result)
+                    inputs: inputs.get(&inst_id).cloned().unwrap_or_default(),
+                    outputs: outputs.get(&inst_id).cloned().unwrap_or_default(),
+                    bb_id: parents
+                        .get(&inst_id)
+                        .filter(|id| bb_ids.contains(*id))
+                        .cloned(),
+                    target: targets.get(&inst_id).cloned(),
+                };
+                (inst_id, data)
+            })
+            .collect();
+        Ok(rows.into_iter().collect())
     }
 
     /// Read VNODE facts
     pub fn read_vnode_facts(&self) -> Result<BTreeMap<PcodeVarnode, VnodeData>> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { self.read_vnode_facts_async().await })
+        const SIZE: &str = "VNODE_SIZE.facts";
+        const ADDRESS: &str = "VNODE_ADDRESS.facts";
+        const OFFSET: &str = "VNODE_OFFSET_N.facts";
+        // Every varnode has a space, so the spaces say which varnodes there are.
+        let (sizes, (spaces, (addresses, offsets))) = join!(
+            self.rows_or_empty(SIZE, |[vn, n]| Ok((
+                PcodeVarnode::from(vn),
+                table::int(SIZE, n)?
+            ))),
+            self.rows_or_empty("VNODE_SPACE.facts", |[vn, space]| Ok((
+                PcodeVarnode::from(vn),
+                AddressSpace::from(space)
+            ))),
+            self.rows_or_empty(ADDRESS, |[vn, a]| Ok((
+                PcodeVarnode::from(vn),
+                PcodeAddress(table::int(ADDRESS, a)?)
+            ))),
+            self.rows_or_empty(OFFSET, |[vn, n]| Ok((
+                PcodeVarnode::from(vn),
+                table::int(OFFSET, n)?
+            )))
+        );
+
+        let (spaces, sizes, addresses, offsets) = (spaces?, sizes?, addresses?, offsets?);
+        let (spaces, (sizes, (addresses, offsets))) = join!(
+            sorted(spaces),
+            last_wins(sizes),
+            last_wins(addresses),
+            last_wins(offsets)
+        );
+
+        let rows: Vec<(PcodeVarnode, VnodeData)> = spaces
+            .into_par_iter()
+            .map(|(vnode_id, space)| {
+                let data = VnodeData {
+                    name: VnodeNames::NONE,
+                    size: sizes.get(&vnode_id).copied(),
+                    space: Some(space),
+                    address: addresses.get(&vnode_id).cloned(),
+                    constant_offset: offsets.get(&vnode_id).copied(),
+                };
+                (vnode_id, data)
+            })
+            .collect();
+        Ok(rows.into_iter().collect())
     }
 
-    async fn read_vnode_facts_async(&self) -> Result<BTreeMap<PcodeVarnode, VnodeData>> {
-        let ctx = SessionContext::new();
-
-        let tables = [
-            (
-                "VNODE_NAME.facts",
-                "vnode_name",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "VNODE_SIZE.facts",
-                "vnode_size",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-            (
-                "VNODE_IS_ADDRESS.facts",
-                "vnode_is_address",
-                vec![Field::new("c0", DataType::Utf8, false)],
-            ),
-            (
-                "VNODE_SPACE.facts",
-                "vnode_space",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "VNODE_ADDRESS.facts",
-                "vnode_address",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-            (
-                "VNODE_OFFSET_N.facts",
-                "vnode_offset_n",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-        ];
-
-        for (file_name, table_name, fields) in tables {
-            self.register_fact_csv(&ctx, table_name, file_name, fields)
-                .await?;
-        }
-
-        let mut name_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
-        if ctx.table_exist("vnode_name")? {
-            let df = ctx.sql("SELECT c0, c1 FROM vnode_name").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    name_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
-                }
+    /// Reads `VNODE_NAME`, setting each varnode's name in `vnode_facts`, and returns the names.
+    pub fn read_vnode_names(
+        &self,
+        vnode_facts: &mut BTreeMap<PcodeVarnode, VnodeData>,
+    ) -> Result<VnodeNames> {
+        let rows = self.rows_or_empty("VNODE_NAME.facts", |[vn, name]| {
+            Ok((PcodeVarnode::from(vn), Box::<str>::from(name)))
+        })?;
+        let mut names = VnodeNames::default();
+        for (vnode_id, name) in rows {
+            if let Some(data) = vnode_facts.get_mut(&vnode_id) {
+                data.name = names.push(&name);
             }
         }
-
-        let mut size_map: BTreeMap<PcodeVarnode, i64> = BTreeMap::new();
-        if ctx.table_exist("vnode_size")? {
-            let df = ctx.sql("SELECT c0, c1 FROM vnode_size").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    size_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
-                }
-            }
-        }
-
-        let mut is_address_set: BTreeSet<PcodeVarnode> = BTreeSet::new();
-        if ctx.table_exist("vnode_is_address")? {
-            let df = ctx.sql("SELECT c0 FROM vnode_is_address").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    is_address_set.insert(PcodeVarnode::from(c0.value(i)));
-                }
-            }
-        }
-
-        let mut space_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
-        if ctx.table_exist("vnode_space")? {
-            let df = ctx.sql("SELECT c0, c1 FROM vnode_space").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    space_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
-                }
-            }
-        }
-
-        let mut address_map: BTreeMap<PcodeVarnode, PcodeAddress> = BTreeMap::new();
-        if ctx.table_exist("vnode_address")? {
-            let df = ctx.sql("SELECT c0, c1 FROM vnode_address").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    address_map.insert(PcodeVarnode::from(c0.value(i)), PcodeAddress(c1.value(i)));
-                }
-            }
-        }
-
-        let mut offset_map: BTreeMap<PcodeVarnode, i64> = BTreeMap::new();
-        if ctx.table_exist("vnode_offset_n")? {
-            let df = ctx.sql("SELECT c0, c1 FROM vnode_offset_n").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    offset_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
-                }
-            }
-        }
-
-        let mut result = BTreeMap::new();
-        // Combine the facts
-        for (vnode_id, name) in name_map {
-            let size = size_map.get(&vnode_id).cloned();
-            let is_address = is_address_set.contains(&vnode_id);
-            let space = space_map.get(&vnode_id).cloned();
-            let address = address_map.get(&vnode_id).cloned();
-            let constant_offset = offset_map.get(&vnode_id).cloned();
-
-            result.insert(
-                vnode_id,
-                VnodeData {
-                    name,
-                    size,
-                    is_address,
-                    space,
-                    address,
-                    constant_offset,
-                },
-            );
-        }
-
-        Ok(result)
+        Ok(names)
     }
 
     /// Read BB (basic block) facts
     pub fn read_bb_facts(&self) -> Result<BTreeMap<PcodeBlockBasic, BBData>> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { self.read_bb_facts_async().await })
-    }
+        const START: &str = "BB_START.facts";
+        const INDEX: &str = "BB_PCODE_INDEX.facts";
+        let (hfuncs, (firsts, (lasts, (starts, (indices, (outs, (touts, fouts))))))) = join!(
+            self.rows_or_empty("BB_HFUNC.facts", |[bb, f]| Ok((
+                PcodeBlockBasic::from(bb),
+                HighFunc::from(f)
+            ))),
+            self.rows_or_empty("BB_FIRST.facts", |[bb, i]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeInstruction::from(i)
+            ))),
+            self.rows_or_empty("BB_LAST.facts", |[bb, i]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeInstruction::from(i)
+            ))),
+            self.rows_or_empty(START, |[bb, a]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeAddress(table::int(START, a)?)
+            ))),
+            self.rows_or_empty(INDEX, |[bb, n, i]| Ok((
+                PcodeBlockBasic::from(bb),
+                table::int(INDEX, n)? as u32,
+                PcodeInstruction::from(i)
+            ))),
+            self.rows_or_empty("BB_OUT.facts", |[bb, to]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeBlockBasic::from(to)
+            ))),
+            self.rows_or_empty("BB_TOUT.facts", |[bb, to]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeBlockBasic::from(to)
+            ))),
+            self.rows_or_empty("BB_FOUT.facts", |[bb, to]| Ok((
+                PcodeBlockBasic::from(bb),
+                PcodeBlockBasic::from(to)
+            )))
+        );
 
-    async fn read_bb_facts_async(&self) -> Result<BTreeMap<PcodeBlockBasic, BBData>> {
-        let ctx = SessionContext::new();
-
-        let tables = [
-            (
-                "BB_HFUNC.facts",
-                "bb_hfunc",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_FIRST.facts",
-                "bb_first",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_LAST.facts",
-                "bb_last",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_START.facts",
-                "bb_start",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                ],
-            ),
-            (
-                "BB_PCODE_INDEX.facts",
-                "bb_pcode_index",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Int64, false),
-                    Field::new("c2", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_OUT.facts",
-                "bb_out",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_TOUT.facts",
-                "bb_tout",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-            (
-                "BB_FOUT.facts",
-                "bb_fout",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                    Field::new("c1", DataType::Utf8, false),
-                ],
-            ),
-        ];
-
-        for (file_name, table_name, fields) in tables {
-            self.register_fact_csv(&ctx, table_name, file_name, fields)
-                .await?;
-        }
-
-        let mut hfunc_map: BTreeMap<PcodeBlockBasic, HighFunc> = BTreeMap::new();
-        if ctx.table_exist("bb_hfunc")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_hfunc").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    hfunc_map.insert(
-                        PcodeBlockBasic::from(c0.value(i)),
-                        HighFunc::from(c1.value(i)),
-                    );
+        let (hfuncs, firsts, lasts, starts) = (hfuncs?, firsts?, lasts?, starts?);
+        let (indices, outs, touts, fouts) = (indices?, outs?, touts?, fouts?);
+        let (hfuncs, (firsts, (lasts, (starts, (indices, (outs, (touts, fouts))))))) = join!(
+            sorted(hfuncs),
+            last_wins(firsts),
+            last_wins(lasts),
+            last_wins(starts),
+            {
+                let mut index_map: HashMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> =
+                    HashMap::new();
+                for (bb, index, inst) in indices {
+                    index_map.entry(bb).or_default().push((index, inst));
                 }
-            }
-        }
-
-        let mut first_map: BTreeMap<PcodeBlockBasic, PcodeInstruction> = BTreeMap::new();
-        if ctx.table_exist("bb_first")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_first").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    first_map.insert(
-                        PcodeBlockBasic::from(c0.value(i)),
-                        PcodeInstruction::from(c1.value(i)),
-                    );
+                for indices in index_map.values_mut() {
+                    indices.sort_by_key(|&(index, _)| index);
                 }
-            }
-        }
+                index_map
+            },
+            grouped(outs),
+            grouped(touts),
+            grouped(fouts)
+        );
 
-        let mut last_map: BTreeMap<PcodeBlockBasic, PcodeInstruction> = BTreeMap::new();
-        if ctx.table_exist("bb_last")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_last").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    last_map.insert(
-                        PcodeBlockBasic::from(c0.value(i)),
-                        PcodeInstruction::from(c1.value(i)),
-                    );
-                }
-            }
-        }
-
-        let mut start_addr_map: BTreeMap<PcodeBlockBasic, PcodeAddress> = BTreeMap::new();
-        if ctx.table_exist("bb_start")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_start").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    start_addr_map.insert(
-                        PcodeBlockBasic::from(c0.value(i)),
-                        PcodeAddress(c1.value(i)),
-                    );
-                }
-            }
-        }
-
-        let mut index_map: BTreeMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> =
-            BTreeMap::new();
-        if ctx.table_exist("bb_pcode_index")? {
-            let df = ctx.sql("SELECT c0, c1, c2 FROM bb_pcode_index").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .unwrap();
-                let c2 = batch
-                    .column(2)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    index_map
-                        .entry(PcodeBlockBasic::from(c0.value(i)))
-                        .or_default()
-                        .push((c1.value(i) as u32, PcodeInstruction::from(c2.value(i))));
-                }
-            }
-        }
-        for indices in index_map.values_mut() {
-            indices.sort_by_key(|&(index, _)| index);
-        }
-
-        let mut out_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        if ctx.table_exist("bb_out")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_out").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    out_edge_map
-                        .entry(PcodeBlockBasic::from(c0.value(i)))
-                        .or_default()
-                        .push(PcodeBlockBasic::from(c1.value(i)));
-                }
-            }
-        }
-
-        let mut tout_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        if ctx.table_exist("bb_tout")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_tout").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    tout_edge_map
-                        .entry(PcodeBlockBasic::from(c0.value(i)))
-                        .or_default()
-                        .push(PcodeBlockBasic::from(c1.value(i)));
-                }
-            }
-        }
-
-        let mut fout_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        if ctx.table_exist("bb_fout")? {
-            let df = ctx.sql("SELECT c0, c1 FROM bb_fout").await?;
-            let batches = df.collect().await?;
-            for batch in batches {
-                let c0 = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                let c1 = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    fout_edge_map
-                        .entry(PcodeBlockBasic::from(c0.value(i)))
-                        .or_default()
-                        .push(PcodeBlockBasic::from(c1.value(i)));
-                }
-            }
-        }
-
-        let mut result = BTreeMap::new();
-        // Combine the facts
-        for (bb_id, hfunc_id) in hfunc_map {
-            let first_inst = first_map.get(&bb_id).cloned();
-            let last_inst = last_map.get(&bb_id).cloned();
-            let start_address = start_addr_map.get(&bb_id).cloned();
-            let instruction_indices = index_map.get(&bb_id).cloned().unwrap_or_default();
-            let out_edges = out_edge_map.get(&bb_id).cloned().unwrap_or_default();
-            let tout_edges = tout_edge_map.get(&bb_id).cloned().unwrap_or_default();
-            let fout_edges = fout_edge_map.get(&bb_id).cloned().unwrap_or_default();
-
-            result.insert(
-                bb_id,
-                BBData {
-                    hfunc: hfunc_id,
-                    start_address,
-                    first_inst,
-                    last_inst,
-                    instruction_indices,
-                    out_edges,
-                    tout_edges,
-                    fout_edges,
-                },
-            );
-        }
-
-        Ok(result)
+        let rows: Vec<(PcodeBlockBasic, BBData)> = hfuncs
+            .into_par_iter()
+            .map(|(bb_id, hfunc)| {
+                let data = BBData {
+                    hfunc,
+                    start_address: starts.get(&bb_id).cloned(),
+                    first_inst: firsts.get(&bb_id).cloned(),
+                    last_inst: lasts.get(&bb_id).cloned(),
+                    instruction_indices: indices.get(&bb_id).cloned().unwrap_or_default(),
+                    out_edges: outs.get(&bb_id).cloned().unwrap_or_default(),
+                    tout_edges: touts.get(&bb_id).cloned().unwrap_or_default(),
+                    fout_edges: fouts.get(&bb_id).cloned().unwrap_or_default(),
+                };
+                (bb_id, data)
+            })
+            .collect();
+        Ok(rows.into_iter().collect())
     }
 
     /// Read SYMBOL_HVAR facts
     pub fn read_symbol_hvar_facts(&self) -> Result<BTreeMap<HighSymbol, Vec<HighVariable>>> {
-        let facts = self.read_csv_facts::<(HighSymbol, HighVariable)>("SYMBOL_HVAR.facts")?;
+        let facts = self.rows("SYMBOL_HVAR.facts", |[s, h]| {
+            Ok((HighSymbol::from(s), HighVariable::from(h)))
+        })?;
         let mut m: BTreeMap<HighSymbol, Vec<HighVariable>> = BTreeMap::new();
         for (s, h) in facts {
             m.entry(s).or_default().push(h);
@@ -1288,50 +795,49 @@ impl PcodeFactsReader {
         Ok(m)
     }
 
-    /// Read HVAR_NAME facts
-    pub fn read_hvar_name_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
-        let facts = self.read_csv_facts::<(HighVariable, String)>("HVAR_NAME.facts")?;
-        Ok(facts.into_iter().collect())
-    }
-
     /// Read HVAR_REPRESENTATIVE facts
     pub fn read_hvar_representative_facts(&self) -> Result<BTreeMap<HighVariable, PcodeVarnode>> {
-        let facts =
-            self.read_csv_facts::<(HighVariable, PcodeVarnode)>("HVAR_REPRESENTATIVE.facts")?;
-        Ok(facts.into_iter().collect())
+        let facts = self.rows("HVAR_REPRESENTATIVE.facts", |[h, vn]| {
+            Ok((HighVariable::from(h), PcodeVarnode::from(vn)))
+        })?;
+        Ok(sorted(facts).into_iter().collect())
     }
 
     /// Read VNODE_HVAR facts, mapping each varnode to the high variable it belongs to.
     ///
-    /// Optional: returns an empty map when the fact file is absent, as it is in older
-    /// fact sets.
+    /// Optional: an empty map when the table is absent.
     pub fn read_vnode_hvar_facts(&self) -> Result<BTreeMap<PcodeVarnode, HighVariable>> {
-        let facts = self
-            .read_csv_facts_optional::<(PcodeVarnode, HighVariable)>("VNODE_HVAR.facts")?
-            .unwrap_or_default();
-        Ok(facts.into_iter().collect())
+        let facts = self.rows_or_empty("VNODE_HVAR.facts", |[vn, h]| {
+            Ok((PcodeVarnode::from(vn), HighVariable::from(h)))
+        })?;
+        Ok(sorted(facts).into_iter().collect())
     }
 
     /// Read HVAR_CLASS facts, giving Ghidra's storage classification for each high
     /// variable (`global`, `constant`, `other`, ...).
     ///
-    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
+    /// A variable can have two rows, Ghidra's class and `global` when its address has a
+    /// symbol; then it is `global`, whatever order the rows are in.
     pub fn read_hvar_class_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
-        let facts = self
-            .read_csv_facts_optional::<(HighVariable, String)>("HVAR_CLASS.facts")?
-            .unwrap_or_default();
-        Ok(facts.into_iter().collect())
+        let facts = self.rows_or_empty("HVAR_CLASS.facts", |[h, class]| {
+            Ok((HighVariable::from(h), class.to_string()))
+        })?;
+        let mut classes: BTreeMap<HighVariable, String> = BTreeMap::new();
+        for (h, class) in facts {
+            if classes.get(&h).is_none_or(|old| old != "global") {
+                classes.insert(h, class);
+            }
+        }
+        Ok(classes)
     }
 
     /// Read HVAR_TYPE facts, giving the id of the data type Ghidra assigned each high
     /// variable.
-    ///
-    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
     pub fn read_hvar_type_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
-        let facts = self
-            .read_csv_facts_optional::<(HighVariable, String)>("HVAR_TYPE.facts")?
-            .unwrap_or_default();
-        Ok(facts.into_iter().collect())
+        let facts = self.rows_or_empty("HVAR_TYPE.facts", |[h, ty]| {
+            Ok((HighVariable::from(h), ty.to_string()))
+        })?;
+        Ok(sorted(facts).into_iter().collect())
     }
 
     /// Read the kind of each exported data type id from the `TYPE_POINTER`,
@@ -1348,51 +854,39 @@ impl PcodeFactsReader {
             // Last, so a type that is somehow both is a pointer.
             ("TYPE_POINTER.facts", TypeKind::Pointer),
         ] {
-            for id in self
-                .read_csv_facts_optional::<(String,)>(file)?
-                .unwrap_or_default()
-            {
-                kinds.insert(id.0, kind);
+            for id in self.rows_or_empty(file, |[id]| Ok(id.to_string()))? {
+                kinds.insert(id, kind);
             }
         }
         Ok(kinds)
     }
+}
 
-    /// Helper function to read CSV facts
-    fn read_csv_facts<T: serde::de::DeserializeOwned>(&self, filename: &str) -> Result<Vec<T>> {
-        log::trace!("read_csv_facts: {filename}");
-        self.read_csv_facts_optional(filename)?
-            .ok_or_else(|| PcodeError::missing_fact_file(self.facts_dir.join(filename)))
+/// `rows` sorted by key, stably, so that collecting them into a map keeps the last row of
+/// each key as inserting them in order would; the collect then has nothing left to sort.
+fn sorted<K: Ord + Send, V: Send>(mut rows: Vec<(K, V)>) -> Vec<(K, V)> {
+    rows.par_sort_by(|a, b| a.0.cmp(&b.0));
+    rows
+}
+
+/// `rows` as a map in which a later row of a key replaces an earlier one.
+fn last_wins<K: Eq + std::hash::Hash, V>(rows: Vec<(K, V)>) -> HashMap<K, V> {
+    rows.into_iter().collect()
+}
+
+/// `rows` grouped by key, each group in file order.
+fn grouped<K: Eq + std::hash::Hash, V>(rows: Vec<(K, V)>) -> HashMap<K, Vec<V>> {
+    let mut groups: HashMap<K, Vec<V>> = HashMap::new();
+    for (k, v) in rows {
+        groups.entry(k).or_default().push(v);
     }
+    groups
+}
 
-    /// Helper function to read CSV facts optionally (returns None if file doesn't exist)
-    fn read_csv_facts_optional<T: serde::de::DeserializeOwned>(
-        &self,
-        filename: &str,
-    ) -> Result<Option<Vec<T>>> {
-        let Some((path, compressed)) = self.resolve_fact_path(filename) else {
-            return Ok(None);
-        };
-
-        let file = std::fs::File::open(&path).map_err(PcodeError::from)?;
-        let reader: std::io::BufReader<Box<dyn std::io::Read>> = if compressed {
-            std::io::BufReader::new(Box::new(flate2::read::GzDecoder::new(file)))
-        } else {
-            std::io::BufReader::new(Box::new(file))
-        };
-        let mut rdr = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .delimiter(b'\t')
-            .from_reader(reader);
-
-        let mut result = Vec::new();
-        for record_result in rdr.deserialize() {
-            let record: T = record_result.map_err(|e| PcodeError::csv_parse_error(filename, e))?;
-            result.push(record);
-        }
-
-        Ok(Some(result))
-    }
+/// A count or position field.
+fn count(filename: &str, field: &str) -> Result<usize> {
+    usize::try_from(table::int(filename, field)?)
+        .map_err(|e| PcodeError::invalid_fact_format(filename, format!("bad count {field:?}: {e}")))
 }
 
 /// What Ghidra's data type says a value is, as far as pointer flow cares.
@@ -1406,13 +900,14 @@ pub enum TypeKind {
 
 #[derive(Debug, Default)]
 pub struct PcodeFacts {
+    /// The varnodes' names, which [`VnodeData::name`] are keys into.
+    pub vnode_names: VnodeNames,
     pub hfunc_facts: BTreeMap<HighFunc, HFuncData>,
     pub pcode_facts: BTreeMap<PcodeInstruction, PcodeData>,
     pub vnode_facts: BTreeMap<PcodeVarnode, VnodeData>,
     pub bb_facts: BTreeMap<PcodeBlockBasic, BBData>,
     pub proto_facts: BTreeMap<HighProto, ProtoData>,
     pub symbol_hvar_facts: BTreeMap<HighSymbol, Vec<HighVariable>>,
-    pub hvar_name_facts: BTreeMap<HighVariable, String>,
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
     pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
     pub hvar_class_facts: BTreeMap<HighVariable, String>,
@@ -1465,7 +960,7 @@ impl PcodeFacts {
     pub fn is_global_vnode(&self, vnode: &PcodeVarnode) -> bool {
         self.vnode_facts
             .get(vnode)
-            .is_some_and(|data| data.space.as_deref() == Some("ram"))
+            .is_some_and(|data| data.space() == Some("ram"))
             && self
                 .vnode_hvar_facts
                 .get(vnode)

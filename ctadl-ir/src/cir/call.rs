@@ -3,6 +3,7 @@ use std::{fmt, fmt::Display};
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
+use internment::ArcIntern;
 use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
@@ -91,26 +92,14 @@ pub enum CallStyle {
     /// C function pointer, a CIL delegate, a Java method handle.
     FuncPtrCall {
         callee: super::AccessPath,
-        signature: Option<String>,
+        signature: Option<Symbol>,
     },
     /// Java virtual call. At analysis time, this consults metadata in the
     /// [`Dispatch::Java`] enum.
     JavaCall {
         receiver: VariableRef,
-        cls: Symbol,
-        simple_name: Symbol,
-        descriptor: Symbol,
-        /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
-        dispatch: JavaDispatch,
-        /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
-        /// every other dispatch kind and for a `Super` site whose frontend could not
-        /// determine it.
-        ///
-        /// Kept beside `cls` rather than overwriting it: `cls` is what a model matches and
-        /// what `ctadl report` counts. The two differ because the instruction names the class
-        /// of the *method reference*, which for a Dalvik `invoke-super` may be the current
-        /// class rather than the superclass the runtime starts at.
-        super_start: Option<Symbol>,
+        /// The method the instruction names; see [`JavaMethodRef`].
+        method: ArcIntern<JavaMethodRef>,
     },
     /// Lua `recv:m(...)` (or `recv.m(recv, ...)`); resolved via the metatable
     /// (`__index`) chain. Unlike [`CallStyle::JavaCall`] there is **no static
@@ -129,10 +118,42 @@ pub enum CallStyle {
     /// interface method and a class method alike, and the table says which `cls` is.
     CilCall {
         receiver: VariableRef,
-        cls: Symbol,
-        simple_name: Symbol,
-        descriptor: Symbol,
+        /// The method the instruction names; see [`CilMethodRef`].
+        method: ArcIntern<CilMethodRef>,
     },
+}
+
+/// The method a [`CallStyle::JavaCall`] names.
+///
+/// A call holds it interned rather than inline: it is most of a call's size (see the size bound
+/// on [`Statement`](super::Statement)), and many call sites name the same method. It serializes
+/// as its fields, so an encoded call is the same as if they were the call's own.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct JavaMethodRef {
+    pub cls: Symbol,
+    pub simple_name: Symbol,
+    pub descriptor: Symbol,
+    /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
+    pub dispatch: JavaDispatch,
+    /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
+    /// every other dispatch kind and for a `Super` site whose frontend could not
+    /// determine it.
+    ///
+    /// Kept beside `cls` rather than overwriting it: `cls` is what a model matches and
+    /// what `ctadl report` counts. The two differ because the instruction names the class
+    /// of the *method reference*, which for a Dalvik `invoke-super` may be the current
+    /// class rather than the superclass the runtime starts at.
+    pub super_start: Option<Symbol>,
+}
+
+/// The method a [`CallStyle::CilCall`] names, held interned as [`JavaMethodRef`] is.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CilMethodRef {
+    pub cls: Symbol,
+    pub simple_name: Symbol,
+    pub descriptor: Symbol,
 }
 
 impl CallStyle {
@@ -186,14 +207,14 @@ impl Display for CallStyle {
             DirectCall { call_edges } => {
                 write!(f, "direct-call {call_edges}")
             }
-            JavaCall {
-                receiver,
-                cls,
-                simple_name,
-                descriptor,
-                dispatch,
-                super_start,
-            } => {
+            JavaCall { receiver, method } => {
+                let JavaMethodRef {
+                    cls,
+                    simple_name,
+                    descriptor,
+                    dispatch,
+                    super_start,
+                } = &**method;
                 write!(
                     f,
                     "java-call {dispatch} {receiver}.<{cls}.{simple_name}{descriptor}>"
@@ -204,12 +225,14 @@ impl Display for CallStyle {
                 }
             }
             LuaCall { receiver, method } => write!(f, "lua-call {receiver}:{method}"),
-            CilCall {
-                receiver,
-                cls,
-                simple_name,
-                descriptor,
-            } => write!(f, "cil-call {receiver}.<{cls}::{simple_name}{descriptor}>"),
+            CilCall { receiver, method } => {
+                let CilMethodRef {
+                    cls,
+                    simple_name,
+                    descriptor,
+                } = &**method;
+                write!(f, "cil-call {receiver}.<{cls}::{simple_name}{descriptor}>")
+            }
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
                 None => write!(f, "funcptr-call {callee}"),
@@ -350,6 +373,7 @@ pub enum Dispatch {
         ///
         /// Every declared method has a row, abstract and native ones included.
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
         /// The interfaces *this import declares*.
         ///
@@ -396,6 +420,7 @@ pub enum Dispatch {
         /// - Fully-qualified function id the method lowers to (the IR function name)
         methods: Vec<(Symbol, Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
     /// Table for the .NET (CIL) frontend. The first four columns mirror
@@ -412,6 +437,7 @@ pub enum Dispatch {
         /// synthesizes (see `ctadl-cil`'s `hierarchy.rs`).
         methods: Vec<(CilClass, CilSimpleName, CilSignature, CilMethod)>,
         /// Class -> its base type and the interfaces it implements, erased to open definitions.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_sorted_map"))]
         hierarchy: HashMap<CilClass, SmallVec<[CilClass; 2]>>,
         /// The interfaces this import declares. See the column of the same name on
         /// [`Dispatch::Java`].
@@ -833,6 +859,48 @@ impl Display for Dispatch {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct JavaClass(pub Symbol);
+
+/// Serializes a map keyed by class in the order of the class names, rather than in the hash
+/// map's iteration order, which is seeded per process, so the same import encodes to the same
+/// bytes every time. It is still an ordinary map on the wire, so reading it back is unchanged.
+#[cfg(feature = "serde")]
+fn serialize_sorted_map<K, V, S>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    K: serde::Serialize + ClassName,
+    V: serde::Serialize,
+    S: serde::Serializer,
+{
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_unstable_by(|(a, _), (b, _)| a.class_name().cmp(b.class_name()));
+    serializer.collect_map(entries)
+}
+
+/// A class key, for [`serialize_sorted_map`] to order by.
+#[cfg(feature = "serde")]
+trait ClassName {
+    fn class_name(&self) -> &str;
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for JavaClass {
+    fn class_name(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for CilClass {
+    fn class_name(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ClassName for Symbol {
+    fn class_name(&self) -> &str {
+        self.as_ref()
+    }
+}
 
 impl Deref for JavaClass {
     type Target = Symbol;

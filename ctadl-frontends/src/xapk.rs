@@ -18,14 +18,28 @@ and record the result on the parent.
   splits. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
+
+# Splits at once
+
+The splits are independent imports -- each writes only its own import directory and config,
+and its native libraries' -- so they are imported concurrently, under one [`Budget`] that their
+native libraries share. Their Dex halves take turns ([`Budget::dex_turn`]); their native halves
+do not wait for them. A split's import starts as soon as it is extracted; the extractions
+take turns, since they are bound by the disk. The bundle's own config is written only after
+every split is done (`record_sub_imports`, by the caller). The sub-import list, the messages this
+module writes, and which error is returned when splits fail, all follow the split order, whatever
+order the splits finish in.
 */
 
 use std::path::{Path, PathBuf};
 
-use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
+use dex_reader::apk::{
+    SplitApkEntry, copy_bundle_entry, has_dex_entries_of_file, split_apk_entries_of_file,
+};
 
 use crate::ImportOptions;
 use crate::apk_native::sanitize;
+use crate::budget::{Budget, run_ordered};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
@@ -40,6 +54,16 @@ use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 pub fn import_bundle(
     parent: &ArtifactImport,
     opts: ImportOptions<'_>,
+) -> Result<Vec<String>, Error> {
+    import_bundle_in(parent, opts, None)
+}
+
+/// [`import_bundle`] under `budget`, or under a budget of its own built from `opts.jobs` when
+/// `None`.
+pub(crate) fn import_bundle_in(
+    parent: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: Option<&Budget>,
 ) -> Result<Vec<String>, Error> {
     let bundle = &parent.artifact_path;
     let entries = split_apk_entries_of_file(bundle)
@@ -60,65 +84,104 @@ pub fn import_bundle(
         .map_err(Error::Io)
         .err_context(|| format!("creating splits dir: '{}'", splits_dir.display()))?;
 
-    // Extract first, then import: which splits carry Dex is a property of their contents, and
-    // the import order depends on it.
-    let mut splits: Vec<Split> = Vec::new();
-    for entry in &entries {
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
+
+    // Interleaved writes only slow down.
+    let extracting = std::sync::Mutex::new(());
+    let extract_one = |entry: &SplitApkEntry| -> Result<Split, Error> {
+        let _turn = extracting.lock().unwrap_or_else(|e| e.into_inner());
         // Built from the stem, never from the raw ZIP entry name, so a hostile entry cannot
         // write outside `splits_dir`. See `dex_reader::apk::SplitApkEntry`.
         let dest = splits_dir.join(format!("{}.apk", sanitize(&entry.stem)));
-        let bytes = read_bundle_entry(bundle, &entry.entry_name)
-            .map_err(Error::Dex)
-            .err_context(|| {
-                format!(
-                    "extracting '{}' from app bundle: '{}'",
-                    entry.entry_name,
-                    bundle.display()
-                )
-            })?;
-        std::fs::write(&dest, &bytes)
-            .map_err(Error::Io)
-            .err_context(|| format!("writing split APK: '{}'", dest.display()))?;
+        let extract = || -> std::io::Result<()> {
+            let mut out = std::fs::File::create(&dest)?;
+            copy_bundle_entry(bundle, &entry.entry_name, &mut out)?;
+            Ok(())
+        };
+        extract().map_err(Error::Io).err_context(|| {
+            format!(
+                "extracting '{}' from app bundle '{}' to '{}'",
+                entry.entry_name,
+                bundle.display(),
+                dest.display()
+            )
+        })?;
         let has_dex = has_dex_entries_of_file(&dest)
             .map_err(Error::Dex)
             .err_context(|| format!("listing '{}'", dest.display()))?;
-        splits.push(Split {
+        Ok(Split {
             name: sub_import_name(&parent.name, &entry.stem),
             path: dest,
             has_dex,
-        });
+        })
+    };
+    let mut results: Vec<Option<Result<SplitResult, Error>>> =
+        (0..entries.len()).map(|_| None).collect();
+    run_ordered(
+        &entries,
+        &(0..entries.len()).collect::<Vec<_>>(),
+        budget.cores(),
+        |entry| {
+            let split = extract_one(entry)?;
+            let imported = import_split(&split.name, &split.path, opts, budget);
+            Ok(SplitResult { split, imported })
+        },
+        // A split that cannot be extracted or imported fails the bundle, so nothing after it
+        // is started: a split that merely holds no code does not.
+        |result| match result {
+            Err(_) => true,
+            Ok(SplitResult { imported, .. }) => {
+                imported.as_ref().is_err_and(|e| !is_nothing_to_import(e))
+            }
+        },
+        |index, result| results[index] = Some(result),
+    );
+    // Everything below happens in split order, which is known only now that every split has been
+    // looked into: an extraction failure first, in entry order; then each split's result. After a
+    // failure, the splits that were not started have no result.
+    let mut done = Vec::with_capacity(results.len());
+    for result in results.into_iter().map_while(|result| result) {
+        done.push(result?);
     }
-    order_splits(&mut splits);
+    order_splits(&mut done);
 
     log::info!(
         "{}: {} split APK(s): {}",
         bundle.display(),
-        splits.len(),
-        splits
-            .iter()
-            .map(|split| split.name.as_str())
+        done.len(),
+        done.iter()
+            .map(|result| result.split.name.as_str())
             .collect::<Vec<_>>()
             .join(", "),
     );
 
     let mut names = Vec::new();
     let mut skipped = 0usize;
-    for Split { name, path, .. } in &splits {
-        match import_split(name, path, opts) {
+    let total = done.len();
+    for SplitResult { split, imported } in done {
+        match imported {
             Ok(sub_imports) => {
-                names.push(name.clone());
+                names.push(split.name);
                 names.extend(sub_imports);
             }
             Err(e) if is_nothing_to_import(&e) => {
                 skipped += 1;
-                // The import directory was created before the split turned out to hold nothing;
-                // leaving it behind would put an entry in `ctadl inspect`'s listing for every
-                // language and density a bundle ships, which on a real one is most of the file.
-                discard_import(name);
+                // The import directory was created before the split turned out to hold
+                // nothing; leaving it behind would put an entry in `ctadl inspect`'s listing
+                // for every language and density a bundle ships, which on a real one is most
+                // of the file.
+                discard_import(&split.name);
                 log::debug!(
                     "{}: skipping '{}': it holds no code",
                     bundle.display(),
-                    name
+                    split.name
                 );
             }
             Err(e) => return Err(e),
@@ -127,10 +190,17 @@ pub fn import_bundle(
     log::info!(
         "{}: {} split(s) imported, {} resource-only split(s) skipped",
         bundle.display(),
-        splits.len() - skipped,
+        total - skipped,
         skipped,
     );
     Ok(names)
+}
+
+/// One split and what importing it did.
+struct SplitResult {
+    split: Split,
+    /// Its own sub-imports, as [`import_split`] returns them.
+    imported: Result<Vec<String>, Error>,
 }
 
 /// One extracted split, ready to import.
@@ -147,13 +217,18 @@ struct Split {
 /// scoping stays in import order and the Java half of a JNI boundary is observed before the native half.
 ///
 /// A stable sort, so the entry order -- already sorted by name -- decides within each group.
-fn order_splits(splits: &mut [Split]) {
-    splits.sort_by_key(|split| !split.has_dex);
+fn order_splits(splits: &mut [SplitResult]) {
+    splits.sort_by_key(|result| !result.split.has_dex);
 }
 
 /// Imports one extracted split as the APK sub-import `name`, returning *its* sub-imports (the
 /// native libraries it in turn produced).
-fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<String>, Error> {
+fn import_split(
+    name: &str,
+    dest: &Path,
+    opts: ImportOptions<'_>,
+    budget: &Budget,
+) -> Result<Vec<String>, Error> {
     // The up-to-date check compares the content hash recorded by a previous import against the
     // file on disk, and the file was written just now, so this is checked after extraction.
     if opts.skip_existing && ArtifactImport::is_up_to_date(name, dest)? {
@@ -163,7 +238,7 @@ fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<
     }
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Apk, dest)?;
-    crate::import_and_save(&child, opts)?;
+    crate::import_and_save_in(&child, opts, Some(budget))?;
 
     // Reload rather than writing the stale in-memory copy back: the APK import records the
     // native libraries it extracted on the child's own config.

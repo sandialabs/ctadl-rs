@@ -35,4 +35,5 @@ jobs:
           nix build --print-build-logs \
             '.#checks.x86_64-linux.regression' \
             '.#checks.x86_64-linux.dex-reader-tests' \
-            '.#checks.x86_64-linux.jvm-reader-tests'
+            '.#checks.x86_64-linux.jvm-reader-tests' \
+            '.#checks.x86_64-linux.lsm-property-tests'

@@ -117,11 +117,14 @@ fn java_call(cls: &str, name: &str, desc: &str) -> CallStyle {
     let receiver = fb.at_block(block).new_local_var("recv");
     CallStyle::JavaCall {
         receiver,
-        cls: cls.into(),
-        simple_name: name.into(),
-        descriptor: desc.into(),
-        dispatch: JavaDispatch::Virtual,
-        super_start: None,
+        method: ctadl_ir::cir::JavaMethodRef {
+            cls: cls.into(),
+            simple_name: name.into(),
+            descriptor: desc.into(),
+            dispatch: JavaDispatch::Virtual,
+            super_start: None,
+        }
+        .into(),
     }
 }
 
@@ -132,9 +135,12 @@ fn cil_call(cls: &str, name: &str, desc: &str) -> CallStyle {
     let receiver = fb.at_block(block).new_local_var("recv");
     CallStyle::CilCall {
         receiver,
-        cls: cls.into(),
-        simple_name: name.into(),
-        descriptor: desc.into(),
+        method: ctadl_ir::cir::CilMethodRef {
+            cls: cls.into(),
+            simple_name: name.into(),
+            descriptor: desc.into(),
+        }
+        .into(),
     }
 }
 
@@ -659,18 +665,14 @@ fn static_sites(program: &ProgramInfo) -> BTreeSet<(String, String)> {
                     CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(edges),
                     } => edges.iter().map(|e| e.to_string()).collect(),
-                    CallStyle::JavaCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        ..
-                    } => vec![format!("{cls}->{simple_name}{descriptor}")],
-                    CallStyle::CilCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        ..
-                    } => vec![format!("{cls}::{simple_name}{descriptor}")],
+                    CallStyle::JavaCall { method, .. } => vec![format!(
+                        "{}->{}{}",
+                        method.cls, method.simple_name, method.descriptor
+                    )],
+                    CallStyle::CilCall { method, .. } => vec![format!(
+                        "{}::{}{}",
+                        method.cls, method.simple_name, method.descriptor
+                    )],
                     CallStyle::LuaCall { method, .. } => vec![method.to_string()],
                     _ => Vec::new(),
                 };

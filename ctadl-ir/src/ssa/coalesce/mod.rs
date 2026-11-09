@@ -56,7 +56,7 @@ struct Pending {
     /// Position of the def statement in the current block.
     stmt_pos: usize,
     /// The def's right-hand side.
-    sources: SmallVec<[Exp; 2]>,
+    sources: Sources,
     /// Variables read by `sources`; a write to any of these kills the entry.
     src_vars: SmallVec<[Variable; 2]>,
 }

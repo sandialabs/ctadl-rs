@@ -7,7 +7,8 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
-const MAXMEM: &str = "40G";
+/// The JVM heap cap, in MiB, of a Ghidra run that [`GhidraLimits`] does not cap further.
+pub const DEFAULT_MAX_HEAP_MIB: u64 = 40 * 1024;
 const LAUNCH_MODE: &str = "fg";
 /// Upper bound on the JVM's garbage-collector and JIT compiler threads.
 const MAX_JVM_HELPER_THREADS: usize = 4;
@@ -123,38 +124,75 @@ fn project_from_gpr(gpr: &Path) -> Result<GhidraSource, Error> {
     })
 }
 
+/// How much of the machine one Ghidra run may use.
+///
+/// [`Default`] is one run that has the machine to itself: every core and a
+/// [`DEFAULT_MAX_HEAP_MIB`] heap. A caller running several at once gives each a share.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GhidraLimits {
+    /// Caps the threads Ghidra analyzes and decompiles with. `0` leaves the count to Ghidra,
+    /// which sizes its pools from the cores the OS reports.
+    pub jobs: usize,
+    /// Caps the JVM heap, in MiB. `None` means [`DEFAULT_MAX_HEAP_MIB`].
+    pub max_heap_mib: Option<u64>,
+}
+
+impl GhidraLimits {
+    /// The cap on threads alone, with the default heap.
+    pub fn jobs(jobs: usize) -> Self {
+        Self {
+            jobs,
+            max_heap_mib: None,
+        }
+    }
+
+    /// The heap cap this run gets, in MiB.
+    pub fn heap_mib(&self) -> u64 {
+        self.max_heap_mib.unwrap_or(DEFAULT_MAX_HEAP_MIB)
+    }
+}
+
 /// Runs the pcode exporter against `artifact_path`, auto-detecting whether it is a
 /// binary to import, an existing local Ghidra project, or a Ghidra Server URL. See
 /// [`GhidraSource::detect`].
-///
-/// `jobs` caps the threads Ghidra analyzes and decompiles with. `0` leaves the count to
-/// Ghidra, which sizes its pools from the cores the OS reports.
 pub fn run_ghidra_export(
     artifact_path: &Path,
     output_dir: &Path,
-    jobs: usize,
+    limits: GhidraLimits,
 ) -> Result<(), Error> {
     let source = GhidraSource::detect(artifact_path)?;
-    run_ghidra_export_source(&source, output_dir, jobs)
+    run_ghidra_export_source(&source, output_dir, limits)
 }
 
 /// Runs the pcode exporter against an explicit [`GhidraSource`]. Binaries are
 /// imported into a throwaway project (which is deleted afterwards); existing
 /// projects and server repositories are opened read-only via `-process`, so the
-/// user's data is never modified. See [`run_ghidra_export`] for `jobs`.
+/// user's data is never modified.
+///
+/// # Errors
+///
+/// When Ghidra fails, produces no facts, or ran out of heap at any point -- even if it went on
+/// to exit cleanly, since an analysis that lost a task to the heap exports a partial program.
+/// [`ran_out_of_memory`] tells that last case apart, for a caller that can retry with a larger
+/// heap.
 pub fn run_ghidra_export_source(
     source: &GhidraSource,
     output_dir: &Path,
-    jobs: usize,
+    limits: GhidraLimits,
 ) -> Result<(), Error> {
+    let jobs = limits.jobs;
+    let facts_dir = output_dir.join("facts");
     // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
-    let facts_dir = output_dir.join("facts");
+    // Facts another version of the script exported are exported again.
     if std::env::var_os("CTADL_REUSE_FACTS").is_some()
         && std::fs::read_dir(&facts_dir)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false)
+        && pcode_reader::PcodeFactsReader::new(&facts_dir)
+            .check_version()
+            .is_ok()
     {
         log::info!(
             "CTADL_REUSE_FACTS set: reusing cached pcode facts in {}",
@@ -197,7 +235,7 @@ pub fn run_ghidra_export_source(
         LAUNCH_MODE,
         "jdk",
         "Ghidra-Headless",
-        MAXMEM,
+        &format!("{}M", limits.heap_mib()),
         &jvm_args(jobs),
         "ghidra.app.util.headless.AnalyzeHeadless",
     ]);
@@ -258,6 +296,15 @@ pub fn run_ghidra_export_source(
     log::debug!("Ghidra command: {:?}", command);
 
     let status = run_and_log(&mut command, &log_path)?;
+
+    if log_reports_out_of_memory(&log_path) {
+        return Err(Error::PcodeConversion(format!(
+            "Ghidra ran out of memory with a {} MiB heap (status: {status}); its output is in {}\n{}",
+            limits.heap_mib(),
+            log_path.display(),
+            log_tail(&log_path)
+        )));
+    }
 
     if !status.success() {
         return Err(Error::PcodeConversion(format!(
@@ -321,6 +368,31 @@ fn run_and_log(command: &mut Command, log_path: &Path) -> Result<ExitStatus, Err
     Ok(status)
 }
 
+/// Whether the last Ghidra run into `output_dir` (an import directory, as given to
+/// [`run_ghidra_export`]) ran out of JVM heap.
+pub fn ran_out_of_memory(output_dir: &Path) -> bool {
+    log_reports_out_of_memory(&output_dir.join(GHIDRA_LOG_NAME))
+}
+
+/// Whether the Ghidra log at `log_path` reports a `java.lang.OutOfMemoryError`. Ghidra catches
+/// the error in an analysis task and carries on, so the exit status alone does not show it.
+fn log_reports_out_of_memory(log_path: &Path) -> bool {
+    use std::io::BufRead;
+    let Ok(file) = File::open(log_path) else {
+        return false;
+    };
+    std::io::BufReader::new(file)
+        .split(b'\n')
+        .map_while(Result::ok)
+        .any(|line| {
+            line.windows(OUT_OF_MEMORY.len())
+                .any(|w| w == OUT_OF_MEMORY.as_bytes())
+        })
+}
+
+/// What the JVM prints when a heap (or metaspace) allocation fails.
+const OUT_OF_MEMORY: &str = "java.lang.OutOfMemoryError";
+
 /// The last [`GHIDRA_LOG_TAIL_LINES`] lines of `log_path`, formatted for
 /// inclusion in an error message. Best-effort: an unreadable or empty log yields
 /// an empty string rather than masking the failure being reported.
@@ -346,29 +418,71 @@ fn log_tail(log_path: &Path) -> String {
 /// Gzip every `*.facts` file in `facts_dir` in place, replacing it with a
 /// `*.facts.gz` sibling and removing the original.
 ///
-/// Ghidra emits ~43 large tab-separated fact tables; compressing them keeps the
+/// Ghidra emits ~100 tab-separated fact tables; compressing them keeps the
 /// store small. Files already ending in `.facts.gz` are skipped, which makes this
 /// idempotent and safe to re-run on the `CTADL_REUSE_FACTS` reuse path. Each file
 /// is written to a `.tmp` sibling and renamed over the final `.gz`, so an
 /// interrupted run never leaves a truncated `.gz` behind.
 pub fn compress_facts_dir(facts_dir: &Path) -> Result<(), Error> {
-    let entries: Vec<PathBuf> = fs::read_dir(facts_dir)
+    let compressed = compress_facts_keeping_originals(facts_dir)?;
+    remove_compressed_originals(&compressed)
+}
+
+/// [`compress_facts_dir`] without removing the originals: returns the `*.facts` files it
+/// compressed, still in place beside their `.gz`, for [`remove_compressed_originals`].
+///
+/// This is what lets the tables be read while they are being compressed: the reader prefers a
+/// plain table, which is never removed from under it, and it does not inflate it.
+pub fn compress_facts_keeping_originals(facts_dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut entries: Vec<(u64, PathBuf)> = fs::read_dir(facts_dir)
         .err_context(|| format!("listing pcode facts dir: {}", facts_dir.display()))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            let name = path.file_name().and_then(|n| n.to_str());
-            matches!(name, Some(name) if name.ends_with(".facts") && !name.ends_with(".facts.gz"))
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str();
+            matches!(name, Some(name) if name.ends_with(".facts"))
         })
+        .map(|entry| (entry.metadata().map_or(0, |m| m.len()), entry.path()))
         .collect();
+    // Largest first, so the biggest table, which takes longest, does not start last.
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
 
     entries
         .par_iter()
-        .try_for_each(|path| compress_one_fact_file(path))
+        .try_for_each(|(_, path)| compress_one_fact_file(path))?;
+    Ok(entries.into_iter().map(|(_, path)| path).collect())
 }
 
-/// Gzip a single `*.facts` file into a `*.facts.gz` sibling (via a `.tmp` +
-/// rename) and remove the original.
+/// Removes the `*.facts` files that [`compress_facts_keeping_originals`] compressed.
+pub fn remove_compressed_originals(paths: &[PathBuf]) -> Result<(), Error> {
+    for path in paths {
+        fs::remove_file(path).err_context(|| format!("removing fact file: {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// The deflate level fact tables are compressed at. Below the default of 6 because compressing
+/// is the largest cost of an import after Ghidra: a level lower saves much more time than it
+/// costs in size, and reading is no slower.
+const FACTS_COMPRESSION: u32 = 5;
+
+/// Gzip a single `*.facts` file into a `*.facts.gz` sibling, via a `.tmp` and a
+/// rename.
+///
+/// A large table is compressed a piece at a time on the rayon pool, so that one table does
+/// not take a thread for seconds while the others are done: each piece is deflated on its
+/// own and ended with a sync flush, and the pieces are joined into one gzip member, whose
+/// checksum is combined from theirs. This is how `pigz` does it, and any gzip reader reads
+/// it. Pieces do not share a dictionary, which costs a fraction of a percent of the size.
 fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
+    use std::io::{Read, Write};
+
+    /// The size of a piece.
+    const PIECE: usize = 1 << 20;
+    /// How many pieces of one table are read and compressed at a time, which bounds the
+    /// memory a table takes.
+    const WINDOW: usize = 8;
+
     let gz_path = {
         let mut name = path.as_os_str().to_owned();
         name.push(".gz");
@@ -379,23 +493,120 @@ fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
         name.push(".tmp");
         PathBuf::from(name)
     };
+    let opening = || format!("opening fact file: {}", path.display());
+    let compressing = || format!("compressing fact file: {}", path.display());
 
-    let mut input =
-        fs::File::open(path).err_context(|| format!("opening fact file: {}", path.display()))?;
+    let mut input = fs::File::open(path).err_context(opening)?;
+    let len = input.metadata().err_context(opening)?.len();
     let output = fs::File::create(&tmp_path)
         .err_context(|| format!("creating compressed fact file: {}", tmp_path.display()))?;
-    let mut encoder = GzEncoder::new(output, Compression::default());
-    std::io::copy(&mut input, &mut encoder)
-        .err_context(|| format!("compressing fact file: {}", path.display()))?;
-    encoder
-        .finish()
-        .err_context(|| format!("compressing fact file: {}", path.display()))?;
+
+    if len <= PIECE as u64 {
+        let mut encoder = GzEncoder::new(output, Compression::new(FACTS_COMPRESSION));
+        std::io::copy(&mut input, &mut encoder).err_context(compressing)?;
+        encoder.finish().err_context(compressing)?;
+    } else {
+        let mut output = std::io::BufWriter::new(output);
+        // A gzip header with no name, no time and an unknown OS.
+        output
+            .write_all(&[0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff])
+            .err_context(compressing)?;
+        let mut crc = crc32fast::Hasher::new();
+        let mut total: u64 = 0;
+        let mut pieces: Vec<Vec<u8>> = Vec::with_capacity(WINDOW);
+        loop {
+            pieces.clear();
+            for _ in 0..WINDOW {
+                let mut piece = Vec::with_capacity(PIECE);
+                (&mut input)
+                    .take(PIECE as u64)
+                    .read_to_end(&mut piece)
+                    .err_context(compressing)?;
+                if piece.is_empty() {
+                    break;
+                }
+                pieces.push(piece);
+            }
+            total += pieces.iter().map(|p| p.len() as u64).sum::<u64>();
+            // Only the end of the file makes a piece short. A window that ends exactly at the
+            // end is not known to be the last, and the next, empty, one ends the stream.
+            let last = pieces.len() < WINDOW || pieces.last().is_some_and(|p| p.len() < PIECE);
+            let n = pieces.len();
+            let deflated: Vec<(Vec<u8>, crc32fast::Hasher)> = pieces
+                .par_iter()
+                .enumerate()
+                .map(|(i, piece)| {
+                    let finish = last && i + 1 == n;
+                    let mut piece_crc = crc32fast::Hasher::new();
+                    piece_crc.update(piece);
+                    deflate_piece(piece, finish).map(|d| (d, piece_crc))
+                })
+                .collect::<Result<_, _>>()
+                .err_context(compressing)?;
+            for (bytes, piece_crc) in &deflated {
+                crc.combine(piece_crc);
+                output.write_all(bytes).err_context(compressing)?;
+            }
+            if last {
+                if n == 0 {
+                    // Every piece so far ended with a sync flush; end the stream.
+                    output
+                        .write_all(&deflate_piece(&[], true).err_context(compressing)?)
+                        .err_context(compressing)?;
+                }
+                break;
+            }
+        }
+        output
+            .write_all(&crc.finalize().to_le_bytes())
+            .err_context(compressing)?;
+        output
+            .write_all(&(total as u32).to_le_bytes())
+            .err_context(compressing)?;
+        output
+            .into_inner()
+            .map_err(|e| e.into_error())
+            .err_context(compressing)?;
+    }
 
     fs::rename(&tmp_path, &gz_path)
         .err_context(|| format!("renaming compressed fact file to: {}", gz_path.display()))?;
-    fs::remove_file(path).err_context(|| format!("removing fact file: {}", path.display()))?;
 
     Ok(())
+}
+
+/// `piece` as raw deflate data: ended with a sync flush, so that the next piece's data can
+/// follow it, or, for the last piece, ending the stream.
+fn deflate_piece(piece: &[u8], finish: bool) -> std::io::Result<Vec<u8>> {
+    use flate2::{Compress, FlushCompress, Status};
+    let flush = if finish {
+        FlushCompress::Finish
+    } else {
+        FlushCompress::Sync
+    };
+    let mut compress = Compress::new(Compression::new(FACTS_COMPRESSION), false);
+    let mut out = Vec::with_capacity(piece.len() / 4 + 64);
+    let mut input = piece;
+    loop {
+        if out.capacity() - out.len() < 64 {
+            out.reserve(out.capacity().max(4096));
+        }
+        let before = compress.total_in();
+        let status = compress
+            .compress_vec(input, &mut out, flush)
+            .map_err(std::io::Error::other)?;
+        input = &input[(compress.total_in() - before) as usize..];
+        let done = match status {
+            Status::StreamEnd => true,
+            // A flush is complete once all the input is taken and the output did not fill up.
+            Status::Ok | Status::BufError => {
+                !finish && input.is_empty() && out.len() < out.capacity()
+            }
+        };
+        if done {
+            return Ok(out);
+        }
+    }
 }
 
 /// True when a Ghidra install can be located and it has an `analyzeHeadless`.
@@ -605,6 +816,48 @@ mod tests {
         compress_facts_dir(dir.path()).unwrap();
         assert_eq!(fs::read(&gz).unwrap(), gz_bytes);
         assert_eq!(gunzip(&dir.path().join("FRESH.facts.gz")), b"x\t9\n");
+    }
+
+    /// What Ghidra 12 logs when a decompiler task runs out of heap, which it then carries on past.
+    #[test]
+    fn an_out_of_memory_error_anywhere_in_the_log_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!ran_out_of_memory(dir.path()));
+        let log = dir.path().join(GHIDRA_LOG_NAME);
+        fs::write(
+            &log,
+            "INFO  analysis done\nINFO  REPORT: Import succeeded\n",
+        )
+        .unwrap();
+        assert!(!ran_out_of_memory(dir.path()));
+        fs::write(
+            &log,
+            "INFO  start\nERROR Unexpected exception getting Decompiler result \
+             (InternalResultListener) java.util.concurrent.ExecutionException: \
+             java.lang.OutOfMemoryError: Java heap space\nINFO  REPORT: Import succeeded\n",
+        )
+        .unwrap();
+        assert!(ran_out_of_memory(dir.path()));
+    }
+
+    /// A table bigger than a piece is compressed in pieces, into one gzip member that a
+    /// reader of a single member reads whole, however its size falls on the pieces.
+    #[test]
+    fn compress_a_large_table_in_pieces_round_trips() {
+        const MIB: usize = 1 << 20;
+        for len in [MIB + 1, 16 * MIB, 16 * MIB + 5, 33 * MIB - 7] {
+            let dir = tempfile::tempdir().unwrap();
+            let facts = dir.path().join("BIG.facts");
+            let content: Vec<u8> = (0..len)
+                .map(|i| b"abcdefghij\t0123456789\n"[(i * 7 + i / 1000) % 22])
+                .collect();
+            fs::write(&facts, &content).unwrap();
+            compress_facts_dir(dir.path()).unwrap();
+            assert!(
+                gunzip(&dir.path().join("BIG.facts.gz")) == content,
+                "{len} bytes"
+            );
+        }
     }
 
     #[test]

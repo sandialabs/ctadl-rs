@@ -75,11 +75,14 @@ fn caller() -> FunctionData {
     b.create_call(
         CallStyle::JavaCall {
             receiver: recv,
-            cls: IFACE.into(),
-            simple_name: NAME.into(),
-            descriptor: DESC.into(),
-            dispatch: JavaDispatch::Interface,
-            super_start: None,
+            method: ctadl_ir::cir::JavaMethodRef {
+                cls: IFACE.into(),
+                simple_name: NAME.into(),
+                descriptor: DESC.into(),
+                dispatch: JavaDispatch::Interface,
+                super_start: None,
+            }
+            .into(),
         },
         vec![result.clone()],
         vec![Exp::variable(arg)],
