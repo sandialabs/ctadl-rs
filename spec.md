@@ -2,50 +2,49 @@
 
 Source: `intent.md`. This refines how the index fixpoint (`docs/spec.md` §4.1 step 2, §4.2)
 runs, so that its peak memory is that of its largest stage rather than the whole program's.
-The rules, the index tables and the query side stay as they are. This spec does not sequence
+The rules and the index tables stay as they are. This spec does not sequence
 the work.
 
 ## Background
 
-- **One run today.** `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1373`) turns the
+- **One run today.** `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1342`) turns the
   whole program's `IndexFacts` into seed relations. It precomputes `prog_store`,
-  `alias_of_formal` and the program-wide path set (`mod.rs:1514-1526`). `run_engine!`
-  (`mod.rs:1634`) seeds one Ascent program and runs it to fixpoint (`mod.rs:1681`). The result
-  is one `IndexResult` (`mod.rs:476`), saved by `try_save` (`mod.rs:490`) as one parquet file per
+  `alias_of_formal` and the program-wide path set (`mod.rs:1414`, `mod.rs:1477`, `mod.rs:1490-1495`). `run_engine!`
+  (`mod.rs:1603`) seeds one Ascent program and runs it to fixpoint (`mod.rs:1650`). The result
+  is one `IndexResult` (`mod.rs:444`), saved by `try_save` (`mod.rs:458`) as one parquet file per
   table.
 - **Engine choice.** Engines are serial, parallel, or serial with LSM stores. They are chosen in
-  `ctadl-ascent/src/index_engine.rs:27-64` from `-j` and `--lsm`.
-- **What crosses functions.** Every rule in `index_rules` (`mod.rs:996-1348`) joins facts of
+  `ctadl-ascent/src/index_engine.rs:27-62` from `-j` and `--lsm`.
+- **What crosses functions.** Every rule in `index_rules` (`mod.rs:965-1317`) joins facts of
   one function, except:
-  - `summary` instantiated at callers through `call` (`mod.rs:1202-1206`). `call` is input only
-    (`mod.rs:1003`).
+  - `summary` instantiated at callers through `call` (`mod.rs:1171-1175`). `call` is input only
+    (`mod.rs:972`).
   - Global-to-global edges written into `GLOBAL_FRAME`'s `assign_like` from `locals`
-    (`mod.rs:1266`) and from `alias_flow` (`mod.rs:1294`). The input `global_flow` of a
-    `--summary` project is also written there (`mod.rs:1467`).
+    (`mod.rs:1235`) and from `alias_flow` (`mod.rs:1263`). The input `global_flow` of a
+    `--summary` project is also written there (`mod.rs:1436`).
   - The label exchange: `const_reaches` at global paths goes up to the frame and back down to
-    `intent_frame` functions that read the path (`mod.rs:1320-1347`).
-  - `global_mention(GLOBAL_FRAME, g) <-- global_mention(_, g)` (`mod.rs:1060`). It only seeds
+    `intent_frame` functions that read the path (`mod.rs:1286-1316`).
+  - `global_mention(GLOBAL_FRAME, g) <-- global_mention(_, g)` (`mod.rs:1029`). It only seeds
     the frame's `locals`.
-- **`resolved_call` feeds no rule** (head only, `mod.rs:1245`). The query side uses `call ∪
-  resolved_call` (`mod.rs:624`).
+- **`resolved_call` feeds no rule** (head only, `mod.rs:1214`).
 - **Monotone.** The rules have no negation, aggregation or lattices.
 - **The frame's `locals` feeds no output.**
-  - The summary rules need formals, which the frame lacks (`mod.rs:1249`), or exclude the frame
-    (`mod.rs:1261`).
-  - The frame-edge rule excludes the frame (`mod.rs:1266`).
+  - The summary rules need formals, which the frame lacks (`mod.rs:1222`), or exclude the frame
+    (`mod.rs:1232`).
+  - The frame-edge rule excludes the frame (`mod.rs:1237`).
   - `alias_flow` needs `prog_store`, and the frame has none.
-  - `global_flow` is the frame's `assign_like` rows (`global_flow_rows`, `mod.rs:696`). It is
-    not a closure: the query closes it by search (`ctadl-ascent/src/query_engine/search.rs:29`).
+  - `global_flow` is the frame's `assign_like` rows (`global_flow_rows`, `mod.rs:664`). It is
+    not a closure.
 - **Encoding and ids.**
   - Parquet columns are by content. Paths and strings are written as text and re-interned on
-    load (`ctadl-index/src/facts/parquet.rs:553`).
-  - `FunctionId` and `InsnId` are counters assigned by codegen (`ctadl-index/src/facts.rs:2103`).
+    load (`ctadl-index/src/facts/parquet.rs:552`).
+  - `FunctionId` and `InsnId` are counters assigned by codegen (`ctadl-index/src/facts.rs:1912`).
     They are stable only together with the saved `IdMap`.
   - `IndexFacts::try_save` (`mod.rs:149`) does not save `assign`, `const_str_assign`, `summary`,
     `paths`, the `intent_*` facts or `global_flow`.
-- **Existing tools.** `ctadl-ir/src/graph/scc/mod.rs:119` computes SCCs with a condensation in
+- **Existing tools.** `ctadl-ir/src/graph/scc/mod.rs:84` computes SCCs with a condensation in
   dependency order. `CTADL_DUMP_RELATIONS` (`ctadl-index/src/index_engine/dump.rs:25`) dumps
-  every relation by content, once per process: it refuses to overwrite (`dump.rs:242`). No test
+  every relation by content, once per process: it refuses to overwrite (`dump.rs:225`). No test
   shuffles facts.
 
 ## Terms
@@ -69,15 +68,15 @@ the work.
 - R2. **Independent of batching and order.** R1 holds for any batch plan the budget allows, down
   to one function, and for input facts in any order.
 - R3. **Same tables.** The index directory has the same files, schemas and encodings as today.
-  `INDEX_FORMAT_VERSION` does not change, and every reader (query, `--summary`, inspection)
+  `INDEX_FORMAT_VERSION` does not change, and every reader (`--summary` and the tests)
   works unchanged. Each row appears once per table.
 - R4. **Rules written once.** Every rule keeps its meaning and is written once. The intent rules
   (`const_reaches`, the label exchange, `intent_pair`, `resolved_call`) are their own rule
   source, which the full program includes. Stage 1 runs the full program, under the serial or
   the parallel engine. Stage 3 runs only the intent rules and computes no `locals`.
-- R5. **Fact generation and query unchanged.** Codegen, models, JNI, intent fact generation and
-  `--summary` loading produce the same `IndexFacts`. The query side reads the same tables.
-- R6. **Staged by default.** `ctadl index` and `ctadl go` run staged. A flag selects the
+- R5. **Fact generation unchanged.** Codegen, models, JNI, intent fact generation and
+  `--summary` loading produce the same `IndexFacts`.
+- R6. **Staged by default.** `ctadl index` runs staged. A flag selects the
   monolithic run, which stays as the reference the tests compare against (R14) and for
   debugging. `--lsm` is accepted only with that flag. Alone, it is an error that says to add the
   flag. Staged workers run only the serial or parallel engine.
@@ -140,7 +139,7 @@ R12).
   (`formal_param`, `actual_param`, `call` as caller, `assign`, `const_str_assign`, seeded
   `summary`, `external_function`). Edges are `call` (caller to callee). `GLOBAL_FRAME` is not a
   node.
-- **SCCs.** The graph is condensed with `ctadl-ir`'s `Sccs` (`ctadl-ir/src/graph/scc/mod.rs:119`).
+- **SCCs.** The graph is condensed with `ctadl-ir`'s `Sccs` (`ctadl-ir/src/graph/scc/mod.rs:84`).
   SCCs are taken in dependency order, callees first.
 - **Packing.** Whole SCCs are packed into batches by estimated memory (D6), up to the budget.
   A batch's callees outside it are in earlier batches. An SCC over the budget is split into parts
@@ -166,7 +165,7 @@ Batch inputs:
   nothing else (Background), so leaving the intent facts out changes no stage-1 output.
 
 Before the fixpoint, every `Path` and `Str` the batch reads is interned, as the freeze rule
-requires (`mod.rs:30-37`). The path set is interned once per process.
+requires (`mod.rs:31-37`). The path set is interned once per process.
 
 Batch outputs, written when its fixpoint ends:
 
@@ -204,15 +203,15 @@ Parts of one SCC run one at a time. Other ready batches may run beside them with
 
 ### D4. Stage 2: global frame
 
-Stage 2 is the union of every batch's frame edges and the input `global_flow` (`mod.rs:1467`),
+Stage 2 is the union of every batch's frame edges and the input `global_flow` (`mod.rs:1436`),
 deduplicated. It is written as the frame's rows of `assign` and as `global_flow`, matching
-`global_flow_rows` (`mod.rs:696`). It runs no fixpoint, because the frame's `locals` feeds no
+`global_flow_rows` (`mod.rs:664`). It runs no fixpoint, because the frame's `locals` feeds no
 output (Background).
 
 ### D5. Stage 3: intent
 
-- **Rule sources.** The intent rules move out of `index_rules` (`mod.rs:1208-1245`,
-  `mod.rs:1320-1347`) into a second `ascent_source!`, `intent_rules`. It holds `const_reaches`,
+- **Rule sources.** The intent rules move out of `index_rules` (`mod.rs:1177-1215`,
+  `mod.rs:1286-1316`) into a second `ascent_source!`, `intent_rules`. It holds `const_reaches`,
   `intent_pair`, `resolved_call`, `global_read`, `intent_frame(GLOBAL_FRAME)` and the
   `global_label_*` rules. It declares every relation it reads.
   - The engines' full programs include `intent_rules` first, then `index_rules`, so that
@@ -236,7 +235,7 @@ output (Background).
   a CLI flag. It defaults to half of physical memory until measurements suggest better.
 - `IndexConfig` also selects the monolithic run (R6). The staged run is the default in
   `IndexConfig::default()` and `IndexOptions::default()`
-  (`ctadl-ascent/src/cli/mod.rs:94`), so existing tests run staged unless they ask otherwise.
+  (`ctadl-ascent/src/cli/mod.rs:88`), so existing tests run staged unless they ask otherwise.
 - **Estimate.** A batch's estimate is a function of its seed sizes: `assign_like` rows,
   instantiated callee-summary rows, variables and formals. It is calibrated against `[mem cp]`
   and `profile.json` measurements. The planner packs by it.
@@ -257,11 +256,11 @@ output (Background).
   stage directory and a batch id. A worker reads its inputs from the stage directory (R10),
   writes its outputs and marker, and exits. Its memory is returned when it exits.
 - **Footprint.** Each worker samples its own footprint on a thread and reports it to the
-  scheduler over a pipe. On macOS it uses `phys_footprint_mb` (`mod.rs:813`). That returns -1
-  elsewhere (`mod.rs:811`), so Linux reads resident set size from `/proc/self/statm`. The
+  scheduler over a pipe. On macOS it uses `phys_footprint_mb` (`mod.rs:782`). That returns -1
+  elsewhere (`mod.rs:802`), so Linux reads resident set size from `/proc/self/statm`. The
   scheduler needs no access to another process's memory.
 - **Path set.** Every worker re-reads and re-interns the program-wide path set before its
-  fixpoint (`mod.rs:30-37`). That is a per-batch cost that grows with the program, so the
+  fixpoint (`mod.rs:31-37`). That is a per-batch cost that grows with the program, so the
   planner prefers fewer, larger batches. If it dominates, sharing the path set through a
   memory-mapped file is a later optimization.
 - **Worker binary.** The scheduler launches the `ctadl` executable. The CLI uses
@@ -290,21 +289,21 @@ output (Background).
 ### D9. Final tables
 
 - **Assembly.** After stage 3, each final table is written by streaming the stage files into
-  it, one row group at a time, through the existing `Writer` (`parquet.rs:174`).
+  it, one row group at a time, through the existing `Writer` (`parquet.rs:177`).
   - `summary` and `assign` are the concatenation of batch outputs plus the frame rows (D4).
   - `paths` is the path set. `external_function` comes from the facts.
   - `resolved_call` and `intent_pair` come from stage 3.
 - **Duplicates.** Only the frame edges need deduplication, done in D4.
 - **After the fixpoint.** `cli::index` uses the result after the fixpoint
-  (`ctadl-ascent/src/cli/mod.rs:787-818`). A staged run computes each of these uses from the
+  (`ctadl-ascent/src/cli/mod.rs:778-813`). A staged run computes each of these uses from the
   stage outputs, not from a whole `IndexResult`:
-  - The zero-assignment notes (`push_zero_assignment_notes`, `cli/mod.rs:276`) need three
+  - The zero-assignment notes (`push_zero_assignment_notes`, `cli/mod.rs:270`) need three
     things:
     - the set of summarized functions, streamed from the batch `summary` files;
     - the final calls, which are `call` plus stage 3's `resolved_call`;
     - `external_function`, from the facts.
   - The intent-pair counts come from stage 3.
-  - `flowy::index_check` (`ctadl-ascent/src/codegen/flowy.rs:94`) reads the final `summary`
+  - `flowy::index_check` (`ctadl-ascent/src/codegen/flowy.rs:92`) reads the final `summary`
     table back. This is the one exception to R9: flowy is a test language whose programs are
     small.
 - **Commit.** The index stamp (`write_index_config`) is written last, as today (R13). The stage
