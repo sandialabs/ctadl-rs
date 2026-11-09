@@ -21,7 +21,7 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
 | 1 | 1 | splits the rule source (`ctadl-index/src/index_engine/mod.rs`, engines) |
-| 2 | A: 2. B: 3 then 4. C: prep | three worktrees. A refactors `EngineInput` (`mod.rs:1322-1785`); B adds the stage-file layer, planner and shuffle (new `ctadl-index/src/staged/`, `facts/parquet.rs`, `facts/schema.rs`); C does the prep below. C's only edit to `mod.rs` is `phys_footprint_mb` (`:801-804`), and it merges before A rebases |
+| 2 | A: 2. B: 3 then 4. C: prep | three worktrees. A refactors `EngineInput` (`mod.rs:1364-1827`); B adds the stage-file layer, planner and shuffle (new `ctadl-index/src/staged/`, `facts/parquet.rs`, `facts/schema.rs`); C does the prep below. C's only edit to `mod.rs` is `phys_footprint_mb` (`:802-805`), and it merges before A rebases |
 | 3 | 5a, then 5b | 5a: write the stage directory and run stage 1 in process, compared on `summary` and `assign`. 5b: stage 2, stage 3 and assembly, compared on all seven tables. Needs A, B and C's `compare.rs`. Checkpoint after 5a: ddg staged in process, peak against the largest batch |
 | 4 | 6 | split SCCs in rounds, floor down to one function. Checkpoint: rounds on the ring test and on real split SCCs |
 | 5 | 7a | the `index-worker` subcommand, the `Process` executor, footprint over stdout; launches gated on estimates only |
@@ -154,14 +154,14 @@ Depends on: Phase 0.
 
 Depends on: Phase 1.
 
-**What.** Split `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1342-1541`) into two
+**What.** Split `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1384-1583`) into two
 parts:
 1. **`ProgramPaths::from_facts(&IndexFacts, deref_paths)`.** The program-wide part:
    `program_paths`, `summary_paths`, the `actual_param` paths, then `compute_paths` and
-   `PathSet::from_paths` (`:1377-1495`).
+   `PathSet::from_paths` (`:1419-1537`).
 2. **`EngineInput::from_slice(slice, paths, config, id_map)`.** The per-function part: `copy_edge`,
    `prog_store`, `alias_of_formal`, `assign` to `assign_like`, `call`, counts. It takes the
-   facts of some functions and seeds them. `compute_alias_of_formal` (`:818`) is already per
+   facts of some functions and seeds them. `compute_alias_of_formal` (`:819`) is already per
    function: it joins only within one `FunctionId`.
 
 `ProgramPaths { paths: Vec<(Path,)>, path_set: PathSetRef }` also has `from_paths(Vec<Path>)`,
@@ -175,18 +175,18 @@ recomputes the path set from facts.
 - **A staged batch** gets a `ProgramPaths` with an empty `paths` vector and an `Arc` clone of
   `path_set`. No batch copies the program's path vector.
 - **`seed_paths`.** `EngineInput` gains `seed_paths: bool`. When it is false, `run_engine!`
-  leaves the `paths` relation empty (no rule reads it, `mod.rs:980-983`), and
+  leaves the `paths` relation empty (no rule reads it, `mod.rs:979-982`), and
   `IndexResult.paths` is empty. Assembly writes `paths` once, from the scheduler's copy. When it
   is true, `run_engine!` moves `paths` into the relation (`paths.into_iter()` instead of
-  `paths.iter().cloned()` at `mod.rs:1645`), so the monolithic run stops holding the paths
+  `paths.iter().cloned()` at `mod.rs:1687`), so the monolithic run stops holding the paths
   twice during the fixpoint.
 - **Program-wide facts.** `from_slice` expects `facts.global_flow` and `facts.paths` empty:
   both are program-wide, and go to stage 2 and to `ProgramPaths`. A debug assertion checks
   this. The monolithic `new` moves `global_flow` into the frame rows before calling
-  `from_slice`, as `mod.rs:1436-1446` does today.
+  `from_slice`, as `mod.rs:1477-1488` does today.
 
 `run_engine!` also drops the `locals` store and the other derived stores (`std::mem::take` on
-their `ind_common` fields) before `take_assign_like` (`mod.rs:730`, `:1756`). Today the
+their `ind_common` fields) before `take_assign_like` (`mod.rs:731`, `:1798`). Today the
 `assign_like` `Vec` is built while `locals`, the largest relation, is still alive. The
 relation census and the dump run before this, so they are unchanged.
 
@@ -195,9 +195,9 @@ overlap of `locals` with the `assign_like` copy.
 
 **Files.**
 - `ctadl-index/src/index_engine/mod.rs`:
-  - `:1322-1541`: the split.
-  - `run_engine!` at `:1624-1646`: honor `seed_paths`.
-  - `run_engine!` at `:1775-1785`: take `paths` from the input when it was not seeded.
+  - `:1364-1584`: the split.
+  - `run_engine!` at `:1666-1688`: honor `seed_paths`.
+  - `run_engine!` at `:1817-1827`: take `paths` from the input when it was not seeded.
 - `ctadl-ascent/src/index_engine.rs:33`: no change, since `new` keeps its signature.
 
 **Tests.**
@@ -281,7 +281,7 @@ Depends on: Phase 3.
     - initial coefficients: bytes per row from `profile.json`'s `bytes_per_row` and Phase 0's
       `[mem cp]` lines;
     - a fixed per-worker term for the path set, which every worker holds whatever its size:
-      `profile.memory.interned["PathSet"]` (`mod.rs:1741-1747`) plus the interned split keys
+      `profile.memory.interned["PathSet"]` (`mod.rs:1783-1789`) plus the interned split keys
       `PathSet::from_paths` adds (`path_set.rs:130-168`). Packing counts it once per batch, so
       more, smaller batches cost more, and the planner prefers fewer, larger ones (D7);
     - Phase 13 recalibrates them.
@@ -345,7 +345,7 @@ Depends on: Phases 1, 2, 3, 4.
    - **Seeds.** The batch's facts, and the `call` rows whose caller is in the batch. Its
      out-of-batch callees' `summary` rows are streamed from their batches' files with the
      filtered reader, then go through `distinct_rows` together with the batch's own seeded
-     summaries, as `run_engine!` does today (`mod.rs:1628`). Intent facts and `global_flow`
+     summaries, as `run_engine!` does today (`mod.rs:1670`). Intent facts and `global_flow`
      are left empty.
    - **Outputs.** Rows are filtered to the batch's functions, so the seeded callee rows drop
      out and batch outputs are disjoint:
@@ -388,11 +388,11 @@ Depends on: Phases 1, 2, 3, 4.
 In this phase the plan never splits an SCC: the floor is clamped to whole SCCs until Phase 6.
 
 **Files.**
-- `ctadl-index/src/index_engine/mod.rs:318-342`. `IndexConfig` gains:
+- `ctadl-index/src/index_engine/mod.rs:319-342`. `IndexConfig` gains:
   - `staged: Option<StagedConfig>`, where `StagedConfig { budget: u64, floor: usize }`;
   - `None` is monolithic.
 
-  The default stays `None`. It must keep `Eq`, `Ord` and `Hash` (`:318`), since `config` is a
+  The default stays `None`. It must keep `Eq`, `Ord` and `Hash` (`:319`), since `config` is a
   relation.
 - `ctadl-index/src/index_engine/dump.rs:115-124`. `DumpCol for IndexConfig` leaves out `staged`,
   like `parallelism`, so staged and monolithic dumps compare.
@@ -416,7 +416,7 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
     global-to-global flow through two batches and a function without formals (D1).
   - `staged_matches_monolithic_intent`: the Phase 1 intent fixture.
   - `staged_matches_monolithic_summary_project`: hand-built facts with an input `global_flow`
-    row, as a `--summary` project loads it (folded into the frame at `mod.rs:1436-1446`), and a
+    row, as a `--summary` project loads it (folded into the frame at `mod.rs:1477-1488`), and a
     function of the consumer that reads one of its globals.
   - `staged_matches_monolithic_flowy`: every `.tnt` under `ctadl-ascent/tests/tnt/` that has
     no recursion. A tight budget gives several batches, and facts are shuffled with seeds 1..3.
@@ -440,7 +440,7 @@ Depends on: Phase 5.
   a row count, kept per `FunctionId` rather than per part, so it survives Phase 7 splitting a
   part. Counting is sound only under three conditions, which the phase enforces:
   - Every run reached its fixpoint. In a staged worker, `run_engine!` hitting
-    `CTADL_INDEX_TIMEOUT_SECS` (`mod.rs:1518`, `:1659-1664`) fails the run instead of
+    `CTADL_INDEX_TIMEOUT_SECS` (`mod.rs:1560`, `:1701-1706`) fails the run instead of
     returning partial rows. Phase 5 already applies this to every batch.
   - Seeds only grow.
   - A function's count never falls. A debug assertion checks it, and the tests check that the
@@ -521,7 +521,7 @@ Depends on: Phase 6.
 **Files.**
 - `ctadl-ascent/src/staged/executor.rs`: `Process { exe, store, jobs }`; the scheduler loop.
 - `ctadl-ascent/src/staged/footprint.rs`: the sampler and the Linux reader.
-- `ctadl-index/src/index_engine/mod.rs:801-804`: the non-macOS `phys_footprint_mb` reads
+- `ctadl-index/src/index_engine/mod.rs:802-805`: the non-macOS `phys_footprint_mb` reads
   `/proc/self/statm`. A one-function change.
 - `ctadl-index/src/staged/plan.rs`: `split_batch(batch) -> (Batch, Batch)` (by SCC, or by
   function within an SCC, which makes it a split SCC).
@@ -645,7 +645,7 @@ still monolithic until Phase 11.
     `worker_exe: Some(Box::leak(std::env::current_exe()?.into_boxed_path()))`.
 - `ctadl-import/src/project.rs:235-244`. `EngineRecord` gains `#[serde(default)] staged: bool`,
   for traceability. It is additive, so `INDEX_FORMAT_VERSION` stays (`:187`).
-- `ctadl-index/src/index_engine/profile.rs`, `mod.rs:393-441`. `IndexStats` and `IndexProfile`
+- `ctadl-index/src/index_engine/profile.rs`, `mod.rs:394-442`. `IndexStats` and `IndexProfile`
   sum over batches. `profile.json` gains `stages: [{id, peak_mb, rows, secs}]` (D10).
 - `ctadl-index/src/index_engine/dump.rs`. Add `dump_outputs(dir, index_dir, id_map)` (D10). It
   is called by `cli::index` after the tables are written, in both modes, when
@@ -685,7 +685,7 @@ still monolithic until Phase 11.
 
 Depends on: Phase 10.
 
-**What.** `IndexConfig::default()` (`ctadl-index/src/index_engine/mod.rs:332-342`) and
+**What.** `IndexConfig::default()` (`ctadl-index/src/index_engine/mod.rs:333-342`) and
 `IndexOptions::default()` (`ctadl-ascent/src/cli/mod.rs:88-102`) select staged, with the
 default budget and floor. `--monolithic` selects the old run. Every existing test now indexes
 staged.
@@ -824,7 +824,7 @@ Not touched:
 - Sharing the path set across workers through a memory-mapped file (D7 names this as later).
   Decide by Phase 13's share of total time spent loading the path set.
 - Each stage-1 batch closes its own frame edges in the frame's `locals`
-  (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1029`), which feeds
+  (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1022`), which feeds
   no output. A config guard would skip that in batches, but it changes a rule's text.
   Decided: Phase 13 measures the frame's `locals` rows per batch first, and a guard comes only
   if the numbers call for one.
