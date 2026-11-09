@@ -119,6 +119,10 @@ Both input forms move together: a manifest may be stored as plain-text XML
 (the integration tests build such APKs, `ctadl-ascent/tests/integration/cli.rs:834`),
 and one function decodes either, so callers never see the split.
 
+The queries move with the types because they read only the tree and need no
+ctadl crate; keeping them as methods avoids an extension trait in
+`ctadl-ascent` and keeps `attr` and `has_child_tag` private.
+
 The module is named for the format. Its types keep their manifest names,
 since every caller decodes a manifest. (R1-R3, R10.)
 
@@ -180,10 +184,5 @@ The test reads the APK at `../../xtask/tests/dex/com.noto_54.apk` relative to
 
 ## Concerns
 
-- C1. **Do the Android queries move?** `package`, `components` and
-  `normalize_component_name` interpret the manifest rather than decode it.
-  Options: (a) move them with the types (R3), keeping them as methods; (b)
-  leave them in `ctadl-ascent` as free functions or an extension trait, keeping
-  `dex-reader` to decoding alone. They have no ctadl dependencies, and
-  splitting a type from its queries costs an extension trait for no gain. The
-  spec assumes (a).
+None open. Text XML moves with AXML (D1), and the Android queries move with
+the tree types (R3).
