@@ -4,7 +4,9 @@ Run the index fixpoint as a sequence of stages, each of which reads its
 inputs from disk, runs `index_rules` on a slice of the program, writes its
 results to disk and frees everything, so that peak memory is the largest
 stage's, not the program's. This assumes the blowup is spread across many
-functions, not concentrated in one.
+functions, not concentrated in one. Staging is the default for `ctadl index`
+and `ctadl go`; the monolithic run stays behind a flag, as the reference the
+tests compare against.
 
 **Why it works.** No output contains `locals` or the relations built from it
 (`reach_vp`, `locals_key(_wild)`, `locals_wild`, `assign_wild`,

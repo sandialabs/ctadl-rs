@@ -77,52 +77,55 @@ the work.
   the parallel engine. Stage 3 runs only the intent rules and computes no `locals`.
 - R5. **Fact generation and query unchanged.** Codegen, models, JNI, intent fact generation and
   `--summary` loading produce the same `IndexFacts`. The query side reads the same tables.
+- R6. **Staged by default.** `ctadl index` and `ctadl go` run staged. A flag selects the
+  monolithic run, which stays as the reference the tests compare against (R14) and for
+  debugging.
 
 ### Memory
 
-- R6. **Peak memory.** The fixpoint part of a staged run peaks at the largest set of batches it
+- R7. **Peak memory.** The fixpoint part of a staged run peaks at the largest set of batches it
   runs at once, plus the program-wide path set. The peak does not grow with the number of
   functions. Peak footprint of `ctadl index` is the larger of fact generation's and that.
-- R7. **Budget.** The user can set the budget. The scheduler packs batches, and runs batches
+- R8. **Budget.** The user can set the budget. The scheduler packs batches, and runs batches
   concurrently, so that their estimated memory stays within it. A single function whose estimate
   exceeds the budget still runs, alone, and is logged.
-- R8. **Freed between stages.** Nothing a stage derives (`locals` and the relations built from
+- R9. **Freed between stages.** Nothing a stage derives (`locals` and the relations built from
   it) outlives the stage. Outputs go to disk as each stage finishes. They are never gathered
   for the whole program in memory, including in the final tables.
 
 ### Disk and resumption
 
-- R9. **Self-contained stages.** Every stage reads its inputs only from the stage directory, so
+- R10. **Self-contained stages.** Every stage reads its inputs only from the stage directory, so
   any stage can run in a fresh process.
-- R10. **Callee reads only.** A batch reads only the `summary` rows of its callees, and its own
+- R11. **Callee reads only.** A batch reads only the `summary` rows of its callees, and its own
   functions' facts.
-- R11. **Resume.** A run killed at any point, restarted with the same facts and configuration,
+- R12. **Resume.** A run killed at any point, restarted with the same facts and configuration,
   skips completed batches and stages and produces the same tables as an uninterrupted run. If
   the facts or configuration differ, it starts over.
-- R12. **No partial index.** Until the final tables are complete, the project reads as having no
+- R13. **No partial index.** Until the final tables are complete, the project reads as having no
   index, as it does today while an index is being written.
 
 ### Verification
 
-- R13. **Equivalence tests.** Every integration test and engine test that indexes also runs
+- R14. **Equivalence tests.** Every integration test and engine test that indexes also runs
   staged, with shuffled facts and the batch floor swept down to one function. It checks R1 by
   comparing `CTADL_DUMP_RELATIONS` output relations with those of the monolithic serial engine
   (`scripts/fact-dump-diff.sh`).
-- R14. **Memory benchmark.** A documented procedure runs a large target staged under
+- R15. **Memory benchmark.** A documented procedure runs a large target staged under
   `memguard.sh`. It shows the peak footprint following the largest batch rather than the program
-  (R6). It also shows a run killed between stages resuming to the same tables (R11).
+  (R7). It also shows a run killed between stages resuming to the same tables (R12).
 
 ### Documentation
 
-- R15. **Overall design updated.** `docs/spec.md` §4.1 and §4.2 describe the staged fixpoint.
+- R16. **Overall design updated.** `docs/spec.md` §4.1 and §4.2 describe the staged fixpoint.
   §4.6 describes the stage directory. Code and help text do not cite this spec's numbers.
 
 ## Design
 
 ### D1. Stage plan
 
-A staged run computes one plan before any fixpoint and saves it in the stage directory (R9,
-R11).
+A staged run computes one plan before any fixpoint and saves it in the stage directory (R10,
+R12).
 
 - **Graph.** Nodes are the functions with facts: `formal_param`, `external_function`, or a seeded
   `summary`. Edges are `call` (caller to callee). `GLOBAL_FRAME` is not a node.
@@ -165,7 +168,7 @@ dropped. Rows of a function are written by exactly one batch, so `summary` and p
 `assign` are disjoint across batches. Frame edges may repeat across batches.
 
 Batches whose callees are all done run concurrently when their estimates fit the budget
-together (R7). Each runs the serial engine. A batch that runs alone may use the parallel
+together (R8). Each runs the serial engine. A batch that runs alone may use the parallel
 engine on the run's `-j` threads.
 
 ### D3. Split SCCs
@@ -210,11 +213,14 @@ output (Background).
 
 ### D6. Budget and estimates
 
-- The budget is a configured byte limit, `IndexConfig` gaining a field beside `parallelism` and
-  `storage`.
+- The budget is a byte limit, an `IndexConfig` field beside `parallelism` and `storage`, set by
+  a CLI flag. It defaults to half of physical memory until measurements suggest better.
+- `IndexConfig` also selects the monolithic run (R6). The staged run is the default in
+  `IndexConfig::default()` and `IndexOptions::default()`
+  (`ctadl-ascent/src/cli/mod.rs:94`), so existing tests run staged unless they ask otherwise.
 - A batch's estimate is a function of its seed sizes: `assign_like` rows, plus instantiated
   callee-summary rows, variables and formals. It is calibrated against `[mem cp]` and
-  `profile.json` measurements. C2 covers the choice of estimator.
+  `profile.json` measurements. C1 covers the choice of estimator.
 - A configured floor bounds how small the planner makes a batch. Its smallest value is one
   function, which splits every recursive SCC. The tests sweep it down to one.
 
@@ -223,13 +229,13 @@ output (Background).
 - **Location.** A directory under the project's `index/`, beside the final tables.
 - **Saved once, before stage 1.** The complete `IndexFacts`, including the members
   `IndexFacts::try_save` omits today, the `IdMap`, the path set and the plan. All are in the
-  index's parquet encoding (R9). Facts are partitioned by batch, so a batch reads only its own
-  facts (R10).
+  index's parquet encoding (R10). Facts are partitioned by batch, so a batch reads only its own
+  facts (R11).
 - **Per batch.** Output files `summary`, `assign` and frame edges, in the same encoding. Rows
   are sorted by `FunctionId`, so a reader of one callee's rows can skip row groups by
   statistics.
 - **Completion.** Each batch, round and stage writes its files to temporary names, renames them
-  into place, then writes its completion marker the same way (R11).
+  into place, then writes its completion marker the same way (R12).
 - **Run key.** A key over the facts and the configuration (engine, budget, alias rule, deref
   paths) is stored in the directory. A resumed run with a different key starts over.
 
@@ -241,7 +247,7 @@ output (Background).
   - `paths` is the path set. `external_function` comes from the facts.
   - `resolved_call` and `intent_pair` come from stage 3.
 - **Duplicates.** Only the frame edges need deduplication, done in D4.
-- **Commit.** The index stamp (`write_index_config`) is written last, as today (R12). The stage
+- **Commit.** The index stamp (`write_index_config`) is written last, as today (R13). The stage
   directory is then removed.
 
 ### D9. Observability
@@ -255,7 +261,7 @@ output (Background).
 
 ### D10. Tests
 
-- A seeded shuffle of every `IndexFacts` vector, used by the staged equivalence tests (R13).
+- A seeded shuffle of every `IndexFacts` vector, used by the staged equivalence tests (R14).
 - A staged mode for the shared test entry points: `taint_index_with_config` (via
   `IndexConfig`), `flowy::check_with_config` and `cli::index` through `IndexOptions`. Each
   existing test can then run staged and compare outputs with the monolithic serial run.
@@ -263,13 +269,7 @@ output (Background).
 
 ## Concerns
 
-- C1. **Default or opt-in.** The intent does not say whether staging replaces the monolithic
-  run.
-  - Make it the default, keeping the monolithic run as the reference for tests (R13).
-  - Add it behind a flag, with the CLI otherwise unchanged.
-  - The spec assumes a flag at first (`IndexConfig`, CLI `--staged` or a budget flag), with the
-    monolithic run the default.
-- C2. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
+- C1. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
   the blowup is in `locals`, which the seeds do not predict. A batch could overshoot the budget
   by a large factor.
   - Estimate from seed sizes, calibrated (D6).
@@ -277,21 +277,21 @@ output (Background).
   - Measure and re-split: abort a batch that exceeds the budget and rerun it split. This needs a
     per-batch memory guard.
   - The spec assumes calibrated seed sizes, with the budget documented as approximate.
-- C3. **In-process or a process per batch.** R9 requires that a stage *can* run in a fresh
+- C2. **In-process or a process per batch.** R10 requires that a stage *can* run in a fresh
   process. Running every batch in-process is simpler, but the allocator may not return freed
   pages, so the footprint might track the high-water mark rather than the current batch.
   Interners never free either, but they hold only the program-wide paths and strings.
-  - Run in-process, and verify with R14 that the footprint falls between batches.
+  - Run in-process, and verify with R15 that the footprint falls between batches.
   - Use a worker subprocess per batch. Memory is reclaimed for certain, at a process-start and
     fact-load cost per batch.
-  - The spec assumes in-process, falling back to subprocesses if R14 shows the footprint does not
+  - The spec assumes in-process, falling back to subprocesses if R15 shows the footprint does not
     fall.
-- C4. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
+- C3. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
   way to bound memory.
   - Staging rejects `--lsm`.
   - Each batch may run under LSM storage.
   - The spec assumes staging rejects `--lsm`.
-- C5. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C4. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.
