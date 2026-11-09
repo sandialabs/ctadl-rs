@@ -1119,7 +1119,7 @@ fn parse_catch_handler_list(data: &[u8], list_off: usize) -> DexResult<CatchHand
         let (raw_size, p) = read_sleb128(data, pos)?;
         pos = p;
 
-        let count = raw_size.abs() as u32;
+        let count = raw_size.unsigned_abs();
         let mut pairs = Vec::with_capacity(count as usize);
 
         for _ in 0..count {
@@ -1178,7 +1178,7 @@ pub fn parse_code_item(data: &[u8], offset: u32) -> DexResult<CodeItem> {
 
     // 4-byte alignment for tries
     let mut next_offset = insns_offset + insns_size * 2;
-    if tries_size > 0 && next_offset % 4 != 0 {
+    if tries_size > 0 && !next_offset.is_multiple_of(4) {
         next_offset += 2; // padding
     }
 
@@ -1216,7 +1216,7 @@ pub fn parse_code_item(data: &[u8], offset: u32) -> DexResult<CodeItem> {
 }
 
 impl EncodedMethod {
-    pub fn code<'a>(&self, data: &'a [u8]) -> DexResult<Option<CodeItem>> {
+    pub fn code(&self, data: &[u8]) -> DexResult<Option<CodeItem>> {
         if self.code_off == 0 {
             return Ok(None); // abstract or native
         }
@@ -1288,14 +1288,12 @@ pub fn call_indices_before_move_result(items: &[DecodedCodeItem]) -> Vec<usize> 
     let mut out = Vec::new();
     let end = items.len().saturating_sub(1);
     for i in 0..end {
-        if let DecodedCodeItem::Instruction { inst, .. } = &items[i] {
-            if inst.is_invoke() {
-                if let DecodedCodeItem::Instruction { inst: next, .. } = &items[i + 1] {
-                    if next.is_move_result() {
-                        out.push(i);
-                    }
-                }
-            }
+        if let DecodedCodeItem::Instruction { inst, .. } = &items[i]
+            && inst.is_invoke()
+            && let DecodedCodeItem::Instruction { inst: next, .. } = &items[i + 1]
+            && next.is_move_result()
+        {
+            out.push(i);
         }
     }
     out
@@ -1314,7 +1312,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0100 => {
                 // packed-switch-payload
                 // Format: size (ushort), first_key (sint), targets[] (sint array)
-                let size = insns[pc + 1] as u16;
+                let size = insns[pc + 1];
                 let first_key = {
                     let low = insns[pc + 2] as i32;
                     let high = insns[pc + 3] as i32;
@@ -1347,7 +1345,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0200 => {
                 // sparse-switch-payload
                 // Format: size (ushort), keys[] (sint array), targets[] (sint array)
-                let size = insns[pc + 1] as u16;
+                let size = insns[pc + 1];
 
                 let mut keys = Vec::with_capacity(size as usize);
                 for i in 0..size as usize {
@@ -1386,7 +1384,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0300 => {
                 // fill-array-data-payload
                 // Format: element_width (ushort), size (uint), data[] (ubyte array)
-                let element_width = insns[pc + 1] as u16;
+                let element_width = insns[pc + 1];
                 let size = {
                     let low = insns[pc + 2] as u32;
                     let high = insns[pc + 3] as u32;
@@ -1396,7 +1394,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
                 // Data starts at pc + 4, and spans size * element_width bytes
                 // Since insns is u16 array, we need to extract bytes carefully
                 let data_size = (size as usize) * (element_width as usize);
-                let data_words = (data_size + 1) / 2; // Round up to u16 boundary
+                let data_words = data_size.div_ceil(2); // Round up to u16 boundary
                 let mut data = Vec::with_capacity(data_size);
 
                 for i in 0..data_words {
@@ -1413,7 +1411,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
                 // Truncate to exact size
                 data.truncate(data_size);
 
-                let width = (data_size + 1) / 2 + 4; // Round up to u16 boundary + header
+                let width = data_size.div_ceil(2) + 4; // Round up to u16 boundary + header
                 out.push(DecodedCodeItem::Payload {
                     offset: pc,
                     payload: crate::instructions::PayloadInstruction::FillArrayData(
@@ -1554,7 +1552,10 @@ impl FieldId {
     }
 }
 
-pub fn disassemble_code_item_with_constants(code: &CodeItem, cp: &DexConstantPool) -> Vec<String> {
+pub fn disassemble_code_item_with_constants(
+    code: &CodeItem,
+    cp: &DexConstantPool<'_>,
+) -> Vec<String> {
     let instructions = decode_code_item(code);
     let mut result = Vec::with_capacity(instructions.len());
 

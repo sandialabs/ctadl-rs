@@ -221,8 +221,8 @@ pub enum Error {
     Parquet(#[from] parquet::errors::ParquetError),
     #[error("arrow error")]
     Arrow(#[from] arrow::error::ArrowError),
-    #[error("android manifest error: {message}")]
-    AndroidManifest { message: String },
+    #[error("android manifest error: {0}")]
+    AndroidManifest(#[from] dex_reader::axml::AxmlError),
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
     #[error("error converting facts: {0}")]

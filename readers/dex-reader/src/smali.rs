@@ -6,7 +6,7 @@ use crate::types::{CodeItem, DexConstantPool};
 
 /// Format a code item as smali-style lines (opcode and operands only, no offset prefix).
 /// Payloads (e.g. .sparse-switch, .array-data) emit multiple logical lines; each is a separate string.
-pub fn format_code_item_smali(code: &CodeItem, cp: &DexConstantPool) -> Vec<String> {
+pub fn format_code_item_smali(code: &CodeItem, cp: &DexConstantPool<'_>) -> Vec<String> {
     let instructions = decode_code_item(code);
     let mut result = Vec::new();
 
@@ -26,7 +26,7 @@ pub fn format_code_item_smali(code: &CodeItem, cp: &DexConstantPool) -> Vec<Stri
     result
 }
 
-fn method_descriptor(parser: &DexParser, proto_idx: usize) -> String {
+fn method_descriptor(parser: &DexParser<'_>, proto_idx: usize) -> String {
     let proto = &parser.proto_ids[proto_idx];
     let ret = parser
         .type_ids
@@ -53,7 +53,7 @@ fn method_descriptor(parser: &DexParser, proto_idx: usize) -> String {
 
 /// Iterate over all methods with code in a DEX and return (method_key, smali_lines) for each.
 /// Method key format: `class_descriptor->method_name(proto_descriptor)`.
-pub fn method_disassembly_smali(parser: &DexParser) -> Vec<(String, Vec<String>)> {
+pub fn method_disassembly_smali(parser: &DexParser<'_>) -> Vec<(String, Vec<String>)> {
     let cp = parser.constant_pool();
     let mut out = Vec::new();
 

@@ -224,6 +224,10 @@ impl<'a> StringTable<'a> {
         self.string_ids.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.string_ids.is_empty()
+    }
+
     /// A copy of this table that shares its decoded entries, so neither copy decodes an entry
     /// the other already has.
     pub fn share(&self) -> Self {

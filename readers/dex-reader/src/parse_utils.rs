@@ -3,10 +3,7 @@ use crate::types::DexString;
 
 #[inline]
 pub fn check_range(data: &[u8], offset: usize, size: usize) -> DexResult<()> {
-    if offset
-        .checked_add(size)
-        .map_or(true, |end| end > data.len())
-    {
+    if offset.checked_add(size).is_none_or(|end| end > data.len()) {
         Err(DexError::OutOfBounds {
             offset,
             size,
@@ -46,7 +43,7 @@ pub fn read_i32_le(data: &[u8], offset: usize) -> DexResult<i32> {
 }
 
 #[inline]
-pub fn read_slice<'a>(data: &'a [u8], offset: usize, size: usize) -> DexResult<&'a [u8]> {
+pub fn read_slice(data: &[u8], offset: usize, size: usize) -> DexResult<&[u8]> {
     check_range(data, offset, size)?;
     Ok(&data[offset..offset + size])
 }
