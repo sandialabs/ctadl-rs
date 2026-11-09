@@ -27,6 +27,7 @@ ascent! {
     #![measure_rule_times]
     #![generate_run_timeout]
     struct LsmIndexProg;
+    include_source!(ctadl_index::index_engine::intent_rules);
     include_source!(ctadl_index::index_engine::index_rules);
     #[ds(lsm::ascent_provider::provider: counting)]
     relation locals_key(FunctionId, FlowVariable, Path, Path, Path);

@@ -7,6 +7,14 @@ this plan and the spec disagree, the spec wins. Each phase builds, passes the ga
 Code, help text and docs written by these phases must not cite the spec's or the plan's numbers
 (R16).
 
+## Status
+
+| Phase | State | Notes |
+| --- | --- | --- |
+| 0 | done | targets, dumps and numbers in `/Volumes/Shampoo/staged-index-baseline/NOTES.md` |
+| 1 | done | gate passes; all 33 relations identical to the Phase 0 dumps for all six targets, serial, `-j 8` and `--lsm` (logs in `/Volumes/Shampoo/staged-index-baseline/phase1/`). `run_intent` takes no config: `intent_rules` reads none |
+| 2 | not started | |
+
 ## Order
 
 | Wave | Phases | Why |

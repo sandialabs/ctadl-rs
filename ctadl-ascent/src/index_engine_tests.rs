@@ -798,3 +798,135 @@ mod globals {
         );
     }
 }
+
+/// The intent rules run alone on the flow the full program closed must derive the full
+/// program's intent pairs. The fixture resolves one send by its component, and one by an action
+/// that reaches the sender only through the label exchange: `setter` stores the action in a
+/// global, `sender` reads the global.
+#[test_log::test]
+fn intent_program_matches_full_program() {
+    use crate::facts::{
+        FlowVertex, FormalIndex, FormalType, GLOBAL_FRAME, GlobalId, IntentKind, PackedCallArg,
+        PackedInsnSiteId, Str,
+    };
+    use crate::index_engine::path_set::{PathSet, PathSetRef};
+    use std::sync::Arc;
+
+    let setter = FunctionId::new(1);
+    let sender = FunctionId::new(2);
+    let by_action = FunctionId::new(3);
+    let by_component = FunctionId::new(4);
+    let site = |f, i| PackedInsnSiteId::try_from_parts(f, InsnId::new(i)).unwrap();
+    let arg = |i, n| {
+        FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(i), FormalIndex::new(n)).unwrap(),
+        )
+    };
+    let local = |s: &str| FlowVariable::local(Str::from(s));
+    let vx = |v, p| FlowVertex::new(v, p);
+    let action = Path::from_symbol_names(["<action>"]);
+    let component = Path::from_symbol_names(["<component>"]);
+    let g = FlowVariable::global(GlobalId::new("g"));
+    let formal0 = FlowVariable::formal_index(FormalIndex::new(0));
+
+    let facts = IndexFacts {
+        formal_param: [by_action, by_component]
+            .into_iter()
+            .map(|f| (f, formal0, FormalType::default()))
+            .collect(),
+        assign: vec![
+            // sender: i = $g; arg(10, 1) = i; arg(11, 1) = j
+            (
+                site(sender, 1),
+                vx(local("i"), Path::empty()),
+                vx(g, Path::empty()),
+            ),
+            (
+                site(sender, 2),
+                vx(arg(10, 1), Path::empty()),
+                vx(local("i"), Path::empty()),
+            ),
+            (
+                site(sender, 3),
+                vx(arg(11, 1), Path::empty()),
+                vx(local("j"), Path::empty()),
+            ),
+        ],
+        const_str_assign: vec![
+            (site(setter, 1), vx(g, action), Str::from("ACT")),
+            (
+                site(sender, 4),
+                vx(local("j"), component),
+                Str::from("Recv"),
+            ),
+        ],
+        paths: vec![(action,), (component,)],
+        intent_frame: vec![(setter,), (sender,)],
+        intent_send: vec![
+            (
+                sender,
+                InsnId::new(20),
+                InsnId::new(10),
+                FormalIndex::new(1),
+                IntentKind::Activity,
+            ),
+            (
+                sender,
+                InsnId::new(21),
+                InsnId::new(11),
+                FormalIndex::new(1),
+                IntentKind::Activity,
+            ),
+        ],
+        intent_filter: vec![(
+            Str::from("ACT"),
+            Str::from(""),
+            IntentKind::Activity,
+            by_action,
+        )],
+        intent_component: vec![(Str::from("Recv"), IntentKind::Activity, by_component)],
+        ..Default::default()
+    };
+
+    let full = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    let mut expected_pairs = full.intent_pair.clone();
+    expected_pairs.sort();
+    assert_eq!(
+        expected_pairs.iter().map(|r| r.2).collect::<Vec<_>>(),
+        vec![by_action, by_component],
+        "the fixture should resolve both sends"
+    );
+
+    let frame: Vec<FunctionId> = facts.intent_frame.iter().map(|(f,)| *f).collect();
+    let in_frame = |f: &FunctionId| *f == GLOBAL_FRAME || frame.contains(f);
+    let intent = ctadl_index_serial::run_intent(IntentInput {
+        assign_like: full
+            .assign_like
+            .iter()
+            .filter(|r| in_frame(&r.0))
+            .cloned()
+            .collect(),
+        const_str_assign: facts
+            .const_str_assign
+            .iter()
+            .map(|(s, FlowVertex(v, p, ..), str)| (unpack_site(s).func_id, *v, *p, *str))
+            .filter(|r| in_frame(&r.0))
+            .collect(),
+        intent_frame: facts.intent_frame.clone(),
+        intent_send: facts.intent_send.clone(),
+        intent_filter: facts.intent_filter.clone(),
+        intent_component: facts.intent_component.clone(),
+        path_set: PathSetRef(Arc::new(PathSet::from_paths(
+            full.paths.iter().map(|(p,)| *p),
+        ))),
+    });
+
+    let mut pairs = intent.intent_pair;
+    pairs.sort();
+    assert_eq!(pairs, expected_pairs);
+    let mut resolved = intent.resolved_call;
+    resolved.sort();
+    let mut expected_resolved = full.resolved_call;
+    expected_resolved.sort();
+    assert_eq!(resolved, expected_resolved);
+}

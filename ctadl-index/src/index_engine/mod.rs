@@ -11,9 +11,10 @@ Generating facts is typically done with a mutable reference to [`IndexFacts`]. G
 done with the help of the [`source_info::IndexSourceInfo`] API. The source info may be persisted,
 but it is not used during indexing (only for fact generation).
 
-The rules are [`index_rules`]. Each engine is a crate of its own that runs them:
-`ctadl-index-serial`, `ctadl-index-par` and `ctadl-index-lsm`. `ctadl_ascent::index_engine` picks
-one and runs it.
+The rules are [`index_rules`] and [`intent_rules`], the Android intent resolution. Each engine is
+a crate of its own that runs them: `ctadl-index-serial`, `ctadl-index-par` and `ctadl-index-lsm`.
+`ctadl_ascent::index_engine` picks one and runs it. `ctadl-index-serial` also runs
+[`intent_rules`] alone, on the flow `index_rules` derived ([`IntentInput`]).
 
 # Data Flow Analysis
 
@@ -963,7 +964,8 @@ pub fn mime_matches(filter: &str, actual: &str) -> bool {
 }
 
 ascent_source! {
-    /// The index datalog: every relation and rule of the index engine, written exactly once.
+    /// The index datalog: every relation and rule of the index engine but the intent rules
+    /// ([`intent_rules`]), written exactly once.
     index_rules:
     // Facts:
 
@@ -971,9 +973,6 @@ ascent_source! {
     relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
     relation call(FunctionId, InsnId, FunctionId);
     relation const_str_assign(FunctionId, FlowVariable, Path, Str);
-    relation intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind);
-    relation intent_filter(Str, Str, IntentKind, FunctionId);
-    relation intent_component(Str, IntentKind, FunctionId);
 
     // Analysis drivers:
 
@@ -985,7 +984,6 @@ ascent_source! {
     // A function's flow from root `n2.p2` to root `n1.p1` (a formal, the return or a global).
     relation summary(FunctionId, Root, Path, Root, Path);
     relation config(IndexConfig);
-    relation intent_frame(FunctionId);
 
     // Derived:
 
@@ -1005,11 +1003,6 @@ ascent_source! {
     // out inter-procedural / summary-derived copies and the write-backs onto the formal at the
     // return. Feeds the aliasing summary rule.
     relation alias_of_formal(FunctionId, FlowVariable, Root);
-    relation const_reaches(FunctionId, FlowVariable, Path, Str);
-
-    // Call edges the fixpoint derives: the Android intent pairings.
-    relation resolved_call(FunctionId, InsnId, FunctionId);
-    relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
 
     // Initialize locals with formals
     locals(infunc, v1, p1.clone(), Root::formal(i), p1.clone()) <--
@@ -1174,46 +1167,6 @@ ascent_source! {
         let v1 = call_arg!(*insn, *n1),
         let v2 = call_arg!(*insn, *n2);
 
-    const_reaches(func_id, v.clone(), p.clone(), s) <--
-        intent_frame(func_id),
-        const_str_assign(func_id, v, p, s);
-
-    const_reaches(func_id, v1.clone(), p_new.clone(), s) <--
-        intent_frame(func_id),
-        const_reaches(func_id, v2, p_context, s),
-        assign_like(func_id, v2, p2, v1, p1),
-        path_set(ps),
-        if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
-
-    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Explicit) <--
-        intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let component_path = *COMPONENT_PATH,
-        let arg = call_arg!(*send_insn, *n),
-        const_reaches(func_id, arg, component_path, cls),
-        intent_component(cls, kind, recv);
-
-    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
-        intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let action_path = *ACTION_PATH,
-        let arg = call_arg!(*send_insn, *n),
-        const_reaches(func_id, arg, action_path, action),
-        intent_filter(action, filter_mime, kind, recv),
-        if filter_mime.as_ref().is_empty();
-
-    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
-        intent_send(func_id, bridge_insn, send_insn, n, kind),
-        let action_path = *ACTION_PATH,
-        let type_path = *TYPE_PATH,
-        let arg = call_arg!(*send_insn, *n),
-        const_reaches(func_id, arg, action_path, action),
-        const_reaches(func_id, arg, type_path, mime),
-        intent_filter(action, filter_mime, kind, recv),
-        if !filter_mime.as_ref().is_empty(),
-        if mime_matches(filter_mime.as_ref(), mime.as_ref());
-
-    resolved_call(func_id, bridge_insn, recv) <--
-        intent_pair(func_id, bridge_insn, recv, _);
-
     // Compute summaries from local reachability.
     summary(infunc, n1, p1, n2, p2) <--
         locals(infunc, dst_var, p1, n2, p2),
@@ -1278,6 +1231,73 @@ ascent_source! {
         config(c),
         if c.alias_rule,
         if n1 != n2 || *p1 != *bp;
+}
+
+ascent_source! {
+    /// The intent rules: Android intent resolution, by the string constants that reach an
+    /// intent's component and action, and the exchange of those labels through global paths.
+    /// The full engines include them before [`index_rules`]; the intent program runs them alone.
+    intent_rules:
+    // Read from `index_rules`, and declared there too, with the same field types: where both
+    // are included, Ascent keeps the last declaration, `index_rules`' (and its `assign_like`
+    // store).
+    relation const_str_assign(FunctionId, FlowVariable, Path, Str);
+    relation path_set(PathSetRef);
+    relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+
+    // Facts:
+    relation intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind);
+    relation intent_filter(Str, Str, IntentKind, FunctionId);
+    relation intent_component(Str, IntentKind, FunctionId);
+    // Functions where string-constant propagation is worth computing.
+    relation intent_frame(FunctionId);
+
+    // A string constant that reaches `v.p` in `f`.
+    relation const_reaches(FunctionId, FlowVariable, Path, Str);
+
+    // Call edges the fixpoint derives: the Android intent pairings.
+    relation resolved_call(FunctionId, InsnId, FunctionId);
+    relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
+
+    const_reaches(func_id, v.clone(), p.clone(), s) <--
+        intent_frame(func_id),
+        const_str_assign(func_id, v, p, s);
+
+    const_reaches(func_id, v1.clone(), p_new.clone(), s) <--
+        intent_frame(func_id),
+        const_reaches(func_id, v2, p_context, s),
+        assign_like(func_id, v2, p2, v1, p1),
+        path_set(ps),
+        if let Some(p_new) = ps.substitute_prefix(p_context, p2, p1);
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Explicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let component_path = *COMPONENT_PATH,
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, component_path, cls),
+        intent_component(cls, kind, recv);
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let action_path = *ACTION_PATH,
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, action_path, action),
+        intent_filter(action, filter_mime, kind, recv),
+        if filter_mime.as_ref().is_empty();
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let action_path = *ACTION_PATH,
+        let type_path = *TYPE_PATH,
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, action_path, action),
+        const_reaches(func_id, arg, type_path, mime),
+        intent_filter(action, filter_mime, kind, recv),
+        if !filter_mime.as_ref().is_empty(),
+        if mime_matches(filter_mime.as_ref(), mime.as_ref());
+
+    resolved_call(func_id, bridge_insn, recv) <--
+        intent_pair(func_id, bridge_insn, recv, _);
 
     // Semantics: G6, the label exchange. A string label at a global path holds in every
     // instance (G2), so it guards nothing: it goes up to the global frame from any function
@@ -1314,6 +1334,28 @@ ascent_source! {
         intent_frame(f),
         let v = FlowVariable::global(*g),
         const_reaches(&GLOBAL_FRAME, v, p, s);
+}
+
+/// What the intent program ([`intent_rules`] alone) starts from: the flow of the functions that
+/// send intents, already closed by [`index_rules`], and the intent facts.
+pub struct IntentInput {
+    /// The `assign_like` rows of the `intent_frame` functions and of [`GLOBAL_FRAME`],
+    /// destination first, as [`IndexResult::assign_like`] holds them.
+    pub assign_like: Vec<AssignLikeRow>,
+    /// Those functions' string constants, as `run_engine!` seeds them.
+    pub const_str_assign: Vec<(FunctionId, FlowVariable, Path, Str)>,
+    pub intent_frame: Vec<(FunctionId,)>,
+    pub intent_send: Vec<(FunctionId, InsnId, InsnId, FormalIndex, IntentKind)>,
+    pub intent_filter: Vec<(Str, Str, IntentKind, FunctionId)>,
+    pub intent_component: Vec<(Str, IntentKind, FunctionId)>,
+    pub path_set: PathSetRef,
+}
+
+/// The call edges the intent program derives.
+#[derive(Debug, Clone, Default)]
+pub struct IntentOutput {
+    pub intent_pair: Vec<(FunctionId, InsnId, FunctionId, IntentPairKind)>,
+    pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
 }
 
 /// What one run of an index engine starts from: the facts, plus what is derived from them before

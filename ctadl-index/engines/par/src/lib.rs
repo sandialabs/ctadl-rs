@@ -20,6 +20,7 @@ ascent_par! {
     #![measure_rule_times]
     #![generate_run_timeout]
     struct ParIndexProg;
+    include_source!(ctadl_index::index_engine::intent_rules);
     include_source!(ctadl_index::index_engine::index_rules);
 }
 ctadl_index::trie_stores!(ParIndexProg);
