@@ -3,10 +3,10 @@ use std::path::Path;
 use dex_reader::axml::{AndroidManifest, ManifestNode, ManifestNodeAttr, ManifestNodeChild};
 
 use crate::error::Error;
+use crate::facts::schema::{manifest_node, manifest_node_attr, manifest_node_child};
 use crate::project::ArtifactImport;
 
 pub fn save_manifest<P: AsRef<Path>>(manifest: &AndroidManifest, path: P) -> Result<(), Error> {
-    use crate::facts::schema::{manifest_node, manifest_node_attr, manifest_node_child};
     let dir = path.as_ref();
     manifest_node::try_save(
         dir,
@@ -33,7 +33,6 @@ pub fn save_manifest<P: AsRef<Path>>(manifest: &AndroidManifest, path: P) -> Res
 }
 
 pub fn load_manifest<P: AsRef<Path>>(path: P) -> Result<AndroidManifest, Error> {
-    use crate::facts::schema::{manifest_node, manifest_node_attr, manifest_node_child};
     let dir = path.as_ref();
     Ok(AndroidManifest {
         nodes: manifest_node::try_load(dir)?
