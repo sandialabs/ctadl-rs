@@ -11,8 +11,8 @@ Code, help text and docs written by these phases must not cite the spec's or the
 
 | Phase | State | Notes |
 | --- | --- | --- |
-| 0 | done | targets, dumps and numbers in `/Volumes/Shampoo/staged-index-baseline/NOTES.md` |
-| 1 | done | gate passes; all 33 relations identical to the Phase 0 dumps for all six targets, serial, `-j 8` and `--lsm` (logs in `/Volumes/Shampoo/staged-index-baseline/phase1/`). `run_intent` takes no config: `intent_rules` reads none |
+| 0 | done | targets, dumps and numbers in `/Volumes/Shampoo/staged-index-baseline/NOTES.md`. Large target: DuckDuckGo (`com.duckduckgo.mobile.android`, `--no-native-libs`), serial 160 s, 12.4 GB peak |
+| 1 | done | gate passes; all 33 relations identical to the Phase 0 dumps: java, noto, cil, pcode, synth and fx serial, `-j 8` and `--lsm`, ddg serial (logs in `/Volumes/Shampoo/staged-index-baseline/phase1/`). `run_intent` takes no config: `intent_rules` reads none |
 | 2 | not started | |
 
 ## Order
