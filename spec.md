@@ -130,8 +130,10 @@ the work.
 A staged run computes one plan before any fixpoint and saves it in the stage directory (R10,
 R12).
 
-- **Graph.** Nodes are the functions with facts: `formal_param`, `external_function`, or a seeded
-  `summary`. Edges are `call` (caller to callee). `GLOBAL_FRAME` is not a node.
+- **Graph.** Nodes are the functions with facts: every `FunctionId` in a per-function fact
+  (`formal_param`, `actual_param`, `call` as caller, `assign`, `const_str_assign`, seeded
+  `summary`, `external_function`). Edges are `call` (caller to callee). `GLOBAL_FRAME` is not a
+  node.
 - **SCCs.** The graph is condensed with `ctadl-ir`'s `Sccs` (`ctadl-ir/src/graph/scc/mod.rs:119`).
   SCCs are taken in dependency order, callees first.
 - **Packing.** Whole SCCs are packed into batches by estimated memory (D6), up to the budget.
