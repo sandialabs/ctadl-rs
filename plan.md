@@ -190,7 +190,7 @@ rendered messages are as before.
   tests that moved in Phase 1.
 - Existing, still passing: `activity_filters_require_default_category`
   (`android_intent.rs:1022`); the integration tests that import APKs with
-  truncated AXML (`ctadl-ascent/tests/integration/cli.rs:1084`, `:1117`) and
+  truncated AXML (`ctadl-ascent/tests/integration/cli.rs:1084`, `:1118`) and
   text XML (`cli.rs:834`), unchanged.
 - Regression: `intent:apk-manifest` and `apk:manifest-and-intents` pass, with
   the counts pinned at `xtask/src/apk.rs:917-942` unchanged.
