@@ -86,19 +86,19 @@ Depends on: Phase 0.
 `intent_rules`. This changes no behavior.
 
 **Files.**
-- `ctadl-index/src/index_engine/mod.rs:996-1348`. `index_rules` loses:
-  - the intent rules at `:1208-1246` (`const_reaches` ×2, `intent_pair` ×3, `resolved_call`);
-  - the label exchange at `:1320-1347` (`global_read`, `intent_frame(GLOBAL_FRAME)`, frame
+- `ctadl-index/src/index_engine/mod.rs:965-1317`. `index_rules` loses:
+  - the intent rules at `:1177-1215` (`const_reaches` ×2, `intent_pair` ×3, `resolved_call`);
+  - the label exchange at `:1282-1316` (`global_read`, `intent_frame(GLOBAL_FRAME)`, frame
     `const_reaches`, `global_label_key`, `global_label_read`, `const_reaches` down);
   - the declarations only those rules use: `intent_send`, `intent_filter`, `intent_component`,
     `intent_frame`, `const_reaches`, `resolved_call`, `intent_pair`.
 
-  `const_str_assign` stays declared in `index_rules`, since `global_mention` reads it (`:1059`).
+  `const_str_assign` stays declared in `index_rules`, since `global_mention` reads it (`:1028`).
   - The new `intent_rules` holds those rules. It declares every relation it reads:
     `const_str_assign`, `assign_like` (no `#[ds]`), `path_set`, `intent_*`, `const_reaches`,
     `resolved_call`, `intent_pair`, `global_read`, `global_label_key`, `global_label_read`.
   - Field types are spelled exactly as in `index_rules`, through `rules_prelude`
-    (`:1577-1589`). Ascent dedups declarations by name and field types compared token by token,
+    (`:1544-1557`). Ascent dedups declarations by name and field types compared token by token,
     so a different spelling would declare the relation twice.
   - Update the module doc (`:14-16`) and the `index_rules` doc line.
 - `ctadl-index/engines/{serial,par,lsm}/src/lib.rs`: `include_source!(…intent_rules);` before
@@ -106,11 +106,11 @@ Depends on: Phase 0.
 - `ctadl-index/engines/serial/src/lib.rs`, additive:
   - `ascent! { struct IntentProg; include_source!(ctadl_index::index_engine::intent_rules); }`;
   - `pub fn run_intent(input: IntentInput) -> IntentOutput`. It seeds `assign_like` source
-    first (`(f, v2, p2, v1, p1)`, as `seed_assign_like` does, `mod.rs:755-759`) and returns
+    first (`(f, v2, p2, v1, p1)`, as `seed_assign_like` does, `mod.rs:723-728`) and returns
     `intent_pair` and `resolved_call`.
   - `IntentInput` and `IntentOutput` are plain structs in `ctadl-index/src/index_engine/mod.rs`,
     beside `EngineInput`.
-- `ctadl-index/src/index_engine/dump.rs:323-333`. `dump_relations!` keeps listing the moved
+- `ctadl-index/src/index_engine/dump.rs:306-316`. `dump_relations!` keeps listing the moved
   relations. They are still fields of the full programs, so the dump is unchanged.
 
 **Tests.**
@@ -135,14 +135,14 @@ Depends on: Phase 0.
 
 Depends on: Phase 1.
 
-**What.** Split `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1373-1572`) into two
+**What.** Split `EngineInput::new` (`ctadl-index/src/index_engine/mod.rs:1342-1541`) into two
 parts:
 1. **`ProgramPaths::from_facts(&IndexFacts, deref_paths)`.** The program-wide part:
    `program_paths`, `summary_paths`, the `actual_param` paths, then `compute_paths` and
-   `PathSet::from_paths` (`:1410-1526`).
+   `PathSet::from_paths` (`:1377-1495`).
 2. **`EngineInput::from_slice(slice, paths, config, id_map)`.** The per-function part: `copy_edge`,
    `prog_store`, `alias_of_formal`, `assign` to `assign_like`, `call`, counts. It takes the
-   facts of some functions and seeds them. `compute_alias_of_formal` (`:849`) is already per
+   facts of some functions and seeds them. `compute_alias_of_formal` (`:818`) is already per
    function: it joins only within one `FunctionId`.
 
 `ProgramPaths { paths: Vec<(Path,)>, path_set: PathSetRef }` also has `from_paths(Vec<Path>)`,
@@ -156,18 +156,18 @@ recomputes the path set from facts.
 - **A staged batch** gets a `ProgramPaths` with an empty `paths` vector and an `Arc` clone of
   `path_set`. No batch copies the program's path vector.
 - **`seed_paths`.** `EngineInput` gains `seed_paths: bool`. When it is false, `run_engine!`
-  leaves the `paths` relation empty (no rule reads it, `mod.rs:1011-1013`), and
+  leaves the `paths` relation empty (no rule reads it, `mod.rs:980-983`), and
   `IndexResult.paths` is empty. Assembly writes `paths` once, from the scheduler's copy. When it
   is true, `run_engine!` moves `paths` into the relation (`paths.into_iter()` instead of
-  `paths.iter().cloned()` at `mod.rs:1676`), so the monolithic run stops holding the paths
+  `paths.iter().cloned()` at `mod.rs:1645`), so the monolithic run stops holding the paths
   twice during the fixpoint.
 - **Program-wide facts.** `from_slice` expects `facts.global_flow` and `facts.paths` empty:
   both are program-wide, and go to stage 2 and to `ProgramPaths`. A debug assertion checks
   this. The monolithic `new` moves `global_flow` into the frame rows before calling
-  `from_slice`, as `mod.rs:1467-1477` does today.
+  `from_slice`, as `mod.rs:1436-1446` does today.
 
 `run_engine!` also drops the `locals` store and the other derived stores (`std::mem::take` on
-their `ind_common` fields) before `take_assign_like` (`mod.rs:761`, `:1787`). Today the
+their `ind_common` fields) before `take_assign_like` (`mod.rs:730`, `:1756`). Today the
 `assign_like` `Vec` is built while `locals`, the largest relation, is still alive. The
 relation census and the dump run before this, so they are unchanged.
 
@@ -176,9 +176,9 @@ overlap of `locals` with the `assign_like` copy.
 
 **Files.**
 - `ctadl-index/src/index_engine/mod.rs`:
-  - `:1353-1572`: the split.
-  - `run_engine!` at `:1655-1677`: honor `seed_paths`.
-  - `run_engine!` at `:1806-1816`: take `paths` from the input when it was not seeded.
+  - `:1322-1541`: the split.
+  - `run_engine!` at `:1624-1646`: honor `seed_paths`.
+  - `run_engine!` at `:1775-1785`: take `paths` from the input when it was not seeded.
 - `ctadl-ascent/src/index_engine.rs:33`: no change, since `new` keeps its signature.
 
 **Tests.**
@@ -212,7 +212,7 @@ Depends on: Phase 0.
     serialized engine config (alias rule, deref paths, budget, floor). The engine kind is left
     out, since it does not change results. `ctadl-index/Cargo.toml` gains `sha2 = "0.10"`,
     which `source-info` already uses.
-- `ctadl-index/src/facts/parquet.rs:144-171`. Add `Reader::rows(columns)`, an iterator that decodes one row group at a time and so can
+- `ctadl-index/src/facts/parquet.rs:144-172`. Add `Reader::rows(columns)`, an iterator that decodes one row group at a time and so can
   feed `Writer::write_iter`, and `Reader::for_each_batch(columns, f)`, which
   streams one row group at a time. Add a variant that skips row groups whose `func_id`
   min/max statistics miss a sorted set of `FunctionId`s. Batch files are written sorted by
@@ -225,13 +225,13 @@ Depends on: Phase 0.
   - `fact_summary`, the seeded summaries, in `summary`'s encoding;
   - `frame_edge`, in `global_flow`'s encoding.
 
-  `assign` for a batch uses the existing `assign` schema (`schema.rs:63`). All are in the
-  index's parquet encoding (`parquet.rs:553`). `INDEX_FORMAT_VERSION`
-  (`ctadl-import/src/project.rs:186`) does not change: no final table changes (R3).
+  `assign` for a batch uses the existing `assign` schema (`schema.rs:62`). All are in the
+  index's parquet encoding (`parquet.rs:554`). `INDEX_FORMAT_VERSION`
+  (`ctadl-import/src/project.rs:187`) does not change: no final table changes (R3).
 
 **Tests.**
 - New, `ctadl-index/src/facts/schema.rs` tests: round-trip each new schema across two row groups
-  (as `schema.rs:272` does).
+  (as `schema.rs:217` does).
 - New, `ctadl-index/src/staged/store.rs` tests:
   - `filtered_reader_skips_row_groups`: 3 row groups by `FunctionId` ranges; a filter on one
     range decodes one group.
@@ -252,8 +252,8 @@ Depends on: Phase 3.
   - `call_graph(&IndexFacts)`: nodes are every `FunctionId` in a per-function fact (D1), edges
     are `call` from caller to callee, and `GLOBAL_FRAME` is not a node. Nodes are renumbered
     densely in `FunctionId` order, so `Sccs::new` (`ctadl-ir/src/graph/scc/mod.rs:119`) can take
-    them. Follow `ChaCallGraph` (`ctadl-ascent/src/report/callgraph.rs:1744-1764`).
-  - SCCs are taken from `Sccs::all_sccs()`, which yields callees first (`scc/mod.rs:141-149`).
+    them. Follow `ChaCallGraph` (`ctadl-ascent/src/report/callgraph.rs:1745-1764`).
+  - SCCs are taken from `Sccs::all_sccs()`, which yields callees first (`scc/mod.rs:147`).
   - `Estimate` per function:
     - inputs: `assign` rows, instantiated callee-summary rows (the sum over its `call` sites of
       the callee's estimated summary rows), variables and formals. Callees in the same SCC are
@@ -262,7 +262,7 @@ Depends on: Phase 3.
     - initial coefficients: bytes per row from `profile.json`'s `bytes_per_row` and Phase 0's
       `[mem cp]` lines;
     - a fixed per-worker term for the path set, which every worker holds whatever its size:
-      `profile.memory.interned["PathSet"]` (`mod.rs:1772-1778`) plus the interned split keys
+      `profile.memory.interned["PathSet"]` (`mod.rs:1741-1747`) plus the interned split keys
       `PathSet::from_paths` adds (`path_set.rs:130-168`). Packing counts it once per batch, so
       more, smaller batches cost more, and the planner prefers fewer, larger ones (D7);
     - Phase 13 recalibrates them.
@@ -285,7 +285,7 @@ Depends on: Phase 3.
 - `ctadl-index/src/staged/shuffle.rs`:
   - `shuffle_facts(&mut IndexFacts, seed)` is a Fisher–Yates shuffle of every vector, with an
     LCG. The repository's style avoids a `rand` dependency; copy the shape of
-    `lsm/src/ascent_provider.rs:1913-1920`.
+    `ctadl-index/src/facts.rs:2000-2006`.
   - It is `pub`, not `cfg(test)`, because the `ctadl-c` and `ctadl-ascent` tests use it from
     other crates.
 
@@ -326,7 +326,7 @@ Depends on: Phases 1, 2, 3, 4.
    - **Seeds.** The batch's facts, and the `call` rows whose caller is in the batch. Its
      out-of-batch callees' `summary` rows are streamed from their batches' files with the
      filtered reader, then go through `distinct_rows` together with the batch's own seeded
-     summaries, as `run_engine!` does today (`mod.rs:1663`). Intent facts and `global_flow`
+     summaries, as `run_engine!` does today (`mod.rs:1628`). Intent facts and `global_flow`
      are left empty.
    - **Outputs.** Rows are filtered to the batch's functions, so the seeded callee rows drop
      out and batch outputs are disjoint:
@@ -339,7 +339,7 @@ Depends on: Phases 1, 2, 3, 4.
      of writing partial rows.
    - **Dumps.** `run_engine!`'s `CTADL_DUMP_RELATIONS` dump is suppressed in batches here, not
      in Phase 10, since a second batch in one process would panic on `create_new`
-     (`dump.rs:242`). Phase 10 adds the `outputs/` and `stages/` dumps.
+     (`dump.rs:225`). Phase 10 adds the `outputs/` and `stages/` dumps.
    - **Row groups.** Stage files are written with 4K-row groups (a `Writer` option), not the
      64K default (`parquet.rs:175`). A batch reading one popular callee's rows then decodes
      4K rows of text paths, not a whole file.
@@ -351,8 +351,8 @@ Depends on: Phases 1, 2, 3, 4.
    says. It opens only the batches that hold `intent_frame` functions, which the plan names.
    Its size, like stage 2's, is reported in Phase 13 and is outside the budget.
 5. Assembly (D9) streams the batch files into the final tables, table by table, through the
-   per-table `schema::*::try_save(dir, iter)` (`schema.rs:24`), which feeds
-   `Writer::write_iter` (`parquet.rs:191`). It does not use `IndexResult::try_save`, which owns
+   per-table `schema::*::try_save(dir, iter)` (`schema.rs:23`), which feeds
+   `Writer::write_iter` (`parquet.rs:192`). It does not use `IndexResult::try_save`, which owns
    whole `Vec`s. Phase 3's reader gains an iterator form, one decoded record batch at a time,
    so it can feed `write_iter` without collecting. `profile.json` is written separately.
    The tables:
@@ -369,16 +369,16 @@ Depends on: Phases 1, 2, 3, 4.
 In this phase the plan never splits an SCC: the floor is clamped to whole SCCs until Phase 6.
 
 **Files.**
-- `ctadl-index/src/index_engine/mod.rs:351-373`. `IndexConfig` gains:
+- `ctadl-index/src/index_engine/mod.rs:318-342`. `IndexConfig` gains:
   - `staged: Option<StagedConfig>`, where `StagedConfig { budget: u64, floor: usize }`;
   - `None` is monolithic.
 
-  The default stays `None`. It must keep `Eq`, `Ord` and `Hash` (`:350`), since `config` is a
+  The default stays `None`. It must keep `Eq`, `Ord` and `Hash` (`:318`), since `config` is a
   relation.
-- `ctadl-index/src/index_engine/dump.rs:128-142`. `DumpCol for IndexConfig` leaves out `staged`,
+- `ctadl-index/src/index_engine/dump.rs:115-124`. `DumpCol for IndexConfig` leaves out `staged`,
   like `parallelism`, so staged and monolithic dumps compare.
-- `ctadl-ascent/src/cli/mod.rs:771-776`: the literal gains `staged: None` (wired in Phase 10).
-- `ctadl-ascent/src/index_engine_tests.rs:241-249`: literals as needed.
+- `ctadl-ascent/src/cli/mod.rs:762-767`: the literal gains `staged: None` (wired in Phase 10).
+- `ctadl-ascent/src/index_engine_tests.rs:242-250`: literals as needed.
 - New `ctadl-ascent/src/staged/{mod.rs,run.rs,batch.rs,executor.rs}` (declared in
   `ctadl-ascent/src/lib.rs`), which hold the engine-dependent part:
   - `run.rs`: `run_staged(facts, config, id_map, stage_dir, index_dir)`.
@@ -396,9 +396,9 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
   - `staged_matches_monolithic_chain`, `_diamond`, `_globals`: hand-built facts, including a
     global-to-global flow through two batches and a function without formals (D1).
   - `staged_matches_monolithic_intent`: the Phase 1 intent fixture.
-  - `staged_matches_monolithic_summary_project`: the facts of
-    `a_summary_projects_global_flows_cross_into_its_consumer`
-    (`index_engine_tests.rs:806-834`), with `global_flow` input.
+  - `staged_matches_monolithic_summary_project`: hand-built facts with an input `global_flow`
+    row, as a `--summary` project loads it (folded into the frame at `mod.rs:1436-1446`), and a
+    function of the consumer that reads one of its globals.
   - `staged_matches_monolithic_flowy`: every `.tnt` under `ctadl-ascent/tests/tnt/` that has
     no recursion. A tight budget gives several batches, and facts are shuffled with seeds 1..3.
   - `batch_reads_only_callees`: a counting reader asserts that a batch opens only the
@@ -421,7 +421,7 @@ Depends on: Phase 5.
   a row count, kept per `FunctionId` rather than per part, so it survives Phase 7 splitting a
   part. Counting is sound only under three conditions, which the phase enforces:
   - Every run reached its fixpoint. In a staged worker, `run_engine!` hitting
-    `CTADL_INDEX_TIMEOUT_SECS` (`mod.rs:1549`, `:1689-1693`) fails the run instead of
+    `CTADL_INDEX_TIMEOUT_SECS` (`mod.rs:1518`, `:1659-1664`) fails the run instead of
     returning partial rows. Phase 5 already applies this to every batch.
   - Seeds only grow.
   - A function's count never falls. A debug assertion checks it, and the tests check that the
@@ -464,7 +464,7 @@ Depends on: Phase 6.
 
 **What.** Add the `Process` executor and the scheduler loop.
 - **Workers.** A hidden subcommand `ctadl index-worker --store S <stage_dir> <batch_id>` runs
-  `run_batch`. It is the first `#[command(hide = true)]` in `main.rs:30-73`. The worker:
+  `run_batch`. It is the first `#[command(hide = true)]` in `main.rs:30-60`. The worker:
   - calls `ctadl_ascent::init()`;
   - starts a thread that samples its footprint every 100 ms and writes it to stdout, a line
     per sample (`phys_footprint_mb`; on Linux, resident set size from `/proc/self/statm`).
@@ -502,14 +502,14 @@ Depends on: Phase 6.
 **Files.**
 - `ctadl-ascent/src/staged/executor.rs`: `Process { exe, store, jobs }`; the scheduler loop.
 - `ctadl-ascent/src/staged/footprint.rs`: the sampler and the Linux reader.
-- `ctadl-index/src/index_engine/mod.rs:832-835`: the non-macOS `phys_footprint_mb` reads
+- `ctadl-index/src/index_engine/mod.rs:801-804`: the non-macOS `phys_footprint_mb` reads
   `/proc/self/statm`. A one-function change.
 - `ctadl-index/src/staged/plan.rs`: `split_batch(batch) -> (Batch, Batch)` (by SCC, or by
   function within an SCC, which makes it a split SCC).
-- `ctadl-ascent/src/main.rs:30-73`, `:664-776`: the hidden `IndexWorker` variant and its arm.
-- `ctadl-ascent/src/cli/mod.rs:69-108`: `IndexOptions` gains
+- `ctadl-ascent/src/main.rs:30-60`, `:545-585`: the hidden `IndexWorker` variant and its arm.
+- `ctadl-ascent/src/cli/mod.rs:64-102`: `IndexOptions` gains
   `worker_exe: Option<&'static std::path::Path>`, which keeps `Copy`. `None` means in-process.
-  Update the exhaustive destructure at `cli/mod.rs:387-397`. It is not used until Phase 10.
+  Update the exhaustive destructure at `cli/mod.rs:381-391`. It is not used until Phase 10.
 
 **Tests.**
 - New, `ctadl-ascent/tests/integration/staged_workers.rs` (registered in
@@ -540,13 +540,12 @@ Depends on: Phase 6.
 `taint_index_with_config` runs the monolithic serial engine as usual, and also runs staged at
 floors {default, 1}, each on facts shuffled with seed 1. Any output difference fails with the
 first differing rows of each table. The comparison is Phase 5's helper. This covers every test
-that indexes through `taint_index`, `taint_index_with_config`, `flowy::check_with_config` or
-`engine_observable`:
+that indexes through `taint_index`, `taint_index_with_config` or `flowy::check_with_config`:
 - the engine tests;
 - `codegen/tests.rs`;
-- the `ctadl-c` suite (`frontends/ctadl-c/src/test_utils.rs:568`, `:609`);
+- the `ctadl-c` suite (`frontends/ctadl-c/src/test_utils.rs:568`);
 - `flowy_tests.rs`;
-- `reference_parity.rs`.
+- `dispatch_models.rs`.
 
 Decided: the mode is opt-in. A plain `cargo test --workspace` runs each test once, which is
 staged after Phase 11. CI runs a second step with the variable set, so every push checks R14.
@@ -554,7 +553,7 @@ Phase 0's test-suite wall time is the reference for that step's cost.
 
 **Files.**
 - `ctadl-ascent/src/index_engine.rs:27-71`: the check mode.
-- `ctadl-ascent/src/index_engine_tests.rs:71-180`. `canonical()` and `assert_same_index` gain
+- `ctadl-ascent/src/index_engine_tests.rs:71-182`. `canonical()` and `assert_same_index` gain
   `global_flow` and `intent_pair`. They miss them today, and R1 needs them.
 - `.github/workflows/test.yml`: a step
   `CTADL_INDEX_CHECK_STAGED=1 cargo test --workspace`.
@@ -597,65 +596,61 @@ The stage directory is removed after the stamp is written (D9).
 
 Depends on: Phases 8, 9.
 
-**What.** Wire the staged run into `cli::index` and `ctadl index`/`ctadl go`. The default is
+**What.** Wire the staged run into `cli::index` and `ctadl index`. The default is
 still monolithic until Phase 11.
 
 **Files.**
-- `ctadl-ascent/src/cli/mod.rs:380-854` (`index`):
+- `ctadl-ascent/src/cli/mod.rs:374-845` (`index`):
   - **Staged run.** When `opts` selects staged:
     - It builds `StagedConfig`.
     - It plans and writes the stage directory under `project.index_path()`.
     - It drops `facts` before stage 1, keeping only the small `static_calls`, `indirect_calls`
-      and `declared` that it already clones (`:778-786`).
+      and `declared` that it already clones (`:769-777`).
     - It runs with the `Process` executor (`opts.worker_exe`) and assembles straight into the
       index directory.
-  - **Notes.** `push_zero_assignment_notes` (`:276-339`) takes a summarized-function set, the
+  - **Notes.** `push_zero_assignment_notes` (`:270-334`) takes a summarized-function set, the
     resolved calls and the external functions instead of `&IndexResult` (D9). The monolithic
     path derives the same three from its result.
   - **Flowy.** `index_check` reads `IndexResult::try_load(&path)` (D9).
-  - **Stamp.** `write_index_config` stays last (`:839`). The stage directory is under
-    `index/staging/`, so `index_tables` (`:2021-2041`), which lists only `index/*.parquet`,
-    does not count stage files, and `has_index` (`ctadl-import/src/project.rs:943`) stays false
+  - **Stamp.** `write_index_config` stays last (`:831`). The stage directory is under
+    `index/staging/`, so `index_tables` (`:1514-1534`), which lists only `index/*.parquet`,
+    does not count stage files, and `has_index` (`ctadl-import/src/project.rs:934`) stays false
     until the stamp (R13).
 - `ctadl-ascent/src/main.rs`:
-  - `IndexArgs` (`:360-506`) gains `--monolithic` and `--index-budget <SIZE>`. The budget uses
-    `parse_size` (`:523-548`); its default is half of physical memory (D6), from
+  - `IndexArgs` (`:347-492`) gains `--monolithic` and `--index-budget <SIZE>`. The budget uses
+    `parse_size` (`:511-534`); its default is half of physical memory (D6), from
     `sysctl hw.memsize` or `/proc/meminfo`.
   - `--lsm` gains `requires = "monolithic"`, with an error message that says to add the flag
-    (R6). Its doc at `:458-465` and the `-j` doc at `:449-454` change to describe staging.
-  - `GoArgs` (`:575-651`) gains the same two flags. The hand-built `IndexArgs` at `:741-758`
-    passes them.
-  - `index_artifacts_to_store` (`:988-1008`) passes
+    (R6). Its doc at `:445-453` and the `-j` doc at `:436-443` change to describe staging.
+  - `index_artifacts_to_store` (`:773-815`) passes
     `worker_exe: Some(Box::leak(std::env::current_exe()?.into_boxed_path()))`.
-- `ctadl-import/src/project.rs:233-242`. `EngineRecord` gains `#[serde(default)] staged: bool`,
-  for traceability. It is additive, so `INDEX_FORMAT_VERSION` stays (`:186`).
-- `ctadl-index/src/index_engine/profile.rs`, `mod.rs:424-472`. `IndexStats` and `IndexProfile`
+- `ctadl-import/src/project.rs:235-244`. `EngineRecord` gains `#[serde(default)] staged: bool`,
+  for traceability. It is additive, so `INDEX_FORMAT_VERSION` stays (`:187`).
+- `ctadl-index/src/index_engine/profile.rs`, `mod.rs:393-441`. `IndexStats` and `IndexProfile`
   sum over batches. `profile.json` gains `stages: [{id, peak_mb, rows, secs}]` (D10).
 - `ctadl-index/src/index_engine/dump.rs`. Add `dump_outputs(dir, index_dir, id_map)` (D10). It
   is called by `cli::index` after the tables are written, in both modes, when
   `CTADL_DUMP_RELATIONS` is set. Under staged, `run_engine!`'s full dump is suppressed, unless
   `CTADL_DUMP_STAGES` is set, in which case it goes to `stages/<batch>/`.
 - `scripts/fact-dump-diff.sh`: `--outputs` compares only `outputs/`. Update the usage text
-  (`:5`, `:22-27`).
-- `docs/debugging.md:189-225`: the examples gain `--monolithic` for the reference and for
+  (`:3-5`, `:7-20`).
+- `docs/debugging.md:171-208`: the examples gain `--monolithic` for the reference and for
   `--lsm`, and describe `--outputs`.
 - `ctadl-ascent/src/cli/mod.rs`. `index()` runs the staged check of Phase 8 here too, when
   `CTADL_INDEX_CHECK_STAGED=1`: it reruns monolithic serial into a temporary directory and
   compares with `compare.rs`. That brings the `cli::index` integration tests (`cli.rs`,
-  `jni_summary.rs`, `bridging_end_to_end.rs`, `global_ports.rs`, `port_semantics.rs`,
-  `sarif_uris.rs`, `multi_import_sarif.rs`, `determinism.rs`) under R14.
+  `jni_summary.rs`, `determinism.rs`) under R14.
 - Test call sites that build `IndexOptions` with `..Default::default()` get
   `worker_exe: Some(Path::new(env!("CARGO_BIN_EXE_ctadl")))` through a helper in
   `tests/integration/common.rs`. The helper `common::index_options()` replaces bare
-  `IndexOptions::default()` at the call sites the explore listed: `cli.rs`, `jni_summary.rs`,
-  `bridging_end_to_end.rs`, `determinism.rs`, `global_ports.rs`, `port_semantics.rs`,
-  `sarif_uris.rs`, `multi_import_sarif.rs`.
+  `IndexOptions::default()` at its call sites: `cli.rs:403`, `:829`, `:1125`,
+  `determinism.rs:178` and `jni_summary.rs`'s seven calls (`:42-271`).
 
 **Tests.**
 - New, `ctadl-ascent/tests/integration/cli.rs`:
   - `lsm_without_monolithic_is_an_error`: the message names `--monolithic`.
   - `staged_index_reads_as_absent_until_stamp`: a run stopped by `CTADL_STAGED_STOP_AFTER` has
-    `has_index() == false` and `IndexStatus::Unfinished` (as `cli.rs:1560-1584`).
+    `has_index() == false` and `IndexStatus::Unfinished` (as `cli.rs:1052-1077`).
   - `staged_cli_matches_monolithic`: `cli::index` staged and `--monolithic` give equal tables
     (D10 helper), with equal notifications.
 - New, `scripts/` check: a `fact-dump-diff.sh compare --outputs` run of a regression project,
@@ -671,8 +666,8 @@ still monolithic until Phase 11.
 
 Depends on: Phase 10.
 
-**What.** `IndexConfig::default()` (`ctadl-index/src/index_engine/mod.rs:364-373`) and
-`IndexOptions::default()` (`ctadl-ascent/src/cli/mod.rs:94-108`) select staged, with the
+**What.** `IndexConfig::default()` (`ctadl-index/src/index_engine/mod.rs:332-342`) and
+`IndexOptions::default()` (`ctadl-ascent/src/cli/mod.rs:88-102`) select staged, with the
 default budget and floor. `--monolithic` selects the old run. Every existing test now indexes
 staged.
 
@@ -682,11 +677,11 @@ Tests that compare engines must name the reference:
 - `fixpoint_interns_nothing` (`:221`) adds a staged config to its three. It measures interning
   during the fixpoint, and a batch's re-interning happens before it.
 
-`xtask/src/regression.rs:1474-1484` (`ctadl_command_with`) gains `--monolithic` when
+`xtask/src/regression.rs:712-721` (`ctadl_command_with`) gains `--monolithic` when
 `XTASK_INDEX_MONOLITHIC=1`, so the suite can run either way.
 
 **Files.** The two defaults; `ctadl-ascent/src/index_engine_tests.rs`;
-`xtask/src/regression.rs:1474-1484`; `README.md` where it describes indexing, if anywhere.
+`xtask/src/regression.rs:712-721`; `README.md` where it describes indexing, if anywhere.
 
 **Tests.**
 - Existing: `cargo test --workspace` passes with staged as the default.
@@ -701,10 +696,10 @@ Tests that compare engines must name the reference:
 Depends on: Phase 11.
 
 **What.** `docs/spec.md`:
-- §4.1 step 2 (`:136-140`) and §4.2's Engines bullet (`:147-150`) describe the staged fixpoint:
+- §4.1 step 2 (`:125-129`) and §4.2's Engines bullet (`:133-136`) describe the staged fixpoint:
   stages, batches by SCC under a budget, the global frame and intent stages, and `--monolithic`
   as the reference.
-- §4.6 (`:226-231`) describes `index/staging/`, its markers and resumption.
+- §4.6 (`:198-203`) describes `index/staging/`, its markers and resumption.
 
 No spec or plan numbers.
 
@@ -767,7 +762,7 @@ Depends on: Phase 11.
 | `ctadl-ascent/src/index_engine_tests.rs` | intent test; `canonical` gains tables; reference configs | 1, 5, 8, 11 |
 | `ctadl-ascent/src/cli/mod.rs` | `IndexOptions.worker_exe`; staged `index`; notes from tables | 5, 7, 10, 11 |
 | `ctadl-ascent/src/main.rs` | `index-worker`; `--monolithic`, `--index-budget`; `--lsm` requires `--monolithic` | 7, 10 |
-| `ctadl-ascent/tests/integration/{main,common,staged_workers,cli,...}.rs` | worker tests; `index_options()` helper | 7, 9, 10 |
+| `ctadl-ascent/tests/integration/{main,common,staged_workers,cli,jni_summary,determinism}.rs` | worker tests; `index_options()` helper | 7, 9, 10 |
 | `ctadl-import/src/project.rs` | `EngineRecord.staged` | 10 |
 | `scripts/fact-dump-diff.sh` | `--outputs` | 10 |
 | `xtask/src/regression.rs` | `XTASK_INDEX_MONOLITHIC` | 11 |
@@ -776,10 +771,9 @@ Depends on: Phase 11.
 | `docs/spec.md` | §4.1, §4.2, §4.6 | 12 |
 
 Not touched:
-- The rules' meaning, and the query side (`ctadl-ascent/src/query_engine/`), which reads the
-  same tables (R5).
+- The rules' meaning (R4).
 - Codegen, models, JNI and intent fact generation (`ctadl-ascent/src/codegen/`,
-  `languages/`), and `load_and_map_summaries` (`cli/mod.rs:1638`) (R5).
+  `languages/`), and `load_and_map_summaries` (`cli/mod.rs:1131`) (R5).
 - `INDEX_FORMAT_VERSION` (R3).
 - `ctadl-ir/src/graph/scc/`, which is used as is.
 - `lsm/` and the LSM engine's storage. The LSM engine only gains an include.
@@ -811,7 +805,7 @@ Not touched:
 - Sharing the path set across workers through a memory-mapped file (D7 names this as later).
   Decide by Phase 13's share of total time spent loading the path set.
 - Each stage-1 batch closes its own frame edges in the frame's `locals`
-  (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1060`), which feeds
+  (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1029`), which feeds
   no output. A config guard would skip that in batches, but it changes a rule's text.
   Decided: Phase 13 measures the frame's `locals` rows per batch first, and a guard comes only
   if the numbers call for one.
