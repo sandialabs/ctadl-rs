@@ -1134,45 +1134,6 @@ mod ladder {
         }
     }
 
-    /// `callee_resolvents` is what the engine joins a deferred receiver's allocated class
-    /// against, so a `(name, descriptor)` pair no site deferred can never be joined and its
-    /// rows are dead weight.
-    #[test]
-    fn resolvent_rows_are_emitted_only_for_deferred_signatures() {
-        let vmt = vmt_with(40);
-        let matches = ProgramModelMatches::default();
-        for (strategy, want_rows) in [
-            (CallResolutionStrategy::Cha, false),
-            (CallResolutionStrategy::Mixed, true),
-        ] {
-            let mut facts = IndexFacts::default();
-            let mut source_info = IndexSourceInfo::default();
-            let cha = ClassHierarchyAnalysis::new(&vmt, Default::default());
-            let mut v = CodegenVisitor::new(
-                cha,
-                &mut facts,
-                &mut source_info,
-                strategy,
-                CallPolicy::default(),
-                &matches,
-            );
-            let action = v.classify(&key(), JavaDispatch::Virtual, None);
-            v.apply(
-                site(),
-                FlowVariable::formal_index(0i16.into()),
-                &key(),
-                JavaDispatch::Virtual,
-                action,
-            );
-            v.finish();
-            assert_eq!(
-                !facts.callee_resolvents.is_empty(),
-                want_rows,
-                "{strategy:?}"
-            );
-        }
-    }
-
     /// A source or sink inside the target set refuses the model: those bodies have to stay in
     /// the analysis, so the site falls to the threshold.
     #[test]

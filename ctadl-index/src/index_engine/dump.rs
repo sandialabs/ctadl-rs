@@ -15,8 +15,8 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use crate::facts::{
-    CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVertex, FormalIndex,
-    FormalType, FunctionId, IdMap, InsnId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
+    CallDispatchKey, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId,
+    IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 use crate::index_engine::path_set::PathSetRef;
 use crate::index_engine::{IndexConfig, Rows, unpack_site};
@@ -107,19 +107,6 @@ impl<A: DumpCol, B: DumpCol> DumpCol for (A, B) {
         self.0.dump_col(cx, out);
         out.push(' ');
         self.1.dump_col(cx, out);
-    }
-}
-
-impl DumpCol for CallTargetObject {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
-        match self.kind() {
-            CallTargetObjectKind::FunctionId(f) => {
-                out.push_str("ptr<");
-                cx.function(*f, out);
-                out.push('>');
-            }
-            _ => write!(out, "{self}").unwrap(),
-        }
     }
 }
 

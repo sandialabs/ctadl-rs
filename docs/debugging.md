@@ -78,7 +78,7 @@ from globals.parquet g join import_id.parquet i on g.import_id = i.id;
 ```
 
 `CTADL_DUMP_RELATIONS` (below) prints the frame's rows under `<globals>`, among them
-`call_target_assign_like` and `const_reaches`, the labels pooled at global paths.
+`const_reaches`, the string labels pooled at global paths.
 
 Get functions endpoints are in:
 
@@ -127,8 +127,8 @@ index. This is expected, not a bug to chase. Read this before comparing two runs
 What is stable and what is not:
 
 - **Deterministic:** everything written before the fixpoint --- `formal_param`,
-  `actual_param`, `call`, `call_target_assign`, `callee_info`,
-  `callee_resolvents`, `external_function`, and the `function_id` IdMap. Function
+  `actual_param`, `call`, `callee_info`, `external_function`, and the
+  `function_id` IdMap. Function
   ids and instruction ids are byte-stable across indexes.
 - **Nondeterministic:** the row *order* of `assign`, `summary` and `paths`
   (written post-fixpoint by `IndexResult::try_save`) and of

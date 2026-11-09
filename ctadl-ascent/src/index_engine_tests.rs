@@ -213,7 +213,7 @@ const SRC_NESTED_TARGET: &str = r"
         return call(&c, x) + call(&b, x);
     }";
 
-/// The fixpoint interns no `Path`, `Str`, `CallTargetObject` or `CallDispatchKey`, on every
+/// The fixpoint interns no `Path`, `Str` or `CallDispatchKey`, on every
 /// engine. The interners are process-wide and the other tests in this binary intern into them
 /// from other threads, so the test re-runs itself as a child process that runs nothing else,
 /// and the child does the checking.
@@ -256,7 +256,7 @@ fn fixpoint_interns_nothing() {
             let interned = &profile.memory.fixpoint_interned;
             assert_eq!(
                 interned.keys().copied().collect::<Vec<_>>(),
-                ["CallDispatchKey", "CallTargetObject", "Path", "Str"],
+                ["CallDispatchKey", "Path", "Str"],
                 "{what}"
             );
             assert!(
@@ -302,9 +302,8 @@ fn leaf(name: &str, pass_through: bool) -> FunctionData {
 /// `fn <name>(x) { fp = <target>; return fp(x); }`.
 ///
 /// The target is established in the calling function itself, which is the arm the
-/// local-dispatch bypass covers. The `ObjectRef` operand is what codegen turns into the
-/// `call_target_assign` row that resolution follows to the call site; the `FuncPtrCall`
-/// is what it turns into the `callee_info` row naming the site.
+/// local-dispatch bypass covers. The `ObjectRef` operand is the stored target; the
+/// `FuncPtrCall` is what codegen turns into the `callee_info` row naming the site.
 fn calls_stored_target(name: &str, target: &str) -> FunctionData {
     let mut f = FunctionData {
         name: name.to_string(),

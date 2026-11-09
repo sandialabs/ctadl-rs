@@ -182,7 +182,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
 ///   gained `globals.parquet`, the project's globals by declaring import, and
 ///   `global_flow.parquet`, the program-level flows between globals.
-pub const INDEX_FORMAT_VERSION: &str = "8";
+/// - `9`: `call_target_assign.parquet` and `callee_resolvents.parquet` are gone with the index
+///   engine's call resolution, and `CallTargetObject` with them.
+pub const INDEX_FORMAT_VERSION: &str = "9";
 
 /// The front-end convention options set in the environment to something other than their
 /// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by

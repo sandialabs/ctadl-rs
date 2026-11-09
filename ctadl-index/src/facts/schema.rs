@@ -67,34 +67,14 @@ pub mod assign {
     save_load!();
 }
 
-pub mod call_target_assign {
-    use super::*;
-    use crate::facts::CallTargetObject;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallTargetObject);
-    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "dst_var", "dst_path", "target"];
-    pub const FILENAME: &str = "call_target_assign.parquet";
-    save_load!();
-}
-
 pub mod callee_info {
     use super::*;
     use crate::facts::CallDispatchKey;
-    /// An indirect / virtual call site awaiting resolution: the receiver vertex
+    /// An indirect or virtual call site the index leaves unresolved: the receiver vertex
     /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallDispatchKey`].
     pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
     pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
     pub const FILENAME: &str = "callee_info.parquet";
-    save_load!();
-}
-
-pub mod callee_resolvents {
-    use super::*;
-    use crate::facts::{CallDispatchKey, CallTargetObject};
-    /// How a stored call-target [`CallTargetObject`] resolves, under a given
-    /// [`CallDispatchKey`], to a concrete callee `target`.
-    pub type Record = (CallTargetObject, CallDispatchKey, FunctionId);
-    pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
-    pub const FILENAME: &str = "callee_resolvents.parquet";
     save_load!();
 }
 
@@ -229,9 +209,7 @@ pub mod manifest_node_attr {
 
 #[cfg(test)]
 mod tests {
-    use crate::facts::{
-        CallTargetObjectKind, FlowVariable, FunctionId, InsnId, IntentPairKind, Path,
-    };
+    use crate::facts::{FlowVariable, FunctionId, InsnId, IntentPairKind, Path};
 
     /// A table larger than a row group is written as several, and reads back whole and in
     /// order; an empty one still makes a readable file.
@@ -255,51 +233,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-    }
-
-    /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
-    /// plus nullable function-id and symbol columns; every variant must survive a parquet
-    /// round-trip, and the payload of each variant must land in the right column. `Symbol` and
-    /// `LuaClass` share the symbol column, so only the tag keeps them apart — the case that
-    /// would silently merge a JVM and a Lua import's classes if the tag were dropped.
-    #[test]
-    fn call_target_assign_object_round_trips() {
-        let var = FlowVariable::default();
-        let records: Vec<super::call_target_assign::Record> = vec![
-            (
-                FunctionId::new(1),
-                InsnId::new(10),
-                var,
-                Path::empty(),
-                CallTargetObjectKind::FunctionId(FunctionId::new(99)).into(),
-            ),
-            (
-                FunctionId::new(2),
-                InsnId::new(20),
-                var,
-                Path::empty(),
-                CallTargetObjectKind::Symbol(ctadl_ir::Symbol::from("com/example/Foo")).into(),
-            ),
-            (
-                FunctionId::new(3),
-                InsnId::new(30),
-                var,
-                Path::empty(),
-                CallTargetObjectKind::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")).into(),
-            ),
-            (
-                FunctionId::new(4),
-                InsnId::new(40),
-                var,
-                Path::empty(),
-                CallTargetObjectKind::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")).into(),
-            ),
-        ];
-
-        let dir = tempfile::tempdir().unwrap();
-        super::call_target_assign::try_save(dir.path(), records.clone()).unwrap();
-        let loaded = super::call_target_assign::try_load(dir.path()).unwrap();
-        assert_eq!(loaded, records);
     }
 
     /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
@@ -351,50 +284,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         super::callee_info::try_save(dir.path(), records.clone()).unwrap();
         let loaded = super::callee_info::try_load(dir.path()).unwrap();
-        assert_eq!(loaded, records);
-    }
-
-    /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
-    /// [`CallDispatchKey`] (each a tag + nullable columns). The JVM CHA (`Symbol`/`Java`), the
-    /// identity function-pointer (`FunctionId`/`C`), the Lua CHA (`LuaClass`/`Lua`) and the
-    /// .NET CHA (`CilClass`/`Cil`) resolutions must all round-trip.
-    #[test]
-    fn callee_resolvents_round_trips() {
-        use crate::facts::{CallDispatchKey, CallDispatchKeyKind};
-        let records: Vec<super::callee_resolvents::Record> = vec![
-            (
-                CallTargetObjectKind::Symbol(ctadl_ir::Symbol::from("com/example/Foo")).into(),
-                CallDispatchKeyKind::Java(
-                    ctadl_ir::Symbol::from("doThing"),
-                    ctadl_ir::Symbol::from("(I)V"),
-                )
-                .into(),
-                FunctionId::new(99),
-            ),
-            (
-                CallTargetObjectKind::FunctionId(FunctionId::new(7)).into(),
-                CallDispatchKey::c(),
-                FunctionId::new(7),
-            ),
-            (
-                CallTargetObjectKind::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")).into(),
-                CallDispatchKeyKind::Lua(ctadl_ir::Symbol::from("deposit")).into(),
-                FunctionId::new(42),
-            ),
-            (
-                CallTargetObjectKind::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")).into(),
-                CallDispatchKeyKind::Cil(
-                    ctadl_ir::Symbol::from("Parse"),
-                    ctadl_ir::Symbol::from("(System.String)->System.Int32"),
-                )
-                .into(),
-                FunctionId::new(43),
-            ),
-        ];
-
-        let dir = tempfile::tempdir().unwrap();
-        super::callee_resolvents::try_save(dir.path(), records.clone()).unwrap();
-        let loaded = super::callee_resolvents::try_load(dir.path()).unwrap();
         assert_eq!(loaded, records);
     }
 

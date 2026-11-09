@@ -766,7 +766,7 @@ pub fn index(
         deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
-    // Kept for the zero-assignment notifications, which need the calls the fixpoint resolved.
+    // Kept for the zero-assignment notifications, which compare them with the final call graph.
     let static_calls = facts.call.clone();
     let indirect_calls: Vec<(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)> = facts
         .callee_info
@@ -1790,9 +1790,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         actual_param,
         call,
         assign,
-        call_target_assign,
         callee_info,
-        callee_resolvents,
         summary,
         paths,
         index_source_map,
@@ -1881,8 +1879,6 @@ pub fn inspect_index_facts(
     log::debug!("  summary:        {}", facts.summary.len());
     log::debug!("  paths:          {}", facts.paths.len());
     log::debug!("  callee_info:    {}", facts.callee_info.len());
-    log::debug!("  callee_resolvents: {}", facts.callee_resolvents.len());
-    log::debug!("  call_target_assign:{}", facts.call_target_assign.len());
     log::debug!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;

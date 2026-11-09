@@ -1585,72 +1585,22 @@ macro_rules! interned_enum_impls {
     };
 }
 
-/// A call target: either a concrete function (a C-style function pointer, `v = ptr<f>`,
-/// a [`FunctionId`]) or a class name (a Java object, `v = new Foo()`, a [`Symbol`]), the
-/// latter resolved against the virtual method table at the call site.
+/// What an indirect or virtual call site (a `callee_info` row) dispatches on, in its frontend's
+/// own terms.
 ///
-/// It appears both as a *stored* target — what an assignment writes at a vertex, in
-/// `call_target_assign` — and as the *resolved* target carried through the `resolvent`
-/// relation during call resolution. [`CallTargetObject`] is its interned handle.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
-pub enum CallTargetObjectKind {
-    FunctionId(FunctionId),
-    Symbol(Symbol),
-    /// A Lua class-table symbol (`lua$class$Account`), the projection of
-    /// [`ctadl_ir::cir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
-    /// import and a JVM import sharing one fact base cannot collide in the
-    /// `callee_resolvents` key space.
-    LuaClass(Symbol),
-    /// A .NET class (`[Asm]Ns.Type`), the projection of
-    /// [`ctadl_ir::cir::call::CallObject::CilObject`]. Kept distinct from `Symbol` for the
-    /// reason `LuaClass` is: a Xamarin app is Dex and CIL in one fact base.
-    CilClass(Symbol),
-}
-
-impl Display for CallTargetObjectKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CallTargetObjectKind::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
-            CallTargetObjectKind::Symbol(cls) => write!(f, "java<{cls}>"),
-            CallTargetObjectKind::LuaClass(cls) => write!(f, "lua<{cls}>"),
-            CallTargetObjectKind::CilClass(cls) => write!(f, "cil<{cls}>"),
-        }
-    }
-}
-
-immortal::id_handle! {
-    /// An interned [`CallTargetObjectKind`]: a 4-byte handle into a process-wide interner that
-    /// never frees. Ordered by id, so sort with `content_cmp` wherever the order is printed.
-    pub struct CallTargetObject(CallTargetObjectKind);
-}
-
-interned_enum_impls!(CallTargetObject, CallTargetObjectKind);
-
-/// The frontend-specific dispatch key that, together with a [`CallTargetObject`], resolves an
-/// indirect / virtual call to concrete callee function(s). It is the *single extension point*
-/// for a new language frontend's call-resolution scheme: adding an arm here plus emitting the
-/// matching `callee_resolvents` facts in codegen is sufficient.
-///
-/// - `Java(simple_name, descriptor)` — a JVM / Dex virtual call, resolved by class-hierarchy
-///   analysis: `callee_resolvents(CallTargetObject::Symbol(class), Java(name, desc), target)`.
-/// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
-///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
-///   codegen for every function that appears as a call target.
-/// - `Lua(method)` — a Lua `recv:m(...)` call, resolved through the recovered `__index` chain:
-///   `callee_resolvents(CallTargetObject::LuaClass(class), Lua(method), target)`. Like `Java`
-///   this is class-hierarchy analysis, but there is no descriptor — a Lua method is uniquely
-///   named within its class table — and no static receiver class on the call site, so the class
-///   comes entirely from the receiver's allocation tag.
-/// - `Cil(simple_name, descriptor)` — a .NET `callvirt`, resolved exactly as `Java` is but in
-///   its own key space: `callee_resolvents(CallTargetObject::CilClass(class), Cil(name, desc),
-///   target)`.
+/// - `Java(simple_name, descriptor)` — a JVM / Dex virtual call.
+/// - `C` — a C-style function-pointer call.
+/// - `Lua(method)` — a Lua `recv:m(...)` call. There is no descriptor: a Lua method is uniquely
+///   named within its class table.
+/// - `Cil(simple_name, descriptor)` — a .NET `callvirt`, in its own key space so a Xamarin app's
+///   Dex and CIL halves cannot collide.
 ///
 /// [`CallDispatchKey`] is its interned handle.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallDispatchKeyKind {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
     Java(Symbol, Symbol),
-    /// C-style function-pointer call: no additional key beyond the stored target.
+    /// C-style function-pointer call.
     C,
     /// Lua metatable call: the method's simple name. No descriptor.
     Lua(Symbol),
@@ -1670,7 +1620,8 @@ impl Display for CallDispatchKeyKind {
 }
 
 immortal::id_handle! {
-    /// An interned [`CallDispatchKeyKind`], a 4-byte handle like [`CallTargetObject`].
+    /// An interned [`CallDispatchKeyKind`]: a 4-byte handle into a process-wide interner that
+    /// never frees. Ordered by id, so sort with `content_cmp` wherever the order is printed.
     pub struct CallDispatchKey(CallDispatchKeyKind);
 }
 
@@ -2115,22 +2066,21 @@ mod tests {
 
     #[test]
     fn call_handles_are_four_bytes_and_shown_by_content() {
-        assert_eq!(std::mem::size_of::<Option<CallTargetObject>>(), 4);
         assert_eq!(std::mem::size_of::<Option<CallDispatchKey>>(), 4);
 
         // Interned in reverse content order, so ids and content disagree.
-        let b: CallTargetObject = CallTargetObjectKind::Symbol("call_handles/b".into()).into();
-        let a: CallTargetObject = CallTargetObjectKind::Symbol("call_handles/a".into()).into();
+        let b: CallDispatchKey = CallDispatchKeyKind::Lua("call_handles_b".into()).into();
+        let a: CallDispatchKey = CallDispatchKeyKind::Lua("call_handles_a".into()).into();
         assert_eq!(a.content_cmp(&b), std::cmp::Ordering::Less);
         assert_eq!(b.content_cmp(&a), std::cmp::Ordering::Greater);
-        assert_eq!(a.to_string(), "java<call_handles/a>");
+        assert_eq!(a.to_string(), "lua_call<call_handles_a>");
 
         let json = serde_json::to_string(&a).unwrap();
         assert_eq!(
             json,
-            serde_json::to_string(&CallTargetObjectKind::Symbol("call_handles/a".into())).unwrap()
+            serde_json::to_string(&CallDispatchKeyKind::Lua("call_handles_a".into())).unwrap()
         );
-        assert_eq!(serde_json::from_str::<CallTargetObject>(&json).unwrap(), a);
+        assert_eq!(serde_json::from_str::<CallDispatchKey>(&json).unwrap(), a);
 
         let c = CallDispatchKey::c();
         assert_eq!(c, CallDispatchKeyKind::C.into());

@@ -3619,9 +3619,9 @@ impl<'a> Context<'a> {
             "identifier" => {
                 // A bare identifier naming a known function (and not shadowed) is a
                 // function *reference* used as a value (`fp = id`, `apply(id, x)`,
-                // `o.op = id`). Lower it as a function-pointer object so codegen emits the
-                // `call_target_assign` fact indirect-call resolution needs; a plain-global
-                // read would drop the taint. Direct calls resolve in `collect_call`, not
+                // `o.op = id`). Lower it as a function-pointer object, the target an indirect
+                // call through it resolves to (S11 of `docs/ir.md`); a plain-global read would
+                // drop the taint. Direct calls resolve in `collect_call`, not
                 // here.
                 if self
                     .scope_tree

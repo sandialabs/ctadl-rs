@@ -29,7 +29,7 @@ to 0.f.
 
 # Interned values
 
-`Path`, `Str`, `CallTargetObject` and `CallDispatchKey` are 4-byte handles into process-wide
+`Path`, `Str` and `CallDispatchKey` are 4-byte handles into process-wide
 interners that never free. Before the fixpoint starts, building an index interns
 every `Path` and `Str` the rules can produce: the path set's members and their splits
 ([`path_set`]) and the paths the intent rules match by name. The fixpoint only reads them,
@@ -52,9 +52,9 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
-    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
-    FormalType, FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId, IntentKind,
-    IntentPairKind, PackedInsnSiteId, Path, Root, Str,
+    CallDispatchKey, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
+    FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId, IntentKind, IntentPairKind,
+    PackedInsnSiteId, Path, Root, Str,
 };
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
@@ -105,22 +105,16 @@ pub struct IndexFacts {
     /// Assignments from source to destination vertices
     #[builder(default)]
     pub assign: Vec<AssignFlow>,
-    /// A call target ([`CallTargetObject`]) stored at a vertex by an assignment.
-    #[builder(default)]
-    pub call_target_assign: Vec<(PackedInsnSiteId, FlowVertex, CallTargetObject)>,
     /// A string constant stored at a vertex by an assignment, store, or call argument.
     #[builder(default)]
     pub const_str_assign: Vec<(PackedInsnSiteId, FlowVertex, Str)>,
     /// Observed Java call sites: declared class, simple method name, descriptor.
     #[builder(default)]
     pub android_call_site: Vec<(PackedInsnSiteId, Str, Str, Str)>,
-    /// An indirect / virtual call site awaiting resolution
+    /// An indirect or virtual call site the index leaves unresolved, with the vertex its callee
+    /// is read from. Read by the unresolved-indirect-call notifications.
     #[builder(default)]
     pub callee_info: Vec<(PackedInsnSiteId, FlowVertex, CallDispatchKey)>,
-    /// How a stored call target ([`CallTargetObject`]) resolves, under a given
-    /// [`CallDispatchKey`], to a concrete callee.
-    #[builder(default)]
-    pub callee_resolvents: Vec<(CallTargetObject, CallDispatchKey, FunctionId)>,
     #[builder(default)]
     pub summary: Vec<FunctionSummary>,
     #[builder(default)]
@@ -146,8 +140,8 @@ pub struct IndexFacts {
 }
 
 impl IndexFacts {
-    /// Saves the `formal_param`, `actual_param`, `call`, `call_target_assign`, `callee_info`,
-    /// `callee_resolvents`, `external_function` and `globals` members. The others aren't saved because
+    /// Saves the `formal_param`, `actual_param`, `call`, `callee_info`, `external_function` and
+    /// `globals` members. The others aren't saved because
     /// they are computed as part of an [`IndexResult`].
     ///
     /// Borrows `self`: only the tuples serialized here are cloned, and the rest of the fact
@@ -182,17 +176,6 @@ impl IndexFacts {
                 (func_id, insn_id, *target)
             }),
         )?;
-        call_target_assign::try_save(
-            &dir,
-            self.call_target_assign
-                .iter()
-                .map(|(site_id, vertex, target)| {
-                    let InsnSiteId { func_id, insn_id } =
-                        InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                    let FlowVertex(variable, path, ..) = vertex;
-                    (func_id, insn_id, *variable, *path, *target)
-                }),
-        )?;
         callee_info::try_save(
             &dir,
             self.callee_info
@@ -204,7 +187,6 @@ impl IndexFacts {
                     (func_id, insn_id, *variable, *path, *dispatch_key)
                 }),
         )?;
-        callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
         external_function::try_save(&dir, self.external_function.iter().copied())?;
         globals::try_save(&dir, self.globals.iter().copied())?;
         Ok(())
@@ -246,19 +228,6 @@ impl IndexFacts {
                     })
                     .collect(),
             )
-            .call_target_assign(
-                call_target_assign::try_load(&dir)?
-                    .into_iter()
-                    .map(|(func_id, insn_id, variable, path, target)| {
-                        let site_id = InsnSiteId { func_id, insn_id };
-                        (
-                            site_id.try_into().expect("error packing site_id"),
-                            FlowVertex::new(variable, path),
-                            target,
-                        )
-                    })
-                    .collect(),
-            )
             .callee_info(
                 callee_info::try_load(&dir)?
                     .into_iter()
@@ -272,7 +241,6 @@ impl IndexFacts {
                     })
                     .collect(),
             )
-            .callee_resolvents(callee_resolvents::try_load(&dir)?)
             .external_function(external_function::try_load(&dir)?)
             .globals(globals::try_load(&dir)?);
         Ok(builder.build().unwrap())
@@ -619,8 +587,8 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
 }
 
 impl IndexResult {
-    /// The final call graph: `call`, the pre-fixpoint relation codegen emitted, plus every call
-    /// the fixpoint resolved or derived (virtual dispatch, Android intent pairings).
+    /// The final call graph: `call`, the pre-fixpoint relation codegen emitted, plus the calls
+    /// the fixpoint derived (the Android intent pairings).
     pub fn final_call(
         &self,
         call: &[(PackedInsnSiteId, FunctionId)],
@@ -1581,9 +1549,9 @@ pub mod rules_prelude {
     };
     pub use crate::call_arg;
     pub use crate::facts::{
-        CallDispatchKey, CallTargetObject, FlowVariable, FlowVertex, FormalIndex, FormalType,
-        FunctionId, GLOBAL_FRAME, GlobalId, InsnId, InsnSiteId, IntentKind, IntentPairKind,
-        PackedInsnSiteId, Path, Root, Str, isout,
+        CallDispatchKey, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId,
+        GLOBAL_FRAME, GlobalId, InsnId, InsnSiteId, IntentKind, IntentPairKind, PackedInsnSiteId,
+        Path, Root, Str, isout,
     };
     pub use crate::index_engine::path_set::PathSetRef;
     pub use packed_struct::PackedStructSlice;

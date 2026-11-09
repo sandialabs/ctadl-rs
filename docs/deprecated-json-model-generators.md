@@ -583,8 +583,7 @@ What a skipped function contributes:
 
 Mechanically, codegen lowers the function's signature and drops its body: the
 matched function's blocks never become facts. So there is no `assign` row to
-derive a summary from, no `callee_info` or `call_target_assign` row to
-manufacture a resolvent from, and no instruction site at all. Call sites are
+derive a summary from, no `callee_info` row, and no instruction site at all. Call sites are
 untouched because they live in the *caller* and instantiate `summary(callee, …)`,
 which the model supplied.
 

@@ -309,8 +309,8 @@ fn a_skip_leaves_the_site_with_no_callee() {
     assert_eq!((buckets.java_sites, buckets.skipped), (1, 1));
 }
 
-/// `resolve: inline` keeps the bodies reachable: no `call` rows, a `callee_info` row for the
-/// engine to resolve from the receiver's allocation.
+/// `resolve: inline` keeps the bodies reachable: no `call` rows, and a `callee_info` row that
+/// marks the site deferred.
 #[test]
 fn inline_defers_the_site_to_hybrid_inlining() {
     let indexed = index_with(
@@ -327,10 +327,6 @@ fn inline_defers_the_site_to_hybrid_inlining() {
             buckets.inlined_by_model
         ),
         (1, 1, 1)
-    );
-    assert!(
-        !indexed.facts.callee_resolvents.is_empty(),
-        "a deferred signature keeps the rows the engine resolves it with"
     );
 }
 
@@ -379,12 +375,4 @@ fn a_sink_in_the_target_set_refuses_the_model() {
         Some(IMPL_B),
         "the refusal names the endpoint that caused it"
     );
-}
-
-/// `callee_resolvents` is what a deferred site is resolved through, so a run that defers
-/// nothing needs none of it.
-#[test]
-fn nothing_deferred_means_no_resolvent_rows() {
-    let indexed = index_with(Vec::new(), &[]);
-    assert!(indexed.facts.callee_resolvents.is_empty());
 }

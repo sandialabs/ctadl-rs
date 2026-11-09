@@ -27,7 +27,7 @@ fixed answer for every site and consult none of the policy.
 `skip_analysis` holds the functions whose winning body mode is `skip_analysis` (see
 [`crate::models::matches::ProgramModelMatches::skip_analysis`]). Those functions get their
 signature lowered and their body dropped, which is the whole implementation of the directive:
-with no `assign`, `call`, `callee_info` or `call_target_assign` rows inside them, the indexer
+with no `assign`, `call` or `callee_info` rows inside them, the indexer
 has nothing to derive a body summary from and nothing to feed hybrid inlining with. Matching
 runs per import immediately before codegen, so every name this import can contribute is
 already in the set by the time we get here.
@@ -414,25 +414,6 @@ pub fn codegen_function_with_globals(
 
 pub use crate::facts::RETURN_INDEX;
 
-/// The `call_target_assign` payload for an *object-valued* expression: the class of an
-/// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
-/// `None` for anything else, including a `FunctionPtr` ref — those carry an interned function
-/// id and so are handled at each site, which needs the id for `funcptr_targets` too.
-fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
-    match exp {
-        Exp::ObjectRef(CallObject::JavaObject(cls)) => {
-            Some(fx::CallTargetObjectKind::Symbol(cls.0.clone()).into())
-        }
-        Exp::ObjectRef(CallObject::LuaClass(cls)) => {
-            Some(fx::CallTargetObjectKind::LuaClass(cls.clone()).into())
-        }
-        Exp::ObjectRef(CallObject::CilObject(cls)) => {
-            Some(fx::CallTargetObjectKind::CilClass(cls.0.clone()).into())
-        }
-        _ => None,
-    }
-}
-
 /// Collects every class the program allocates, which is the input the RTA arm of
 /// [`run_cha`] restricts on. `pub(crate)` so [`crate::report`] can run the same collection
 /// over an import without going through codegen.
@@ -481,12 +462,6 @@ struct CodegenVisitor<'a> {
     globals: Vec<fx::GlobalId>,
     /// Number of parameters of the function under translation, written back at its `return`.
     num_params: usize,
-    /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
-    /// anywhere in this codegen unit. Each gets an identity `callee_resolvents(FunctionId(f),
-    /// C, f)` fact emitted in [`Self::finish`] — the function-pointer analogue of the CHA
-    /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
-    /// function pointer to itself without a `C`-specific rule in the index engine.
-    funcptr_targets: BTreeSet<fx::FunctionId>,
     /// What the model files matched against this import.
     matches: &'a crate::models::ProgramModelMatches,
     /// How [`CallResolutionStrategy::Mixed`] classifies a site.
@@ -500,14 +475,6 @@ struct CodegenVisitor<'a> {
     /// Signatures a site has actually been modelled with, so the synthetic function's
     /// `external_function` row is pushed once.
     synthetics: BTreeSet<SignatureKey>,
-    /// The `(simple name, descriptor)` pairs some site deferred to hybrid inlining.
-    ///
-    /// `callee_resolvents` is what the engine's resolution rule joins a deferred site's
-    /// receiver class against, and a pair no site deferred can never be joined. Collecting
-    /// them here and emitting in [`Self::finish`] is what keeps the whole program's CHA table
-    /// out of the fact base. The class is deliberately not part of the key: the join is on the
-    /// receiver's *allocated* class, which is not the one the site names.
-    deferred_dispatch: BTreeSet<(Symbol, Symbol)>,
     /// What this visitor did, returned by [`codegen_program`].
     report: CodegenReport,
 }
@@ -563,13 +530,11 @@ impl<'a> CodegenVisitor<'a> {
             paths_dedup: Default::default(),
             globals: Vec::new(),
             num_params: 0,
-            funcptr_targets: Default::default(),
             endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
             matches,
             policy,
             key_cache: Default::default(),
             synthetics: Default::default(),
-            deferred_dispatch: Default::default(),
             report: Default::default(),
         }
     }
@@ -712,8 +677,6 @@ impl<'a> CodegenVisitor<'a> {
                     self.facts.call.push((site, target));
                 }
                 log::trace!("java: hybrid resolve {cls}.{simple_name}{descriptor} (deferred)");
-                self.deferred_dispatch
-                    .insert((simple_name.clone(), descriptor.clone()));
                 let key = self.cha.dispatch_key(simple_name, descriptor);
                 self.facts.callee_info.push((
                     site,
@@ -829,20 +792,8 @@ impl<'a> CodegenVisitor<'a> {
         if std::env::var_os("CTADL_NO_EMPTY_PATH").is_none() {
             self.paths_dedup.insert((fx::Path::empty(),));
         }
-        let deferred = std::mem::take(&mut self.deferred_dispatch);
-        emit_callee_resolvents(&self.cha, &deferred, self.facts, self.source_info);
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
-        let funcptr_targets = std::mem::take(&mut self.funcptr_targets);
-        self.facts
-            .callee_resolvents
-            .extend(funcptr_targets.into_iter().map(|f| {
-                (
-                    fx::CallTargetObjectKind::FunctionId(f).into(),
-                    fx::CallDispatchKey::c(),
-                    f,
-                )
-            }));
     }
 
     /// Does finish and also runs a datalog modeling pass
@@ -969,22 +920,6 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 let dest = FlowVertex::new(self.trans_variable_ref(&dest.base), path);
                 for src in sources {
-                    // A function pointer or an object stored at the destination: a target label
-                    // (S11). Recorded before `src` is lowered, since `trans_exp` returns `None`
-                    // for an `ObjectRef`.
-                    if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = src {
-                        let target = fx::Function(name.clone().into());
-                        let target = self.source_info.sites.get_or_add_function(target);
-                        self.facts.call_target_assign.push((
-                            site,
-                            dest,
-                            fx::CallTargetObjectKind::FunctionId(target).into(),
-                        ));
-                        self.funcptr_targets.insert(target);
-                    }
-                    if let Some(object) = call_target_object(src) {
-                        self.facts.call_target_assign.push((site, dest, object));
-                    }
                     if let Exp::Str(value) = src {
                         self.facts
                             .const_str_assign
@@ -1080,9 +1015,6 @@ impl Visitor for CodegenVisitor<'_> {
                         // The receiver is already actual arg 0 (inserted by the frontend), so
                         // it is not re-inserted here.
                         let recv_var = self.trans_variable_ref(receiver);
-                        // The empty descriptor is the sentinel the Lua CHA arm keys on; see
-                        // [`Self::deferred_dispatch`].
-                        let deferred_key = (method.clone(), Symbol::from(""));
                         let deferred = (
                             site,
                             FlowVertex::new(recv_var, fx::Path::empty()),
@@ -1092,7 +1024,6 @@ impl Visitor for CodegenVisitor<'_> {
                         // callee. `Hi` still records it as a deferred site.
                         match self.strategy {
                             CallResolutionStrategy::Hi => {
-                                self.deferred_dispatch.insert(deferred_key);
                                 self.facts.callee_info.push(deferred);
                                 log::trace!("lua: HI resolve {receiver}:{method} (deferred)");
                             }
@@ -1122,37 +1053,6 @@ impl Visitor for CodegenVisitor<'_> {
                         );
                         break;
                     };
-
-                    if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = arg_exp {
-                        let target = fx::Function(name.clone().into());
-                        let target = self.source_info.sites.get_or_add_function(target);
-                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
-                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
-                            formal_index,
-                        )
-                        .unwrap();
-                        let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.call_target_assign.push((
-                            site,
-                            FlowVertex::new(call_arg_var, fx::Path::empty()),
-                            fx::CallTargetObjectKind::FunctionId(target).into(),
-                        ));
-                        self.funcptr_targets.insert(target);
-                    }
-
-                    if let Some(object) = call_target_object(arg_exp) {
-                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
-                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
-                            formal_index,
-                        )
-                        .unwrap();
-                        let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.call_target_assign.push((
-                            site,
-                            FlowVertex::new(call_arg_var, fx::Path::empty()),
-                            object,
-                        ));
-                    }
 
                     if let Exp::Str(value) = arg_exp {
                         let call_arg_packed = fx::PackedCallArg::try_from_parts(
@@ -1292,16 +1192,16 @@ impl CodegenVisitor<'_> {
     }
 }
 
-/// Which frontend's call-resolution scheme [`ClassHierarchyAnalysis::resolvents`] is keyed for.
-/// The hierarchy computation itself ([`run_cha`]) is language-neutral; this only decides the
-/// `(CallTargetObject, CallDispatchKey)` pair the resolvents are emitted under, so that a Lua
-/// import and a JVM import sharing one fact base cannot collide in that key space.
+/// Which frontend's dispatch scheme a [`ClassHierarchyAnalysis`] was built for. The hierarchy
+/// computation itself ([`run_cha`]) is language-neutral; this only decides the
+/// [`fx::CallDispatchKey`] a deferred site is keyed under, so that a Lua import and a JVM
+/// import sharing one fact base cannot collide in that key space.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChaLanguage {
     #[default]
     Java,
     Lua,
-    /// .NET: the Java scheme, keyed `(CilClass(cls), Cil(name, desc))`.
+    /// .NET: the Java scheme, keyed `Cil(name, desc)`.
     Cil,
 }
 
@@ -1419,8 +1319,8 @@ impl ClassHierarchyAnalysis {
         self.interfaces.contains(cls)
     }
 
-    /// The `callee_info` key a deferred `(name, descriptor)` site is joined on, in this
-    /// table's language. Lua sites build their own key, since theirs has no descriptor.
+    /// The `callee_info` key of a deferred `(name, descriptor)` site, in this table's
+    /// language. Lua sites build their own key, since theirs has no descriptor.
     pub(crate) fn dispatch_key(&self, name: &Symbol, descriptor: &Symbol) -> fx::CallDispatchKey {
         match self.language {
             ChaLanguage::Cil => {
@@ -1573,50 +1473,6 @@ fn declared_implementations(
 /// collide with a dex or jvm method id, both of which begin with `L`.
 pub fn synthetic_dispatch_function(key: &SignatureKey) -> String {
     format!("ctadl$dispatch${}->{}{}", key.0, key.1, key.2)
-}
-
-/// Emits the `callee_resolvents` rows for a completed CHA, under the language's own
-/// `(CallTargetObject, CallDispatchKey)` pair: `(Symbol(cls), Java(name, desc))` for JVM/Dex,
-/// `(LuaClass(cls), Lua(name))` for Lua, `(CilClass(cls), Cil(name, desc))` for CIL. The `""`
-/// descriptor the Lua CHA arm feeds `run_cha`
-/// stays an implementation detail of that arm and never reaches a fact.
-///
-/// `wanted` holds the `(name, descriptor)` pairs some site deferred to hybrid inlining. Those
-/// are the only pairs the engine's resolution rule can join, so a row under any other pair is
-/// dead weight -- on a run where the ladder defers a couple of percent of sites, almost all of
-/// them. The *class* is not filtered: the join is on the receiver's allocated class, which is
-/// not the one the deferred site names.
-fn emit_callee_resolvents(
-    cha: &ClassHierarchyAnalysis,
-    wanted: &BTreeSet<(Symbol, Symbol)>,
-    facts: &mut IndexFacts,
-    source_info: &mut IndexSourceInfo,
-) {
-    for ((cls, name, desc), targets) in &cha.resolvents {
-        if !wanted.contains(&(name.clone(), desc.clone())) {
-            continue;
-        }
-        let (object, key): (fx::CallTargetObject, fx::CallDispatchKey) = match cha.language {
-            ChaLanguage::Java => (
-                fx::CallTargetObjectKind::Symbol(cls.clone()).into(),
-                fx::CallDispatchKeyKind::Java(name.clone(), desc.clone()).into(),
-            ),
-            ChaLanguage::Lua => (
-                fx::CallTargetObjectKind::LuaClass(cls.clone()).into(),
-                fx::CallDispatchKeyKind::Lua(name.clone()).into(),
-            ),
-            ChaLanguage::Cil => (
-                fx::CallTargetObjectKind::CilClass(cls.clone()).into(),
-                fx::CallDispatchKeyKind::Cil(name.clone(), desc.clone()).into(),
-            ),
-        };
-        for target in targets {
-            let func_id = source_info
-                .sites
-                .get_or_add_function(fx::Function(target.clone().into()));
-            facts.callee_resolvents.push((object, key, func_id));
-        }
-    }
 }
 
 /// Runs the class hierarchy analysis, and -- when `rta` is set -- the rapid type analysis

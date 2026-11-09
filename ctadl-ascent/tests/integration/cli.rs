@@ -775,7 +775,8 @@ fn index_version_gate_rejects_an_index_from_before_declared_globals() {
             Err(ctadl_import::Error::IncompatibleIndex {
                 found, expected, ..
             }) => {
-                assert_eq!((found.as_str(), expected.as_str()), ("7", "8"));
+                assert_eq!(found, "7");
+                assert_eq!(expected, INDEX_FORMAT_VERSION);
             }
             other => panic!("expected IncompatibleIndex, got: {other:?}"),
         }

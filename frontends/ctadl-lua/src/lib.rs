@@ -2279,9 +2279,8 @@ impl<'a> Lowerer<'a> {
     /// Lowers `setmetatable(t, mt)`. Returns `Some(value)` where `value` is a single
     /// variable that (i) carries the table `t`'s data (setmetatable returns its first argument) and
     /// (ii) is tagged with an allocation-site object ref when `mt` resolves to a known class table.
-    /// The tag rides the existing `call_target_assign` closure interprocedurally — including the
-    /// engine's return-direction rule, which carries a tag on a callee's out-formal up to the
-    /// caller's `call_arg` — so a `local acct = Account.new()` receives `acct`'s class for free.
+    /// The tag is a class label (S11 of `docs/ir.md`), which crosses functions like any label, so
+    /// a `local acct = Account.new()` gives `acct` its class.
     /// Returns `None` to fall through to the generic call path when `node` is not a
     /// `setmetatable` call.
     fn eval_setmetatable(

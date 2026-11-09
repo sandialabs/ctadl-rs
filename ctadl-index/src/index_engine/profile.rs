@@ -14,7 +14,7 @@ use serde::Serialize;
 
 pub use immortal::Stats;
 
-use crate::facts::{CallDispatchKey, CallTargetObject, PathId, Str};
+use crate::facts::{CallDispatchKey, PathId, Str};
 use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
@@ -61,7 +61,6 @@ impl MemoryProfile {
     pub fn read_interned(&mut self) {
         self.interned.extend([
             ("Str", Str::stats()),
-            ("CallTargetObject", CallTargetObject::stats()),
             ("CallDispatchKey", CallDispatchKey::stats()),
             ("Path", PathId::stats()),
         ]);
@@ -71,7 +70,6 @@ impl MemoryProfile {
     pub fn frozen_interner_entries() -> BTreeMap<&'static str, usize> {
         BTreeMap::from([
             ("Str", Str::stats().entries),
-            ("CallTargetObject", CallTargetObject::stats().entries),
             ("CallDispatchKey", CallDispatchKey::stats().entries),
             ("Path", PathId::stats().entries),
         ])
@@ -204,15 +202,12 @@ mod tests {
     #[test]
     fn memory_reports_each_interner() {
         Str::intern("memory_reports_each_interner");
-        CallTargetObject::intern(&crate::facts::CallTargetObjectKind::Symbol(
-            "memory_reports_each_interner".into(),
-        ));
         CallDispatchKey::c();
         crate::facts::Path::from_symbol_names(["memory_reports_each_interner"]);
         let mut p = IndexProfile::default();
         p.memory.read_interned();
         let json = serde_json::to_value(&p).unwrap();
-        for name in ["Str", "CallTargetObject", "CallDispatchKey", "Path"] {
+        for name in ["Str", "CallDispatchKey", "Path"] {
             let s = &json["memory"]["interned"][name];
             assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");
             assert!(s["bytes"].as_u64().unwrap() > 0, "{name}");
