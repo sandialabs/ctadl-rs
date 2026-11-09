@@ -208,7 +208,7 @@ impl std::fmt::Display for JsonModelErrors {
 /// The matching type on the import side is [`ctadl_import::Error`], which covers everything a
 /// front end or the store can raise. Those errors reach this type through [`Error::Import`].
 /// Having two enums rather than one is what lets a program read an import without building
-/// datafusion, ascent and tree-sitter. The module docs for `ctadl_import` give the rule that
+/// arrow, ascent and tree-sitter. The module docs for `ctadl_import` give the rule that
 /// keeps the two [`ErrorContext`] traits out of each other's way.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -225,8 +225,6 @@ pub enum Error {
     AndroidManifest { message: String },
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
-    #[error("datafusion error")]
-    DataFusion(#[from] datafusion_common::DataFusionError),
     #[error("error converting facts: {0}")]
     FactsConvert(String),
     #[error("JSON model parsing error")]

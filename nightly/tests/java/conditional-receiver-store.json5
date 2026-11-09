@@ -1,5 +1,0 @@
-{
-  // Flow: (c ? a : b).data = source() (16) -> sink(a.data) (17). The putfield's
-  // object is a stack value defined on two branches.
-  "expected_lines": [16, 17]
-}

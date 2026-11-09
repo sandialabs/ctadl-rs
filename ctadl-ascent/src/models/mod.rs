@@ -96,8 +96,7 @@ pub fn load_default_models_from_facts(
         .unwrap_or_default();
     log::debug!("loading default models from {name}");
     // Both phases: the defaults are propagation-only, so `All` and `Index` name the same rules,
-    // and a caller that hands them to a query gets what the file says rather than a phase
-    // decision made here.
+    // and a caller gets what the file says rather than a phase decision made here.
     let mut matcher = portcullis::PortcullisMatcher::new(set, portcullis::Phase::All);
     matcher.observe_facts(facts, out);
     matcher
@@ -187,12 +186,11 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
 pub struct ModelLoadReport {
     /// What each (generator index, direction) matched -- see [`EndpointStats`]. Key presence
     /// means the generator declared a port of that direction; a zero `endpoints_matched` means
-    /// it matched nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
+    /// it matched nothing.
     ///
     /// Not keyed by model file; see [`portcullis_endpoint_stats`].
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
-    /// How many generators declared an index-time-only construct. Lets `ctadl query` say once
-    /// that it is ignoring them instead of dropping them in silence.
+    /// How many generators declared an index-time-only construct.
     pub index_time_models: IndexTimeModelCounts,
     /// Per generator, what its `where` selected: the functions its rules' heads anchored at,
     /// with a capped sample of their names.

@@ -99,8 +99,8 @@ pub const DEFAULT_CHA_THRESHOLD: usize = 4;
 
 /// How [`CallResolutionStrategy::Mixed`] classifies a Java call site.
 ///
-/// Read at codegen and nowhere else. It is *recorded* in the on-disk index config so a query
-/// can say what policy produced the index it is reading, but the engine never sees it.
+/// Read at codegen and nowhere else. It is *recorded* in the on-disk index config, but the
+/// engine never sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallPolicy {
     /// Rung 2: at or under this many CHA targets, a site gets ordinary CHA edges. `0` disables
@@ -578,9 +578,8 @@ impl<'a> CodegenVisitor<'a> {
     /// declared class, as resolving the method reference does, whether or not the program has
     /// a body for it.
     ///
-    /// Models attach to methods by name, and a query finds a source or sink's call sites
-    /// through the call graph, so this edge is how a model on the named method reaches the
-    /// site, whichever models the query brings. It is not dispatch: the one target is the
+    /// Models attach to methods by name, so this edge is how a model on the named method reaches
+    /// the site. It is not dispatch: the one target is the
     /// method the bytecode names, and an override in a subclass is not found.
     fn named_method(&self, key: &SignatureKey) -> Option<Symbol> {
         match self.cha.super_resolvent(&key.0, &key.1, &key.2) {

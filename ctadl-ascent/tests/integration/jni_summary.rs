@@ -162,11 +162,10 @@ fn provenance_says_when_it_cannot_check_staleness() {
 
 /// A summary project's notifications reach the app through its summaries, so the app's index
 /// repeats them, naming the project in their properties as it names an import for its imports'
-/// notifications, and the app's query reports them under their own descriptor. Indexing the app
-/// again without the summary project drops the summary project's.
+/// notifications. Indexing the app again without the summary project drops the summary
+/// project's.
 #[test]
-fn summary_project_notifications_reach_the_app_and_its_sarif() {
-    use ctadl_ascent::query_engine::formatter::SarifProfile;
+fn summary_project_notifications_reach_the_app() {
     use ctadl_import::notifications::{self, Level, Notifications};
 
     import_lua(
@@ -249,40 +248,6 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
         Some(serde_json::json!("notes_app"))
     );
 
-    let sarif = store_dir().join("notes_app.sarif");
-    cli::query(&app, &[], &sarif, SarifProfile::default(), None).expect("querying");
-    let doc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
-            .expect("parsing sarif");
-    let run = &doc["runs"][0];
-    let warnings: Vec<&str> = run["invocations"][0]["toolExecutionNotifications"]
-        .as_array()
-        .expect("toolExecutionNotifications")
-        .iter()
-        .filter(|n| n["descriptor"]["id"] == notifications::STACK_SLOTS_PROMOTED_FULLY.id)
-        .map(|n| {
-            assert_eq!(n["level"], "warning");
-            n["message"]["text"].as_str().expect("message text")
-        })
-        .collect();
-    assert_eq!(warnings, [note]);
-    let declared: Vec<&str> = run["tool"]["driver"]["notifications"]
-        .as_array()
-        .expect("driver notifications")
-        .iter()
-        .map(|d| d["id"].as_str().expect("descriptor id"))
-        .collect();
-    for id in [
-        notifications::STACK_SLOTS_PROMOTED_FULLY.id,
-        notifications::MERGED_CLASSES_SPLIT.id,
-    ] {
-        assert_eq!(
-            declared.iter().filter(|d| **d == id).count(),
-            1,
-            "{id} is declared once"
-        );
-    }
-
     cli::index(&app, &[], &[], false, cli::IndexOptions::default()).expect("reindexing app");
     assert_eq!(
         texts(&Notifications::load(&app_index).expect("reading app notes")),
@@ -292,10 +257,9 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
 
 /// The calls that are zero assignments (S10 of `docs/ir.md`): an indirect call no target
 /// reaches and a call to a function with neither a body nor a model are each reported in the
-/// index's `notifications.sarif`, and the query carries both into its SARIF.
+/// index's `notifications.sarif`.
 #[test]
 fn zero_assignment_calls_are_reported() {
-    use ctadl_ascent::query_engine::formatter::SarifProfile;
     use ctadl_import::notifications::{self, Notifications};
 
     import_lua(
@@ -316,23 +280,5 @@ fn zero_assignment_calls_are_reported() {
             descriptor.id,
             notes.notifications()
         );
-    }
-
-    let sarif = store_dir().join("zero_calls.sarif");
-    cli::query(&project, &[], &sarif, SarifProfile::default(), None).expect("querying");
-    let doc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
-            .expect("parsing sarif");
-    let ids: Vec<&str> = doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
-        .as_array()
-        .expect("toolExecutionNotifications")
-        .iter()
-        .filter_map(|n| n["descriptor"]["id"].as_str())
-        .collect();
-    for id in [
-        notifications::UNRESOLVED_INDIRECT_CALL.id,
-        notifications::CALL_WITHOUT_BODY.id,
-    ] {
-        assert!(ids.contains(&id), "{id} in the query's SARIF: {ids:?}");
     }
 }

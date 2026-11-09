@@ -3,9 +3,7 @@
 //! or an index writes them next to itself as `notifications.sarif`, a SARIF 2.1.0 log whose one
 //! run holds them as `invocations[0].toolExecutionNotifications` and declares their descriptors
 //! as `tool.driver.notifications`. `ctadl index` carries its imports' notifications into its own
-//! file, and `ctadl query` copies the index's into the SARIF it writes, descriptors included, so
-//! it needs to know none of them. Both are built as `ctadl query` builds its own notifications
-//! (see [`crate::sarif`]).
+//! file. Both are built from [`crate::sarif`].
 //!
 //! A notification states one fact, never once per site. Its message has both forms: `text`, and
 //! a `message.id` selecting one of its descriptor's `messageStrings` with the `arguments` that
@@ -29,7 +27,7 @@ pub const DEFAULT_MESSAGE: &str = "default";
 /// A kind of notification: its SARIF `reportingDescriptor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Descriptor {
-    /// `CTADLnnnn.kebab-name`, unique across ctadl, the query's own included.
+    /// `CTADLnnnn.kebab-name`, unique across ctadl.
     pub id: &'static str,
     /// A short name, in sentence case.
     pub name: &'static str,

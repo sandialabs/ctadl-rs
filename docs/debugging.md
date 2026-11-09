@@ -12,7 +12,7 @@
 | One module only                        | `RUST_LOG=warn,ctadl_ascent::languages::jni=debug` |
 
 Keep the leading `warn,` in each of these. `RUST_LOG=debug` on its own turns *every*
-dependency up to `debug` too, which buries CTADL's own output under datafusion's and
+dependency up to `debug` too, which buries CTADL's own output under its dependencies' and
 Ghidra's; `warn,ctadl=debug` raises this project alone and leaves everything else at
 `warn`. The `ctadl` prefix matches every crate here whose name starts with it
 (`ctadl-ascent`, `ctadl-ir`, `ctadl-flowy`), which is what the default filter
@@ -103,7 +103,7 @@ ctadl inspect app --dump-index-graph app.dot
 `NAME` here is an analysis project, not an import: the flag reads `assign.parquet` and
 `function_id.parquet` out of the project's `index/`, so nothing is re-indexed and nothing is
 written back to the store. The project must have been indexed; if it was not, or if the index was
-written by an incompatible build, this fails the same way `ctadl query` would.
+written by an incompatible build, this fails.
 
 An edge `A -> B` is the assignment `B = A`. A node is the triple (function, variable, access
 path), so `local(t)` and `local(t).x` are distinct; the file opens with a legend saying so.
@@ -122,16 +122,14 @@ this is a tool for small inputs and for reduced test cases.
 # `index` is not deterministic
 
 Running `index` twice on the same unchanged artifacts does not give you the same
-index, and re-querying it does not give you the same SARIF. This is expected, not
-a bug to chase. Read this before comparing two runs of anything.
+index. This is expected, not a bug to chase. Read this before comparing two runs of anything.
 
 What is stable and what is not:
 
 - **Deterministic:** everything written before the fixpoint --- `formal_param`,
   `actual_param`, `call`, `call_target_assign`, `callee_info`,
   `callee_resolvents`, `external_function`, and the `function_id` IdMap. Function
-  ids, instruction ids, and therefore the vertex numbers that appear in SARIF are
-  byte-stable across indexes.
+  ids and instruction ids are byte-stable across indexes.
 - **Nondeterministic:** the row *order* of `assign`, `summary` and `paths`
   (written post-fixpoint by `IndexResult::try_save`) and of
   `index_source_map`. The *contents* are identical --- these tables are stable as
@@ -157,24 +155,8 @@ order ever matters; the third is not.
    Hashing `Path` by contents does not help, because that recurses into
    `PathSegment::Symbol(ArcIntern<str>)`, which hashes the pointer again.
 
-How this reaches the SARIF: the search is breadth-first-shortest, and among
-equal-length paths the tie-break is adjacency order. `TaintSearchGraph::new`
-(`query_engine/search.rs`) sorts each adjacency list by content, so that order is
-not the index's row order, and the query's output is sorted by content too.
-`tests/integration/determinism.rs` checks that the graphviz, the relation
-dumps and the SARIF come out byte-identical, timestamps aside, whatever order
-values were interned in. Without that sort, a different index would pick a different
-*witness* path for the same source/sink pair, so the rendered code flow would change
-while the finding did not.
-
-Consequences for measurement:
-
-- Endpoint-level and flow-rendering counters are both reproducible: two indexes
-  of identical input give the same SARIF, timestamps aside.
-- Regression cases must still assert set-level properties --- reached lines,
-  whether a code flow connects a source and a sink --- never the shape of a
-  rendered flow.
-  The `nightly` harness does this today; keep it that way.
+`tests/integration/determinism.rs` checks that the graphviz and the relation dumps come out
+byte-identical whatever order values were interned in.
 
 Check that two indexes agree as sets (0/0 means order-only difference):
 

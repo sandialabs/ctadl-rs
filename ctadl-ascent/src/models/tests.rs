@@ -74,8 +74,8 @@ fn endpoints_of(names: &[&str], generators: Vec<serde_json::Value>) -> Vec<Endpo
     out.endpoints
 }
 
-/// Every field of an [`EndpointMatch`] is load-bearing at query time, and a dropped one narrows
-/// or widens taint results silently. This pins each one against the port that sets it.
+/// Every field of an [`EndpointMatch`] is set from the port that declares it. This pins each
+/// one against the port that sets it.
 #[test]
 fn a_function_anchored_port_fills_its_fields() {
     let endpoints = endpoints_of(

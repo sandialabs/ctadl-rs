@@ -18,9 +18,6 @@ CTADL's overall flow is as follows:
    process of turning the programs into indexable-facts is called code generation (codegen) because
    it's quite like what a compiler does. It turns the programs into SSA form, applies relevant
    models, and generates raw [`crate::index_engine::IndexFacts`].
-3. [`crate::cli::query`] runs a taint analysis query. It loads parts of program info and the index,
-   computes the taint result in memory, and formats it in some human- or machine-consumable format,
-   SARIF for example. Formatting is done in the [`crate::query_engine::formatter`] module.
 
 The primary storage format is parquet. This is used for most facts. The IR is more structured so we
 store it in a binary format.
@@ -36,10 +33,8 @@ store it in a binary format.
 - [ctadl_jvm] - JVM language frontend
 - [ctadl_c] - C language frontend
 - [crate::codegen] - Frontend language to Datalog code generation
-- [crate::models] - Handles loading models for index/query
+- [crate::models] - Handles loading models for indexing
 - [crate::index_engine] - datalog, datatypes for core CTADL index phase
-- [crate::query_engine] - datalog, datatypes for core CTADL taint analysis phase
-- [crate::query_engine::formatter] - datalog, takes taint results and associates them with instructions
 
 The DEX and class-file parsers are the in-tree [dex_reader] and [jvm_reader] crates.
 

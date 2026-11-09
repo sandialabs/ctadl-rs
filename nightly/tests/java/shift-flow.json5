@@ -1,4 +1,0 @@
-{
-  // Taint through iushr/lshl and friends.
-  "expected_lines": [40, 41]
-}

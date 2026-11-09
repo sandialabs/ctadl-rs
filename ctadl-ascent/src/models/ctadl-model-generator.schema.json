@@ -348,7 +348,7 @@
       }
     },
     "bridge-model": {
-      "description": "Connects a callee matched in one program to its implementation in another, with an explicit argument correspondence. Index-time only: a bridge creates call facts, which the index fixpoint consumes, so `ctadl query --models` cannot act on one.",
+      "description": "Connects a callee matched in one program to its implementation in another, with an explicit argument correspondence. Index-time only: a bridge creates call facts, which the index fixpoint consumes.",
       "type": "object",
       "additionalProperties": false,
       "required": ["to"],

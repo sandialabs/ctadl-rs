@@ -1167,7 +1167,7 @@ fn closure_shaped_is_a_marker_not_a_model() {
     );
 }
 
-/// Dispatch heads are index-time, like a propagation: `ctadl query` keeps the source/sink half.
+/// Dispatch heads are index-time, like a propagation: the query phase keeps the source/sink half.
 #[test]
 fn a_dispatch_head_belongs_to_the_index_phase() {
     let source = r#"K::dispatch(resolve = "inline") :- callsig(K, name = "size");"#;
@@ -1461,7 +1461,8 @@ fn a_matcher_built_for_one_phase_skips_the_others_rules() {
     let (out, report) = run_phase(&imports, source, portcullis::Phase::Query);
     assert!(out.propagations.is_empty());
     assert_eq!(report.skipped_rules(), 1);
-    assert!(report.phase_warning().is_some());
+    // Only an `Index` matcher warns; the source/sink matcher runs alongside one.
+    assert!(report.phase_warning().is_none());
     assert!(report.dead_rules().is_empty());
 }
 
@@ -1561,40 +1562,6 @@ fn grounding_counts_saturate_and_groundings_stay_lazy() {
         ..Default::default()
     };
     assert_eq!(closed.groundings(&[(0, 0)]).count(), 0);
-}
-
-/// The model check matches the DSL across every import with one matcher, as `ctadl index` does:
-/// a bridging rule satisfied only by two imports together matched something, and is not a
-/// `CTADL0004`.
-#[test]
-fn the_model_check_does_not_call_a_cross_import_rule_dead() {
-    use std::io::Write as _;
-    let mut file = tempfile::NamedTempFile::with_suffix(".ctadl").expect("tempfile");
-    write!(
-        file,
-        r#"source(F::return) :-
-             fun(F, name = "luaCallNativeAdd", language = "lua"),
-             fun(G, name = "luaNativeAdd", language = "pcode");"#
-    )
-    .expect("write");
-    let imports = lua_and_pcode(&["luaCallNativeAdd"], &["luaNativeAdd"]);
-    let outcome = ctadl_ascent::cli::check_programs(
-        imports.into_iter().map(Ok),
-        &[file.path().to_path_buf()],
-    )
-    .expect("checking");
-    assert!(
-        !outcome.has_file_errors(),
-        "{:?}",
-        outcome.check.file_errors
-    );
-    assert_eq!(
-        outcome.dead_declarations(),
-        0,
-        "{:?}",
-        outcome.endpoint_stats
-    );
-    assert_eq!(outcome.rows_matched(TaintDirection::Forward), 1);
 }
 
 // ---- planner/eval ----

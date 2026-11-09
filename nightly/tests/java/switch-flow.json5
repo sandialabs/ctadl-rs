@@ -1,4 +1,0 @@
-{
-  // Source and sink both inside the lookupswitch/tableswitch arm (25, 49).
-  "expected_lines": [25, 49]
-}

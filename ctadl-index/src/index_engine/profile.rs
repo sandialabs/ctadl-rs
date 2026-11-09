@@ -212,12 +212,7 @@ mod tests {
         let mut p = IndexProfile::default();
         p.memory.read_interned();
         let json = serde_json::to_value(&p).unwrap();
-        for name in [
-            "Str",
-            "CallTargetObject",
-            "CallDispatchKey",
-            "Path",
-        ] {
+        for name in ["Str", "CallTargetObject", "CallDispatchKey", "Path"] {
             let s = &json["memory"]["interned"][name];
             assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");
             assert!(s["bytes"].as_u64().unwrap() > 0, "{name}");

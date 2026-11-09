@@ -14,7 +14,6 @@ A project represents a set of programs that have been indexed together. It might
 
 - `project_config.json`: Configuration file. Has the name and original artifacts of the project.
 - `index`: Stores parquet files, the output of indexing.
-- `query`: Stores parquet files, the output of a taint analysis query.
 
 # Relocating a store
 
@@ -152,7 +151,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 /// Separate from [`IMPORT_FORMAT_VERSION`] because the two artifacts change independently -- an
 /// import holds structural `bitcode`, an index holds parquet columns whose *textual* encodings
 /// can shift without the schema moving. Bump this whenever a column's encoding or the table
-/// schema changes, so `ctadl query` fails with "re-run `ctadl index`" instead of decoding stale
+/// schema changes, so a reader fails with "re-run `ctadl index`" instead of decoding stale
 /// bytes into something wrong. History:
 ///
 /// - `1`: original format. Every `Path` column was written by `Path::to_dot_string`, which
@@ -241,12 +240,8 @@ pub struct EngineRecord {
     pub mem2reg: String,
 }
 
-/// How the index resolved calls, so a query can say what it is reading.
-///
-/// Recorded and reported rather than checked. Only [`Self::endpoint_model_digest`] leads to a
-/// warning, because a dispatch model is refused against the endpoints `ctadl index` was given
-/// and a query run with different sources and sinks is asking a question the index did not
-/// answer.
+/// How the index resolved calls, recorded in the index config so a reader can say what it is
+/// reading. Recorded rather than checked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallPolicyRecord {
     /// `"mixed"`, `"cha"`, `"hi"` or `"legacy-mixed"`.
@@ -923,12 +918,6 @@ impl AnalysisProject {
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
         Ok(())
-    }
-
-    /// The call policy this project's index was built under, or `None` for an index written
-    /// before the stamp existed or with no readable config.
-    pub fn index_call_policy(&self) -> Option<CallPolicyRecord> {
-        self.index_config()?.call_policy
     }
 
     /// This project's index config, or `None` when there is no readable one.

@@ -21,17 +21,14 @@ This is one structure spanning two phases, and each field is consumed by exactly
   site, and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
 - [`ProgramModelMatches::closure_shaped`] -- report time. A note about what hybrid inlining is
   for; nothing resolves differently for being on it.
-- [`ProgramModelMatches::endpoints`] -- query time. Stage 2
-  ([`crate::query_engine::build_query_endpoints`]) resolves and expands them into
-  `QueryEndpoint`s. Phase 1 also *reads* them, without analysing them, to refuse a dispatch
-  model whose CHA targets hold one.
+- [`ProgramModelMatches::endpoints`] -- read by phase 1, without analysing them, to refuse a
+  dispatch model whose CHA targets hold one.
 
 Each phase therefore ignores the other's half, and both say so rather than dropping them in
-silence: `ctadl index` warns that the given files declare source/sink models it ignores, and
-`ctadl query` warns that they declare propagation/bridging models it ignores (both in
-`cli::mod`).
+silence: `ctadl index` warns that the given files declare source/sink models it does not
+analyse (in `cli::mod`).
 
-The alternative -- a second, sibling structure for the query-time half -- was considered and
+The alternative -- a second, sibling structure for the source/sink half -- was considered and
 rejected: one engine pass produces both halves, and splitting its output across two
 accumulators buys nothing but a second thing to thread and document. The cost is paid here, in
 having to say which field belongs to which phase.
@@ -156,11 +153,6 @@ pub struct PropagationMatch {
 /// One matched source or sink port: everything Stage 1 of source/sink matching knows, with the
 /// names interned and the port's path resolved.
 ///
-/// Stage 2 ([`crate::query_engine::build_query_endpoints`]) turns these into
-/// `QueryEndpoint`s, resolving names to [`crate::facts::FunctionId`]s and performing the two
-/// index-dependent expansions (call-site fan-out and sink wildcard expansion). The split
-/// exists because Stage 1 runs while each import's IR is in hand and Stage 2 needs the index,
-/// which does not exist until every import has been codegen'd.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct EndpointMatch {
     /// Name of the endpoint function. For a callsite-scoped endpoint this is the callee.
@@ -190,10 +182,8 @@ pub struct EndpointMatch {
     /// Base `LocalIdx` for a `Variable(name)` ([`FormalIndexTypeTag::Local`]) port; `None` for
     /// every other selector.
     ///
-    /// This field is why an endpoint has to be recorded at all rather than re-derived at query
-    /// time. The name has to be resolved against the *matched function's* `locals` during
-    /// Stage 1, and it **cannot** be recovered later: Stage 2 sees only the
-    /// post-`eliminate_dead_temps`/`coalesce_copies` graph, where the name may no longer exist.
+    /// The name has to be resolved against the *matched function's* `locals` while its IR is in
+    /// hand: after `eliminate_dead_temps`/`coalesce_copies` the name may no longer exist.
     /// Portcullis spells it `F::local(L)`, with `L` bound by `local(F, L, name = ...)`.
     pub local_index: Option<u32>,
 }
@@ -211,8 +201,8 @@ pub struct ProgramModelMatches {
     /// seeds `model_paths` -- so a propagation's paths keep the model-path bucket discipline
     /// that lets them concatenate with every program path.
     pub propagations: Vec<PropagationMatch>,
-    /// Matched source/sink models. `ctadl query` runs Stage 2 over these; `ctadl index` ignores
-    /// them and says so once (see `cli::index`'s "declare source/sink models" warning).
+    /// Matched source/sink models. `ctadl index` does not analyse them and says so once (see
+    /// `cli::index`'s "declare source/sink models" warning).
     ///
     /// A `Vec` and not a set: `CTADL0100` compares declared ports against *post-fan-out*
     /// endpoints, so deduplicating here would change a reported number. Two model files that

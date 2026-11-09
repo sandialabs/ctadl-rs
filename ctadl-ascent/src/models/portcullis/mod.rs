@@ -36,9 +36,9 @@ Finishing after the loop is what makes a bridging rule expressible at all. Such 
 programs in one body, and no single import satisfies it; the body's connected components are
 accumulated separately and joined at the end. See [`eval`].
 
-The phase is fixed when the matcher is built. `index` keeps the propagation / bridge /
-`access_paths` / dispatch / mode heads and `query` keeps the source / sink ones, and a rule with no
-head for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
+The phase is fixed when the matcher is built. `Index` keeps the propagation / bridge /
+`access_paths` / dispatch / mode heads and `Query` keeps the source / sink ones, which the index
+reads to refuse dispatch models, and a rule with no head for the phase is not evaluated. Each says how many rules contributed nothing to it, rather than
 dropping them in silence; a rule contributing at least one head to the running phase is never
 counted.
 */
@@ -458,7 +458,7 @@ impl PortcullisModelSet {
 
     /// The files with a rule that has a `source` or `sink` head, whether or not it matches.
     /// What the endpoint digest an index records is taken over, so a property of the files
-    /// alone: `ctadl index` and `ctadl query` must agree on it without matching anything.
+    /// alone, known without matching anything.
     pub fn endpoint_files(&self) -> impl Iterator<Item = &PathBuf> {
         self.files
             .iter()
@@ -774,14 +774,14 @@ impl PortcullisReport {
             return None;
         }
         let phase = self.files.first().map(|f| f.phase)?;
-        let (running, other) = match phase {
-            Phase::Index => ("index", "source/sink"),
-            Phase::Query => ("query", "propagation/bridge/access_paths/dispatch/mode"),
-            Phase::All => return None,
-        };
+        match phase {
+            Phase::Index => {}
+            // The index's endpoint matcher runs alongside an `Index` one, which reports.
+            Phase::Query | Phase::All => return None,
+        }
         Some(format!(
-            "ctadl {running} is ignoring {skipped} model rule(s) that declare only {other} \
-             heads; they take effect in the other phase"
+            "ctadl index is not analysing {skipped} model rule(s) that declare only source/sink \
+             heads; it reads them only to refuse dispatch models"
         ))
     }
 

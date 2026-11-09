@@ -1,9 +1,0 @@
-{
-  // Flow: data = source() (14) -> local = data (15) -> sink(local) (16).
-  // Line 15 is dropped: `local = data` is a pure copy
-  // (see "Pure copies" in nightly/README.md).
-  "expected_lines": [
-    14,
-    16
-  ]
-}

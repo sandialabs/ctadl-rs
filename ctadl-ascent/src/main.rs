@@ -8,11 +8,10 @@ use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
 use ctadl_ascent::index_engine::{Parallelism, Storage};
 use ctadl_ascent::project;
-use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
 use ctadl_frontends::budget::DEFAULT_MAX_CORES;
 
-/// ctadl: import artifacts, index programs, and run/query analyses.
+/// ctadl: import artifacts, index programs, and report on them.
 #[derive(Debug, Parser)]
 #[command(name = "ctadl", version, about)]
 pub struct Cli {
@@ -38,20 +37,8 @@ pub enum Command {
     /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
-    ///
-    /// Given `--models` and no index -- because the project was never indexed, or is being
-    /// indexed right now -- this reports what those model files match in the imported
-    /// program(s) instead of failing. Model matching happens in two stages and only the second
-    /// needs an index, so a model file can be made ready while the index is still building.
-    Query(QueryArgs),
-
-    /// One-shot: import artifacts, index them under name, query, and format output
-    Go(GoArgs),
-
     /// Generate a template Portcullis model file to help write custom analysis models. Analysis
-    /// models are used to specify sources and sinks (see the 'query' command) as well as
-    /// specifying external function behavior (see the 'index' command)
+    /// models specify external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
 
     /// Rewrite a JSON/JSON5/JSONL model-generator file in Portcullis.
@@ -103,7 +90,6 @@ impl Command {
     fn import_artifact(&self) -> &PathBuf {
         match self {
             Command::Import(args) => &args.artifact,
-            Command::Go(args) => &args.artifacts[0],
             _ => panic!("command does not have an artifact"),
         }
     }
@@ -493,7 +479,7 @@ pub struct IndexArgs {
     /// 1000 direct stack accesses (`full:N` for another threshold), and `window:8` elsewhere. It
     /// cuts the index of a large native function by a large factor, but a callee or a copy of
     /// the address no longer sees what the function stored directly. Each function where this
-    /// may lose flows is named in the index's `notifications.sarif` and in the query's SARIF. A
+    /// may lose flows is named in the index's `notifications.sarif`. A
     /// model's `modes: ["mem2reg-full"]` or `["mem2reg-window"]` forces or forbids it for one
     /// function.
     #[arg(
@@ -547,109 +533,6 @@ fn parse_size(s: &str) -> Result<usize, String> {
     Ok((number * scale as f64) as usize)
 }
 
-#[derive(Debug, Args)]
-pub struct QueryArgs {
-    /// Analysis project (index) name
-    pub name: String,
-
-    /// The query to run, or load additional models from one or more files. Can be specified
-    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in
-    /// Portcullis; `.json`, `.json5` and `.jsonl` are the older model-generator format,
-    /// deprecated, and migrated to Portcullis as they are loaded.
-    #[arg(long, short, action = clap::ArgAction::Append)]
-    pub models: Vec<PathBuf>,
-
-    /// Output file path (defaults to results.sarif)
-    #[arg(long, short, default_value = "results.sarif")]
-    pub output: PathBuf,
-
-    /// SARIF profile
-    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
-    pub sarif_profile: SarifProfile,
-
-    /// Dump the taint graph to a dot file
-    #[arg(long)]
-    pub dump_taint_graph: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-pub struct GoArgs {
-    /// Analysis project (index) name. Inferred from the first artifact by default
-    #[arg(long, short)]
-    pub name: Option<String>,
-
-    /// Load additional models from one or more files. Can be specified multiple times to load
-    /// multiple model files. A `.ctadl` (or `.dl`) file is written in Portcullis; `.json`,
-    /// `.json5` and `.jsonl` are the older model-generator format, deprecated, and migrated to
-    /// Portcullis as they are loaded.
-    #[arg(long, short, action = clap::ArgAction::Append)]
-    pub models: Vec<PathBuf>,
-
-    /// Do not load the built-in default propagation models for the imported language.
-    /// See `ctadl index --help`.
-    #[arg(long)]
-    pub no_default_models: bool,
-
-    /// Do not link Java `native` methods to their native implementations.
-    /// See `ctadl index --help`.
-    #[arg(long)]
-    pub no_jni_bridge: bool,
-
-    /// Ignore the `RegisterNatives` tables recovered at import time.
-    /// See `ctadl index --help`.
-    #[arg(long)]
-    pub no_jni_registry: bool,
-
-    /// One or more artifacts to import in this one-shot flow
-    #[arg(required = true)]
-    pub artifacts: Vec<PathBuf>,
-
-    /// Output file path (defaults to results.sarif)
-    #[arg(long, short, default_value = "results.sarif")]
-    pub output: PathBuf,
-
-    /// SARIF profile
-    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
-    pub sarif_profile: SarifProfile,
-
-    /// Dump the taint graph to a dot file
-    #[arg(long)]
-    pub dump_taint_graph: Option<PathBuf>,
-
-    #[command(flatten)]
-    pub call: CallPolicyArgs,
-
-    /// Language/IR family for the artifact, or auto to detect it
-    #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
-    pub language: ImportLanguage,
-
-    /// Re-import artifacts even when an up-to-date import already exists.
-    /// See `ctadl import --help`.
-    #[arg(long)]
-    pub force: bool,
-
-    /// Do not import the native libraries packaged inside an APK.
-    /// See `ctadl import --help`.
-    #[arg(long)]
-    pub no_native_libs: bool,
-
-    /// Import an APK's native libraries for this ABI (e.g. armeabi-v7a).
-    /// See `ctadl import --help`.
-    #[arg(long, value_name = "ABI")]
-    pub native_abi: Option<String>,
-
-    /// Import a .NET directory's framework and BCL assemblies too.
-    /// See `ctadl import --help`.
-    #[arg(long)]
-    pub include_framework: bool,
-
-    /// Number of threads to import and index with. Unset, the import uses every core and the
-    /// index runs serially, as `ctadl import` and `ctadl index` do by default.
-    /// See `ctadl import --help` and `ctadl index --help`.
-    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
-    pub jobs: Option<usize>,
-}
-
 fn main() -> anyhow::Result<()> {
     ctadl_ascent::init();
     let cli = Cli::parse();
@@ -682,10 +565,6 @@ fn main() -> anyhow::Result<()> {
             index_artifacts_to_store(args)
                 .with_context(|| format!("running 'index' artifacts: {:?}", effective_progs))?;
         }
-        Command::Query(args) => {
-            query_project(args)
-                .with_context(|| format!("running 'query' project: {:?}", args.name))?;
-        }
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
@@ -693,79 +572,6 @@ fn main() -> anyhow::Result<()> {
         Command::Report(args) => {
             report_project(args)
                 .with_context(|| format!("running 'report' project: {:?}", args.name))?;
-        }
-        Command::Go(args) => {
-            // Use the user-provided name or one derived from the first artifact.
-            let name = match &args.name {
-                Some(n) => n.clone(),
-                None => {
-                    let first = &args.artifacts[0];
-                    let inferred = project::artifact_name(first)?
-                        .as_os_str()
-                        .to_str()
-                        .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
-                        .to_string();
-                    if args.artifacts.len() > 1 {
-                        log::warn!(
-                            "no project name given (-n); using '{}' inferred from the first artifact",
-                            inferred
-                        );
-                    }
-                    inferred
-                }
-            };
-
-            // The pool is the process's, and outlives the import into indexing and querying, so
-            // it is sized only on request; an APK's import budgets its own threads either way.
-            if let Some(jobs) = args.jobs {
-                init_import_threads(jobs);
-            }
-            let mut imported_names = Vec::new();
-            for artifact in &args.artifacts {
-                let import_args = ImportArgs {
-                    artifact: artifact.clone(),
-                    name: None,
-                    language: args.language,
-                    force: args.force,
-                    no_native_libs: args.no_native_libs,
-                    native_abi: args.native_abi.clone(),
-                    include_framework: args.include_framework,
-                    jobs: args.jobs.unwrap_or(0),
-                };
-                let name = import_artifact_to_store(&import_args).with_context(|| {
-                    format!("importing artifact from: '{}'", artifact.display())
-                })?;
-                imported_names.push(name);
-            }
-
-            index_artifacts_to_store(&IndexArgs {
-                name: name.clone(),
-                progs: imported_names.clone(),
-                summary: vec![],
-                no_native_libs: false,
-                models: args.models.clone(),
-                no_default_models: args.no_default_models,
-                no_jni_bridge: args.no_jni_bridge,
-                no_jni_registry: args.no_jni_registry,
-                call: args.call.clone(),
-                prune_unreachable_cfg_nodes: None,
-                alias_rule: None,
-                jobs: args.jobs,
-                lsm: false,
-                lsm_memtable_limit: None,
-                lsm_memory_budget: None,
-                mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
-            })
-            .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
-
-            query_project(&QueryArgs {
-                name: name.clone(),
-                models: args.models.clone(),
-                output: args.output.clone(),
-                sarif_profile: args.sarif_profile,
-                dump_taint_graph: args.dump_taint_graph.clone(),
-            })
-            .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
         Command::InitModel(args) => {
             handle_init_model(args).context("running 'init-model'")?;
@@ -838,8 +644,7 @@ fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
 const MODEL_TEMPLATE: &str = r#"// A Portcullis model file. The language reference is docs/portcullis.md.
 //
 // Each rule derives its heads (left of ':-') for every way its body (right of ':-') matches.
-// Pass this file to `ctadl query --models` for its sources and sinks, and to
-// `ctadl index --models` for its propagations.
+// Pass this file to `ctadl index --models` for its propagations.
 
 // A source: the return value of every method named `readData` is untrusted. `kind` is a label
 // you choose; a flow is reported when a source's kind reaches a sink of the same kind.
@@ -1009,35 +814,6 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
-    let project = load_or_infer_project(&args.name)?;
-    let status = cli::query(
-        &project,
-        &args.models,
-        &args.output,
-        args.sarif_profile,
-        args.dump_taint_graph.as_deref(),
-    )?;
-    // SARIF §3.58.6: a run carrying an error-level notification SHOULD exit non-zero. This
-    // is deliberately after `cli::query` has written (and announced) the output file, since
-    // that file is what explains the failure.
-    if !status.execution_successful {
-        if status.model_check_only {
-            anyhow::bail!(
-                "no index, so only the model files were checked; see '{}' for what they match, \
-                 then run `ctadl index {}`",
-                args.output.display(),
-                args.name
-            );
-        }
-        anyhow::bail!(
-            "query produced no analyzable endpoints; see '{}' for details",
-            args.output.display()
-        );
-    }
-    Ok(())
-}
-
 fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
     let project = load_or_infer_project(&args.name)?;
     cli::report(
@@ -1063,11 +839,9 @@ fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
 /// The project `name` denotes, or the one an import of that name would be indexed into.
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
-/// has ever run there is no project to load -- and that is exactly when checking a model file
-/// against the import is most useful. Falling back to [`project::AnalysisProject::ephemeral`] gives
-/// `ctadl query` the same import list, with the same `sub_imports` expansion (an APK's native
-/// libraries), and writes nothing to the store. The query itself then finds no index and says
-/// so; see [`cli::query`].
+/// has ever run there is no project to load. Falling back to
+/// [`project::AnalysisProject::ephemeral`] gives `ctadl report` the same import list, with the
+/// same `sub_imports` expansion (an APK's native libraries), and writes nothing to the store.
 fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject> {
     match project::AnalysisProject::try_load_name(name) {
         Ok(project) => Ok(project),

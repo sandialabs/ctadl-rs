@@ -2,8 +2,7 @@
 The reference implementation of the IR's semantics (S1–S17 of `docs/ir.md`).
 
 This is a direct, unoptimized evaluation of the rules, written to be read beside them. It is the
-oracle the IR passes are checked against (`frontends/ctadl-flowy/tests/passes.rs`) and the engines
-are measured against (`ctadl-ascent/tests/integration/reference_parity.rs`). It is never run on a
+oracle the IR passes are checked against (`frontends/ctadl-flowy/tests/passes.rs`). It is never run on a
 real artifact: it enumerates instances of every call, and every labeled cell of every instance.
 
 # What it computes

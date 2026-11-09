@@ -5,7 +5,7 @@
 //! interned in a different order. [`output_does_not_depend_on_intern_order`] runs the fixture's
 //! whole pipeline in child processes of this test binary: one to list the values the pipeline
 //! interns, then one that pre-interns them in content order and one in reverse. It asserts that
-//! both render byte-identical graphviz, relation dumps and SARIF.
+//! both render byte-identical graphviz and relation dumps.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,6 @@ use std::process::Command;
 use ctadl_ascent::cli;
 use ctadl_ascent::facts::{Path as FactPath, PathId, Str};
 use ctadl_ascent::project::*;
-use ctadl_ascent::query_engine::formatter::SarifProfile;
 
 /// Selects the child's role: `collect`, `forward` or `reverse`.
 const ROLE_ENV: &str = "CTADL_TEST_INTERN_ROLE";
@@ -167,7 +166,7 @@ fn fixture(name: &str) -> PathBuf {
         .collect()
 }
 
-/// Imports, indexes and queries `ties.c` into a store under `out`, writing every rendering
+/// Imports and indexes `ties.c` into a store under `out`, writing every rendering
 /// the test compares into `out`.
 fn run_pipeline(out: &Path) {
     init_store_path(Some(&out.join("store"))).unwrap();
@@ -178,21 +177,6 @@ fn run_pipeline(out: &Path) {
     let models = vec![fixture("ties.json")];
     cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
     cli::inspect_index_graph(&project, &out.join("index.dot")).unwrap();
-    for (profile, name) in [
-        (SarifProfile::Human, "human"),
-        (SarifProfile::Agent, "agent"),
-        (SarifProfile::Debug, "debug"),
-    ] {
-        let taint_dot = out.join(format!("taint-{name}.dot"));
-        cli::query(
-            &project,
-            &models,
-            &out.join(format!("{name}.sarif")),
-            profile,
-            Some(&taint_dot),
-        )
-        .unwrap();
-    }
 }
 
 fn child(role: &str) {
@@ -241,26 +225,14 @@ fn spawn(role: &str, out: &Path, values: &Path) {
     assert!(status.success(), "the {role} child failed");
 }
 
-/// The files the comparison reads, by path relative to `out`, normalized: SARIF loses its
-/// timestamps and the output directory, and a relation dump is sorted, since the engine's
-/// row order varies between runs whatever the intern order (`docs/debugging.md`).
+/// The files the comparison reads, by path relative to `out`, normalized: each loses the output
+/// directory, and a relation dump is sorted, since the engine's row order varies between runs
+/// whatever the intern order (`docs/debugging.md`).
 fn renderings(out: &Path) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     let mut add = |rel: String, path: &Path| {
         let mut text = std::fs::read_to_string(path).unwrap();
-        if rel.ends_with(".sarif") {
-            let mut doc: serde_json::Value = serde_json::from_str(&text).unwrap();
-            for inv in doc["runs"][0]["invocations"]
-                .as_array_mut()
-                .into_iter()
-                .flatten()
-            {
-                let inv = inv.as_object_mut().unwrap();
-                inv.remove("startTimeUtc");
-                inv.remove("endTimeUtc");
-            }
-            text = serde_json::to_string_pretty(&doc).unwrap();
-        } else if rel.starts_with("dump/") {
+        if rel.starts_with("dump/") {
             let mut lines: Vec<&str> = text.lines().collect();
             lines.sort_unstable();
             text = lines.join("\n");
@@ -270,7 +242,7 @@ fn renderings(out: &Path) -> BTreeMap<String, String> {
     for entry in std::fs::read_dir(out).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-        if name.ends_with(".dot") || name.ends_with(".sarif") {
+        if name.ends_with(".dot") {
             add(name, &path);
         }
     }
@@ -303,11 +275,7 @@ fn output_does_not_depend_on_intern_order() {
         b.keys().collect::<Vec<_>>(),
         "the two runs wrote different files"
     );
-    assert!(a.contains_key("index.dot") && a.contains_key("human.sarif"));
-    assert!(
-        a["human.sarif"].contains("C0001.tainted-path"),
-        "the fixture must report a taint flow"
-    );
+    assert!(a.contains_key("index.dot"));
     let differing: Vec<&String> = a.keys().filter(|k| a[*k] != b[*k]).collect();
     for name in &differing {
         let (x, y) = (&a[*name], &b[*name]);

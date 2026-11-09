@@ -1,9 +1,0 @@
-{
-  // Flow: obj.data = source() (15) -> local = obj.data (16) -> sink(local) (17).
-  // Line 16 is dropped: `local = obj.data` is a pure copy
-  // (see "Pure copies" in nightly/README.md).
-  "expected_lines": [
-    15,
-    17
-  ]
-}

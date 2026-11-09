@@ -60,7 +60,6 @@ use anyhow::{Context, Result};
 use crate::regression::Outcome;
 use parity::{CecilDump, Input};
 
-pub mod cases;
 mod cecil_tests;
 pub mod exec;
 pub mod flow;

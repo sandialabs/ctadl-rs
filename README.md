@@ -7,15 +7,13 @@ CTADL (Compositional Taint Analysis in Datalog) is a static taint analyzer. CTAD
 
 ## Usage
 
-The typical pipeline is **import → index → query**. Use `ctadl <command> --help` for the full,
+The typical pipeline is **import → index**. Use `ctadl <command> --help` for the full,
 current set of flags.
 
 | Command | What it does |
 | --- | --- |
 | `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. |
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
-| `query` | Run a taint-analysis query over an indexed project and write results as SARIF. With `--models` and no index yet, reports what those model files match in the imported programs instead. |
-| `go` | One-shot convenience: import, index, and query in a single invocation. |
 | `init-model` | Emit a template [Portcullis](docs/portcullis.md) model file for defining sources, sinks, and external function propagation models. |
 | `migrate-models` | Rewrite a deprecated JSON model file in Portcullis. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
@@ -34,22 +32,11 @@ sink(F::arg(1), kind = "UserInput") :-
   fun(F, name = "exec", parent = "Ljava/lang/Runtime;");
 ```
 
-One-shot APK analysis:
-
-```bash
-ctadl go /path/to/my/app.apk --name my-app --models sources-and-sinks.ctadl
-```
-
-Or run the stages separately:
+Indexing an APK:
 
 ```bash
 ctadl import /path/to/app.apk --name my-app
-# Optional, and needs only the import: with no index yet, `query` reports which rules select a
-# function and which select nothing. Run it while you write the model file rather than after
-# indexing.
-ctadl query my-app --models sources-and-sinks.ctadl --output check.sarif
-ctadl index my-app
-ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
+ctadl index my-app --models models.ctadl
 ```
 
 ### Report
@@ -146,12 +133,11 @@ into a project of its own, then index the app without its libraries and pass tha
 ctadl import app.apk                          # app, app__arm64-v8a__libX, app__arm64-v8a__libY
 ctadl index  xproj app__arm64-v8a__libX       # the library, on its own
 ctadl index  appproj app --no-native-libs --summary xproj
-ctadl query  appproj -m models.ctadl          # Java -> libX -> Java flows are found
 ```
 
 `index --no-native-libs` drops the native libraries naming an APK or XAPK would otherwise pull in
 (an `.xapk`'s split APKs stay), so `libY` is never loaded. An import named on the command line is
-always kept. `query`, `report` and `inspect` read the project's saved import list, so they see the
+always kept. `report` and `inspect` read the project's saved import list, so they see the
 same filtered set with no flag of their own.
 
 `--summary P` maps `P`'s saved function summaries into the project, keeping those for functions
@@ -162,8 +148,7 @@ links as `from summary`, and a warning names any linked function `P` has no summ
 warning says when `P` may not describe this app: a library that is not one of this app's
 sub-imports (another ABI, app or version), or one that changed since `P` was indexed.
 
-The native half of such a flow is carried by the summaries alone, so its SARIF locates the Java
-steps only; co-index the library to see where the taint goes inside it. Only context-free summaries
+The native half of such a flow is carried by the summaries alone. Only context-free summaries
 cross this way, so a flow in the library that depends on resolving an indirect call is lost. The
 library's flows between its globals cross too: a global is one variable for the whole project, so
 a value one library function stores in a global is there for another to read, with no call between

@@ -12,9 +12,6 @@ as parameters.
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-mod model_check;
-pub use model_check::{ModelCheckOutcome, check_models, check_programs};
-
 use itertools::Itertools;
 
 use crate::codegen::{CallResolutionStrategy, codegen_program};
@@ -22,13 +19,10 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    IndexFacts, IndexResult, Parallelism, Storage,
-    source_info::IndexSourceInfo, taint_index_with_config,
+    IndexFacts, Parallelism, Storage, source_info::IndexSourceInfo, taint_index_with_config,
 };
 use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
-use crate::query_engine;
-use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_import::notifications::{self, Level, Notifications};
 use ctadl_ir::ssa;
 
@@ -425,7 +419,7 @@ pub fn index(
     // The source/sink heads too, though index time does not analyse them: a matched endpoint
     // in a signature's target set is what refuses a dispatch model (see
     // `codegen::CodegenVisitor::key_facts`), so codegen has to see them as each import is
-    // lowered. Not reported, since `ctadl query` reports on them.
+    // lowered. Not reported.
     let mut endpoint_matcher = crate::models::PortcullisMatcher::new(
         &portcullis_models,
         crate::models::PortcullisPhase::Query,
@@ -715,14 +709,11 @@ pub fn index(
         log::info!("bridge {stats}");
     }
     if !files_declaring_endpoints.is_empty() {
-        // Not "pass them to query instead": an endpoint is not analysed at index time, but it
-        // *gates* the dispatch models -- a signature whose targets hold a matched sink is not
-        // modelled -- so the same file belongs to both commands. `ctadl query` warns about the
-        // mirror case, a file declaring index-time models.
+        // An endpoint is not analysed at index time, but it *gates* the dispatch models -- a
+        // signature whose targets hold a matched sink is not modelled.
         log::warn!(
             "{} of the given model file(s) declare source/sink models, which `ctadl index` does \
-             not analyse; it does use them to refuse a dispatch model whose targets hold one, so \
-             pass the same file(s) to `ctadl query` as well: {}",
+             not analyse; it uses them only to refuse a dispatch model whose targets hold one: {}",
             files_declaring_endpoints.len(),
             files_declaring_endpoints
                 .iter()
@@ -853,50 +844,6 @@ pub fn index(
     Ok(())
 }
 
-/// Says what call policy the index being queried was built under.
-///
-/// Reported, never enforced: an index built with `--strategy cha` answers a query perfectly
-/// well, it just answers a different question. The one thing that warns is the endpoint digest,
-/// checked separately once the query knows which of its model files declare endpoints (see
-/// [`warn_on_endpoint_digest_mismatch`]).
-fn report_call_policy(
-    project: &AnalysisProject,
-) -> Option<ctadl_import::project::CallPolicyRecord> {
-    let policy = project.index_call_policy();
-    match &policy {
-        Some(policy) => log::info!("index call policy: {policy}"),
-        None => log::info!(
-            "this index records no call policy; it was built before the policy was recorded, so \
-             how it resolved calls is not known here"
-        ),
-    }
-    policy
-}
-
-/// Warns when the sources and sinks this query is using are not the ones the index's dispatch
-/// models were checked against.
-///
-/// A dispatch model is refused when the signature's CHA targets hold a matched source or sink,
-/// so an index built against other endpoints may have modelled away a signature whose targets
-/// hold one of *these* -- and the sink inside it will then never match.
-fn warn_on_endpoint_digest_mismatch(
-    policy: Option<&ctadl_import::project::CallPolicyRecord>,
-    endpoint_files: &BTreeSet<&std::path::PathBuf>,
-) -> Result<(), Error> {
-    let Some(policy) = policy else {
-        return Ok(());
-    };
-    let files: Vec<std::path::PathBuf> = endpoint_files.iter().map(|p| (*p).clone()).collect();
-    if ctadl_import::project::hash_file_contents(&files)? != policy.endpoint_model_digest {
-        log::warn!(
-            "this index's dispatch models were checked against a different set of sources and \
-             sinks; a sink inside a modelled signature's targets will not match. Re-index with \
-             the same --models."
-        );
-    }
-    Ok(())
-}
-
 /// The call policy an index was built under, for the on-disk stamp.
 ///
 /// The flags are recorded as given even under a strategy that ignores them: what the user
@@ -926,310 +873,6 @@ fn call_policy_record(
         }
         .to_string(),
         endpoint_model_digest: ctadl_import::project::hash_file_contents(&files)?,
-    })
-}
-
-/// What [`query`] concluded about the run as a whole, mirroring
-/// `invocation.executionSuccessful` in the SARIF it just wrote. `false` means an
-/// `error`-level notification was emitted — the query was vacuous — and per SARIF §3.58.6
-/// the process should exit non-zero, *after* the SARIF file has been written.
-#[derive(Debug, Clone, Copy)]
-pub struct QueryStatus {
-    pub execution_successful: bool,
-    /// True when there was no index and the run reported on the model files alone. The SARIF
-    /// says so in `CTADL0008`; this is so the caller can say it on the terminal too.
-    pub model_check_only: bool,
-}
-
-/// Runs a taint query and formats the results as SARIF.
-///
-/// Taint results are computed in memory and handed straight to the formatter; they are
-/// not persisted. The `profile` selects what the SARIF reports: path profiles enumerate
-/// source -> sink paths, closure profiles list every tainted instruction (see
-/// [`query_engine::formatter`]).
-///
-/// # Without an index
-///
-/// Model matching is decided per import and only half of it needs an index (see
-/// [`model_check`]). So when the project has not been indexed -- or is *being* indexed, since
-/// the version stamp is written last -- and model files were given, this reports what those
-/// files match in the imported programs rather than failing outright. The SARIF is the ordinary
-/// one, carrying the same notifications and saying in `CTADL0008` what it could not determine;
-/// the run is still a failure, because the query asked for could not be answered.
-pub fn query(
-    project: &AnalysisProject,
-    models: &[std::path::PathBuf],
-    output: &Path,
-    profile: query_engine::formatter::SarifProfile,
-    dump_taint_graph: Option<&Path>,
-) -> Result<QueryStatus, Error> {
-    let start_time_utc = query_engine::formatter::utc_timestamp();
-    log::info!("querying project '{}'", project.name);
-    if !project.has_index() {
-        if models.is_empty() {
-            return Err(Error::from(ctadl_import::Error::MissingIndex {
-                project: project.name.clone(),
-            }));
-        }
-        return query_model_check(project, models, output, profile, start_time_utc);
-    }
-    // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
-    // this is what turns that into an actionable "re-run `ctadl index`".
-    project.check_index_config()?;
-    let indexed_policy = report_call_policy(project);
-    let index_path = project.index_path()?;
-    let ids = facts::IdMap::try_load(&index_path)
-        .err_context(|| format!("loading IdMap from index: {}", index_path.display()))?;
-    // Load the index tables once; they seed the query and are reused to format the results.
-    let index_facts = IndexFacts::try_load(&index_path)
-        .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
-    let index_result = IndexResult::try_load(&index_path)
-        .err_context(|| format!("loading index result from: {}", index_path.display()))?;
-    let final_call = index_result.final_call(&index_facts.call);
-
-    // Assembled alongside the query itself and handed to the SARIF writer, which turns it
-    // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
-    let mut diagnostics = query_engine::formatter::QueryDiagnostics {
-        command_line: ctadl_import::sarif::command_line(),
-        arguments: ctadl_import::sarif::arguments(),
-        start_time_utc,
-        index_notifications: Notifications::load(&index_path)
-            .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
-        ..Default::default()
-    };
-
-    let facts = {
-        // One accumulator across every (import x model file) pair. Endpoints carry their own
-        // `facts::Path`, so accumulation is an append and there is nothing to renumber.
-        let mut model_matches = crate::models::ProgramModelMatches::default();
-        let portcullis_models = crate::models::PortcullisModelSet::scan(models)?;
-        let mut portcullis_matcher = crate::models::PortcullisMatcher::new(
-            &portcullis_models,
-            crate::models::PortcullisPhase::Query,
-        );
-        // Which files declare endpoints, by the same test `ctadl index` applies, so the two
-        // digests are over the same thing.
-        let files_declaring_endpoints: BTreeSet<&std::path::PathBuf> =
-            portcullis_models.endpoint_files().collect();
-        if !models.is_empty() {
-            for import in project.iter_imports() {
-                let import = import?;
-                let program_info = load_import(&import, SourceInfoMode::Skip)?;
-                let match_index = crate::models::ProgramMatchIndex::new(
-                    &program_info,
-                    crate::models::ImportScope::new(import.language, &import.name),
-                );
-                portcullis_matcher.observe_import(&match_index, &mut model_matches);
-            }
-        }
-        // Query time keeps the source/sink heads. The rules whose heads are all index-time are
-        // counted and reported, so a query that drops a propagation says so rather than
-        // looking exactly like one whose models did nothing.
-        let portcullis_report = portcullis_matcher.finish(&mut model_matches)?;
-        report_portcullis(&portcullis_report);
-        // Re-keyed by file (see [`crate::models::portcullis_endpoint_stats`]).
-        for file in &portcullis_report.files {
-            for ((rule, direction), stats) in crate::models::portcullis_endpoint_stats(file) {
-                diagnostics
-                    .generator_stats
-                    .entry((file.path.clone(), rule, direction))
-                    .or_default()
-                    .merge(&stats);
-            }
-        }
-        log::debug!(
-            "[mem cp] after query model accumulation ({} endpoint match(es), {} propagation \
-             match(es) ignored): {:.1} MB",
-            model_matches.endpoints.len(),
-            model_matches.propagations.len(),
-            crate::index_engine::phys_footprint_mb()
-        );
-        warn_on_endpoint_digest_mismatch(indexed_policy.as_ref(), &files_declaring_endpoints)?;
-        let mut builder = QueryFactsBuilder::default();
-        let mut endpoints = Vec::new();
-        // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
-        // into account here
-        for import in project.iter_imports() {
-            let import = import?;
-            if import.language == ArtifactLanguage::Flowy {
-                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &final_call)?;
-                endpoints.extend(eps);
-            }
-        }
-        // Flowy endpoints are already resolved, so they count as both declared and matched:
-        // a flowy-only run configures endpoints without any `-m` and must not be reported
-        // as having configured none.
-        let flowy_sources = endpoints
-            .iter()
-            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Forward)
-            .count();
-        let flowy_sinks = endpoints.len() - flowy_sources;
-
-        let mut formal_params = index_facts.formal_param.clone();
-        // Gated on having something to resolve, not merely on `-m` having been passed: Stage 2
-        // union-finds the whole `assign_like` relation before it touches an endpoint, and a
-        // model-less or flowy-only query must not pay for that.
-        if !model_matches.endpoints.is_empty() {
-            let built = query_engine::build_query_endpoints(
-                &model_matches.endpoints,
-                &index_facts,
-                &ids,
-                &index_result.assign_like,
-                &final_call,
-            );
-            diagnostics.unresolved_functions = built.unresolved_functions;
-            endpoints.extend(built.endpoints);
-            formal_params.extend(built.formals);
-        }
-
-        // Declared: model *ports* of that direction, plus flowy's already-resolved
-        // endpoints (one port each). Matched: post-fan-out `QueryEndpoint`s. Counting
-        // (generator, direction) keys here instead would make `CTADL0100` compare a count of
-        // generators against a count of endpoints.
-        let count_declared = |direction| {
-            diagnostics
-                .generator_stats
-                .iter()
-                .filter(|((_, _, d), _)| *d == direction)
-                .map(|(_, stats)| stats.ports_declared)
-                .sum::<usize>()
-        };
-        diagnostics.sources_declared =
-            count_declared(crate::facts::TaintDirection::Forward) + flowy_sources;
-        diagnostics.sinks_declared =
-            count_declared(crate::facts::TaintDirection::Backward) + flowy_sinks;
-
-        let sources = endpoints
-            .iter()
-            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Forward)
-            .count();
-        let sinks = endpoints
-            .iter()
-            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Backward)
-            .count();
-        diagnostics.sources_matched = sources;
-        diagnostics.sinks_matched = sinks;
-        log::info!("matched {} sources and {} sinks", sources, sinks);
-        // The line above reads the same whether an end is empty by accident or by design,
-        // so say which it is rather than leaving the terminal silent about a vacuous query.
-        if let Some(reason) = query_engine::formatter::empty_end_reason(&diagnostics) {
-            log::warn!("{reason}; see the SARIF invocation for details");
-        }
-
-        // `actual_param` and `call` are also needed by `FormatFacts` below, so the
-        // query facts take clones and the originals feed the formatter. `assign`,
-        // `paths`, and `external_function` are consumed only by the query engine, so
-        // they are moved.
-        builder
-            .endpoints(endpoints)
-            .formal_param(formal_params)
-            .actual_param(index_facts.actual_param.clone())
-            .call(final_call.clone())
-            .assign(index_result.assign_like)
-            .paths(index_result.paths)
-            .external_function(index_result.external_function);
-        builder.build().unwrap()
-    };
-
-    // A single taint pass computes the closure, the taint graph, and the
-    // instruction-level facts the formatter needs.
-    let result = taint_analysis(facts, Some(&ids));
-    for import in project.iter_imports() {
-        let import = import?;
-        if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::query_check(&import, &result, &ids, &final_call)?;
-        }
-    }
-
-    let taint_results = query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
-    let mut b = query_engine::formatter::FormatFactsBuilder::default();
-    b.taint(result.taint)
-        .taint_edge(result.taint_edge)
-        .index_actual_param(index_facts.actual_param)
-        .call(final_call)
-        .id_to_name(ids.get_id_to_name_map());
-    let facts = b.build().unwrap();
-
-    let execution_successful = query_engine::formatter::format_sarif(
-        project,
-        &facts,
-        &taint_results,
-        output,
-        profile,
-        &diagnostics,
-    )
-    .err_context(|| "formatting sarif")?;
-
-    if let Some(dot_path) = dump_taint_graph {
-        dump_taint_graph_dot(&facts, &index_path, dot_path)?;
-    }
-
-    if output.to_str() != Some("-") {
-        log::info!("wrote {}", output.display());
-    }
-    Ok(QueryStatus {
-        execution_successful,
-        model_check_only: false,
-    })
-}
-
-/// [`query`] for a project with no index: report what the model files match against the
-/// imported programs, and say plainly that that is all this is.
-///
-/// The output is the ordinary SARIF, written by the ordinary writer, because the questions it
-/// answers are the ones `ctadl query` always answers -- which generators matched nothing, which
-/// declared ports produced no row -- asked of Stage 1 alone. What is different is stated in the
-/// file: see `CTADL0008`.
-fn query_model_check(
-    project: &AnalysisProject,
-    models: &[std::path::PathBuf],
-    output: &Path,
-    profile: query_engine::formatter::SarifProfile,
-    start_time_utc: String,
-) -> Result<QueryStatus, Error> {
-    log::warn!(
-        "project '{}' has no index, so no taint analysis can run. Checking what the given model \
-         file(s) select in the imported program(s) instead -- partial feedback: call sites, \
-         `Argument(*)` and wildcard sinks need the index. Run `ctadl index {}` for a real query",
-        project.name,
-        project.name
-    );
-    let outcome = model_check::check_models(project, models)?;
-    // The counts, on the terminal; the SARIF is where each of them is named and explained.
-    log::info!(
-        "checked {} model file(s) against {} import(s): {} generator(s) matched something, {} \
-         declaration(s) matched nothing, {} generator(s) admitted by no import",
-        models.len(),
-        outcome.check.imports.len(),
-        outcome.check.matched.len(),
-        outcome.dead_declarations(),
-        outcome.check.scope_excluded.len(),
-    );
-
-    let has_file_errors = outcome.has_file_errors();
-    let mut diagnostics = outcome.into_diagnostics();
-    diagnostics.command_line = ctadl_import::sarif::command_line();
-    diagnostics.arguments = ctadl_import::sarif::arguments();
-    diagnostics.start_time_utc = start_time_utc;
-
-    let execution_successful =
-        query_engine::formatter::format_model_check_sarif(project, output, profile, &diagnostics)
-            .err_context(|| "formatting sarif")?;
-    if output.to_str() != Some("-") {
-        log::info!("wrote {}", output.display());
-    }
-    // A file error is reported in the SARIF (`CTADL0012`) rather than raised, so that one typo
-    // does not cost the rest of the check. It still fails the run: `execution_successful` is
-    // already false, since that notification is error-level.
-    if has_file_errors {
-        log::error!(
-            "one or more model files have errors; see {}",
-            output.display()
-        );
-    }
-    Ok(QueryStatus {
-        execution_successful,
-        model_check_only: true,
     })
 }
 
@@ -1278,156 +921,6 @@ fn dump_index_graph_dot(
          node label: `function(<name>)` / `<variable><access-path>`; nodes are keyed by\n  \
          (function, variable, access path), and an empty access path renders as nothing\n  \
          (a label with no `.field` suffix is the empty path, not an omitted one)",
-        dot_path.display()
-    );
-    Ok(())
-}
-
-/// Renders the meet-in-the-middle taint graph to a Graphviz DOT file.
-///
-/// Classifies every tainted node by cone membership, orients each propagation
-/// edge in data-flow direction (source → sink, matching `find_path`), then
-/// renders the result with a self-documenting legend.
-fn dump_taint_graph_dot(
-    facts: &query_engine::formatter::FormatFacts,
-    index_path: &Path,
-    dot_path: &Path,
-) -> Result<(), Error> {
-    use crate::facts::TaintDirection;
-    use crate::graphviz::Cone;
-
-    // Classify every tainted node by cone membership: a node carrying a
-    // Forward endpoint is in the forward cone, a Backward endpoint puts
-    // it in the backward cone, and both makes it a "meet" (Cone::Both)
-    // — exactly the nodes on a complete source→sink path.
-    let mut node_cone: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (func_id, _, var, path, ep) in &facts.taint {
-        let cone = match ep.direction {
-            TaintDirection::Forward => Cone::Forward,
-            TaintDirection::Backward => Cone::Backward,
-        };
-        node_cone
-            .entry((*func_id, *var, *path))
-            .and_modify(|c| *c = c.join(cone))
-            .or_insert(cone);
-    }
-
-    // The persisted taint edges are already in data-flow (execution) order
-    // (source → derived, matching `find_path`) and do not carry the
-    // exploration direction, so draw each edge as-is and dedup. Approximate an
-    // edge's cone from the cones its endpoints already carry (from the
-    // authoritative `facts.taint` classification above); a `Call`/`Return`/`Intra`
-    // label does not itself imply forward vs backward.
-    let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (_edge, sf, sv, sp, df, dv, dp) in &facts.taint_edge {
-        let src = (*sf, *sv, *sp);
-        let dst = (*df, *dv, *dp);
-        let cone = match (node_cone.get(&src), node_cone.get(&dst)) {
-            (Some(a), Some(b)) => a.join(*b),
-            (Some(c), None) | (None, Some(c)) => *c,
-            (None, None) => Cone::Both,
-        };
-        oriented
-            .entry((src, dst))
-            .and_modify(|c| *c = c.join(cone))
-            .or_insert(cone);
-    }
-    // `oriented` iterates in handle order; the file wants content order.
-    let mut oriented: Vec<_> = oriented.into_iter().collect();
-    oriented.sort_unstable_by(|((s1, d1), _), ((s2, d2), _)| {
-        crate::graphviz::index_vertex_cmp(s1, s2)
-            .then_with(|| crate::graphviz::index_vertex_cmp(d1, d2))
-    });
-    let edges: Vec<_> = oriented
-        .into_iter()
-        .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))
-        .collect();
-
-    // The saved query taint is pruned to the relevant (content-level)
-    // vertices, but the re-derived edges also touch pointer-level
-    // intermediates. Declare every edge endpoint so none renders as an
-    // uncolored auto-node. Nodes already classified from `facts.taint`
-    // endpoints keep that authoritative (find_path-consistent) cone —
-    // structural pointer edges must not promote a content node to a
-    // false meet — while edge-only intermediates are colored by their
-    // incident edges' cone(s).
-    let from_taint: BTreeSet<_> = node_cone.keys().cloned().collect();
-    for (sf, sv, sp, df, dv, dp, cone) in &edges {
-        for n in [(*sf, *sv, *sp), (*df, *dv, *dp)] {
-            if from_taint.contains(&n) {
-                continue;
-            }
-            node_cone
-                .entry(n)
-                .and_modify(|c| *c = c.join(*cone))
-                .or_insert(*cone);
-        }
-    }
-
-    let sources: BTreeSet<_> = facts
-        .taint
-        .iter()
-        .filter_map(|(_, _, _, _, ep)| {
-            if ep.direction == TaintDirection::Forward {
-                Some((ep.infunc, ep.vertex.0, ep.vertex.1))
-            } else {
-                None
-            }
-        })
-        .collect();
-    let sinks: BTreeSet<_> = facts
-        .taint
-        .iter()
-        .filter_map(|(_, _, _, _, ep)| {
-            if ep.direction == TaintDirection::Backward {
-                Some((ep.infunc, ep.vertex.0, ep.vertex.1))
-            } else {
-                None
-            }
-        })
-        .collect();
-    let mut file = std::fs::File::create(dot_path)
-        .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
-    // Embed the legend as a leading DOT comment so the file documents
-    // itself (kept in sync with the log message below).
-    {
-        use std::io::Write as _;
-        writeln!(
-            file,
-            "// Taint graph (meet-in-the-middle): a forward cone grows from each source,\n\
-             // a backward cone from each sink. A \"meet\" lies in both cones -- i.e. on a\n\
-             // complete source->sink path. Reading reachability is then visual: follow the\n\
-             // forward cone out of a source diamond and see whether it reaches the meet.\n\
-             //\n\
-             // Nodes (shape = role, fill = cone):\n\
-             //   diamond  = source vertex      (fill gold)\n\
-             //   ellipse  = sink vertex        (fill orange)\n\
-             //   box      = propagated vertex\n\
-             //   fill lightblue = forward cone (reachable from a source)\n\
-             //   fill mistyrose = backward cone (reaches a sink)\n\
-             //   fill palegreen = meet (on a source->sink path)\n\
-             //\n\
-             // Edges (oriented in data-flow direction, source -> sink, matching find_path):\n\
-             //   blue        = forward propagation\n\
-             //   red dashed  = backward propagation\n\
-             //   bold green  = meet edge (on a source->sink path)\n"
-        )
-        .err_context(|| format!("writing taint graph legend: {}", dot_path.display()))?;
-    }
-    let ids = facts::IdMap::try_load(index_path).err_context(|| {
-        format!(
-            "loading IdMap for taint graph from index: {}",
-            index_path.display()
-        )
-    })?;
-    crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
-        .err_context(|| format!("rendering taint graph: {}", dot_path.display()))?;
-    // Multi-line; see the note in `dump_index_graph_dot`.
-    log::info!(
-        "Wrote taint graph to '{}'\n  \
-         nodes: diamond=source, ellipse=sink, box=propagated; \
-         fill lightblue=forward cone, mistyrose=backward cone, palegreen=meet (on a source→sink path)\n  \
-         edges (data-flow oriented, source→sink): blue=forward, red dashed=backward, bold green=meet",
         dot_path.display()
     );
     Ok(())
@@ -2302,7 +1795,6 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         callee_resolvents,
         summary,
         paths,
-        taint,
         index_source_map,
         import_id,
         external_function

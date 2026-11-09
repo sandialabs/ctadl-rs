@@ -1,8 +1,7 @@
 /*! The counters a model load reports besides its matches.
 
 What the diagnostics read: `CTADL0004`'s per-generator endpoint counts and why a port matched
-nothing, `CTADL0011`'s match samples, and the index-time constructs `ctadl query` says it is
-ignoring. A DSL load fills them in through [`super::ModelLoadReport::from_portcullis`].
+nothing, `CTADL0011`'s match samples, and the index-time constructs a load counted. A DSL load fills them in through [`super::ModelLoadReport::from_portcullis`].
 
 The same model file is re-matched once per import, so each `merge` combines two kinds of count
 differently. A count of what the file declares is a property of the file alone, and merges by
@@ -75,7 +74,7 @@ impl IndexTimeModelCounts {
         self.propagations == 0 && self.bridges == 0 && self.modes == 0
     }
 
-    /// How to name what was ignored, for the one warning a query-time load emits.
+    /// How to name what was ignored, for a warning about a load's index-time constructs.
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
         if self.propagations > 0 {

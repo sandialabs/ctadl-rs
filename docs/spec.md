@@ -43,7 +43,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 | **Store** | Where CTADL keeps imports and projects, with their indexes, between runs. |
 | **Import** | An artifact lowered to CTADL IR and saved in the store. An APK yields sub-imports for its native libraries. |
 | **Project** | A named set of imports indexed together. |
-| **Index** | A project's query-independent analysis result: resolved calls and function summaries. |
+| **Index** | A project's analysis result: resolved calls and function summaries. |
 | **Summary** | How data flows between a function's formals (and return), and between them and the globals it reaches, as pairs of access paths. |
 | **Global** | A variable a program declares outside any function, written `$name` ([ir.md](ir.md#globals)). One variable for the whole project, shared by every function and every program that declares the name. |
 | **Access path** | A variable followed by a path of fields, offsets, `deref` and `#value` (`x.f.g`, `p.[8].deref`); the unit of taint. Defined, with the IR's semantics, in [ir.md](ir.md). |
@@ -74,20 +74,10 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 - F7. Reuse summaries from a separately indexed project (`--summary`).
 - F8. Apply shipped per-language default models, user models on top, or user models alone.
 
-**Query**
-
-- F9. Find flows from sources to sinks given by model generators, and report them as SARIF:
-  source-to-sink paths or all tainted instructions, each step located in the artifact.
-- F10. Check model files against imported programs before indexing, reporting generators and
-  ports that match nothing.
-- F11. Make a vacuous run visible: a query that could not be answered, or whose endpoints
-  matched nothing, says so in the SARIF and exits non-zero.
-
 **Inspection**
 
 - F12. Inspect the store, print imported IR, report call-graph statistics, and dump the index
-  and taint graphs (Graphviz).
-- F13. Run import, index and query in one command (`ctadl go`).
+  graph (Graphviz).
 
 ### 3.2 Non-functional
 
@@ -117,12 +107,12 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 ### 4.1 Pipeline
 
 ```
- artifact ──import──▶ IR + source info ──index──▶ facts + summaries ──query──▶ SARIF
-            (front end)   (store)       (SSA, codegen,    (store)    (taint search,
-                                         Datalog fixpoint)            formatter)
-                            ▲                   ▲                         ▲
-                            │                   │                         │
-                         models: propagation, bridge, dispatch      models: sources, sinks
+ artifact ──import──▶ IR + source info ──index──▶ facts + summaries
+            (front end)   (store)       (SSA, codegen,    (store)
+                                         Datalog fixpoint)
+                                                ▲
+                                                │
+                         models: propagation, bridge, dispatch
 ```
 
 Each stage reads only what the previous one saved, so stages can be rerun and debugged
@@ -137,22 +127,17 @@ separately.
    approximation, with respect to [ir.md](ir.md)'s semantics. Codegen turns IR, call-resolution policy and
    propagation models into Datalog facts; the index engine runs them to fixpoint, producing
    the call graph and summaries, saved as parquet.
-3. **Query.** Source and sink models are matched by name and signature against the programs,
-   then resolved against the index to call sites and access paths. The query engine computes
-   taint, and the formatter maps it to source locations and writes SARIF. Query results are
-   not persisted.
 
 ### 4.2 Analysis
 
-- **Engines.** Index and query rules are written once as Datalog in Rust with
+- **Engines.** Index rules are written once as Datalog in Rust with
   [Ascent](https://s-arash.github.io/ascent/) and compiled into engines that differ only in
   execution and storage: serial, parallel (rayon), and serial with large relations in
   memory-mapped LSM stores.
 - **Semantics.** What the analysis computes is [ir.md](ir.md)'s least labeling: local flow is
   its assignment rules, flow- and path-insensitive, with order kept only as far as SSA keeps
   it. The engines approximate it, and every deviation is a row of the
-  [approximations register](limitations.md#approximations-register), measured by
-  `tests/integration/reference_parity.rs`.
+  [approximations register](limitations.md#approximations-register).
 - **Field propagation** is the forward and backward rules of [ir.md](ir.md#assignment) applied
   to a path's suffixes.
 - **Finite access paths.** Propagation builds only paths from the program text, from models,
@@ -176,12 +161,8 @@ separately.
   and context sensitivity appears only where needed.
 - **Aliasing** is [ir.md](ir.md#assignment)'s backward rule. The index implements it as a local
   Andersen-style analysis of each formal's and global's copy aliases, so a store through an
-  alias still yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`), and the query as a
-  backward hop along whole-variable copies; both are restrictions or widenings of the rule
-  recorded in the register.
-- **Queries** meet forward from sources and backward from sinks. A reported path leaves
-  functions through returns before entering them through calls, so it respects call/return
-  matching, except across a global, which connects any two functions.
+  alias still yields a summary (`l = p1; l.f = p2` gives `p2 -> p1.f`); it is a restriction of
+  the rule recorded in the register.
 - **Cross-language.** The JNI bridge and Android intent handling (`ctadl-ascent/src/languages`)
   add call edges between a project's programs.
 
@@ -199,29 +180,20 @@ more of these to a port of each match:
   sides already share;
 - a **dispatch**: the targets a virtual call resolves to, replacing call resolution there.
 
-Propagation, bridge and dispatch models are consumed at index time; sources and sinks at query
-time. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
+Propagation, bridge and dispatch models are consumed at index time. Sources and sinks are
+matched there only to refuse a dispatch model whose targets hold one. Per-language defaults ship in `ctadl-ascent/src/models/defaults`.
 
 ### 4.4 Source info
 
 Each IR instruction carries a span id into its import's source-info tables, which map it to
 a byte range in a file of an original artifact, recorded by path and content hash. Front ends
-record spans as they lower, and IR passes carry them along. The formatter resolves spans to
-SARIF locations. For a text file it rereads the file, checks its hash, and computes line and
-column. For a binary it uses the absolute and section-relative address. Every location also
-gets its enclosing function as a logical location. A text file that is missing, or whose hash
-no longer matches, falls back to a byte offset and a notification. Each location points to a
-SARIF artifact entry carrying the content hash, so a consumer can check that the artifact in
-front of them is the one that was analyzed.
+record spans as they lower, and IR passes carry them along.
 
 ### 4.5 Output
 
-One SARIF run, one rule per kind of result: `C0001` source-to-sink paths (a code flow with
-intra-/interprocedural steps), `C0002` tainted instructions, `C0003`/`C0004` source and sink
-vertices, `C0005` tainted vertices, `C0006` functions holding both source- and sink-tainted
-data (an "almost" path), `C0007` external functions that absorb taint. `CTADL0xxx`
-notifications report on the run itself. `--sarif-profile` (`human`, `agent`, `machine`,
-`debug`) selects what is emitted.
+An import and an index each write `notifications.sarif` next to themselves: one SARIF run whose
+`CTADL0xxx` notifications report on the run itself. `ctadl index` carries its imports'
+notifications into its own file.
 
 ### 4.6 Storage
 
@@ -236,8 +208,7 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   that run the engine.
 - Golden tests for readers and front ends (`xtask`).
 - A nightly regression suite (`cargo xtask regression`, or the `regression` flake check):
-  small programs in every front end, each with a known answer (the source lines a flow must
-  reach), built with real toolchains (javac, dx, gcc, Ghidra, the Android SDK) from Nix.
+  pcode fact cases and reader, APK and CIL checks, built with real toolchains from Nix.
 
 ## 6. Known limitations
 
@@ -246,5 +217,3 @@ See [limitations.md](limitations.md). Also:
 - Only context-free summaries cross a `--summary` boundary, with the summary project's
   program-level flows between globals.
 - A native method that fails to link produces no flow and no error, only a JNI bridge log line.
-- The formatter does not yet check source hashes (a file edited since import gets wrong lines,
-  and a missing one fails the query), and SARIF does not yet carry artifact hashes.

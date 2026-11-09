@@ -10,8 +10,7 @@
 //!
 //! The import takes ~13 s and the checks read one shared store, except
 //! `apk:manifest-and-intents`. It indexes, which takes longer than everything else here together,
-//! and writes the project `apk:model-check` asserts is absent, so it imports into a store of its
-//! own ([`run_index_check`]) and runs alongside the others.
+//! so it imports into a store of its own ([`run_index_check`]) and runs alongside the others.
 //!
 //! Nothing here needs a toolchain: the APK is prebuilt and checked in, so unlike the `dex:*` and
 //! `jvm:*` checks there is no javac, no `dx`, and no Ghidra in the loop. All it needs is `ctadl`.
@@ -40,7 +39,6 @@ const IMPORT: &str = "app";
 pub const CHECKS: &[&str] = &[
     "apk:import",
     "apk:no-native-libs",
-    "apk:model-check",
     "apk:report",
     "apk:report-invariants",
     "apk:reimport",
@@ -81,13 +79,6 @@ const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// that forgets the store's readers has to come through here.
 const IMPORT_FORMAT_VERSION: &str = "15";
 
-/// A Portcullis model file that selects something in any Java app: every `toString` override.
-/// The point is the *checking*, not the model, so the cheapest rule that cannot match nothing is
-/// the right one.
-const MODELS: &str = r#"source(F::return, kind = "k") :-
-  fun(F, name = "toString");
-"#;
-
 /// Import the app once, then run every check but [`INDEX_CHECK`] against that store. Returns named
 /// (check, outcome) pairs to fold into the regression report.
 ///
@@ -119,13 +110,11 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
     }
 
     // Positional, and in the order [`CHECKS`] names them -- the checks share a store, so the
-    // order is part of the arrangement rather than a presentation choice. `apk:model-check` runs
-    // before `apk:reimport` because it wants the store exactly as the first import left it,
-    // and `apk:reimport` re-imports.
+    // order is part of the arrangement rather than a presentation choice. `apk:reimport` runs
+    // last because it re-imports.
     let outcomes = [
         to_outcome(check_import(work, &state, &store, &apk)),
         to_outcome(check_no_native_libs(&store)),
-        to_outcome(check_model_check(work, &state, &store)),
         to_outcome(check_report(work, &state, &store)),
         to_outcome(check_report_invariants(work, &state)),
         to_outcome(check_reimport(work, &state, &store, &apk)),
@@ -273,7 +262,6 @@ fn check_import(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<(
 /// sub-imports and stages nothing.
 ///
 /// This is the path every APK without native code takes, and the one that must not need Ghidra.
-/// The `Jni:*+apk` cases cover the other path, where there *are* libraries to find.
 fn check_no_native_libs(store: &Path) -> Result<()> {
     let config = read_config(store)?;
     let subs = config["sub_imports"]
@@ -289,107 +277,6 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
         !staged.exists(),
         "nothing was extracted, so {} should not exist",
         staged.display()
-    );
-    Ok(())
-}
-
-/// `ctadl query` against an import that was never indexed reports what the model files select,
-/// and writes nothing into the store.
-///
-/// Two halves, and both matter. The report has to name the imports it checked and say the
-/// rule matched something -- a check that silently matches nothing is worse than no check,
-/// because it reads as a clean bill of health. And the command must leave the store alone: it
-/// could not run a query, so a project written here would be an empty index that the next real
-/// `ctadl query` would happily use.
-///
-/// The synthetic-program half of this -- what `check_programs` decides, given programs and no
-/// store -- stays in `ctadl-ascent/tests/integration/model_check.rs`, which needs no artifact and runs in
-/// milliseconds. What is here is the half that needs a real import.
-fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
-    let models = work.join("models.ctadl");
-    std::fs::write(&models, MODELS).with_context(|| format!("writing {}", models.display()))?;
-    let sarif = work.join("model-check.sarif");
-
-    // Deliberately not `run_checked`: a query with no index exits non-zero, and that is the
-    // contract -- it could not answer the question it was asked. The report it wrote on the way
-    // out is what is under test.
-    let output = command(
-        work,
-        state,
-        &[
-            "query",
-            IMPORT,
-            "-m",
-            &models.to_string_lossy(),
-            "-o",
-            &sarif.to_string_lossy(),
-        ],
-    )?
-    .output()
-    .context("failed to spawn `ctadl query`")?;
-    ensure!(
-        !output.status.success(),
-        "`ctadl query` with no index exited 0; it cannot have run a query, and the non-zero \
-         exit is what tells a caller so"
-    );
-
-    let text = std::fs::read_to_string(&sarif).with_context(|| {
-        format!(
-            "`ctadl query` wrote no report at {}\n--- stderr ---\n{}",
-            sarif.display(),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        )
-    })?;
-    let doc: Value =
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", sarif.display()))?;
-    let notifications = &doc["runs"][0]["invocations"][0]["toolConfigurationNotifications"];
-    let notifications = notifications
-        .as_array()
-        .with_context(|| format!("no toolConfigurationNotifications in {}", sarif.display()))?;
-    let by_id = |id: &str| -> Option<&Value> {
-        notifications
-            .iter()
-            .find(|n| n["descriptor"]["id"].as_str() == Some(id))
-    };
-
-    // Which imports were checked. Naming the import names everything imported out of it, so for
-    // an APK this is the app plus its native libraries -- of which this one has none.
-    let checked = by_id("CTADL0008.no-index-model-check-only")
-        .with_context(|| format!("no `no-index-model-check-only` notification in:\n{text}"))?;
-    let imports: Vec<&str> = checked["properties"]["imports"]
-        .as_array()
-        .context("the notification lists no imports")?
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    ensure!(
-        imports == [IMPORT],
-        "the check ran over {imports:?}, expected [{IMPORT:?}]"
-    );
-    ensure!(
-        checked["properties"]["functions"]
-            .as_u64()
-            .is_some_and(|n| n > 0),
-        "the check reports no functions in the import: {}",
-        checked["properties"]
-    );
-
-    // And that the rule selected something. This one matches `toString`, which any real
-    // Java app has hundreds of.
-    let matched = by_id("CTADL0011.generator-matched")
-        .with_context(|| format!("the rule matched nothing:\n{text}"))?;
-    ensure!(
-        matched["level"] == "note",
-        "a matched rule is a note, not {}",
-        matched["level"]
-    );
-
-    // Nothing ran, so nothing may be recorded.
-    let project = store.join(PROJECTS_DIR).join(IMPORT);
-    ensure!(
-        !project.exists(),
-        "the model check wrote a project config: {}",
-        project.display()
     );
     Ok(())
 }
@@ -1044,7 +931,7 @@ mod tests {
     /// mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 8, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 7, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
         assert_eq!(
             CHECKS[CHECKS.len() - 2..],
@@ -1116,18 +1003,5 @@ mod tests {
         found.save(&dir).unwrap();
         fails_with("30 of 140 split classes still have live merged methods");
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// The model file the model check is run with has to be a model file. It is written from a
-    /// string constant, so nothing else would catch a typo in it until the nightly ran.
-    #[test]
-    fn the_model_file_is_portcullis() {
-        let program =
-            ctadl_ascent::models::portcullis::parse::parse_program(MODELS).expect("MODELS parses");
-        assert_eq!(
-            program.rules.len(),
-            1,
-            "one rule, which the check expects to match"
-        );
     }
 }

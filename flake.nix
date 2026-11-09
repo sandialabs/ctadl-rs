@@ -100,9 +100,6 @@
             rustToolchain
             pkgs.jq
             pkgs.python3
-            # `xtask regression` validates the SARIF each taint case emits by
-            # running this; without it on PATH the checks self-skip.
-            checksarif
             # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
             # would also claim `cc`, and on Darwin that is fatal: rustc links
             # through `cc`, and gcc passes -no_compact_unwind, so the binary
@@ -113,13 +110,7 @@
             # Where it is not cross (x86_64 Linux) it collapses to the native
             # gcc, which is the right linker there anyway.
             pkgs.pkgsCross.gnu64.stdenv.cc
-            # The 32-bit x86 toolchain (`i686-unknown-linux-gnu-` prefixed, so it
-            # claims no `cc` either), for the JNI cases that need a 32-bit
-            # library: the ABI on which a `long` arrives split in two.
-            pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
-            android.dex-reader
-            android.jvm-reader
             android.androidSdk.androidsdk
             android.jdk
             android.baksmali
@@ -231,18 +222,17 @@
                   # the JDK and Android SDK in testEnv / PATH.
                   # `--dex-apk` feeds a second family too: the `apk:*` checks,
                   # which drive ctadl itself over that same app -- import it,
-                  # read the store back, model-check it unindexed. They need no
-                  # toolchain, only the CTADL_BIN below.
+                  # read the store back, report on it. They need no toolchain,
+                  # only the CTADL_BIN below.
                   # xtask normally rebuilds ctadl from source to guard against a
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
-                  export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
                   # The `cil:*` checks read Cecil's test corpus (the pinned
                   # input), the Cecil goldens and the built fixtures, and diff
                   # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
+                    --frontend dex,jvm,pcode,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --cil-goldens ${./xtask/cil-goldens} \
@@ -338,7 +328,6 @@
             ANDROID_NDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
             ANDROID_DEBUG_SYSTEM_IMAGE = android.androidDebugSystemImage;
             FRIDA_SERVER = "${android.fridaServer}";
-            CTADL_ANDROID_ICC_APKS = "${android.droidbenchIccApks}";
             DOTNET_NOLOGO = "1";
             DOTNET_CLI_TELEMETRY_OPTOUT = "1";
             DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";

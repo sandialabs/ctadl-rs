@@ -17,8 +17,8 @@ Three implementations follow this document:
 
 - `ctadl_ir::semantics`, the reference implementation: a direct evaluation of the rules below,
   used as an oracle on small programs.
-- The index (`ctadl-index`) and the query (`ctadl-ascent/src/query_engine`), the engines, which
-  compute the same labeling compositionally and at scale, deviating only as the register says.
+- The index (`ctadl-index`), the engine, which computes the same labeling compositionally and at
+  scale, deviating only as the register says.
 - `ctadl_ir::cir::path`, the one implementation of the path equations.
 
 ## Syntax
@@ -295,6 +295,3 @@ documentation:
 - `ctadl-ir/src/cir/tests.rs`: one test per verifier check.
 - `frontends/ctadl-flowy/tests/semantics/*.flowy`: one program per rule, run on the reference
   implementation, each pinning its observable in an `// expect:` block.
-- `ctadl-ascent/tests/integration/reference_parity.rs`: the engines against the reference on the
-  corpus and every `.tnt` program; every difference is a row of the
-  [approximations register](limitations.md#approximations-register).

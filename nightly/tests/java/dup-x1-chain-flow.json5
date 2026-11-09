@@ -1,5 +1,0 @@
-{
-  // Flow: x = o.data = source() (15) -> sink(x) (16). The positive twin of
-  // DupX1Chain: the value dup_x1 copies must still reach x.
-  "expected_lines": [15, 16]
-}

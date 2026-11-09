@@ -1,6 +1,0 @@
-{
-  // `throughGrid` carries the taint past a two-dimensional `multianewarray`.
-  // The stores at lines 20 and 22 are dropped: pure copies
-  // (see "Pure copies" in nightly/README.md).
-  "expected_lines": [14, 28]
-}

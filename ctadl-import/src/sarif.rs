@@ -1,7 +1,6 @@
 //! What every SARIF file ctadl writes shares: the tool it names, the invocation's command line
 //! and times, how notifications and their descriptors are built, and the document's key order.
-//! `ctadl query`'s results and each step's `notifications.sarif` (see [`crate::notifications`])
-//! are both built from these.
+//! Each step's `notifications.sarif` (see [`crate::notifications`]) is built from these.
 
 use std::collections::BTreeMap;
 

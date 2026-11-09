@@ -1,6 +1,0 @@
-{
-  // `limit()` is four bytes -- `sipush 1024; ireturn` -- so a four-byte operand
-  // read runs off the end of the code array and fails the class, taking this
-  // flow with it.
-  "expected_lines": [16, 32]
-}

@@ -1,5 +1,0 @@
-{
-  // Flow: t = source() (19) -> get().data = t (20) -> sink(h.data) (26), where
-  // get() returns holder. The store goes to the object get() returned, not to t.
-  "expected_lines": [19, 26]
-}

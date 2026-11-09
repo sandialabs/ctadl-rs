@@ -1,4 +1,0 @@
-{
-  // Taint set in a string-switch arm, sunk by the caller.
-  "expected_lines": [59, 60]
-}

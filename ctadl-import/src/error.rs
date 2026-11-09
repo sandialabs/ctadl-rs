@@ -89,11 +89,7 @@ pub enum Error {
     },
     /// No index has been written for the project yet. This is different from
     /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read.
-    #[error(
-        "project '{project}' has no index; run `ctadl index {project}` first. \
-         With `--models` given, `ctadl query {project}` reports what those files match in the \
-         imported programs without one."
-    )]
+    #[error("project '{project}' has no index; run `ctadl index {project}` first.")]
     MissingIndex { project: String },
     #[error(
         "the index for project '{project}' was created by an incompatible version of ctadl \

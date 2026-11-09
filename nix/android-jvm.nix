@@ -1,7 +1,6 @@
 # The dex/Android/JVM toolchain: the Android SDKs (the one the regression suite
 # builds with, and a larger one for debugging apps), the app-debugging tools,
-# the JDK, baksmali, smali, ASM, the DroidBench APKs, and the dex-reader and
-# jvm-reader packages and unit tests.
+# the JDK, baksmali, smali, ASM, and the dex-reader and jvm-reader unit tests.
 {
   pkgs,
   naersk-lib,
@@ -186,89 +185,6 @@ let
       echo ${pkgs.lib.concatStringsSep ":" jars}
     '';
 
-  # The readers' source: the workspace root plus the two readers, not the
-  # whole tree, so that editing the rest of the repo does not rebuild
-  # them. The root manifest still lists every member, which cargo would
-  # fail to load, so `preBuild` cuts `members` down to the two readers;
-  # naersk runs it in its dependency pass too.
-  readersSrc = pkgs.lib.fileset.toSource {
-    root = ../.;
-    fileset = pkgs.lib.fileset.unions [
-      ../Cargo.toml
-      ../Cargo.lock
-      ../readers/dex-reader
-      ../readers/jvm-reader
-    ];
-  };
-  readersPreBuild = ''
-    sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|' Cargo.toml
-  '';
-
-  # The dumper of the reader crate `name`. Each dumper is an *example* of
-  # its crate, not a bin, so that a plain `cargo build` -- which is what
-  # packages.default runs -- leaves it out of the distro. Examples are not
-  # built by default, so ask for them by name.
-  #
-  # Two details of the target selection:
-  #
-  # - The src is `readersSrc`, not the crate's own directory. Each reader
-  #   is a workspace member, and a member cannot be built alone: its
-  #   `version.workspace = true` needs the root manifest.
-  # - `--lib` rides along with `--examples` for naersk's sake. naersk
-  #   builds dependencies in a first pass over a stub source tree, which
-  #   has no examples/ directory; with `--examples` alone that pass
-  #   matches no targets, builds nothing, and the dependency caching it
-  #   exists for is lost. `--lib` gives it the crate's real dependencies
-  #   to chew on.
-  #
-  # naersk installs whatever cargo reports as an executable, and an
-  # example is one, so the dumper lands at $out/bin/<name>.
-  readerExamples =
-    name:
-    naersk-lib.buildPackage {
-      src = readersSrc;
-      preBuild = readersPreBuild;
-      version = workspaceVersion;
-      inherit name;
-      release = false;
-      cargoBuildOptions =
-        x:
-        x
-        ++ [
-          "--package"
-          name
-          "--lib"
-          "--examples"
-        ];
-    };
-
-  # The DEX dumper the linemap step of the DEX regression tests runs.
-  dex-reader = readerExamples "dex-reader";
-
-  # The JVM dumper, for the JVM E2E linemap step.
-  jvm-reader = readerExamples "jvm-reader";
-
-  # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
-  # at the commit the specs pin instead of being committed to this repo.
-  # xtask finds them through CTADL_ANDROID_ICC_APKS; without it those cases
-  # SKIP.
-  droidbenchIccApks =
-    let
-      rev = "a57fa6f42f278591695672f1aa8b37c275139370";
-      apk = name: hash: {
-        name = "${name}.apk";
-        path = pkgs.fetchurl {
-          url = "https://raw.githubusercontent.com/secure-software-engineering/DroidBench/${rev}/apk/InterComponentCommunication/${name}.apk";
-          inherit hash;
-        };
-      };
-    in
-    pkgs.linkFarm "droidbench-icc-apks" [
-      (apk "ActivityCommunication2" "sha256-KyJvdF2BdCccHox9k+op/GbzEbeHKGmQ6op/HOrxvcA=")
-      (apk "ActivityCommunication5" "sha256-MVtam+x1OU2TUN2PBaJnULM2PlC/jBawvLwPdS05FVw=")
-      (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
-    ];
-
   # The pure-Rust unit tests of the reader crate `name`, built offline by
   # naersk in test mode.
   #
@@ -315,9 +231,6 @@ in
     baksmali
     smali
     asmClasspath
-    dex-reader
-    jvm-reader
-    droidbenchIccApks
     ;
   androidSdkBuildTools = buildToolsDir androidSdk;
   androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;

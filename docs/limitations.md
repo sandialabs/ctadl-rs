@@ -10,8 +10,7 @@
   the lowered program, calling any such delegate may call any of the class's non-capturing
   lambdas, and taint passed to one reaches what another does with its argument, a false
   positive. The imprecision is the lowering's: the index carries a call target held in a global
-  between functions no call chain connects, as G2 requires. The nightly `Cil:delegates` case is an
-  XFAIL for it.
+  between functions no call chain connects, as G2 requires.
 - **The address of a C struct member is not nameable.** The C frontend has no struct layout,
   so `&s.f` has no address in the IR and falls back to a copy of `s.f`: a callee that writes
   through that pointer (`init(&s.f)`) does not taint `s.f` in the caller, a false negative.
@@ -37,25 +36,22 @@
 
 ## Approximations register
 
-The index and the query deviate from the semantics of [ir.md](ir.md) only here, and the IR
+The index deviates from the semantics of [ir.md](ir.md) only here, and the IR
 passes only where a row says so. "Loses" means a flow the semantics derives may be absent;
 "adds" means a flow the semantics does not derive may be present.
 
 | Name | Where | What | Direction | Reported |
 | --- | --- | --- | --- | --- |
-| `admissible paths` | index, query | Admissible path set: suffixes outside program ∪ model ∪ one-level concatenations are dropped | loses | no (structural) |
+| `admissible paths` | index | Admissible path set: suffixes outside program ∪ model ∪ one-level concatenations are dropped | loses | no (structural) |
 | `callee cells merge` | index | Cells inside a callee merge all callers (S14). A global's cells merge every instance too, which is G2, not a deviation | adds | no (structural) |
 | `resolution ladder` | index | Resolution ladder: dispatch model, CHA under threshold | adds | config recorded |
 | `hybrid context` | index | Hybrid context widening (`collapse`, `bounded`, `spill`) | adds | config recorded |
 | `backward alias rule` | index | Backward (S8) only along whole-variable copy chains from a formal and at program-store destinations: `l = p.f; l.g = a` reaches `p.f.g` only when `l` is a temporary the load-chain composition pass (`ssa::compose_loads`) anchors on `p`; `y.f = p; y.f.g = a` never reaches `p.g` | loses | no (doc comment on the rule) |
 | `shared formals` | index | `Shared` formals (pcode, endpoints, JNI): whole-variable write-back through a parameter. A global is not a formal (G5), so no function writes globals back | adds | no (doc comment on the rule) |
 | `copied formals` | index | `Copied` formals: no field write-back through a parameter | loses | no (doc comment on the rule) |
-| `object hop` | query | Object hop at the empty path | adds | no |
-|  | query | Saturating sources read below the port; wildcard sinks match below the port | adds (model opt-in) | model text |
 | `mem2reg window` | passes | `mem2reg window:N` (and `exact`, a window of one slot): an escape reaching past the window | loses | no; `above` avoids it |
 | `mem2reg full` | passes | `mem2reg full` | loses | per function |
 | `copy_prop` | passes | `copy_prop` rewrites a store through a copy `t = v` onto `v`: a store at `t.#value` lands on `v.#value`, and stores through `t` and `v` merge as S9's do | adds | no |
-|  | query | Call/return matching by one bit, not a site stack | adds (witness only) | no |
 |  | `--summary` | Only unconditional rows cross: a summary project's `Always` summaries, including rows rooted at a global, and its program-level flows between globals | loses | docs/spec.md §6 |
 |  | front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
@@ -63,9 +59,4 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
 |  | front ends | CIL: a delegate is lowered as its target, so delegates over one target share their method; the target of every non-capturing lambda of a class is the one static `<>c.<>9`, so their call targets merge | adds | the list above |
 
-The query resets call/return matching at a hop through a global. That is exact under G2, since a
-global is shared by every instance, and is not a row.
-
-Anything not in this table that differs from the reference implementation is a bug. A test
-program that shows a row names it on a `// parity: <name> <adds|loses>: ...` line, which
-`ctadl-ascent/tests/integration/reference_parity.rs` checks.
+Anything not in this table that differs from the reference implementation is a bug.

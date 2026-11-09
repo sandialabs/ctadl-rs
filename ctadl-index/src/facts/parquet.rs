@@ -21,7 +21,7 @@ use parquet::{
 use paste::paste;
 
 use crate::error::{Error, ErrorContext};
-use crate::facts::{self, QueryEndpoint};
+use crate::facts;
 
 type Str = facts::Str;
 
@@ -586,7 +586,6 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
     }
 }
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
-impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
 impl_encode_newtype!(facts::GlobalId, Str, GenericStringArray<i64>);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
@@ -790,8 +789,6 @@ impl EncodeColumn<[u8; 8]> for DefaultEncoder {
 }
 
 impl EncodeColumn<Option<[u8; 8]>> for DefaultEncoder {
-    /// TaintDirection is encoded as a boolean. 'true' is the forward direction, 'false' is the
-    /// backward direction.
     #[inline]
     fn encode_column(name: &str, col: Vec<Option<[u8; 8]>>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
         let fld = vec![arrowd::Field::new(name, arrowd::DataType::UInt64, true)];
@@ -856,63 +853,6 @@ impl DecodeColumn<Option<facts::PackedInsnSiteId>> for DefaultDecoder {
         <Self as DecodeColumn<Option<[u8; 8]>>>::into_decode_array(name, batch)
             .into_iter()
             .map(|o| o.map(facts::PackedInsnSiteId))
-    }
-}
-
-// A `FlowEdge` spans two arrow columns: a `<name>_tag` byte (0 = Intra, 1 =
-// Call, 2 = Return, 3 = Global) and a nullable `<name>_site` holding the anchoring call
-// instruction for Call/Return edges (null for Intra).
-impl EncodeColumn<facts::FlowEdge> for DefaultEncoder {
-    #[inline]
-    fn encode_column(name: &str, col: Vec<facts::FlowEdge>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::FlowEdge::*;
-        let tag_column_name = name.to_owned() + "_tag";
-        let site_column_name = name.to_owned() + "_site";
-        let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
-            &tag_column_name,
-            col.iter()
-                .map(|e| match e {
-                    Intra => 0u8,
-                    Call(_) => 1,
-                    Return(_) => 2,
-                    Global => 3,
-                })
-                .collect_vec(),
-        );
-        let (site_fields, site_arrays) =
-            <Self as EncodeColumn<Option<facts::PackedInsnSiteId>>>::encode_column(
-                &site_column_name,
-                col.into_iter().map(|e| e.site()).collect_vec(),
-            );
-        fields.extend(site_fields);
-        arrays.extend(site_arrays);
-        (fields, arrays)
-    }
-}
-
-impl DecodeColumn<facts::FlowEdge> for DefaultDecoder {
-    #[inline]
-    fn into_decode_array(
-        name: &str,
-        batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = facts::FlowEdge> {
-        use facts::FlowEdge::*;
-        let tag_column_name = name.to_owned() + "_tag";
-        let site_column_name = name.to_owned() + "_site";
-        let tags = <Self as DecodeColumn<u8>>::into_decode_array(&tag_column_name, batch);
-        let sites = <Self as DecodeColumn<Option<facts::PackedInsnSiteId>>>::into_decode_array(
-            &site_column_name,
-            batch,
-        );
-        izip![tags, sites]
-            .map(|(tag, site)| match tag {
-                0 => Intra,
-                1 => Call(site.expect("call FlowEdge missing anchoring site")),
-                2 => Return(site.expect("return FlowEdge missing anchoring site")),
-                3 => Global,
-                _ => panic!("bad encoding of FlowEdge"),
-            })
-            .collect_vec()
     }
 }
 
@@ -1092,72 +1032,6 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
     }
 }
 
-impl EncodeColumn<facts::TaintState> for DefaultEncoder {
-    #[inline]
-    fn encode_column(
-        name: &str,
-        col: Vec<facts::TaintState>,
-    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        <Self as EncodeColumn<bool>>::encode_column(
-            name,
-            col.into_iter()
-                .map(|s| match s {
-                    facts::TaintState::Free => true,
-                    facts::TaintState::Restricted => false,
-                })
-                .collect_vec(),
-        )
-    }
-}
-
-impl DecodeColumn<facts::TaintState> for DefaultDecoder {
-    #[inline]
-    fn into_decode_array(
-        name: &str,
-        batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = facts::TaintState> {
-        <Self as DecodeColumn<bool>>::into_decode_array(name, batch)
-            .into_iter()
-            .map(|s| match s {
-                true => facts::TaintState::Free,
-                false => facts::TaintState::Restricted,
-            })
-    }
-}
-
-impl EncodeColumn<facts::TaintDirection> for DefaultEncoder {
-    #[inline]
-    fn encode_column(
-        name: &str,
-        col: Vec<facts::TaintDirection>,
-    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        <Self as EncodeColumn<bool>>::encode_column(
-            name,
-            col.into_iter()
-                .map(|s| match s {
-                    facts::TaintDirection::Forward => true,
-                    facts::TaintDirection::Backward => false,
-                })
-                .collect_vec(),
-        )
-    }
-}
-
-impl DecodeColumn<facts::TaintDirection> for DefaultDecoder {
-    #[inline]
-    fn into_decode_array(
-        name: &str,
-        batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = facts::TaintDirection> {
-        <Self as DecodeColumn<bool>>::into_decode_array(name, batch)
-            .into_iter()
-            .map(|s| match s {
-                true => facts::TaintDirection::Forward,
-                false => facts::TaintDirection::Backward,
-            })
-    }
-}
-
 impl EncodeColumn<facts::IntentPairKind> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -1189,67 +1063,6 @@ impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
                 1 => facts::IntentPairKind::Implicit,
                 _ => panic!("bad encoding of IntentPairKind"),
             })
-    }
-}
-
-impl EncodeColumn<QueryEndpoint> for DefaultEncoder {
-    #[inline]
-    fn encode_column(name: &str, col: Vec<QueryEndpoint>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        DefaultEncoder::encode_all(
-            &[
-                &(name.to_owned() + "_infunc"),
-                &(name.to_owned() + "_var"),
-                &(name.to_owned() + "_path"),
-                &(name.to_owned() + "_label"),
-                &(name.to_owned() + "_direction"),
-                &(name.to_owned() + "_call_site"),
-            ],
-            col.into_iter()
-                .map(|e| {
-                    (
-                        e.infunc,
-                        e.vertex.0,
-                        e.vertex.1,
-                        e.label,
-                        e.direction,
-                        e.call_site,
-                    )
-                })
-                .collect(),
-        )
-    }
-}
-
-impl DecodeColumn<QueryEndpoint> for DefaultDecoder {
-    #[inline]
-    fn into_decode_array(
-        name: &str,
-        batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = QueryEndpoint> {
-        DefaultDecoder::decode_tuples(
-            &[
-                &(name.to_owned() + "_infunc"),
-                &(name.to_owned() + "_var"),
-                &(name.to_owned() + "_path"),
-                &(name.to_owned() + "_label"),
-                &(name.to_owned() + "_direction"),
-                &(name.to_owned() + "_call_site"),
-            ],
-            batch,
-        )
-        .into_iter()
-        .map(
-            |(infunc, var, path, label, direction, call_site)| QueryEndpoint {
-                infunc,
-                vertex: facts::FlowVertex::new(var, path),
-                label,
-                direction,
-                call_site,
-                // Not persisted: `saturating` is a search-graph concern re-derived from the
-                // model each query.
-                saturating: false,
-            },
-        )
     }
 }
 

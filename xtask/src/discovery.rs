@@ -1,11 +1,8 @@
 //! Test-case discovery.
 //!
-//! A regression case is a source file paired with a JSON config that holds its
-//! known answer (`expected_lines` and the like) and, beside the config, a
-//! Portcullis model file (the config's name with a `.ctadl` extension) that is
-//! the ctadl query. We discover cases by pairing each source with its config
-//! rather than hard-coding a list, so adding a `.java` + matching `.json` +
-//! `.ctadl` is enough to register a new test.
+//! A regression case is a source file under one of the tests directory's case
+//! folders. We discover cases by listing those folders rather than hard-coding
+//! a list, so adding a source file is enough to register a new test.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -20,108 +17,15 @@ pub struct TestCase {
 }
 
 pub enum Kind {
-    /// Java compiled to DEX, mapped back to source lines via a dex linemap.
-    Dex {
-        java: PathBuf,
-        config: PathBuf,
-        models: PathBuf,
-    },
-    /// Java compiled to a JAR, mapped back to source lines via a jvm linemap.
-    Jvm {
-        java: PathBuf,
-        config: PathBuf,
-        models: PathBuf,
-    },
-    /// C compiled to an ELF object, mapped back to lines via `addr2line`.
-    Pcode {
-        source: PathBuf,
-        query: PathBuf,
-        models: PathBuf,
-    },
     /// C compiled to an ELF object and exported by Ghidra, checked on the facts the export
-    /// writes rather than on a query's results. See `regression::check_pcode_facts`.
+    /// writes. See `regression::check_pcode_facts`.
     PcodeFacts { source: PathBuf },
-    /// C parsed directly by the tree-sitter frontend, with source lines read
-    /// straight off the SARIF regions (no compiler, no Ghidra).
-    C {
-        source: PathBuf,
-        query: PathBuf,
-        models: PathBuf,
-    },
-    /// Lua source imported directly; SARIF regions carry source lines, so no
-    /// linemap or compilation step is needed.
-    Lua {
-        source: PathBuf,
-        query: PathBuf,
-        models: PathBuf,
-    },
-    /// Java `native` methods plus the shared library implementing them,
-    /// co-indexed as two imports of one project so the JNI bridge has both
-    /// halves to join. The only two-import case kind.
-    Jni {
-        java: PathBuf,
-        native: PathBuf,
-        config: PathBuf,
-        models: PathBuf,
-        /// A declarative bridging model to use *instead of* the built-in JNI pass. When set,
-        /// the case indexes with `--no-jni-bridge -m <this>`, so it asserts exactly what the
-        /// built-in case asserts and the two are a direct A/B.
-        bridge: Option<PathBuf>,
-        /// How the two artifacts reach `ctadl import`. Every packaging asserts exactly the
-        /// same thing, so the set is a direct A/B on the importer alone.
-        packaging: Packaging,
-        /// The Android ABI the library is built for, from the config's `native_abi`.
-        abi: String,
-        /// Strip the library's debug info before importing it, so Ghidra recovers no types.
-        /// Only for a config with `untyped_native_layout`, which names the layout the bridge
-        /// must then choose.
-        untyped: bool,
-    },
-    /// Pinned external Android ICC benchmark APK plus expected-answer spec.
-    AndroidIcc { spec: PathBuf },
-    /// C# compiled with `dotnet build` and imported through the CIL frontend; see
-    /// `crate::cil::cases`. `source` is a `.cs` file, or a directory of them that are
-    /// separate assemblies. The query model is generated from the config; `models` is an
-    /// optional `<name>-query.ctadl` beside it, loaded in addition.
-    Cil {
-        source: PathBuf,
-        config: PathBuf,
-        models: Option<PathBuf>,
-    },
-}
-
-/// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Packaging {
-    /// Import the DEX and the shared library as two separate artifacts. The baseline.
-    Separate,
-    /// Package both into one APK and import it once, as an ordinary Android app ships.
-    /// Exercises the APK importer finding, extracting, and disassembling `lib/<abi>`.
-    SingleApk,
-    /// Package each into an APK of its own -- a base APK holding the DEX and a
-    /// `config.<abi>.apk` holding only the library -- and import both. This is how an
-    /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
-    /// native half arrives in an APK with no `classes*.dex` in it at all.
-    SplitApks,
-    /// Package both into one APK beside a second, JNI-free library, import it once, and index
-    /// the library on its own into a summary project. The app is then indexed with
-    /// `--no-native-libs --summary <that project>`, so the bridge links against the library's
-    /// symbol and `RegisterNatives` tables and its saved summaries, never its code, and the
-    /// second library is never loaded at all.
-    SummaryApk,
 }
 
 impl Kind {
     pub fn frontend(&self) -> Frontend {
         match self {
-            Kind::Dex { .. } => Frontend::Dex,
-            Kind::Jvm { .. } => Frontend::Jvm,
-            Kind::Pcode { .. } | Kind::PcodeFacts { .. } => Frontend::Pcode,
-            Kind::C { .. } => Frontend::C,
-            Kind::Lua { .. } => Frontend::Lua,
-            Kind::Jni { .. } => Frontend::Jni,
-            Kind::AndroidIcc { .. } => Frontend::AndroidIcc,
-            Kind::Cil { .. } => Frontend::Cil,
+            Kind::PcodeFacts { .. } => Frontend::Pcode,
         }
     }
 }
@@ -135,43 +39,19 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
-    /// The tree-sitter C frontend (`ctadl import -l c`). Exercises the same
-    /// `tests/c/*.c` sources as `Pcode`, but parses them directly and reads
-    /// source lines off the SARIF regions instead of going through Ghidra.
-    C,
-    Lua,
-    /// Not a frontend of its own: the JNI bridge, which needs the dex *and*
-    /// pcode toolchains at once. It selects separately so `--frontend jni` runs
-    /// the two-import cases without also running every dex and pcode case.
-    Jni,
-    /// External Android ICC benchmark APKs (DroidBench ICC / ICC-Bench style).
-    AndroidIcc,
-    /// The cil-reader and CIL frontend checks (see [`crate::cil`]), and the C# taint
-    /// cases under `tests/cil`.
+    /// The cil-reader and CIL frontend checks (see [`crate::cil`]).
     Cil,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] = &[
-        Frontend::Dex,
-        Frontend::Jvm,
-        Frontend::Pcode,
-        Frontend::Lua,
-        Frontend::Jni,
-        Frontend::C,
-        Frontend::AndroidIcc,
-        Frontend::Cil,
-    ];
+    pub const ALL: &'static [Frontend] =
+        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::Cil];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
-            Frontend::C => "c",
-            Frontend::Lua => "lua",
-            Frontend::Jni => "jni",
-            Frontend::AndroidIcc => "android-icc",
             Frontend::Cil => "cil",
         }
     }
@@ -185,16 +65,8 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
-            "c" => Ok(Frontend::C),
-            "lua" => Ok(Frontend::Lua),
-            "jni" => Ok(Frontend::Jni),
-            "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
             "cil" => Ok(Frontend::Cil),
-            other => {
-                bail!(
-                    "unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil)"
-                )
-            }
+            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, cil)"),
         }
     }
 }
@@ -224,158 +96,8 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 
 /// Discover all cases under `tests_dir`, sorted by name for deterministic order.
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = discover_dex(&tests_dir.join("java"))?;
-    cases.extend(discover_pcode(&tests_dir.join("c"))?);
-    cases.extend(discover_pcode_facts(&tests_dir.join("pcode-facts"))?);
-    cases.extend(discover_lua(&tests_dir.join("lua"))?);
-    cases.extend(discover_jni(&tests_dir.join("jni"))?);
-    cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
-    cases.extend(discover_cil(&tests_dir.join("cil"))?);
+    let mut cases = discover_pcode_facts(&tests_dir.join("pcode-facts"))?;
     cases.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(cases)
-}
-
-/// Pair each `foo.cs`, or each `foo/` directory of C# sources (one assembly per file), with
-/// its `foo-query.json5` and, if there is one, `foo-query.ctadl`. Cases report as `Cil:foo`.
-fn discover_cil(dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(dir)? {
-        if !entry.is_dir() && entry.extension().and_then(|e| e.to_str()) != Some("cs") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        let config = dir.join(format!("{stem}-query.json5"));
-        if !config.is_file() {
-            continue;
-        }
-        let models = config.with_extension("ctadl");
-        cases.push(TestCase {
-            name: format!("Cil:{stem}"),
-            kind: Kind::Cil {
-                source: absolute(&entry)?,
-                config: absolute(&config)?,
-                models: models.is_file().then(|| absolute(&models)).transpose()?,
-            },
-        });
-    }
-    Ok(cases)
-}
-
-fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(dir)? {
-        if entry.extension().and_then(|e| e.to_str()) != Some("json5") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        cases.push(TestCase {
-            name: format!("AndroidIcc:{stem}"),
-            kind: Kind::AndroidIcc {
-                spec: absolute(&entry)?,
-            },
-        });
-    }
-    Ok(cases)
-}
-
-/// Pair each `Foo.java` with its kebab-cased `foo.json` (or `foo.json5`) and that
-/// config's [`case_models`]. A `.java` without a matching config (e.g.
-/// `MultiImplFlow.java`) is skipped.
-fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !java_dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(java_dir)? {
-        if entry.extension().and_then(|e| e.to_str()) != Some("java") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        // Prefer a JSON5 config (it can carry inline comments) over a plain JSON one.
-        let kebab = to_kebab_case(&stem);
-        let json5 = java_dir.join(format!("{kebab}.json5"));
-        let json = java_dir.join(format!("{kebab}.json"));
-        let config = if json5.is_file() { json5 } else { json };
-        if config.is_file() {
-            let java = absolute(&entry)?;
-            let models = case_models(&config)?;
-            let config = absolute(&config)?;
-            cases.push(TestCase {
-                name: stem.clone(),
-                kind: Kind::Dex {
-                    java: java.clone(),
-                    config: config.clone(),
-                    models: models.clone(),
-                },
-            });
-            cases.push(TestCase {
-                name: format!("Jvm:{stem}"),
-                kind: Kind::Jvm {
-                    java,
-                    config,
-                    models,
-                },
-            });
-        }
-    }
-    Ok(cases)
-}
-
-/// Pair each `foo.c` with a query JSON and its [`case_models`], then register it
-/// against *both* C frontends. We prefer `foo-query.json`, falling back to a
-/// shared `query.json` (whose model is the shared `query.ctadl`).
-///
-/// The same source drives the `Pcode` frontend (compiled through Ghidra) and the
-/// tree-sitter `C` frontend, mirroring how a single `.java` yields both a `Dex`
-/// and a `Jvm` case. The two are distinct `TestCase`s with distinct names, so
-/// each is selected, run, and reported on its own -- a C failure cannot mask or
-/// fail a Pcode case and vice versa. The Pcode case keeps the bare stem; the C
-/// case is prefixed `C:`.
-fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !c_dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(c_dir)? {
-        if entry.extension().and_then(|e| e.to_str()) != Some("c") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        let specific = c_dir.join(format!("{stem}-query.json"));
-        let shared = c_dir.join("query.json");
-        let query = if specific.is_file() {
-            specific
-        } else if shared.is_file() {
-            shared
-        } else {
-            continue;
-        };
-        let source = absolute(&entry)?;
-        let models = case_models(&query)?;
-        let query = absolute(&query)?;
-        cases.push(TestCase {
-            name: stem.clone(),
-            kind: Kind::Pcode {
-                source: source.clone(),
-                query: query.clone(),
-                models: models.clone(),
-            },
-        });
-        cases.push(TestCase {
-            name: format!("C:{stem}"),
-            kind: Kind::C {
-                source,
-                query,
-                models,
-            },
-        });
-    }
     Ok(cases)
 }
 
@@ -397,123 +119,6 @@ fn discover_pcode_facts(dir: &Path) -> Result<Vec<TestCase>> {
         });
     }
     Ok(cases)
-}
-
-/// Pair each `foo.lua` -- or each `foo/` directory of Lua sources, imported whole
-/// as one `require` root -- with its `foo-query.json` config and that config's
-/// [`case_models`]. A source without a matching query is skipped, mirroring the
-/// pcode discovery. The name is prefixed with `Lua:` so the reports (and
-/// `--filter`) distinguish it from other frontends' cases.
-fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !lua_dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(lua_dir)? {
-        if !entry.is_dir() && entry.extension().and_then(|e| e.to_str()) != Some("lua") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        let query = lua_dir.join(format!("{stem}-query.json"));
-        if !query.is_file() {
-            continue;
-        }
-        cases.push(TestCase {
-            name: format!("Lua:{stem}"),
-            kind: Kind::Lua {
-                source: absolute(&entry)?,
-                models: case_models(&query)?,
-                query: absolute(&query)?,
-            },
-        });
-    }
-    Ok(cases)
-}
-
-/// Pair each `Foo.java` with its sibling `Foo.c` -- the shared library implementing
-/// its `native` methods -- and its kebab-cased `foo.json` (with its [`case_models`]).
-/// All three must be present:
-/// a case here is by construction about the boundary between the two artifacts, so a
-/// `.java` with no `.c` (or no config) is not a degenerate JNI case, it is not one at
-/// all. Cases report as `Jni:Foo`.
-fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
-    let mut cases = Vec::new();
-    if !jni_dir.is_dir() {
-        return Ok(cases);
-    }
-    for entry in read_dir_sorted(jni_dir)? {
-        if entry.extension().and_then(|e| e.to_str()) != Some("java") {
-            continue;
-        }
-        let stem = file_stem(&entry)?;
-        let native = jni_dir.join(format!("{stem}.c"));
-        if !native.is_file() {
-            continue;
-        }
-        // Prefer a JSON5 config (it can carry inline comments), as the dex cases do.
-        let kebab = to_kebab_case(&stem);
-        let json5 = jni_dir.join(format!("{kebab}.json5"));
-        let json = jni_dir.join(format!("{kebab}.json"));
-        let config = if json5.is_file() { json5 } else { json };
-        if !config.is_file() {
-            continue;
-        }
-        let abi = crate::assertions::read_native_abi(&config)?;
-        let models = case_models(&config)?;
-        let (java, native, config) = (absolute(&entry)?, absolute(&native)?, absolute(&config)?);
-        let mut push = |suffix: &str, packaging, bridge, untyped| {
-            cases.push(TestCase {
-                name: format!("Jni:{stem}{suffix}"),
-                kind: Kind::Jni {
-                    java: java.clone(),
-                    native: native.clone(),
-                    config: config.clone(),
-                    models: models.clone(),
-                    bridge,
-                    packaging,
-                    abi: abi.clone(),
-                    untyped,
-                },
-            });
-        };
-        push("", Packaging::Separate, None, false);
-        push("+apk", Packaging::SingleApk, None, false);
-        push("+split-apks", Packaging::SplitApks, None, false);
-        push("+summary", Packaging::SummaryApk, None, false);
-        let bridge = jni_dir.join(format!("{kebab}.bridge.ctadl"));
-        if bridge.is_file() {
-            push(
-                "+bridge",
-                Packaging::Separate,
-                Some(absolute(&bridge)?),
-                false,
-            );
-        }
-        // The library again with its debug info stripped, so Ghidra recovers no types and a
-        // `long` on a 32-bit ABI shows up as two parameters. Co-indexed only: stripped, Ghidra
-        // infers no return value for an export nothing calls, so the flow cannot come back to
-        // Java, and a sink inside the library is out of reach of a `+summary` app index.
-        if crate::assertions::read_untyped_native_layout(&config)?.is_some() {
-            push("+untyped", Packaging::Separate, None, true);
-        }
-    }
-    Ok(cases)
-}
-
-/// The Portcullis model file a case config is queried with: the config's sibling with its
-/// extension replaced by `.ctadl` (`foo.json5` -> `foo.ctadl`, `foo-query.json` ->
-/// `foo-query.ctadl`). A config without one is an error rather than a skipped case, since
-/// the case could only be run without its query.
-fn case_models(config: &Path) -> Result<PathBuf> {
-    let models = config.with_extension("ctadl");
-    if !models.is_file() {
-        bail!(
-            "{} has no model file: expected {}",
-            config.display(),
-            models.display()
-        );
-    }
-    absolute(&models)
 }
 
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -539,305 +144,23 @@ fn file_stem(path: &Path) -> Result<String> {
         .with_context(|| format!("invalid file name: {}", path.display()))
 }
 
-/// Convert `CamelCase` to `kebab-case`: `ArrayListIteratorFlow` ->
-/// `array-list-iterator-flow`.
-fn to_kebab_case(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_ascii_uppercase() {
-            if i != 0 {
-                out.push('-');
-            }
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        Frontend, Kind, Packaging, case_models, discover, discover_android_icc, discover_jni,
-        to_kebab_case,
-    };
-
-    /// Every shipped case config has its `.ctadl` model beside it, so discovering the shipped
-    /// tree finds every case; and a config without one stops discovery rather than being
-    /// skipped, because a case run without its query would assert nothing about it.
-    #[test]
-    fn a_case_config_needs_a_sibling_model_file() {
-        let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("nightly/tests");
-        if tests.is_dir() {
-            let cases = discover(&tests).expect("discovering the shipped cases");
-            for case in &cases {
-                let models = match &case.kind {
-                    Kind::Dex { models, .. }
-                    | Kind::Jvm { models, .. }
-                    | Kind::Pcode { models, .. }
-                    | Kind::C { models, .. }
-                    | Kind::Lua { models, .. }
-                    | Kind::Jni { models, .. } => models,
-                    Kind::AndroidIcc { .. } | Kind::Cil { .. } | Kind::PcodeFacts { .. } => {
-                        continue;
-                    }
-                };
-                assert_eq!(
-                    models.extension().and_then(|e| e.to_str()),
-                    Some("ctadl"),
-                    "{}",
-                    case.name
-                );
-            }
-        }
-
-        let dir = std::env::temp_dir().join(format!("xtask-case-models-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let config = dir.join("foo-query.json5");
-        std::fs::write(&config, "{}").unwrap();
-        let err = case_models(&config).expect_err("no foo-query.ctadl yet");
-        assert!(err.to_string().contains("foo-query.ctadl"), "{err}");
-        std::fs::write(dir.join("foo-query.ctadl"), "").unwrap();
-        let models = case_models(&config).expect("foo-query.ctadl is there now");
-        assert_eq!(models.file_name().unwrap(), "foo-query.ctadl");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.ctadl`
-    /// yields a second, declaratively-bridged case beside it.
-    ///
-    /// This is the cheap half of the A/B: the runner itself needs `javac`, `dx`, a C compiler
-    /// and Ghidra, so it only runs in the nightly environment. That the pair is *discovered* --
-    /// and that the two halves make the same claims, since they share a config and a model -- is
-    /// checkable everywhere.
-    #[test]
-    fn a_bridge_model_beside_a_jni_case_yields_an_ab_pair() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("nightly/tests/jni");
-        if !dir.is_dir() {
-            return;
-        }
-        let cases = discover_jni(&dir).expect("discovering jni cases");
-        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-        for stem in ["JniFlow", "JniArgShift"] {
-            assert!(
-                names.contains(&format!("Jni:{stem}").as_str()),
-                "the built-in case is missing: {names:?}"
-            );
-            assert!(
-                names.contains(&format!("Jni:{stem}+bridge").as_str()),
-                "the declarative A/B case is missing: {names:?}"
-            );
-            assert!(
-                names.contains(&format!("Jni:{stem}+apk").as_str()),
-                "the APK-packaged A/B case is missing: {names:?}"
-            );
-            assert!(
-                names.contains(&format!("Jni:{stem}+split-apks").as_str()),
-                "the split-APK A/B case is missing: {names:?}"
-            );
-            assert!(
-                names.contains(&format!("Jni:{stem}+summary").as_str()),
-                "the summary-project case is missing: {names:?}"
-            );
-        }
-        // The variants of each case differ in exactly one thing: which mechanism joins
-        // the boundary, or how the artifacts are packaged. Same sources, same config, so
-        // the same assertions.
-        for stem in ["JniFlow", "JniArgShift"] {
-            let of = |suffix: &str| {
-                let name = format!("Jni:{stem}{suffix}");
-                cases
-                    .iter()
-                    .find(|c| c.name == name)
-                    .map(|c| match &c.kind {
-                        Kind::Jni {
-                            java,
-                            native,
-                            config,
-                            models,
-                            bridge,
-                            packaging,
-                            ..
-                        } => (
-                            (java.clone(), native.clone(), config.clone(), models.clone()),
-                            bridge.clone(),
-                            *packaging,
-                        ),
-                        _ => panic!("expected a Jni case for {name}"),
-                    })
-                    .unwrap_or_else(|| panic!("no case named {name}"))
-            };
-            let (artifacts, bridge, packaging) = of("");
-            assert!(bridge.is_none(), "the built-in case uses no model");
-            assert_eq!(packaging, Packaging::Separate);
-
-            // Only the mechanism differs.
-            let (ab_artifacts, ab_bridge, ab_packaging) = of("+bridge");
-            assert_eq!(artifacts, ab_artifacts);
-            assert!(ab_bridge.is_some(), "the A/B case supplies one");
-            assert_eq!(ab_packaging, Packaging::Separate);
-
-            // Only the packaging differs; both use the built-in bridge.
-            for (suffix, expected) in [
-                ("+apk", Packaging::SingleApk),
-                ("+split-apks", Packaging::SplitApks),
-                ("+summary", Packaging::SummaryApk),
-            ] {
-                let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
-                assert_eq!(artifacts, packaged_artifacts);
-                assert!(
-                    packaged_bridge.is_none(),
-                    "{suffix} uses the built-in bridge"
-                );
-                assert_eq!(packaged, expected);
-            }
-        }
-    }
-
-    /// A case with no `.bridge.ctadl` gets the four built-in variants and no A/B one. That is
-    /// how `JniRegister` ships: its boundary is joined by a `RegisterNatives` table recovered
-    /// from the library, and a hand-written bridge model would be testing something else.
-    #[test]
-    fn a_jni_case_without_a_bridge_model_yields_no_ab_pair() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("nightly/tests/jni");
-        if !dir.is_dir() {
-            return;
-        }
-        let cases = discover_jni(&dir).expect("discovering jni cases");
-        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-        // `+summary` is the registry-only boundary reached through a summary project.
-        for suffix in ["", "+apk", "+split-apks", "+summary"] {
-            assert!(
-                names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
-                "the RegisterNatives case is missing: {names:?}"
-            );
-        }
-        assert!(
-            !names.contains(&"Jni:JniRegister+bridge"),
-            "no bridge model ships beside it, so there is nothing to A/B against"
-        );
-    }
-
-    /// A case whose config names an `untyped_native_layout` also runs stripped, co-indexed only,
-    /// and every variant builds for the config's ABI.
-    #[test]
-    fn an_untyped_layout_adds_a_stripped_variant() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("nightly/tests/jni");
-        if !dir.is_dir() {
-            return;
-        }
-        let cases = discover_jni(&dir).expect("discovering jni cases");
-        let wide: Vec<(&str, &Kind)> = cases
-            .iter()
-            .filter(|c| c.name.starts_with("Jni:JniWide"))
-            .map(|c| (c.name.as_str(), &c.kind))
-            .collect();
-        let names: Vec<&str> = wide.iter().map(|(n, _)| *n).collect();
-        assert_eq!(
-            names,
-            [
-                "Jni:JniWide",
-                "Jni:JniWide+apk",
-                "Jni:JniWide+split-apks",
-                "Jni:JniWide+summary",
-                "Jni:JniWide+untyped"
-            ]
-        );
-        for (name, kind) in wide {
-            let Kind::Jni {
-                abi,
-                untyped,
-                packaging,
-                ..
-            } = kind
-            else {
-                panic!("expected a Jni case for {name}");
-            };
-            assert_eq!(abi, "x86", "{name}");
-            assert_eq!(*untyped, name.ends_with("+untyped"), "{name}");
-            if *untyped {
-                assert_eq!(*packaging, Packaging::Separate);
-            }
-        }
-        // Every other case builds for the default ABI and is never stripped.
-        for case in cases.iter().filter(|c| !c.name.starts_with("Jni:JniWide")) {
-            let Kind::Jni { abi, untyped, .. } = &case.kind else {
-                continue;
-            };
-            assert_eq!(
-                (abi.as_str(), *untyped),
-                ("arm64-v8a", false),
-                "{}",
-                case.name
-            );
-        }
-    }
+    use super::Frontend;
 
     #[test]
     fn frontend_parses() {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
-        assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
-        assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
         assert_eq!("cil".parse::<Frontend>().unwrap(), Frontend::Cil);
-        assert_eq!(
-            "android-icc".parse::<Frontend>().unwrap(),
-            Frontend::AndroidIcc
-        );
-        assert_eq!("icc".parse::<Frontend>().unwrap(), Frontend::AndroidIcc);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
-        assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
         assert!("bogus".parse::<Frontend>().is_err());
         // Every variant round-trips through its own name, so `--frontend <x>`
         // accepts anything the report prints.
         for frontend in Frontend::ALL {
             assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
         }
-    }
-
-    #[test]
-    fn discovers_android_icc_specs() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("nightly/tests/android-icc");
-        if !dir.is_dir() {
-            return;
-        }
-        let cases = discover_android_icc(&dir).expect("discovering android icc cases");
-        assert!(
-            cases
-                .iter()
-                .any(|c| c.name == "AndroidIcc:droidbench-activity-communication-2"),
-            "scaffold Android ICC case not discovered"
-        );
-    }
-
-    #[test]
-    fn kebab() {
-        assert_eq!(to_kebab_case("SourceSinkExample"), "source-sink-example");
-        assert_eq!(
-            to_kebab_case("ArrayListIteratorFlow"),
-            "array-list-iterator-flow"
-        );
-        assert_eq!(
-            to_kebab_case("CrossClassStaticFieldFlow"),
-            "cross-class-static-field-flow"
-        );
     }
 }

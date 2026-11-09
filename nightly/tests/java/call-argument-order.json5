@@ -1,6 +1,0 @@
-{
-  // No flow: second(t, "clean") (16) returns its second argument, which is
-  // clean. Mapping the stack (or registers) to parameters in the wrong order, or
-  // returning the wrong stack slot, would taint the result.
-  "expected_lines": []
-}

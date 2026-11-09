@@ -133,11 +133,7 @@ impl DumpCol for IndexConfig {
             storage: _,
             deref_paths,
         } = self;
-        write!(
-            out,
-            "alias_rule={alias_rule} deref_paths={deref_paths}"
-        )
-        .unwrap()
+        write!(out, "alias_rule={alias_rule} deref_paths={deref_paths}").unwrap()
     }
 }
 

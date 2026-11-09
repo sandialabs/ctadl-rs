@@ -26,45 +26,29 @@ migrated to this one as it is loaded; see [§9](#9-migrating-from-the-json-forma
 ### A first model
 
 ```
-// The value Request.getParameter returns is attacker-controlled.
-source(F::return, kind = "UserInput") :-
-  fun(F, name = "getParameter", parent = "Ljavax/servlet/ServletRequest;");
-
-// Whatever reaches the first argument of Runtime.exec is a command injection.
-sink(F::arg(1), kind = "UserInput") :-
+// Runtime.exec's command string flows into the Process it returns.
+propagation(F::return <- F::arg(1)) :-
   fun(F, name = "exec", parent = "Ljava/lang/Runtime;");
 ```
 
 ```bash
 ctadl import /path/to/app.apk --name my-app
-ctadl index my-app
-ctadl query my-app --models first.ctadl --output results.sarif
+ctadl index my-app --models first.ctadl
 ```
 
-CTADL reports every flow from a value `getParameter` returns to the command `exec` runs. A flow is
-reported when a source's `kind` reaches a sink of the same `kind`. `ctadl init-model` writes a
-starter file with a source, a sink and a propagation to edit.
+`ctadl init-model` writes a starter file with a source, a sink and a propagation to edit.
 
 ### Which command reads what
 
-The pipeline is **import → index → query**, and `--models` (repeatable) is accepted by `ctadl
-index`, `ctadl query` and `ctadl go`. The two halves of a model file are consumed by different
-commands, so a model given only to the wrong one does nothing:
+The pipeline is **import → index**, and `--models` (repeatable) is accepted by `ctadl index` and
+`ctadl report`. The heads take effect at index time:
 
-| heads | consumed by | why |
-| --- | --- | --- |
-| `source`, `sink` | `ctadl query` | they define the search, which runs over a finished index |
-| `propagation`, `bridge`, `access_paths`, `dispatch`, the mode heads | `ctadl index` | they become facts the index fixpoint consumes, and it is fixed by the time a query runs |
+| heads | what `ctadl index` does with them |
+| --- | --- |
+| `propagation`, `bridge`, `access_paths`, `dispatch`, the mode heads | they become facts the index fixpoint consumes |
+| `source`, `sink` | matched only to refuse a `dispatch` model whose targets hold one (see [Phases](#phases)); `ctadl index` warns that it does not analyse them |
 
-Passing one file to both commands is normal, and each says what it is ignoring rather than
-dropping it silently (see [Phases](#phases)). Adding a `bridge` or a `propagation` after indexing
-means re-running `ctadl index`.
-
-```bash
-ctadl index my-app --models libc-propagations.ctadl
-ctadl query my-app --models sources-and-sinks.ctadl --output results.sarif
-ctadl go /path/to/app.apk --name my-app --models my-models.ctadl   # all three steps
-```
+Adding a `bridge` or a `propagation` after indexing means re-running `ctadl index`.
 
 ### The built-in defaults
 
@@ -80,48 +64,8 @@ import, chosen by the frontend:
 | flowy | *(none)* |
 
 Your `--models` files are added on top, and a mode head of yours outranks a default's (see
-[Mode priority](#mode-priority)). `--no-default-models` on `ctadl index` or `ctadl go`
-leaves `--models` as the complete set. There are no default sources or sinks: what to search for
-is yours to say.
-
-### Checking a model file before you index
-
-Only half of matching needs an index. The rules are evaluated against each imported program's
-functions, method table and call sites, which needs the import and nothing else; resolving what
-they matched to the index's function ids, fanning endpoints out over call sites and expanding
-wildcard sinks is the half that needs the index. Functions are never optimized out, so a source
-or sink on a function is fully decided by the first half.
-
-So `ctadl query` without an index, because the project was never indexed or is being indexed
-right now, checks the model files instead of failing:
-
-```bash
-ctadl import /path/to/app.apk --name my-app
-ctadl query my-app --models sources-and-sinks.ctadl --output check.sarif
-```
-
-The output is ordinary SARIF, and its notifications say what the rules selected:
-
-| notification | what it says |
-| --- | --- |
-| `CTADL0008` | There was no index, so this is a model check, and what a model check cannot decide (below). |
-| `CTADL0004` | A rule declared a source, sink or propagation and matched nothing, and why: its body matched no function, or its `local` atom matched no local of the functions it did. |
-| `CTADL0010` | A bridge rule paired no functions in the programs checked. |
-| `CTADL0011` | What each live rule matched: the count, and a few of the names. |
-| `CTADL0012` | A model file that could not be read, or a malformed rule. The rest of the file is still checked. |
-| `CTADL0100` | The totals. |
-
-Rules are numbered from 0 in file order. The run exits non-zero, because the query asked for
-could not be answered, and the built-in defaults are not loaded, as they never are for `ctadl
-query`. What a model check cannot tell you:
-
-- **Call-site anchors** count the callees the matched call sites name, not the sites.
-- **`arg(_)`** expands over an arity only the index knows; it is counted as one port.
-- **A matched function can still be missing from the index.** The query then raises `CTADL0005`.
-- **Bridge pair counts.** Whether a bridge paired anything is known; how many calls it covers is
-  not.
-- **Cross-import bridges.** A bridge's sides can live in two imports, so its verdict means
-  something only when the project holds every import the real one will index.
+[Mode priority](#mode-priority)). `--no-default-models` on `ctadl index` or `ctadl report`
+leaves `--models` as the complete set. There are no default sources or sinks.
 
 ---
 
@@ -271,8 +215,7 @@ Notes worth having:
   The full name is not a `name_of` row; it is `F`.
 - `local` lists every local a function declares, under the name the program text gives it.
   `L` is opaque: it is not an integer, so it cannot index an argument, nor an argument index
-  a local. A rule whose `local` atom ran and matched nothing is reported by `CTADL0004` as a
-  local not found, naming the local and counting the functions it was asked about.
+  a local.
 - `arity`, `has_code`, `param` and `local` read the IR, so they match nothing for a function with no body,
   such as a Lua external. `name` / `signature` / `name_of` and `F` itself are the supported shape
   for a bodyless callee.
@@ -289,8 +232,7 @@ Notes worth having:
   the keys costs a pass over every statement, so an import pays for it only when some rule reads
   `callsig`; a rule that reads it against an import collected without them matches nothing.
 - `global` lists the program's declared globals, by name. A global is its name ([ir.md](ir.md),
-  G3): a name two imports declare is one global, and `import` matches each of them. A rule
-  whose `global` atom matches nothing is reported as `CTADL0004` (`globalNotFound`).
+  G3): a name two imports declare is one global, and `import` matches each of them.
 - `allocator` lists the entry points of a C heap allocator, in native code only. `kind` is
   `"malloc"` (returns a fresh block: `malloc`, `calloc`, `memalign`, …), `"realloc"` (returns a
   block holding its first argument's contents), `"free"`, or `"internal"` (`mallopt`,
@@ -388,9 +330,7 @@ The point of a model file is to derive these.
 | `mem2reg_full(F)`, `mem2reg_window(F)` | a function | `priority` (default `0`) |
 | `frame_store(F)`, `frame_update(F)` | a function | `priority` (default `0`) |
 
-- **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
-  same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
-  works without inventing a vocabulary first.
+- **`kind`** is the taint label. It defaults to `"taint"` for both directions.
 - **`saturating`** (source only): any path *extending* the source port's path is tainted too,
   recursively. Reach for it when callers index into the value. C's `argv` is the motivating
   case: `argv[1]` is read at an offset path (`[8].deref`) that is a sibling of the `.deref` the
@@ -478,7 +418,7 @@ body (`skip_analysis` or `analyze`), its stack-slot promotion (`mem2reg_full` or
 - Two rules claiming **the same mode** at one priority agree, and that is fine.
 - Two rules claiming **different modes** at the winning priority is an error, naming the function
   and both rules, unless a higher claim settles it. `ctadl index` stops on it before lowering the
-  import, and a model check (`ctadl query` without an index) reports it.
+  import.
 - The pairs are independent: `skip_analysis(F)` and `mem2reg_full(F)` never conflict.
 
 The built-in defaults claim their modes at `priority = -100`, so any rule of yours that names no
@@ -529,9 +469,7 @@ level shift. Take `u = id(t)`, with taint stored at `t.f`:
 A longer input path **unwraps** and a longer output path **wraps**; neither narrows what the
 model matches. A propagation is an assignment between its ports, and this is the IR's forward
 rule: every suffix of the source carries to the destination ([ir.md](ir.md#assignment)). Whether
-it is a store or a copy follows from the output path, as for any assignment. When testing a model, probe at the level the port predicts. The worked matrix is
-`ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and `ctadl-ascent/tests/integration/port_semantics.rs`
-(Lua).
+it is a store or a copy follows from the output path, as for any assignment. When testing a model, probe at the level the port predicts.
 
 One asymmetry: a **sink** port covers the paths reachable at its vertex, so a sink on `return`
 also sees `return.f`. A sink cannot say "the object itself, but not its fields".
@@ -573,8 +511,7 @@ class the JNI pass could not recover.
 - **It attaches inside the callee.** The bridge gives `F` a summary that every call site of it
   uses, which is why a bridge cannot be anchored at a call site: it would name only the
   statically emitted calls, precisely not the indirect and virtual ones a bridge exists for.
-- **It is index-time only.** It creates call facts the index consumes; `ctadl query` ignores it
-  and says so.
+- **It is index-time.** It creates call facts the index consumes.
 
 A bridge that goes wrong (a side matching nothing, a wrong slot, a wrong path) produces *fewer
 flows*, not an error. `ctadl index` logs one line per bridge rule at `info`, and it is the one
@@ -657,19 +594,12 @@ dropped with it, which is what keeps a multi-artifact index streaming rather tha
 
 ### Phases
 
-The engine is phased. `ctadl index` keeps the `propagation` / `bridge` / `access_paths` /
-`dispatch` / mode heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
-it, and a rule contributing at least one head to the running phase is never counted:
+`ctadl index` keeps the `propagation` / `bridge` / `access_paths` / `dispatch` / mode heads, and
+says how many rules contributed none of them; a rule contributing at least one is never counted.
 
-```
-source(F::return), propagation(F::return <- F::arg(0)) :- fun(F, name = "openConnection");
-```
-
-is live in both phases and warned about in neither.
-
-`ctadl index` does match the `source` / `sink` heads too, without reporting on them: a matched
-endpoint in a call signature's targets refuses that signature's `dispatch` model, so a file with
-both kinds of rule belongs on both commands.
+It matches the `source` / `sink` heads too, without reporting on them: a matched endpoint in a
+call signature's targets refuses that signature's `dispatch` model. It warns that it does not
+analyse them otherwise.
 
 ---
 
@@ -694,12 +624,11 @@ The migration is checked by loading it, so a file that translates but does not c
 rather than a surprise on the next index.
 
 A JSON file passed to `--models` goes through the same translation, in memory, every time it is
-loaded: `ctadl index`, `ctadl query`, the model check and `ctadl report` run the migration on the
+loaded: `ctadl index` and `ctadl report` run the migration on the
 Portcullis engine, exactly as they run a `.ctadl` file. Each JSON file draws one warning per run that the
 format is deprecated, and the migration's own warnings are logged with it. A generator that does
-not translate fails the command with the errors below, each naming its generator; the model check
-reports it and checks the rest of the file. Diagnostics about a migrated file name the JSON file
-and the generator index — in provenance, `CTADL0004`, the dead-rule warning and engine errors —
+not translate fails the command with the errors below, each naming its generator. Diagnostics about a migrated file name the JSON file
+and the generator index — in provenance, the dead-rule warning and engine errors —
 not a line of a translation the author has never seen.
 
 How the JSON constructs map:
@@ -773,8 +702,8 @@ Every diagnostic names a file, line and column, and says what to do:
 Rule errors accumulate: a file with three bad rules reports three. A *syntax* error is the
 exception — there is no resynchronization point, so it is reported alone.
 
-`ctadl index` and `ctadl query` also log, at `warn`, every rule that was live for the running
-phase and matched nothing. That is the condition worth hunting for: a rule that is doing nothing
+`ctadl index` also logs, at `warn`, every rule that was live for the running phase and matched
+nothing (the dead-rule warning). That is the condition worth hunting for: a rule that is doing nothing
 looks exactly like a clean program.
 
 ---
@@ -801,17 +730,10 @@ looks exactly like a clean program.
 
 ## 12. Tips
 
-- **Check before you index.** `ctadl query` against an un-indexed project tells you which rules
-  select something and which select nothing; it needs only the import. See
-  [Checking a model file before you index](#checking-a-model-file-before-you-index).
 - **Group families with sets.** `fun(F, name in {…}, parent in {…})` models a library's methods
   in one rule.
 - **Get the ports right for the language.** Java taints through `return` and `arg(N)`; C through
   `.deref` out-parameters.
-- **Kinds are your vocabulary.** A flow is reported when a source's `kind` reaches a sink of the
-  same `kind`; keep them consistent across files.
 - **Do not name lua functions by `%anonN`.** A function with no name of its own is numbered by a
   counter that runs across the whole import, so adding a file renumbers the rest. Pin it by its
   module and a `uses_field` or `arity` test, or give it a name in the source.
-- **Propagations at index time, sources and sinks at query time.** Pass the same file to both;
-  each command takes its half.

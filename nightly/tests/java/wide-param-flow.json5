@@ -1,4 +1,0 @@
-{
-  // Each sink reads a reference parameter that shares a frame with a wide one.
-  "expected_lines": [21, 26, 31, 36]
-}

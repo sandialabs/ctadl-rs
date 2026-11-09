@@ -52,9 +52,9 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
-    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind,
-    FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId,
-    IntentKind, IntentPairKind, PackedInsnSiteId, Path, Root, Str,
+    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
+    FormalType, FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId, IntentKind,
+    IntentPairKind, PackedInsnSiteId, Path, Root, Str,
 };
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
@@ -755,7 +755,8 @@ macro_rules! trie_relations {
             fn seed_assign_like(&mut self, rows: Vec<$crate::index_engine::AssignLikeRow>) {
                 // Stored source first.
                 self.__assign_like_ind_common.extend_rows(
-                    rows.into_iter().map(|(f, v1, p1, v2, p2)| (f, v2, p2, v1, p1)),
+                    rows.into_iter()
+                        .map(|(f, v1, p1, v2, p2)| (f, v2, p2, v1, p1)),
                 );
             }
             fn take_assign_like(&mut self) -> Vec<$crate::index_engine::AssignLikeRow> {

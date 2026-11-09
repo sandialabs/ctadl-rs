@@ -1,5 +1,0 @@
-{
-  // Flow: x = arr[0] = source() (13) -> sink(x) (14). The positive twin of
-  // DupX2ArrayChain: the `dup_x2` copy of the stored value is what reaches x.
-  "expected_lines": [13, 14]
-}

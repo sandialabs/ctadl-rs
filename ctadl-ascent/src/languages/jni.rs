@@ -126,7 +126,7 @@ the same `int` at slot 1. Both put `this` at slot 0 for an instance method.
 Only the *normal* return is mapped: a Java function has return arity 2 (normal and exception) while
 a native function has one, and a JNI implementation cannot throw into the second. Nothing is
 mapped for globals: both sides already share every global (G5, G7 of `docs/ir.md`), and a flow
-through a native global is found by the query's hop through it. Because ports are bidirectional,
+through a native global needs no bridge of its own. Because ports are bidirectional,
 by-reference out-parameters and the return value come back across the boundary with no extra work.
 
 # Linking against a summary project
@@ -139,7 +139,6 @@ its own:
 ctadl import app.apk
 ctadl index xproj app__arm64-v8a__libX
 ctadl index appproj app --no-native-libs --summary xproj
-ctadl query appproj -m models.json
 ```
 
 `cli::index` feeds the observer the symbol and `RegisterNatives` tables of each summary project's
@@ -149,16 +148,6 @@ carry the flow across the bridge. [`LinkStats::from_summary`] counts these links
 
 `--no-jni-bridge` skips all of this, and `--no-jni-registry` skips the summary projects' tables
 as it does the current project's.
-
-# Reading the results
-
-A bridged project is the ordinary multi-import case, and its SARIF locates every result in the
-artifact that result is actually in: the Java half by byte offset into the `.dex`/`.jar`, the native
-half by instruction address into the shared library. This works because `ctadl index` records, per
-instruction, which import its source span came from. Span ids are *per-import* indices -- each
-artifact's source-info database numbers its spans from zero, while function and instruction ids are
-project-global -- so a span read against the wrong import's database still resolves, to an
-unrelated line in an unrelated file.
 
 # Diagnostics
 
@@ -193,14 +182,10 @@ legitimately has one per `native` declaration. So do unattributed table entries.
   native function correctly; propagating *through* the accessors additionally needs a default model
   for the `JNINativeInterface` functions and a way to resolve the vtable.
 - **Index time only.** Like `propagation` models, the bridge creates facts the index fixpoint
-  consumes, so `ctadl query --models` cannot introduce one after the fact. Re-run `ctadl index` if
-  you add the native artifact later.
+  consumes. Re-run `ctadl index` if you add the native artifact later.
 - **One frontend's slot model per method.** If the same method is observed through two Java
   frontends at once (a Dex and a JVM import of the same class), the first observation's slot model
   is used. The two agree except on `long`/`double` parameters.
-- **An index written before this feature cannot be queried**, since the per-import span provenance
-  above is an index format change. `ctadl query` on an older index says so and asks for a
-  re-`index`.
 - **Floating-point parameters may be mis-slotted.** On `arm64-v8a`, `x86_64` and hard-float
   targets, `float` and `double` arrive in FP registers. Without a recovered prototype, Ghidra may
   list them after the integer parameters rather than in declaration order, and `Typed` then maps

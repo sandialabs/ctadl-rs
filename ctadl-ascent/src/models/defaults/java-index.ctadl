@@ -306,7 +306,7 @@ propagation(F::arg(0) <- F::arg(2)) :-
 // hybrid inlining by themselves, which is what recovers the receiver's identity.
 //
 // A model is refused for a signature whose targets hold a matched source or sink, and the site
-// takes CHA instead; `ctadl index` says so. Pass the same --models to `index` and `query`.
+// takes CHA instead; `ctadl index` says so.
 //
 // THE PORTS mean what they mean on a `propagation` head: the receiver is `arg(0)`, the nth
 // argument is `arg(n)`, the result is `return`. Most rules below repeat a `propagation` rule

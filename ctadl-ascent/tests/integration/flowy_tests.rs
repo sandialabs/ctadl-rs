@@ -63,15 +63,8 @@ fn is_known_limitation(path: &std::path::Path) -> bool {
 /// fixture that passes fails as an XPASS until its entry is deleted.
 const CALL_GRAPH_XFAIL: &[&str] = &[
     "funcptr_field_forward.tnt",
-    "funcptr_one_frame_down.tnt",
-    "funcptr_one_frame_down_same_frame.tnt",
-    "funcptr_through_indirect.tnt",
-    "funcptr_two_frames_down.tnt",
-    "funcptr_two_frames_down_same_frame.tnt",
-    "funcptr_two_targets.tnt",
     "hybrid_context_precision.tnt",
     "hybrid_inlining.tnt",
-    "poly.tnt",
 ];
 
 // Parse index files and discharge the assertions.
@@ -98,9 +91,9 @@ fn all_flowy_tests() {
         match (tnt_test(&path), xfail) {
             (Ok(()), false) => {}
             (Err(e), false) => failed.push(format!("FAIL {name}: {e:#}")),
-            (Ok(()), true) => failed.push(format!(
-                "XPASS {name}: delete its `CALL_GRAPH_XFAIL` entry"
-            )),
+            (Ok(()), true) => {
+                failed.push(format!("XPASS {name}: delete its `CALL_GRAPH_XFAIL` entry"))
+            }
             (Err(_), true) => eprintln!("XFAIL (call graph): {name}"),
         }
     }

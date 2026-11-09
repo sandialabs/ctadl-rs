@@ -5,7 +5,7 @@
 > in memory and run on the Portcullis engine; nothing else reads it, and each one draws a
 > deprecation warning. `ctadl migrate-models my-models.jsonl` converts a file and reports
 > anything that does not carry across; a generator that cannot carry across exactly fails `ctadl
-> index` and `ctadl query` the same way, naming the generator.
+> index`, naming the generator.
 >
 > This document is kept only as the reference for reading and migrating existing JSON files. The
 > semantics it describes (ports, paths, port pairs, bridges, modes) are documented, in
@@ -49,33 +49,17 @@ rule: **find** some set of program elements, optionally filter them with
 
 ## 2. Where they fit in the pipeline
 
-The pipeline is **import → index → query**. Models are loaded with `--models`
-(repeatable) on the commands that consume them:
+The pipeline is **import → index**. Models are loaded with `--models` (repeatable) on `ctadl
+index`, and on `ctadl report`:
 
 ```bash
-# Propagation models are most useful at index time (they become function summaries)
 ctadl index my-app --models libc-propagations.jsonl
-
-# Source/sink models are most useful at query time (they define what to search for)
-ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
-
-# One-shot form
-ctadl go my-app /path/to/app.apk --models my-models.json
 ```
 
-**Which phase consumes what.** The split is not cosmetic; a model given to the wrong command
-does nothing:
-
-| model | consumed by | why |
-| --- | --- | --- |
-| `sources`, `sinks` | `ctadl query` | they define the search, which runs over a finished index |
-| `propagation`, `bridge`, `access_paths` | `ctadl index` | they become facts the index fixpoint consumes, and it is fixed by the time a query runs |
-
-Both commands accept `--models`, and passing one file to both is normal. Each now says out loud
-what it is ignoring rather than dropping it in silence: `ctadl query` warns that it is skipping
-the propagation and bridging models in your file, and `ctadl index` warns that it is skipping
-the source/sink ones. Adding a `bridge` or a `propagation` after indexing means re-running
-`ctadl index`.
+**What index does with each model.** `propagation`, `bridge`, `access_paths`, `dispatch` and
+`modes` become facts the index fixpoint consumes; adding one after indexing means re-running
+`ctadl index`. `sources` and `sinks` are matched only to refuse a dispatch model whose targets
+hold one (see §8.5), and `ctadl index` warns that it does not analyse them.
 
 CTADL also ships **built-in default propagation models**, in
 `ctadl-ascent/src/models/defaults/`. Exactly one file is loaded per import,
@@ -90,57 +74,10 @@ chosen by the frontend's method table:
 | flowy | *(none)* |
 
 Your `--models` files are unioned on top of the selected default. Pass
-`--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving
+`--no-default-models` to `ctadl index` or `ctadl report` to suppress it, leaving
 `--models` as the complete set. Note the defaults are **propagation only** —
 CTADL ships no default sources or sinks. `ctadl init-model` scaffolds a starter file, in
 Portcullis.
-
-### Checking a model file before you index
-
-Matching is decided **per import**, and only half of it needs an index. Stage 1 runs every
-generator (as its Portcullis migration) against one program's functions, method table and call sites —
-it reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
-endpoints out over call sites, and expands wildcard sinks; that half needs the index. Since
-functions are never optimized out, the common case — a source or sink that names a function
-call — is fully decided in Stage 1.
-
-So `ctadl query` runs Stage 1 on its own when there is no index — because the project was never
-indexed, or is being indexed right now — instead of failing. You can find out whether a `where`
-selects anything without waiting for `ctadl index`:
-
-```bash
-ctadl import /path/to/app.apk --name my-app
-ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
-```
-
-The output is the ordinary SARIF, and it reports what it found in the notifications a query
-already uses:
-
-| Notification | What it says |
-| --- | --- |
-| `CTADL0008` | There was no index, so this is a model check; it also lists what a model check cannot decide (below). |
-| `CTADL0004` | A generator declared a source, a sink, or a propagation and matched nothing — and which of the several reasons it was. |
-| `CTADL0009` | A generator's `in` clause admits none of the programs checked, so it was never evaluated. Not the same thing as matching nothing. |
-| `CTADL0010` | A bridge that paired no functions in any program checked. |
-| `CTADL0011` | What each live generator's `where` selected: the count, and a few of the names. |
-| `CTADL0012` | A model file that could not be read, or a malformed generator. One typo no longer costs the rest of the check. |
-| `CTADL0100` | The totals, in Stage-1 units. |
-
-The run still exits non-zero: the query you asked for could not be answered. The built-in
-default models are not loaded, exactly as `ctadl query` does not load them.
-
-What it deliberately cannot tell you, all of it stated in `CTADL0008` rather than left implicit:
-
-- **`find: callsites`** — Stage 1 counts the callees the matched call sites name, not the sites,
-  so "3 callees" says nothing about how many sites the endpoints land on.
-- **`Argument(*)`** — expands over an arity computed from actual parameters and call sites
-  across every import. It is reported as one port, not as its expansion.
-- **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
-  contain.
-- **Bridge pair counts.** Whether a bridge paired anything needs no index; how many call pairs
-  it makes does, so none is reported.
-- **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
-  only meaningful when the project holds every import the real one will index.
 
 ---
 
@@ -167,8 +104,7 @@ A JSONL line has exactly the shape of one element of the `model_generators`
 array. Blank lines and lines starting with `//` are skipped, so a `.jsonl` model
 file can carry commentary; the built-in defaults use this to record why an entry
 is (or deliberately is not) there. Skipped lines do not consume a generator
-index — the index that error messages and `CTADL0004` report counts generators,
-not lines.
+index — the index that error messages report counts generators, not lines.
 
 The regression suite checks every generator in the built-in files against this
 schema (`cargo xtask regression --filter models:`, one report entry per file),
@@ -271,7 +207,7 @@ described below. If `where` is omitted, the rule matches everything of that
 > function, so a constraint that was skipped would leave the generator matching
 > **the whole program**: a model meant
 > to mark one method as a source silently became a global source. The
-> `CTADL0004` diagnostic only reports generators that matched *nothing*, so
+> dead-rule warning only reports generators that matched *nothing*, so
 > nothing caught it. This mirrors `additionalProperties: false` in the JSON
 > schema, so an editor wired to the `$schema` URL flags the same mistakes as you
 > type.
@@ -500,14 +436,9 @@ Source ports carry one extra knob:
   What it does not reach is the memory at that address, `p[2]`; that is what
   saturation adds.
 
-  Saturation is purely internal to the search: reported flows (SARIF) are
-  unchanged in shape — a saturating source just reconstructs flows a precise
-  source would drop.
-
 ### `sinks`
 
-Marks a port as a *dangerous consumer*. A flow from a source of the matching
-`kind` to a sink is what the query reports.
+Marks a port as a *dangerous consumer*.
 
 ```jsonc
 // A method whose argument 0 is dangerous
@@ -600,9 +531,7 @@ A longer output path **wraps**. Neither one narrows what the model matches.
 
 The practical consequence is for testing: probe at the level the port *predicts*,
 not at one fixed depth. A fixture that always reads `u.f` scores nothing on rows
-2 and 3 above while the models are doing exactly what they say. The worked matrix
-is `ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and
-`ctadl-ascent/tests/integration/port_semantics.rs` (Lua).
+2 and 3 above while the models are doing exactly what they say.
 
 One asymmetry worth knowing: a **sink** port materializes over the paths reachable
 at its vertex, so a sink written `Return` also seeds `Return.f`. Reading a whole
@@ -611,8 +540,7 @@ but not its fields".
 
 ### `modes`
 
-Analysis directives, index time only; `ctadl query` reports them as ignored,
-like a `propagation`. Five defined values:
+Analysis directives, index time. Five defined values:
 
 - `"skip-analysis"`: don't analyze the body of the matched function. The rest of
   this section is about it.
@@ -623,7 +551,7 @@ like a `propagation`. Five defined values:
   large native function by a large factor. In exchange, a callee or a copy of
   the address no longer sees what the function stored to that slot directly.
   `ctadl index` names each function where this may lose flows in its
-  `notifications.sarif`, and `ctadl query` repeats it in the SARIF. A
+  `notifications.sarif`. A
   `mem2reg-full` model works without `--mem2reg full`. When generators
   disagree on a function, the last one read wins.
 - `"frame-store"` and `"frame-update"`: coarsen or keep the matched native
@@ -776,8 +704,7 @@ Finally, `ctadl index` logs a per-generator count line unconditionally, at `info
 bridge my-models.jsonl:0: 1 from, 1 to, 1 pair(s) bridged
 ```
 
-A bridge-only generator declares no endpoint, so it has no entry in the endpoint statistics and
-can never raise `CTADL0004`. This line is the only surface it appears on, and it is the one
+This line is the only surface a bridge-only generator appears on, and it is the one
 thing that catches a *mis*-paired bridge — wrong slot, wrong path, wrong function matched —
 which warn-on-empty cannot see.
 
@@ -812,11 +739,10 @@ sites, duplicated flows. If you are writing one for a `Java_…`-named method �
 not normally need to — pass `--no-jni-bridge` to `ctadl index` so exactly one mechanism is in
 play. That is also what makes an A/B measurement between the two meaningful.
 
-#### Index time only
+#### Index time
 
 A bridge creates `call` facts, which the index fixpoint consumes, so it takes effect at
-`ctadl index` and **not** at `ctadl query`. Passing one to `query` gets you a warning saying
-so. Adding a native artifact late means re-running `ctadl index`.
+`ctadl index`. Adding a native artifact late means re-running `ctadl index`.
 
 > **`find: callsites` with a `bridge` is a load error**, not an ignored key. `call` is an input
 > relation: indirect and virtual dispatch are resolved *inside* the fixpoint, so a pass running
@@ -912,9 +838,7 @@ and says so at `info`. The guard sees the **direct** targets only: it catches a 
 `OutputStream.write`). It cannot be made transitive — most of a program sits in one strongly
 connected component, and a transitive check would refuse nearly every model. For a signature
 whose bodies must stay reachable, use `resolve: "inline"` below rather than a model of any
-shape. The guard also needs the endpoint file at index time, so pass the same `--models` to
-`ctadl index` and `ctadl query`; the index records a digest of them and `ctadl query` warns
-when they differ.
+shape. The guard needs the source/sink models at index time, so pass them to `ctadl index`.
 
 ### What it does
 
@@ -1003,56 +927,19 @@ design is drawn on.
 | Frameworks that call your override indirectly | `methods` | `forward_self` *(not yet implemented)* |
 | Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` |
 
-### End-to-end example
-
-A minimal source→sink model (from `nightly/tests/java/source-sink-example.json`):
-
-```jsonc
-{
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LSourceSinkExample;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LSourceSinkExample;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
-}
-```
-
-Run it:
-
-```bash
-ctadl query my-app --models source-sink-example.json --output results.sarif
-```
-
-CTADL reports every flow where data returned by `source()` reaches
-`Argument(0)` of `sink()`.
-
 ---
 
 ## 10. Tips
 
-- **Query before you index.** On a new or edited model file, `ctadl query` against an
-  un-indexed project is the fastest way to learn which generators select something and which
-  select nothing; it needs only the import. See §2.
 - **`signature_match` with `names`/`parents`** is the most maintainable way to
   model families of library methods — group by owning class.
 - **Get the ports right for the language.** Java methods usually taint through
   `Return` / `Argument(n)`; C functions frequently work through `.deref`
   out-parameters.
-- **Kinds are your own vocabulary.** A flow is reported when a source's `kind`
-  reaches a sink of a matching `kind`. Keep them consistent across your models.
 - **Reach for `saturating` when callers index into the source.** If taint should
   cover *every* element/offset/field of a value — `argv`, an array of untrusted
   strings, a struct that's wholly attacker-controlled — mark the source
   `saturating: true` instead of trying to enumerate each path. Leave it off
   (the default) for precise sources like `getenv` so you don't over-taint.
-- **Prefer propagation models at `index` time** (they become reusable
-  summaries) and **source/sink models at `query` time** (they define the search).
 - **Reach for `callsites` + `in_function`** only when call context matters;
   method-level models are simpler and cover most cases.

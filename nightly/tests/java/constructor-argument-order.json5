@@ -1,6 +1,0 @@
-{
-  // No flow: new Pair(t, "clean") (20) stores the tainted value in first, and
-  // sink(p.second) (21) reads the clean field. The constructor's receiver is the
-  // `new` copied by `dup`, and its arguments sit above it on the stack.
-  "expected_lines": []
-}

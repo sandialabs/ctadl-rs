@@ -1,5 +1,0 @@
-{
-  // No flow: a.data is tainted (19), but sink(fresh().data) (21) reads the field
-  // of the new object fresh() returns, not of a.
-  "expected_lines": []
-}

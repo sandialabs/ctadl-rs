@@ -356,7 +356,7 @@ fn escaped_bracketed_port_stays_a_symbol() {
 // ---------------------------------------------------------------------------
 // An endpoint keeps the path its own model file declared.
 //
-// `cli::query` accumulates one batch per (import x model file) pair. Accumulating must not
+// `cli::index` accumulates one batch per (import x model file) pair. Accumulating must not
 // let one pair's trailing port path reach another pair's endpoint -- a source or sink that is
 // silently widened, narrowed, or moved is indistinguishable from one the user wrote that way.
 // The two ways it could happen are pinned below.
@@ -379,7 +379,7 @@ fn endpoint_model_file(kind: &str, func: &str, port: &str) -> NamedTempFile {
     file
 }
 
-/// Loads `(program, file)` pairs in the given order, accumulating them the way `cli::query`
+/// Loads `(program, file)` pairs in the given order, accumulating them the way `cli::index`
 /// does, and returns each matched endpoint's label paired with the path it resolves to.
 ///
 /// Only this accumulation harness is specific to how matches are represented; the fixtures

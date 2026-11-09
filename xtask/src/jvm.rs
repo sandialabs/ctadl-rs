@@ -106,7 +106,6 @@ fn check_asm_flow(cp: &str, samples: &[Sample], cases: Option<&Path>, work: &Pat
         samples.iter().flat_map(|s| s.classes.clone()).collect(),
     ));
     if let Some(cases) = cases {
-        // As the JVM taint cases compile them.
         let class_dir = work.join("cases-classes");
         exec::fresh_dir(&class_dir)?;
         let mut sources: Vec<PathBuf> = std::fs::read_dir(cases)
@@ -628,9 +627,7 @@ fn assert_normalized(loc: &Location, saw_stack_slot: &mut bool) -> Result<()> {
 
 // --- fixture-shape checks -------------------------------------------------
 //
-// The `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
-// cases cover decoding these fixtures end to end, in both frontends. These two
-// check what a taint case cannot say.
+// These two check that the switch fixtures still exercise what they are named for.
 
 /// Read one sample's compiled `.class` by class name.
 fn class_bytes(samples: &[Sample], name: &str) -> Result<Vec<u8>> {
@@ -662,10 +659,9 @@ fn mnemonics(bytes: &[u8], method_name: &str) -> Result<Vec<&'static str>> {
 
 /// The switch fixtures still contain the switch instruction they are named for.
 ///
-/// A vacuity guard, and the one thing the taint cases cannot check: if a later
-/// `javac` lowered these shapes some other way -- a chain of `if_icmpeq`, say --
-/// `SwitchFlow` and `StringSwitchFlow` would keep passing while no longer
-/// exercising a switch at all.
+/// A vacuity guard: if a later `javac` lowered these shapes some other way -- a
+/// chain of `if_icmpeq`, say -- the fixtures would no longer exercise a switch at
+/// all.
 fn check_switch_shapes(samples: &[Sample]) -> Result<()> {
     for (class, method, mnemonic) in [
         ("SparseSwitch", "parseTable", "lookupswitch"),
@@ -694,8 +690,8 @@ fn check_switch_shapes(samples: &[Sample]) -> Result<()> {
 
 /// Modified-UTF-8 string constants survive the constant-pool parse.
 ///
-/// No taint case can stand in for this: an unpaired surrogate is inert data in
-/// a constant, so a decoder that mangles it changes no flow. These two fixtures
+/// An unpaired surrogate is inert data in a constant, so a decoder that mangles it
+/// changes no flow. These two fixtures
 /// carry nothing else. `dex:utf8-constants` is the same check on the other
 /// frontend, over the same two sources compiled to DEX.
 fn check_utf8_constants(samples: &[Sample]) -> Result<()> {

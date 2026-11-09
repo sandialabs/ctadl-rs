@@ -124,7 +124,7 @@ jobs:
     # too; build unless the release job actually failed.
     if: ${{ !cancelled() && needs.release.result != 'failure' }}
     runs-on: ${{ matrix.runner }}
-    # A cold cache builds the whole dependency tree (datafusion, arrow, ascent)
+    # A cold cache builds the whole dependency tree (arrow, parquet, ascent)
     # plus, for the cross targets, the toolchain that compiles it. The macOS
     # runner is the slow one. 360 is the most a GitHub-hosted job may run.
     timeout-minutes: 360

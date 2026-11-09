@@ -1,6 +1,6 @@
 //! `cargo xtask` — developer task runner.
 //!
-//! Four tasks. `regression` runs the source-sink taint regression tests, and is what CI
+//! Four tasks. `regression` runs the nightly regression checks, and is what CI
 //! runs. `report-eval` sweeps `ctadl report` across a directory of real apps and keeps the
 //! per-app JSON; it is a measurement tool rather than a check, and nothing depends on it
 //! passing. `cil` regenerates the CIL goldens and opcode table, and runs single CIL checks.
@@ -11,16 +11,14 @@
 //!     cargo xtask regression --frontend pcode
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
-//!     cargo xtask regression --frontend pcode,jni --mem2reg full:0
+//!     cargo xtask regression --frontend dex --mem2reg full:0
 //!     cargo xtask regression --compare-paths $TMPDIR/ctadl_xtask_PID   # an earlier run's root
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
 //!     cargo xtask cil bless|bless-flow|bless-cir|codegen|exec|models|taint
 
-mod android_icc;
 mod apk;
 mod asm_flow;
-mod assertions;
 mod baksmali;
 mod cil;
 mod cil_codegen;
@@ -33,7 +31,6 @@ mod jvm;
 mod jvm_opcodes;
 mod regression;
 mod report_eval;
-mod sarif;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -105,9 +102,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!(
-                        "--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil"
-                    );
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, cil");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -313,9 +308,7 @@ fn report_check(name: &str, outcome: regression::Outcome) -> bool {
             println!("SKIP {name}: {why}");
             true
         }
-        regression::Outcome::Fail(why)
-        | regression::Outcome::HardFail(why)
-        | regression::Outcome::Xfail(why) => {
+        regression::Outcome::Fail(why) => {
             println!("FAIL {name}: {why}");
             false
         }
@@ -367,33 +360,23 @@ fn print_help() {
 cargo xtask <task>
 
 Tasks:
-  regression                 Run the source-sink taint regression suite.
-    --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             `lua`, `jni`, `c`, `android-icc` or `cil` (default:
-                             all). Accepts a comma-separated list and may be
-                             repeated; unselected
-                             frontends are skipped entirely, so their toolchains
-                             are not needed. E.g. `--frontend pcode` runs the
-                             C/pcode cases and the Ghidra checks without any Java
-                             toolchain, and `--frontend lua` runs just the Lua
-                             source cases. `jni` is the two-import bridge cases,
-                             which need the Java *and* Ghidra toolchains.
-                             `android-icc` runs external DroidBench/ICC-Bench
-                             APK specs under `tests/android-icc`. `cil` runs the
-                             cil-reader checks against Mono.Cecil (see
-                             --cecil-src).
+  regression                 Run the nightly regression suite.
+    --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`
+                             or `cil` (default: all). Accepts a comma-separated
+                             list and may be repeated; unselected frontends are
+                             skipped entirely, so their toolchains are not
+                             needed. E.g. `--frontend pcode` runs the pcode
+                             cases and the Ghidra checks without any Java
+                             toolchain. `cil` runs the cil-reader checks against
+                             Mono.Cecil (see --cecil-src).
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,
                              capped). Cases are independent and each runs in its
                              own scratch dir, so this only trades memory for wall
                              clock; `-j 1` reverts to running them one at a time.
-    --mem2reg <policy>       Index every case with `ctadl index --mem2reg <policy>`
-                             (default: ctadl's own default). For a policy that
-                             can lose flows, such as `full:0`: a case that loses
-                             its flow is an XFAIL when an index's
-                             notifications.sarif names a function it promoted
-                             fully, and a FAIL when none does.
+    --mem2reg <policy>       Run every `ctadl index` with `--mem2reg <policy>`
+                             (default: ctadl's own default).
     --compare-paths <root>   After the run, compare every index's paths.parquet
                              with the same case's under <root>, the scratch root
                              an earlier run printed; a difference fails the run.

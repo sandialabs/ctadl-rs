@@ -1,5 +1,0 @@
-{
-  // No flow: o is tainted (14), but x = o.v = y (16) copies the clean long y.
-  // As DupX1Chain, with a long field, which javac copies with dup2_x1.
-  "expected_lines": []
-}

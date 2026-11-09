@@ -3,19 +3,12 @@ use super::*;
 use hashbrown::HashSet;
 
 use crate::facts as fx;
-use crate::facts::{FlowVariable, FlowVertex, TaintEndpoint};
+use crate::facts::{FlowVariable, FlowVertex};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexFacts, taint_index};
-use crate::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
 use ctadl_ir::cir::builder::FunctionBuilder;
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::ssa;
-
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct SourceSinkQuery {
-    pub source: TaintEndpoint,
-    pub sink: TaintEndpoint,
-}
 
 #[test]
 fn test_basic2_f() {
@@ -156,91 +149,6 @@ fn a_skipped_body_contributes_no_facts() {
     let result = taint_index(facts);
     assert!(result.summary.iter().any(|t| t.0 == f_id));
     assert!(!result.summary.iter().any(|t| t.0 == g_id));
-}
-
-#[test]
-fn test_basic2_source_sink() {
-    let (h, ss) = function_h();
-    let mut h_ssa = h.clone();
-    log::trace!("{h}");
-    ssa::transform(&mut h_ssa, false);
-    log::trace!("{h_ssa}");
-    let mut facts = IndexFacts::default();
-    let mut source_info = IndexSourceInfo::default();
-    codegen_function(&h_ssa, &mut facts, &mut source_info);
-    let index_result = taint_index(facts.clone());
-    let h_id = source_info
-        .sites
-        .get_function_id(fx::Function("H".into()))
-        .unwrap();
-    let qfacts = QueryFacts {
-        formal_param: facts.formal_param,
-        actual_param: facts.actual_param,
-        call: facts.call,
-        assign: index_result.assign_like,
-        paths: facts.paths,
-        external_function: index_result.external_function,
-        endpoints: [ss.source.clone(), ss.sink.clone()]
-            .into_iter()
-            .map(|e| (QueryEndpoint::from_taint_endpoint(&source_info.sites, e),))
-            .collect(),
-    };
-    let query_result = taint_analysis(qfacts, None);
-    assert!(
-        query_result
-            .taint
-            .iter()
-            .find(|r| r.0 == h_id
-                && r.4.clone().to_taint_endpoint(&source_info.sites) == ss.source
-                && r.2 == ss.sink.vertex.0
-                && r.3 == ss.sink.vertex.1)
-            .is_some()
-    );
-    assert!(
-        query_result
-            .taint
-            .iter()
-            .find(|r| r.0 == h_id
-                && r.4.clone().to_taint_endpoint(&source_info.sites) == ss.sink
-                && r.2 == ss.source.vertex.0
-                && r.3 == ss.source.vertex.1)
-            .is_some()
-    );
-
-    // The taint graph is oriented in execution / data-flow order, so a forward walk over
-    // `taint_edge` from the source vertex must reach the sink vertex. This only holds if
-    // backward (sink-seeded) edges were reversed into execution order.
-    assert!(!query_result.taint_edge.is_empty());
-    let mut adj: std::collections::BTreeMap<
-        (fx::FunctionId, fx::FlowVariable, fx::Path),
-        Vec<(fx::FunctionId, fx::FlowVariable, fx::Path)>,
-    > = std::collections::BTreeMap::new();
-    for (_edge, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
-        adj.entry((*sf, *sv, *sp))
-            .or_default()
-            .push((*df, *dv, *dp));
-    }
-    let start = (h_id, ss.source.vertex.0, ss.source.vertex.1);
-    let goal = (h_id, ss.sink.vertex.0, ss.sink.vertex.1);
-    let mut seen = std::collections::BTreeSet::new();
-    let mut queue = std::collections::VecDeque::from([start]);
-    seen.insert(start);
-    let mut reached_sink = false;
-    while let Some(node) = queue.pop_front() {
-        if node == goal {
-            reached_sink = true;
-            break;
-        }
-        for next in adj.get(&node).into_iter().flatten() {
-            if seen.insert(*next) {
-                queue.push_back(*next);
-            }
-        }
-    }
-    assert!(
-        reached_sink,
-        "forward walk over taint_edge should reach the sink vertex"
-    );
 }
 
 // Test Phi instruction with control flow
@@ -484,64 +392,6 @@ fn function_g() -> FunctionData {
 
     f.verify().expect("Function doesn't verify");
     f
-}
-
-// def H(p, q)
-// {
-//   q = source(Net);
-//   a = q;
-//   p = a;
-//   return sink(p, Net);
-// }
-//
-// The sink is the returned value, not the formal `p`: rebinding a parameter does not reach the
-// caller, so `p`'s formal is written back as the caller's argument and never sees `q`.
-fn function_h() -> (FunctionData, SourceSinkQuery) {
-    let mut f = FunctionData {
-        name: "H".to_string(),
-        return_type: ReturnType { arity: 1 },
-        ..Default::default()
-    };
-
-    let mut fb = FunctionBuilder::new(&mut f);
-    fb.add_param(ParameterType::SharedFields);
-    fb.add_param(ParameterType::SharedFields);
-
-    let entry = fb.add_block();
-    fb.at_block(entry).create_goto(vec![BasicBlockIdx::new(1)]);
-
-    let body = fb.add_block();
-    let mut b = fb.at_block(body);
-
-    let a = b.new_local_var("a");
-    let p = b.new_param_var(ParameterIdx::new(0));
-    let q = b.new_param_var(ParameterIdx::new(1));
-
-    b.create_assign(a.clone(), [Exp::from(q)]);
-    b.create_assign(p.clone(), [Exp::from(a)]);
-    b.create_ret(vec![p.into()]);
-
-    f.verify().expect("Function doesn't verify");
-
-    let ss = SourceSinkQuery {
-        source: TaintEndpoint {
-            infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex::new(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
-            label: fx::Label("Net".into()),
-            direction: fx::TaintDirection::Forward,
-        },
-        sink: TaintEndpoint {
-            infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex::new(
-                FlowVariable::formal_index(RETURN_INDEX.into()),
-                fx::Path::empty(),
-            ),
-            label: fx::Label("Net".into()),
-            direction: fx::TaintDirection::Backward,
-        },
-    };
-
-    (f, ss)
 }
 
 // def phi_func(cond, a, b)

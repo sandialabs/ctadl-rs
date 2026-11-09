@@ -1,6 +1,0 @@
-{
-  // `roundTrip` carries the taint past a `sastore`/`saload` pair. With `sastore`
-  // unmodelled the method leaves three phantom slots and the class fails to
-  // import, taking this flow with it.
-  "expected_lines": [16, 34]
-}

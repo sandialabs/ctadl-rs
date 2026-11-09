@@ -1,5 +1,0 @@
-{
-  // Flow: x = a[0] = source() (13) -> sink(x) (14). The positive twin of
-  // Dup2X2LongArrayChain.
-  "expected_lines": [13, 14]
-}

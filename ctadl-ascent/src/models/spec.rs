@@ -2,8 +2,7 @@
 paths.
 
 These are read by the JSON validator ([`super::json_schema`]), which rejects what the JSON
-format does not allow before the migrator translates it, and by the model check's inventory
-(`cli::model_check`), which reports what a generator's `in` clause admits. Their
+format does not allow before the migrator translates it. Their
 [`ResolvedBridge`] and [`PortPair`] are what a bridging DSL rule emits.
 
 # Hardening

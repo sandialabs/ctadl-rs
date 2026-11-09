@@ -141,8 +141,7 @@ impl RuleStats {
 }
 
 /// Which half of a model file a load consumes. The other half is counted and reported, not
-/// silently dropped: `ctadl index` says how many query-time rules it skipped and `ctadl query`
-/// says how many index-time ones.
+/// silently dropped: `ctadl index` says how many source/sink rules it skipped.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Phase {
     Index,

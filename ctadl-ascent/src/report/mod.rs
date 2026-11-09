@@ -37,7 +37,7 @@ Kotlin one cannot.
 
 # One report per program
 
-A name resolves the way `ctadl query` resolves it -- a project, or an import of the same
+A name resolves to a project, or to an import of the same
 name -- and then expands to that project's imports, sub-imports included. Every non-empty one
 is measured separately, because the class hierarchy is per program: two imports have two
 virtual method tables and resolving a call in one against the other's hierarchy would be

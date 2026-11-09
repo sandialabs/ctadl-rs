@@ -1,5 +1,0 @@
-{
-  // Flow: t = source() (18) -> get()[0] = t (19) -> sink(h[0]) (21). As
-  // CallResultFieldStore, for an array element.
-  "expected_lines": [18, 21]
-}

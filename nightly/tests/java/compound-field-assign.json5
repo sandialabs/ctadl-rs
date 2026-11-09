@@ -1,6 +1,0 @@
-{
-  // Flow: c.n += source() (15) -> sink(c.n) (16). javac keeps c on the stack with
-  // `dup` across the getfield, the call and the iadd, so the putfield's object is
-  // a copy made by a stack shuffle.
-  "expected_lines": [15, 16]
-}

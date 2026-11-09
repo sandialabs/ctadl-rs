@@ -16,7 +16,6 @@ pub use ctadl_index::{error, facts};
 pub mod index_engine;
 #[cfg(test)]
 mod index_engine_tests;
-pub mod query_engine;
 pub mod report;
 pub mod stats;
 

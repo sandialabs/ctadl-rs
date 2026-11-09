@@ -490,7 +490,7 @@ global's name, which the index stores as a string beside the paths (a vertex of 
 
 The invariant it exists for is that a field name is non-empty. `facts::Path` serializes an access path as its segments joined by `.` and its parser
 rejects an empty segment, so ONE empty field name anywhere in an import makes the whole index
-unreadable: `ctadl query` panics on the parquet it just wrote, before printing a single result.
+unreadable: the next reader panics on the parquet `ctadl index` just wrote.
 Whole-program rather than one function because only tree-sitter's parse recovery can produce an
 empty name, and an input that provokes the recovery is never a tidy one-function program. */
 pub(crate) fn field_symbols(prog: &Program) -> Vec<&str> {
@@ -567,47 +567,6 @@ pub(crate) fn get_summary(
     );
     let result = taint_index(facts);
     Ok((result.summary, source_info))
-}
-
-/// Indexes `program` all the way through, running SSA, then code generation, then the taint
-/// index. It returns the three things that
-/// [`ctadl_ascent::query_engine::build_query_endpoints`] needs: the [`IndexFacts`], the
-/// [`IndexSourceInfo`] (whose `.sites` field is the [`fx::IdMap`]), and the `assign_like`
-/// relation. Unlike [`get_summary`], this throws nothing away, so a test can run stage 2
-/// against a real index.
-#[allow(clippy::type_complexity)]
-pub(crate) fn index_program(
-    program: Program,
-) -> (
-    IndexFacts,
-    IndexSourceInfo,
-    Vec<(
-        fx::FunctionId,
-        fx::FlowVariable,
-        Path,
-        fx::FlowVariable,
-        Path,
-    )>,
-) {
-    let mut program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    program_info.program.verify().unwrap();
-    let mut facts = IndexFacts::default();
-    ssa::transform_program(&mut program_info.program, true);
-    let mut source_info = IndexSourceInfo::default();
-    codegen_program(
-        program_info,
-        &mut facts,
-        &mut source_info,
-        CallResolutionStrategy::Mixed,
-        Default::default(),
-        &Default::default(),
-    );
-    // `taint_index` consumes the facts; clone so the caller keeps them for Stage 2.
-    let result = taint_index(facts.clone());
-    (facts, source_info, result.assign_like)
 }
 
 /* Searches a summary slice for a specific flow edge, scanning records across ALL functions in the

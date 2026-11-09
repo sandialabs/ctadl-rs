@@ -1,5 +1,0 @@
-{
-  // Flow: new Pair(t, "clean") (20) -> sink(p.first) (21). The positive twin of
-  // ConstructorArgumentOrder.
-  "expected_lines": [20, 21]
-}
