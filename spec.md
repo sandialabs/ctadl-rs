@@ -320,7 +320,7 @@ output (Background).
     and no `global_flow` or `external_function` file, so it does not compare with a staged run.
   - `fact-dump-diff.sh --outputs` compares only `outputs/`.
 - **Stage dumps.** Per-stage scratch is dumped only when `CTADL_DUMP_STAGES` is also set, into
-  `stages/<batch>/`. `dump.rs:242` refuses to overwrite, so two batches cannot share a
+  `stages/<batch>/`. `dump.rs:225` refuses to overwrite, so two batches cannot share a
   directory.
 - **In-process tests.** Tests that index through the library compare the two runs' tables with
   a Rust helper. It renders the rows the same way and compares them as sets. This uses no
