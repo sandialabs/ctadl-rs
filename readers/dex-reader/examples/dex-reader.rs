@@ -1,4 +1,3 @@
-#![allow(clippy::all)]
 use std::io::Read;
 
 use dex_reader::{
@@ -120,7 +119,7 @@ fn main() {
 }
 
 fn run_print_options(
-    parser: &DexParser,
+    parser: &DexParser<'_>,
     buffer: &[u8],
     print_strings: bool,
     print_protos: bool,
@@ -257,7 +256,7 @@ fn run_print_options(
                 println!("Method: {} (access: 0x{:X})", sig, method.access_flags);
 
                 if let Some(code_item) = method.code(buffer).unwrap() {
-                    let disasm = disassemble_code_item_with_constants(&code_item, &cp);
+                    let disasm = disassemble_code_item_with_constants(&code_item, cp);
                     for line in disasm.iter() {
                         println!("  {}", line);
                     }
@@ -282,7 +281,7 @@ fn run_print_options(
                 println!("Method: {} (access: 0x{:X})", sig, method.access_flags);
 
                 if let Some(code_item) = method.code(buffer).unwrap() {
-                    let lines = smali::format_code_item_smali(&code_item, &cp);
+                    let lines = smali::format_code_item_smali(&code_item, cp);
                     for line in lines.iter() {
                         println!("  {}", line);
                     }

@@ -100,6 +100,24 @@ its existing, mostly vendored code. No behavior change.
     cargo test -p dex-reader -p ctadl-dex
     cargo xtask regression --frontend dex --filter dex:
 
+**As built.**
+- The findings were 80, not 77. The count above missed
+  `readers/dex-reader/examples/dex-reader.rs`: the first clippy run stopped
+  at the lib-test target before compiling the example, which also had its own
+  `#![allow(clippy::all)]`. Removing that allow exposed one hidden lifetime
+  and two needless borrows there, all fixed. The example is the one file
+  touched outside the list above.
+- `cargo clippy --fix` does not apply the 44 hidden-lifetime fixes (rustc
+  marks them not machine-applicable); they were applied from rustc's
+  suggestions, and `cargo fmt` then rewrapped the lengthened signatures, so
+  `instructions.rs` shows mostly formatting churn.
+- `is_empty` is `StringTable::is_empty` (`readers/dex-reader/src/types.rs`).
+- `raw_size.abs() as u32` became `raw_size.unsigned_abs()`
+  (`readers/dex-reader/src/parser.rs`). Equal for every input except
+  `i32::MIN`, where the old code panicked in debug builds and wrapped to
+  2147483648 in release; the new code returns 2147483648 in both, so release
+  behavior is unchanged. No `#[allow]` was added.
+
 ## Phase 2: add `dex_reader::axml` (R1, R2, R3, R9, R10; D1, D2, D5)
 
 Depends on: 1.
