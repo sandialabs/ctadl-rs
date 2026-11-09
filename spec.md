@@ -79,7 +79,8 @@ the work.
   `--summary` loading produce the same `IndexFacts`. The query side reads the same tables.
 - R6. **Staged by default.** `ctadl index` and `ctadl go` run staged. A flag selects the
   monolithic run, which stays as the reference the tests compare against (R14) and for
-  debugging.
+  debugging. `--lsm` is accepted only with that flag. Alone, it is an error that says to add the
+  flag. Staged workers run only the serial or parallel engine.
 
 ### Memory
 
@@ -301,12 +302,7 @@ output (Background).
 
 ## Concerns
 
-- C1. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
-  way to bound memory.
-  - Staging rejects `--lsm`.
-  - Each batch may run under LSM storage.
-  - The spec assumes staging rejects `--lsm`.
-- C2. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C1. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.
