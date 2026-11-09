@@ -80,28 +80,28 @@ clippy:
   stage: lint
   script:
     - rustup component add clippy
-    - cargo clippy -- -Dwarnings
+    - cargo clippy --workspace -- -Dwarnings
 
 rust-latest-build:
   extends: .rust_stable
   stage: build
   script:
-    - cargo build --verbose
-    - cargo doc --no-deps
+    - cargo build --workspace --verbose
+    - cargo doc --workspace --no-deps
 
 rust-nightly-build:
   extends: .rust_nightly
   stage: build
   script:
-    - cargo build --verbose
-    - cargo doc --no-deps
+    - cargo build --workspace --verbose
+    - cargo doc --workspace --no-deps
   allow_failure: true
 
 test:
   extends: .rust_stable
   stage: test
   script:
-    - cargo test --verbose
+    - cargo test --workspace --verbose
 
 ctadl-ascent-ci:
   stage: trigger
@@ -131,6 +131,6 @@ windows-test:
   script:
     - >
       'for pkg in $(cargo metadata --no-deps --format-version=1 | jq -r ".packages[] | .name"); do cargo clean -p $pkg; done' | wsl bash -i
-    - cargo test
+    - cargo test --workspace
     - >
-      'cargo test' | wsl bash -i
+      'cargo test --workspace' | wsl bash -i
