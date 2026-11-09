@@ -548,8 +548,9 @@ that indexes through `taint_index`, `taint_index_with_config`, `flowy::check_wit
 - `flowy_tests.rs`;
 - `reference_parity.rs`.
 
-The mode is off by default, so the plain gate's time does not triple. The CI job (below) turns
-it on.
+Decided: the mode is opt-in. A plain `cargo test --workspace` runs each test once, which is
+staged after Phase 11. CI runs a second step with the variable set, so every push checks R14.
+Phase 0's test-suite wall time is the reference for that step's cost.
 
 **Files.**
 - `ctadl-ascent/src/index_engine.rs:27-71`: the check mode.
