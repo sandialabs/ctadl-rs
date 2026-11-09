@@ -20,9 +20,11 @@ parse the result — see `xtask/src/dex.rs`.
 
 xtask owns this fixture. The regression harness finds it automatically at
 `xtask/tests/dex/com.noto_54.apk`, or via `cargo xtask regression --dex-apk
-<path>`. The Nix `regression` check passes the path explicitly. Outside xtask, only
-a unit test in `ctadl-ascent/src/languages/android_manifest.rs` reads it, and it
-skips when the file is absent.
+<path>`. The Nix `regression` check passes the path explicitly. Outside xtask, two tests
+read it: `noto_binary_manifest_has_known_counts` in `readers/dex-reader/src/axml.rs`,
+which skips when the file is absent, and
+`a_class_global_is_declared_at_its_class_def_item` in `frontends/ctadl-dex/src/tests.rs`,
+which does not skip and fails when it is absent.
 
 # `all-opcodes.smali`
 
