@@ -289,6 +289,18 @@ output (Background).
   - `paths` is the path set. `external_function` comes from the facts.
   - `resolved_call` and `intent_pair` come from stage 3.
 - **Duplicates.** Only the frame edges need deduplication, done in D4.
+- **After the fixpoint.** `cli::index` uses the result after the fixpoint
+  (`ctadl-ascent/src/cli/mod.rs:787-818`). A staged run computes each of these uses from the
+  stage outputs, not from a whole `IndexResult`:
+  - The zero-assignment notes (`push_zero_assignment_notes`, `cli/mod.rs:276`) need three
+    things:
+    - the set of summarized functions, streamed from the batch `summary` files;
+    - the final calls, which are `call` plus stage 3's `resolved_call`;
+    - `external_function`, from the facts.
+  - The intent-pair counts come from stage 3.
+  - `flowy::index_check` (`ctadl-ascent/src/codegen/flowy.rs:94`) reads the final `summary`
+    table back. This is the one exception to R9: flowy is a test language whose programs are
+    small.
 - **Commit.** The index stamp (`write_index_config`) is written last, as today (R13). The stage
   directory is then removed.
 
