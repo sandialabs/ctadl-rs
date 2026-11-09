@@ -55,5 +55,5 @@ and never computes `locals`. Fact generation and the query side.
 equal the monolithic serial engine's as sets (`CTADL_DUMP_RELATIONS`,
 `scripts/fact-dump-diff.sh`), with shuffled facts and any batch size down to a
 configured floor, swept down to one function. On a large target, under
-`memguard.sh`, the peak footprint tracks the largest batch rather than the program, and a run killed between
-stages resumes to the same result.
+`memguard.sh`, the peak footprint tracks the largest batch rather than the
+program, and a run killed between stages resumes to the same result.
