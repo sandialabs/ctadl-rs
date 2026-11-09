@@ -10,15 +10,6 @@ Code, help text and docs written by these phases must not cite the spec's or the
 
 ## Corrections to the spec
 
-- P1. **Graph nodes miss functions without formals.** D1 makes a node of every function with a
-  `formal_param`, `external_function` or seeded `summary` row. A function that has `assign`,
-  `actual_param`, `call` or `const_str_assign` rows but none of those would be in no batch. Its
-  `assign` rows and frame edges would be lost, and R1 would fail. Codegen always emits the return
-  formal (`ctadl-ascent/src/codegen/mod.rs:874`), but hand-built facts in the engine tests
-  (`ctadl-ascent/src/index_engine_tests.rs`, `ctadl-ascent/src/codegen/tests.rs`) need not.
-  This plan assumes the nodes are every `FunctionId` in any per-function fact: `formal_param`,
-  `actual_param`, `call` (caller), `assign`, `const_str_assign`, `summary`, `external_function`,
-  except `GLOBAL_FRAME`.
 - P2. **The CLI reads the whole result after the fixpoint.** R9 says outputs are never gathered
   for the whole program in memory. But `cli::index` uses the in-memory `IndexResult` after
   `taint_index_with_config` (`ctadl-ascent/src/cli/mod.rs:787`), and the spec does not mention
@@ -312,7 +303,7 @@ Depends on: Phase 3.
 
 **Files.**
 - `ctadl-index/src/staged/plan.rs`:
-  - `call_graph(&IndexFacts)`: nodes are every `FunctionId` in a per-function fact (P1), edges
+  - `call_graph(&IndexFacts)`: nodes are every `FunctionId` in a per-function fact (D1), edges
     are `call` from caller to callee, and `GLOBAL_FRAME` is not a node. Nodes are renumbered
     densely in `FunctionId` order, so `Sccs::new` (`ctadl-ir/src/graph/scc/mod.rs:119`) can take
     them. Follow `ChaCallGraph` (`ctadl-ascent/src/report/callgraph.rs:1744-1764`).
@@ -360,7 +351,7 @@ Depends on: Phase 3.
 - `cycle_splits_at_floor_one`: an SCC `{a,b,c}` (a→b→c→a) with floor 1 gives 3 parts in one
   split SCC, ordered by the internal edges.
 - `function_without_formals_is_planned`: a function with only `assign` rows is in some batch
-  (P1).
+  (D1).
 - `plan_ignores_fact_order`: shuffled facts (seeds 1..10) give byte-identical plan JSON.
 - `oversize_function_is_alone`: one function over the budget gets a batch of its own.
 
@@ -457,7 +448,7 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
 - New, `ctadl-ascent/src/staged/tests.rs`. Each test compares the staged run's seven tables, as
   sets by content (P3), with the monolithic serial run's:
   - `staged_matches_monolithic_chain`, `_diamond`, `_globals`: hand-built facts, including a
-    global-to-global flow through two batches and a function without formals (P1).
+    global-to-global flow through two batches and a function without formals (D1).
   - `staged_matches_monolithic_intent`: the Phase 1 intent fixture.
   - `staged_matches_monolithic_summary_project`: the facts of
     `a_summary_projects_global_flows_cross_into_its_consumer`
