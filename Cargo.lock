@@ -1111,7 +1111,6 @@ dependencies = [
  "percent-encoding",
  "rayon",
  "regex",
- "roxmltree",
  "rustc-hash",
  "rustc_graphviz",
  "serde",

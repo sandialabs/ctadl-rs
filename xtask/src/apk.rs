@@ -911,9 +911,9 @@ fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result
 /// core (`-j 0`); the parallel engine derives the same relations as the serial one.
 fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {
     use ctadl_ascent::facts::IntentPairKind;
-    use ctadl_ascent::languages::android_manifest::AndroidManifest;
+    use ctadl_ascent::languages::android_manifest::load_manifest;
 
-    let manifest = AndroidManifest::load(import_dir(store))
+    let manifest = load_manifest(import_dir(store))
         .with_context(|| format!("loading the manifest under {}", import_dir(store).display()))?;
     ensure!(
         manifest.nodes.len() == 180,

@@ -7,9 +7,10 @@ use crate::facts::{
     InsnSiteId, IntentKind, Path, Str,
 };
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
-use crate::languages::android_manifest::AndroidManifest;
+use crate::languages::android_manifest;
 use crate::project::AnalysisProject;
 use ctadl_ir::{ProgramInfo, call::Dispatch};
+use dex_reader::axml::AndroidManifest;
 
 const INTENT: &str = "Landroid/content/Intent;";
 const BUNDLE: &str = "Landroid/os/Bundle;";
@@ -194,7 +195,7 @@ fn load_manifest_receivers(
         if !manifest_path.is_file() {
             continue;
         }
-        let manifest = AndroidManifest::load(import.import_path())?;
+        let manifest = android_manifest::load_manifest(import.import_path())?;
         for component in manifest.components() {
             let Some(descriptor) = component.descriptor.as_deref() else {
                 continue;
@@ -1020,7 +1021,7 @@ mod tests {
 
     #[test]
     fn activity_filters_require_default_category() {
-        let manifest = crate::languages::android_manifest::parse_manifest(
+        let manifest = dex_reader::axml::parse_manifest(
             br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
                 <application>
                     <activity android:name=".MainActivity">

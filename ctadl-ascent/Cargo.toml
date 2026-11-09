@@ -57,7 +57,6 @@ peg = "0.8"
 pcode-reader = { path = "../readers/pcode-reader" }
 rayon = "1.10"
 regex = "1.12"
-roxmltree = "0.20"
 serde = { version = "1.0", features = ["derive"] }
 serde-sarif = "0.8"
 rustc_graphviz = { path = "../rustc_graphviz" }
