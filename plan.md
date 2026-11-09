@@ -6,16 +6,6 @@ decoder, its tree types and its Android queries from `ctadl-ascent` into
 disagree, the spec wins, except for the corrections listed below. Each phase
 builds, passes the gate named in it, and is one commit.
 
-## Corrections to the spec
-
-- P1. **The noto APK has two readers outside xtask.** R11 has the fixture
-  README name "the dex-reader test" as the fixture's reader outside xtask. But
-  `frontends/ctadl-dex/src/tests.rs:758` (`a_class_global_is_declared_at_its_class_def_item`)
-  also reads it, and does not skip when it is absent (`expect("the APK")`,
-  `frontends/ctadl-dex/src/tests.rs:761`). The README's "only" at
-  `xtask/tests/dex/README.md:23-25` is already false. Until settled, Phase 4
-  has the README name both tests, and say that only the dex-reader one skips.
-
 ## Order
 
 | Wave | Phases | Why |
@@ -254,7 +244,7 @@ Depends on: 3.
 - `xtask/tests/dex/README.md:23-25` — say that outside xtask the APK is read
   by the unit test in `readers/dex-reader/src/axml.rs`, which skips when the
   file is absent, and by the test in `frontends/ctadl-dex/src/tests.rs`, which
-  does not (P1). Name files, not the spec's or this plan's numbers.
+  does not. Name files, not the spec's or this plan's numbers.
 
 **Tests.** None.
 
