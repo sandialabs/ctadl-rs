@@ -22,8 +22,7 @@ linted, and so a regression in the vendored code is attributed to the lint
 fixes, not to the move. Phases 1 and 2 both edit
 `readers/dex-reader/src/lib.rs` and `readers/dex-reader/Cargo.toml`, which is
 another reason they are sequenced. Phase 2 adds the new module beside the old
-one, so the two decoders can be compared on the same inputs while both exist
-(J1). Phase 3 cannot be split: changing
+one, so the two decoders can be compared on the same inputs while both exist. Phase 3 cannot be split: changing
 `ctadl_index::error::Error::AndroidManifest` to wrap `AxmlError` breaks every
 `Error::AndroidManifest { message }` in the old decoder, so the error change,
 the deletion and all the callers build only together. No two phases share a
@@ -136,7 +135,8 @@ is unchanged apart from one temporary test. No behavior change.
   `Cargo.lock` gains the edge from `dex-reader` to the existing `roxmltree`
   entry, and no new package version.
 - `ctadl-ascent/src/languages/android_manifest.rs:515` (tests module) — the
-  temporary equivalence test below (J1).
+  temporary equivalence test below. Decided: it is worth one commit's
+  life, because it proves identical output in order, not only in counts.
 
 **Tests.**
 - New, `readers/dex-reader/src/axml.rs` `mod tests`, moved from
@@ -287,12 +287,6 @@ ctadl-ascent for `load_manifest` and the intent facts).
   prints nothing (R1, R5, R9).
 - `cargo tree -p dex-reader -e normal --depth 1` lists `roxmltree` as its only
   new dependency (R9).
-
-## Judgment calls
-
-- J1. **Equivalence test while both decoders exist.** Phase 2 adds a
-  temporary test comparing old and new decoder output, and Phase 3 deletes
-  it. The alternative is to trust the verbatim copy and the pinned counts.
 
 ## Deferred
 
