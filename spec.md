@@ -51,7 +51,10 @@ Callers:
 `dex-reader` already depends on `zip`, `thiserror`, `smallvec`, `log` and
 `rayon` (`readers/dex-reader/Cargo.toml:6-11`), not on serde or any ctadl
 crate. Its `lib.rs` allows `clippy::all` crate-wide because most of it is
-vendored (`readers/dex-reader/src/lib.rs:1-5`).
+vendored (`readers/dex-reader/src/lib.rs:1-5`), and its `Cargo.toml` has no
+`[lints] workspace = true`, unlike the other ctadl crates. Linted like them,
+it has 77 findings in eight files: 44 hidden-lifetime errors from
+`rust-2018-idioms` and 33 clippy warnings.
 
 ## Requirements
 
@@ -97,6 +100,13 @@ vendored (`readers/dex-reader/src/lib.rs:1-5`).
   dex-reader test, not the ctadl-ascent file, as the fixture's reader outside
   xtask.
 
+**Lints**
+
+- R12. **dex-reader is linted like the workspace.** It takes the workspace
+  lints and has no crate-wide clippy allow, and `cargo clippy -- -Dwarnings`
+  passes on it, vendored code included. Fixing the findings changes no
+  behavior.
+
 ## Design
 
 ### D1. Module `dex_reader::axml`
@@ -134,10 +144,8 @@ Invariants carried over unchanged:
 - Attribute keys in the android namespace are `android:<name>` from AXML and
   `<namespace-uri>:<name>` from text XML; `attr_key_matches` accepts both.
 
-The crate-wide `#![allow(clippy::all)]` exists for vendored code. This module
-is not vendored, so it opts back in with a module-level
-`#![warn(clippy::all)]`, as the crate comment already promises for code it
-holds to workspace standards.
+The module needs no lint attribute of its own: the whole crate is linted
+(D6).
 
 ### D2. Error type
 
@@ -181,6 +189,14 @@ It does not re-export the dex-reader types. Callers name them from
 The test reads the APK at `../../xtask/tests/dex/com.noto_54.apk` relative to
 `CARGO_MANIFEST_DIR` of dex-reader, and skips when it is absent, as today.
 (R6, R10, R11.)
+
+### D6. Lints
+
+`readers/dex-reader/Cargo.toml` gains `[lints] workspace = true`, and
+`readers/dex-reader/src/lib.rs:1-5` loses the `#![allow(clippy::all)]` and the
+comment that justifies it. The findings are fixed in the code, not allowed;
+an `#[allow]` on a single item is acceptable only where the fix would change
+behavior, with a comment saying why. (R12.)
 
 ## Concerns
 
