@@ -31,8 +31,10 @@ three things cross functions:
    budget is split and its parts iterated until its summaries stop growing.
    Batches whose callees are all done are independent and may run
    concurrently, within the budget.
-2. **Global frame.** One stage over all global-to-global edges: the frame's
-   closure, written as `global_flow`.
+2. **Global frame.** The union of all global-to-global edges, deduplicated
+   and written as `global_flow`. It runs no fixpoint: `global_flow` is the
+   frame's edges, not their closure (the query closes them), and the frame's
+   `locals` feeds no output.
 3. **Intent.** One stage over the `intent_frame` functions and the frame:
    `const_reaches`, `intent_pair`, `resolved_call`. Small, and cyclic through
    the frame, so it is not split.
