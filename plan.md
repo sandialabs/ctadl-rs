@@ -10,22 +10,6 @@ Code, help text and docs written by these phases must not cite the spec's or the
 
 ## Corrections to the spec
 
-- P2. **The CLI reads the whole result after the fixpoint.** R9 says outputs are never gathered
-  for the whole program in memory. But `cli::index` uses the in-memory `IndexResult` after
-  `taint_index_with_config` (`ctadl-ascent/src/cli/mod.rs:787`), and the spec does not mention
-  these uses:
-  - `push_zero_assignment_notes` (`cli/mod.rs:276`) reads `final_call`, the set of functions
-    with a summary, and `external_function` (`cli/mod.rs:285`, `:313-316`);
-  - the intent-pair log line (`cli/mod.rs:796-809`);
-  - `flowy::index_check` (`ctadl-ascent/src/codegen/flowy.rs:94`) checks summaries.
-
-  This plan assumes:
-  - the notes are computed from the stage outputs: the set of summarized functions is streamed
-    from the batch `summary` files, `final_call` is `facts.call` plus stage 3's `resolved_call`,
-    and `external_function` comes from the facts;
-  - the intent counts come from stage 3;
-  - `index_check` reads the final `summary` table back with `IndexResult::try_load`. Flowy is a
-    test language whose programs are small.
 - P3. **How outputs are compared.** R14 and D10 compare runs by diffing `CTADL_DUMP_RELATIONS`
   output with `scripts/fact-dump-diff.sh`. That does not work as written, for three reasons:
   - The monolithic dump holds every relation, scratch ones included (`dump.rs:323-333`), and
@@ -369,7 +353,7 @@ Depends on: Phases 1, 2, 3, 4.
      group cut at each batch boundary. A batch selects its rows with the filtered reader. This
      avoids both filtering once per batch (O(B·N)) and holding a writer open per batch.
    - **Other files.** The `IdMap`, the path set (as `paths`), the plan and the key.
-   - **Then the facts are dropped.** The scheduler keeps only what the notes need (P2:
+   - **Then the facts are dropped.** The scheduler keeps only what the notes need (D9:
      `call`, the indirect calls, `external_function`, the declared functions), so stage 1
      does not run beside the whole program's facts (R7).
 2. Runs stage 1 batch by batch in plan order, on the in-process executor (D7).
@@ -663,9 +647,9 @@ still monolithic until Phase 11.
     - It runs with the `Process` executor (`opts.worker_exe`) and assembles straight into the
       index directory.
   - **Notes.** `push_zero_assignment_notes` (`:276-339`) takes a summarized-function set, the
-    resolved calls and the external functions instead of `&IndexResult` (P2). The monolithic
+    resolved calls and the external functions instead of `&IndexResult` (D9). The monolithic
     path derives the same three from its result.
-  - **Flowy.** `index_check` reads `IndexResult::try_load(&path)` (P2).
+  - **Flowy.** `index_check` reads `IndexResult::try_load(&path)` (D9).
   - **Stamp.** `write_index_config` stays last (`:839`). The stage directory is under
     `index/staging/`, so `index_tables` (`:2021-2041`), which lists only `index/*.parquet`,
     does not count stage files, and `has_index` (`ctadl-import/src/project.rs:943`) stays false
