@@ -813,4 +813,5 @@ Not touched:
 - Each stage-1 batch closes its own frame edges in the frame's `locals`
   (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1060`), which feeds
   no output. A config guard would skip that in batches, but it changes a rule's text.
-  Phase 13 measures the frame's `locals` rows per batch first.
+  Decided: Phase 13 measures the frame's `locals` rows per batch first, and a guard comes only
+  if the numbers call for one.
