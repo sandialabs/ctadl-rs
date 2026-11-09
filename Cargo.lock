@@ -1111,7 +1111,6 @@ dependencies = [
  "percent-encoding",
  "rayon",
  "regex",
- "roxmltree",
  "rustc-hash",
  "rustc_graphviz",
  "serde",
@@ -2180,6 +2179,7 @@ version = "0.1.7"
 dependencies = [
  "log",
  "rayon",
+ "roxmltree",
  "smallvec",
  "tempfile",
  "thiserror",

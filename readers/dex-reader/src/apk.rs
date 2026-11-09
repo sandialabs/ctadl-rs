@@ -31,11 +31,12 @@ fn dex_entry_sort_key(name: &str) -> (bool, u32) {
     }
     if let Some(rest) = name.strip_prefix("classes") {
         // "2.dex" or ".dex" (already handled above)
-        if let Some(num) = rest.strip_suffix(".dex") {
-            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-                let n: u32 = num.parse().unwrap_or(0);
-                return (true, n);
-            }
+        if let Some(num) = rest.strip_suffix(".dex")
+            && !num.is_empty()
+            && num.chars().all(|c| c.is_ascii_digit())
+        {
+            let n: u32 = num.parse().unwrap_or(0);
+            return (true, n);
         }
     }
     (false, 0)
