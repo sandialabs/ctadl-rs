@@ -87,8 +87,10 @@ the work.
   runs at once, plus the program-wide path set. The peak does not grow with the number of
   functions. Peak footprint of `ctadl index` is the larger of fact generation's and that.
 - R8. **Budget.** The user can set the budget. The scheduler packs batches, and runs batches
-  concurrently, so that their estimated memory stays within it. A single function whose estimate
-  exceeds the budget still runs, alone, and is logged.
+  concurrently, so that their estimated memory stays within it. A batch that is running when the
+  footprint exceeds the budget is stopped, split and rerun, so an underestimate costs time, not
+  memory beyond the budget. A single function that exceeds the budget runs alone to completion,
+  and is logged.
 - R9. **Freed between stages.** Nothing a stage derives (`locals` and the relations built from
   it) outlives the stage. Outputs go to disk as each stage finishes. They are never gathered
   for the whole program in memory, including in the final tables.
@@ -218,9 +220,20 @@ output (Background).
 - `IndexConfig` also selects the monolithic run (R6). The staged run is the default in
   `IndexConfig::default()` and `IndexOptions::default()`
   (`ctadl-ascent/src/cli/mod.rs:94`), so existing tests run staged unless they ask otherwise.
-- A batch's estimate is a function of its seed sizes: `assign_like` rows, plus instantiated
-  callee-summary rows, variables and formals. It is calibrated against `[mem cp]` and
-  `profile.json` measurements. C1 covers the choice of estimator.
+- **Estimate.** A batch's estimate is a function of its seed sizes: `assign_like` rows,
+  instantiated callee-summary rows, variables and formals. It is calibrated against `[mem cp]`
+  and `profile.json` measurements. The planner packs by it.
+- **Enforcement.** While batches run, the scheduler polls the process footprint
+  (`phys_footprint_mb`, `mod.rs:813`). That function returns -1 off macOS (`mod.rs:811`), so
+  Linux needs its own reading (resident set size from `/proc/self/statm`).
+  - Over the budget, it starts no new batch. It stops the running batch with the
+    most derived rows at its next fixpoint iteration, discards its work, splits it in two (by
+    SCC, or by function within an SCC), and requeues the halves.
+  - A batch of one function is never stopped.
+  - A stopped batch's results are discarded whole, so stopping cannot change outputs (R1).
+  - Ascent 0.8 offers only a time check between iterations (`run_timeout`, `mod.rs:1681`). The
+    stop needs a check at the same point that a flag can trip, or a batch in its own process
+    that can be killed (C1).
 - A configured floor bounds how small the planner makes a batch. Its smallest value is one
   function, which splits every recursive SCC. The tests sweep it down to one.
 
@@ -269,29 +282,22 @@ output (Background).
 
 ## Concerns
 
-- C1. **Estimating a batch's memory.** No estimator exists. Seed sizes are a weak proxy, because
-  the blowup is in `locals`, which the seeds do not predict. A batch could overshoot the budget
-  by a large factor.
-  - Estimate from seed sizes, calibrated (D6).
-  - Budget in seed rows rather than bytes, and say so.
-  - Measure and re-split: abort a batch that exceeds the budget and rerun it split. This needs a
-    per-batch memory guard.
-  - The spec assumes calibrated seed sizes, with the budget documented as approximate.
-- C2. **In-process or a process per batch.** R10 requires that a stage *can* run in a fresh
+- C1. **In-process or a process per batch.** R10 requires that a stage *can* run in a fresh
   process. Running every batch in-process is simpler, but the allocator may not return freed
   pages, so the footprint might track the high-water mark rather than the current batch.
   Interners never free either, but they hold only the program-wide paths and strings.
   - Run in-process, and verify with R15 that the footprint falls between batches.
-  - Use a worker subprocess per batch. Memory is reclaimed for certain, at a process-start and
-    fact-load cost per batch.
+  - Use a worker subprocess per batch. Memory is reclaimed for certain, and stopping an
+    over-budget batch (D6) is a kill rather than a new hook in Ascent's run loop. The cost is a
+    process start and a fact load per batch.
   - The spec assumes in-process, falling back to subprocesses if R15 shows the footprint does not
     fall.
-- C3. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
+- C2. **LSM storage.** The intent names only the serial and parallel engines. `--lsm` is another
   way to bound memory.
   - Staging rejects `--lsm`.
   - Each batch may run under LSM storage.
   - The spec assumes staging rejects `--lsm`.
-- C4. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
+- C3. **Cost of split SCCs.** Each round reruns its parts from scratch, so an SCC that needs k
   rounds costs about k times its monolithic work, and a deep cycle needs many rounds. Rerunning
   only parts whose callee summaries grew (D3) limits this, but bounds nothing. The spec accepts
   it as the price of fitting the budget, and logs rounds per split SCC.

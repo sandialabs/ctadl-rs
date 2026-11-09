@@ -26,7 +26,8 @@ three things cross functions:
 
 1. **Functions, bottom-up.** Condense `call` into SCCs and process them in
    reverse topological order, packing whole SCCs into batches under a memory
-   budget. A batch is seeded with its functions' facts and with its callees'
+   budget, by an estimate from its seeds. A batch still running when the
+   footprint passes the budget is stopped, split and rerun. A batch is seeded with its functions' facts and with its callees'
    `summary` rows, read from disk. It writes its own `summary` rows, its
    `assign_like` (including instantiated summaries) and its global-to-global
    edges. Every function is computed exactly once. An SCC too large for the
