@@ -115,6 +115,10 @@ A new module `readers/dex-reader/src/axml.rs`, declared in
   `parse_bool`), `AndroidComponent`, and `normalize_component_name`;
 - the unit tests named in R10.
 
+Both input forms move together: a manifest may be stored as plain-text XML
+(the integration tests build such APKs, `ctadl-ascent/tests/integration/cli.rs:834`),
+and one function decodes either, so callers never see the split.
+
 The module is named for the format. Its types keep their manifest names,
 since every caller decodes a manifest. (R1-R3, R10.)
 
@@ -176,15 +180,7 @@ The test reads the APK at `../../xtask/tests/dex/com.noto_54.apk` relative to
 
 ## Concerns
 
-- C1. **Does text XML belong in a Dex reader?** The intent says "AXML
-  decoder", but `parse_manifest` also accepts plain-text XML, and the
-  integration tests build APKs with text manifests
-  (`ctadl-ascent/tests/integration/cli.rs:834`). Options: (a) move both paths,
-  so `dex-reader` gains `roxmltree`, a small crate with no dependencies; (b)
-  move only the AXML path, and leave the text path and the binary/text dispatch
-  in `ctadl-ascent`, which keeps `dex-reader` free of an XML library but splits
-  one decoder across two crates. The spec assumes (a).
-- C2. **Do the Android queries move?** `package`, `components` and
+- C1. **Do the Android queries move?** `package`, `components` and
   `normalize_component_name` interpret the manifest rather than decode it.
   Options: (a) move them with the types (R3), keeping them as methods; (b)
   leave them in `ctadl-ascent` as free functions or an extension trait, keeping
