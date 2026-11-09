@@ -56,10 +56,9 @@ pub mod model_matches;
 
 /// Strategy for resolving virtual calls.
 ///
-/// While the call graph is reworked, neither CHA nor hybrid inlining resolves a call: a site
-/// classified as CHA, or deferred, gets a `call` row only to the method its reference names
-/// (`CodegenVisitor::named_method`). Dispatch models and exact super resolution still emit
-/// theirs.
+/// Neither CHA nor hybrid inlining resolves a call: a site classified as CHA, or deferred, gets
+/// a `call` row only to the method its reference names (`CodegenVisitor::named_method`).
+/// Dispatch models and exact super resolution still emit theirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum CallResolutionStrategy {
     /// Every call is resolved with Class Hierarchy Analysis.
