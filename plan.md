@@ -10,28 +10,6 @@ Code, help text and docs written by these phases must not cite the spec's or the
 
 ## Corrections to the spec
 
-- P3. **How outputs are compared.** R14 and D10 compare runs by diffing `CTADL_DUMP_RELATIONS`
-  output with `scripts/fact-dump-diff.sh`. That does not work as written, for three reasons:
-  - The monolithic dump holds every relation, scratch ones included (`dump.rs:323-333`), and
-    has no `global_flow` or `external_function` file. The script counts a relation present on
-    only one side as a difference (`scripts/fact-dump-diff.sh`, `diff`).
-  - The engine tests index in-process, many on threads of one test binary. An environment
-    variable is process-wide, and `RelationDump::relation` refuses to overwrite a file
-    (`dump.rs:242`), so a second index run in the process panics.
-  - So "per-stage scratch into one subdirectory per stage" (D10) cannot share the top-level
-    dump directory either.
-
-  This plan assumes:
-  - a function `dump_outputs(dir, index_dir, id_map)` writes the seven output tables by content
-    (the existing `DumpCol` rendering) into `dir/outputs/`. Monolithic and staged runs both call
-    it when `CTADL_DUMP_RELATIONS` is set. The monolithic run still writes its full dump at the
-    top level as today. Staged scratch goes to `dir/stages/<batch>/` only when
-    `CTADL_DUMP_STAGES` is also set.
-  - `fact-dump-diff.sh` gains `--outputs`, which compares only `outputs/`.
-  - In-process tests compare outputs with a Rust helper that renders both runs' tables the same
-    way and compares them as sets. It is the same comparison as `fact-dump-diff.sh --outputs`,
-    without the environment variable.
-
 - P4. **What R7's bound leaves out.** R7 says the fixpoint part peaks at the scheduler's
   footprint plus the running workers', and that the peak does not grow with the number of
   functions. Three things do grow with the program:
@@ -430,7 +408,7 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
 
 **Tests.**
 - New, `ctadl-ascent/src/staged/tests.rs`. Each test compares the staged run's seven tables, as
-  sets by content (P3), with the monolithic serial run's:
+  sets by content (D10), with the monolithic serial run's:
   - `staged_matches_monolithic_chain`, `_diamond`, `_globals`: hand-built facts, including a
     global-to-global flow through two batches and a function without formals (D1).
   - `staged_matches_monolithic_intent`: the Phase 1 intent fixture.
@@ -441,7 +419,7 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
     no recursion. A tight budget gives several batches, and facts are shuffled with seeds 1..3.
   - `batch_reads_only_callees`: a counting reader asserts that a batch opens only the
     `summary` files of batches holding its callees (R11).
-- New: `output_comparison` helper (P3), in `ctadl-ascent/src/staged/compare.rs`. Phases 8 and
+- New: `output_comparison` helper (D10), in `ctadl-ascent/src/staged/compare.rs`. Phases 8 and
   10 reuse it.
 - Existing: `cargo test --workspace` unchanged (default monolithic).
 
@@ -668,7 +646,7 @@ still monolithic until Phase 11.
   for traceability. It is additive, so `INDEX_FORMAT_VERSION` stays (`:186`).
 - `ctadl-index/src/index_engine/profile.rs`, `mod.rs:424-472`. `IndexStats` and `IndexProfile`
   sum over batches. `profile.json` gains `stages: [{id, peak_mb, rows, secs}]` (D10).
-- `ctadl-index/src/index_engine/dump.rs`. Add `dump_outputs(dir, index_dir, id_map)` (P3). It
+- `ctadl-index/src/index_engine/dump.rs`. Add `dump_outputs(dir, index_dir, id_map)` (D10). It
   is called by `cli::index` after the tables are written, in both modes, when
   `CTADL_DUMP_RELATIONS` is set. Under staged, `run_engine!`'s full dump is suppressed, unless
   `CTADL_DUMP_STAGES` is set, in which case it goes to `stages/<batch>/`.
@@ -694,7 +672,7 @@ still monolithic until Phase 11.
   - `staged_index_reads_as_absent_until_stamp`: a run stopped by `CTADL_STAGED_STOP_AFTER` has
     `has_index() == false` and `IndexStatus::Unfinished` (as `cli.rs:1560-1584`).
   - `staged_cli_matches_monolithic`: `cli::index` staged and `--monolithic` give equal tables
-    (P3 helper), with equal notifications.
+    (D10 helper), with equal notifications.
 - New, `scripts/` check: a `fact-dump-diff.sh compare --outputs` run of a regression project,
   staged against a `--monolithic` reference, in the gate below.
 - Existing: every integration test, unchanged, still monolithic by default.
