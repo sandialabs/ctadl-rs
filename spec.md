@@ -115,7 +115,7 @@ the work.
 ### Verification
 
 - R14. **Equivalence tests.** Every integration test and engine test that indexes also runs
-  staged, with shuffled facts and the batch floor swept down to one function. It checks R1 by
+  staged, with shuffled facts and the floor swept down to one function. It checks R1 by
   comparing the output tables, rendered by content, with those of the monolithic serial engine:
   in-process for tests that index through the library, and with
   `scripts/fact-dump-diff.sh --outputs` for runs of the CLI (D10).
@@ -245,8 +245,11 @@ output (Background).
   - A worker running a batch of one function is never killed.
   - A killed worker leaves no completion marker, and its files are discarded, so a kill cannot
     change outputs (R1).
-- A configured floor bounds how small the planner makes a batch. Its smallest value is one
-  function, which splits every recursive SCC. The tests sweep it down to one.
+- **Floor.** The most functions a part of a split recursive SCC may hold. A recursive SCC with
+  more functions than the floor is split even if it fits the budget, and one over the budget is
+  split whatever the floor. The default is unbounded, so in normal runs only the budget splits
+  an SCC. Tests set it to 4, 2 and 1 to exercise rounds. Floor 1 splits every recursive SCC of
+  more than one function into single functions.
 
 ### D7. Workers
 
