@@ -15,7 +15,10 @@ use internment::ArcIntern;
 use itertools::{Itertools, izip, multiunzip};
 use parquet::arrow::*;
 use parquet::{
-    arrow::arrow_reader::ParquetRecordBatchReaderBuilder, basic::Compression,
+    arrow::arrow_reader::{
+        ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder, statistics::StatisticsConverter,
+    },
+    basic::Compression,
     file::properties::WriterProperties,
 };
 use paste::paste;
@@ -141,6 +144,92 @@ pub struct Reader {
     path: std::path::PathBuf,
 }
 
+/// Selects the rows whose `column`, a [`facts::FunctionId`] column, holds one of `ids`.
+///
+/// A reader given one skips each row group whose `column` statistics show it holds none of
+/// `ids`, then drops the other rows of the groups it decodes. A file sorted by `column` keeps
+/// each function's rows in few groups, so a reader decodes little beyond them.
+#[derive(Clone, Copy, Debug)]
+pub struct FunctionFilter<'a> {
+    column: &'a str,
+    ids: &'a [facts::FunctionId],
+}
+
+impl<'a> FunctionFilter<'a> {
+    /// `ids` must be sorted and distinct.
+    pub fn new(column: &'a str, ids: &'a [facts::FunctionId]) -> Self {
+        debug_assert!(
+            ids.is_sorted_by(|a, b| a < b),
+            "ids are sorted and distinct"
+        );
+        Self { column, ids }
+    }
+
+    /// Whether some id lies in `min..=max`.
+    fn meets(&self, min: u32, max: u32) -> bool {
+        let at = self.ids.partition_point(|f| f.id < min);
+        at < self.ids.len() && self.ids[at].id <= max
+    }
+
+    /// `batch` without the rows whose id is not selected.
+    fn apply(&self, batch: RecordBatch) -> Result<RecordBatch, Error> {
+        let ids = batch
+            .column_by_name(self.column)
+            .and_then(|c| c.as_any().downcast_ref::<UInt32Array>())
+            .ok_or_else(|| {
+                Error::FactsConvert(format!("no function id column {:?}", self.column))
+            })?;
+        let keep: BooleanArray = ids
+            .values()
+            .iter()
+            .map(|id| Some(self.ids.binary_search_by_key(id, |f| f.id).is_ok()))
+            .collect();
+        if keep.true_count() == batch.num_rows() {
+            return Ok(batch);
+        }
+        Ok(arrow::compute::filter_record_batch(&batch, &keep)?)
+    }
+}
+
+/// The rows of a file, decoded one record batch at a time; see [`Reader::rows`].
+pub struct Rows<'a, T> {
+    reader: ParquetRecordBatchReader,
+    columns: &'a [&'a str],
+    filter: Option<FunctionFilter<'a>>,
+    decoded: std::vec::IntoIter<T>,
+    path: std::path::PathBuf,
+}
+
+impl<T> Iterator for Rows<'_, T>
+where
+    DefaultDecoder: DecodeColumns<T>,
+{
+    type Item = Result<T, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(row) = self.decoded.next() {
+                return Some(Ok(row));
+            }
+            let batch = match self.reader.next()? {
+                Ok(batch) => batch,
+                Err(e) => {
+                    let path = self.path.display().to_string();
+                    return Some(Err(e).err_context(|| format!("reading parquet file: {path}")));
+                }
+            };
+            let batch = match self.filter {
+                Some(filter) => match filter.apply(batch) {
+                    Ok(batch) => batch,
+                    Err(e) => return Some(Err(e)),
+                },
+                None => batch,
+            };
+            self.decoded = DefaultDecoder::decode_tuples(self.columns, &batch).into_iter();
+        }
+    }
+}
+
 impl Reader {
     /// Reads from the given path
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
@@ -149,23 +238,169 @@ impl Reader {
         }
     }
 
+    fn context(&self) -> String {
+        format!("reading parquet file: {}", self.path.display())
+    }
+
+    fn builder(&self) -> Result<ParquetRecordBatchReaderBuilder<File>, Error> {
+        let file = File::open(&self.path)
+            .map_err(Error::from)
+            .err_context(|| format!("opening parquet file: {}", self.path.display()))?;
+        ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(Error::Parquet)
+            .err_context(|| self.context())
+    }
+
+    /// The number of row groups in the file.
+    pub fn num_row_groups(&self) -> Result<usize, Error> {
+        Ok(self.builder()?.metadata().num_row_groups())
+    }
+
+    /// The row groups a reader given `filter` decodes: those whose statistics do not rule out
+    /// every selected id. A group without statistics is kept.
+    pub fn row_groups_for(&self, filter: FunctionFilter<'_>) -> Result<Vec<usize>, Error> {
+        Self::select_row_groups(&self.builder()?, filter).err_context(|| self.context())
+    }
+
+    fn select_row_groups(
+        builder: &ParquetRecordBatchReaderBuilder<File>,
+        filter: FunctionFilter<'_>,
+    ) -> Result<Vec<usize>, Error> {
+        let groups = builder.metadata().row_groups();
+        let stats = StatisticsConverter::try_new(
+            filter.column,
+            builder.schema(),
+            builder.parquet_schema(),
+        )?;
+        let mins = stats.row_group_mins(groups.iter())?;
+        let maxes = stats.row_group_maxes(groups.iter())?;
+        let (Some(mins), Some(maxes)) = (
+            mins.as_any().downcast_ref::<UInt32Array>(),
+            maxes.as_any().downcast_ref::<UInt32Array>(),
+        ) else {
+            return Err(Error::FactsConvert(format!(
+                "column {:?} is not a function id column",
+                filter.column
+            )));
+        };
+        Ok((0..groups.len())
+            .filter(|&i| {
+                mins.is_null(i) || maxes.is_null(i) || filter.meets(mins.value(i), maxes.value(i))
+            })
+            .collect())
+    }
+
+    /// Streams the file's rows, using the given column names, one record batch at a time. A
+    /// batch holds at most one row group's rows, so memory holds one decoded group, not the
+    /// file. The iterator can feed [`Writer::write_rows`].
+    pub fn rows<'a, T>(&self, column_names: &'a [&'a str]) -> Result<Rows<'a, T>, Error>
+    where
+        DefaultDecoder: DecodeColumns<T>,
+    {
+        self.open(column_names, None)
+    }
+
+    /// As [`Reader::rows`], only the rows `filter` selects.
+    pub fn rows_of<'a, T>(
+        &self,
+        column_names: &'a [&'a str],
+        filter: FunctionFilter<'a>,
+    ) -> Result<Rows<'a, T>, Error>
+    where
+        DefaultDecoder: DecodeColumns<T>,
+    {
+        self.open(column_names, Some(filter))
+    }
+
+    fn open<'a, T>(
+        &self,
+        columns: &'a [&'a str],
+        filter: Option<FunctionFilter<'a>>,
+    ) -> Result<Rows<'a, T>, Error> {
+        let mut builder = self.builder()?;
+        let largest_group = builder
+            .metadata()
+            .row_groups()
+            .iter()
+            .map(|g| g.num_rows() as usize)
+            .max()
+            .unwrap_or(0);
+        builder = builder.with_batch_size(largest_group.max(1));
+        if let Some(filter) = filter {
+            let groups =
+                Self::select_row_groups(&builder, filter).err_context(|| self.context())?;
+            builder = builder.with_row_groups(groups);
+        }
+        let reader = builder
+            .build()
+            .map_err(Error::Parquet)
+            .err_context(|| self.context())?;
+        Ok(Rows {
+            reader,
+            columns,
+            filter,
+            decoded: Vec::new().into_iter(),
+            path: self.path.clone(),
+        })
+    }
+
+    /// Calls `f` on the file's rows, one record batch at a time, as [`Reader::rows`] decodes
+    /// them.
+    pub fn for_each_batch<T>(
+        &self,
+        column_names: &[&str],
+        f: impl FnMut(Vec<T>) -> Result<(), Error>,
+    ) -> Result<(), Error>
+    where
+        DefaultDecoder: DecodeColumns<T>,
+    {
+        self.each_batch(column_names, None, f)
+    }
+
+    /// As [`Reader::for_each_batch`], only the rows `filter` selects. A batch may be empty.
+    pub fn for_each_batch_of<T>(
+        &self,
+        column_names: &[&str],
+        filter: FunctionFilter<'_>,
+        f: impl FnMut(Vec<T>) -> Result<(), Error>,
+    ) -> Result<(), Error>
+    where
+        DefaultDecoder: DecodeColumns<T>,
+    {
+        self.each_batch(column_names, Some(filter), f)
+    }
+
+    fn each_batch<T>(
+        &self,
+        column_names: &[&str],
+        filter: Option<FunctionFilter<'_>>,
+        mut f: impl FnMut(Vec<T>) -> Result<(), Error>,
+    ) -> Result<(), Error>
+    where
+        DefaultDecoder: DecodeColumns<T>,
+    {
+        let rows = self.open::<T>(column_names, filter)?;
+        for batch in rows.reader {
+            let batch = batch.map_err(Error::Arrow).err_context(|| self.context())?;
+            let batch = match filter {
+                Some(filter) => filter.apply(batch)?,
+                None => batch,
+            };
+            f(DefaultDecoder::decode_tuples(column_names, &batch))?;
+        }
+        Ok(())
+    }
+
     /// Read a parquet file into a vec. The vec rows are read using the given column names
     pub fn read_vec<T>(&self, column_names: &[&str]) -> Result<Vec<T>, Error>
     where
         DefaultDecoder: DecodeColumns<T>,
     {
-        let file = File::open(&self.path)
-            .map_err(Error::from)
-            .err_context(|| format!("opening parquet file: {}", self.path.display()))?;
-        let rdr = ParquetRecordBatchReaderBuilder::try_new(file)
-            .and_then(|b| b.build())
-            .map_err(Error::Parquet)
-            .err_context(|| format!("reading parquet file: {}", self.path.display()))?;
         let mut result = Vec::new();
-        for batch_result in rdr {
-            let batch = batch_result.unwrap();
-            result.extend(DefaultDecoder::decode_tuples(column_names, &batch));
-        }
+        self.for_each_batch(column_names, |rows| {
+            result.extend(rows);
+            Ok(())
+        })?;
         result.shrink_to_fit();
         Ok(result)
     }
@@ -176,19 +411,30 @@ pub const ROWS_PER_GROUP: usize = 64 * 1024;
 
 pub struct Writer {
     path: std::path::PathBuf,
+    rows_per_group: usize,
 }
 
 impl Writer {
-    /// Writes to the given path
+    /// Writes to the given path, [`ROWS_PER_GROUP`] rows per row group.
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         Self {
             path: path.as_ref().into(),
+            rows_per_group: ROWS_PER_GROUP,
         }
     }
 
-    /// Writes the rows to a parquet file, using the given column names, [`ROWS_PER_GROUP`] rows
-    /// at a time: each batch is encoded, written out as a row group of its own and dropped
-    /// before the next is taken, so memory holds one batch's columns, not the whole table's.
+    /// Sets the most rows a row group holds. Smaller groups let a [`FunctionFilter`] skip more
+    /// of a file, at some cost in size.
+    pub fn rows_per_group(mut self, rows: usize) -> Self {
+        assert!(rows > 0, "a row group holds at least one row");
+        self.rows_per_group = rows;
+        self
+    }
+
+    /// Writes the rows to a parquet file, using the given column names, up to
+    /// [`Writer::rows_per_group`] rows at a time: each batch is encoded, written out as a row
+    /// group of its own and dropped before the next is taken, so memory holds one batch's
+    /// columns, not the whole table's.
     pub fn write_iter<T>(
         &mut self,
         column_names: &[&str],
@@ -197,25 +443,83 @@ impl Writer {
     where
         DefaultEncoder: EncodeColumns<T>,
     {
-        let context = || format!("writing parquet file: {}", self.path.display());
-        let file = File::create(&self.path)
+        self.write_rows(column_names, rows.into_iter().map(Ok))
+    }
+
+    /// As [`Writer::write_iter`], from rows that may fail to come, such as those of
+    /// [`Reader::rows`]. The first error stops the write and is returned; the file is then
+    /// incomplete.
+    pub fn write_rows<T>(
+        &mut self,
+        column_names: &[&str],
+        rows: impl IntoIterator<Item = Result<T, Error>>,
+    ) -> Result<(), Error>
+    where
+        DefaultEncoder: EncodeColumns<T>,
+    {
+        let per_group = self.rows_per_group;
+        let mut rows = rows.into_iter();
+        let groups = std::iter::from_fn(move || {
+            let group: Result<Vec<T>, Error> = rows.by_ref().take(per_group).collect();
+            match group {
+                Ok(group) if group.is_empty() => None,
+                group => Some(group),
+            }
+        });
+        self.write_groups(column_names, groups)
+    }
+
+    /// As [`Writer::write_iter`], and a row group also ends wherever `key` changes from one
+    /// row to the next. Rows sorted by a key that partitions them, such as their batch, then
+    /// never share a row group with another part.
+    pub fn write_iter_grouped_by<T, K: PartialEq>(
+        &mut self,
+        column_names: &[&str],
+        rows: impl IntoIterator<Item = T>,
+        mut key: impl FnMut(&T) -> K,
+    ) -> Result<(), Error>
+    where
+        DefaultEncoder: EncodeColumns<T>,
+    {
+        let per_group = self.rows_per_group;
+        let mut rows = rows.into_iter().peekable();
+        let groups = std::iter::from_fn(move || {
+            let first = rows.next()?;
+            let k = key(&first);
+            let mut group = vec![first];
+            while group.len() < per_group {
+                match rows.next_if(|row| key(row) == k) {
+                    Some(row) => group.push(row),
+                    None => break,
+                }
+            }
+            Some(Ok(group))
+        });
+        self.write_groups(column_names, groups)
+    }
+
+    /// Writes each group as a row group of its own. A file with no rows still gets the schema.
+    fn write_groups<T>(
+        &mut self,
+        column_names: &[&str],
+        groups: impl Iterator<Item = Result<Vec<T>, Error>>,
+    ) -> Result<(), Error>
+    where
+        DefaultEncoder: EncodeColumns<T>,
+    {
+        let path = &self.path;
+        let context = || format!("writing parquet file: {}", path.display());
+        let file = File::create(path)
             .map_err(Error::from)
-            .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
+            .err_context(|| format!("creating parquet file: {}", path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
-            .set_max_row_group_row_count(Some(ROWS_PER_GROUP))
+            .set_max_row_group_row_count(Some(self.rows_per_group))
             .build();
         let mut file = Some(file);
         let mut writer: Option<ArrowWriter<File>> = None;
-        let mut rows = rows.into_iter();
-        loop {
-            let batch: Vec<T> = rows.by_ref().take(ROWS_PER_GROUP).collect();
-            let last = batch.len() < ROWS_PER_GROUP;
-            // Past the first batch, an empty one has nothing to add.
-            if batch.is_empty() && writer.is_some() {
-                break;
-            }
-            let (fields, arrays) = DefaultEncoder::encode_all(column_names, batch);
+        let mut write = |group: Vec<T>| -> Result<(), Error> {
+            let (fields, arrays) = DefaultEncoder::encode_all(column_names, group);
             let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
                 .map_err(Error::Arrow)?;
             if writer.is_none() {
@@ -229,10 +533,15 @@ impl Writer {
             wtr.write(&batch)
                 .and_then(|()| wtr.flush())
                 .map_err(Error::Parquet)
-                .err_context(context)?;
-            if last {
-                break;
-            }
+                .err_context(context)
+        };
+        let mut wrote = false;
+        for group in groups {
+            write(group?)?;
+            wrote = true;
+        }
+        if !wrote {
+            write(Vec::new())?;
         }
         writer
             .unwrap()
@@ -976,6 +1285,46 @@ impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
                 0 => facts::IntentPairKind::Explicit,
                 1 => facts::IntentPairKind::Implicit,
                 _ => panic!("bad encoding of IntentPairKind"),
+            })
+    }
+}
+
+impl EncodeColumn<facts::IntentKind> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::IntentKind>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        use facts::IntentKind::*;
+        <Self as EncodeColumn<u8>>::encode_column(
+            name,
+            col.into_iter()
+                .map(|kind| match kind {
+                    Activity => 0,
+                    Receiver => 1,
+                    StartedService => 2,
+                    BoundService => 3,
+                })
+                .collect_vec(),
+        )
+    }
+}
+
+impl DecodeColumn<facts::IntentKind> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::IntentKind> {
+        use facts::IntentKind::*;
+        <Self as DecodeColumn<u8>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(|tag| match tag {
+                0 => Activity,
+                1 => Receiver,
+                2 => StartedService,
+                3 => BoundService,
+                _ => panic!("bad encoding of IntentKind"),
             })
     }
 }

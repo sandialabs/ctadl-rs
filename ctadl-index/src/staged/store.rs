@@ -1,0 +1,510 @@
+/*!
+The stage directory, `<index>/staging/`, and the writes that make its files safe to resume
+from.
+
+Its layout:
+
+| Path | Holds |
+| --- | --- |
+| `facts/` | the program's facts, one file per relation |
+| `paths.parquet` | the program-wide path set |
+| `plan.json` | the plan of batches |
+| `key` | the [`RunKey`] of the facts and configuration the files were made from |
+| `batches/<id>/` | a batch's descriptor and outputs |
+| `rounds/` | the outputs of each round of a split SCC |
+| `frame/` | the global frame's edges |
+| `intent/` | the intent stage's outputs |
+| `done/` | a marker per completed [`Stage`] |
+
+Every file is written by [`write_atomic`], so it is complete or absent. A stage's marker is
+written the same way after all of its files, so a marker vouches for every file of its stage.
+*/
+
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use crate::error::{Error, ErrorContext};
+use crate::index_engine::IndexConfig;
+
+/// A unit of work whose completion is marked in `done/`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Stage {
+    /// The facts, path set and plan are written.
+    Facts,
+    /// A batch of the plan.
+    Batch(u32),
+    /// The global frame.
+    Frame,
+    /// The intent rules.
+    Intent,
+}
+
+impl fmt::Display for Stage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Stage::Facts => write!(f, "facts"),
+            Stage::Batch(id) => write!(f, "batch-{id}"),
+            Stage::Frame => write!(f, "frame"),
+            Stage::Intent => write!(f, "intent"),
+        }
+    }
+}
+
+/// The stage directory of one index directory.
+#[derive(Clone, Debug)]
+pub struct StageDir {
+    root: PathBuf,
+}
+
+impl StageDir {
+    /// The stage directory's name in the index directory.
+    pub const NAME: &str = "staging";
+
+    /// The stage directory of `index_dir`. Nothing is created.
+    pub fn new(index_dir: impl AsRef<Path>) -> Self {
+        Self {
+            root: index_dir.as_ref().join(Self::NAME),
+        }
+    }
+
+    /// Creates the directory and its subdirectories, if they are missing.
+    pub fn create(&self) -> Result<(), Error> {
+        for dir in [
+            self.facts_dir(),
+            self.root.join("batches"),
+            self.rounds_dir(),
+            self.frame_dir(),
+            self.intent_dir(),
+            self.done_dir(),
+        ] {
+            fs::create_dir_all(&dir)
+                .map_err(Error::from)
+                .err_context(|| format!("creating {}", dir.display()))?;
+        }
+        Ok(())
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn facts_dir(&self) -> PathBuf {
+        self.root.join("facts")
+    }
+
+    pub fn paths_file(&self) -> PathBuf {
+        self.root.join("paths.parquet")
+    }
+
+    pub fn plan_file(&self) -> PathBuf {
+        self.root.join("plan.json")
+    }
+
+    pub fn key_file(&self) -> PathBuf {
+        self.root.join("key")
+    }
+
+    pub fn batch_dir(&self, batch: u32) -> PathBuf {
+        self.root.join("batches").join(batch.to_string())
+    }
+
+    pub fn rounds_dir(&self) -> PathBuf {
+        self.root.join("rounds")
+    }
+
+    pub fn frame_dir(&self) -> PathBuf {
+        self.root.join("frame")
+    }
+
+    pub fn intent_dir(&self) -> PathBuf {
+        self.root.join("intent")
+    }
+
+    pub fn done_dir(&self) -> PathBuf {
+        self.root.join("done")
+    }
+
+    /// The marker file of `stage`.
+    pub fn marker(&self, stage: Stage) -> PathBuf {
+        self.done_dir().join(stage.to_string())
+    }
+
+    /// Marks `stage` done. Call it only once every file of the stage is in place.
+    pub fn mark_done(&self, stage: Stage) -> Result<(), Error> {
+        write_atomic(&self.marker(stage), |tmp| {
+            fs::write(tmp, b"").map_err(Error::from)
+        })
+    }
+
+    /// Whether `stage` was marked done.
+    pub fn is_done(&self, stage: Stage) -> bool {
+        self.marker(stage).is_file()
+    }
+}
+
+/// Numbers temporary names, so that two writers in one process never share one.
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Writes `path` all at once: `write` writes a temporary path beside it, a file or a
+/// directory, which is then renamed to `path`. If `write` fails, the temporary path is removed
+/// and `path` is left as it was. A process killed midway leaves at most a temporary path,
+/// whose name starts with `.`.
+///
+/// `path`'s parent directory is created if it is missing. A directory can replace only a
+/// missing or empty one.
+pub fn write_atomic<T>(
+    path: &Path,
+    write: impl FnOnce(&Path) -> Result<T, Error>,
+) -> Result<T, Error> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(Error::FactsConvert(format!(
+            "no file name in {}",
+            path.display()
+        )));
+    };
+    fs::create_dir_all(parent)
+        .map_err(Error::from)
+        .err_context(|| format!("creating {}", parent.display()))?;
+    let tmp = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id(),
+        TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = write(&tmp).and_then(|value| {
+        fs::rename(&tmp, path)
+            .map_err(Error::from)
+            .err_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
+        Ok(value)
+    });
+    if result.is_err() {
+        if tmp.is_dir() {
+            let _ = fs::remove_dir_all(&tmp);
+        } else {
+            let _ = fs::remove_file(&tmp);
+        }
+    }
+    result
+}
+
+/// The configuration a [`RunKey`] covers: everything that can change a staged run's files.
+#[derive(Clone, Debug, Serialize)]
+pub struct KeyConfig {
+    pub alias_rule: bool,
+    pub deref_paths: bool,
+    /// The engine, which does not change the tables but does change the run.
+    pub engine: String,
+    /// The memory budget, in bytes, which changes the plan.
+    pub budget: u64,
+    /// The batch floor, which changes the plan.
+    pub floor: usize,
+}
+
+impl KeyConfig {
+    pub fn new(config: &IndexConfig, budget: u64, floor: usize) -> Self {
+        let IndexConfig {
+            alias_rule,
+            parallelism,
+            storage,
+            deref_paths,
+        } = config;
+        Self {
+            alias_rule: *alias_rule,
+            deref_paths: *deref_paths,
+            engine: format!("{parallelism}, {storage:?}"),
+            budget,
+            floor,
+        }
+    }
+}
+
+/// A SHA-256 over a stage directory's fact files and a [`KeyConfig`]. A run resumes from a stage
+/// directory only if the key it stored equals the one of its own facts and configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunKey([u8; 32]);
+
+impl RunKey {
+    /// The key of the files in `facts_dir` and of `config`. The files are hashed in the order of
+    /// their names, each with its name and length, and temporary files (names starting with
+    /// `.`) are left out.
+    pub fn new(facts_dir: &Path, config: &KeyConfig) -> Result<Self, Error> {
+        let context = || format!("hashing the facts in {}", facts_dir.display());
+        let mut files = Vec::new();
+        for entry in fs::read_dir(facts_dir)
+            .map_err(Error::from)
+            .err_context(context)?
+        {
+            let entry = entry.map_err(Error::from).err_context(context)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            if !entry.file_type().map_err(Error::from)?.is_file() {
+                return Err(Error::FactsConvert(format!(
+                    "{} is not a fact file",
+                    entry.path().display()
+                )));
+            }
+            files.push(name);
+        }
+        files.sort_unstable();
+        let mut hasher = Sha256::new();
+        for name in files {
+            let path = facts_dir.join(&name);
+            let mut file = fs::File::open(&path)
+                .map_err(Error::from)
+                .err_context(context)?;
+            let len = file.metadata().map_err(Error::from)?.len();
+            hasher.update((name.len() as u64).to_le_bytes());
+            hasher.update(name.as_bytes());
+            hasher.update(len.to_le_bytes());
+            io::copy(&mut file, &mut hasher)
+                .map_err(Error::from)
+                .err_context(|| format!("reading {}", path.display()))?;
+        }
+        let config = serde_json::to_vec(config).expect("a key config serializes");
+        hasher.update((config.len() as u64).to_le_bytes());
+        hasher.update(&config);
+        Ok(RunKey(hasher.finalize().into()))
+    }
+
+    /// Stores the key in `stage`'s key file.
+    pub fn save(&self, stage: &StageDir) -> Result<(), Error> {
+        write_atomic(&stage.key_file(), |tmp| {
+            fs::write(tmp, self.to_string()).map_err(Error::from)
+        })
+    }
+
+    /// The key stored in `stage`, if there is one that reads.
+    pub fn load(stage: &StageDir) -> Option<Self> {
+        fs::read_to_string(stage.key_file())
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+}
+
+impl fmt::Display for RunKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|b| write!(f, "{b:02x}"))
+    }
+}
+
+impl std::str::FromStr for RunKey {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        if s.len() != 64 || !s.is_ascii() {
+            return Err(());
+        }
+        let mut key = [0u8; 32];
+        for (i, b) in key.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).map_err(|_| ())?;
+        }
+        Ok(RunKey(key))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::parquet::{FunctionFilter, Reader, Writer};
+    use crate::facts::schema::summary;
+    use crate::facts::{FormalIndex, FunctionId, Path as FactPath, Root};
+
+    fn summary_row(f: u32) -> summary::Record {
+        let root = Root::formal(FormalIndex::new(0));
+        let path = FactPath::from_symbol_names(["f"]);
+        (FunctionId::new(f), root, path, root, FactPath::empty())
+    }
+
+    /// Three row groups, of functions 0-9, 20-29 and 40-49. A filter on functions of the second
+    /// decodes only it, and gets only their rows. One between two of its functions decodes
+    /// that group and gets nothing.
+    #[test]
+    fn filtered_reader_skips_row_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(summary::FILENAME);
+        let rows: Vec<_> = (0..3)
+            .flat_map(|group| (0..10).map(move |i| summary_row(20 * group + i)))
+            .collect();
+        Writer::new(&file)
+            .rows_per_group(4096)
+            .write_iter_grouped_by(&summary::COLUMNS, rows, |row| row.0.id / 20)
+            .unwrap();
+        let reader = Reader::new(&file);
+        assert_eq!(reader.num_row_groups().unwrap(), 3);
+
+        let ids = [FunctionId::new(21), FunctionId::new(25)];
+        let filter = FunctionFilter::new("func_id", &ids);
+        assert_eq!(reader.row_groups_for(filter).unwrap(), vec![1]);
+        let got: Vec<summary::Record> = reader
+            .rows_of(&summary::COLUMNS, filter)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(got, vec![summary_row(21), summary_row(25)]);
+
+        let mut batches = 0;
+        reader
+            .for_each_batch_of(&summary::COLUMNS, filter, |rows: Vec<summary::Record>| {
+                batches += 1;
+                assert_eq!(rows, vec![summary_row(21), summary_row(25)]);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(batches, 1);
+
+        let missing = [
+            FunctionId::new(15),
+            FunctionId::new(35),
+            FunctionId::new(99),
+        ];
+        let filter = FunctionFilter::new("func_id", &missing);
+        assert!(reader.row_groups_for(filter).unwrap().is_empty());
+        let ids = [FunctionId::new(45)];
+        let filter = FunctionFilter::new("func_id", &ids);
+        assert_eq!(reader.row_groups_for(filter).unwrap(), vec![2]);
+    }
+
+    /// `Reader::rows` feeds `Writer::write_rows`, which copies a file group by group.
+    #[test]
+    fn rows_stream_into_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from.parquet");
+        let to = dir.path().join("to.parquet");
+        let rows: Vec<_> = (0..10).map(summary_row).collect();
+        Writer::new(&from)
+            .rows_per_group(3)
+            .write_iter(&summary::COLUMNS, rows.clone())
+            .unwrap();
+        Writer::new(&to)
+            .rows_per_group(3)
+            .write_rows(
+                &summary::COLUMNS,
+                Reader::new(&from)
+                    .rows::<summary::Record>(&summary::COLUMNS)
+                    .unwrap(),
+            )
+            .unwrap();
+        let reader = Reader::new(&to);
+        assert_eq!(reader.num_row_groups().unwrap(), 4);
+        assert_eq!(
+            reader
+                .read_vec::<summary::Record>(&summary::COLUMNS)
+                .unwrap(),
+            rows
+        );
+    }
+
+    /// A write that fails leaves neither its file, nor a temporary one, nor the marker that
+    /// would have followed it. One that succeeds leaves only the file and its marker.
+    #[test]
+    fn atomic_write_leaves_no_partial_file() {
+        let index = tempfile::tempdir().unwrap();
+        let stage = StageDir::new(index.path());
+        stage.create().unwrap();
+        let file = stage.batch_dir(0).join(summary::FILENAME);
+        let write_batch = |fail: bool| -> Result<(), Error> {
+            write_atomic(&file, |tmp| {
+                Writer::new(tmp).write_iter(&summary::COLUMNS, (0..10).map(summary_row))?;
+                if fail {
+                    return Err(Error::FactsConvert("killed".into()));
+                }
+                Ok(())
+            })?;
+            stage.mark_done(Stage::Batch(0))
+        };
+
+        assert!(write_batch(true).is_err());
+        assert!(!file.exists());
+        assert!(!stage.is_done(Stage::Batch(0)));
+        assert_eq!(fs::read_dir(stage.batch_dir(0)).unwrap().count(), 0);
+
+        write_batch(false).unwrap();
+        assert!(stage.is_done(Stage::Batch(0)));
+        assert!(!stage.is_done(Stage::Batch(1)));
+        let names: Vec<_> = fs::read_dir(stage.batch_dir(0))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![summary::FILENAME]);
+        assert_eq!(fs::read_dir(stage.done_dir()).unwrap().count(), 1);
+    }
+
+    /// The key changes with one byte of one fact file, with a file's name, and with each
+    /// configuration field, and not with temporary files or the order files were written in.
+    #[test]
+    fn run_key_changes_with_facts_and_config() {
+        let index = tempfile::tempdir().unwrap();
+        let stage = StageDir::new(index.path());
+        stage.create().unwrap();
+        let facts = stage.facts_dir();
+        fs::write(facts.join("b.parquet"), b"bbbb").unwrap();
+        fs::write(facts.join("a.parquet"), b"aaaa").unwrap();
+        let config = KeyConfig::new(&IndexConfig::default(), 1 << 30, 1);
+        let key = RunKey::new(&facts, &config).unwrap();
+
+        // Stable, and stored.
+        assert_eq!(RunKey::new(&facts, &config).unwrap(), key);
+        assert_eq!(RunKey::load(&stage), None);
+        key.save(&stage).unwrap();
+        assert_eq!(RunKey::load(&stage), Some(key));
+
+        // Temporary files do not count; write order does not either.
+        fs::write(facts.join(".a.parquet.1.0.tmp"), b"partial").unwrap();
+        assert_eq!(RunKey::new(&facts, &config).unwrap(), key);
+        let other = tempfile::tempdir().unwrap();
+        fs::write(other.path().join("a.parquet"), b"aaaa").unwrap();
+        fs::write(other.path().join("b.parquet"), b"bbbb").unwrap();
+        assert_eq!(RunKey::new(other.path(), &config).unwrap(), key);
+
+        // One byte.
+        fs::write(facts.join("b.parquet"), b"bbbc").unwrap();
+        assert_ne!(RunKey::new(&facts, &config).unwrap(), key);
+        fs::write(facts.join("b.parquet"), b"bbbb").unwrap();
+        // A name, with the same bytes.
+        fs::rename(facts.join("b.parquet"), facts.join("c.parquet")).unwrap();
+        assert_ne!(RunKey::new(&facts, &config).unwrap(), key);
+        fs::rename(facts.join("c.parquet"), facts.join("b.parquet")).unwrap();
+        assert_eq!(RunKey::new(&facts, &config).unwrap(), key);
+
+        // Each configuration field.
+        let changed = [
+            KeyConfig {
+                alias_rule: !config.alias_rule,
+                ..config.clone()
+            },
+            KeyConfig {
+                deref_paths: !config.deref_paths,
+                ..config.clone()
+            },
+            KeyConfig::new(
+                &IndexConfig {
+                    parallelism: crate::index_engine::Parallelism::from_jobs(2),
+                    ..IndexConfig::default()
+                },
+                config.budget,
+                config.floor,
+            ),
+            KeyConfig {
+                budget: config.budget + 1,
+                ..config.clone()
+            },
+            KeyConfig {
+                floor: config.floor + 1,
+                ..config.clone()
+            },
+        ];
+        for changed in changed {
+            assert_ne!(RunKey::new(&facts, &changed).unwrap(), key, "{changed:?}");
+        }
+    }
+}

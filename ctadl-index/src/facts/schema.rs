@@ -10,8 +10,8 @@ use source_info::FileSpanId;
 use crate::error::Error;
 use crate::facts::parquet;
 use crate::facts::{
-    FlowVariable, FormalIndex, FormalType, Function, FunctionId, GlobalId, ImportId, InsnId, Path,
-    Root,
+    FlowVariable, FormalIndex, FormalType, Function, FunctionId, GlobalId, ImportId, InsnId,
+    IntentKind, Path, Root, Str,
 };
 
 // Captures the Record type and FILENAME and COLUMNS constants.
@@ -183,6 +183,76 @@ pub mod intent_pair {
     save_load!();
 }
 
+// The facts below are not index tables. A staged index run writes them to its stage directory,
+// beside the facts `IndexFacts::try_save` writes, so that a stage run in a fresh process can
+// read a batch's whole input.
+
+pub mod const_str_assign {
+    use super::*;
+    /// A string constant stored at a vertex, in the index rules' encoding: the instruction is
+    /// dropped, since no rule reads it.
+    pub type Record = (FunctionId, FlowVariable, Path, Str);
+    pub const COLUMNS: [&str; 4] = ["func_id", "var", "path", "str"];
+    pub const FILENAME: &str = "const_str_assign.parquet";
+    save_load!();
+}
+
+pub mod intent_send {
+    use super::*;
+    /// An intent sent at `send_insn_id` through the bridge call at `bridge_insn_id`, its
+    /// intent in actual `index`.
+    pub type Record = (FunctionId, InsnId, InsnId, FormalIndex, IntentKind);
+    pub const COLUMNS: [&str; 5] = ["func_id", "bridge_insn_id", "send_insn_id", "index", "kind"];
+    pub const FILENAME: &str = "intent_send.parquet";
+    save_load!();
+}
+
+pub mod intent_filter {
+    use super::*;
+    /// A receiver's intent filter: an action and a MIME type.
+    pub type Record = (Str, Str, IntentKind, FunctionId);
+    pub const COLUMNS: [&str; 4] = ["action", "mime", "kind", "receiver_id"];
+    pub const FILENAME: &str = "intent_filter.parquet";
+    save_load!();
+}
+
+pub mod intent_component {
+    use super::*;
+    /// A receiver by its component class.
+    pub type Record = (Str, IntentKind, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["class", "kind", "receiver_id"];
+    pub const FILENAME: &str = "intent_component.parquet";
+    save_load!();
+}
+
+pub mod intent_frame {
+    use super::*;
+    /// A function whose string constants the intent rules follow.
+    pub type Record = (FunctionId,);
+    pub const COLUMNS: [&str; 1] = ["func_id"];
+    pub const FILENAME: &str = "intent_frame.parquet";
+    save_load!();
+}
+
+pub mod fact_summary {
+    use super::*;
+    /// A summary the facts seed before the fixpoint, in [`summary`]'s encoding.
+    pub type Record = summary::Record;
+    pub const COLUMNS: [&str; 5] = summary::COLUMNS;
+    pub const FILENAME: &str = "fact_summary.parquet";
+    save_load!();
+}
+
+pub mod frame_edge {
+    use super::*;
+    /// A flow between two global paths, an edge of the global frame, in [`global_flow`]'s
+    /// encoding.
+    pub type Record = global_flow::Record;
+    pub const COLUMNS: [&str; 4] = global_flow::COLUMNS;
+    pub const FILENAME: &str = "frame_edge.parquet";
+    save_load!();
+}
+
 pub mod manifest_node {
     use super::*;
     pub type Record = (u32, String);
@@ -285,6 +355,125 @@ mod tests {
         super::callee_info::try_save(dir.path(), records.clone()).unwrap();
         let loaded = super::callee_info::try_load(dir.path()).unwrap();
         assert_eq!(loaded, records);
+    }
+
+    /// Writes `rows` with 4-row groups, then checks they span at least two groups and read
+    /// back whole and in order.
+    fn round_trips_in_groups<T>(columns: &[&str], filename: &str, rows: Vec<T>)
+    where
+        T: Clone + PartialEq + std::fmt::Debug,
+        super::parquet::DefaultEncoder: super::parquet::EncodeColumns<T>,
+        super::parquet::DefaultDecoder: super::parquet::DecodeColumns<T>,
+    {
+        assert!(rows.len() > 4);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(filename);
+        super::parquet::Writer::new(&file)
+            .rows_per_group(4)
+            .write_iter(columns, rows.clone())
+            .unwrap();
+        let reader = super::parquet::Reader::new(&file);
+        assert!(reader.num_row_groups().unwrap() >= 2);
+        assert_eq!(reader.read_vec::<T>(columns).unwrap(), rows);
+    }
+
+    /// The stage-file schemas round-trip across row groups, every variant of their enums
+    /// included.
+    #[test]
+    fn stage_schemas_round_trip_across_row_groups() {
+        use super::*;
+        use crate::facts::{IntentKind, Root, Str};
+        let kinds = [
+            IntentKind::Activity,
+            IntentKind::Receiver,
+            IntentKind::StartedService,
+            IntentKind::BoundService,
+        ];
+        let path = |s: &str| Path::from_symbol_names([s]);
+        let var = |i: usize| match i % 3 {
+            0 => FlowVariable::local(Str::from(format!("v{i}").as_str())),
+            1 => FlowVariable::formal_index(FormalIndex::new(i as i16)),
+            _ => FlowVariable::global(GlobalId(Str::from(format!("G{i}").as_str()))),
+        };
+        let root = |i: usize| match i % 2 {
+            0 => Root::formal(FormalIndex::new(i as i16)),
+            _ => Root::global(GlobalId(Str::from(format!("G{i}").as_str()))),
+        };
+        let n = 9;
+        round_trips_in_groups(
+            &const_str_assign::COLUMNS,
+            const_str_assign::FILENAME,
+            (0..n)
+                .map(|i| {
+                    let s = Str::from(format!("s{i}").as_str());
+                    (FunctionId::new(i as u32), var(i), path("f"), s)
+                })
+                .collect(),
+        );
+        round_trips_in_groups(
+            &intent_send::COLUMNS,
+            intent_send::FILENAME,
+            (0..n)
+                .map(|i| {
+                    (
+                        FunctionId::new(i as u32),
+                        InsnId::new(i as u64),
+                        InsnId::new(100 + i as u64),
+                        FormalIndex::new(i as i16 - 1),
+                        kinds[i % 4],
+                    )
+                })
+                .collect(),
+        );
+        round_trips_in_groups(
+            &intent_filter::COLUMNS,
+            intent_filter::FILENAME,
+            (0..n)
+                .map(|i| {
+                    (
+                        Str::from(format!("action{i}").as_str()),
+                        Str::from(format!("mime{i}").as_str()),
+                        kinds[i % 4],
+                        FunctionId::new(i as u32),
+                    )
+                })
+                .collect(),
+        );
+        round_trips_in_groups(
+            &intent_component::COLUMNS,
+            intent_component::FILENAME,
+            (0..n)
+                .map(|i| {
+                    let class = Str::from(format!("C{i}").as_str());
+                    (class, kinds[i % 4], FunctionId::new(i as u32))
+                })
+                .collect(),
+        );
+        round_trips_in_groups(
+            &intent_frame::COLUMNS,
+            intent_frame::FILENAME,
+            (0..n).map(|i| (FunctionId::new(i as u32),)).collect(),
+        );
+        round_trips_in_groups(
+            &fact_summary::COLUMNS,
+            fact_summary::FILENAME,
+            (0..n)
+                .map(|i| {
+                    let f = FunctionId::new(i as u32);
+                    (f, root(i), path("a"), root(i + 1), path("b"))
+                })
+                .collect(),
+        );
+        round_trips_in_groups(
+            &frame_edge::COLUMNS,
+            frame_edge::FILENAME,
+            (0..n)
+                .map(|i| {
+                    let g = |j: usize| GlobalId(Str::from(format!("G{j}").as_str()));
+                    (g(i), path("a"), g(i + 1), Path::empty())
+                })
+                .collect(),
+        );
     }
 
     #[test]
