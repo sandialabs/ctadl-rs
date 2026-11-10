@@ -2,7 +2,7 @@
 //! `codegen` first. They live in this crate because `codegen` does.
 
 use crate::codegen::{CallResolutionStrategy, codegen_program};
-use crate::facts::{FlowVariable, FunctionId, IdMap, InsnId, Path};
+use crate::facts::{FlowVariable, FunctionId, IdMap, InsnId, IntentPairKind, Path};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::*;
 use ctadl_ir::ProgramInfo;
@@ -74,31 +74,37 @@ fn canonical(
     Vec<FunctionSummary>,
     Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     Vec<(FunctionId, InsnId, FunctionId)>,
+    Vec<(FunctionId, InsnId, FunctionId, IntentPairKind)>,
     Vec<(Path,)>,
     Vec<(FunctionId,)>,
+    Vec<GlobalFlow>,
 ) {
     let IndexResult {
         mut summary,
         mut assign_like,
         mut resolved_call,
         const_reaches: _,
-        intent_pair: _,
+        mut intent_pair,
         mut paths,
         mut external_function,
-        global_flow: _,
+        mut global_flow,
         stats: _,
     } = result;
     summary.sort();
     assign_like.sort();
     resolved_call.sort();
+    intent_pair.sort();
     paths.sort();
     external_function.sort();
+    global_flow.sort();
     (
         summary,
         assign_like,
         resolved_call,
+        intent_pair,
         paths,
         external_function,
+        global_flow,
     )
 }
 
