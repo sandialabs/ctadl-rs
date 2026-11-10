@@ -23,15 +23,29 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
     taint_index_with_config(facts, IndexConfig::default(), None)
 }
 
-/// Creates a data flow graph for taint analysis, with the engine that `config` selects.
+/// Creates a data flow graph for taint analysis, with the engine that `config` selects, staged
+/// when it says so.
 pub fn taint_index_with_config(
     facts: IndexFacts,
     config: IndexConfig,
     id_map: Option<&IdMap>,
 ) -> IndexResult {
-    let (storage, parallelism) = (config.storage, config.parallelism);
-    let input = EngineInput::new(facts, config, id_map);
-    let result = match (storage, parallelism) {
+    if let Some(staged) = config.staged {
+        return crate::staged::run::run_in_process(facts, config, staged, id_map);
+    }
+    let result = run_engine(EngineInput::new(facts, config, id_map));
+    log::trace!("index result: {}", result.display(id_map));
+    log::debug!(
+        "flow variable size: {}",
+        std::mem::size_of::<FlowVariable>()
+    );
+    result
+}
+
+/// Runs `input` to fixpoint on the engine its config selects.
+pub fn run_engine(input: EngineInput<'_>) -> IndexResult {
+    let (storage, parallelism) = (input.config.storage, input.config.parallelism);
+    match (storage, parallelism) {
         (Storage::Lsm, parallelism) => {
             if parallelism != Parallelism::Serial {
                 log::warn!("the LSM storage runs the serial engine only; ignoring {parallelism}");
@@ -61,11 +75,5 @@ pub fn taint_index_with_config(
                 .expect("spawning the index thread pool");
             pool.install(move || ctadl_index_par::run(input))
         }
-    };
-    log::trace!("index result: {}", result.display(id_map));
-    log::debug!(
-        "flow variable size: {}",
-        std::mem::size_of::<FlowVariable>()
-    );
-    result
+    }
 }

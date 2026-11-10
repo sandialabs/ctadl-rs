@@ -802,6 +802,7 @@ pub fn index(
         parallelism,
         storage,
         deref_paths,
+        staged: None,
     };
     log::info!("indexing (computing the flow relation)");
     let call_facts = CallFacts::new(&facts);

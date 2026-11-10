@@ -1,0 +1,124 @@
+//! One stage-1 batch: the index rules on a batch's functions and its callees' summaries.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Instant;
+
+use crate::error::Error;
+use crate::facts::{IdMap, Path};
+use crate::index_engine::path_set::PathSetRef;
+use crate::index_engine::{EngineInput, Parallelism, ProgramPaths, phys_footprint_mb, run_engine};
+use ctadl_index::facts::parquet::Reader;
+use ctadl_index::facts::schema;
+use ctadl_index::staged::files::{BatchFacts, BatchOutputs, read_batch_facts};
+use ctadl_index::staged::plan::{Batch, BatchId};
+use ctadl_index::staged::store::{KeyConfig, RunKey, Stage, StageDir};
+
+/// What running a batch did.
+#[derive(Debug)]
+pub struct BatchRun {
+    /// Every stage file the batch read its input from, in the order read.
+    pub read: Vec<PathBuf>,
+}
+
+/// Runs batch `id` of the run in `stage` on the engine of `parallelism`, writes its outputs and
+/// marks it done. Its inputs are read only from `stage`: its descriptor, the run's
+/// configuration, the path set, its functions' facts and its callees' summaries from the
+/// batches that ran them, which must be done.
+///
+/// Fails if the fixpoint stops short of its end (`CTADL_INDEX_TIMEOUT_SECS`), and then writes
+/// nothing.
+pub fn run_batch(
+    stage: &StageDir,
+    id: BatchId,
+    parallelism: Parallelism,
+    id_map: Option<&IdMap>,
+) -> Result<BatchRun, Error> {
+    let start = Instant::now();
+    let batch = Batch::load(stage, id)?;
+    let config = KeyConfig::load(stage)?.index_config(parallelism);
+    let path_set = path_set(stage)?;
+    let BatchFacts { facts, read } = read_batch_facts(stage, &batch)?;
+    let mut input = EngineInput::from_slice(
+        facts,
+        ProgramPaths {
+            paths: Vec::new(),
+            path_set,
+        },
+        config,
+        id_map,
+    );
+    input.seed_paths = false;
+    // A dump refuses to overwrite another, and a process may run many batches.
+    input.dump = false;
+    let result = run_engine(input);
+    if !result.stats.profile.reached_fixpoint {
+        return Err(Error::Staged(format!(
+            "batch {id} stopped before its fixpoint, so its outputs would be partial"
+        )));
+    }
+    let outputs = BatchOutputs::new(&batch, result.summary, result.assign_like);
+    log::debug!(
+        "batch {id}: {} functions, {} summary rows, {} assign rows, {} frame edges, {:.2} s, \
+         {:.1} MB",
+        batch.functions.len(),
+        outputs.summary.len(),
+        outputs.assign.len(),
+        outputs.frame.len(),
+        start.elapsed().as_secs_f64(),
+        phys_footprint_mb()
+    );
+    outputs.write(stage, id)?;
+    stage.mark_done(Stage::Batch(id))?;
+    Ok(BatchRun { read })
+}
+
+/// The path set of the last run a batch of this process ran, by its run key. Batches of one run
+/// share it, so it is read once per process.
+static PATH_SET: Mutex<Option<(RunKey, PathSetRef)>> = Mutex::new(None);
+
+/// The path set of the run in `stage`, read from its paths file unless this process holds it.
+fn path_set(stage: &StageDir) -> Result<PathSetRef, Error> {
+    let key = RunKey::load(stage)
+        .ok_or_else(|| Error::Staged(format!("no run key in {}", stage.root().display())))?;
+    let mut cached = PATH_SET.lock().unwrap();
+    if let Some((k, path_set)) = &*cached
+        && *k == key
+    {
+        return Ok(path_set.clone());
+    }
+    let start = Instant::now();
+    let before = phys_footprint_mb();
+    let paths: Vec<Path> = Reader::new(stage.paths_file())
+        .read_vec::<schema::paths::Record>(&schema::paths::COLUMNS)?
+        .into_iter()
+        .map(|(p,)| p)
+        .collect();
+    let path_set = ProgramPaths::from_paths(paths).path_set;
+    log::info!(
+        "read the path set of {} paths in {:.2} s, {:.1} MB",
+        path_set.len(),
+        start.elapsed().as_secs_f64(),
+        phys_footprint_mb() - before
+    );
+    *cached = Some((key, path_set.clone()));
+    Ok(path_set)
+}
+
+/// Lends `path_set`, the path set of the run in `stage`, to the batches this process runs, so
+/// they need not read it.
+pub fn share_path_set(stage: &StageDir, path_set: PathSetRef) -> Result<(), Error> {
+    let key = RunKey::load(stage)
+        .ok_or_else(|| Error::Staged(format!("no run key in {}", stage.root().display())))?;
+    *PATH_SET.lock().unwrap() = Some((key, path_set));
+    Ok(())
+}
+
+/// Drops the path set this process holds for the run in `stage`, if it holds that one.
+pub fn forget_path_set(stage: &StageDir) {
+    let key = RunKey::load(stage);
+    let mut cached = PATH_SET.lock().unwrap();
+    if cached.as_ref().map(|(k, _)| *k) == key {
+        *cached = None;
+    }
+}

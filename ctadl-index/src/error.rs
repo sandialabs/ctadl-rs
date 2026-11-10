@@ -227,6 +227,10 @@ pub enum Error {
     Flowy(#[from] ctadl_flowy::FlowyError),
     #[error("error converting facts: {0}")]
     FactsConvert(String),
+    /// A staged index run that cannot go on: a batch that failed, or a stage directory that does
+    /// not read.
+    #[error("staged index run: {0}")]
+    Staged(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
     /// A Portcullis file that does not parse, or whose rules do not mean anything. Already

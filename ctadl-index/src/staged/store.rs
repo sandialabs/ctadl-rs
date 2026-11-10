@@ -9,6 +9,7 @@ Its layout:
 | `facts/` | the program's facts, one file per relation |
 | `paths.parquet` | the program-wide path set |
 | `plan.json` | the plan of batches |
+| `config.json` | the run's [`KeyConfig`] |
 | `key` | the [`RunKey`] of the facts and configuration the files were made from |
 | `batches/<id>/` | a batch's descriptor and outputs |
 | `rounds/` | the outputs of each round of a split SCC |
@@ -26,11 +27,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, ErrorContext};
-use crate::index_engine::IndexConfig;
+use crate::index_engine::{IndexConfig, Parallelism, Storage};
 
 /// A unit of work whose completion is marked in `done/`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -106,6 +107,10 @@ impl StageDir {
         self.root.join("plan.json")
     }
 
+    pub fn config_file(&self) -> PathBuf {
+        self.root.join("config.json")
+    }
+
     pub fn key_file(&self) -> PathBuf {
         self.root.join("key")
     }
@@ -147,6 +152,10 @@ impl StageDir {
         self.marker(stage).is_file()
     }
 }
+
+/// Rows per row group of a stage file. A batch that reads one callee's rows from another's file
+/// decodes at most a group of them beyond its own, rather than the default group's 64K.
+pub const STAGE_ROWS_PER_GROUP: usize = 4096;
 
 /// Numbers temporary names, so that two writers in one process never share one.
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -193,13 +202,13 @@ pub fn write_atomic<T>(
     result
 }
 
-/// The configuration a [`RunKey`] covers: everything that can change a staged run's files.
-#[derive(Clone, Debug, Serialize)]
+/// The configuration a [`RunKey`] covers: everything that can change a staged run's plan or
+/// tables. The engine is left out, since it changes neither. It is also what a stage reads to
+/// configure its run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyConfig {
     pub alias_rule: bool,
     pub deref_paths: bool,
-    /// The engine, which does not change the tables but does change the run.
-    pub engine: String,
     /// The memory budget, in bytes, which changes the plan.
     pub budget: u64,
     /// The batch floor, which changes the plan.
@@ -210,16 +219,52 @@ impl KeyConfig {
     pub fn new(config: &IndexConfig, budget: u64, floor: usize) -> Self {
         let IndexConfig {
             alias_rule,
-            parallelism,
-            storage,
+            parallelism: _,
+            storage: _,
             deref_paths,
+            staged: _,
         } = config;
         Self {
             alias_rule: *alias_rule,
             deref_paths: *deref_paths,
-            engine: format!("{parallelism}, {storage:?}"),
             budget,
             floor,
+        }
+    }
+
+    /// Writes the configuration to `stage`'s config file.
+    pub fn save(&self, stage: &StageDir) -> Result<(), Error> {
+        let path = stage.config_file();
+        write_atomic(&path, |tmp| {
+            fs::write(
+                tmp,
+                serde_json::to_vec(self).expect("a key config serializes"),
+            )
+            .map_err(Error::from)
+            .err_context(|| format!("writing {}", path.display()))
+        })
+    }
+
+    /// Reads the configuration [`KeyConfig::save`] wrote.
+    pub fn load(stage: &StageDir) -> Result<Self, Error> {
+        let path = stage.config_file();
+        let json = fs::read(&path)
+            .map_err(Error::from)
+            .err_context(|| format!("reading {}", path.display()))?;
+        serde_json::from_slice(&json).map_err(|e| Error::Context {
+            context: format!("reading {}", path.display()),
+            source: Box::new(e),
+        })
+    }
+
+    /// The index configuration a stage runs under, on the engine of `parallelism`.
+    pub fn index_config(&self, parallelism: Parallelism) -> IndexConfig {
+        IndexConfig {
+            alias_rule: self.alias_rule,
+            parallelism,
+            storage: Storage::Memory,
+            deref_paths: self.deref_paths,
+            staged: None,
         }
     }
 }
@@ -440,7 +485,8 @@ mod tests {
     }
 
     /// The key changes with one byte of one fact file, with a file's name, and with each
-    /// configuration field, and not with temporary files or the order files were written in.
+    /// configuration field, and not with temporary files, the order files were written in or the
+    /// engine.
     #[test]
     fn run_key_changes_with_facts_and_config() {
         let index = tempfile::tempdir().unwrap();
@@ -486,14 +532,6 @@ mod tests {
                 deref_paths: !config.deref_paths,
                 ..config.clone()
             },
-            KeyConfig::new(
-                &IndexConfig {
-                    parallelism: crate::index_engine::Parallelism::from_jobs(2),
-                    ..IndexConfig::default()
-                },
-                config.budget,
-                config.floor,
-            ),
             KeyConfig {
                 budget: config.budget + 1,
                 ..config.clone()
@@ -506,5 +544,16 @@ mod tests {
         for changed in changed {
             assert_ne!(RunKey::new(&facts, &changed).unwrap(), key, "{changed:?}");
         }
+        // Not the engine.
+        let engine = KeyConfig::new(
+            &IndexConfig {
+                parallelism: Parallelism::from_jobs(2),
+                storage: Storage::Lsm,
+                ..IndexConfig::default()
+            },
+            config.budget,
+            config.floor,
+        );
+        assert_eq!(RunKey::new(&facts, &engine).unwrap(), key);
     }
 }

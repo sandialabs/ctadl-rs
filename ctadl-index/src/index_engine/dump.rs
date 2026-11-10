@@ -113,8 +113,8 @@ impl<A: DumpCol, B: DumpCol> DumpCol for (A, B) {
     }
 }
 
-/// The settings that change what is derived. The engine and storage are left out: they must not
-/// change the result, and leaving them out lets two engines' dumps be compared.
+/// The settings that change what is derived. The engine, storage and staging are left out: they
+/// must not change the result, and leaving them out lets two engines' dumps be compared.
 impl DumpCol for IndexConfig {
     fn dump_col(&self, _: &Cx<'_>, out: &mut String) {
         let IndexConfig {
@@ -122,6 +122,7 @@ impl DumpCol for IndexConfig {
             parallelism: _,
             storage: _,
             deref_paths,
+            staged: _,
         } = self;
         write!(out, "alias_rule={alias_rule} deref_paths={deref_paths}").unwrap()
     }

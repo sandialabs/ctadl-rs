@@ -12,10 +12,11 @@ program, so that its peak memory is that of its largest stage:
 
 Every stage reads its inputs from, and writes its outputs to, the stage directory
 ([`store`]), so each can run in a fresh process and a killed run can resume. This module holds
-the parts that need no engine: the stage directory, the plan of batches ([`plan`]) and a
-seeded shuffle of facts for tests ([`shuffle`]).
+the parts that need no engine: the stage directory, the files in it ([`files`]), the plan of
+batches ([`plan`]) and a seeded shuffle of facts for tests ([`shuffle`]).
 */
 
+pub mod files;
 pub mod plan;
 pub mod shuffle;
 pub mod store;

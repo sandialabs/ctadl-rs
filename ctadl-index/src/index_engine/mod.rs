@@ -328,6 +328,29 @@ pub struct IndexConfig {
     /// When set, every program path `p` also admits `p.deref`, as if a loaded summary mentioned
     /// `.deref`.
     pub deref_paths: bool,
+    /// Runs the fixpoint in stages, batches of functions callees first, instead of once over the
+    /// whole program. `None` runs it once.
+    #[builder(default)]
+    pub staged: Option<StagedConfig>,
+}
+
+/// How a staged run splits the program into batches.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct StagedConfig {
+    /// The memory, in bytes, the batches running at once may use, by their estimates.
+    pub budget: u64,
+    /// The most functions a part of a split recursive SCC may hold.
+    pub floor: usize,
+}
+
+impl StagedConfig {
+    /// A budget of `budget` bytes, with no floor: only the budget splits an SCC.
+    pub fn with_budget(budget: u64) -> Self {
+        StagedConfig {
+            budget,
+            floor: usize::MAX,
+        }
+    }
 }
 
 impl Default for IndexConfig {
@@ -337,6 +360,7 @@ impl Default for IndexConfig {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             deref_paths: false,
+            staged: None,
         }
     }
 }
@@ -1492,6 +1516,9 @@ pub struct EngineInput<'a> {
     /// Whether the run seeds the `paths` relation with `paths`. No rule reads it: it is the
     /// output's copy. When false, [`IndexResult::paths`] is `paths` as given.
     pub seed_paths: bool,
+    /// Whether the run writes the `CTADL_DUMP_RELATIONS` dump when it is set. A dump refuses to
+    /// overwrite another, so only one run in a process may write it.
+    pub dump: bool,
     pub index_timeout: std::time::Duration,
     pub id_map: Option<&'a IdMap>,
     pub initial_assign: usize,
@@ -1663,6 +1690,7 @@ impl<'a> EngineInput<'a> {
             paths,
             path_set,
             seed_paths: true,
+            dump: true,
             index_timeout,
             id_map,
             initial_assign,
@@ -1750,6 +1778,7 @@ macro_rules! run_engine {
             paths,
             path_set,
             seed_paths,
+            dump,
             index_timeout,
             id_map,
             initial_assign,
@@ -1888,7 +1917,10 @@ macro_rules! run_engine {
             },
         );
         profile.split_misses = path_set.split_misses();
-        if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
+        if let Some(mut dump) = dump
+            .then(|| $crate::index_engine::dump::RelationDump::from_env(id_map))
+            .flatten()
+        {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);
             prog.dump_trie_stores(&mut dump);

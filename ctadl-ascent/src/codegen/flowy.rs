@@ -116,9 +116,60 @@ pub fn check_with_config<P: AsRef<Path>>(
     config: IndexConfig,
 ) -> anyhow::Result<()> {
     let file = file.as_ref();
-    let program = flowy::compile_program(file)?;
+    let (index_facts, source_info, requirements) = program_facts(file, models)?;
     let mut pass_count = 0;
     let mut fail_count = 0;
+    let index_result = taint_index_with_config(index_facts, config, Some(&source_info.sites));
+    if let Some(dot_path) = dump_index_graph {
+        let mut file = std::fs::File::create(dot_path)
+            .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
+        crate::graphviz::render_index_graph(
+            &index_result.assign_like,
+            &source_info.sites,
+            &mut file,
+        )
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
+        log::info!("Wrote index graph to '{}'", dot_path.display());
+    }
+
+    // `#value` is terminal (`ctadl_ir::cir::PathSegment::Value`).
+    for (p,) in &index_result.paths {
+        let segments: Vec<_> = p.iter().collect();
+        if let Some(i) = segments.iter().position(|s| s.is_value())
+            && i + 1 != segments.len()
+        {
+            log::warn!("admissible path with a segment after #value: {p}");
+            fail_count += 1;
+        }
+    }
+
+    let (ipass, ifail) = index_check_summaries(
+        &index_result,
+        requirements.summary_requires,
+        &source_info.sites,
+    )?;
+    pass_count += ipass;
+    fail_count += ifail;
+
+    if fail_count > 0 {
+        anyhow::bail!(
+            "Flowy program verification failed: {} checks passed, {} failed",
+            pass_count,
+            fail_count
+        );
+    }
+    println!("{} checks passed, {} failed", pass_count, fail_count);
+    Ok(())
+}
+
+/// Compiles the flowy program in `file` and generates its index facts, with the models in
+/// `models`. Returns the facts, the source info that names their functions, and the program's
+/// requirements.
+pub fn program_facts(
+    file: &Path,
+    models: &[std::path::PathBuf],
+) -> anyhow::Result<(IndexFacts, IndexSourceInfo, flowy::FlowyRequires)> {
+    let program = flowy::compile_program(file)?;
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
     // import has `Dispatch::Unknown` and names each function by its IR name, so a generator
@@ -163,47 +214,7 @@ pub fn check_with_config<P: AsRef<Path>>(
     }
     log::trace!("requirements: {}", program.requirements);
     crate::cli::inspect_index_facts(&index_facts, Some(&source_info.sites))?;
-    let index_result = taint_index_with_config(index_facts, config, Some(&source_info.sites));
-    if let Some(dot_path) = dump_index_graph {
-        let mut file = std::fs::File::create(dot_path)
-            .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
-        crate::graphviz::render_index_graph(
-            &index_result.assign_like,
-            &source_info.sites,
-            &mut file,
-        )
-        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
-        log::info!("Wrote index graph to '{}'", dot_path.display());
-    }
-
-    // `#value` is terminal (`ctadl_ir::cir::PathSegment::Value`).
-    for (p,) in &index_result.paths {
-        let segments: Vec<_> = p.iter().collect();
-        if let Some(i) = segments.iter().position(|s| s.is_value())
-            && i + 1 != segments.len()
-        {
-            log::warn!("admissible path with a segment after #value: {p}");
-            fail_count += 1;
-        }
-    }
-
-    let (ipass, ifail) = index_check_summaries(
-        &index_result,
-        program.requirements.summary_requires,
-        &source_info.sites,
-    )?;
-    pass_count += ipass;
-    fail_count += ifail;
-
-    if fail_count > 0 {
-        anyhow::bail!(
-            "Flowy program verification failed: {} checks passed, {} failed",
-            pass_count,
-            fail_count
-        );
-    }
-    println!("{} checks passed, {} failed", pass_count, fail_count);
-    Ok(())
+    Ok((index_facts, source_info, program.requirements))
 }
 
 fn port_to_index(port: &Port) -> anyhow::Result<(fx::Root, fx::Path)> {
