@@ -283,8 +283,17 @@ output (Background).
   statistics.
 - **Completion.** Each batch, round and stage writes its files to temporary names, renames them
   into place, then writes its completion marker the same way (R12).
-- **Run key.** A key over the facts and the configuration (engine, budget, alias rule, deref
-  paths) is stored in the directory. A resumed run with a different key starts over.
+- **Run key.** A SHA-256 stored in the stage directory. It covers:
+  - the fact files the run writes into the stage directory, hashed in file-name order;
+  - the configuration that changes the plan or the tables: alias rule, deref paths, budget and
+    floor.
+
+  It leaves out the engine (serial, parallel, LSM), which changes neither. Fact files are
+  written in a total order (batch, `FunctionId`, then the row), so the same facts give the same
+  bytes.
+- **Resume.** On start, a run writes its facts beside the stored ones, under a temporary name,
+  and computes its key. If the key equals the stored key, it deletes the new facts and resumes.
+  Otherwise it removes the stage directory and starts over, with the new facts as its facts.
 
 ### D9. Final tables
 
