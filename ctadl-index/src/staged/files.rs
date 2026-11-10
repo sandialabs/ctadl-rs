@@ -1,5 +1,6 @@
 /*!
-The stage directory's fact files, and the files a stage-1 batch writes.
+The stage directory's fact files, the files each stage writes, and the assembly of the index
+tables from them.
 
 The facts are written once, before any batch runs, one file per relation in `facts/`. The
 per-function facts are sorted by batch, then by function, then by content, and a row group ends
@@ -10,13 +11,17 @@ whatever order they came in, which the [`RunKey`](super::store::RunKey) relies o
 
 A batch writes, under `batches/<id>/`, its functions' `summary` and `assign` rows and its
 frame edges, each sorted by function so that a caller's batch can read one callee's rows by
-row-group statistics.
+row-group statistics. The global frame ([`run_frame`]) writes the distinct frame edges under
+`frame/`, and the intent stage writes its `intent_pair` and `resolved_call` under `intent/`.
+[`assemble`] then streams all of these into the index tables.
 
 Every file is in the encoding of the index's parquet tables: paths and strings by content.
 */
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+
+use hashbrown::HashSet;
 use std::path::{Path as FsPath, PathBuf};
 
 use crate::error::Error;
@@ -28,9 +33,12 @@ use crate::facts::{
     FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, GLOBAL_FRAME, GlobalId, InsnId,
     IntentKind, PackedInsnSiteId, Path, Root, Str,
 };
-use crate::index_engine::{AssignLikeRow, FunctionSummary, GlobalFlow, IndexFacts, unpack_site};
+use crate::index_engine::path_set::PathSetRef;
+use crate::index_engine::{
+    AssignLikeRow, FunctionSummary, GlobalFlow, IndexFacts, IntentInput, IntentOutput, unpack_site,
+};
 use crate::staged::plan::{Batch, BatchId, Plan};
-use crate::staged::store::{STAGE_ROWS_PER_GROUP, StageDir, write_atomic};
+use crate::staged::store::{STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic};
 
 /// The function column of every per-function file.
 const FUNC_COLUMN: &str = "func_id";
@@ -487,7 +495,11 @@ impl BatchOutputs {
     }
 }
 
-fn write_file<R>(file: &FsPath, columns: &[&str], rows: Vec<R>) -> Result<(), Error>
+fn write_file<R>(
+    file: &FsPath,
+    columns: &[&str],
+    rows: impl IntoIterator<Item = R>,
+) -> Result<(), Error>
 where
     DefaultEncoder: EncodeColumns<R>,
 {
@@ -530,12 +542,129 @@ where
     Writer::new(index_dir.join(name)).write_rows(columns, concat::<R>(files, columns))
 }
 
-/// Writes the index tables to `index_dir` from the stage files of a run of `plan` whose batches
+/// The file of the global frame's edges.
+pub fn frame_file(stage: &StageDir) -> PathBuf {
+    stage.frame_dir().join(schema::frame_edge::FILENAME)
+}
+
+/// An edge of the global frame as a row of the frame's `assign`.
+fn frame_assign((dst, p1, src, p2): GlobalFlow) -> AssignLikeRow {
+    (
+        GLOBAL_FRAME,
+        FlowVariable::global(dst),
+        p1,
+        FlowVariable::global(src),
+        p2,
+    )
+}
+
+/// Stage 2, the global frame: the distinct edges of every batch of `plan`, all done, and of the
+/// facts' `global_flow`. Writes them to the frame file and marks the stage done. Returns how
+/// many there are.
+pub fn run_frame(stage: &StageDir, plan: &Plan) -> Result<usize, Error> {
+    use schema::*;
+    let mut edges: HashSet<GlobalFlow> = HashSet::new();
+    let files = plan
+        .batches
+        .iter()
+        .map(|b| batch_file(stage, b.id, frame_edge::FILENAME))
+        .chain([stage.facts_dir().join(global_flow::FILENAME)]);
+    for file in files {
+        Reader::new(file).for_each_batch(&frame_edge::COLUMNS, |rows: Vec<GlobalFlow>| {
+            edges.extend(rows);
+            Ok(())
+        })?;
+    }
+    let n = edges.len();
+    write_file(&frame_file(stage), &frame_edge::COLUMNS, edges)?;
+    stage.mark_done(Stage::Frame)?;
+    Ok(n)
+}
+
+/// The input of stage 3, the intent rules, if any function sends an intent: the `assign` rows
+/// of the functions in `intent_frame`, from the batches that ran them, and the frame's edges,
+/// from stage 2, which must be done; those functions' `const_str_assign` and `intent_send`;
+/// and the other intent facts.
+pub fn read_intent_input(
+    stage: &StageDir,
+    plan: &Plan,
+    path_set: PathSetRef,
+) -> Result<Option<IntentInput>, Error> {
+    use schema::*;
+    let facts = stage.facts_dir();
+    let intent_frame: Vec<intent_frame::Record> =
+        Reader::new(facts.join(intent_frame::FILENAME)).read_vec(&intent_frame::COLUMNS)?;
+    let mut functions: Vec<FunctionId> = intent_frame
+        .iter()
+        .map(|(f,)| *f)
+        .filter(|f| *f != GLOBAL_FRAME)
+        .collect();
+    functions.sort_unstable();
+    functions.dedup();
+    if functions.is_empty() {
+        return Ok(None);
+    }
+    let mut read = Vec::new();
+    let mut assign_like: Vec<AssignLikeRow> = Vec::new();
+    for b in &plan.intent_batches {
+        assign_like.extend(read_of::<assign::Record>(
+            batch_file(stage, *b, assign::FILENAME),
+            &assign::COLUMNS,
+            &functions,
+            &mut read,
+        )?);
+    }
+    Reader::new(frame_file(stage)).for_each_batch(&frame_edge::COLUMNS, |rows| {
+        assign_like.extend(rows.into_iter().map(frame_assign));
+        Ok(())
+    })?;
+    Ok(Some(IntentInput {
+        assign_like,
+        const_str_assign: read_of(
+            facts.join(const_str_assign::FILENAME),
+            &const_str_assign::COLUMNS,
+            &functions,
+            &mut read,
+        )?,
+        intent_send: read_of(
+            facts.join(intent_send::FILENAME),
+            &intent_send::COLUMNS,
+            &functions,
+            &mut read,
+        )?,
+        intent_frame,
+        intent_filter: Reader::new(facts.join(intent_filter::FILENAME))
+            .read_vec(&intent_filter::COLUMNS)?,
+        intent_component: Reader::new(facts.join(intent_component::FILENAME))
+            .read_vec(&intent_component::COLUMNS)?,
+        path_set,
+    }))
+}
+
+/// Writes stage 3's outputs, empty when it did not run, and marks the stage done.
+pub fn write_intent_output(stage: &StageDir, output: IntentOutput) -> Result<(), Error> {
+    use schema::*;
+    let dir = stage.intent_dir();
+    write_file(
+        &dir.join(intent_pair::FILENAME),
+        &intent_pair::COLUMNS,
+        output.intent_pair,
+    )?;
+    write_file(
+        &dir.join(resolved_call::FILENAME),
+        &resolved_call::COLUMNS,
+        output.resolved_call,
+    )?;
+    stage.mark_done(Stage::Intent)
+}
+
+/// Writes the index tables to `index_dir` from the stage files of a run of `plan` whose stages
 /// are all done, streaming each table a row group at a time:
-/// - `summary` and `assign` are the batches' rows;
+/// - `summary` is the batches' rows, and `assign` those and the frame's edges;
 /// - `paths` is the path set;
 /// - `external_function` is the facts';
-/// - `global_flow`, `resolved_call` and `intent_pair` are empty.
+/// - `global_flow` is the frame's edges;
+/// - `resolved_call` and `intent_pair` are stage 3's.
 pub fn assemble(stage: &StageDir, plan: &Plan, index_dir: &FsPath) -> Result<(), Error> {
     use schema::*;
     let of_batches = |name: &str| -> Vec<PathBuf> {
@@ -550,11 +679,12 @@ pub fn assemble(stage: &StageDir, plan: &Plan, index_dir: &FsPath) -> Result<(),
         &summary::COLUMNS,
         of_batches(summary::FILENAME),
     )?;
-    assemble_table::<assign::Record>(
-        index_dir,
-        assign::FILENAME,
+    Writer::new(index_dir.join(assign::FILENAME)).write_rows(
         &assign::COLUMNS,
-        of_batches(assign::FILENAME),
+        concat::<assign::Record>(of_batches(assign::FILENAME), &assign::COLUMNS).chain(
+            concat::<frame_edge::Record>(vec![frame_file(stage)], &frame_edge::COLUMNS)
+                .map(|r| r.map(frame_assign)),
+        ),
     )?;
     assemble_table::<paths::Record>(
         index_dir,
@@ -568,8 +698,23 @@ pub fn assemble(stage: &StageDir, plan: &Plan, index_dir: &FsPath) -> Result<(),
         &external_function::COLUMNS,
         vec![stage.facts_dir().join(external_function::FILENAME)],
     )?;
-    global_flow::try_save(index_dir, [])?;
-    resolved_call::try_save(index_dir, [])?;
-    intent_pair::try_save(index_dir, [])?;
-    Ok(())
+    assemble_table::<global_flow::Record>(
+        index_dir,
+        global_flow::FILENAME,
+        &global_flow::COLUMNS,
+        vec![frame_file(stage)],
+    )?;
+    let intent = stage.intent_dir();
+    assemble_table::<resolved_call::Record>(
+        index_dir,
+        resolved_call::FILENAME,
+        &resolved_call::COLUMNS,
+        vec![intent.join(resolved_call::FILENAME)],
+    )?;
+    assemble_table::<intent_pair::Record>(
+        index_dir,
+        intent_pair::FILENAME,
+        &intent_pair::COLUMNS,
+        vec![intent.join(intent_pair::FILENAME)],
+    )
 }

@@ -8,11 +8,11 @@ use crate::facts::IdMap;
 use crate::index_engine::{
     IndexConfig, IndexFacts, IndexResult, ProgramPaths, StagedConfig, Storage, phys_footprint_mb,
 };
-use crate::staged::batch::{forget_path_set, share_path_set};
+use crate::staged::batch::{forget_path_set, run_intent_stage, share_path_set};
 use crate::staged::executor::{Executor, InProcess};
 use ctadl_index::facts::parquet::Writer;
 use ctadl_index::facts::schema;
-use ctadl_index::staged::files::{assemble, write_facts};
+use ctadl_index::staged::files::{assemble, run_frame, write_facts};
 use ctadl_index::staged::plan::Plan;
 use ctadl_index::staged::store::{
     KeyConfig, RunKey, STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic,
@@ -23,8 +23,8 @@ use ctadl_index::staged::store::{
 ///
 /// Before any batch runs, it plans the batches, writes the facts, the path set, the plan and
 /// the run key to the stage directory, and drops the facts. It then runs the batches in plan
-/// order on `executor`, and streams their outputs into the tables. A stage directory already
-/// there is removed first.
+/// order on `executor`, the global frame and the intent stage, and streams their outputs into
+/// the tables. A stage directory already there is removed first.
 pub fn run_staged(
     mut facts: IndexFacts,
     config: &IndexConfig,
@@ -45,6 +45,7 @@ pub fn run_staged(
 
     let ProgramPaths { paths, path_set } = ProgramPaths::from_facts(&facts, config.deref_paths);
     let plan = Plan::whole_sccs(&facts, staged.budget, paths.len());
+    log::debug!("[mem cp] staged: planned: {:.1} MB", phys_footprint_mb());
     write_atomic(&stage.paths_file(), |tmp| {
         Writer::new(tmp)
             .rows_per_group(STAGE_ROWS_PER_GROUP)
@@ -52,7 +53,15 @@ pub fn run_staged(
     })?;
     plan.save(&stage)?;
     write_facts(&stage, &mut facts, &plan)?;
+    log::debug!(
+        "[mem cp] staged: facts written: {:.1} MB",
+        phys_footprint_mb()
+    );
     drop(facts);
+    log::debug!(
+        "[mem cp] staged: facts dropped: {:.1} MB",
+        phys_footprint_mb()
+    );
     let key_config = KeyConfig::new(config, staged.budget, staged.floor);
     key_config.save(&stage)?;
     RunKey::new(&stage.facts_dir(), &key_config)?.save(&stage)?;
@@ -77,17 +86,32 @@ pub fn run_staged(
                 executor.run(&stage, batch.id)?;
             }
         }
+        log::info!(
+            "staged index: batches done in {:.1} s, {:.1} MB",
+            start.elapsed().as_secs_f64(),
+            phys_footprint_mb()
+        );
+        let edges = run_frame(&stage, &plan)?;
+        log::info!(
+            "staged index: {edges} edges of the global frame, {:.1} MB",
+            phys_footprint_mb()
+        );
+        run_intent_stage(&stage)?;
+        log::debug!(
+            "[mem cp] staged: intent stage done: {:.1} MB",
+            phys_footprint_mb()
+        );
         Ok::<_, Error>(())
     })();
     forget_path_set(&stage);
     ran?;
-    log::info!(
-        "staged index: batches done in {:.1} s, {:.1} MB",
-        start.elapsed().as_secs_f64(),
+
+    assemble(&stage, &plan, index_dir)?;
+    log::debug!(
+        "[mem cp] staged: tables written: {:.1} MB",
         phys_footprint_mb()
     );
-
-    assemble(&stage, &plan, index_dir)
+    Ok(())
 }
 
 const MB: f64 = (1 << 20) as f64;
@@ -110,6 +134,10 @@ pub fn run_in_process(
     let mut result = run_staged(facts, &config, staged, index_dir.path(), &mut executor)
         .and_then(|()| IndexResult::try_load(index_dir.path()))
         .unwrap_or_else(|e| panic!("the staged index run failed: {e:?}"));
+    log::debug!(
+        "[mem cp] staged: tables loaded: {:.1} MB",
+        phys_footprint_mb()
+    );
     // Every batch did, or the run would have failed.
     result.stats.profile.reached_fixpoint = true;
     result

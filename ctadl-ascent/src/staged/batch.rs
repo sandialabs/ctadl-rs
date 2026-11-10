@@ -1,4 +1,6 @@
-//! One stage-1 batch: the index rules on a batch's functions and its callees' summaries.
+//! The stages that run the index's rules, each reading its inputs only from the stage directory:
+//! a stage-1 batch ([`run_batch`]), the index rules on a batch's functions and its callees'
+//! summaries, and the intent stage ([`run_intent_stage`]).
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -10,8 +12,11 @@ use crate::index_engine::path_set::PathSetRef;
 use crate::index_engine::{EngineInput, Parallelism, ProgramPaths, phys_footprint_mb, run_engine};
 use ctadl_index::facts::parquet::Reader;
 use ctadl_index::facts::schema;
-use ctadl_index::staged::files::{BatchFacts, BatchOutputs, read_batch_facts};
-use ctadl_index::staged::plan::{Batch, BatchId};
+use ctadl_index::index_engine::IntentOutput;
+use ctadl_index::staged::files::{
+    BatchFacts, BatchOutputs, read_batch_facts, read_intent_input, write_intent_output,
+};
+use ctadl_index::staged::plan::{Batch, BatchId, Plan};
 use ctadl_index::staged::store::{KeyConfig, RunKey, Stage, StageDir};
 
 /// What running a batch did.
@@ -71,6 +76,29 @@ pub fn run_batch(
     outputs.write(stage, id)?;
     stage.mark_done(Stage::Batch(id))?;
     Ok(BatchRun { read })
+}
+
+/// Runs the intent rules alone on the flow of the functions that send intents and on the global
+/// frame, which must be done, and writes the intent pairs and the calls they resolve. When no
+/// function sends an intent, it writes none and runs nothing.
+pub fn run_intent_stage(stage: &StageDir) -> Result<(), Error> {
+    let start = Instant::now();
+    let plan = Plan::load(stage)?;
+    let output = match read_intent_input(stage, &plan, path_set(stage)?)? {
+        Some(input) => {
+            let rows = input.assign_like.len();
+            let output = ctadl_index_serial::run_intent(input);
+            log::debug!(
+                "intent stage: {rows} assign rows in, {} intent pairs, {:.2} s, {:.1} MB",
+                output.intent_pair.len(),
+                start.elapsed().as_secs_f64(),
+                phys_footprint_mb()
+            );
+            output
+        }
+        None => IntentOutput::default(),
+    };
+    write_intent_output(stage, output)
 }
 
 /// The path set of the last run a batch of this process ran, by its run key. Batches of one run

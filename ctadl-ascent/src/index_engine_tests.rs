@@ -805,18 +805,15 @@ mod globals {
     }
 }
 
-/// The intent rules run alone on the flow the full program closed must derive the full
-/// program's intent pairs. The fixture resolves one send by its component, and one by an action
-/// that reaches the sender only through the label exchange: `setter` stores the action in a
-/// global, `sender` reads the global.
-#[test_log::test]
-fn intent_program_matches_full_program() {
+/// Intent facts of four functions: `sender` sends one intent resolved by its component and one
+/// resolved by an action that reaches it only through the label exchange, since `setter` stores
+/// the action in a global and `sender` reads the global. `by_action` (3) and `by_component` (4)
+/// receive them.
+pub(crate) fn intent_facts() -> IndexFacts {
     use crate::facts::{
-        FlowVertex, FormalIndex, FormalType, GLOBAL_FRAME, GlobalId, IntentKind, PackedCallArg,
-        PackedInsnSiteId, Str,
+        FlowVertex, FormalIndex, FormalType, GlobalId, IntentKind, PackedCallArg, PackedInsnSiteId,
+        Str,
     };
-    use crate::index_engine::path_set::{PathSet, PathSetRef};
-    use std::sync::Arc;
 
     let setter = FunctionId::new(1);
     let sender = FunctionId::new(2);
@@ -835,7 +832,7 @@ fn intent_program_matches_full_program() {
     let g = FlowVariable::global(GlobalId::new("g"));
     let formal0 = FlowVariable::formal_index(FormalIndex::new(0));
 
-    let facts = IndexFacts {
+    IndexFacts {
         formal_param: [by_action, by_component]
             .into_iter()
             .map(|f| (f, formal0, FormalType::default()))
@@ -892,7 +889,20 @@ fn intent_program_matches_full_program() {
         )],
         intent_component: vec![(Str::from("Recv"), IntentKind::Activity, by_component)],
         ..Default::default()
-    };
+    }
+}
+
+/// The intent rules run alone on the flow the full program closed must derive the full
+/// program's intent pairs, on [`intent_facts`].
+#[test_log::test]
+fn intent_program_matches_full_program() {
+    use crate::facts::{FlowVertex, GLOBAL_FRAME};
+    use crate::index_engine::path_set::{PathSet, PathSetRef};
+    use std::sync::Arc;
+
+    let by_action = FunctionId::new(3);
+    let by_component = FunctionId::new(4);
+    let facts = intent_facts();
 
     let full = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
     let mut expected_pairs = full.intent_pair.clone();

@@ -8,13 +8,13 @@ use super::compare::compare_results;
 use super::executor::InProcess;
 use super::run::run_staged;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, GLOBAL_FRAME, IdMap, InsnId,
+    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, InsnId,
     PackedInsnSiteId, Path, Str,
 };
 use crate::index_engine::{
     IndexConfig, IndexFacts, IndexResult, Parallelism, StagedConfig, taint_index_with_config,
 };
-use crate::index_engine_tests::{SRC, index_program, program_from_string};
+use crate::index_engine_tests::{SRC, index_program, intent_facts, program_from_string};
 use ctadl_index::facts::schema;
 use ctadl_index::staged::files::batch_file;
 use ctadl_index::staged::plan::{BatchId, Plan};
@@ -46,17 +46,6 @@ fn run(facts: IndexFacts, staged: StagedConfig, id_map: Option<&IdMap>) -> (Inde
     (IndexResult::try_load(index.path()).unwrap(), plan)
 }
 
-/// The tables of a monolithic run that a staged run writes so far: the global frame and the
-/// intent rules are not run yet, so it has no frame rows in `assign`, and no `global_flow`,
-/// `resolved_call` or `intent_pair`.
-fn stage_one_tables(mut result: IndexResult) -> IndexResult {
-    result.assign_like.retain(|r| r.0 != GLOBAL_FRAME);
-    result.global_flow.clear();
-    result.resolved_call.clear();
-    result.intent_pair.clear();
-    result
-}
-
 /// Asserts that `facts` staged, shuffled by each of `seeds` (and unshuffled when there are
 /// none), has the monolithic serial run's tables. Returns the number of batches of each run.
 fn assert_staged_matches(
@@ -66,11 +55,7 @@ fn assert_staged_matches(
     seeds: &[u64],
     what: &str,
 ) -> Vec<usize> {
-    let monolithic = stage_one_tables(taint_index_with_config(
-        facts.clone(),
-        IndexConfig::default(),
-        id_map,
-    ));
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
     let seeds: Vec<Option<u64>> = if seeds.is_empty() {
         vec![None]
     } else {
@@ -199,6 +184,62 @@ fn staged_matches_monolithic_function_without_formals() {
     assert!(monolithic.summary.iter().any(|r| r.0 == caller));
     let counts = assert_staged_matches(&facts, None, ONE_SCC_PER_BATCH, &[1, 2, 3], "no formals");
     assert!(counts.iter().all(|&n| n == 3), "{counts:?}");
+}
+
+/// Intent pairs, one resolved through the label exchange across the global frame, with the
+/// sender, the setter of the global and the receivers in batches of their own.
+#[test]
+fn staged_matches_monolithic_intent() {
+    let facts = intent_facts();
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    assert_eq!(monolithic.intent_pair.len(), 2);
+    let counts = assert_staged_matches(&facts, None, ONE_SCC_PER_BATCH, &[1, 2, 3], "intent");
+    assert!(counts.iter().all(|&n| n == 4), "{counts:?}");
+}
+
+/// The program-level flows a `--summary` project loads are edges of the global frame, beside
+/// those the batches find, each once.
+#[test]
+fn staged_matches_monolithic_summary_project() {
+    let (reader, writer, copier) = (FunctionId::new(1), FunctionId::new(2), FunctionId::new(3));
+    let site = |f, i| PackedInsnSiteId::try_from_parts(f, InsnId::new(i)).unwrap();
+    let global = |name: &str| GlobalId::new(name);
+    let gv = |name: &str| FlowVertex::new(FlowVariable::global(global(name)), Path::empty());
+    let formal = |i| FlowVariable::formal_index(FormalIndex::new(i));
+    let ret = FlowVertex::new(formal(-1), Path::empty());
+    let facts = IndexFacts {
+        formal_param: vec![
+            (reader, formal(-1), FormalType::default()),
+            (writer, formal(0), FormalType::default()),
+        ],
+        assign: vec![
+            // reader: return $g2
+            (site(reader, 1), ret, gv("g2")),
+            // writer: $g1 = p0
+            (
+                site(writer, 1),
+                gv("g1"),
+                FlowVertex::new(formal(0), Path::empty()),
+            ),
+            // copier: $g3 = $g1, an edge of the frame
+            (site(copier, 1), gv("g3"), gv("g1")),
+        ],
+        global_flow: vec![
+            (global("g2"), Path::empty(), global("g1"), Path::empty()),
+            // Also the copier's edge.
+            (global("g3"), Path::empty(), global("g1"), Path::empty()),
+        ],
+        ..Default::default()
+    };
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    assert_eq!(monolithic.global_flow.len(), 2);
+    assert_staged_matches(
+        &facts,
+        None,
+        ONE_SCC_PER_BATCH,
+        &[1, 2, 3],
+        "summary project",
+    );
 }
 
 /// Every flowy fixture, one SCC per batch, on facts in three orders.
