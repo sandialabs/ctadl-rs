@@ -678,6 +678,8 @@ pub trait EngineStores {
     fn store_sizes(&self) -> StoreSizes;
     /// Writes the store-backed relations, whose fields hold no rows, to `dump`.
     fn dump_stores(&self, dump: &mut dump::RelationDump<'_>);
+    /// Frees the store-backed relations, after the run.
+    fn drop_stores(&mut self);
 }
 
 pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
@@ -698,6 +700,8 @@ pub trait TrieStores {
     fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
     /// Takes `assign_like`'s rows out, after the run.
     fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
+    /// Frees the stores of `locals`, `edge_split` and `ext_dst`, after the run.
+    fn drop_derived_stores(&mut self);
     fn trie_sizes(&self) -> TrieSizes;
     /// The heap of the `locals` store.
     fn locals_heap_report(&self) -> locals_trie::HeapReport;
@@ -734,6 +738,11 @@ macro_rules! trie_relations {
                     .into_iter()
                     .map(|(f, v2, p2, v1, p1)| (f, v1, p1, v2, p2))
                     .collect()
+            }
+            fn drop_derived_stores(&mut self) {
+                drop(std::mem::take(&mut self.__locals_ind_common));
+                drop(std::mem::take(&mut self.__edge_split_ind_common));
+                drop(std::mem::take(&mut self.__ext_dst_ind_common));
             }
             fn trie_sizes(&self) -> $crate::index_engine::TrieSizes {
                 $crate::index_engine::TrieSizes {
@@ -1389,6 +1398,84 @@ pub struct IntentOutput {
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
 }
 
+/// The program's paths, which the fixpoint of every function shares: the rows of the `paths`
+/// relation, and the same set frozen as a [`PathSet`].
+pub struct ProgramPaths {
+    /// The rows of the `paths` relation. Empty in an input that shares another's path set.
+    pub paths: Vec<(Path,)>,
+    pub path_set: PathSetRef,
+}
+
+impl ProgramPaths {
+    /// The paths of the whole program: the program paths of `facts` (those of its assignments,
+    /// its `paths` and its actuals), closed by [`compute_paths`] with the paths its summaries
+    /// introduce.
+    pub fn from_facts(facts: &IndexFacts, deref_paths: bool) -> Self {
+        use hashbrown::hash_set::HashSet;
+        // The assign-derived paths and `facts.paths` overlap heavily, so unify them
+        // in a set to drop duplicates before they seed the `program_paths` relation.
+        let mut program_paths: HashSet<_> = facts
+            .assign
+            .iter()
+            .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
+            .map(|p| (p,))
+            .collect();
+        // Codegen's paths are syntactic program paths too, including composed ones that no single
+        // `assign` edge carries (a field read through a pointer is lowered to a chain of loads through
+        // temporaries, so only the per-hop paths land on edges). Dropping them under-approximates the
+        // propagation gate and silently kills flows.
+        program_paths.extend(facts.paths.iter().cloned());
+        log::debug!(
+            "[mem cp] + program_paths ({} rows): {:.1} MB",
+            program_paths.len(),
+            phys_footprint_mb()
+        );
+        // Model paths = paths introduced by summaries ONLY. Do NOT fold `facts.paths` in here:
+        // those are program paths (already in `program_paths`), and the one-level concat rules below
+        // combine `model_paths` with `program_paths`. Adding `facts.paths` makes model_paths ≈
+        // program_paths, turning that concat into a program×program self-join (|facts.paths|² rows).
+        let summary_paths: HashSet<_> = facts
+            .summary
+            .iter()
+            .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
+            .collect();
+        log::debug!(
+            "[mem cp] + summary_paths ({} rows): {:.1} MB",
+            summary_paths.len(),
+            phys_footprint_mb()
+        );
+        program_paths.extend(
+            facts
+                .actual_param
+                .iter()
+                .map(|(_, _, FlowVertex(_, p, ..))| (*p,)),
+        );
+        let paths = compute_paths(
+            program_paths.into_iter().collect(),
+            summary_paths.into_iter().collect(),
+            deref_paths,
+        );
+        Self::from_paths(paths.into_iter().map(|(p,)| p).collect())
+    }
+
+    /// Freezes `paths`, already closed (a [`from_facts`](Self::from_facts) result) and distinct,
+    /// as the path set.
+    pub fn from_paths(paths: Vec<Path>) -> Self {
+        let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().copied())));
+        let paths: Vec<(Path,)> = paths.into_iter().map(|p| (p,)).collect();
+        debug_assert!(
+            path_set.len() == paths.len() && paths.iter().all(|(p,)| path_set.contains(p)),
+            "the paths relation and the path set differ"
+        );
+        log::debug!(
+            "[mem cp] + paths ({} rows): {:.1} MB",
+            paths.len(),
+            phys_footprint_mb()
+        );
+        ProgramPaths { paths, path_set }
+    }
+}
+
 /// What one run of an index engine starts from: the facts, plus what is derived from them before
 /// the fixpoint. Each engine crate (`ctadl-index-serial`, `ctadl-index-par` and
 /// `ctadl-index-lsm`) hands it to [`run_engine!`](crate::run_engine).
@@ -1402,6 +1489,9 @@ pub struct EngineInput<'a> {
     pub alias_of_formal: Vec<(FunctionId, FlowVariable, Root)>,
     pub paths: Vec<(Path,)>,
     pub path_set: PathSetRef,
+    /// Whether the run seeds the `paths` relation with `paths`. No rule reads it: it is the
+    /// output's copy. When false, [`IndexResult::paths`] is `paths` as given.
+    pub seed_paths: bool,
     pub index_timeout: std::time::Duration,
     pub id_map: Option<&'a IdMap>,
     pub initial_assign: usize,
@@ -1412,7 +1502,50 @@ pub struct EngineInput<'a> {
 }
 
 impl<'a> EngineInput<'a> {
+    /// The input of a run on the whole program.
     pub fn new(mut facts: IndexFacts, config: IndexConfig, id_map: Option<&'a IdMap>) -> Self {
+        log::debug!(
+            "[mem cp] entry (facts loaded): {:.1} MB | assign={} summary={} formals={}",
+            phys_footprint_mb(),
+            facts.assign.len(),
+            facts.summary.len(),
+            facts.formal_param.len()
+        );
+        let paths = ProgramPaths::from_facts(&facts, config.deref_paths);
+        facts.paths = Vec::new();
+        let global_flow = std::mem::take(&mut facts.global_flow);
+        let mut input = Self::from_slice(facts, paths, config, id_map);
+        // A `--summary` project's program-level flows are edges of the global frame.
+        input
+            .assign_like
+            .extend(global_flow.into_iter().map(|(dst, p1, src, p2)| {
+                (
+                    crate::facts::GLOBAL_FRAME,
+                    FlowVariable::global(dst),
+                    p1,
+                    FlowVariable::global(src),
+                    p2,
+                )
+            }));
+        input
+    }
+
+    /// The input of a run on some of the program's functions: `facts` holds their facts, and
+    /// `paths` the paths of the whole program. Each step here joins within one function, so the
+    /// inputs of two disjoint slices union to the input of both.
+    ///
+    /// `facts.global_flow` and `facts.paths` must be empty: they are program-wide, and `paths`
+    /// already holds the paths.
+    pub fn from_slice(
+        mut facts: IndexFacts,
+        paths: ProgramPaths,
+        config: IndexConfig,
+        id_map: Option<&'a IdMap>,
+    ) -> Self {
+        debug_assert!(
+            facts.global_flow.is_empty() && facts.paths.is_empty(),
+            "a slice holds program-wide facts"
+        );
         let parallelism = config.parallelism;
         let storage = config.storage;
         use hashbrown::hash_set::HashSet;
@@ -1439,32 +1572,6 @@ impl<'a> EngineInput<'a> {
         let initial_summary = facts.summary.len();
         let initial_formals = facts.formal_param.len();
 
-        log::debug!(
-            "[mem cp] entry (facts loaded): {:.1} MB | assign={} summary={} formals={}",
-            phys_footprint_mb(),
-            initial_assign,
-            initial_summary,
-            initial_formals
-        );
-
-        // The assign-derived paths and `facts.paths` overlap heavily, so unify them
-        // in a set to drop duplicates before they seed the `program_paths` relation.
-        let mut program_paths: HashSet<_> = facts
-            .assign
-            .iter()
-            .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
-            .map(|p| (p,))
-            .collect();
-        // Codegen's paths are syntactic program paths too, including composed ones that no single
-        // `assign` edge carries (a field read through a pointer is lowered to a chain of loads through
-        // temporaries, so only the per-hop paths land on edges). Dropping them under-approximates the
-        // propagation gate and silently kills flows.
-        program_paths.extend(facts.paths.iter().cloned());
-        log::debug!(
-            "[mem cp] + program_paths ({} rows): {:.1} MB",
-            program_paths.len(),
-            phys_footprint_mb()
-        );
         // Whole-variable copies (`x = y`, both sides empty path) from the ORIGINAL program
         // assignments only -- NOT the derived `assign_like` closure (which also contains
         // inter-procedural argument copies and summary-induced edges). Used to compute
@@ -1498,42 +1605,16 @@ impl<'a> EngineInput<'a> {
             prog_store.len(),
             phys_footprint_mb()
         );
-        let mut assign_like: Vec<_> = std::mem::take(&mut facts.assign)
+        let assign_like: Vec<_> = std::mem::take(&mut facts.assign)
             .into_iter()
             .map(|(site, dst, src)| {
                 let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site).unwrap();
                 (func_id, dst.0, dst.1, src.0, src.1)
             })
             .collect();
-        // A `--summary` project's program-level flows are edges of the global frame.
-        assign_like.extend(std::mem::take(&mut facts.global_flow).into_iter().map(
-            |(dst, p1, src, p2)| {
-                (
-                    crate::facts::GLOBAL_FRAME,
-                    FlowVariable::global(dst),
-                    p1,
-                    FlowVariable::global(src),
-                    p2,
-                )
-            },
-        ));
         log::debug!(
             "[mem cp] + assign_like ({} rows, facts.assign consumed): {:.1} MB",
             assign_like.len(),
-            phys_footprint_mb()
-        );
-        // Model paths = paths introduced by summaries ONLY. Do NOT fold `facts.paths` in here:
-        // those are program paths (already in `program_paths`), and the one-level concat rules below
-        // combine `model_paths` with `program_paths`. Adding `facts.paths` makes model_paths ≈
-        // program_paths, turning that concat into a program×program self-join (|facts.paths|² rows).
-        let summary_paths: HashSet<_> = facts
-            .summary
-            .iter()
-            .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
-            .collect();
-        log::debug!(
-            "[mem cp] + summary_paths ({} rows): {:.1} MB",
-            summary_paths.len(),
             phys_footprint_mb()
         );
         let call: Vec<_> = facts
@@ -1545,7 +1626,6 @@ impl<'a> EngineInput<'a> {
                 (func_id, insn_id, *target)
             })
             .collect();
-        let deref_paths = config.deref_paths;
 
         let alias_of_formal = compute_alias_of_formal(&facts.formal_param, copy_edge);
         log::debug!(
@@ -1553,32 +1633,10 @@ impl<'a> EngineInput<'a> {
             alias_of_formal.len(),
             phys_footprint_mb()
         );
-        let mut all_program_paths = program_paths;
-        all_program_paths.extend(
-            facts
-                .actual_param
-                .iter()
-                .map(|(_, _, FlowVertex(_, p, ..))| (*p,)),
-        );
-        let paths = compute_paths(
-            all_program_paths.into_iter().collect(),
-            summary_paths.into_iter().collect(),
-            deref_paths,
-        );
-        let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
-        debug_assert!(
-            path_set.len() == paths.len() && paths.iter().all(|(p,)| path_set.contains(p)),
-            "the paths relation and the path set differ"
-        );
         // The paths the intent rules match by name: intern them here, not mid-run.
         for p in [&COMPONENT_PATH, &ACTION_PATH, &TYPE_PATH] {
             LazyLock::force(p);
         }
-        log::debug!(
-            "[mem cp] + paths ({} rows), about to enter ascent_run: {:.1} MB",
-            paths.len(),
-            phys_footprint_mb()
-        );
         log::info!("index engine: {parallelism}, {storage:?} storage");
 
         // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
@@ -1594,6 +1652,7 @@ impl<'a> EngineInput<'a> {
             .map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::MAX);
 
+        let ProgramPaths { paths, path_set } = paths;
         EngineInput {
             facts,
             call,
@@ -1603,6 +1662,7 @@ impl<'a> EngineInput<'a> {
             alias_of_formal,
             paths,
             path_set,
+            seed_paths: true,
             index_timeout,
             id_map,
             initial_assign,
@@ -1653,6 +1713,9 @@ macro_rules! trie_stores {
                     self.__locals_key_ind_common.for_each_row(|r| w.row(&r))
                 });
             }
+            fn drop_stores(&mut self) {
+                drop(std::mem::take(&mut self.__locals_key_ind_common));
+            }
         }
     };
 }
@@ -1686,6 +1749,7 @@ macro_rules! run_engine {
             alias_of_formal,
             paths,
             path_set,
+            seed_paths,
             index_timeout,
             id_map,
             initial_assign,
@@ -1715,7 +1779,12 @@ macro_rules! run_engine {
         prog.seed_assign_like(assign_like);
         prog.prog_store = prog_store.into_iter().collect();
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
-        prog.paths = paths.iter().cloned().collect();
+        let unseeded_paths = if seed_paths {
+            prog.paths = paths.into_iter().collect();
+            Vec::new()
+        } else {
+            paths
+        };
         prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
 
         let interned_before = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
@@ -1826,6 +1895,10 @@ macro_rules! run_engine {
             dump.finish(&prog.relation_sizes_summary());
         }
 
+        // Nothing reads the stores after the census and the dump. Free them, `locals` above all,
+        // before `assign_like` is copied out of its store.
+        prog.drop_derived_stores();
+        prog.drop_stores();
         let assign_like_out = prog.take_assign_like();
         let summary_out: Vec<_> = prog.summary.into_iter().collect();
         let global_flow_out = $crate::index_engine::global_flow_rows(&assign_like_out);
@@ -1851,7 +1924,11 @@ macro_rules! run_engine {
             resolved_call: prog.resolved_call.into_iter().collect(),
             const_reaches: prog.const_reaches.into_iter().collect(),
             intent_pair: prog.intent_pair.into_iter().collect(),
-            paths: prog.paths.into_iter().collect(),
+            paths: if seed_paths {
+                prog.paths.into_iter().collect()
+            } else {
+                unseeded_paths
+            },
             external_function: facts.external_function,
             global_flow: global_flow_out,
             stats,
@@ -1928,5 +2005,153 @@ mod tests {
         // A program that never mentions `#value` keeps its paths.
         let plain = vec![(Path::empty(),), p(".f")];
         assert_eq!(compute_paths(plain.clone(), vec![], false), plain);
+    }
+
+    /// Two functions' facts, with no calls between them: formals, whole-variable copies (for
+    /// `alias_of_formal`), field stores (for `prog_store`), a summary and an actual.
+    fn two_function_facts() -> (FunctionId, FunctionId, IndexFacts) {
+        let f = FunctionId::new(1);
+        let g = FunctionId::new(2);
+        let site = |func, i| PackedInsnSiteId::try_from_parts(func, InsnId::new(i)).unwrap();
+        let local = |s: &str| FlowVariable::local(Str::from(s));
+        let vx = |v, p| FlowVertex::new(v, p);
+        let formal = |n| FlowVariable::formal_index(FormalIndex::new(n));
+        let field = |s: &str| Path::from_symbol_names([s]);
+        let facts = IndexFacts {
+            formal_param: vec![
+                (f, formal(0), FormalType::default()),
+                (f, formal(1), FormalType::default()),
+                (g, formal(0), FormalType::default()),
+            ],
+            assign: vec![
+                // f: a = p0; a.x = p1; b = a.x
+                (
+                    site(f, 1),
+                    vx(local("a"), Path::empty()),
+                    vx(formal(0), Path::empty()),
+                ),
+                (
+                    site(f, 2),
+                    vx(local("a"), field("x")),
+                    vx(formal(1), Path::empty()),
+                ),
+                (
+                    site(f, 3),
+                    vx(local("b"), Path::empty()),
+                    vx(local("a"), field("x")),
+                ),
+                // g: c = p0; d = c; d.y = c
+                (
+                    site(g, 1),
+                    vx(local("c"), Path::empty()),
+                    vx(formal(0), Path::empty()),
+                ),
+                (
+                    site(g, 2),
+                    vx(local("d"), Path::empty()),
+                    vx(local("c"), Path::empty()),
+                ),
+                (
+                    site(g, 3),
+                    vx(local("d"), field("y")),
+                    vx(local("c"), Path::empty()),
+                ),
+            ],
+            summary: vec![(
+                g,
+                Root::formal(FormalIndex::new(0)),
+                field("z"),
+                Root::formal(FormalIndex::new(0)),
+                Path::empty(),
+            )],
+            actual_param: vec![(site(f, 4), FormalIndex::new(0), vx(local("b"), field("w")))],
+            paths: vec![(field("x"),), (field("v"),)],
+            ..Default::default()
+        };
+        (f, g, facts)
+    }
+
+    /// The rows of `func` in each relation `two_function_facts` fills.
+    fn slice_of(facts: &IndexFacts, func: FunctionId) -> IndexFacts {
+        let in_func = |site: &PackedInsnSiteId| unpack_site(site).func_id == func;
+        IndexFacts {
+            formal_param: facts
+                .formal_param
+                .iter()
+                .filter(|r| r.0 == func)
+                .cloned()
+                .collect(),
+            assign: facts
+                .assign
+                .iter()
+                .filter(|r| in_func(&r.0))
+                .cloned()
+                .collect(),
+            summary: facts
+                .summary
+                .iter()
+                .filter(|r| r.0 == func)
+                .cloned()
+                .collect(),
+            actual_param: facts
+                .actual_param
+                .iter()
+                .filter(|r| in_func(&r.0))
+                .cloned()
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Each function's facts seeded alone, with the program's paths, give between them the
+    /// per-function inputs of the whole program.
+    #[test]
+    fn slices_union_to_whole_input() {
+        use std::collections::HashSet;
+        let (f, g, facts) = two_function_facts();
+        let config = IndexConfig::default();
+        let whole = EngineInput::new(facts.clone(), config.clone(), None);
+        assert!(whole.seed_paths);
+        assert!(!whole.paths.is_empty());
+
+        let program = ProgramPaths::from_facts(&facts, config.deref_paths);
+        let mut prog_store = HashSet::new();
+        let mut alias_of_formal = HashSet::new();
+        let mut assign_like = HashSet::new();
+        for func in [f, g] {
+            let paths = ProgramPaths {
+                paths: Vec::new(),
+                path_set: program.path_set.clone(),
+            };
+            let part = EngineInput::from_slice(slice_of(&facts, func), paths, config.clone(), None);
+            assert!(part.paths.is_empty());
+            assert!(part.prog_store.iter().all(|r| r.0 == func));
+            assert!(part.alias_of_formal.iter().all(|r| r.0 == func));
+            assert!(part.assign_like.iter().all(|r| r.0 == func));
+            prog_store.extend(part.prog_store);
+            alias_of_formal.extend(part.alias_of_formal);
+            assign_like.extend(part.assign_like);
+        }
+        fn set<T: std::hash::Hash + Eq>(rows: Vec<T>) -> HashSet<T> {
+            rows.into_iter().collect()
+        }
+        assert!(!alias_of_formal.is_empty() && !prog_store.is_empty());
+        assert_eq!(prog_store, set(whole.prog_store));
+        assert_eq!(alias_of_formal, set(whole.alias_of_formal));
+        assert_eq!(assign_like, set(whole.assign_like));
+    }
+
+    #[test]
+    fn program_paths_from_paths_matches_from_facts() {
+        let (_, _, facts) = two_function_facts();
+        // `deref_paths` makes `compute_paths` add paths of its own.
+        let from_facts = ProgramPaths::from_facts(&facts, true);
+        assert!(from_facts.paths.len() > facts.paths.len());
+        let from_paths = ProgramPaths::from_paths(from_facts.paths.iter().map(|(p,)| *p).collect());
+        assert_eq!(from_paths.paths, from_facts.paths);
+        assert_eq!(from_paths.path_set.len(), from_facts.path_set.len());
+        for (p,) in &from_facts.paths {
+            assert!(from_paths.path_set.contains(p), "{p} missing");
+        }
     }
 }

@@ -82,6 +82,14 @@ impl EngineStores for LsmIndexProg {
         }
         lsm_stores!(dump_rows);
     }
+    fn drop_stores(&mut self) {
+        macro_rules! drop_stores {
+            ($($rel:ident: $store:ident),* $(,)?) => {$(
+                drop(std::mem::take(&mut self.$store));
+            )*};
+        }
+        lsm_stores!(drop_stores);
+    }
 }
 
 ctadl_index::trie_relations!(LsmIndexProg);
