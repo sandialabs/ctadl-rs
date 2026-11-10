@@ -16,7 +16,7 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | 2 | in progress (track A) | |
 | 3 | done | stage-directory layout files: `paths.parquet`, `plan.json`, `key`, `batches/<id>/batch.json`. `Writer::write_iter_grouped_by` cuts a row group at each key change. Filtered reads skip row groups by `func_id` statistics and also drop rows that don't match the filter |
 | 4 | done | `Plan::new(facts, budget, floor, paths)`, where `paths` is the size of the computed path set, because `facts.paths` is about 1/30 of it. Coefficients are named constants in `staged/plan.rs`, fitted from `[mem cp]` lines (`profile.json`'s `bytes_per_row` is empty for serial runs). Adds `Plan.intent_batches` |
-| prep | in progress (track C) | |
+| prep | done | all five items; engines agree on `global_flow` and `intent_pair`. The notes take a `CallFacts` (static calls, indirect call sites, declared functions), which Phase 10 can keep when it drops the facts. `IndexResult::final_call` has no callers. `docs/debugging.md` already describes `--outputs`. statm is not yet built on Linux (Phase 7) |
 
 ## Order
 
