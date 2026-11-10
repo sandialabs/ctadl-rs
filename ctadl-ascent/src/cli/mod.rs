@@ -262,21 +262,61 @@ fn push_escape_note(notes: &mut Notifications, note: &ssa::EscapeNote) {
     );
 }
 
+/// What the zero-assignment notes need of the facts, kept so the facts can be dropped before
+/// the fixpoint.
+struct CallFacts {
+    /// `call`: the calls codegen resolved.
+    static_calls: Vec<(crate::facts::PackedInsnSiteId, crate::facts::FunctionId)>,
+    /// The indirect call sites, with the vertex that holds the callee.
+    indirect_calls: Vec<(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)>,
+    /// The functions with formals.
+    declared: BTreeSet<crate::facts::FunctionId>,
+}
+
+impl CallFacts {
+    fn new(facts: &IndexFacts) -> Self {
+        CallFacts {
+            static_calls: facts.call.clone(),
+            indirect_calls: facts
+                .callee_info
+                .iter()
+                .map(|(site, vertex, _)| (*site, *vertex))
+                .collect(),
+            declared: facts.formal_param.iter().map(|(f, _, _)| *f).collect(),
+        }
+    }
+}
+
 /// The calls that are zero assignments (S10 of `docs/ir.md`), collected after the fixpoint: one
 /// [`notifications::UNRESOLVED_INDIRECT_CALL`] per function with an indirect call no target
 /// reached, and one [`notifications::CALL_WITHOUT_BODY`] per function called with neither a body
-/// nor a model. A function has no body when it is declared without one, or not declared at all
-/// (`declared` holds the functions with formals); it has no model when it has no summary.
+/// nor a model. The calls are `call` plus the index's `resolved_call`. A function has no body
+/// when it is an `external_function`, or not declared at all; it has no model when it is not in
+/// `summarized`, the functions with a summary row.
 fn push_zero_assignment_notes(
     notes: &mut Notifications,
-    result: &crate::index_engine::IndexResult,
-    static_calls: &[(crate::facts::PackedInsnSiteId, crate::facts::FunctionId)],
-    indirect_calls: &[(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)],
-    declared: &std::collections::BTreeSet<crate::facts::FunctionId>,
+    calls: &CallFacts,
+    summarized: &BTreeSet<crate::facts::FunctionId>,
+    resolved_call: &[(
+        crate::facts::FunctionId,
+        crate::facts::InsnId,
+        crate::facts::FunctionId,
+    )],
+    external_function: &[(crate::facts::FunctionId,)],
     sites: &crate::facts::IdMap,
 ) {
-    use std::collections::{BTreeMap, BTreeSet};
-    let final_call = result.final_call(static_calls);
+    use std::collections::BTreeMap;
+    let CallFacts {
+        static_calls,
+        indirect_calls,
+        declared,
+    } = calls;
+    let resolved = resolved_call.iter().map(|&(func_id, insn_id, target)| {
+        let site = crate::facts::PackedInsnSiteId::try_from_parts(func_id, insn_id)
+            .expect("a resolved call's site packs");
+        (site, target)
+    });
+    let final_call: Vec<_> = static_calls.iter().copied().chain(resolved).collect();
     let called: BTreeSet<crate::facts::PackedInsnSiteId> =
         final_call.iter().map(|(site, _)| *site).collect();
     let name = |f| crate::index_engine::func_name(Some(sites), f).to_string();
@@ -305,9 +345,7 @@ fn push_zero_assignment_notes(
         );
     }
     let external: BTreeSet<crate::facts::FunctionId> =
-        result.external_function.iter().map(|(f,)| *f).collect();
-    let summarized: BTreeSet<crate::facts::FunctionId> =
-        result.summary.iter().map(|(f, ..)| *f).collect();
+        external_function.iter().map(|(f,)| *f).collect();
     let mut bodyless: BTreeMap<String, (usize, String)> = BTreeMap::new();
     for (site, callee) in &final_call {
         let no_body = external.contains(callee) || !declared.contains(callee);
@@ -766,22 +804,16 @@ pub fn index(
         deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
-    // Kept for the zero-assignment notifications, which compare them with the final call graph.
-    let static_calls = facts.call.clone();
-    let indirect_calls: Vec<(crate::facts::PackedInsnSiteId, crate::facts::FlowVertex)> = facts
-        .callee_info
-        .iter()
-        .map(|(site, vertex, _)| (*site, *vertex))
-        .collect();
-    let declared: std::collections::BTreeSet<crate::facts::FunctionId> =
-        facts.formal_param.iter().map(|(f, _, _)| *f).collect();
+    let call_facts = CallFacts::new(&facts);
     let result = taint_index_with_config(facts, config, Some(&sites));
+    let summarized: BTreeSet<crate::facts::FunctionId> =
+        result.summary.iter().map(|(f, ..)| *f).collect();
     push_zero_assignment_notes(
         &mut notes,
-        &result,
-        &static_calls,
-        &indirect_calls,
-        &declared,
+        &call_facts,
+        &summarized,
+        &result.resolved_call,
+        &result.external_function,
         &sites,
     );
     if !result.intent_pair.is_empty() {
