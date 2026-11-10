@@ -14,12 +14,13 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::PathBuf;
 
+use crate::error::Error;
 use crate::facts::{
     CallDispatchKey, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId,
     IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 use crate::index_engine::path_set::PathSetRef;
-use crate::index_engine::{IndexConfig, Rows, unpack_site};
+use crate::index_engine::{IndexConfig, IndexResult, Rows, unpack_site};
 
 /// The environment variable that turns the dump on and names its directory.
 pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
@@ -175,6 +176,90 @@ fn push_col(col: &impl DumpCol, cx: &Cx<'_>, out: &mut String) {
                 c => out.push(c),
             }
         }
+    }
+}
+
+/// A table of an index directory: what an index run keeps, as opposed to the scratch relations
+/// of its fixpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputTable {
+    Summary,
+    Assign,
+    Paths,
+    ExternalFunction,
+    GlobalFlow,
+    ResolvedCall,
+    IntentPair,
+}
+
+/// Where output tables are read from: a result in memory, or an index directory.
+#[derive(Clone, Copy)]
+pub enum Outputs<'a> {
+    Result(&'a IndexResult),
+    Dir(&'a std::path::Path),
+}
+
+impl OutputTable {
+    pub const ALL: [OutputTable; 7] = [
+        OutputTable::Summary,
+        OutputTable::Assign,
+        OutputTable::Paths,
+        OutputTable::ExternalFunction,
+        OutputTable::GlobalFlow,
+        OutputTable::ResolvedCall,
+        OutputTable::IntentPair,
+    ];
+
+    /// The table's file name in an index directory, without the extension.
+    pub fn name(self) -> &'static str {
+        match self {
+            OutputTable::Summary => "summary",
+            OutputTable::Assign => "assign",
+            OutputTable::Paths => "paths",
+            OutputTable::ExternalFunction => "external_function",
+            OutputTable::GlobalFlow => "global_flow",
+            OutputTable::ResolvedCall => "resolved_call",
+            OutputTable::IntentPair => "intent_pair",
+        }
+    }
+
+    /// Renders each row of this table in `from` as a dump line, without its newline, and passes
+    /// it to `f`, in the order the table holds them.
+    pub fn for_each_row(
+        self,
+        from: Outputs<'_>,
+        id_map: Option<&IdMap>,
+        mut f: impl FnMut(&str),
+    ) -> Result<(), Error> {
+        use crate::facts::schema;
+        fn render<R: DumpRow>(rows: &[R], cx: &Cx<'_>, f: &mut impl FnMut(&str)) {
+            let mut line = String::new();
+            for row in rows {
+                line.clear();
+                row.dump_row(cx, &mut line);
+                f(&line);
+            }
+        }
+        let cx = Cx { id_map };
+        // A table read from a directory is loaded whole, as `IndexResult::try_load` loads it.
+        macro_rules! table {
+            ($field:ident, $schema:ident) => {
+                match from {
+                    Outputs::Result(r) => render(&r.$field, &cx, &mut f),
+                    Outputs::Dir(dir) => render(&schema::$schema::try_load(dir)?, &cx, &mut f),
+                }
+            };
+        }
+        match self {
+            OutputTable::Summary => table!(summary, summary),
+            OutputTable::Assign => table!(assign_like, assign),
+            OutputTable::Paths => table!(paths, paths),
+            OutputTable::ExternalFunction => table!(external_function, external_function),
+            OutputTable::GlobalFlow => table!(global_flow, global_flow),
+            OutputTable::ResolvedCall => table!(resolved_call, resolved_call),
+            OutputTable::IntentPair => table!(intent_pair, intent_pair),
+        }
+        Ok(())
     }
 }
 

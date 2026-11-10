@@ -16,7 +16,7 @@ use std::num::NonZeroUsize;
 /// its own thirty lines instead of reaching into a front end's private code. The crates
 /// depend on each other in the other direction, and sharing them would need a
 /// dev-dependency cycle in both directions.
-fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
+pub(crate) fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
     let (program, failed, dump) =
         ctadl_c::parse_c_program(src).expect("Failed to parse C program.");
     assert!(!failed, "Input Program failed to parse without error");
@@ -29,7 +29,7 @@ fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
 
 /// Runs SSA, then code generation. Returns the facts the taint index runs on, and the
 /// source info that names their functions.
-fn index_program(program: ctadl_ir::Program) -> (IndexFacts, IndexSourceInfo) {
+pub(crate) fn index_program(program: ctadl_ir::Program) -> (IndexFacts, IndexSourceInfo) {
     let mut program_info = ProgramInfo {
         program,
         ..Default::default()
@@ -51,7 +51,7 @@ fn index_program(program: ctadl_ir::Program) -> (IndexFacts, IndexSourceInfo) {
 
 /// A program with direct calls, summaries, field-sensitive flows, and indirect calls
 /// (function-pointer parameter, function pointer in a struct field).
-const SRC: &str = r"
+pub(crate) const SRC: &str = r"
     struct ops { int (*f)(int); int tag; };
     int id(int p) { return p; }
     int twice(int p) { return p + p; }

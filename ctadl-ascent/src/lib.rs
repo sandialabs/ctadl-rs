@@ -17,6 +17,7 @@ pub mod index_engine;
 #[cfg(test)]
 mod index_engine_tests;
 pub mod report;
+pub mod staged;
 pub mod stats;
 
 /// Initializes the logger for the shipped `ctadl` binary.
