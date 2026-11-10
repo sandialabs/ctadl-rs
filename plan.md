@@ -409,7 +409,9 @@ In this phase the plan never splits an SCC: the floor is clamped to whole SCCs u
   - `executor.rs`: the `Executor` trait, with `InProcess`, which runs batches one at a time on
     the calling thread.
 - `ctadl-index/src/staged/store.rs`: readers and writers per stage file, if Phase 3 left any
-  out.
+  out. `KeyConfig` drops `engine`, as the spec's run key says. Fact files are sorted totally
+  (batch, `FunctionId`, then the row), so the same facts give the same bytes and the same key.
+  `StagedConfig`'s default floor is unbounded (`usize::MAX`).
 - `ctadl-ascent/src/index_engine.rs:27-71`: dispatch on `config.staged` first.
 
 **Tests.**
