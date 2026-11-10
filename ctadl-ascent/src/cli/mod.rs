@@ -812,6 +812,9 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
+    if let Some(dump_dir) = std::env::var_os(crate::index_engine::dump::DUMP_ENV) {
+        crate::index_engine::dump::dump_outputs(Path::new(&dump_dir), &path, Some(&sites))?;
+    }
     let warnings = notes
         .notifications()
         .iter()

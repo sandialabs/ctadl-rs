@@ -1,6 +1,8 @@
 //! `CTADL_DUMP_RELATIONS=<dir>`: writes every relation of the index engine to `<dir>`, one
 //! `<relation>.tsv` per relation, once the fixpoint is reached. `scripts/fact-dump-diff.sh` sorts
 //! and compares these dumps to check that two builds or engines derive the same sets.
+//! `ctadl index` also writes the tables of the index it saved to `<dir>/outputs/`
+//! ([`dump_outputs`]); `fact-dump-diff.sh --outputs` compares only those.
 //!
 //! A row is one line, its columns separated by tabs. Every column is printed by content, never by
 //! an intern id: a function by its name, and a string, path or call target by its text. Rows come out in whatever order the engine holds them,
@@ -261,6 +263,40 @@ impl OutputTable {
         }
         Ok(())
     }
+}
+
+/// The subdirectory of the dump directory that [`dump_outputs`] writes.
+pub const OUTPUTS_DIR: &str = "outputs";
+
+/// Writes the output tables of the index in `index_dir` to `<dir>/outputs/<table>.tsv`, rendered
+/// as the relations are. Unlike the relations, which only a monolithic run holds, these are what
+/// every index run writes, so they compare across ways of running the index. Refuses to
+/// overwrite an earlier dump.
+pub fn dump_outputs(
+    dir: &std::path::Path,
+    index_dir: &std::path::Path,
+    id_map: Option<&IdMap>,
+) -> Result<(), Error> {
+    use crate::error::ErrorContext;
+    let dir = dir.join(OUTPUTS_DIR);
+    std::fs::create_dir_all(&dir).err_context(|| format!("creating {}", dir.display()))?;
+    for table in OutputTable::ALL {
+        let path = dir.join(format!("{}.tsv", table.name()));
+        let file = std::fs::File::create_new(&path)
+            .err_context(|| format!("creating {}", path.display()))?;
+        let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
+        let mut written = Ok(());
+        table.for_each_row(Outputs::Dir(index_dir), id_map, |row| {
+            if written.is_ok() {
+                written = writeln!(out, "{row}");
+            }
+        })?;
+        written
+            .and_then(|()| out.flush())
+            .err_context(|| format!("writing {}", path.display()))?;
+    }
+    log::info!("dumped the output tables to {}", dir.display());
+    Ok(())
 }
 
 /// The dump of one run, in progress.

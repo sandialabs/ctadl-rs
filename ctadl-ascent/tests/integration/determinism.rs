@@ -246,10 +246,18 @@ fn renderings(out: &Path) -> BTreeMap<String, String> {
             add(name, &path);
         }
     }
-    for entry in std::fs::read_dir(out.join("dump")).unwrap() {
-        let path = entry.unwrap().path();
-        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-        add(format!("dump/{name}"), &path);
+    // The relations, and the output tables in `dump/outputs/`.
+    let mut dirs = vec![("dump".to_string(), out.join("dump"))];
+    while let Some((rel_dir, dir)) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+            if path.is_dir() {
+                dirs.push((format!("{rel_dir}/{name}"), path));
+            } else {
+                add(format!("{rel_dir}/{name}"), &path);
+            }
+        }
     }
     files
 }
@@ -276,6 +284,7 @@ fn output_does_not_depend_on_intern_order() {
         "the two runs wrote different files"
     );
     assert!(a.contains_key("index.dot"));
+    assert!(a.contains_key("dump/outputs/summary.tsv"));
     let differing: Vec<&String> = a.keys().filter(|k| a[*k] != b[*k]).collect();
     for name in &differing {
         let (x, y) = (&a[*name], &b[*name]);

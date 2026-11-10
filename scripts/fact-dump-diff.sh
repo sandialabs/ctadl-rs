@@ -5,19 +5,24 @@
 # candidate) or two engines (serial, `-j N`, `--lsm`).
 #
 # Usage:
-#   scripts/fact-dump-diff.sh record OUT -- CMD [ARG...]
-#   scripts/fact-dump-diff.sh compare [-n N] [-k KEEP] REF -- CMD [ARG...]
-#   scripts/fact-dump-diff.sh diff [-n N] A B
+#   scripts/fact-dump-diff.sh record [--outputs] OUT -- CMD [ARG...]
+#   scripts/fact-dump-diff.sh compare [--outputs] [-n N] [-k KEEP] REF -- CMD [ARG...]
+#   scripts/fact-dump-diff.sh diff [--outputs] [-n N] A B
 #
-#   record   run CMD, a `ctadl index` command line, with CTADL_DUMP_RELATIONS
-#            set, and save its relations to the new directory OUT, each one
-#            sorted. The command line is saved in OUT/command.
-#   compare  run CMD as `record` does, into a temporary directory (or into
-#            KEEP with -k), and compare it with the saved dump REF.
-#   diff     compare two saved dumps.
+#   record     run CMD, a `ctadl index` command line, with CTADL_DUMP_RELATIONS
+#              set, and save its relations to the new directory OUT, each one
+#              sorted, and the index's output tables to OUT/outputs. The
+#              command line is saved in OUT/command.
+#   compare    run CMD as `record` does, into a temporary directory (or into
+#              KEEP with -k), and compare it with the saved dump REF.
+#   diff       compare two saved dumps.
 #
-#   -n N     show the first N rows only on each side of a differing relation
-#            (default 5).
+#   --outputs  work on the output tables (OUT/outputs) only: the tables the
+#              index saves, which compare between any two ways of running the
+#              index, where the relations compare only between runs that
+#              compute it the same way. `record` then needs only the tables.
+#   -n N       show the first N rows only on each side of a differing relation
+#              (default 5).
 #
 # CMD picks the build and the engine: serial is the default, `-j N` (N > 1) is
 # the parallel engine, `--lsm` is Storage::Lsm. For example:
@@ -38,7 +43,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,42p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -56,7 +61,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# record OUT CMD...: run CMD with the dump on, then sort each relation into OUT.
+# sort_into DIR OUT TMP: sort each DIR/*.tsv into OUT, removing the original.
+# Prints how many there were.
+sort_into() {
+  local dir="$1" out="$2" tmp="$3" f n=0
+  for f in "$dir"/*.tsv; do
+    [ -f "$f" ] || continue
+    mkdir -p "$out"
+    LC_ALL=C sort -u -T "$tmp" -o "$out/${f##*/}" "$f"
+    rm -f "$f"
+    n=$((n + 1))
+  done
+  echo "$n"
+}
+
+# record OUT CMD...: run CMD with the dump on, then sort each relation into OUT
+# and each output table into OUT/outputs.
 record() {
   local out="$1"
   shift
@@ -68,20 +88,20 @@ record() {
   raw="$(mktemp -d "$tmp_root/fact-dump.XXXXXX")"
   cleanup_dirs+=("$raw")
   CTADL_DUMP_RELATIONS="$raw/rel" "$@" || die "command failed: $*"
-  shopt -s nullglob
-  local files=("$raw"/rel/*.tsv)
-  shopt -u nullglob
-  [ "${#files[@]}" -gt 0 ] ||
-    die "the command wrote no dump; is it a \`ctadl index\` run, by a build with CTADL_DUMP_RELATIONS?"
+  local relations tables
+  relations="$(sort_into "$raw/rel" "$out" "$raw")"
+  tables="$(sort_into "$raw/rel/outputs" "$out/outputs" "$raw")"
+  if [ -n "$outputs" ]; then
+    [ "$tables" -gt 0 ] ||
+      die "the command wrote no output tables; is it a \`ctadl index\` run, by a build that dumps them?"
+  else
+    [ "$relations" -gt 0 ] ||
+      die "the command wrote no dump; is it a \`ctadl index\` run, by a build with CTADL_DUMP_RELATIONS?"
+  fi
   mkdir -p "$out"
-  local f
-  for f in "${files[@]}"; do
-    LC_ALL=C sort -u -T "$raw" -o "$out/${f##*/}" "$f"
-    rm -f "$f"
-  done
   printf '%q ' "$@" | sed 's/ $//' >"$out/command"
   echo >>"$out/command"
-  echo "fact-dump-diff: recorded ${#files[@]} relations in $out" >&2
+  echo "fact-dump-diff: recorded $relations relations and $tables output tables in $out" >&2
 }
 
 # side_only FILE OTHER N SAMPLE: the number of rows of FILE not in OTHER, with
@@ -91,14 +111,21 @@ side_only() {
     awk -v n="$3" -v sample="$4" 'NR <= n { print > sample } END { print NR }'
 }
 
-# compare_dumps A B N: compare every relation of two recorded dumps.
+# compare_dumps A B N: compare every relation of two recorded dumps, or with
+# --outputs every output table.
 compare_dumps() {
   local a="$1" b="$2" n="$3"
+  local what=relations
+  if [ -n "$outputs" ]; then
+    a="$a/outputs"
+    b="$b/outputs"
+    what="output tables"
+  fi
   [ -d "$a" ] || die "$a is not a directory"
   [ -d "$b" ] || die "$b is not a directory"
   local names
   names="$(ls -- "$a" "$b" | sed -n 's/\.tsv$//p' | LC_ALL=C sort -u)"
-  [ -n "$names" ] || die "no relations in $a or $b"
+  [ -n "$names" ] || die "no $what in $a or $b"
 
   local work
   work="$(mktemp -d "$tmp_root/fact-dump-diff.XXXXXX")"
@@ -133,10 +160,10 @@ compare_dumps() {
   done <<<"$names"
 
   if [ "$differ" -eq 0 ]; then
-    echo "fact-dump-diff: all $total relations are the same set"
+    echo "fact-dump-diff: all $total $what are the same set"
     return 0
   fi
-  echo "fact-dump-diff: $differ of $total relations differ ($same the same)"
+  echo "fact-dump-diff: $differ of $total $what differ ($same the same)"
   return 1
 }
 
@@ -146,8 +173,10 @@ shift
 
 rows=5
 keep=""
+outputs=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --outputs) outputs=1; shift ;;
     -n) [ "$#" -ge 2 ] || usage; rows="$2"; shift 2 ;;
     -k) [ "$#" -ge 2 ] || usage; keep="$2"; shift 2 ;;
     -h|--help) usage ;;

@@ -201,6 +201,17 @@ differing relation, the row count on each side, how many rows only one side has,
 few of them (`-n N`, default 5). The `config` relation leaves out the engine and storage, so
 dumps of different engines compare.
 
+`ctadl index` also writes the seven tables of the index it saved (`summary`, `assign`, `paths`,
+`external_function`, `global_flow`, `resolved_call`, `intent_pair`) to `<dir>/outputs/`, printed
+the same way. The relations are the fixpoint's working state, so they compare only between runs
+that compute the index the same way; the output tables compare between any two runs. With
+`--outputs`, every mode works on `outputs/` alone:
+
+```
+scripts/fact-dump-diff.sh record ref -- ctadl index app
+scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app
+```
+
 The dump and the sort scale with the index: `locals` alone is tens of millions of rows on a large
 target. Raw dumps and sort's temporary files go under `$TMPDIR`, so point it at a disk with room
 for a few times the dump. A reference is only as good as the build that wrote it: record it with
