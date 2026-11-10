@@ -778,7 +778,7 @@ macro_rules! call_arg {
 /// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
 /// `[mem cp]` derivation checkpoints so we can attribute the pre-fixpoint memory spike to the
 /// individual transient buffers in-process (an external sampler can't see sub-second phases).
-/// Returns -1.0 on non-macOS or on error.
+/// Returns -1.0 on error.
 #[cfg(target_os = "macos")]
 pub fn phys_footprint_mb() -> f64 {
     // SAFETY: `proc_pid_rusage` fills a caller-provided `rusage_info_v2` for our own pid. The C
@@ -799,9 +799,40 @@ pub fn phys_footprint_mb() -> f64 {
         }
     }
 }
+
+/// Elsewhere, the resident set size from `/proc/self/statm` in MB. Unlike the macOS footprint, it
+/// leaves out swapped and compressed pages. Returns -1.0 without `/proc`, or on error.
 #[cfg(not(target_os = "macos"))]
 pub fn phys_footprint_mb() -> f64 {
+    #[cfg(unix)]
+    {
+        // SAFETY: `sysconf` reads a system constant and has no preconditions.
+        let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let pages = std::fs::read_to_string("/proc/self/statm")
+            .ok()
+            .and_then(|statm| statm_resident_pages(&statm));
+        if let (Ok(page_bytes @ 1..), Some(pages)) = (u64::try_from(page_bytes), pages) {
+            return (pages * page_bytes) as f64 / (1024.0 * 1024.0);
+        }
+    }
     -1.0
+}
+
+/// The resident pages in the text of `/proc/<pid>/statm`: its second field.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn statm_resident_pages(statm: &str) -> Option<u64> {
+    statm.split_ascii_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(test)]
+#[test]
+fn statm_parses() {
+    assert_eq!(
+        statm_resident_pages("12345 678 90 12 0 3456 0\n"),
+        Some(678)
+    );
+    assert_eq!(statm_resident_pages("12345"), None);
+    assert_eq!(statm_resident_pages("12345 x 90"), None);
 }
 
 /// Computes `alias_of_formal`: the whole-variable copy-closure of the formals and globals over
