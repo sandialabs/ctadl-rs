@@ -77,6 +77,11 @@ impl StageDir {
         }
     }
 
+    /// The stage directory whose root is `root`, as [`StageDir::root`] names it.
+    pub fn from_root(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
     /// Creates the directory and its subdirectories, if they are missing.
     pub fn create(&self) -> Result<(), Error> {
         for dir in [
@@ -86,6 +91,7 @@ impl StageDir {
             self.frame_dir(),
             self.intent_dir(),
             self.done_dir(),
+            self.logs_dir(),
         ] {
             fs::create_dir_all(&dir)
                 .map_err(Error::from)
@@ -148,6 +154,11 @@ impl StageDir {
 
     pub fn done_dir(&self) -> PathBuf {
         self.root.join("done")
+    }
+
+    /// Where worker processes write their logs.
+    pub fn logs_dir(&self) -> PathBuf {
+        self.root.join("logs")
     }
 
     /// The marker file of `stage`.

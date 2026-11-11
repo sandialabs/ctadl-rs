@@ -83,6 +83,9 @@ pub struct IndexOptions {
     pub storage: Storage,
     /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
     pub mem2reg: Option<ssa::Mem2Reg>,
+    /// The `ctadl` executable a staged run starts its workers from. `None` runs its batches on
+    /// the calling thread.
+    pub worker_exe: Option<&'static std::path::Path>,
 }
 
 impl Default for IndexOptions {
@@ -97,6 +100,7 @@ impl Default for IndexOptions {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
+            worker_exe: None,
         }
     }
 }
@@ -426,6 +430,8 @@ pub fn index(
         parallelism,
         storage,
         mem2reg,
+        // Not yet read: `index` runs monolithic.
+        worker_exe: _,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(

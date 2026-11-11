@@ -57,6 +57,32 @@ pub enum Command {
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
     /// analysis; no index is read, and none is written.
     Report(ReportArgs),
+
+    /// Runs one job of a staged index run, in a worker process `ctadl index` starts.
+    #[command(hide = true)]
+    IndexWorker(IndexWorkerArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct IndexWorkerArgs {
+    /// The run's stage directory.
+    pub stage_dir: PathBuf,
+
+    /// The batch to run.
+    #[arg(long, required_unless_present = "intent", conflicts_with = "intent")]
+    pub batch: Option<u32>,
+
+    /// The round to run the batch in, when it is a part of a split SCC.
+    #[arg(long, requires = "batch")]
+    pub round: Option<u32>,
+
+    /// Run the intent stage.
+    #[arg(long)]
+    pub intent: bool,
+
+    /// Threads for the engine, as `ctadl index -j` takes them.
+    #[arg(short, long, default_value_t = 1)]
+    pub jobs: usize,
 }
 
 #[derive(Debug, Args)]
@@ -579,6 +605,22 @@ fn main() -> anyhow::Result<()> {
         Command::MigrateModels(args) => {
             handle_migrate_models(args).context("running 'migrate-models'")?;
         }
+        Command::IndexWorker(args) => {
+            use ctadl_ascent::staged::executor::Job;
+            let job = match args.batch {
+                Some(id) => Job::Batch {
+                    id,
+                    round: args.round,
+                },
+                None => Job::Intent,
+            };
+            ctadl_ascent::staged::worker::run_worker(
+                &args.stage_dir,
+                job,
+                Parallelism::from_jobs(args.jobs),
+            )
+            .with_context(|| format!("running {job} of {}", args.stage_dir.display()))?;
+        }
     };
 
     Ok(())
@@ -809,6 +851,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
                 Storage::Memory
             },
             mem2reg: args.mem2reg.0,
+            worker_exe: None,
         },
     )?;
     Ok(())

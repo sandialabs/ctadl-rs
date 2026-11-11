@@ -15,5 +15,6 @@ mod json_error_handling;
 mod lua_model_externals;
 mod migration_equivalence;
 mod models_loading;
+mod staged_workers;
 mod store_relocation;
 mod xapk_bundle;

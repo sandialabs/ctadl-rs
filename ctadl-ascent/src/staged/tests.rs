@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use super::batch::run_batch;
 use super::compare::compare_results;
-use super::executor::InProcess;
+use super::executor::{Executor, InProcess, Job};
 use super::run::{RunStats, SccRounds, run_staged};
 use crate::facts::{
     FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, InsnId,
@@ -35,10 +35,7 @@ fn run(
     id_map: Option<&IdMap>,
 ) -> (IndexResult, Plan, RunStats) {
     let index = tempfile::tempdir().unwrap();
-    let mut executor = InProcess {
-        parallelism: Parallelism::Serial,
-        id_map,
-    };
+    let mut executor = InProcess::new(Parallelism::Serial, id_map);
     let stats = run_staged(
         facts,
         &IndexConfig::default(),
@@ -325,10 +322,7 @@ fn batch_reads_only_callees() {
     let (facts, source_info) = index_program(program_from_string(DIAMOND).0);
     let id_map = Some(&source_info.sites);
     let index = tempfile::tempdir().unwrap();
-    let mut executor = InProcess {
-        parallelism: Parallelism::Serial,
-        id_map,
-    };
+    let mut executor = InProcess::new(Parallelism::Serial, id_map);
     run_staged(
         facts,
         &IndexConfig::default(),
@@ -491,5 +485,128 @@ fn part_not_rerun_when_callees_stable() {
         assert_eq!(runs_of(&run, "c"), 2);
         assert_eq!(runs_of(&run, "b"), 1);
         assert_eq!(runs_of(&run, "a"), 1);
+    }
+}
+
+/// Starts each job when the scheduler starts it, but runs it on the calling thread only when the
+/// scheduler waits, latest started first, so jobs end out of order. Records the jobs running
+/// at each start.
+struct Deferred<'a> {
+    inner: InProcess<'a>,
+    threads: usize,
+    stage: Option<StageDir>,
+    running: Vec<(Job, bool)>,
+    at_once: Vec<Vec<Job>>,
+}
+
+impl Executor for Deferred<'_> {
+    fn threads(&self) -> usize {
+        self.threads
+    }
+
+    fn lend_path_set(
+        &mut self,
+        stage: &StageDir,
+        path_set: crate::index_engine::path_set::PathSetRef,
+    ) -> Result<(), crate::error::Error> {
+        self.inner.lend_path_set(stage, path_set)
+    }
+
+    fn start(
+        &mut self,
+        stage: &StageDir,
+        job: Job,
+        alone: bool,
+    ) -> Result<(), crate::error::Error> {
+        self.stage = Some(stage.clone());
+        self.running.push((job, alone));
+        self.at_once
+            .push(self.running.iter().map(|(job, _)| *job).collect());
+        Ok(())
+    }
+
+    fn wait(&mut self) -> (Job, Result<(), crate::error::Error>) {
+        let (job, alone) = self.running.pop().expect("a job was started");
+        let stage = self.stage.as_ref().unwrap();
+        self.inner.start(stage, job, alone).unwrap();
+        self.inner.wait()
+    }
+
+    fn stop_all(&mut self) {
+        self.running.clear();
+    }
+}
+
+/// The scheduler runs at once as many jobs as there are threads and their estimates fit the
+/// budget, never more, and a job that ends out of order changes no table.
+#[test]
+fn scheduler_runs_jobs_at_once_within_threads_and_budget() {
+    // The diamond packs into one batch, and each ring is a split SCC whose parts run one at a
+    // time, so three jobs at most can run at once.
+    let other_ring = ring(4)
+        .replace("int f", "int g")
+        .replace("return f", "return g");
+    let src = format!("{DIAMOND}\n{}\n{other_ring}", ring(4));
+    let (facts, source_info) = index_program(program_from_string(&src).0);
+    let id_map = Some(&source_info.sites);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
+    let largest = {
+        let index = tempfile::tempdir().unwrap();
+        let mut executor = InProcess::new(Parallelism::Serial, id_map);
+        run_staged(
+            facts.clone(),
+            &IndexConfig::default(),
+            FLOOR_ONE,
+            index.path(),
+            &mut executor,
+        )
+        .unwrap();
+        let plan = Plan::load(&StageDir::new(index.path())).unwrap();
+        plan.batches.iter().map(|b| b.estimate).max().unwrap()
+    };
+    // The fewest and most jobs at once that each budget allows, with three threads. Any two
+    // first runs fit twice the largest estimate.
+    for (budget, fewest, most) in [(u64::MAX, 3, 3), (2 * largest, 2, 3), (0, 1, 1)] {
+        let staged = StagedConfig {
+            budget,
+            ..FLOOR_ONE
+        };
+        let index = tempfile::tempdir().unwrap();
+        let mut executor = Deferred {
+            inner: InProcess::new(Parallelism::Serial, id_map),
+            threads: 3,
+            stage: None,
+            running: Vec::new(),
+            at_once: Vec::new(),
+        };
+        run_staged(
+            facts.clone(),
+            &IndexConfig::default(),
+            staged,
+            index.path(),
+            &mut executor,
+        )
+        .unwrap();
+        let plan = Plan::load(&StageDir::new(index.path())).unwrap();
+        let estimate = |job: &Job| match job {
+            Job::Batch { id, .. } => plan.batches[*id as usize].estimate,
+            Job::Intent => 0,
+        };
+        let seen = executor.at_once.iter().map(Vec::len).max().unwrap();
+        assert!(
+            (fewest..=most).contains(&seen),
+            "budget {budget}: {seen} at once: {:?}",
+            executor.at_once
+        );
+        for jobs in executor.at_once.iter().filter(|jobs| jobs.len() > 1) {
+            let sum: u64 = jobs.iter().map(estimate).sum();
+            assert!(sum <= budget, "budget {budget}: {jobs:?} estimate {sum}");
+        }
+        let result = IndexResult::try_load(index.path()).unwrap();
+        let diff = compare_results(&monolithic, &result, id_map);
+        assert!(
+            diff.is_empty(),
+            "budget {budget}: monolithic < > staged\n{diff}"
+        );
     }
 }
