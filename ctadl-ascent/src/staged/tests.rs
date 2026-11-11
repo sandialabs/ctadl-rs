@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use super::batch::run_batch;
 use super::compare::compare_results;
 use super::executor::InProcess;
-use super::run::run_staged;
+use super::run::{RunStats, SccRounds, run_staged};
 use crate::facts::{
     FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, GlobalId, IdMap, InsnId,
     PackedInsnSiteId, Path, Str,
@@ -27,14 +27,19 @@ const ONE_SCC_PER_BATCH: StagedConfig = StagedConfig {
     floor: usize::MAX,
 };
 
-/// Runs `facts` staged in a temporary index directory, and returns the tables and the plan.
-fn run(facts: IndexFacts, staged: StagedConfig, id_map: Option<&IdMap>) -> (IndexResult, Plan) {
+/// Runs `facts` staged in a temporary index directory, and returns the tables, the plan and
+/// what the run did.
+fn run(
+    facts: IndexFacts,
+    staged: StagedConfig,
+    id_map: Option<&IdMap>,
+) -> (IndexResult, Plan, RunStats) {
     let index = tempfile::tempdir().unwrap();
     let mut executor = InProcess {
         parallelism: Parallelism::Serial,
         id_map,
     };
-    run_staged(
+    let stats = run_staged(
         facts,
         &IndexConfig::default(),
         staged,
@@ -43,18 +48,18 @@ fn run(facts: IndexFacts, staged: StagedConfig, id_map: Option<&IdMap>) -> (Inde
     )
     .unwrap();
     let plan = Plan::load(&StageDir::new(index.path())).unwrap();
-    (IndexResult::try_load(index.path()).unwrap(), plan)
+    (IndexResult::try_load(index.path()).unwrap(), plan, stats)
 }
 
 /// Asserts that `facts` staged, shuffled by each of `seeds` (and unshuffled when there are
-/// none), has the monolithic serial run's tables. Returns the number of batches of each run.
+/// none), has the monolithic serial run's tables. Returns each run's plan and what it did.
 fn assert_staged_matches(
     facts: &IndexFacts,
     id_map: Option<&IdMap>,
     staged: StagedConfig,
     seeds: &[u64],
     what: &str,
-) -> Vec<usize> {
+) -> Vec<(Plan, RunStats)> {
     let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
     let seeds: Vec<Option<u64>> = if seeds.is_empty() {
         vec![None]
@@ -68,27 +73,33 @@ fn assert_staged_matches(
             if let Some(seed) = seed {
                 shuffle_facts(&mut facts, seed);
             }
-            let (result, plan) = run(facts, staged, id_map);
+            let (result, plan, stats) = run(facts, staged, id_map);
             let diff = compare_results(&monolithic, &result, id_map);
             assert!(
                 diff.is_empty(),
                 "{what}, seed {seed:?}, {} batches: monolithic < > staged\n{diff}",
                 plan.batches.len()
             );
-            plan.batches.len()
+            (plan, stats)
         })
         .collect()
 }
 
+/// The number of batches of each plan of `runs`.
+fn batch_counts(runs: &[(Plan, RunStats)]) -> Vec<usize> {
+    runs.iter().map(|(plan, _)| plan.batches.len()).collect()
+}
+
 fn assert_c_matches(src: &str, batches: usize) {
     let (facts, source_info) = index_program(program_from_string(src).0);
-    let counts = assert_staged_matches(
+    let runs = assert_staged_matches(
         &facts,
         Some(&source_info.sites),
         ONE_SCC_PER_BATCH,
         &[1, 2, 3],
         src,
     );
+    let counts = batch_counts(&runs);
     assert!(counts.iter().all(|&n| n == batches), "{counts:?}");
 }
 
@@ -142,8 +153,9 @@ fn staged_matches_monolithic_calls() {
         &[],
         "one batch",
     );
-    assert_eq!(one, vec![1]);
+    assert_eq!(batch_counts(&one), vec![1]);
     let many = assert_staged_matches(&facts, id_map, ONE_SCC_PER_BATCH, &[1, 2, 3], "many");
+    let many = batch_counts(&many);
     assert!(many.iter().all(|&n| n > 1), "{many:?}");
 }
 
@@ -182,7 +194,13 @@ fn staged_matches_monolithic_function_without_formals() {
     let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
     assert!(monolithic.assign_like.iter().any(|r| r.0 == no_formals));
     assert!(monolithic.summary.iter().any(|r| r.0 == caller));
-    let counts = assert_staged_matches(&facts, None, ONE_SCC_PER_BATCH, &[1, 2, 3], "no formals");
+    let counts = batch_counts(&assert_staged_matches(
+        &facts,
+        None,
+        ONE_SCC_PER_BATCH,
+        &[1, 2, 3],
+        "no formals",
+    ));
     assert!(counts.iter().all(|&n| n == 3), "{counts:?}");
 }
 
@@ -193,7 +211,13 @@ fn staged_matches_monolithic_intent() {
     let facts = intent_facts();
     let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
     assert_eq!(monolithic.intent_pair.len(), 2);
-    let counts = assert_staged_matches(&facts, None, ONE_SCC_PER_BATCH, &[1, 2, 3], "intent");
+    let counts = batch_counts(&assert_staged_matches(
+        &facts,
+        None,
+        ONE_SCC_PER_BATCH,
+        &[1, 2, 3],
+        "intent",
+    ));
     assert!(counts.iter().all(|&n| n == 4), "{counts:?}");
 }
 
@@ -242,9 +266,11 @@ fn staged_matches_monolithic_summary_project() {
     );
 }
 
-/// Every flowy fixture, one SCC per batch, on facts in three orders.
+/// Every flowy fixture, on facts in three orders, one SCC per batch, which splits every
+/// recursive SCC into single functions, and in batches as large as can be, with recursive SCCs
+/// split at floors 4, 2 and 1.
 #[test]
-fn staged_matches_monolithic_flowy() {
+fn staged_matches_monolithic_flowy_floor_sweep() {
     let dir: std::path::PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "tnt"]
         .iter()
         .collect();
@@ -255,6 +281,7 @@ fn staged_matches_monolithic_flowy() {
         .collect();
     files.sort();
     assert!(!files.is_empty());
+    let mut split = false;
     for file in files {
         let models: Vec<_> = ["models.jsonl", "models.ctadl"]
             .iter()
@@ -263,14 +290,32 @@ fn staged_matches_monolithic_flowy() {
             .collect();
         let (facts, source_info, _) = crate::codegen::flowy::program_facts(&file, &models)
             .unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
-        assert_staged_matches(
-            &facts,
-            Some(&source_info.sites),
+        for staged in [
             ONE_SCC_PER_BATCH,
-            &[1, 2, 3],
-            &file.display().to_string(),
-        );
+            StagedConfig {
+                budget: u64::MAX,
+                floor: 4,
+            },
+            StagedConfig {
+                budget: u64::MAX,
+                floor: 2,
+            },
+            StagedConfig {
+                budget: u64::MAX,
+                floor: 1,
+            },
+        ] {
+            let runs = assert_staged_matches(
+                &facts,
+                Some(&source_info.sites),
+                staged,
+                &[1, 2, 3],
+                &format!("{}, floor {}", file.display(), staged.floor),
+            );
+            split |= runs.iter().any(|(plan, _)| !plan.split_sccs.is_empty());
+        }
     }
+    assert!(split, "some fixture has a recursive SCC to split");
 }
 
 /// A batch reads its own facts and the `summary` files of the batches that hold its callees,
@@ -297,7 +342,7 @@ fn batch_reads_only_callees() {
     let facts_dir = stage.facts_dir();
     let mut with_callees = 0;
     for batch in &plan.batches {
-        let read = run_batch(&stage, batch.id, Parallelism::Serial, id_map)
+        let read = run_batch(&stage, batch.id, None, Parallelism::Serial, id_map)
             .unwrap()
             .read;
         let callee_batches: BTreeSet<BatchId> = batch.callees.iter().map(|(_, b)| *b).collect();
@@ -314,4 +359,137 @@ fn batch_reads_only_callees() {
         with_callees += usize::from(!callee_batches.is_empty());
     }
     assert_eq!(with_callees, 3, "b, c and a call another batch's function");
+}
+
+/// The function `name` of the program `id_map` names.
+fn function(id_map: &IdMap, name: &str) -> FunctionId {
+    id_map
+        .functions()
+        .find(|(_, f)| f.as_str() == name)
+        .unwrap_or_else(|| panic!("no function {name}"))
+        .0
+}
+
+/// The runs of a split SCC: its plan and its rounds.
+struct SplitRuns {
+    plan: Plan,
+    scc: SccRounds,
+}
+
+impl SplitRuns {
+    /// How many times the part holding `f` ran.
+    fn runs_of(&self, f: FunctionId) -> u32 {
+        let batch = self
+            .plan
+            .batches
+            .iter()
+            .find(|b| b.functions.contains(&f))
+            .unwrap()
+            .id;
+        self.scc
+            .part_runs
+            .iter()
+            .find(|(b, _)| *b == batch)
+            .unwrap()
+            .1
+    }
+
+    fn part_runs(&self) -> u32 {
+        self.scc.part_runs.iter().map(|(_, runs)| runs).sum()
+    }
+}
+
+/// Indexes `src` at `staged`, which must split exactly one SCC, compares it with the
+/// monolithic run on facts in three orders, and returns each run's split SCC with the
+/// program's names.
+fn split_scc_runs(src: &str, staged: StagedConfig) -> (Vec<SplitRuns>, IdMap) {
+    let (facts, source_info) = index_program(program_from_string(src).0);
+    let runs = assert_staged_matches(&facts, Some(&source_info.sites), staged, &[1, 2, 3], src);
+    let runs = runs
+        .into_iter()
+        .map(|(plan, stats)| {
+            assert_eq!(plan.split_sccs.len(), 1, "{plan:?}");
+            let [scc] = <[SccRounds; 1]>::try_from(stats.split_sccs).unwrap();
+            log::info!("{} parts: {scc:?}", plan.split_sccs[0].parts.len());
+            SplitRuns { plan, scc }
+        })
+        .collect();
+    (runs, source_info.sites)
+}
+
+const FLOOR_ONE: StagedConfig = StagedConfig {
+    budget: u64::MAX,
+    floor: 1,
+};
+
+/// A ring of `n` functions of three formals, each calling the next with its formals rotated,
+/// `(p, q, r)` to `(q, r, p)`, and the first returning `p` too. Every function returns each of
+/// its formals, but a flow takes a lap of the ring per rotation to show it, and with the ring
+/// split into single functions, a lap is a round.
+fn ring(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!("int f{i}(int p, int q, int r);\n");
+    }
+    for i in 0..n {
+        let next = (i + 1) % n;
+        let base = if i == 0 { "if (r) " } else { "" };
+        src += &format!("int f{i}(int p, int q, int r) {{ {base}return f{next}(q, r, p);");
+        src += if i == 0 { " return p; }\n" } else { " }\n" };
+    }
+    src
+}
+
+/// Mutual recursion whose summaries feed each other: each of the two parts must run again
+/// after the other's summary grows, more than once, before they close.
+#[test_log::test]
+fn split_scc_matches_monolithic() {
+    let (runs, id_map) = split_scc_runs(&ring(2), FLOOR_ONE);
+    for run in runs {
+        assert!(run.scc.rounds >= 3, "{:?}", run.scc);
+        for f in ["f0", "f1"] {
+            assert!(run.runs_of(function(&id_map, f)) >= 3, "{:?}", run.scc);
+        }
+    }
+}
+
+/// The worst case for rounds: rings split into single functions, where a flow crosses the
+/// ring once per round. Records the rounds and part runs.
+#[test_log::test]
+fn ring_rounds_are_recorded() {
+    for n in [16, 64] {
+        let (runs, _) = split_scc_runs(&ring(n), FLOOR_ONE);
+        for run in runs {
+            log::info!(
+                "ring of {n}: {} rounds, {} part runs",
+                run.scc.rounds,
+                run.part_runs()
+            );
+            assert_eq!(run.scc.part_runs.len(), n);
+            assert!(run.scc.rounds >= 3, "{:?}", run.scc);
+        }
+    }
+}
+
+/// In a cycle `a → b → c → a`, split into single functions, `c`'s summary does not depend on
+/// `a`'s. The parts run `c`, `b`, `a`, callees first. `c` runs again once `a` has a summary,
+/// and finds the same summary, so `b` and `a`, whose callees did not grow, run once.
+#[test_log::test]
+fn part_not_rerun_when_callees_stable() {
+    let (runs, id_map) = split_scc_runs(
+        r"
+        int b(int x);
+        int c(int x);
+        int a(int x) { return b(x); }
+        int b(int x) { return c(x); }
+        int c(int x) { a(0); return x; }",
+        FLOOR_ONE,
+    );
+    let runs_of = |run: &SplitRuns, f| run.runs_of(function(&id_map, f));
+    for run in runs {
+        assert_eq!(run.scc.rounds, 2, "{:?}", run.scc);
+        assert_eq!(runs_of(&run, "c"), 2);
+        assert_eq!(runs_of(&run, "b"), 1);
+        assert_eq!(runs_of(&run, "a"), 1);
+    }
 }

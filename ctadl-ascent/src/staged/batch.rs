@@ -31,16 +31,30 @@ pub struct BatchRun {
 /// configuration, the path set, its functions' facts and its callees' summaries from the
 /// batches that ran them, which must be done.
 ///
+/// A part of a split SCC runs in a `round`, and every other batch in none. A part reads the
+/// other parts' summaries from their latest runs, and its outputs are that round's run.
+///
 /// Fails if the fixpoint stops short of its end (`CTADL_INDEX_TIMEOUT_SECS`), and then writes
 /// nothing.
 pub fn run_batch(
     stage: &StageDir,
     id: BatchId,
+    round: Option<u32>,
     parallelism: Parallelism,
     id_map: Option<&IdMap>,
 ) -> Result<BatchRun, Error> {
     let start = Instant::now();
     let batch = Batch::load(stage, id)?;
+    if batch.part.is_some() != round.is_some() {
+        return Err(Error::Staged(format!(
+            "batch {id} runs {}, but was given round {round:?}",
+            if batch.part.is_some() {
+                "in rounds"
+            } else {
+                "once"
+            }
+        )));
+    }
     let config = KeyConfig::load(stage)?.index_config(parallelism);
     let path_set = path_set(stage)?;
     let BatchFacts { facts, read } = read_batch_facts(stage, &batch)?;
@@ -64,8 +78,9 @@ pub fn run_batch(
     }
     let outputs = BatchOutputs::new(&batch, result.summary, result.assign_like);
     log::debug!(
-        "batch {id}: {} functions, {} summary rows, {} assign rows, {} frame edges, {:.2} s, \
+        "batch {id}{}: {} functions, {} summary rows, {} assign rows, {} frame edges, {:.2} s, \
          {:.1} MB",
+        round.map(|r| format!(", round {r}")).unwrap_or_default(),
         batch.functions.len(),
         outputs.summary.len(),
         outputs.assign.len(),
@@ -73,8 +88,16 @@ pub fn run_batch(
         start.elapsed().as_secs_f64(),
         phys_footprint_mb()
     );
-    outputs.write(stage, id)?;
-    stage.mark_done(Stage::Batch(id))?;
+    match (batch.part, round) {
+        (Some(part), Some(round)) => {
+            outputs.write_round(stage, part.scc, id, round)?;
+            stage.mark_done(Stage::Round { batch: id, round })?;
+        }
+        _ => {
+            outputs.write(&stage.batch_dir(id))?;
+            stage.mark_done(Stage::Batch(id))?;
+        }
+    }
     Ok(BatchRun { read })
 }
 

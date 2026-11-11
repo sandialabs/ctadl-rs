@@ -271,22 +271,8 @@ impl Plan {
     /// A batch's estimate fits the budget, except a batch of one function that does not fit
     /// alone.
     pub fn new(facts: &IndexFacts, budget: u64, floor: usize, paths: usize) -> Self {
-        Self::packed(facts, budget, floor, paths, true)
-    }
-
-    /// As [`Plan::new`], but no SCC is split, whatever the budget and the floor: an SCC over the
-    /// budget is a batch of its own. The staged run uses this until it runs split SCCs.
-    pub fn whole_sccs(facts: &IndexFacts, budget: u64, paths: usize) -> Self {
-        Self::packed(facts, budget, usize::MAX, paths, false)
-    }
-
-    fn packed(facts: &IndexFacts, budget: u64, floor: usize, paths: usize, split: bool) -> Self {
         let graph = call_graph(facts);
-        let mut plan = Planner {
-            split,
-            ..Planner::new(&graph, budget, floor.max(1), worker_bytes(paths))
-        }
-        .run();
+        let mut plan = Planner::new(&graph, budget, floor.max(1), worker_bytes(paths)).run();
         let batch_of = plan.batch_of(&graph);
         let mut intent: Vec<BatchId> = facts
             .intent_frame
@@ -330,6 +316,14 @@ impl Plan {
     }
 }
 
+/// The estimate of a rerun of `part`, a part of a split SCC, seeded with `callee_rows` summary
+/// rows of the other parts. The plan estimated those rows from the callees' facts alone, and a
+/// later round seeds more; adding them all over-counts the plan's share, erring high.
+pub fn rerun_estimate(part: &Batch, callee_rows: u64) -> u64 {
+    part.estimate
+        .saturating_add(SEED_ROW_BYTES.saturating_mul(callee_rows))
+}
+
 fn write_json<T: Serialize>(path: &std::path::Path, value: &T) -> Result<(), Error> {
     write_atomic(path, |tmp| {
         let json = serde_json::to_vec(value).expect("a plan serializes");
@@ -355,8 +349,6 @@ struct Planner<'a> {
     budget: u64,
     floor: usize,
     worker: u64,
-    /// Whether an SCC is split at all.
-    split: bool,
     /// The nodes of each batch so far, in [`FunctionId`] order, and its part, if any.
     batches: Vec<(Vec<u32>, Option<Part>)>,
     split_sccs: Vec<SplitScc>,
@@ -369,7 +361,6 @@ impl<'a> Planner<'a> {
             budget,
             floor,
             worker,
-            split: true,
             batches: Vec::new(),
             split_sccs: Vec::new(),
         }
@@ -411,8 +402,7 @@ impl<'a> Planner<'a> {
             let s = scc as usize;
             let scc_nodes = &members[members_at[s] as usize..members_at[s + 1] as usize];
             let sum = self.estimate(scc_nodes) - self.worker;
-            if self.split
-                && scc_nodes.len() > 1
+            if scc_nodes.len() > 1
                 && (scc_nodes.len() > self.floor || !self.fits(self.worker.saturating_add(sum)))
             {
                 self.close(&mut open, &mut open_sum);
@@ -697,11 +687,6 @@ mod tests {
         let plan = Plan::new(&facts, budget_for(&facts, 1), usize::MAX, 0);
         assert_eq!(functions(&plan), vec![vec![c], vec![b], vec![a]]);
         assert_eq!(plan.split_sccs.len(), 1);
-        // Unless SCCs are kept whole.
-        let plan = Plan::whole_sccs(&facts, budget_for(&facts, 1), 0);
-        check(&plan);
-        assert_eq!(functions(&plan), vec![vec![a, b, c]]);
-        assert!(plan.split_sccs.is_empty());
     }
 
     #[test]

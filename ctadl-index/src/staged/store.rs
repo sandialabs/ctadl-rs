@@ -12,7 +12,7 @@ Its layout:
 | `config.json` | the run's [`KeyConfig`] |
 | `key` | the [`RunKey`] of the facts and configuration the files were made from |
 | `batches/<id>/` | a batch's descriptor and outputs |
-| `rounds/` | the outputs of each round of a split SCC |
+| `rounds/<scc>/` | a split SCC's [`LatestRounds`] and, under `<batch>/<round>/`, each part's latest run |
 | `frame/` | the global frame's edges |
 | `intent/` | the intent stage's outputs |
 | `done/` | a marker per completed [`Stage`] |
@@ -38,8 +38,10 @@ use crate::index_engine::{IndexConfig, Parallelism, Storage};
 pub enum Stage {
     /// The facts, path set and plan are written.
     Facts,
-    /// A batch of the plan.
+    /// A batch of the plan. A part of a split SCC is done when its SCC is.
     Batch(u32),
+    /// A run of a part of a split SCC in a round.
+    Round { batch: u32, round: u32 },
     /// The global frame.
     Frame,
     /// The intent rules.
@@ -51,6 +53,7 @@ impl fmt::Display for Stage {
         match self {
             Stage::Facts => write!(f, "facts"),
             Stage::Batch(id) => write!(f, "batch-{id}"),
+            Stage::Round { batch, round } => write!(f, "round-{batch}-{round}"),
             Stage::Frame => write!(f, "frame"),
             Stage::Intent => write!(f, "intent"),
         }
@@ -123,6 +126,18 @@ impl StageDir {
         self.root.join("rounds")
     }
 
+    /// Where split SCC `scc` keeps its rounds.
+    pub fn scc_dir(&self, scc: u32) -> PathBuf {
+        self.rounds_dir().join(scc.to_string())
+    }
+
+    /// The outputs of the run of part `batch` of split SCC `scc` in `round`.
+    pub fn round_dir(&self, scc: u32, batch: u32, round: u32) -> PathBuf {
+        self.scc_dir(scc)
+            .join(batch.to_string())
+            .join(round.to_string())
+    }
+
     pub fn frame_dir(&self) -> PathBuf {
         self.root.join("frame")
     }
@@ -150,6 +165,55 @@ impl StageDir {
     /// Whether `stage` was marked done.
     pub fn is_done(&self, stage: Stage) -> bool {
         self.marker(stage).is_file()
+    }
+
+    /// Removes `stage`'s marker, if it has one. Call it before removing any file of the stage.
+    pub fn unmark(&self, stage: Stage) -> Result<(), Error> {
+        let marker = self.marker(stage);
+        match fs::remove_file(&marker) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                Err(Error::from(e)).err_context(|| format!("removing {}", marker.display()))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The latest done run of each part of a split SCC that has run, by batch. Its parts read each
+/// other's summaries from the runs it names.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatestRounds {
+    pub latest: std::collections::BTreeMap<u32, u32>,
+}
+
+impl LatestRounds {
+    fn file(stage: &StageDir, scc: u32) -> PathBuf {
+        stage.scc_dir(scc).join("latest.json")
+    }
+
+    /// The latest rounds of split SCC `scc`: none, if none of its parts has run.
+    pub fn load(stage: &StageDir, scc: u32) -> Result<Self, Error> {
+        let path = Self::file(stage, scc);
+        match fs::read(&path) {
+            Ok(json) => serde_json::from_slice(&json).map_err(|e| Error::Context {
+                context: format!("reading {}", path.display()),
+                source: Box::new(e),
+            }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(Error::from(e)).err_context(|| format!("reading {}", path.display())),
+        }
+    }
+
+    pub fn save(&self, stage: &StageDir, scc: u32) -> Result<(), Error> {
+        let path = Self::file(stage, scc);
+        write_atomic(&path, |tmp| {
+            fs::write(
+                tmp,
+                serde_json::to_vec(self).expect("latest rounds serialize"),
+            )
+            .map_err(Error::from)
+            .err_context(|| format!("writing {}", path.display()))
+        })
     }
 }
 

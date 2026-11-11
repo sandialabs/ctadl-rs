@@ -10,8 +10,9 @@ use ctadl_index::staged::store::StageDir;
 /// Runs the batches of a staged run. A batch's inputs and outputs are all in the stage
 /// directory, so an executor needs only the batch's id.
 pub trait Executor {
-    /// Runs `batch`, whose dependencies are done, and marks it done.
-    fn run(&mut self, stage: &StageDir, batch: BatchId) -> Result<(), Error>;
+    /// Runs `batch`, whose dependencies are done, in `round` if it is a part of a split SCC, and
+    /// marks the run done.
+    fn run(&mut self, stage: &StageDir, batch: BatchId, round: Option<u32>) -> Result<(), Error>;
 }
 
 /// Runs each batch on the calling thread, one at a time, on the engine of `parallelism`.
@@ -22,7 +23,7 @@ pub struct InProcess<'a> {
 }
 
 impl Executor for InProcess<'_> {
-    fn run(&mut self, stage: &StageDir, batch: BatchId) -> Result<(), Error> {
-        run_batch(stage, batch, self.parallelism, self.id_map).map(|_| ())
+    fn run(&mut self, stage: &StageDir, batch: BatchId, round: Option<u32>) -> Result<(), Error> {
+        run_batch(stage, batch, round, self.parallelism, self.id_map).map(|_| ())
     }
 }

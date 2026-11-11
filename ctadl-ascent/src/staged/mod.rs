@@ -4,8 +4,9 @@
 //!
 //! [`run::run_staged`] plans a run, writes the stage directory, runs each batch through an
 //! [`executor::Executor`] and assembles the index tables. A batch runs in
-//! [`batch::run_batch`], which reads its inputs only from the stage directory. [`compare`]
-//! checks one run's output tables against another's.
+//! [`batch::run_batch`], which reads its inputs only from the stage directory. The parts of a
+//! split recursive SCC run in rounds until their summaries stop growing. [`compare`] checks one
+//! run's output tables against another's.
 
 pub mod batch;
 pub mod compare;

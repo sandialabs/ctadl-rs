@@ -11,9 +11,14 @@ whatever order they came in, which the [`RunKey`](super::store::RunKey) relies o
 
 A batch writes, under `batches/<id>/`, its functions' `summary` and `assign` rows and its
 frame edges, each sorted by function so that a caller's batch can read one callee's rows by
-row-group statistics. The global frame ([`run_frame`]) writes the distinct frame edges under
-`frame/`, and the intent stage writes its `intent_pair` and `resolved_call` under `intent/`.
-[`assemble`] then streams all of these into the index tables.
+row-group statistics. A part of a split SCC writes the same files for each of its runs, under
+`rounds/` ([`StageDir::round_dir`]), with the number of `summary` rows of each of its
+functions. When the SCC's rounds end, [`finish_split_scc`] moves each part's latest run to its
+batch's directory, where the other stages read it.
+
+The global frame ([`run_frame`]) writes the distinct frame edges under `frame/`, and the intent
+stage writes its `intent_pair` and `resolved_call` under `intent/`. [`assemble`] then streams
+all of these into the index tables.
 
 Every file is in the encoding of the index's parquet tables: paths and strings by content.
 */
@@ -24,7 +29,7 @@ use std::collections::BTreeMap;
 use hashbrown::HashSet;
 use std::path::{Path as FsPath, PathBuf};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use crate::facts::parquet::{
     DecodeColumns, DefaultDecoder, DefaultEncoder, EncodeColumns, FunctionFilter, Reader, Writer,
 };
@@ -38,7 +43,7 @@ use crate::index_engine::{
     AssignLikeRow, FunctionSummary, GlobalFlow, IndexFacts, IntentInput, IntentOutput, unpack_site,
 };
 use crate::staged::plan::{Batch, BatchId, Plan};
-use crate::staged::store::{STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic};
+use crate::staged::store::{LatestRounds, STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic};
 
 /// The function column of every per-function file.
 const FUNC_COLUMN: &str = "func_id";
@@ -337,7 +342,8 @@ where
 }
 
 /// Reads `batch`'s input: its functions' facts from `facts/`, and its callees' summaries from
-/// the `summary` files of the batches that hold them, which must be done.
+/// the `summary` files of the batches that hold them, which must be done. A part of a split SCC
+/// reads the other parts' summaries from their latest runs, and none from a part yet to run.
 pub fn read_batch_facts(stage: &StageDir, batch: &Batch) -> Result<BatchFacts, Error> {
     use schema::*;
     let dir = stage.facts_dir();
@@ -384,9 +390,23 @@ pub fn read_batch_facts(stage: &StageDir, batch: &Batch) -> Result<BatchFacts, E
     for (f, b) in &batch.callees {
         by_batch.entry(*b).or_default().push(*f);
     }
+    let rounds = match batch.part {
+        Some(part) => Some((part.scc, LatestRounds::load(stage, part.scc)?)),
+        None => None,
+    };
     for (b, callees) in by_batch {
+        // A part depends on every batch of its callees but the other parts of its SCC.
+        let dir = match &rounds {
+            Some((scc, rounds)) if batch.deps.binary_search(&b).is_err() => {
+                match rounds.latest.get(&b) {
+                    Some(round) => stage.round_dir(*scc, b, *round),
+                    None => continue,
+                }
+            }
+            _ => stage.batch_dir(b),
+        };
         summary.extend(read_of::<FunctionSummary>(
-            batch_file(stage, b, summary::FILENAME),
+            dir.join(summary::FILENAME),
             &summary::COLUMNS,
             &callees,
             &mut read,
@@ -471,28 +491,89 @@ impl BatchOutputs {
         }
     }
 
-    /// Writes the outputs to batch `id`'s directory, each file sorted by function. Each is
-    /// written all at once; the caller marks the batch done after.
-    pub fn write(mut self, stage: &StageDir, id: BatchId) -> Result<(), Error> {
+    /// Writes the outputs to `dir`, each file sorted by function. Each is written all at once;
+    /// the caller marks the batch done after.
+    pub fn write(mut self, dir: &FsPath) -> Result<(), Error> {
         use schema::*;
         self.summary.sort_unstable_by_key(|r| r.0);
         self.assign.sort_unstable_by_key(|r| r.0);
         write_file(
-            &batch_file(stage, id, summary::FILENAME),
+            &dir.join(summary::FILENAME),
             &summary::COLUMNS,
             self.summary,
         )?;
+        write_file(&dir.join(assign::FILENAME), &assign::COLUMNS, self.assign)?;
         write_file(
-            &batch_file(stage, id, assign::FILENAME),
-            &assign::COLUMNS,
-            self.assign,
-        )?;
-        write_file(
-            &batch_file(stage, id, frame_edge::FILENAME),
+            &dir.join(frame_edge::FILENAME),
             &frame_edge::COLUMNS,
             self.frame,
         )
     }
+
+    /// Writes the outputs of a run of part `batch` of split SCC `scc` in `round`, with the
+    /// number of `summary` rows of each of its functions that has any, all at once.
+    pub fn write_round(
+        self,
+        stage: &StageDir,
+        scc: u32,
+        batch: BatchId,
+        round: u32,
+    ) -> Result<(), Error> {
+        let mut counts: BTreeMap<FunctionId, u64> = BTreeMap::new();
+        for row in &self.summary {
+            *counts.entry(row.0).or_default() += 1;
+        }
+        let counts: Vec<(FunctionId, u64)> = counts.into_iter().collect();
+        write_atomic(&stage.round_dir(scc, batch, round), |tmp| {
+            std::fs::create_dir(tmp)?;
+            std::fs::write(
+                tmp.join(SUMMARY_COUNTS),
+                serde_json::to_vec(&counts).expect("counts serialize"),
+            )?;
+            self.write(tmp)
+        })
+    }
+}
+
+/// The file of a part's run that holds the number of `summary` rows of each of its functions.
+const SUMMARY_COUNTS: &str = "summary_counts.json";
+
+/// The number of `summary` rows of each function of part `batch` of split SCC `scc` in its run
+/// in `round`, for the functions that have any.
+pub fn read_summary_counts(
+    stage: &StageDir,
+    scc: u32,
+    batch: BatchId,
+    round: u32,
+) -> Result<Vec<(FunctionId, u64)>, Error> {
+    let path = stage.round_dir(scc, batch, round).join(SUMMARY_COUNTS);
+    let json = std::fs::read(&path)
+        .map_err(Error::from)
+        .err_context(|| format!("reading {}", path.display()))?;
+    serde_json::from_slice(&json).map_err(|e| Error::Context {
+        context: format!("reading {}", path.display()),
+        source: Box::new(e),
+    })
+}
+
+/// Ends split SCC `scc`, whose parts' latest runs `latest` names: moves each part's outputs to
+/// its batch's directory and marks the part done, then removes the SCC's rounds.
+pub fn finish_split_scc(stage: &StageDir, scc: u32, latest: &LatestRounds) -> Result<(), Error> {
+    use schema::*;
+    for (&batch, &round) in &latest.latest {
+        let from = stage.round_dir(scc, batch, round);
+        let to = stage.batch_dir(batch);
+        for name in [summary::FILENAME, assign::FILENAME, frame_edge::FILENAME] {
+            let (from, to) = (from.join(name), to.join(name));
+            std::fs::rename(&from, &to)
+                .map_err(Error::from)
+                .err_context(|| format!("moving {} to {}", from.display(), to.display()))?;
+        }
+        stage.mark_done(Stage::Batch(batch))?;
+        stage.unmark(Stage::Round { batch, round })?;
+    }
+    std::fs::remove_dir_all(stage.scc_dir(scc))?;
+    Ok(())
 }
 
 fn write_file<R>(
