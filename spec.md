@@ -84,7 +84,8 @@ the work.
 ### Memory
 
 - R7. **Peak memory.** The fixpoint part of a staged run peaks at the scheduler's footprint plus
-  that of the workers it runs at once, each holding one batch and the program-wide path set. The peak does not grow with the number of
+  that of the workers it runs at once, each holding one batch. The program-wide path set is held
+  once, in a file the workers map read-only (D7), not once per worker. The peak does not grow with the number of
   functions, except in three parts:
   - the scheduler's plan, which is O(functions + call edges);
   - stage 2, which holds the frame edges;
@@ -165,7 +166,7 @@ Batch inputs:
   nothing else (Background), so leaving the intent facts out changes no stage-1 output.
 
 Before the fixpoint, every `Path` and `Str` the batch reads is interned, as the freeze rule
-requires (`mod.rs:31-37`). The path set is interned once per process.
+requires (`mod.rs:31-37`). A worker maps the path set rather than interning it (D7).
 
 Batch outputs, written when its fixpoint ends:
 
@@ -262,10 +263,21 @@ output (Background).
   scheduler over a pipe. On macOS it uses `phys_footprint_mb` (`mod.rs:782`). That returns -1
   elsewhere (`mod.rs:802`), so Linux reads resident set size from `/proc/self/statm`. The
   scheduler needs no access to another process's memory.
-- **Path set.** Every worker re-reads and re-interns the program-wide path set before its
-  fixpoint (`mod.rs:31-37`). That is a per-batch cost that grows with the program, so the
-  planner prefers fewer, larger batches. If it dominates, sharing the path set through a
-  memory-mapped file is a later optimization.
+- **Path set.** The scheduler builds the program-wide path set once, splits included, and
+  writes it to a file in the stage directory (D8). Each worker maps that file read-only before
+  it interns any path and uses the mapped path set as is: it does not parse, intern or split
+  the path set.
+  - So the mapped nodes mean the same thing in every process, a path node is plain data: its
+    first segment is an interned segment id, not a `cir::PathSegment`, and its stored hash is
+    computed from segment ids. (`cir::Symbol` is an `ArcIntern<str>`, which hashes by pointer,
+    so today's stored hashes differ between processes.)
+  - The file numbers its segments and paths densely from 1. A worker's segment and path
+    interners take those numbers as their first ids, and give paths it interns later ids above
+    them. Its lookups probe the mapped index first.
+  - The mapped pages are clean file pages, which the footprint leaves out (on Linux, resident
+    minus shared). The planner's per-worker term is then what a worker allocates around the
+    map, not the path set.
+  - In-process runs and monolithic runs build the path set in memory, as today.
 - **Worker binary.** The scheduler launches the `ctadl` executable. The CLI uses
   `std::env::current_exe()`. Library callers, including tests, name it in `IndexOptions`;
   integration tests pass `env!("CARGO_BIN_EXE_ctadl")`. Engine tests that call
@@ -280,7 +292,9 @@ output (Background).
 - **Saved once, before stage 1.** The complete `IndexFacts`, including the members
   `IndexFacts::try_save` omits today, the `IdMap`, the path set and the plan. All are in the
   index's parquet encoding (R10). Facts are partitioned by batch, so a batch reads only its own
-  facts (R11).
+  facts (R11). The path set is also written in a mappable binary file, its paths, splits and
+  lookup index in the file's numbering (D7). It is derived from the parquet path set, which
+  assembly keeps reading.
 - **Per batch.** Output files `summary`, `assign` and frame edges, in the same encoding. Rows
   are sorted by `FunctionId`, so a reader of one callee's rows can skip row groups by
   statistics.
