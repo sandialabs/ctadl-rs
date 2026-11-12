@@ -20,6 +20,12 @@ pub struct StageStats {
     pub fixpoint_secs: f64,
     pub update_indices_secs: f64,
     pub split_misses: usize,
+    /// Whether `CTADL_INDEX_TIMEOUT_SECS` stopped the fixpoint before its end, so its outputs
+    /// are partial.
+    #[serde(default)]
+    pub timed_out: bool,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub fixpoint_interned: BTreeMap<String, usize>,
     pub initial_assign: usize,
@@ -56,6 +62,8 @@ impl StageStats {
             fixpoint_secs: profile.fixpoint_secs,
             update_indices_secs: profile.update_indices_secs,
             split_misses: profile.split_misses,
+            timed_out: !profile.reached_fixpoint,
+            timeout_secs: profile.timeout_secs,
             fixpoint_interned: profile.memory.fixpoint_interned.clone(),
             initial_assign: *initial_assign,
             final_assign_like: *final_assign_like,
@@ -129,7 +137,8 @@ impl StageStats {
 }
 
 /// The run's [`IndexStats`]: every number summed over `runs`, and each run as a stage of the
-/// profile. Of its memory profile, only the entries the fixpoints interned are filled in.
+/// profile. Of its memory profile, only the entries the fixpoints interned are filled in. It
+/// reached its fixpoint only if every run did.
 pub fn sum(runs: Vec<StageStats>) -> IndexStats {
     let mut stats = IndexStats {
         profile: IndexProfile {
@@ -146,6 +155,8 @@ pub fn sum(runs: Vec<StageStats>) -> IndexStats {
         profile.fixpoint_secs += run.fixpoint_secs;
         profile.update_indices_secs += run.update_indices_secs;
         profile.split_misses += run.split_misses;
+        profile.reached_fixpoint &= !run.timed_out;
+        profile.timeout_secs = profile.timeout_secs.or(run.timeout_secs);
         for (name, n) in run.fixpoint_interned {
             *profile.memory.fixpoint_interned.entry(name).or_default() += n;
         }
@@ -210,5 +221,47 @@ mod tests {
         let mut ids: Vec<_> = stats.profile.stages.iter().map(|s| s.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, ["batch-0", "batch-1", "frame"]);
+        assert!(stats.profile.reached_fixpoint);
+        assert_eq!(stats.profile.timeout_secs, None);
+    }
+
+    /// A run stopped by the timeout says so in its stats, and the sum then has not reached its
+    /// fixpoint, like a monolithic run stopped short.
+    #[test]
+    fn stats_sum_not_at_fixpoint_if_one_run_stopped() {
+        let stopped = IndexStats {
+            profile: IndexProfile {
+                reached_fixpoint: false,
+                timeout_secs: Some(5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let finished = IndexStats {
+            profile: IndexProfile {
+                reached_fixpoint: true,
+                timeout_secs: Some(5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let stage = |id: &str| StageProfile {
+            id: id.to_string(),
+            ..Default::default()
+        };
+        let run = StageStats::of_engine(stage("batch-0"), &stopped);
+        assert!(run.timed_out);
+        let json = serde_json::to_vec(&run).unwrap();
+        assert_eq!(serde_json::from_slice::<StageStats>(&json).unwrap(), run);
+
+        let stats = sum(vec![
+            StageStats::of_engine(stage("batch-1"), &finished),
+            run,
+            StageStats::of_stage(stage("frame")),
+        ]);
+        assert!(!stats.profile.reached_fixpoint);
+        assert_eq!(stats.profile.timeout_secs, Some(5));
+        let stats = sum(vec![StageStats::of_engine(stage("batch-1"), &finished)]);
+        assert!(stats.profile.reached_fixpoint);
     }
 }

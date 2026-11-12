@@ -1273,6 +1273,49 @@ fn staged_index_reads_as_absent_until_stamp() {
     });
 }
 
+/// A staged run whose fixpoints `CTADL_INDEX_TIMEOUT_SECS` stops short writes a partial index,
+/// warns, and its `profile.json` says it did not reach its fixpoint, as a monolithic run does.
+#[test]
+fn staged_index_reports_timeout() {
+    run_store_test(|| {
+        let import = ArtifactImport::try_create(
+            "staged_timeout_c",
+            ArtifactLanguage::C,
+            &c_fixture("xfer.c"),
+        )
+        .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        let index = |timeout: Option<&str>| {
+            let mut cmd = ctadl();
+            cmd.args(["index", "staged_timeout_proj", "staged_timeout_c"]);
+            if let Some(timeout) = timeout {
+                cmd.env("CTADL_INDEX_TIMEOUT_SECS", timeout);
+            }
+            let out = cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let project = AnalysisProject::try_load_name("staged_timeout_proj").unwrap();
+            let profile: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(project.index_path().unwrap().join("profile.json")).unwrap(),
+            )
+            .unwrap();
+            (String::from_utf8_lossy(&out.stderr).into_owned(), profile)
+        };
+
+        let (stderr, profile) = index(Some("0"));
+        assert!(stderr.contains("TIMED OUT"), "{stderr}");
+        assert_eq!(profile["reached_fixpoint"], false, "{profile:#}");
+        assert_eq!(profile["timeout_secs"], 0, "{profile:#}");
+
+        let (stderr, profile) = index(None);
+        assert!(!stderr.contains("TIMED OUT"), "{stderr}");
+        assert_eq!(profile["reached_fixpoint"], true, "{profile:#}");
+    });
+}
+
 /// `cli::index` staged, with every recursive SCC split into single functions and one SCC per
 /// batch, writes the same tables and notifications as the monolithic run, and records which run
 /// it was.

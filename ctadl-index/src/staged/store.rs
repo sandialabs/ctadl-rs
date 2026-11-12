@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, ErrorContext};
-use crate::index_engine::{IndexConfig, Parallelism, Storage};
+use crate::index_engine::{IndexConfig, Parallelism, Storage, index_timeout_secs};
 use crate::staged::plan::{Batch, Plan};
 
 /// A unit of work whose completion is marked in `done/`.
@@ -454,9 +454,15 @@ pub struct KeyConfig {
     pub budget: u64,
     /// The batch floor, which changes the plan.
     pub floor: usize,
+    /// `CTADL_INDEX_TIMEOUT_SECS` of the run, which every stage run's fixpoint stops at: a run
+    /// with no timeout must not resume from batches that one stopped short.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 impl KeyConfig {
+    /// The configuration of a run of `config`, `budget` and `floor`, with the timeout this
+    /// process's environment sets.
     pub fn new(config: &IndexConfig, budget: u64, floor: usize) -> Self {
         let IndexConfig {
             alias_rule,
@@ -470,6 +476,7 @@ impl KeyConfig {
             deref_paths: *deref_paths,
             budget,
             floor,
+            timeout_secs: index_timeout_secs(),
         }
     }
 
@@ -806,6 +813,10 @@ mod tests {
             },
             KeyConfig {
                 floor: config.floor + 1,
+                ..config.clone()
+            },
+            KeyConfig {
+                timeout_secs: Some(config.timeout_secs.map_or(0, |t| t + 1)),
                 ..config.clone()
             },
         ];

@@ -261,7 +261,22 @@ pub fn run_staged_until(
         "[mem cp] staged: tables written: {:.1} MB",
         phys_footprint_mb()
     );
-    stats.index = sum_stats(StageStats::load_all(&stage)?);
+    let runs = StageStats::load_all(&stage)?;
+    let timed_out: Vec<_> = runs
+        .iter()
+        .filter(|r| r.timed_out)
+        .map(|r| r.stage.id.clone())
+        .collect();
+    if !timed_out.is_empty() {
+        log::warn!(
+            "staged index: {} stage run(s) TIMED OUT after {} s without reaching fixpoint, so \
+             the index is PARTIAL: {}",
+            timed_out.len(),
+            runs.iter().find_map(|r| r.timeout_secs).unwrap_or_default(),
+            timed_out.join(", ")
+        );
+    }
+    stats.index = sum_stats(runs);
     let mut profile = stats.index.profile.clone();
     profile.memory.read_interned();
     profile.save(index_dir)?;

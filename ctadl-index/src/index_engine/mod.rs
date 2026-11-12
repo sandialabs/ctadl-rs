@@ -830,6 +830,14 @@ macro_rules! call_arg {
     };
 }
 
+/// `CTADL_INDEX_TIMEOUT_SECS`, the seconds after which a fixpoint stops short of its end, if
+/// set.
+pub fn index_timeout_secs() -> Option<u64> {
+    std::env::var("CTADL_INDEX_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
 /// Reads this process's current physical footprint (macOS `phys_footprint`, the same number
 /// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
 /// `[mem cp]` derivation checkpoints so we can attribute the pre-fixpoint memory spike to the
@@ -1759,9 +1767,7 @@ impl<'a> EngineInput<'a> {
         // `run_engine!`.
         // This is the tool for profiling which rule(s) dominate a run that does not terminate, as
         // if it hit a fixpoint.
-        let index_timeout = std::env::var("CTADL_INDEX_TIMEOUT_SECS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
+        let index_timeout = index_timeout_secs()
             .map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::MAX);
 

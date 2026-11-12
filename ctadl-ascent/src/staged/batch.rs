@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::error::Error;
 use crate::facts::{IdMap, Path};
@@ -41,8 +41,8 @@ pub struct BatchRun {
 /// A part of a split SCC runs in a `round`, and every other batch in none. A part reads the
 /// other parts' summaries from their latest runs, and its outputs are that round's run.
 ///
-/// Fails if the fixpoint stops short of its end (`CTADL_INDEX_TIMEOUT_SECS`), and then writes
-/// nothing.
+/// A fixpoint the run's timeout (`CTADL_INDEX_TIMEOUT_SECS`) stops short of its end writes its
+/// partial outputs, and its stats say so.
 pub fn run_batch(
     stage: &StageDir,
     id: BatchId,
@@ -62,7 +62,8 @@ pub fn run_batch(
             }
         )));
     }
-    let config = KeyConfig::load(stage)?.index_config(parallelism);
+    let key_config = KeyConfig::load(stage)?;
+    let config = key_config.index_config(parallelism);
     let path_set = path_set(stage)?;
     let BatchFacts { facts, read } = read_batch_facts(stage, &batch)?;
     let mut input = EngineInput::from_slice(
@@ -75,13 +76,14 @@ pub fn run_batch(
         id_map,
     );
     input.seed_paths = false;
+    input.index_timeout = key_config
+        .timeout_secs
+        .map_or(Duration::MAX, Duration::from_secs);
     let name = Job::Batch { id, round }.name();
     input.dump = stage_dump_dir(&name);
     let result = run_engine(input);
     if !result.stats.profile.reached_fixpoint {
-        return Err(Error::Staged(format!(
-            "batch {id} stopped before its fixpoint, so its outputs would be partial"
-        )));
+        log::warn!("batch {id} stopped before its fixpoint; its outputs are partial");
     }
     let stats = result.stats;
     let outputs = BatchOutputs::new(&batch, result.summary, result.assign_like);
