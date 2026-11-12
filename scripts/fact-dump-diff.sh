@@ -21,15 +21,18 @@
 #              index saves, which compare between any two ways of running the
 #              index, where the relations compare only between runs that
 #              compute it the same way. `record` then needs only the tables.
+#              A staged run (`--staged`, `--index-budget`) writes only the
+#              tables, so it compares only with --outputs.
 #   -n N       show the first N rows only on each side of a differing relation
 #              (default 5).
 #
-# CMD picks the build and the engine: serial is the default, `-j N` (N > 1) is
-# the parallel engine, `--lsm` is Storage::Lsm. For example:
+# CMD picks the build and the engine: `--monolithic` is the reference run,
+# serial unless `-j N` (N > 1) picks the parallel engine or `--lsm`
+# Storage::Lsm; `--staged` is the staged run. For example:
 #
-#   scripts/fact-dump-diff.sh record ref-serial -- ctadl index app
-#   scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app
-#   scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app -j 8
+#   scripts/fact-dump-diff.sh record ref-serial -- ctadl index app --monolithic
+#   scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app --monolithic -j 8
+#   scripts/fact-dump-diff.sh compare --outputs ref-serial -- target/release/ctadl index app --staged
 #
 # The dump is written by the index engine (ctadl-index/src/index_engine/dump.rs).
 # Rows are compared as sets: each relation is sorted with `LC_ALL=C sort -u`,
@@ -43,7 +46,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,42p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,44p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 

@@ -184,13 +184,13 @@ compares the dumps as sets:
 
 ```
 # Record a reference with the build on PATH, one per engine
-scripts/fact-dump-diff.sh record ref-serial -- ctadl index app
-scripts/fact-dump-diff.sh record ref-par    -- ctadl index app -j 8
-scripts/fact-dump-diff.sh record ref-lsm    -- ctadl index app --lsm
+scripts/fact-dump-diff.sh record ref-serial -- ctadl index app --monolithic
+scripts/fact-dump-diff.sh record ref-par    -- ctadl index app --monolithic -j 8
+scripts/fact-dump-diff.sh record ref-lsm    -- ctadl index app --monolithic --lsm
 
 # Later, compare a candidate build against the reference
-scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app
-scripts/fact-dump-diff.sh compare -k cand-par ref-par -- target/release/ctadl index app -j 8
+scripts/fact-dump-diff.sh compare ref-serial -- target/release/ctadl index app --monolithic
+scripts/fact-dump-diff.sh compare -k cand-par ref-par -- target/release/ctadl index app --monolithic -j 8
 
 # Or compare two saved dumps, for example two engines
 scripts/fact-dump-diff.sh diff ref-serial ref-par
@@ -208,9 +208,17 @@ that compute the index the same way; the output tables compare between any two r
 `--outputs`, every mode works on `outputs/` alone:
 
 ```
-scripts/fact-dump-diff.sh record ref -- ctadl index app
-scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app
+scripts/fact-dump-diff.sh record ref -- ctadl index app --monolithic
+scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app --staged
+scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app --index-budget 2G -j 4
 ```
+
+This is how a staged run is checked. It holds no relation of the whole program, only one batch's
+at a time, so it writes `outputs/` and no relations, and only `--outputs` compares it. Record
+the reference with `--monolithic`, which is the run the staged one must match. To see a batch's
+own relations, set `CTADL_DUMP_STAGES=1` as well: each batch then dumps them to
+`<dir>/stages/<batch>/`, `batch-3` or `batch-3-round-2` for a part of a split recursive SCC. A
+batch in a worker process has no names for functions, so they print as numbers there.
 
 The dump and the sort scale with the index: `locals` alone is tens of millions of rows on a large
 target. Raw dumps and sort's temporary files go under `$TMPDIR`, so point it at a disk with room

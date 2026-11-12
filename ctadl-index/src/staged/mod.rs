@@ -19,4 +19,5 @@ batches ([`plan`]) and a seeded shuffle of facts for tests ([`shuffle`]).
 pub mod files;
 pub mod plan;
 pub mod shuffle;
+pub mod stats;
 pub mod store;

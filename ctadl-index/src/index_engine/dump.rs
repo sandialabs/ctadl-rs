@@ -4,6 +4,10 @@
 //! `ctadl index` also writes the tables of the index it saved to `<dir>/outputs/`
 //! ([`dump_outputs`]); `fact-dump-diff.sh --outputs` compares only those.
 //!
+//! A staged run holds no relation of the whole program, so it writes only `outputs/`. With
+//! `CTADL_DUMP_STAGES` also set, each batch writes its own relations to
+//! `<dir>/stages/<batch>/` ([`stage_dump_dir`]).
+//!
 //! A row is one line, its columns separated by tabs. Every column is printed by content, never by
 //! an intern id: a function by its name, and a string, path or call target by its text. Rows come out in whatever order the engine holds them,
 //! which differs between runs and engines; only the sorted file is comparable.
@@ -26,6 +30,20 @@ use crate::index_engine::{IndexConfig, IndexResult, Rows, unpack_site};
 
 /// The environment variable that turns the dump on and names its directory.
 pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
+
+/// Set along with [`DUMP_ENV`], it makes each batch of a staged run dump its relations.
+pub const DUMP_STAGES_ENV: &str = "CTADL_DUMP_STAGES";
+
+/// The subdirectory of the dump directory that holds the batches' dumps.
+pub const STAGES_DIR: &str = "stages";
+
+/// Where the batch or stage run named `name` dumps its relations: `<dir>/stages/<name>/` when
+/// [`DUMP_ENV`] and [`DUMP_STAGES_ENV`] are both set, and nowhere otherwise.
+pub fn stage_dump_dir(name: &str) -> Option<PathBuf> {
+    std::env::var_os(DUMP_STAGES_ENV)?;
+    let dir = PathBuf::from(std::env::var_os(DUMP_ENV)?);
+    Some(dir.join(STAGES_DIR).join(name))
+}
 
 /// What a column needs to print itself by content.
 pub struct Cx<'a> {
@@ -327,17 +345,16 @@ impl RelationWriter<'_, '_> {
 }
 
 impl<'a> RelationDump<'a> {
-    /// The dump `CTADL_DUMP_RELATIONS` asks for, if it is set. Creates the directory.
-    pub fn from_env(id_map: Option<&'a IdMap>) -> Option<Self> {
-        let dir = PathBuf::from(std::env::var_os(DUMP_ENV)?);
+    /// A dump into `dir`, which it creates.
+    pub fn new(dir: PathBuf, id_map: Option<&'a IdMap>) -> Self {
         std::fs::create_dir_all(&dir)
             .unwrap_or_else(|e| panic!("{DUMP_ENV}: creating {}: {e}", dir.display()));
         log::info!("dumping the index relations to {}", dir.display());
-        Some(RelationDump {
+        RelationDump {
             dir,
             cx: Cx { id_map },
             written: Vec::new(),
-        })
+        }
     }
 
     /// Writes relation `name`, whose rows `fill` passes to the writer. Refuses to overwrite an

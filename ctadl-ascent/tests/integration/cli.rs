@@ -400,7 +400,14 @@ fn import_index_android_icc_case(
     } else {
         Vec::new()
     };
-    cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
+    cli::index(
+        &project,
+        &[],
+        &models,
+        false,
+        crate::common::index_options(),
+    )
+    .unwrap();
     (project, dir)
 }
 
@@ -826,7 +833,7 @@ fn index_xfer_project(import_name: &str, project_name: &str) -> AnalysisProject 
         &[],
         &[c_fixture("xfer.json")],
         false,
-        cli::IndexOptions::default(),
+        crate::common::index_options(),
     )
     .unwrap();
     project
@@ -1122,7 +1129,7 @@ fn a_failed_reindex_leaves_no_stamp() {
             &[],
             &[c_fixture("xfer.json")],
             false,
-            cli::IndexOptions::default(),
+            crate::common::index_options(),
         );
         std::fs::set_permissions(&table, std::fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -1167,5 +1174,162 @@ fn inspect_project_lists_the_tables_of_a_readable_index() {
             }
             other => panic!("expected a readable index, got: {other:?}"),
         }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Staged runs of `ctadl index`.
+// ---------------------------------------------------------------------------
+
+/// `ctadl` from this package, run on the store the tests share.
+fn ctadl() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ctadl"));
+    cmd.arg("--store").arg(crate::common::store_dir());
+    cmd
+}
+
+/// `--lsm` keeps the monolithic run's relations on disk, so it means nothing to a staged run,
+/// and is refused without `--monolithic`, which the message names.
+#[test]
+fn lsm_without_monolithic_is_an_error() {
+    let out = ctadl()
+        .args(["index", "lsm_without_monolithic", "--lsm"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--monolithic"), "{stderr}");
+
+    let out = ctadl()
+        .args(["index", "lsm_without_monolithic", "--lsm", "--staged"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+/// A staged run stopped after its first batch has written facts and stage files but no stamp,
+/// so the project reads as having no index. Rerun, it resumes, stamps the index and removes the
+/// stage directory.
+#[test]
+fn staged_index_reads_as_absent_until_stamp() {
+    run_store_test(|| {
+        use ctadl_ascent::staged::run::{STOP_AFTER_VAR, STOPPED_STATUS};
+        use ctadl_index::staged::store::StageDir;
+
+        let import =
+            ArtifactImport::try_create("staged_stop_c", ArtifactLanguage::C, &c_fixture("xfer.c"))
+                .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        let index = |stop: bool| {
+            let mut cmd = ctadl();
+            cmd.args(["index", "staged_stop_proj", "staged_stop_c", "--staged"]);
+            if stop {
+                cmd.env(STOP_AFTER_VAR, "0");
+            }
+            cmd.output().unwrap()
+        };
+
+        let out = index(true);
+        assert_eq!(
+            out.status.code(),
+            Some(STOPPED_STATUS),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let project = AnalysisProject::try_load_name("staged_stop_proj").unwrap();
+        let stage = StageDir::new(project.index_path().unwrap());
+        assert!(
+            stage.root().is_dir(),
+            "the stopped run keeps its stage files"
+        );
+        assert!(!project.has_index());
+        assert!(
+            matches!(
+                cli::summarize_project(&project).unwrap().index,
+                cli::IndexStatus::Unfinished { .. }
+            ),
+            "a stopped run is an unfinished index"
+        );
+
+        let out = index(false);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("resuming"), "{stderr}");
+        assert!(project.has_index());
+        assert!(
+            !stage.root().exists(),
+            "the stamp removes the stage directory"
+        );
+    });
+}
+
+/// `cli::index` staged, with every recursive SCC split into single functions and one SCC per
+/// batch, writes the same tables and notifications as the monolithic run, and records which run
+/// it was.
+#[test]
+fn staged_cli_matches_monolithic() {
+    run_store_test(|| {
+        use ctadl_ascent::facts::IdMap;
+        use ctadl_ascent::index_engine::StagedConfig;
+        use ctadl_ascent::staged::compare::compare_index_dirs;
+        use ctadl_import::notifications::Notifications;
+
+        let import = ArtifactImport::try_create(
+            "staged_cli_c",
+            ArtifactLanguage::C,
+            &c_fixture("callsmear.c"),
+        )
+        .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        let models = [c_fixture("callsmear.json")];
+        let index = |name: &str, staged: Option<StagedConfig>| {
+            let project =
+                AnalysisProject::try_create(name, &["staged_cli_c"], SubImports::All).unwrap();
+            let opts = cli::IndexOptions {
+                staged,
+                ..crate::common::index_options()
+            };
+            cli::index(&project, &[], &models, false, opts).unwrap();
+            project
+        };
+        let monolithic = index("staged_cli_mono", None);
+        let staged = index(
+            "staged_cli_staged",
+            Some(StagedConfig {
+                budget: 0,
+                floor: 1,
+            }),
+        );
+
+        let (mono_dir, staged_dir) = (
+            monolithic.index_path().unwrap(),
+            staged.index_path().unwrap(),
+        );
+        let sites = IdMap::try_load(&mono_dir).unwrap();
+        let diff = compare_index_dirs(&mono_dir, &staged_dir, Some(&sites)).unwrap();
+        assert!(diff.is_empty(), "{diff}");
+        let notes = |dir: &std::path::Path| {
+            serde_json::to_value(Notifications::load(dir).unwrap().notifications()).unwrap()
+        };
+        assert_eq!(notes(&mono_dir), notes(&staged_dir));
+
+        let engine = |p: &AnalysisProject| p.index_config().unwrap().engine.unwrap().staged;
+        assert!(!engine(&monolithic));
+        assert!(engine(&staged));
+        assert!(
+            !ctadl_index::staged::store::StageDir::new(&staged_dir)
+                .root()
+                .exists()
+        );
+        let profile: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(staged_dir.join("profile.json")).unwrap())
+                .unwrap();
+        let stages = profile["stages"].as_array().unwrap();
+        assert!(stages.iter().any(|s| s["id"] == "frame"), "{profile:#}");
+        assert!(stages.iter().any(|s| s["id"] == "batch-0"), "{profile:#}");
     });
 }

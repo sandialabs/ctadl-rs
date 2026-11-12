@@ -21,6 +21,17 @@ pub fn store_dir() -> &'static Path {
     .path()
 }
 
+/// The options of `ctadl index` with no flags, for a test that calls [`cli::index`]: as
+/// [`Default`], with the workers of a staged run started from this package's `ctadl`.
+///
+/// [`cli::index`]: ctadl_ascent::cli::index
+pub fn index_options() -> ctadl_ascent::cli::IndexOptions {
+    ctadl_ascent::cli::IndexOptions {
+        worker_exe: Some(Path::new(env!("CARGO_BIN_EXE_ctadl"))),
+        ..Default::default()
+    }
+}
+
 /// Loads `generators`, the generators of one JSON model file, against `index`, appending what
 /// they matched to `out`: migrated to the DSL and run on its engine, which is how every JSON
 /// model file is loaded.

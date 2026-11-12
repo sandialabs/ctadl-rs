@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{Parallelism, Storage};
+use ctadl_ascent::index_engine::{Parallelism, StagedConfig, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::report::ReportFormat;
 use ctadl_frontends::budget::DEFAULT_MAX_CORES;
@@ -464,18 +464,57 @@ pub struct IndexArgs {
     /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
     /// reports. Both engines evaluate the same rules and derive the same relations. The IR
     /// passes that run before the engine (SSA and its cleanups) use the same number of threads.
+    ///
+    /// A staged run starts up to N workers at once, each a batch on the serial engine, as many
+    /// as the budget allows; a worker that runs alone runs the parallel engine on N threads.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
 
+    /// Compute the flow relation once over the whole program, holding all of it in memory,
+    /// instead of in stages.
+    ///
+    /// For now the default; the staged run is selected by `--staged` or `--index-budget`. The
+    /// monolithic run is the reference a staged run is checked against, and the only one that
+    /// can use `--lsm`.
+    #[arg(long)]
+    pub monolithic: bool,
+
+    /// Compute the flow relation in stages: batches of functions, callees first, each in a
+    /// worker process, as many at once as `--index-budget` allows, then the flows between
+    /// globals and the intent rules.
+    ///
+    /// Each batch holds only its own functions' relations, so the peak memory follows the
+    /// largest batch rather than the program. The tables are the same as the monolithic run's.
+    /// A run that is killed resumes from its stage directory, `index/staging/`, when it is
+    /// rerun with the same facts and options.
+    #[arg(long, conflicts_with = "monolithic")]
+    pub staged: bool,
+
+    /// The memory the workers of a staged run may use at once, e.g. `2G` or `512M` (powers of
+    /// 1024; a bare number is bytes). Implies `--staged`. Half of physical memory by default.
+    ///
+    /// The scheduler packs batches to fit their estimates within it, and when the workers
+    /// running go over it, stops the largest, splits its batch and runs the halves again. A
+    /// single function over the budget runs alone. The budget does not cover the scheduler,
+    /// which holds the plan, nor fact generation before it.
+    #[arg(
+        long,
+        value_name = "SIZE",
+        value_parser = parse_size,
+        conflicts_with = "monolithic"
+    )]
+    pub index_budget: Option<usize>,
+
     /// Experimental: keep the largest relations in memory-mapped LSM files instead of in-memory
-    /// tries.
+    /// tries. Needs `--monolithic`.
     ///
     /// The relations that dominate the index's memory (`locals`, `assign_like` and the
     /// propagation relations built from them) then live mostly in run files under `$TMPDIR`,
     /// read through the page cache, with only a write buffer per index in memory: a run that
     /// would not fit in RAM can finish, at some cost in time. Runs the serial engine, so it
-    /// cannot be combined with `-j`.
-    #[arg(long, conflicts_with = "jobs")]
+    /// cannot be combined with `-j`. A staged run keeps each batch's relations in memory, and
+    /// bounds them with `--index-budget` instead.
+    #[arg(long, conflicts_with = "jobs", requires = "monolithic")]
     pub lsm: bool,
 
     /// With `--lsm`, how many entries each index buffers in memory before writing them out as
@@ -588,8 +627,20 @@ fn main() -> anyhow::Result<()> {
                 args.progs.clone()
             };
             // Pass the original args; the indexing function will handle the fallback.
-            index_artifacts_to_store(args)
-                .with_context(|| format!("running 'index' artifacts: {:?}", effective_progs))?;
+            let indexed = index_artifacts_to_store(args)
+                .with_context(|| format!("running 'index' artifacts: {:?}", effective_progs));
+            if let Err(e) = &indexed
+                && e.chain().any(|e| {
+                    matches!(
+                        e.downcast_ref::<ctadl_ascent::error::Error>(),
+                        Some(ctadl_ascent::error::Error::StagedStopped(_))
+                    )
+                })
+            {
+                eprintln!("{e:#}");
+                std::process::exit(ctadl_ascent::staged::run::STOPPED_STATUS);
+            }
+            indexed?;
         }
         Command::Inspect(args) => {
             inspect_artifact(args)
@@ -851,7 +902,13 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
                 Storage::Memory
             },
             mem2reg: args.mem2reg.0,
-            worker_exe: None,
+            staged: (args.staged || args.index_budget.is_some()).then(|| {
+                StagedConfig::with_budget(
+                    args.index_budget
+                        .map_or_else(StagedConfig::default_budget, |budget| budget as u64),
+                )
+            }),
+            worker_exe: Some(Box::leak(std::env::current_exe()?.into_boxed_path())),
         },
     )?;
     Ok(())

@@ -83,6 +83,9 @@ pub struct IndexOptions {
     pub storage: Storage,
     /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
     pub mem2reg: Option<ssa::Mem2Reg>,
+    /// Runs the fixpoint in stages, in batches of functions under a memory budget, instead of
+    /// once over the whole program. `None` runs it once, monolithic.
+    pub staged: Option<crate::index_engine::StagedConfig>,
     /// The `ctadl` executable a staged run starts its workers from. `None` runs its batches on
     /// the calling thread.
     pub worker_exe: Option<&'static std::path::Path>,
@@ -100,6 +103,7 @@ impl Default for IndexOptions {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
+            staged: None,
             worker_exe: None,
         }
     }
@@ -430,9 +434,15 @@ pub fn index(
         parallelism,
         storage,
         mem2reg,
-        // Not yet read: `index` runs monolithic.
-        worker_exe: _,
+        staged,
+        worker_exe,
     } = opts;
+    if staged.is_some() && storage == Storage::Lsm {
+        return Err(Error::Staged(
+            "a staged run keeps its relations in memory; the LSM storage needs the monolithic run"
+                .to_string(),
+        ));
+    }
     use crate::index_engine::phys_footprint_mb;
     log::info!(
         "indexing project '{}' from {} import(s): {}",
@@ -808,49 +818,53 @@ pub fn index(
         parallelism,
         storage,
         deref_paths,
-        staged: None,
+        staged,
     };
     log::info!("indexing (computing the flow relation)");
     let call_facts = CallFacts::new(&facts);
-    let result = taint_index_with_config(facts, config, Some(&sites));
-    let summarized: BTreeSet<crate::facts::FunctionId> =
-        result.summary.iter().map(|(f, ..)| *f).collect();
-    push_zero_assignment_notes(
-        &mut notes,
-        &call_facts,
-        &summarized,
-        &result.resolved_call,
-        &result.external_function,
-        &sites,
-    );
-    if !result.intent_pair.is_empty() {
-        let explicit = result
-            .intent_pair
-            .iter()
-            .filter(|(_, _, _, kind)| *kind == crate::facts::IntentPairKind::Explicit)
-            .count();
-        let implicit = result.intent_pair.len() - explicit;
-        log::info!(
-            "android intent pairs: {} explicit, {} implicit, {} total",
-            explicit,
-            implicit,
-            result.intent_pair.len()
-        );
-    }
-
-    // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
-    // time, check them here.
-    for import in project.iter_imports() {
-        let import = import?;
-        if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::index_check(&import, &result, &sites)?;
+    match staged {
+        None => {
+            let result = taint_index_with_config(facts, config, Some(&sites));
+            let summarized: BTreeSet<crate::facts::FunctionId> =
+                result.summary.iter().map(|(f, ..)| *f).collect();
+            push_zero_assignment_notes(
+                &mut notes,
+                &call_facts,
+                &summarized,
+                &result.resolved_call,
+                &result.external_function,
+                &sites,
+            );
+            log_intent_pairs(&result.intent_pair);
+            flowy_index_check(project, &result, &sites)?;
+            result
+                .try_save(&path)
+                .err_context(|| format!("saving index: {}", path.display()))?;
+        }
+        Some(staged) => {
+            staged_index(&path, facts, &config, staged, worker_exe, &sites)?;
+            let summarized = summarized_functions(&path)?;
+            let resolved_call = crate::facts::schema::resolved_call::try_load(&path)?;
+            let external_function = crate::facts::schema::external_function::try_load(&path)?;
+            push_zero_assignment_notes(
+                &mut notes,
+                &call_facts,
+                &summarized,
+                &resolved_call,
+                &external_function,
+                &sites,
+            );
+            log_intent_pairs(&crate::facts::schema::intent_pair::try_load(&path)?);
+            if project
+                .iter_imports()
+                .any(|i| i.is_ok_and(|i| i.language == ArtifactLanguage::Flowy))
+            {
+                let result = crate::index_engine::IndexResult::try_load(&path)
+                    .err_context(|| format!("loading index: {}", path.display()))?;
+                flowy_index_check(project, &result, &sites)?;
+            }
         }
     }
-
-    let path = project.index_path()?;
-    result
-        .try_save(&path)
-        .err_context(|| format!("saving index: {}", path.display()))?;
     if let Some(dump_dir) = std::env::var_os(crate::index_engine::dump::DUMP_ENV) {
         crate::index_engine::dump::dump_outputs(Path::new(&dump_dir), &path, Some(&sites))?;
     }
@@ -880,9 +894,152 @@ pub fn index(
             alias_rule,
             deref_paths,
             mem2reg: mem2reg.map_or_else(|| "off".to_string(), |m| m.tag()),
+            staged: staged.is_some(),
         }),
     )?;
+    // After the stamp: until it is written, a run killed while writing the tables can resume.
+    let stage = ctadl_index::staged::store::StageDir::new(&path);
+    if let Err(e) = std::fs::remove_dir_all(stage.root())
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("could not remove {}: {e}", stage.root().display());
+    }
     log::info!("wrote index to {}", path.display());
+    Ok(())
+}
+
+/// Logs how many intent pairs the index found, if any.
+fn log_intent_pairs(
+    intent_pair: &[(
+        crate::facts::FunctionId,
+        crate::facts::InsnId,
+        crate::facts::FunctionId,
+        crate::facts::IntentPairKind,
+    )],
+) {
+    if intent_pair.is_empty() {
+        return;
+    }
+    let explicit = intent_pair
+        .iter()
+        .filter(|(_, _, _, kind)| *kind == crate::facts::IntentPairKind::Explicit)
+        .count();
+    log::info!(
+        "android intent pairs: {} explicit, {} implicit, {} total",
+        explicit,
+        intent_pair.len() - explicit,
+        intent_pair.len()
+    );
+}
+
+/// Checks the index-time assertions of the project's flowy imports against `result`.
+fn flowy_index_check(
+    project: &AnalysisProject,
+    result: &crate::index_engine::IndexResult,
+    sites: &crate::facts::IdMap,
+) -> Result<(), Error> {
+    for import in project.iter_imports() {
+        let import = import?;
+        if import.language == ArtifactLanguage::Flowy {
+            crate::codegen::flowy::index_check(&import, result, sites)?;
+        }
+    }
+    Ok(())
+}
+
+/// The functions with a row in the `summary` table of the index in `index_dir`, read one row
+/// group at a time.
+fn summarized_functions(index_dir: &Path) -> Result<BTreeSet<crate::facts::FunctionId>, Error> {
+    use crate::facts::schema::summary;
+    let mut functions = BTreeSet::new();
+    ctadl_index::facts::parquet::Reader::new(index_dir.join(summary::FILENAME)).for_each_batch::<(
+        crate::facts::FunctionId,
+    )>(
+        &summary::COLUMNS[..1],
+        |rows| {
+            functions.extend(rows.into_iter().map(|(f,)| f));
+            Ok(())
+        },
+    )?;
+    Ok(functions)
+}
+
+/// Computes the index of `facts` in stages and writes its tables to `index_dir`, with the stage
+/// directory under it. The batches run in workers started from `worker_exe`, or on this thread
+/// without one. Stops after the batch `CTADL_STAGED_STOP_AFTER` names, if it names one.
+///
+/// With `CTADL_INDEX_CHECK_STAGED=1`, it then indexes the facts again, monolithic and serial,
+/// into a temporary directory, and panics if the tables differ.
+fn staged_index(
+    index_dir: &Path,
+    facts: IndexFacts,
+    config: &crate::index_engine::IndexConfig,
+    staged: crate::index_engine::StagedConfig,
+    worker_exe: Option<&Path>,
+    sites: &crate::facts::IdMap,
+) -> Result<(), Error> {
+    use crate::staged::executor::{Executor, InProcess, Process};
+    use crate::staged::worker::TEST_HOOK_VAR;
+    let checked = crate::index_engine::check_staged_enabled().then(|| facts.clone());
+    let mut in_process;
+    let mut process;
+    let executor: &mut dyn Executor = match worker_exe {
+        Some(exe) => {
+            process = Process::new(exe, config.parallelism);
+            if let Some(hooks) = std::env::var_os(TEST_HOOK_VAR) {
+                process = process.env(TEST_HOOK_VAR, hooks);
+            }
+            &mut process
+        }
+        None => {
+            in_process = InProcess::new(config.parallelism, Some(sites));
+            &mut in_process
+        }
+    };
+    let stats = crate::staged::run::run_staged_until(
+        facts,
+        config,
+        staged,
+        index_dir,
+        executor,
+        crate::staged::run::stop_after_from_env(),
+    )?;
+    log::info!(
+        "staged index: {} stage runs, {} workers killed, {} batches split{}",
+        stats.index.profile.stages.len(),
+        stats.kills,
+        stats.splits.len(),
+        if stats.resumed {
+            format!(", {} batches done by an earlier run", stats.skipped.len())
+        } else {
+            String::new()
+        }
+    );
+    if let Some(facts) = checked {
+        let serial = crate::index_engine::IndexConfig {
+            parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
+            staged: None,
+            ..config.clone()
+        };
+        let mut input = crate::index_engine::EngineInput::new(facts, serial, Some(sites));
+        input.dump = None;
+        let reference = crate::index_engine::run_engine(input);
+        let reference_dir = tempfile::tempdir()?;
+        reference.try_save(reference_dir.path())?;
+        let diff = crate::staged::compare::compare_index_dirs(
+            reference_dir.path(),
+            index_dir,
+            Some(sites),
+        )?;
+        assert!(
+            diff.is_empty(),
+            "{}: the staged index in {} differs from the monolithic serial run's \
+             (< monolithic, > staged):\n{diff}",
+            crate::index_engine::CHECK_STAGED_VAR,
+            index_dir.display()
+        );
+    }
     Ok(())
 }
 

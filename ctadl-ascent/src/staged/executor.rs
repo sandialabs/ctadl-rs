@@ -253,6 +253,16 @@ const LOG_TAIL_BYTES: u64 = 16 << 10;
 /// How long [`Process::wait`] sleeps between looks at its workers when none reports.
 const POLL: Duration = Duration::from_millis(50);
 
+/// Turns off the large-allocation cache of macOS's allocator in a worker. The cache keeps the
+/// pages of freed large allocations, which count toward the footprint that the scheduler holds
+/// against the budget, for the process to reuse. It is set before the worker starts, since the
+/// allocator reads it once; [`Process::env`] can override it.
+const LARGE_CACHE_OFF: &[(&str, &str)] = if cfg!(target_os = "macos") {
+    &[("MallocLargeCache", "0")]
+} else {
+    &[]
+};
+
 impl Process {
     /// Runs workers from `exe`, a `ctadl` executable.
     pub fn new(exe: impl Into<PathBuf>, parallelism: Parallelism) -> Self {
@@ -280,6 +290,7 @@ impl Process {
             .arg(stage.root())
             .args(job.worker_args())
             .args(["--jobs", &threads.to_string()])
+            .envs(LARGE_CACHE_OFF.iter().copied())
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

@@ -37,6 +37,23 @@ pub struct IndexProfile {
     /// How many times a rule asked the path set to split a path that is not in it. Each is a
     /// bug that drops rows, so this is 0.
     pub split_misses: usize,
+    /// Each stage of a staged run, in the order they ended; empty for a monolithic run. The
+    /// other numbers are then sums over the stages, with no `sccs`.
+    pub stages: Vec<StageProfile>,
+}
+
+/// One run of one stage of a staged run: a batch, a round of a part of a split SCC, the global
+/// frame or the intent stage.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+pub struct StageProfile {
+    /// The run's name: `batch-3`, `batch-3-round-2`, `frame` or `intent`.
+    pub id: String,
+    /// The footprint of the process that ran it, in MB, the whole process included: a batch's
+    /// or the intent stage's largest, and the frame's at its end, in the scheduler.
+    pub peak_mb: f64,
+    /// The rows it wrote.
+    pub rows: usize,
+    pub secs: f64,
 }
 
 /// Where the index's bytes are, so a memory regression can be traced to a store.
@@ -92,6 +109,16 @@ pub struct RuleProfile {
 }
 
 impl IndexProfile {
+    /// Writes the profile to `dir` as [`PROFILE_FILE`].
+    pub fn save(&self, dir: &std::path::Path) -> Result<(), crate::error::Error> {
+        use crate::error::ErrorContext;
+        let path = dir.join(PROFILE_FILE);
+        let file =
+            std::fs::File::create(&path).err_context(|| format!("creating {}", path.display()))?;
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), self)
+            .err_context(|| format!("writing {}", path.display()))
+    }
+
     /// `relation_sizes` and `scc_times` are the program's `relation_sizes_summary()` and
     /// `scc_times_summary()`. A relation held in a store of its own reads 0 in the first; pass its
     /// real count in `store_sizes`, which takes precedence.

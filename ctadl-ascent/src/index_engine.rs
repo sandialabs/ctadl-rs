@@ -55,7 +55,7 @@ fn run_configured(facts: IndexFacts, config: IndexConfig, id_map: Option<&IdMap>
 /// staged runs of the same facts (see [`check_staged_with`]). It is read once per process.
 pub const CHECK_STAGED_VAR: &str = "CTADL_INDEX_CHECK_STAGED";
 
-fn check_staged_enabled() -> bool {
+pub(crate) fn check_staged_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var(CHECK_STAGED_VAR).is_ok_and(|v| v == "1"))
 }

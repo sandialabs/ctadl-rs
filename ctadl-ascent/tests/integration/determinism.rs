@@ -175,7 +175,14 @@ fn run_pipeline(out: &Path) {
     cli::import(&import, cli::ImportOptions::default()).unwrap();
     let project = AnalysisProject::try_create("ties_proj", &["ties"], SubImports::All).unwrap();
     let models = vec![fixture("ties.json")];
-    cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
+    cli::index(
+        &project,
+        &[],
+        &models,
+        false,
+        crate::common::index_options(),
+    )
+    .unwrap();
     cli::inspect_index_graph(&project, &out.join("index.dot")).unwrap();
 }
 

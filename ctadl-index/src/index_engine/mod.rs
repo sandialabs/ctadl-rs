@@ -51,7 +51,7 @@ use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
 use streaming_iterator::StreamingIterator;
 
-use crate::error::{Error, ErrorContext};
+use crate::error::Error;
 use crate::facts::{
     CallDispatchKey, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
     FunctionId, GlobalId, IdMap, ImportId, InsnId, InsnSiteId, IntentKind, IntentPairKind,
@@ -344,6 +344,12 @@ pub struct StagedConfig {
 }
 
 impl StagedConfig {
+    /// The budget when none is given: half of physical memory, or [`FALLBACK_BUDGET`] if the
+    /// system does not say how much it has.
+    pub fn default_budget() -> u64 {
+        physical_memory_bytes().map_or(FALLBACK_BUDGET, |bytes| bytes / 2)
+    }
+
     /// A budget of `budget` bytes, with no floor: only the budget splits an SCC.
     pub fn with_budget(budget: u64) -> Self {
         StagedConfig {
@@ -352,6 +358,9 @@ impl StagedConfig {
         }
     }
 }
+
+/// The default budget on a system that does not report its physical memory.
+pub const FALLBACK_BUDGET: u64 = 4 << 30;
 
 impl Default for IndexConfig {
     fn default() -> Self {
@@ -520,11 +529,7 @@ impl IndexResult {
         // After the tables, so the sizes include anything writing them interned.
         let mut profile = self.stats.profile;
         profile.memory.read_interned();
-        let profile_path = dir.as_ref().join(profile::PROFILE_FILE);
-        let file = std::fs::File::create(&profile_path)
-            .err_context(|| format!("creating {}", profile_path.display()))?;
-        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &profile)
-            .err_context(|| format!("writing {}", profile_path.display()))?;
+        profile.save(dir.as_ref())?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
             phys_footprint_mb()
@@ -861,6 +866,63 @@ fn statm_private_pages(statm: &str) -> Option<u64> {
     let resident: u64 = fields.next()?.parse().ok()?;
     let shared: u64 = fields.next()?.parse().ok()?;
     Some(resident.saturating_sub(shared))
+}
+
+/// The largest footprint this process has had, in MB: macOS's lifetime maximum
+/// `phys_footprint`. Elsewhere, the current footprint ([`phys_footprint_mb`]).
+pub fn peak_phys_footprint_mb() -> f64 {
+    #[cfg(target_os = "macos")]
+    // SAFETY: as in `phys_footprint_mb`, with the struct of the version asked for.
+    unsafe {
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+        let rc = libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V4,
+            info.as_mut_ptr() as *mut libc::rusage_info_t,
+        );
+        if rc == 0 {
+            return info.assume_init().ri_lifetime_max_phys_footprint as f64 / (1024.0 * 1024.0);
+        }
+    }
+    phys_footprint_mb()
+}
+
+/// The machine's physical memory in bytes: `hw.memsize` on macOS, and the physical pages times
+/// the page size elsewhere. `None` if the system does not say.
+pub fn physical_memory_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut bytes: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` is a 64-bit integer, and `bytes` and `len` describe a buffer of
+        // that size.
+        let rc = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                (&raw mut bytes).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        (rc == 0 && bytes > 0).then_some(bytes)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // SAFETY: `sysconf` reads system constants and has no preconditions.
+        let (pages, page_bytes) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        let (pages, page_bytes) = (u64::try_from(pages).ok()?, u64::try_from(page_bytes).ok()?);
+        (pages > 0 && page_bytes > 0).then(|| pages * page_bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1521,9 +1583,10 @@ pub struct EngineInput<'a> {
     /// Whether the run seeds the `paths` relation with `paths`. No rule reads it: it is the
     /// output's copy. When false, [`IndexResult::paths`] is `paths` as given.
     pub seed_paths: bool,
-    /// Whether the run writes the `CTADL_DUMP_RELATIONS` dump when it is set. A dump refuses to
-    /// overwrite another, so only one run in a process may write it.
-    pub dump: bool,
+    /// The directory the run dumps every relation to, `CTADL_DUMP_RELATIONS` unless the caller
+    /// changes it. A dump refuses to overwrite another, so runs in one process need distinct
+    /// directories.
+    pub dump: Option<std::path::PathBuf>,
     pub index_timeout: std::time::Duration,
     pub id_map: Option<&'a IdMap>,
     pub initial_assign: usize,
@@ -1695,7 +1758,7 @@ impl<'a> EngineInput<'a> {
             paths,
             path_set,
             seed_paths: true,
-            dump: true,
+            dump: std::env::var_os(dump::DUMP_ENV).map(std::path::PathBuf::from),
             index_timeout,
             id_map,
             initial_assign,
@@ -1922,9 +1985,8 @@ macro_rules! run_engine {
             },
         );
         profile.split_misses = path_set.split_misses();
-        if let Some(mut dump) = dump
-            .then(|| $crate::index_engine::dump::RelationDump::from_env(id_map))
-            .flatten()
+        if let Some(mut dump) =
+            dump.map(|dir| $crate::index_engine::dump::RelationDump::new(dir, id_map))
         {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);

@@ -240,6 +240,10 @@ pub struct EngineRecord {
     pub deref_paths: bool,
     /// The `--mem2reg` policy the IR passes ran with, `off` for none.
     pub mem2reg: String,
+    /// Whether the fixpoint ran in stages rather than once over the whole program. The tables
+    /// are the same either way; this is for tracing a result to the run that made it.
+    #[serde(default)]
+    pub staged: bool,
 }
 
 /// How the index resolved calls, recorded in the index config so a reader can say what it is

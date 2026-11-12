@@ -39,7 +39,7 @@ fn no_jni_bridge_skips_reading_summary_imports() {
     );
     let summary = AnalysisProject::try_create("nobridge_sp", &["nobridge_lib"], SubImports::All)
         .expect("summary project");
-    cli::index(&summary, &[], &[], false, cli::IndexOptions::default()).expect("indexing sp");
+    cli::index(&summary, &[], &[], false, crate::common::index_options()).expect("indexing sp");
     std::fs::remove_file(lib.vmt_path()).expect("removing the library's vmt");
 
     import_lua("nobridge_app", "print(io.read())\n");
@@ -47,7 +47,7 @@ fn no_jni_bridge_skips_reading_summary_imports() {
         .expect("app project");
     let summaries = ["nobridge_sp".to_string()];
 
-    let err = cli::index(&app, &summaries, &[], false, cli::IndexOptions::default())
+    let err = cli::index(&app, &summaries, &[], false, crate::common::index_options())
         .expect_err("the bridge reads the summary project's imports");
     let message = full_message(&err);
     assert!(message.contains("vmt"), "{message}");
@@ -59,7 +59,7 @@ fn no_jni_bridge_skips_reading_summary_imports() {
         false,
         cli::IndexOptions {
             no_jni_bridge: true,
-            ..Default::default()
+            ..crate::common::index_options()
         },
     )
     .expect("--no-jni-bridge does not read the summary project's imports");
@@ -174,7 +174,7 @@ fn summary_project_notifications_reach_the_app() {
     );
     let summary = AnalysisProject::try_create("notes_sp", &["notes_lib"], SubImports::All)
         .expect("summary project");
-    cli::index(&summary, &[], &[], false, cli::IndexOptions::default()).expect("indexing sp");
+    cli::index(&summary, &[], &[], false, crate::common::index_options()).expect("indexing sp");
     // Lua has no stack slots to promote, so the note stands in for one mem2reg would write.
     let note = "mem2reg full: f: frame address escapes (call input); flows through those slots \
                 may be missed";
@@ -210,7 +210,7 @@ fn summary_project_notifications_reach_the_app() {
         &["notes_sp".to_string()],
         &[],
         false,
-        cli::IndexOptions::default(),
+        crate::common::index_options(),
     )
     .expect("indexing app");
     // The notes under test; the index adds its own about calls that do nothing (`print`).
@@ -248,7 +248,7 @@ fn summary_project_notifications_reach_the_app() {
         Some(serde_json::json!("notes_app"))
     );
 
-    cli::index(&app, &[], &[], false, cli::IndexOptions::default()).expect("reindexing app");
+    cli::index(&app, &[], &[], false, crate::common::index_options()).expect("reindexing app");
     assert_eq!(
         texts(&Notifications::load(&app_index).expect("reading app notes")),
         [from_import]
@@ -268,7 +268,7 @@ fn zero_assignment_calls_are_reported() {
     );
     let project = AnalysisProject::try_create("zero_calls", &["zero_calls"], SubImports::All)
         .expect("project");
-    cli::index(&project, &[], &[], false, cli::IndexOptions::default()).expect("indexing");
+    cli::index(&project, &[], &[], false, crate::common::index_options()).expect("indexing");
     let notes = Notifications::load(project.index_path().expect("index path")).expect("notes");
     for descriptor in [
         &notifications::UNRESOLVED_INDIRECT_CALL,

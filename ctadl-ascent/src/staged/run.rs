@@ -6,8 +6,10 @@ use std::time::Instant;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::IdMap;
+use crate::index_engine::profile::StageProfile;
 use crate::index_engine::{
-    IndexConfig, IndexFacts, IndexResult, ProgramPaths, StagedConfig, Storage, phys_footprint_mb,
+    IndexConfig, IndexFacts, IndexResult, IndexStats, ProgramPaths, StagedConfig, Storage,
+    phys_footprint_mb,
 };
 use crate::staged::batch::forget_path_set;
 use crate::staged::executor::{Executor, InProcess, Job};
@@ -20,6 +22,7 @@ use ctadl_index::staged::files::{
     write_facts, write_intent_output,
 };
 use ctadl_index::staged::plan::{BatchId, Plan, SplitKind, rerun_estimate};
+use ctadl_index::staged::stats::{StageStats, sum as sum_stats};
 use ctadl_index::staged::store::{
     KeyConfig, LatestRounds, RunKey, STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic,
 };
@@ -44,11 +47,17 @@ pub struct RunStats {
     pub alpha: f64,
     /// The batches of one function that ran alone over the budget.
     pub over_budget_alone: Vec<BatchId>,
+    /// The stats of every stage run, this run's and the resumed run's, summed, with each run
+    /// a stage of the profile. The run writes its profile next to the tables.
+    pub index: IndexStats,
 }
 
 /// A test hook: set to a batch id, it makes a staged run that the CLI starts stop once that
 /// batch is done, with [`Error::StagedStopped`], leaving its stage directory to resume from.
 pub const STOP_AFTER_VAR: &str = "CTADL_STAGED_STOP_AFTER";
+
+/// The exit status of `ctadl index` when [`STOP_AFTER_VAR`] stopped it.
+pub const STOPPED_STATUS: i32 = 4;
 
 /// The batch [`STOP_AFTER_VAR`] names, if it names one.
 pub fn stop_after_from_env() -> Option<BatchId> {
@@ -137,12 +146,21 @@ pub fn run_staged_until(
     );
     let key_config = KeyConfig::new(config, staged.budget, staged.floor);
     let key = RunKey::new(&fresh.facts_dir(), &key_config)?;
-    let resumed = stage.is_done(Stage::Facts) && RunKey::load(&stage) == Some(key);
-    if resumed {
+    let earlier_plan = (stage.is_done(Stage::Facts) && RunKey::load(&stage) == Some(key))
+        .then(|| {
+            Plan::load(&stage)
+                .inspect_err(|e| {
+                    log::warn!("staged index: not resuming, as the plan does not read: {e}")
+                })
+                .ok()
+        })
+        .flatten();
+    let resumed = earlier_plan.is_some();
+    if let Some(earlier_plan) = earlier_plan {
         remove_dir_if_exists(fresh.root())?;
         // The earlier run may have split batches. Its descriptors are rewritten, in case it
         // stopped while it saved a split.
-        plan = Plan::load(&stage)?;
+        plan = earlier_plan;
         plan.save(&stage)?;
         stage.discard_unmarked(&plan)?;
         log::info!(
@@ -199,7 +217,15 @@ pub fn run_staged_until(
         if stage.is_done(Stage::Frame) {
             log::info!("staged index: the global frame was done by an earlier run");
         } else {
+            let start = Instant::now();
             let edges = run_frame(&stage, &plan)?;
+            StageStats::of_stage(StageProfile {
+                id: "frame".to_string(),
+                peak_mb: phys_footprint_mb(),
+                rows: edges,
+                secs: start.elapsed().as_secs_f64(),
+            })
+            .save(&stage)?;
             log::info!(
                 "staged index: {edges} edges of the global frame, {:.1} MB",
                 phys_footprint_mb()
@@ -228,13 +254,17 @@ pub fn run_staged_until(
     if ran.is_err() {
         executor.stop_all();
     }
-    let stats = ran?;
+    let mut stats = ran?;
 
     assemble(&stage, &plan, index_dir)?;
     log::debug!(
         "[mem cp] staged: tables written: {:.1} MB",
         phys_footprint_mb()
     );
+    stats.index = sum_stats(StageStats::load_all(&stage)?);
+    let mut profile = stats.index.profile.clone();
+    profile.memory.read_interned();
+    profile.save(index_dir)?;
     Ok(stats)
 }
 
@@ -979,14 +1009,16 @@ pub fn run_in_process(
 ) -> IndexResult {
     let index_dir = tempfile::tempdir().expect("creating a temporary index directory");
     let mut executor = InProcess::new(config.parallelism, id_map);
-    let mut result = run_staged(facts, &config, staged, index_dir.path(), &mut executor)
-        .and_then(|_| IndexResult::try_load(index_dir.path()))
+    let result = run_staged(facts, &config, staged, index_dir.path(), &mut executor)
+        .and_then(|stats| {
+            let mut result = IndexResult::try_load(index_dir.path())?;
+            result.stats = stats.index;
+            Ok(result)
+        })
         .unwrap_or_else(|e| panic!("the staged index run failed: {e:?}"));
     log::debug!(
         "[mem cp] staged: tables loaded: {:.1} MB",
         phys_footprint_mb()
     );
-    // Every batch did, or the run would have failed.
-    result.stats.profile.reached_fixpoint = true;
     result
 }

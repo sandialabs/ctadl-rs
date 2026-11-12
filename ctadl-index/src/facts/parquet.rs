@@ -471,27 +471,36 @@ impl Writer {
 
     /// As [`Writer::write_iter`], and a row group also ends wherever `key` changes from one
     /// row to the next. Rows sorted by a key that partitions them, such as their batch, then
-    /// never share a row group with another part.
+    /// never share a row group with another part, unless there are so many parts that a group
+    /// each would pass [`MAX_KEYED_ROW_GROUPS`]: then a group ends at a key change only once it
+    /// holds enough rows to stay under it.
     pub fn write_iter_grouped_by<T, K: PartialEq>(
         &mut self,
         column_names: &[&str],
-        rows: impl IntoIterator<Item = T>,
+        rows: impl IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
         mut key: impl FnMut(&T) -> K,
     ) -> Result<(), Error>
     where
         DefaultEncoder: EncodeColumns<T>,
     {
         let per_group = self.rows_per_group;
-        let mut rows = rows.into_iter().peekable();
+        let rows = rows.into_iter();
+        let fewest = rows.len().div_ceil(MAX_KEYED_ROW_GROUPS).min(per_group);
+        let mut rows = rows.peekable();
         let groups = std::iter::from_fn(move || {
             let first = rows.next()?;
-            let k = key(&first);
+            let mut k = key(&first);
             let mut group = vec![first];
             while group.len() < per_group {
-                match rows.next_if(|row| key(row) == k) {
-                    Some(row) => group.push(row),
-                    None => break,
+                let Some(next) = rows.peek() else { break };
+                let next_key = key(next);
+                if next_key != k {
+                    if group.len() >= fewest {
+                        break;
+                    }
+                    k = next_key;
                 }
+                group.push(rows.next().expect("peeked"));
             }
             Some(Ok(group))
         });
@@ -551,6 +560,10 @@ impl Writer {
         Ok(())
     }
 }
+
+/// The most row groups [`Writer::write_iter_grouped_by`] cuts at key changes. Parquet allows
+/// 32767 row groups in a file.
+pub const MAX_KEYED_ROW_GROUPS: usize = 30_000;
 
 /// Encoder struct for all the encoding traits. Not for instantiating
 pub struct DefaultEncoder {}

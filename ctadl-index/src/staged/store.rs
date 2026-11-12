@@ -510,6 +510,11 @@ impl KeyConfig {
     }
 }
 
+/// The version of the stage directory's files, which the run key covers, so that a build does
+/// not resume from a stage directory another build wrote in another format. Change it whenever
+/// a stage file, the plan or a batch descriptor changes how it is written.
+pub const STAGE_FORMAT: u32 = 1;
+
 /// A SHA-256 over a stage directory's fact files and a [`KeyConfig`]. A run resumes from a stage
 /// directory only if the key it stored equals the one of its own facts and configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -557,6 +562,7 @@ impl RunKey {
         let config = serde_json::to_vec(config).expect("a key config serializes");
         hasher.update((config.len() as u64).to_le_bytes());
         hasher.update(&config);
+        hasher.update(STAGE_FORMAT.to_le_bytes());
         Ok(RunKey(hasher.finalize().into()))
     }
 
@@ -609,6 +615,27 @@ mod tests {
         let root = Root::formal(FormalIndex::new(0));
         let path = FactPath::from_symbol_names(["f"]);
         (FunctionId::new(f), root, path, root, FactPath::empty())
+    }
+
+    /// Rows of more keys than a file may have row groups share groups, as few as keep the file
+    /// under the limit, and every row is kept.
+    #[test]
+    fn grouped_writer_stays_under_the_row_group_limit() {
+        use crate::facts::parquet::MAX_KEYED_ROW_GROUPS;
+        use crate::facts::schema::external_function;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(external_function::FILENAME);
+        let n = MAX_KEYED_ROW_GROUPS * 2 + 1;
+        let rows: Vec<_> = (0..n as u32).map(|f| (FunctionId::new(f),)).collect();
+        Writer::new(&file)
+            .rows_per_group(4096)
+            .write_iter_grouped_by(&external_function::COLUMNS, rows.iter().copied(), |r| r.0)
+            .unwrap();
+        let reader = Reader::new(&file);
+        assert!(reader.num_row_groups().unwrap() <= MAX_KEYED_ROW_GROUPS);
+        let got: Vec<external_function::Record> =
+            reader.read_vec(&external_function::COLUMNS).unwrap();
+        assert_eq!(got, rows);
     }
 
     /// Three row groups, of functions 0-9, 20-29 and 40-49. A filter on functions of the second

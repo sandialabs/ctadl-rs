@@ -8,8 +8,13 @@ use std::time::Instant;
 
 use crate::error::Error;
 use crate::facts::{IdMap, Path};
+use crate::index_engine::dump::stage_dump_dir;
 use crate::index_engine::path_set::{PathSet, PathSetRef};
-use crate::index_engine::{EngineInput, Parallelism, ProgramPaths, phys_footprint_mb, run_engine};
+use crate::index_engine::profile::StageProfile;
+use crate::index_engine::{
+    EngineInput, Parallelism, ProgramPaths, peak_phys_footprint_mb, phys_footprint_mb, run_engine,
+};
+use crate::staged::executor::Job;
 use ctadl_index::facts::can_install_path_base;
 use ctadl_index::facts::parquet::Reader;
 use ctadl_index::facts::schema;
@@ -18,6 +23,7 @@ use ctadl_index::staged::files::{
     BatchFacts, BatchOutputs, read_batch_facts, read_intent_input, write_intent_output,
 };
 use ctadl_index::staged::plan::{Batch, BatchId, Plan};
+use ctadl_index::staged::stats::StageStats;
 use ctadl_index::staged::store::{KeyConfig, RunKey, Stage, StageDir};
 
 /// What running a batch did.
@@ -69,14 +75,15 @@ pub fn run_batch(
         id_map,
     );
     input.seed_paths = false;
-    // A dump refuses to overwrite another, and a process may run many batches.
-    input.dump = false;
+    let name = Job::Batch { id, round }.name();
+    input.dump = stage_dump_dir(&name);
     let result = run_engine(input);
     if !result.stats.profile.reached_fixpoint {
         return Err(Error::Staged(format!(
             "batch {id} stopped before its fixpoint, so its outputs would be partial"
         )));
     }
+    let stats = result.stats;
     let outputs = BatchOutputs::new(&batch, result.summary, result.assign_like);
     log::debug!(
         "batch {id}{}: {} functions, {} summary rows, {} assign rows, {} frame edges, {:.2} s, \
@@ -89,6 +96,16 @@ pub fn run_batch(
         start.elapsed().as_secs_f64(),
         phys_footprint_mb()
     );
+    StageStats::of_engine(
+        StageProfile {
+            id: name,
+            peak_mb: peak_phys_footprint_mb(),
+            rows: outputs.summary.len() + outputs.assign.len() + outputs.frame.len(),
+            secs: start.elapsed().as_secs_f64(),
+        },
+        &stats,
+    )
+    .save(stage)?;
     match (batch.part, round) {
         (Some(part), Some(round)) => {
             outputs.write_round(stage, part.scc, id, round)?;
@@ -122,6 +139,13 @@ pub fn run_intent_stage(stage: &StageDir) -> Result<(), Error> {
         }
         None => IntentOutput::default(),
     };
+    StageStats::of_stage(StageProfile {
+        id: Job::Intent.name(),
+        peak_mb: peak_phys_footprint_mb(),
+        rows: output.intent_pair.len() + output.resolved_call.len(),
+        secs: start.elapsed().as_secs_f64(),
+    })
+    .save(stage)?;
     write_intent_output(stage, output)
 }
 
