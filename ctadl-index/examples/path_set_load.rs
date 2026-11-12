@@ -3,6 +3,7 @@ use ctadl_index::facts::Path;
 use ctadl_index::facts::parquet::Reader;
 use ctadl_index::facts::schema;
 use ctadl_index::index_engine::path_set::PathSet;
+use ctadl_index::index_engine::phys_footprint_mb;
 use std::time::Instant;
 
 fn main() {
@@ -17,6 +18,7 @@ fn main() {
         .map(|(p,)| p)
         .collect();
     let read = t.elapsed();
+    let decoded_mb = phys_footprint_mb();
     let segs: usize = paths.iter().map(|p| p.len()).sum();
     if std::env::args().nth(2).as_deref() == Some("--decode") {
         // What a decode costs beyond consing: the strings alone, and consing alone.
@@ -83,6 +85,10 @@ fn main() {
     let t = Instant::now();
     let set = PathSet::from_paths(paths.iter().copied());
     let freeze = t.elapsed();
+    println!(
+        "footprint: {decoded_mb:.0} MB after decode, {:.0} MB after from_paths",
+        phys_footprint_mb()
+    );
     println!(
         "{} paths, {} segments, max depth {}; read+decode+intern {:.2} s; PathSet::from_paths {:.2} s",
         paths.len(),
