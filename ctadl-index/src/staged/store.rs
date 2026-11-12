@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, ErrorContext};
 use crate::index_engine::{IndexConfig, Parallelism, Storage};
+use crate::staged::plan::{Batch, Plan};
 
 /// A unit of work whose completion is marked in `done/`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -197,6 +198,137 @@ impl StageDir {
             _ => Ok(()),
         }
     }
+
+    /// Removes what a run of `plan` killed midway left that no marker vouches for, so that a
+    /// run resuming from the directory reads only files of stages that are done:
+    /// - temporary paths;
+    /// - the outputs of every batch that is not done (its descriptor, written with the plan,
+    ///   stays);
+    /// - every run of a part of a split SCC but the latest that [`LatestRounds`] names, and the
+    ///   rounds of a split SCC whose parts are all done;
+    /// - the global frame's and the intent stage's files, if those stages are not done.
+    pub fn discard_unmarked(&self, plan: &Plan) -> Result<(), Error> {
+        remove_temporaries(&self.root)?;
+        for batch in &plan.batches {
+            if !self.is_done(Stage::Batch(batch.id)) {
+                let descriptor = Batch::descriptor_file(self, batch.id);
+                clear_dir(&self.batch_dir(batch.id), |path| path != descriptor)?;
+            }
+        }
+        for (scc, split) in plan.split_sccs.iter().enumerate() {
+            self.discard_stale_rounds(scc as u32, &split.parts)?;
+        }
+        if !self.is_done(Stage::Frame) {
+            clear_dir(&self.frame_dir(), |_| true)?;
+        }
+        if !self.is_done(Stage::Intent) {
+            clear_dir(&self.intent_dir(), |_| true)?;
+        }
+        Ok(())
+    }
+
+    /// Keeps, of split SCC `scc` with `parts`, only the latest done run of each part that is not
+    /// itself done, and their markers.
+    fn discard_stale_rounds(&self, scc: u32, parts: &[u32]) -> Result<(), Error> {
+        let dir = self.scc_dir(scc);
+        let mut latest = LatestRounds::load(self, scc)?;
+        // A part's latest run is marked before `latest.json` names it. A part that is done had
+        // its run moved to its batch.
+        let named = latest.latest.len();
+        latest.latest.retain(|&batch, &mut round| {
+            self.is_done(Stage::Batch(batch)) || self.is_done(Stage::Round { batch, round })
+        });
+        if latest.latest.len() != named {
+            latest.save(self, scc)?;
+        }
+        let all_done = parts.iter().all(|b| self.is_done(Stage::Batch(*b)));
+        let keep = |batch: u32, round: u32| {
+            !all_done
+                && !self.is_done(Stage::Batch(batch))
+                && latest.latest.get(&batch) == Some(&round)
+        };
+        for &batch in parts {
+            for round in self.marked_rounds(batch)? {
+                if !keep(batch, round) {
+                    self.unmark(Stage::Round { batch, round })?;
+                }
+            }
+            let part_dir = dir.join(batch.to_string());
+            clear_dir(&part_dir, |path| {
+                let round = path.file_name().and_then(|n| n.to_str()?.parse().ok());
+                round.is_none_or(|round| !keep(batch, round))
+            })?;
+        }
+        if all_done && dir.exists() {
+            fs::remove_dir_all(&dir)
+                .map_err(Error::from)
+                .err_context(|| format!("removing {}", dir.display()))?;
+        }
+        Ok(())
+    }
+
+    /// The rounds of part `batch` that have a marker.
+    fn marked_rounds(&self, batch: u32) -> Result<Vec<u32>, Error> {
+        let prefix = format!("round-{batch}-");
+        let mut rounds = Vec::new();
+        for entry in read_dir_if_exists(&self.done_dir())? {
+            let name = entry.file_name();
+            if let Some(round) = name.to_str().and_then(|n| n.strip_prefix(&prefix)) {
+                rounds.extend(round.parse::<u32>().ok());
+            }
+        }
+        Ok(rounds)
+    }
+}
+
+/// The entries of `dir`, none if it is missing.
+fn read_dir_if_exists(dir: &Path) -> Result<Vec<fs::DirEntry>, Error> {
+    let context = || format!("reading {}", dir.display());
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .collect::<Result<_, _>>()
+            .map_err(Error::from)
+            .err_context(context),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(Error::from(e)).err_context(context),
+    }
+}
+
+/// Removes each entry of `dir`, file or directory, whose path `remove` accepts.
+fn clear_dir(dir: &Path, remove: impl Fn(&Path) -> bool) -> Result<(), Error> {
+    for entry in read_dir_if_exists(dir)? {
+        let path = entry.path();
+        if remove(&path) {
+            remove_path(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_path(path: &Path) -> Result<(), Error> {
+    let removed = if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    removed
+        .map_err(Error::from)
+        .err_context(|| format!("removing {}", path.display()))
+}
+
+/// Removes every temporary path [`write_atomic`] left under `dir`.
+fn remove_temporaries(dir: &Path) -> Result<(), Error> {
+    for entry in read_dir_if_exists(dir)? {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') && name.ends_with(".tmp") {
+            remove_path(&path)?;
+        } else if entry.file_type().map_err(Error::from)?.is_dir() {
+            remove_temporaries(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// The latest done run of each part of a split SCC that has run, by batch. Its parts read each

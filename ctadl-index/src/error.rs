@@ -231,6 +231,10 @@ pub enum Error {
     /// not read.
     #[error("staged index run: {0}")]
     Staged(String),
+    /// A staged index run stopped on purpose once batch `.0` was done, as a test asked. Its stage
+    /// directory is left for a later run to resume from.
+    #[error("staged index run: stopped after batch {0}")]
+    StagedStopped(u32),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
     /// A Portcullis file that does not parse, or whose rules do not mean anything. Already

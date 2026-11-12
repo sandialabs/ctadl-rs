@@ -557,10 +557,14 @@ pub fn read_summary_counts(
 }
 
 /// Ends split SCC `scc`, whose parts' latest runs `latest` names: moves each part's outputs to
-/// its batch's directory and marks the part done, then removes the SCC's rounds.
+/// its batch's directory and marks the part done, then removes the SCC's rounds. A part already
+/// done, by an earlier call that stopped midway, is left as it is.
 pub fn finish_split_scc(stage: &StageDir, scc: u32, latest: &LatestRounds) -> Result<(), Error> {
     use schema::*;
     for (&batch, &round) in &latest.latest {
+        if stage.is_done(Stage::Batch(batch)) {
+            continue;
+        }
         let from = stage.round_dir(scc, batch, round);
         let to = stage.batch_dir(batch);
         for name in [summary::FILENAME, assign::FILENAME, frame_edge::FILENAME] {

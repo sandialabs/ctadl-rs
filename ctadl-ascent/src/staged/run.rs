@@ -27,9 +27,27 @@ use hashbrown::HashMap;
 /// What a staged run did.
 #[derive(Debug, Default)]
 pub struct RunStats {
+    /// Whether it resumed from a stage directory an earlier run of the same facts and
+    /// configuration left.
+    pub resumed: bool,
+    /// The batches an earlier run did, which this one skipped, sorted.
+    pub skipped: Vec<BatchId>,
     /// Each split SCC's rounds, in plan order.
     pub split_sccs: Vec<SccRounds>,
 }
+
+/// A test hook: set to a batch id, it makes a staged run that the CLI starts stop once that
+/// batch is done, with [`Error::StagedStopped`], leaving its stage directory to resume from.
+pub const STOP_AFTER_VAR: &str = "CTADL_STAGED_STOP_AFTER";
+
+/// The batch [`STOP_AFTER_VAR`] names, if it names one.
+pub fn stop_after_from_env() -> Option<BatchId> {
+    std::env::var(STOP_AFTER_VAR).ok()?.trim().parse().ok()
+}
+
+/// Where a run writes a fresh stage directory in the index directory, until it knows whether
+/// the one there can be resumed.
+const FRESH_STAGE: &str = ".staging.new";
 
 /// The rounds of one split SCC.
 #[derive(Debug)]
@@ -42,46 +60,62 @@ pub struct SccRounds {
 }
 
 /// Computes the index of `facts` in stages and writes its tables to `index_dir`, keeping the
+/// stage directory under it. See [`run_staged_until`].
+pub fn run_staged(
+    facts: IndexFacts,
+    config: &IndexConfig,
+    staged: StagedConfig,
+    index_dir: &Path,
+    executor: &mut dyn Executor,
+) -> Result<RunStats, Error> {
+    run_staged_until(facts, config, staged, index_dir, executor, None)
+}
+
+/// Computes the index of `facts` in stages and writes its tables to `index_dir`, keeping the
 /// stage directory under it.
 ///
-/// Before any batch runs, it plans the batches, writes the facts, the path set (as rows, and
-/// frozen for workers to map), the plan and the run key to the stage directory, and drops the
-/// facts. It then runs the batches in plan
-/// order on `executor`, the global frame and the intent stage, and streams their outputs into
-/// the tables. A stage directory already there is removed first.
-pub fn run_staged(
+/// Before any batch runs, it plans the batches and writes the path set (as rows, and frozen for
+/// workers to map), the plan and the facts to a fresh stage directory, drops the facts, and
+/// computes the run key of the facts written and the configuration. If the stage directory
+/// already in `index_dir` has the same key, the run resumes from it: the fresh one is removed,
+/// files of stages not marked done are discarded, and the stages that are done are skipped.
+/// Otherwise the fresh directory, with its key, replaces it.
+///
+/// It then runs the batches in plan order on `executor`, the global frame and the intent stage,
+/// and streams their outputs into the tables. With `stop_after`, it stops instead, with
+/// [`Error::StagedStopped`], once that batch is done.
+pub fn run_staged_until(
     mut facts: IndexFacts,
     config: &IndexConfig,
     staged: StagedConfig,
     index_dir: &Path,
     executor: &mut dyn Executor,
+    stop_after: Option<BatchId>,
 ) -> Result<RunStats, Error> {
     let start = Instant::now();
     if config.storage == Storage::Lsm {
         log::warn!("a staged run keeps its relations in memory; ignoring the LSM storage");
     }
     let stage = StageDir::new(index_dir);
-    if stage.root().exists() {
-        std::fs::remove_dir_all(stage.root())
-            .err_context(|| format!("removing {}", stage.root().display()))?;
-    }
-    stage.create()?;
+    let fresh = StageDir::from_root(index_dir.join(FRESH_STAGE));
+    remove_dir_if_exists(fresh.root())?;
+    fresh.create()?;
 
     let ProgramPaths { paths, path_set } = ProgramPaths::from_facts(&facts, config.deref_paths);
     let plan = Plan::new(&facts, staged.budget, staged.floor, paths.len());
     log::debug!("[mem cp] staged: planned: {:.1} MB", phys_footprint_mb());
-    write_atomic(&stage.paths_file(), |tmp| {
+    write_atomic(&fresh.paths_file(), |tmp| {
         Writer::new(tmp)
             .rows_per_group(STAGE_ROWS_PER_GROUP)
             .write_iter(&schema::paths::COLUMNS, paths)
     })?;
-    write_atomic(&stage.path_set_file(), |tmp| path_set.write_file(tmp))?;
+    write_atomic(&fresh.path_set_file(), |tmp| path_set.write_file(tmp))?;
     log::debug!(
         "[mem cp] staged: path set written: {:.1} MB",
         phys_footprint_mb()
     );
-    plan.save(&stage)?;
-    write_facts(&stage, &mut facts, &plan)?;
+    plan.save(&fresh)?;
+    write_facts(&fresh, &mut facts, &plan)?;
     log::debug!(
         "[mem cp] staged: facts written: {:.1} MB",
         phys_footprint_mb()
@@ -92,9 +126,34 @@ pub fn run_staged(
         phys_footprint_mb()
     );
     let key_config = KeyConfig::new(config, staged.budget, staged.floor);
-    key_config.save(&stage)?;
-    RunKey::new(&stage.facts_dir(), &key_config)?.save(&stage)?;
-    stage.mark_done(Stage::Facts)?;
+    let key = RunKey::new(&fresh.facts_dir(), &key_config)?;
+    let resumed = stage.is_done(Stage::Facts) && RunKey::load(&stage) == Some(key);
+    if resumed {
+        remove_dir_if_exists(fresh.root())?;
+        stage.discard_unmarked(&plan)?;
+        log::info!(
+            "staged index: resuming the run in {}, whose facts and configuration are the same",
+            stage.root().display()
+        );
+    } else {
+        key_config.save(&fresh)?;
+        key.save(&fresh)?;
+        fresh.mark_done(Stage::Facts)?;
+        if stage.root().exists() {
+            log::info!(
+                "staged index: the facts or configuration of the run in {} differ; starting over",
+                stage.root().display()
+            );
+        }
+        remove_dir_if_exists(stage.root())?;
+        std::fs::rename(fresh.root(), stage.root()).err_context(|| {
+            format!(
+                "renaming {} to {}",
+                fresh.root().display(),
+                stage.root().display()
+            )
+        })?;
+    }
     log::info!(
         "staged index: {} batches of {} functions, {} split SCCs, largest estimate {:.1} MB of a \
          {:.1} MB budget, {:.1} MB",
@@ -111,18 +170,26 @@ pub fn run_staged(
 
     executor.lend_path_set(&stage, path_set)?;
     let ran = (|| {
-        let stats = Scheduler::new(&stage, &plan).run(executor)?;
+        let mut stats = Scheduler::new(&stage, &plan, stop_after).run(executor)?;
+        stats.resumed = resumed;
         log::info!(
-            "staged index: batches done in {:.1} s, {:.1} MB",
+            "staged index: batches done in {:.1} s, {} of them by an earlier run, {:.1} MB",
             start.elapsed().as_secs_f64(),
+            stats.skipped.len(),
             phys_footprint_mb()
         );
-        let edges = run_frame(&stage, &plan)?;
-        log::info!(
-            "staged index: {edges} edges of the global frame, {:.1} MB",
-            phys_footprint_mb()
-        );
-        if plan.intent_batches.is_empty() {
+        if stage.is_done(Stage::Frame) {
+            log::info!("staged index: the global frame was done by an earlier run");
+        } else {
+            let edges = run_frame(&stage, &plan)?;
+            log::info!(
+                "staged index: {edges} edges of the global frame, {:.1} MB",
+                phys_footprint_mb()
+            );
+        }
+        if stage.is_done(Stage::Intent) {
+            log::info!("staged index: the intent stage was done by an earlier run");
+        } else if plan.intent_batches.is_empty() {
             // No function sends an intent, so no worker need read the path set to find none.
             write_intent_output(&stage, IntentOutput::default())?;
         } else {
@@ -149,6 +216,15 @@ pub fn run_staged(
     Ok(stats)
 }
 
+fn remove_dir_if_exists(dir: &Path) -> Result<(), Error> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(Error::from(e)).err_context(|| format!("removing {}", dir.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// What the scheduler runs: a batch, or all the parts of a split SCC, one at a time in rounds.
 enum Unit {
     Batch(BatchId),
@@ -173,11 +249,13 @@ struct Scheduler<'a> {
     /// Whether each unit is done.
     finished: Vec<bool>,
     done: usize,
+    /// The batch after which to stop.
+    stop_after: Option<BatchId>,
     stats: RunStats,
 }
 
 impl<'a> Scheduler<'a> {
-    fn new(stage: &'a StageDir, plan: &'a Plan) -> Self {
+    fn new(stage: &'a StageDir, plan: &'a Plan, stop_after: Option<BatchId>) -> Self {
         let mut units = Vec::new();
         let mut unit_of = vec![0; plan.batches.len()];
         let mut scc_unit = HashMap::new();
@@ -221,6 +299,7 @@ impl<'a> Scheduler<'a> {
             ready,
             running: HashMap::new(),
             done: 0,
+            stop_after,
             stats: RunStats::default(),
         }
     }
@@ -232,15 +311,35 @@ impl<'a> Scheduler<'a> {
     /// smaller one behind it, which could starve it, and starts it whatever its estimate when
     /// nothing runs. A job is alone, and takes every thread, when nothing runs beside it and
     /// nothing else is ready.
+    ///
+    /// Units a run before this one did are skipped, and a split SCC it left midway resumes.
     fn run(mut self, executor: &mut dyn Executor) -> Result<RunStats, Error> {
-        // Units whose batches a run before this one finished.
         for u in 0..self.units.len() {
             let batches = self.units[u].batches(self.plan);
-            if batches.iter().all(|b| self.stage.is_done(Stage::Batch(*b))) {
+            let done = batches
+                .iter()
+                .filter(|b| self.stage.is_done(Stage::Batch(**b)))
+                .count();
+            if done == batches.len() {
+                log::debug!("batches {batches:?}: done by an earlier run");
+                self.stats.skipped.extend(batches);
+                self.ready.remove(&u);
+                self.finish(u);
+                continue;
+            }
+            let Unit::Scc(scc) = &mut self.units[u] else {
+                continue;
+            };
+            scc.resume(self.stage)?;
+            if done > 0 {
+                // The earlier run stopped while it moved the parts' runs to their batches.
+                let rounds = scc.finish(self.stage)?;
+                self.stats.split_sccs.push(rounds);
                 self.ready.remove(&u);
                 self.finish(u);
             }
         }
+        self.stats.skipped.sort_unstable();
         let threads = executor.threads();
         while self.done < self.units.len() {
             while let Some(&u) = self.ready.first() {
@@ -252,6 +351,7 @@ impl<'a> Scheduler<'a> {
                     let rounds = scc.finish(self.stage)?;
                     self.stats.split_sccs.push(rounds);
                     self.finish(u);
+                    self.stop_if_asked(u)?;
                     continue;
                 };
                 let used: usize = self.running.values().map(|r| r.2).sum();
@@ -299,7 +399,10 @@ impl<'a> Scheduler<'a> {
                     scc.ran(self.stage, id, round)?;
                     self.ready.insert(u);
                 }
-                _ => self.finish(u),
+                _ => {
+                    self.finish(u);
+                    self.stop_if_asked(u)?;
+                }
             }
         }
         self.stats.split_sccs.sort_by_key(|s| s.scc);
@@ -328,6 +431,17 @@ impl<'a> Scheduler<'a> {
                     estimate,
                 ))
             }
+        }
+    }
+
+    /// Fails with [`Error::StagedStopped`] if unit `u`, done, holds the batch to stop after.
+    fn stop_if_asked(&self, u: usize) -> Result<(), Error> {
+        match self.stop_after {
+            Some(b) if self.units[u].batches(self.plan).contains(&b) => {
+                log::info!("staged index: stopping after batch {b}, as {STOP_AFTER_VAR} says");
+                Err(Error::StagedStopped(b))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -415,6 +529,31 @@ impl SplitRun {
             start: None,
             round_start: None,
         }
+    }
+
+    /// Picks up where an earlier run of this SCC that stopped midway left it: each part's latest
+    /// run, which [`StageDir::discard_unmarked`] kept. The rounds go on from the round after the
+    /// latest, in which every part runs again, since what its callees held when it last ran is
+    /// not kept.
+    fn resume(&mut self, stage: &StageDir) -> Result<(), Error> {
+        self.latest = LatestRounds::load(stage, self.scc)?;
+        for (&batch, &round) in &self.latest.latest {
+            self.round = self.round.max(round + 1);
+            if !stage.is_done(Stage::Batch(batch)) {
+                self.rows
+                    .extend(read_summary_counts(stage, self.scc, batch, round)?);
+            }
+        }
+        if !self.latest.latest.is_empty() {
+            log::info!(
+                "split SCC {}: resuming in round {}, from the latest runs of {} of {} parts",
+                self.scc,
+                self.round,
+                self.latest.latest.len(),
+                self.parts.len()
+            );
+        }
+        Ok(())
     }
 
     /// The rows of part `i`'s callees in other parts.
