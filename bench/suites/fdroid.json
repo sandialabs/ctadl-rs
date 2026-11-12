@@ -1,5 +1,13 @@
 [
  {
+  "bench": "app-alextran-immich",
+  "app": "app.alextran.immich",
+  "version": "3030699",
+  "path": "/Volumes/Shampoo/datasets/apps/fdroid/app.alextran.immich_3030699.apk",
+  "size": 180368496,
+  "sha256": "643d7ba3b83c4b7c60b12a4c607b097403cfd86ce4700886dbcb8a774c2fc4c1"
+ },
+ {
   "bench": "chat-schildi-android",
   "app": "chat.schildi.android",
   "version": "12104",
@@ -38,6 +46,14 @@
   "path": "/Volumes/Shampoo/datasets/apps/fdroid/de.danoeh.antennapod_3120195.apk",
   "size": 17733444,
   "sha256": "11b38c20b555b445a301c12028ccb912af24dce1d8b85532658b797b85d52638"
+ },
+ {
+  "bench": "de-dennisguse-opentracks",
+  "app": "de.dennisguse.opentracks",
+  "version": "6766",
+  "path": "/Volumes/Shampoo/datasets/apps/fdroid/de.dennisguse.opentracks_6766.apk",
+  "size": 10934525,
+  "sha256": "f63ed60e2a4f1b3d878671bfde2150ceaa89e484618b91390500e1a583694cc1"
  },
  {
   "bench": "net-osmand-plus",

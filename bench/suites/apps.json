@@ -1,5 +1,21 @@
 [
  {
+  "bench": "AccuWeather-Weather-Radar",
+  "app": "AccuWeather-+Weather+Radar",
+  "version": "21.2.1-1-rc",
+  "path": "/Volumes/Shampoo/datasets/apps/AccuWeather-+Weather+Radar_21.2.1-1-rc_APKPure.xapk",
+  "size": 23508461,
+  "sha256": "cbfc37cd9aa27a6ba1f6a4f6ef7508156a53d84f02666162347950376568f5de"
+ },
+ {
+  "bench": "Bluesky",
+  "app": "Bluesky",
+  "version": "1.137.0",
+  "path": "/Volumes/Shampoo/datasets/apps/Bluesky_1.137.0_APKPure.xapk",
+  "size": 134183305,
+  "sha256": "a669d2a70c94565c33d8c144bf83eaef5cc36aa988013a3a8fe1c89b8887d872"
+ },
+ {
   "bench": "FX-File-Explorer",
   "app": "FX+File+Explorer",
   "version": "9.1.0.8",
@@ -16,6 +32,14 @@
   "sha256": "bc6ba7d44422993bb173e211a193e33a0cdcd715c1caef6b149b77ab9ffbb974"
  },
  {
+  "bench": "GPS-Status-Toolbox",
+  "app": "GPS+Status+&+Toolbox",
+  "version": "12.2.0",
+  "path": "/Volumes/Shampoo/datasets/apps/GPS+Status+&+Toolbox_12.2.0_APKPure.xapk",
+  "size": 34968481,
+  "sha256": "0b93a166bfe889375d5f76e7926e473297c1c9e63c04a7adebda739f1d8c41fa"
+ },
+ {
   "bench": "Google-Chrome",
   "app": "Google+Chrome",
   "version": "149.0.7827.160",
@@ -30,6 +54,14 @@
   "path": "/Volumes/Shampoo/datasets/apps/Messenger_570.0.0.34.87_APKPure.apk",
   "size": 85631370,
   "sha256": "f76d059d19977ecad9f240231aef9dce881dde8306ba1ec9820ba343374235db"
+ },
+ {
+  "bench": "QR-Barcode-Scanner",
+  "app": "QR+Barcode+Scanner",
+  "version": "2.2.229",
+  "path": "/Volumes/Shampoo/datasets/apps/QR+Barcode+Scanner_2.2.229_APKPure.xapk",
+  "size": 13443665,
+  "sha256": "a8a5ad2a6b06b48e922e6d208260757ce83e33e330b5e70e9ddf5d95433069dd"
  },
  {
   "bench": "Telegram",
@@ -64,19 +96,19 @@
   "sha256": "640d5091e1da211d149939c621ae6997d0ff2639dc9df6569cf4b256971a6e0c"
  },
  {
-  "bench": "WhatsApp-Business",
-  "app": "WhatsApp+Business",
-  "version": "2.26.21.75",
-  "path": "/Volumes/Shampoo/datasets/apps/WhatsApp+Business_2.26.21.75_APKPure.xapk",
-  "size": 100615979,
-  "sha256": "a096559069278005c01b57a96d7d9ba7ac52a79d36d5e7395492066957e9e84f"
- },
- {
   "bench": "WhatsApp-Messenger",
   "app": "WhatsApp+Messenger",
   "version": "2.26.27.85",
   "path": "/Volumes/Shampoo/datasets/apps/WhatsApp+Messenger_2.26.27.85_APKPure.xapk",
   "size": 88265985,
   "sha256": "28b5306e843f2bd4793f869c78d841a91acacdd87862288ce495ea1009daeef0"
+ },
+ {
+  "bench": "org-thoughtcrime-securesms",
+  "app": "org.thoughtcrime.securesms",
+  "version": "177501",
+  "path": "/Volumes/Shampoo/datasets/apps/org.thoughtcrime.securesms_177501.apk",
+  "size": 115258247,
+  "sha256": "ca516bdc9cda4a9eef95ad772c2f73311922ff791b58c90a76d68033f20bfef6"
  }
 ]

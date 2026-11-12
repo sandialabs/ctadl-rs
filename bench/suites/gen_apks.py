@@ -15,11 +15,11 @@ from pathlib import Path
 
 
 def version_key(v: str) -> tuple:
-    return tuple(int(p) if p.isdigit() else p for p in re.split(r"[._]", v))
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"[._-]", v))
 
 
 def parse(name: str) -> tuple[str, str] | None:
-    if m := re.match(r"(.+)_([0-9][0-9A-Za-z.]*)_APKPure\.x?apk$", name):
+    if m := re.match(r"(.+)_([0-9][0-9A-Za-z.-]*)_APKPure\.x?apk$", name):
         return m.group(1), m.group(2)
     if m := re.match(r"(.+)_([0-9]+)(?:_[0-9a-f]+)?\.apk$", name):
         return m.group(1), m.group(2)
