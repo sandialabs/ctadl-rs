@@ -979,6 +979,29 @@ Not touched:
 - `ctadl-ir/src/graph/scc/`, which is used as is.
 - `lsm/` and the LSM engine's storage. The LSM engine only gains an include.
 
+## Open
+
+Phases 0-13 are done. Before staged can stay the default, these remain:
+
+- **The scheduler is outside the budget.** On ddg with a 2 GB budget, the scheduler peaks at
+  5.27 GB before any worker starts, while it loads the facts and computes the path set, so the
+  run's peak exceeds `--index-budget` (Acceptance). macOS's large-allocation cache then keeps
+  3.6-4.2 GB of the freed facts while workers run. `MallocLargeCache=0` for the scheduler (a
+  re-exec) lowers the tree's peak to 3.40 GiB but leaves the scheduler at 4.41 GB. Moving the
+  setup (load facts, compute the path set, write the stage directory) into a worker would keep
+  it out of the scheduler. Undecided.
+- **The default budget.** Half of physical memory runs ddg as one 9.4 GB batch: 12.95 GiB and
+  220 s, against monolithic's 12.0 GB and 153 s. The default should count the scheduler, or
+  be lower.
+- **Fixed cost on small inputs.** noto takes 20 s staged and 13 s monolithic; the regression
+  suite's `apk index check` 136 s and 75 s in a debug build. Candidates: copy the path table at
+  assembly instead of re-encoding `paths` (45 s on ddg, against 18 s for the monolithic save),
+  and keep the tables a worker builds when it maps the path set.
+- **Kills are hard to trigger.** No real kill happened on ddg at any budget, since its plan is
+  nearly a chain. fx at 32-64 MB did kill and split. On noto at 32 MB, two batches went 2 MB
+  over their estimates between samples, and nothing was killed.
+- `cargo xtask regression` was last run in Phase 11, before Phase 13's calibration.
+
 ## Acceptance
 
 - `cargo fmt --all -- --check`, `cargo clippy -- -Dwarnings`, and `cargo test --workspace` pass
@@ -1005,7 +1028,7 @@ Not touched:
   - running `cargo test --workspace -- staged` on Linux, which 7a did once and 7p did not;
   - checking that the Linux `phys_footprint_mb` (resident pages less shared ones, from
     `/proc/self/statm`) leaves a worker's mapped path set out, as macOS's footprint does;
-  - Phase 10's default budget from `/proc/meminfo`;
+  - Phase 10's default budget, which reads physical pages times page size from `sysconf`;
   - Phase 13's benchmark and calibration on Linux.
 
 - `global_read` is derived in every stage-1 batch, though only `intent_frame` functions use it.
@@ -1013,5 +1036,4 @@ Not touched:
 - Each stage-1 batch closes its own frame edges in the frame's `locals`
   (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1022`), which feeds
   no output. A config guard would skip that in batches, but it changes a rule's text.
-  Decided: Phase 13 measures the frame's `locals` rows per batch first, and a guard comes only
-  if the numbers call for one.
+  Decided: no guard. Phase 13 measured the frame's rows at 0.26% of the batches' `locals`.
