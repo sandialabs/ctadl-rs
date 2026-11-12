@@ -28,29 +28,37 @@ use crate::staged::store::{StageDir, write_atomic};
 //     SEED_ROW_BYTES × (assign rows + instantiated callee-summary rows)
 //       + FORMAL_BYTES × formals + VARIABLE_BYTES × variables,
 //
-// and a batch's is the sum of its functions' plus one worker's fixed cost. They were fitted to
-// whole-program serial runs, the only measurements there are before staging. Fit them again to
-// measured batch peaks.
+// and a batch's is the sum of its functions' plus one worker's fixed cost. Their ratios were
+// fitted to whole-program serial runs; the scale and the worker's cost were then fitted to the
+// peak footprints of stage-1 batches on workers (`peak_mb` of each stage in `profile.json`), as
+// `docs/debugging.md` describes. A batch's peak grows with its rows but scatters around the
+// estimate from one program to the next, so the estimate is set above most measured peaks
+// rather than at their mean: a batch over its estimate costs a kill and a rerun.
 
 /// Bytes per seed row of `assign_like`: an `assign` fact, or a callee's summary row instantiated
-/// at a call site. The fixpoint's whole growth divided by the `assign` rows it started from was
-/// 1976 B and 1998 B on two Android apps of 4.9M and 1.3M `assign` rows. Fitting formals as well
-/// gave them no share of it.
-pub const SEED_ROW_BYTES: u64 = 2048;
-/// Bytes per formal. Not fitted: the seed rows explain the measured growth.
-pub const FORMAL_BYTES: u64 = 256;
-/// Bytes per variable. Not fitted, as for formals.
-pub const VARIABLE_BYTES: u64 = 64;
+/// at a call site. The whole-program fits gave about 2000 B per row on two Android apps; batch
+/// peaks were 0.55 (median) to 0.68 (largest) of that on one app, at 256 MB and 2 GB budgets,
+/// and 0.74 to 0.88 on a smaller one at 64 MB. Set at 0.75 of it. A batch's peak grows faster
+/// than its rows, so the larger batches this packs come closer to their estimates: on the
+/// large app, at most 0.81 of it at 256 MB, 0.97 at 2 GB and 0.98 at 4 GB. On a third app at
+/// 64 MB, 4 of 60 batches went over the budget and were split.
+pub const SEED_ROW_BYTES: u64 = 1536;
+/// Bytes per formal. Not fitted alone: the seed rows explain the measured growth. Scaled with
+/// [`SEED_ROW_BYTES`].
+pub const FORMAL_BYTES: u64 = 192;
+/// Bytes per variable. Not fitted alone, as for formals.
+pub const VARIABLE_BYTES: u64 = 48;
 /// The summary rows a function is expected to have per formal, in thousandths, beyond those its
 /// facts seed. Measured 290, 410 and 890 on the two apps and a synthetic program.
 pub const SUMMARY_MILLIROWS_PER_FORMAL: u64 = 400;
 /// Bytes a worker holds per member of the program's path set beside the path set file it maps,
 /// whose clean pages its footprint leaves out: the segments and the tables it builds on mapping.
-/// Measured 4 B on an Android app of 10.3M paths (40.7 MB per worker).
+/// Measured 4 B on an Android app of 10.3M paths: a worker that ran a batch of 238 functions
+/// peaked at 45 MB.
 pub const PATH_BYTES: u64 = 4;
-/// A worker's footprint before it reads anything. Not fitted: a whole index run of a small
-/// synthetic program peaked at 80 MB, which bounds it.
-pub const WORKER_BASE_BYTES: u64 = 32 << 20;
+/// A worker's footprint before it reads anything. A worker that ran one function of a synthetic
+/// program with a path set of six members peaked at 3.3 MB.
+pub const WORKER_BASE_BYTES: u64 = 4 << 20;
 
 /// What every worker holds whatever its batch: [`WORKER_BASE_BYTES`] and a path set of `paths`
 /// members.
@@ -811,8 +819,6 @@ mod tests {
     use crate::facts::{FlowVertex, InsnId, InsnSiteId, PackedInsnSiteId, Path, Str};
     use crate::staged::shuffle::shuffle_facts;
 
-    const MB: u64 = 1 << 20;
-
     fn site(f: u32, insn: u64) -> PackedInsnSiteId {
         InsnSiteId {
             func_id: FunctionId::new(f),
@@ -1145,7 +1151,7 @@ mod tests {
         let plan = Plan::new(&facts, budget, usize::MAX, paths);
         assert_eq!(plan.batches.len(), 2);
         assert_eq!(plan.worker_bytes, worker_bytes(paths));
-        assert!(plan.worker_bytes > 32 * MB);
+        assert!(plan.worker_bytes > WORKER_BASE_BYTES);
     }
 
     /// The plan and each batch's descriptor read back from the stage directory as written.

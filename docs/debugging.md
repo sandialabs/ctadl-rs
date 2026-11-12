@@ -225,6 +225,96 @@ target. Raw dumps and sort's temporary files go under `$TMPDIR`, so point it at 
 for a few times the dump. A reference is only as good as the build that wrote it: record it with
 a build that has `CTADL_DUMP_RELATIONS`, and pass the same index flags on both sides.
 
+# Measuring a staged run's memory
+
+A staged run, the default, holds one batch of functions at a time in each worker process, and
+the scheduler starts workers while their estimates fit `--index-budget`. The estimates come
+from coefficients in `ctadl-index/src/staged/plan.rs`, fitted to measured batch peaks. This is
+how to measure a run against the monolithic one and refit them.
+
+Use two targets. A synthetic program, whose functions call nothing, so that every function is
+a batch of its own once the budget is small, which measures what a worker costs:
+
+```
+scripts/gen-locals-bench.py --funcs 2000 --group-size 8 --paths 2 -o synth.tnt
+ctadl import synth.tnt --name synth
+```
+
+And a large real program, such as an Android app of a few hundred thousand functions whose
+monolithic index peaks at several GB.
+
+Run every heavy command under a memory guard, a wrapper that sums the footprint of the command's
+whole process tree, workers included, and kills the tree past a cap (`memguard.sh LIMIT_GIB
+CMD...`; on Linux `systemd-run --user --scope -p MemoryMax=...` does it in the kernel). Set the
+limit above the budget plus the scheduler's own peak, which the first run below tells you.
+`/usr/bin/time -l` inside the guard reports the kernel's `peak memory footprint` of the process
+it runs, which for `ctadl index` is the scheduler alone; the guard's polled peak is the tree's.
+Timings are noisy on a shared machine, so repeat any that matter.
+
+1. The monolithic run: its peak and wall time, and the reference tables.
+
+   ```
+   memguard.sh 24 scripts/fact-dump-diff.sh record --outputs ref -- \
+       /usr/bin/time -l ctadl index app --monolithic
+   ```
+
+2. Staged, with `--index-budget` below the monolithic peak, compared with the reference. The
+   `ctadl_ir=info` keeps the IR's per-function debug lines out of the log.
+
+   ```
+   RUST_LOG=warn,ctadl=debug,ctadl_ir=info memguard.sh 16 \
+       scripts/fact-dump-diff.sh compare --outputs ref -- \
+       /usr/bin/time -l ctadl index app --index-budget 2G -j 4 2> staged.log
+   ```
+
+   Read, from `staged.log` and the index's `profile.json`:
+   - the `[mem cp] staged:` lines, the scheduler's footprint as it plans, writes the path set
+     and the facts, and drops them. The budget covers the workers only: the scheduler's own
+     peak, while it computes the path set, comes before any worker starts;
+   - `batch N: starting, estimate E MB` and `staged index: N batches ...`, the plan;
+   - `profile.json`'s `stages`: each `batch-N` with its worker's lifetime `peak_mb` and `secs`,
+     `intent` likewise, and `frame` with the scheduler's footprint when the frame was done.
+     The `peak footprint` of a `worker exited` line is the scheduler's sampled view of the
+     worker, which misses the peak of a worker that ends between samples;
+   - `split SCC i: P parts, R rounds, N part runs` for each recursive SCC split into parts
+     (an SCC is split only when it is over the budget alone);
+   - `killed`, `split batch` and `runs alone` lines, if a worker went over the budget.
+
+   On macOS, the scheduler's footprint stays at what the facts took while workers run, because
+   the allocator keeps freed large blocks; workers are started with `MallocLargeCache=0`, and
+   setting it for the whole run as well (`MallocLargeCache=0 ctadl index ...`) shows what the
+   scheduler holds once the facts are freed.
+
+3. The worker's fixed cost: a small synthetic program (`--funcs 50`) with `--index-budget 1
+   -j 1`, one function per batch. Its batches' `peak_mb` is a worker's base footprint,
+   `WORKER_BASE_BYTES`. (With thousands of batches, each worker also holds the stage files'
+   metadata, a few MB more.) On the large program, the `peak_mb` of its smallest batch, less
+   that base, over the path set's size (`+ paths (N rows)` in the log) is `PATH_BYTES`. The
+   time a worker spends outside its batch is the `worker exited ... after S s` line less the
+   stage's `secs`, and the worker's log (`logs/<run>.log` in the stage directory, which a run
+   stopped as in step 5 keeps) says how long mapping the path set took.
+
+4. Calibrate. For each batch, divide its `peak_mb` less the worker's cost by its estimate less
+   the plan's worker cost (`worker_bytes` in the stage directory's `plan.json`). Scale
+   `SEED_ROW_BYTES`, `FORMAL_BYTES` and `VARIABLE_BYTES` by a ratio that most batches stay
+   under, over a few budgets (256M to 4G on the large program, 64M on a smaller one) and
+   programs; a batch's peak grows faster than its estimate, so check the largest budgets too.
+   A batch over its estimate can take the workers over the budget, and is then killed and
+   rerun in two halves, so err high. A stage
+   directory survives a run stopped as in step 5, with `plan.json` and each run's
+   `stats/<run>.json`, which also counts the batch's input rows. Then run
+   `cargo test -p ctadl-index`, and repeat step 2 with the new build.
+
+5. Resume. Stop the staged run after a batch midway (the `N batches` line gives the count),
+   then run the same command again, which resumes from the stage directory, and compare:
+
+   ```
+   CTADL_STAGED_STOP_AFTER=3 ctadl index app --index-budget 2G -j 4   # exits with status 4
+   scripts/fact-dump-diff.sh compare --outputs ref -- ctadl index app --index-budget 2G -j 4
+   ```
+
+   The second run logs `resuming` and `batches done ... K of them by an earlier run`.
+
 # Pcode
 
 ## Ghidra output
