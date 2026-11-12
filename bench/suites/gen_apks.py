@@ -1,7 +1,7 @@
 """Freeze an APK benchmark list: the newest version of each app in a directory, hashed.
 
-    python3 gen_apks.py ~/apps > apps.json
-    python3 gen_apks.py ~/apps/fdroid > fdroid.json
+    python3 gen_apks.py /Volumes/Shampoo/datasets/apps > apps.json
+    python3 gen_apks.py /Volumes/Shampoo/datasets/apps/fdroid > fdroid.json
 
 Versions are read from the file name, in either of the two layouts present:
 APKPure's `<Name>_<version>_APKPure.<ext>` and F-Droid's `<package>_<versionCode>.apk`.
