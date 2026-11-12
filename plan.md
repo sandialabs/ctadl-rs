@@ -20,7 +20,7 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | 5a | done | stage directory and stage 1 in process; `Plan::whole_sccs` keeps every SCC whole. A batch's `assign` and `const_str_assign` rows come back with instruction 0, since their files drop it and no rule reads it. Checkpoint, ddg with a 2 GB budget, run in process by an uncommitted env var in `cli::index`: 57 batches, all run in 35 s; a batch ends at about 2.1 GB footprint, the whole process included. Peak 5.26 GB (monolithic 12.4 GB), wall 219 s (160 s), but no `[mem cp]` checkpoint is above 2.3 GB, so the peak falls between them. Logs in `/Volumes/Shampoo/staged-index-baseline/phase5a/` |
 | 5b | done | ddg staged with a 2 GB budget against `--outputs` of a monolithic run of the same build: all 7 tables are the same set. Peak 5.37 GB, wall 247 s; the stage-boundary `[mem cp]` lines stay at or under 2.35 GB, and memguard's 2 s polls saw at most 4.37 GiB, so the peak is a short spike. Candidates: `compute_paths` with the facts alive, and the in-process load and save of the whole result, which the CLI path will not do. Frame: 3247 edges; intent stage: 171286 `assign` rows in, 0.26 s. Logs in `/Volumes/Shampoo/staged-index-baseline/phase5b/` |
 | 6 | done | ddg, 2 GB budget, in process, against 5b's monolithic `--outputs`: all 7 tables are the same set, with the default floor (no SCC splits; 57 batches, peak 5.38 GB, wall 272 s) and with floor 1 (183 split SCCs of 646 functions, 991 part runs, at most 7 rounds, largest SCC 50 functions in 2 rounds and 62 part runs; 34 s in split SCCs; peak 5.34 GB, wall 313 s). The ring and mutual-recursion tests rotate three formals instead of extending fields: the path set holds only paths in the facts, so a field-extending ring closes in one round. Every part of an SCC has a callee in another part, so `part_not_rerun_when_callees_stable` checks a cycle whose rerun finds no growth. A split SCC's latest runs move to `batches/<id>/` when it ends, so the frame, intent and assembly readers are unchanged. Logs in `/Volumes/Shampoo/staged-index-baseline/phase6/` |
-| 7a | done | `ctadl index-worker` runs a batch, a round's part or the intent stage; `Process` starts one per job, at most `-j` at once, and a job alone with nothing else ready gets every thread. The scheduler starts the first ready batch or split SCC while its estimate fits the budget beside the running ones, so the floor-1 split SCCs of `process_executor_matches_in_process` run beside other batches. `Process` takes no store: a worker touches only the stage directory. The intent stage runs in a worker only when `plan.intent_batches` is non-empty. Test hooks are one variable, `CTADL_STAGED_TEST_HOOK` (`fail=`, `noise=`), passed through `Process::env`; 7b's footprint hook can join it. Linux: the staged tests and `statm_parses` pass in `ghidra-box`. Checkpoint, ddg with a 2 GB budget on workers, serial, against 5b's monolithic `--outputs`: all 7 tables are the same set, peak 4.82 GiB (memguard, process tree), but wall 2633 s (in process 272 s): each of the 58 workers reads the path set in about 40 s and 1.03 GB, which is 97% of worker time and half the budget. The mmap'd path set (Deferred) is now needed, not optional. Logs in `/Volumes/Shampoo/staged-index-baseline/phase7a/` |
+| 7a | done | `ctadl index-worker` runs a batch, a round's part or the intent stage; `Process` starts one per job, at most `-j` at once, and a job alone with nothing else ready gets every thread. The scheduler starts the first ready batch or split SCC while its estimate fits the budget beside the running ones, so the floor-1 split SCCs of `process_executor_matches_in_process` run beside other batches. `Process` takes no store: a worker touches only the stage directory. The intent stage runs in a worker only when `plan.intent_batches` is non-empty. Test hooks are one variable, `CTADL_STAGED_TEST_HOOK` (`fail=`, `noise=`), passed through `Process::env`; 7b's footprint hook can join it. Linux: the staged tests and `statm_parses` pass in `ghidra-box`. Checkpoint, ddg with a 2 GB budget on workers, serial, against 5b's monolithic `--outputs`: all 7 tables are the same set, peak 4.82 GiB (memguard, process tree), but wall 2633 s (in process 272 s): each of the 58 workers reads the path set in about 40 s and 1.03 GB, which is 97% of worker time and half the budget. A shared, memory-mapped path set is now needed: see [After 7a: the path set](#after-7a-the-path-set). Logs in `/Volumes/Shampoo/staged-index-baseline/phase7a/` |
 
 ## Order
 
@@ -560,6 +560,46 @@ Depends on: Phase 6.
 
 **Gate.** fmt, clippy, `cargo test --workspace`, and the Linux run above.
 
+### After 7a: the path set
+
+7a's ddg checkpoint (Status, row 7a) produced the same tables as monolithic, but took 2633 s
+on workers against 272 s in process. Almost all of the difference is the path set.
+
+**Where the time goes.** A batch gets its path set from `path_set` (`ctadl-ascent/src/staged/batch.rs:132-157`).
+It reads `paths.parquet` into a `Vec<Path>` and rebuilds the frozen set with
+`ProgramPaths::from_paths`, which interns every path and its splits. A process caches the
+result by run key (`batch.rs:127-129`).
+- In process, the scheduler lends its own path set (`share_path_set`, `batch.rs:161`), so no
+  batch reads it. That is why the in-process run is fast.
+- `Process` drops the lent path set (the trait default, `executor.rs:97-101`), so each worker
+  is a new process with an empty cache and reads the path set again. On ddg that is about 40 s
+  and 1.03 GB per worker, 97% of worker time, 58 times.
+
+**How to measure it.** Each worker logs
+`read the path set of N paths in X s, Y MB` (`batch.rs:150`) at info level, in its log under
+the stage directory's logs (`executor.rs:231`). Summing X over the worker logs gives the
+time spent loading. The CLI does not run staged until Phase 10 (`cli/mod.rs:434` ignores
+`worker_exe`), so the checkpoint used a change that was not committed. Rerunning it needs
+the same kind of change.
+
+**What it does to the budget.** The scheduler and the planner charge each worker
+`worker_bytes(paths)` = `WORKER_BASE_BYTES` + `PATH_BYTES` (176 B) per path
+(`ctadl-index/src/staged/plan.rs:47-58`). On ddg the measured 1.03 GB is half of a 2 GB budget,
+before the batch's own rows, and it is paid once per worker, so two workers at once hold
+2 GB of path set alone. Check `PATH_BYTES` against the logged MB and path count:
+its 176 B was measured in process.
+
+**Why it is not deferred.** Spec D7 ("Path set", `spec.md:265-268`) expected the cost to
+stay small enough that the planner's preference for fewer, larger batches would cover it. It
+said a memory-mapped path set shared across workers would come later "if it dominates". It
+now does. With a shared path set, a worker would map the paths and splits the scheduler
+built, instead of reading and interning them again (interners: `ctadl-index/src/index_engine/mod.rs:31-37`).
+
+**Open.** Whether this becomes its own phase before 7b, or part of 7b. It matters for 7b
+because 7b's split decision subtracts the per-worker path-set term (Phase 7, "Splitting").
+While that term is half the budget, the ddg checkpoint after 7b would mostly measure the path
+set.
+
 ## Phase 8: equivalence harness for in-process tests (R14, part)
 
 Depends on: Phase 6.
@@ -830,8 +870,6 @@ Not touched:
 
 - `global_read` is derived in every stage-1 batch, though only `intent_frame` functions use it.
   An `intent_frame(f)` guard would save that memory, but it changes the relation's dump.
-- Sharing the path set across workers through a memory-mapped file (D7 names this as later).
-  Decide by Phase 13's share of total time spent loading the path set.
 - Each stage-1 batch closes its own frame edges in the frame's `locals`
   (`global_mention(GLOBAL_FRAME, _)`, `ctadl-index/src/index_engine/mod.rs:1022`), which feeds
   no output. A config guard would skip that in batches, but it changes a rule's text.
