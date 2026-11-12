@@ -174,7 +174,7 @@ mod tests {
         let (program, _) = program_from_string(SRC);
         let (facts, source_info) = index_program(program);
         let id_map = source_info.sites;
-        let config = IndexConfig::default();
+        let config = IndexConfig::monolithic();
         let a = taint_index_with_config(facts.clone(), config.clone(), Some(&id_map));
         let b = taint_index_with_config(facts, config, Some(&id_map));
         (a, b, id_map)

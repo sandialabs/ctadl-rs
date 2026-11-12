@@ -117,7 +117,7 @@ fn parallel_engine_matches_serial() {
     let (facts, source_info) = index_program(program);
     let id_map = Some(&source_info.sites);
 
-    let config = IndexConfig::default();
+    let config = IndexConfig::monolithic();
     let serial = taint_index_with_config(facts.clone(), config.clone(), id_map);
     let parallel = taint_index_with_config(
         facts,
@@ -138,7 +138,7 @@ fn lsm_storage_matches_memory() {
     let (facts, source_info) = index_program(program);
     let id_map = Some(&source_info.sites);
 
-    let config = IndexConfig::default();
+    let config = IndexConfig::monolithic();
     let memory = taint_index_with_config(facts.clone(), config.clone(), id_map);
     lsm::ascent_provider::set_memtable_limit(4);
     let on_lsm = taint_index_with_config(
@@ -219,10 +219,11 @@ const SRC_NESTED_TARGET: &str = r"
         return call(&c, x) + call(&b, x);
     }";
 
-/// The fixpoint interns no `Path`, `Str` or `CallDispatchKey`, on every
-/// engine. The interners are process-wide and the other tests in this binary intern into them
-/// from other threads, so the test re-runs itself as a child process that runs nothing else,
-/// and the child does the checking.
+/// The fixpoint interns no `Path`, `Str` or `CallDispatchKey`, on every engine, monolithic or
+/// staged: a batch re-interns its facts before its fixpoint, not during it. The interners are
+/// process-wide and the other tests in this binary intern into them from other threads, so the
+/// test re-runs itself as a child process that runs nothing else, and the child does the
+/// checking.
 #[test]
 fn fixpoint_interns_nothing() {
     const CHILD_ENV: &str = "CTADL_TEST_FIXPOINT_INTERNS_NOTHING";
@@ -244,24 +245,28 @@ fn fixpoint_interns_nothing() {
         let (program, _) = program_from_string(src);
         let (facts, source_info) = index_program(program);
         for config in [
-            IndexConfig::default(),
+            IndexConfig::monolithic(),
             IndexConfig {
                 parallelism: Parallelism::Threads(NonZeroUsize::new(8).unwrap()),
-                ..IndexConfig::default()
+                ..IndexConfig::monolithic()
             },
             IndexConfig {
                 storage: Storage::Lsm,
-                ..IndexConfig::default()
+                ..IndexConfig::monolithic()
             },
+            IndexConfig::default(),
         ] {
-            let what = format!("{:?} {:?}", config.parallelism, config.storage);
+            let what = format!(
+                "{:?} {:?} {:?}",
+                config.parallelism, config.storage, config.staged
+            );
             let result = taint_index_with_config(facts.clone(), config, Some(&source_info.sites));
             let profile = &result.stats.profile;
             assert!(profile.reached_fixpoint, "{what}");
             assert_eq!(profile.split_misses, 0, "{what}: split misses");
             let interned = &profile.memory.fixpoint_interned;
             assert_eq!(
-                interned.keys().copied().collect::<Vec<_>>(),
+                interned.keys().map(String::as_str).collect::<Vec<_>>(),
                 ["CallDispatchKey", "Path", "Str"],
                 "{what}"
             );
@@ -904,7 +909,7 @@ fn intent_program_matches_full_program() {
     let by_component = FunctionId::new(4);
     let facts = intent_facts();
 
-    let full = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    let full = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), None);
     let mut expected_pairs = full.intent_pair.clone();
     expected_pairs.sort();
     assert_eq!(

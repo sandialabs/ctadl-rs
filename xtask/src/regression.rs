@@ -708,17 +708,25 @@ pub(crate) fn ctadl_command<S: AsRef<OsStr>>(args: &[S]) -> Result<Command> {
 }
 
 /// `<ctadl> <args>`. A `ctadl index` is also passed the suite's `--mem2reg` policy, if one was
-/// given. Every case spawns `ctadl` through here, so none misses the policy.
+/// given, and `--monolithic` when `XTASK_INDEX_MONOLITHIC=1`, so the suite can run the reference
+/// index instead of the default staged one. Every case spawns `ctadl` through here, so none
+/// misses either.
 pub(crate) fn ctadl_command_with<S: AsRef<OsStr>>(ctadl: &Path, args: &[S]) -> Command {
     let mut cmd = Command::new(ctadl);
     cmd.args(args);
-    if let Some(Some(policy)) = MEM2REG.get()
-        && args.first().is_some_and(|a| a.as_ref() == "index")
-    {
-        cmd.arg("--mem2reg").arg(policy);
+    if args.first().is_some_and(|a| a.as_ref() == "index") {
+        if let Some(Some(policy)) = MEM2REG.get() {
+            cmd.arg("--mem2reg").arg(policy);
+        }
+        if std::env::var_os(INDEX_MONOLITHIC_VAR).is_some_and(|v| v == "1") {
+            cmd.arg("--monolithic");
+        }
     }
     cmd
 }
+
+/// Set to `1`, it makes every `ctadl index` of the suite run monolithic.
+const INDEX_MONOLITHIC_VAR: &str = "XTASK_INDEX_MONOLITHIC";
 
 /// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
 ///

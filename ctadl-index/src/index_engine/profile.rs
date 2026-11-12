@@ -67,7 +67,7 @@ pub struct MemoryProfile {
     pub interned: BTreeMap<&'static str, Stats>,
     /// The entries each interner that the fixpoint may only read gained while it ran. All 0
     /// when this process built one index at a time.
-    pub fixpoint_interned: BTreeMap<&'static str, usize>,
+    pub fixpoint_interned: BTreeMap<String, usize>,
 }
 
 impl MemoryProfile {

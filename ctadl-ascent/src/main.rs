@@ -473,25 +473,18 @@ pub struct IndexArgs {
     /// Compute the flow relation once over the whole program, holding all of it in memory,
     /// instead of in stages.
     ///
-    /// For now the default; the staged run is selected by `--staged` or `--index-budget`. The
-    /// monolithic run is the reference a staged run is checked against, and the only one that
-    /// can use `--lsm`.
+    /// By default the flow relation is computed in stages: batches of functions, callees first,
+    /// each in a worker process, as many at once as `--index-budget` allows, then the flows
+    /// between globals and the intent rules. Each batch holds only its own functions'
+    /// relations, so the peak memory follows the largest batch rather than the program, and a
+    /// run that is killed resumes from its stage directory, `index/staging/`, when it is rerun
+    /// with the same facts and options. The tables are the same either way. The monolithic run
+    /// is the reference a staged run is checked against, and the only one that can use `--lsm`.
     #[arg(long)]
     pub monolithic: bool,
 
-    /// Compute the flow relation in stages: batches of functions, callees first, each in a
-    /// worker process, as many at once as `--index-budget` allows, then the flows between
-    /// globals and the intent rules.
-    ///
-    /// Each batch holds only its own functions' relations, so the peak memory follows the
-    /// largest batch rather than the program. The tables are the same as the monolithic run's.
-    /// A run that is killed resumes from its stage directory, `index/staging/`, when it is
-    /// rerun with the same facts and options.
-    #[arg(long, conflicts_with = "monolithic")]
-    pub staged: bool,
-
     /// The memory the workers of a staged run may use at once, e.g. `2G` or `512M` (powers of
-    /// 1024; a bare number is bytes). Implies `--staged`. Half of physical memory by default.
+    /// 1024; a bare number is bytes). Half of physical memory by default.
     ///
     /// The scheduler packs batches to fit their estimates within it, and when the workers
     /// running go over it, stops the largest, splits its batch and runs the halves again. A
@@ -902,7 +895,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
                 Storage::Memory
             },
             mem2reg: args.mem2reg.0,
-            staged: (args.staged || args.index_budget.is_some()).then(|| {
+            staged: (!args.monolithic).then(|| {
                 StagedConfig::with_budget(
                     args.index_budget
                         .map_or_else(StagedConfig::default_budget, |budget| budget as u64),

@@ -1201,7 +1201,13 @@ fn lsm_without_monolithic_is_an_error() {
     assert!(stderr.contains("--monolithic"), "{stderr}");
 
     let out = ctadl()
-        .args(["index", "lsm_without_monolithic", "--lsm", "--staged"])
+        .args([
+            "index",
+            "lsm_without_monolithic",
+            "--lsm",
+            "--index-budget",
+            "1G",
+        ])
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -1222,7 +1228,7 @@ fn staged_index_reads_as_absent_until_stamp() {
         cli::import(&import, cli::ImportOptions::default()).unwrap();
         let index = |stop: bool| {
             let mut cmd = ctadl();
-            cmd.args(["index", "staged_stop_proj", "staged_stop_c", "--staged"]);
+            cmd.args(["index", "staged_stop_proj", "staged_stop_c"]);
             if stop {
                 cmd.env(STOP_AFTER_VAR, "0");
             }

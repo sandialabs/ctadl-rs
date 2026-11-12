@@ -20,6 +20,8 @@ pub struct StageStats {
     pub fixpoint_secs: f64,
     pub update_indices_secs: f64,
     pub split_misses: usize,
+    #[serde(default)]
+    pub fixpoint_interned: BTreeMap<String, usize>,
     pub initial_assign: usize,
     pub final_assign_like: usize,
     pub initial_formals: usize,
@@ -54,6 +56,7 @@ impl StageStats {
             fixpoint_secs: profile.fixpoint_secs,
             update_indices_secs: profile.update_indices_secs,
             split_misses: profile.split_misses,
+            fixpoint_interned: profile.memory.fixpoint_interned.clone(),
             initial_assign: *initial_assign,
             final_assign_like: *final_assign_like,
             initial_formals: *initial_formals,
@@ -126,7 +129,7 @@ impl StageStats {
 }
 
 /// The run's [`IndexStats`]: every number summed over `runs`, and each run as a stage of the
-/// profile. Its memory profile is left empty.
+/// profile. Of its memory profile, only the entries the fixpoints interned are filled in.
 pub fn sum(runs: Vec<StageStats>) -> IndexStats {
     let mut stats = IndexStats {
         profile: IndexProfile {
@@ -143,6 +146,9 @@ pub fn sum(runs: Vec<StageStats>) -> IndexStats {
         profile.fixpoint_secs += run.fixpoint_secs;
         profile.update_indices_secs += run.update_indices_secs;
         profile.split_misses += run.split_misses;
+        for (name, n) in run.fixpoint_interned {
+            *profile.memory.fixpoint_interned.entry(name).or_default() += n;
+        }
         profile.stages.push(run.stage);
         stats.initial_assign += run.initial_assign;
         stats.final_assign_like += run.final_assign_like;
@@ -183,6 +189,7 @@ mod tests {
             relations: BTreeMap::from([("locals".to_string(), locals)]),
             final_locals: locals,
             fixpoint_secs: 1.0,
+            fixpoint_interned: BTreeMap::from([("Path".to_string(), locals)]),
             ..Default::default()
         };
         run("batch-0", 2).save(&stage).unwrap();
@@ -199,6 +206,7 @@ mod tests {
         assert_eq!(stats.final_locals, 7);
         assert_eq!(stats.profile.relations["locals"], 7);
         assert_eq!(stats.profile.fixpoint_secs, 2.0);
+        assert_eq!(stats.profile.memory.fixpoint_interned["Path"], 7);
         let mut ids: Vec<_> = stats.profile.stages.iter().map(|s| s.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, ["batch-0", "batch-1", "frame"]);

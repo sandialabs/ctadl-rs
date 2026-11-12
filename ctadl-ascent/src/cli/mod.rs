@@ -84,7 +84,8 @@ pub struct IndexOptions {
     /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
     pub mem2reg: Option<ssa::Mem2Reg>,
     /// Runs the fixpoint in stages, in batches of functions under a memory budget, instead of
-    /// once over the whole program. `None` runs it once, monolithic.
+    /// once over the whole program. `None` runs it once, monolithic. Staged under the default
+    /// budget by default.
     pub staged: Option<crate::index_engine::StagedConfig>,
     /// The `ctadl` executable a staged run starts its workers from. `None` runs its batches on
     /// the calling thread.
@@ -103,7 +104,7 @@ impl Default for IndexOptions {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             mem2reg: ssa::Pipeline::index_default().mem2reg,
-            staged: None,
+            staged: Some(crate::index_engine::StagedConfig::default()),
             worker_exe: None,
         }
     }

@@ -209,16 +209,16 @@ that compute the index the same way; the output tables compare between any two r
 
 ```
 scripts/fact-dump-diff.sh record ref -- ctadl index app --monolithic
-scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app --staged
+scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app
 scripts/fact-dump-diff.sh compare --outputs ref -- target/release/ctadl index app --index-budget 2G -j 4
 ```
 
-This is how a staged run is checked. It holds no relation of the whole program, only one batch's
-at a time, so it writes `outputs/` and no relations, and only `--outputs` compares it. Record
-the reference with `--monolithic`, which is the run the staged one must match. To see a batch's
-own relations, set `CTADL_DUMP_STAGES=1` as well: each batch then dumps them to
-`<dir>/stages/<batch>/`, `batch-3` or `batch-3-round-2` for a part of a split recursive SCC. A
-batch in a worker process has no names for functions, so they print as numbers there.
+This is how a staged run, the default, is checked. It holds no relation of the whole program,
+only one batch's at a time, so it writes `outputs/` and no relations, and only `--outputs`
+compares it. Record the reference with `--monolithic`, which is the run the staged one must
+match. To see a batch's own relations, set `CTADL_DUMP_STAGES=1` as well: each batch then dumps
+them to `<dir>/stages/<batch>/`, `batch-3` or `batch-3-round-2` for a part of a split recursive
+SCC. A batch in a worker process has no names for functions, so they print as numbers there.
 
 The dump and the sort scale with the index: `locals` alone is tens of millions of rows on a large
 target. Raw dumps and sort's temporary files go under `$TMPDIR`, so point it at a disk with room

@@ -57,7 +57,7 @@ fn assert_staged_matches(
     seeds: &[u64],
     what: &str,
 ) -> Vec<(Plan, RunStats)> {
-    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), id_map);
     let seeds: Vec<Option<u64>> = if seeds.is_empty() {
         vec![None]
     } else {
@@ -188,7 +188,7 @@ fn staged_matches_monolithic_function_without_formals() {
         call: vec![(site(caller, 5), id), (site(caller, 6), no_formals)],
         ..Default::default()
     };
-    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), None);
     assert!(monolithic.assign_like.iter().any(|r| r.0 == no_formals));
     assert!(monolithic.summary.iter().any(|r| r.0 == caller));
     let counts = batch_counts(&assert_staged_matches(
@@ -206,7 +206,7 @@ fn staged_matches_monolithic_function_without_formals() {
 #[test]
 fn staged_matches_monolithic_intent() {
     let facts = intent_facts();
-    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), None);
     assert_eq!(monolithic.intent_pair.len(), 2);
     let counts = batch_counts(&assert_staged_matches(
         &facts,
@@ -252,7 +252,7 @@ fn staged_matches_monolithic_summary_project() {
         ],
         ..Default::default()
     };
-    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), None);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), None);
     assert_eq!(monolithic.global_flow.len(), 2);
     assert_staged_matches(
         &facts,
@@ -553,7 +553,7 @@ fn scheduler_runs_jobs_at_once_within_threads_and_budget() {
     let src = format!("{DIAMOND}\n{}\n{other_ring}", ring(4));
     let (facts, source_info) = index_program(program_from_string(&src).0);
     let id_map = Some(&source_info.sites);
-    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
+    let monolithic = taint_index_with_config(facts.clone(), IndexConfig::monolithic(), id_map);
     let largest = {
         let index = tempfile::tempdir().unwrap();
         let mut executor = InProcess::new(Parallelism::Serial, id_map);

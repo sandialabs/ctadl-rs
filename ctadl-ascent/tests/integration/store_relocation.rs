@@ -29,15 +29,32 @@ fn fake_artifact(name: &str) -> (TempDir, PathBuf) {
 }
 
 /// Copies the directory tree at `src` to `dst`, the way someone relocating a store would.
+///
+/// The other tests of this binary index into the same store meanwhile, and a staged index
+/// creates and removes its stage files as it runs, so a file or directory that is gone by the
+/// time it is copied is skipped.
 fn copy_dir(src: &Path, dst: &Path) {
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     fs::create_dir_all(dst).unwrap();
-    for entry in fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
+    let entries = match fs::read_dir(src) {
+        Err(e) if gone(&e) => return,
+        entries => entries.unwrap(),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Err(e) if gone(&e) => continue,
+            entry => entry.unwrap(),
+        };
         let to = dst.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &to);
-        } else {
-            fs::copy(entry.path(), &to).unwrap();
+        match entry.file_type() {
+            Err(e) if gone(&e) => {}
+            Ok(t) if t.is_dir() => copy_dir(&entry.path(), &to),
+            _ => match fs::copy(entry.path(), &to) {
+                Err(e) if gone(&e) => {}
+                copied => {
+                    copied.unwrap();
+                }
+            },
         }
     }
 }

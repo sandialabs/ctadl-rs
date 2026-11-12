@@ -329,7 +329,8 @@ pub struct IndexConfig {
     /// `.deref`.
     pub deref_paths: bool,
     /// Runs the fixpoint in stages, batches of functions callees first, instead of once over the
-    /// whole program. `None` runs it once.
+    /// whole program. `None` runs it once, monolithic. Staged under the default budget by
+    /// default.
     #[builder(default)]
     pub staged: Option<StagedConfig>,
 }
@@ -359,8 +360,25 @@ impl StagedConfig {
     }
 }
 
+/// The default budget, with no floor.
+impl Default for StagedConfig {
+    fn default() -> Self {
+        StagedConfig::with_budget(StagedConfig::default_budget())
+    }
+}
+
 /// The default budget on a system that does not report its physical memory.
 pub const FALLBACK_BUDGET: u64 = 4 << 30;
+
+impl IndexConfig {
+    /// The default configuration, run once over the whole program instead of in stages.
+    pub fn monolithic() -> Self {
+        IndexConfig {
+            staged: None,
+            ..IndexConfig::default()
+        }
+    }
+}
 
 impl Default for IndexConfig {
     fn default() -> Self {
@@ -369,7 +387,7 @@ impl Default for IndexConfig {
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
             deref_paths: false,
-            staged: None,
+            staged: Some(StagedConfig::default()),
         }
     }
 }
@@ -1975,7 +1993,7 @@ macro_rules! run_engine {
         profile.memory.locals = Some(locals_heap);
         profile.memory.fixpoint_interned = interned_after
             .into_iter()
-            .map(|(name, n)| (name, n - interned_before[name]))
+            .map(|(name, n)| (name.to_string(), n - interned_before[name]))
             .collect();
         profile.memory.interned.insert(
             "PathSet",
