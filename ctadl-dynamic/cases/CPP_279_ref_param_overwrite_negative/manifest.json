@@ -1,0 +1,7 @@
+{
+  "name": "CPP_279_ref_param_overwrite_negative",
+  "description": "C++ reference parameters after #154, NEGATIVE at runtime, EXPECTED PRECISION GAP: `set_ref(x, 0)` overwrites a tainted `x`. The callee's store to the temp cell does not kill what the caller copied in, so CTADL keeps the old taint. Sound. s=flow d=none precision-disagree.",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "reference-cell-weak-update"
+}

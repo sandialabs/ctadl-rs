@@ -1,0 +1,6 @@
+{
+  "name": "CPP_273_ref_param_pass_through",
+  "description": "C++ reference parameters after #154, POSITIVE: `b(int& o)` passes `o` on to `a(int& o)`, which writes it. The inner call copies back through `@p0.deref`, which reaches the outer caller. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

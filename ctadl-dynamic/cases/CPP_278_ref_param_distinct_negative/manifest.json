@@ -1,0 +1,6 @@
+{
+  "name": "CPP_278_ref_param_distinct_negative",
+  "description": "C++ reference parameters after #154, NEGATIVE: `set_ref(x, 1)` writes a constant into `x`; the tainted `y` never reaches it. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

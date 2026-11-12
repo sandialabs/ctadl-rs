@@ -1,0 +1,6 @@
+{
+  "name": "CPP_277_ref_param_pointer_ref",
+  "description": "C++ reference parameters after #154, POSITIVE: a reference to a pointer, `int*& p`, rebinds the caller's pointer to `&y`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

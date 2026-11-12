@@ -1,0 +1,6 @@
+{
+  "name": "CPP_272_ref_param_method_out",
+  "description": "C++ reference parameters after #154, POSITIVE: a method writes its `int& o` parameter; the method call passes `x` through a temp cell and copies it back. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

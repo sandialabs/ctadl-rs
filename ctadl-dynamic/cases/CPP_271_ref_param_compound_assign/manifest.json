@@ -1,0 +1,6 @@
+{
+  "name": "CPP_271_ref_param_compound_assign",
+  "description": "C++ reference parameters after #154, POSITIVE: `out += v` through `int& out`. A non-const scalar reference is a cell: its value is at `@p0.deref`, and the caller passes the argument through a temp and copies it back. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

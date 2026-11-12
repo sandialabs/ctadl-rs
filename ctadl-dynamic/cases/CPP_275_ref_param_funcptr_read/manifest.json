@@ -1,0 +1,6 @@
+{
+  "name": "CPP_275_ref_param_funcptr_read",
+  "description": "C++ reference parameters after #154, POSITIVE: a call through a function pointer does not pass the argument by address. A reference cell is also read from its root (the callee stores it into `.deref` on entry), so the read still flows. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

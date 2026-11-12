@@ -1,0 +1,6 @@
+{
+  "name": "CPP_274_ref_param_member_arg",
+  "description": "C++ reference parameters after #154, POSITIVE: a member `p.v` passed to `int& out` is copied back into `p.v` after the call. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

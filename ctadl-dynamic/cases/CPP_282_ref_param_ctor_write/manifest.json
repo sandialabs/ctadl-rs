@@ -1,0 +1,7 @@
+{
+  "name": "CPP_282_ref_param_ctor_write",
+  "description": "C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a constructor writing its `int& o`. Construction copies the argument into a temp cell but has no argument node to copy back into. s=none d=flow.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F8"
+}

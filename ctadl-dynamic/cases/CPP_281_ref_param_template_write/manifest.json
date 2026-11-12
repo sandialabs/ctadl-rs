@@ -1,0 +1,7 @@
+{
+  "name": "CPP_281_ref_param_template_write",
+  "description": "C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a template parameter's reference `T& o` keeps the root model (its method calls dispatch on the parameter itself, spec 043), so `o = v` is a rebinding that does not reach the caller. s=none d=flow.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F8"
+}

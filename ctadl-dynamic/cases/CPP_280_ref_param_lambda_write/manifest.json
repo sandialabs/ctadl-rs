@@ -1,0 +1,7 @@
+{
+  "name": "CPP_280_ref_param_lambda_write",
+  "description": "C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a lambda's `int& o` keeps the root model, because a closure is called through a pointer that cannot pass a temp cell, and since #154 rebinding a parameter never reaches the caller. s=none d=flow.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F8"
+}

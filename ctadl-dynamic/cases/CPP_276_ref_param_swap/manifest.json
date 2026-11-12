@@ -1,0 +1,6 @@
+{
+  "name": "CPP_276_ref_param_swap",
+  "description": "C++ reference parameters after #154, POSITIVE: `swp(int& a, int& b)` moves the tainted `x` into `y`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
