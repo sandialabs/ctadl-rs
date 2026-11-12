@@ -21,7 +21,7 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | 5b | done | ddg staged with a 2 GB budget against `--outputs` of a monolithic run of the same build: all 7 tables are the same set. Peak 5.37 GB, wall 247 s; the stage-boundary `[mem cp]` lines stay at or under 2.35 GB, and memguard's 2 s polls saw at most 4.37 GiB, so the peak is a short spike. Candidates: `compute_paths` with the facts alive, and the in-process load and save of the whole result, which the CLI path will not do. Frame: 3247 edges; intent stage: 171286 `assign` rows in, 0.26 s. Logs in `/Volumes/Shampoo/staged-index-baseline/phase5b/` |
 | 6 | done | ddg, 2 GB budget, in process, against 5b's monolithic `--outputs`: all 7 tables are the same set, with the default floor (no SCC splits; 57 batches, peak 5.38 GB, wall 272 s) and with floor 1 (183 split SCCs of 646 functions, 991 part runs, at most 7 rounds, largest SCC 50 functions in 2 rounds and 62 part runs; 34 s in split SCCs; peak 5.34 GB, wall 313 s). The ring and mutual-recursion tests rotate three formals instead of extending fields: the path set holds only paths in the facts, so a field-extending ring closes in one round. Every part of an SCC has a callee in another part, so `part_not_rerun_when_callees_stable` checks a cycle whose rerun finds no growth. A split SCC's latest runs move to `batches/<id>/` when it ends, so the frame, intent and assembly readers are unchanged. Logs in `/Volumes/Shampoo/staged-index-baseline/phase6/` |
 | 7a | done | `ctadl index-worker` runs a batch, a round's part or the intent stage; `Process` starts one per job, at most `-j` at once, and a job alone with nothing else ready gets every thread. The scheduler starts the first ready batch or split SCC while its estimate fits the budget beside the running ones, so the floor-1 split SCCs of `process_executor_matches_in_process` run beside other batches. `Process` takes no store: a worker touches only the stage directory. The intent stage runs in a worker only when `plan.intent_batches` is non-empty. Test hooks are one variable, `CTADL_STAGED_TEST_HOOK` (`fail=`, `noise=`), passed through `Process::env`; 7b's footprint hook can join it. Linux: the staged tests and `statm_parses` pass in `ghidra-box`. Checkpoint, ddg with a 2 GB budget on workers, serial, against 5b's monolithic `--outputs`: all 7 tables are the same set, peak 4.82 GiB (memguard, process tree), but wall 2633 s (in process 272 s): each of the 58 workers reads the path set in about 40 s and 1.03 GB, which is 97% of worker time and half the budget. A shared, memory-mapped path set is now needed: see [After 7a: the path set](#after-7a-the-path-set) and [Phase 7p](#phase-7p-workers-map-one-shared-path-set-r7-d7-d8). Logs in `/Volumes/Shampoo/staged-index-baseline/phase7a/` |
-| 7p | done | `PathSet::write_file` writes `path_set.bin` once; each worker maps it and installs its segments and nodes as the interners' base before anything interns a path. Changes from the plan: the member table is `u64` entries (`bits \| hash << 32`), so a probe rejects most misses without reading a node; a `PathSet` keeps an offset-to-segment map for a candidate's junction, so `concat` never interns. `Path::cons` now interns a segment as well, which made monolithic ddg 7% slower until `prefix_keys`, `concat` and the other path builders consed from the segment handles they already hold. Checkpoint, ddg (Phase 0's baseline directory is gone, so the reference is HEAD 1ffe9db6c rebuilt, and ddg's 10.3M-path set stands in for Chrome's 7.9M): `path_set_load --mapped` maps the 1.27 GB file in 0.26 s, and the footprint stays at 43 MB after touching every page (resident 963 MB). On workers with a 2 GB budget, serial: all 7 tables match HEAD's monolithic `--outputs`; each worker maps in 0.27 s and 41 MB (7a: 40 s and 1.03 GB). With the old `PATH_BYTES` 57 batches, wall 223 s; refit to 4 B, 9 batches, wall 218 s (7a 2633 s, in process 272 s), peak 5.21 GiB across the process tree, set by the scheduler. Monolithic: 162 s vs HEAD 167 s (fixpoint 55.2 vs 54.3 s), the same 7 tables, and the path interner's bytes are halved (352 vs 687 MB). Linux run not done. Logs in `/Volumes/Shampoo/staged-index-7p/` |
+| 7p | done | `PathSet::write_file` writes `path_set.bin` once; each worker maps it and installs its segments and nodes as the interners' base before anything interns a path. Changes from the plan: the member table is `u64` entries (`bits \| hash << 32`), so a probe rejects most misses without reading a node; a `PathSet` keeps an offset-to-segment map for a candidate's junction, so `concat` never interns. `Path::cons` now interns a segment as well, which made monolithic ddg 7% slower until `prefix_keys`, `concat` and the other path builders consed from the segment handles they already hold. Checkpoint, ddg (Phase 0's baseline directory is gone, so the reference is HEAD 1ffe9db6c rebuilt, and ddg's 10.3M-path set stands in for Chrome's 7.9M): `path_set_load --mapped` maps the 1.27 GB file in 0.26 s, and the footprint stays at 43 MB after touching every page (resident 963 MB). On workers with a 2 GB budget, serial: all 7 tables match HEAD's monolithic `--outputs`; each worker maps in 0.27 s and 41 MB (7a: 40 s and 1.03 GB). With the old `PATH_BYTES` 57 batches, wall 223 s; refit to 4 B, 9 batches, wall 218 s (7a 2633 s, in process 272 s), peak 5.21 GiB across the process tree, set by the scheduler. Monolithic: 162 s vs HEAD 167 s (fixpoint 55.2 vs 54.3 s), the same 7 tables, and the path interner's bytes are halved (352 vs 687 MB). Linux is [deferred](#deferred). Logs in `/Volumes/Shampoo/staged-index-7p/` |
 
 ## Order
 
@@ -563,9 +563,9 @@ Depends on: Phase 6.
   - `worker_failure_fails_run`: a hook makes the worker exit 3; the run fails with its stderr,
     and completed batches stay on disk.
 - New, `ctadl-ascent/src/staged/footprint.rs`: `statm_parses` (Linux only, `cfg`).
-- Run on Linux in the `ghidra-box` VM: `cargo test --workspace -- staged`.
 
-**Gate.** fmt, clippy, `cargo test --workspace`, and the Linux run above.
+**Gate.** fmt, clippy, `cargo test --workspace`. Running on Linux is
+[deferred](#deferred).
 
 ### After 7a: the path set
 
@@ -711,8 +711,6 @@ precomputes so the fixpoint need not. The scheduler already builds all of it
 - Existing: `ctadl-ascent/tests/integration/staged_workers.rs` passes. Its workers now map.
 - New, `staged_workers.rs`: `worker_maps_path_set`: a worker's log reports a mapped path set,
   and its outputs equal the in-process run's.
-- Linux, in `ghidra-box`: `cargo test --workspace -- staged`, and `statm_parses` for the
-  shared field.
 
 **Checkpoint.**
 - `path_set_load --mapped` on Chrome's path set: map time, and footprint after touching every
@@ -722,7 +720,8 @@ precomputes so the fixpoint need not. The scheduler already builds all of it
 - Monolithic ddg wall time against Phase 0's 160 s: `get` gains a branch for the base, and the
   fixpoint reads path nodes constantly.
 
-**Gate.** fmt, clippy, `cargo test --workspace`, the Linux run, and the checkpoint.
+**Gate.** fmt, clippy, `cargo test --workspace`, and the checkpoint. Running on Linux is
+[deferred](#deferred).
 
 ## Phase 8: equivalence harness for in-process tests (R14, part)
 
@@ -811,7 +810,7 @@ still monolithic until Phase 11.
 - `ctadl-ascent/src/main.rs`:
   - `IndexArgs` (`:347-492`) gains `--monolithic` and `--index-budget <SIZE>`. The budget uses
     `parse_size` (`:511-534`); its default is half of physical memory (D6), from
-    `sysctl hw.memsize` or `/proc/meminfo`.
+    `sysctl hw.memsize` (Linux's `/proc/meminfo` is [deferred](#deferred)).
   - `--lsm` gains `requires = "monolithic"`, with an error message that says to add the flag
     (R6). Its doc at `:445-453` and the `-j` doc at `:436-443` change to describe staging.
   - `index_artifacts_to_store` (`:773-815`) passes
@@ -994,6 +993,13 @@ Not touched:
     only in `intent_rules`.
 
 ## Deferred
+
+- Linux. Staged runs are built and tested on macOS only. Left for later:
+  - running `cargo test --workspace -- staged` on Linux, which 7a did once and 7p did not;
+  - checking that the Linux `phys_footprint_mb` (resident pages less shared ones, from
+    `/proc/self/statm`) leaves a worker's mapped path set out, as macOS's footprint does;
+  - Phase 10's default budget from `/proc/meminfo`;
+  - Phase 13's benchmark and calibration on Linux.
 
 - `global_read` is derived in every stage-1 batch, though only `intent_frame` functions use it.
   An `intent_frame(f)` guard would save that memory, but it changes the relation's dump.
