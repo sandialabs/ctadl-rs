@@ -20,7 +20,7 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | 5a | done | stage directory and stage 1 in process; `Plan::whole_sccs` keeps every SCC whole. A batch's `assign` and `const_str_assign` rows come back with instruction 0, since their files drop it and no rule reads it. Checkpoint, ddg with a 2 GB budget, run in process by an uncommitted env var in `cli::index`: 57 batches, all run in 35 s; a batch ends at about 2.1 GB footprint, the whole process included. Peak 5.26 GB (monolithic 12.4 GB), wall 219 s (160 s), but no `[mem cp]` checkpoint is above 2.3 GB, so the peak falls between them. Logs in `/Volumes/Shampoo/staged-index-baseline/phase5a/` |
 | 5b | done | ddg staged with a 2 GB budget against `--outputs` of a monolithic run of the same build: all 7 tables are the same set. Peak 5.37 GB, wall 247 s; the stage-boundary `[mem cp]` lines stay at or under 2.35 GB, and memguard's 2 s polls saw at most 4.37 GiB, so the peak is a short spike. Candidates: `compute_paths` with the facts alive, and the in-process load and save of the whole result, which the CLI path will not do. Frame: 3247 edges; intent stage: 171286 `assign` rows in, 0.26 s. Logs in `/Volumes/Shampoo/staged-index-baseline/phase5b/` |
 | 6 | done | ddg, 2 GB budget, in process, against 5b's monolithic `--outputs`: all 7 tables are the same set, with the default floor (no SCC splits; 57 batches, peak 5.38 GB, wall 272 s) and with floor 1 (183 split SCCs of 646 functions, 991 part runs, at most 7 rounds, largest SCC 50 functions in 2 rounds and 62 part runs; 34 s in split SCCs; peak 5.34 GB, wall 313 s). The ring and mutual-recursion tests rotate three formals instead of extending fields: the path set holds only paths in the facts, so a field-extending ring closes in one round. Every part of an SCC has a callee in another part, so `part_not_rerun_when_callees_stable` checks a cycle whose rerun finds no growth. A split SCC's latest runs move to `batches/<id>/` when it ends, so the frame, intent and assembly readers are unchanged. Logs in `/Volumes/Shampoo/staged-index-baseline/phase6/` |
-| 7a | done | `ctadl index-worker` runs a batch, a round's part or the intent stage; `Process` starts one per job, at most `-j` at once, and a job alone with nothing else ready gets every thread. The scheduler starts the first ready batch or split SCC while its estimate fits the budget beside the running ones, so the floor-1 split SCCs of `process_executor_matches_in_process` run beside other batches. `Process` takes no store: a worker touches only the stage directory. The intent stage runs in a worker only when `plan.intent_batches` is non-empty. Test hooks are one variable, `CTADL_STAGED_TEST_HOOK` (`fail=`, `noise=`), passed through `Process::env`; 7b's footprint hook can join it. Linux: the staged tests and `statm_parses` pass in `ghidra-box`. Checkpoint, ddg with a 2 GB budget on workers, serial, against 5b's monolithic `--outputs`: all 7 tables are the same set, peak 4.82 GiB (memguard, process tree), but wall 2633 s (in process 272 s): each of the 58 workers reads the path set in about 40 s and 1.03 GB, which is 97% of worker time and half the budget. A shared, memory-mapped path set is now needed: see [After 7a: the path set](#after-7a-the-path-set). Logs in `/Volumes/Shampoo/staged-index-baseline/phase7a/` |
+| 7a | done | `ctadl index-worker` runs a batch, a round's part or the intent stage; `Process` starts one per job, at most `-j` at once, and a job alone with nothing else ready gets every thread. The scheduler starts the first ready batch or split SCC while its estimate fits the budget beside the running ones, so the floor-1 split SCCs of `process_executor_matches_in_process` run beside other batches. `Process` takes no store: a worker touches only the stage directory. The intent stage runs in a worker only when `plan.intent_batches` is non-empty. Test hooks are one variable, `CTADL_STAGED_TEST_HOOK` (`fail=`, `noise=`), passed through `Process::env`; 7b's footprint hook can join it. Linux: the staged tests and `statm_parses` pass in `ghidra-box`. Checkpoint, ddg with a 2 GB budget on workers, serial, against 5b's monolithic `--outputs`: all 7 tables are the same set, peak 4.82 GiB (memguard, process tree), but wall 2633 s (in process 272 s): each of the 58 workers reads the path set in about 40 s and 1.03 GB, which is 97% of worker time and half the budget. A shared, memory-mapped path set is now needed: see [After 7a: the path set](#after-7a-the-path-set) and [Phase 7p](#phase-7p-workers-map-one-shared-path-set-r7-d7-d8). Logs in `/Volumes/Shampoo/staged-index-baseline/phase7a/` |
 
 ## Order
 
@@ -32,10 +32,11 @@ Code, help text and docs written by these phases must not cite the spec's or the
 | 3 | 5a, then 5b | 5a: write the stage directory and run stage 1 in process, compared on `summary` and `assign`. 5b: stage 2, stage 3 and assembly, compared on all seven tables. Needs A, B and C's `compare.rs`. Checkpoint after 5a: ddg staged in process, peak against the largest batch |
 | 4 | 6 | split SCCs in rounds, floor down to one function. Checkpoint: rounds on the ring test and on real split SCCs |
 | 5 | 7a | the `index-worker` subcommand, the `Process` executor, footprint over stdout; launches gated on estimates only |
-| 6 | 7b, 8, 9 | 7b: kills, batch splitting, α correction (`executor.rs`, `plan.rs`). 8: the in-process equivalence harness (`ctadl-ascent/src/index_engine.rs`, CI). 9: resume (`run.rs`, `store.rs`), which needs only 7a's scheduler. Checkpoint after 7b: ddg under a budget |
-| 7 | 10 | the CLI runs staged on request: `cli::index` wiring, flags, `EngineRecord`, profile stages, the `index_options()` test helper |
-| 8 | 11 | staged becomes the default |
-| 9 | 12, 13 | 12 is `docs/spec.md`; 13 is the benchmark procedure (`docs/debugging.md`) and calibration (`ctadl-index/src/staged/plan.rs`) |
+| 6 | 7p, 8, 9 | 7p: workers map one shared path set (`immortal/src/id.rs`, `facts.rs`, `path_set.rs`, `staged/`). 8: the in-process equivalence harness (`ctadl-ascent/src/index_engine.rs`, CI). 9: resume (`run.rs`, `store.rs`), which needs only 7a's scheduler. Checkpoint after 7p: ddg on workers, path-set load time and footprint per worker |
+| 7 | 7b | kills, batch splitting, α correction (`executor.rs`, `plan.rs`). After 7p, so its per-worker term is no longer half the budget. Checkpoint: ddg under a budget |
+| 8 | 10 | the CLI runs staged on request: `cli::index` wiring, flags, `EngineRecord`, profile stages, the `index_options()` test helper |
+| 9 | 11 | staged becomes the default |
+| 10 | 12, 13 | 12 is `docs/spec.md`; 13 is the benchmark procedure (`docs/debugging.md`) and calibration (`ctadl-index/src/staged/plan.rs`) |
 
 Prep (track C) pulls forward the parts of later phases that do not depend on staging, one commit
 each. The phase sections below still describe them where they were; those phases skip them.
@@ -58,9 +59,14 @@ Why this order:
 - **The harness before the flip.** Phase 8 can compare every engine test's staged and
   monolithic outputs before Phase 11 makes staged the default. So the flip, which reroutes
   every test, is a one-line change whose effect is already measured.
-- **Shared files in wave 6.** Phase 7b changes how a staged run is executed
-  (`ctadl-ascent/src/staged/`). Phase 8 only calls it through `taint_index_with_config`
-  (`ctadl-ascent/src/index_engine.rs`), which Phase 7 does not touch.
+- **Shared files in wave 6.** Phase 7p changes how a worker gets its path set
+  (`ctadl-ascent/src/staged/batch.rs`, `worker.rs`) and adds a stage file
+  (`ctadl-index/src/staged/store.rs`), which Phase 9 also edits; the two touch different
+  functions. Phase 8 only calls the staged run through `taint_index_with_config`
+  (`ctadl-ascent/src/index_engine.rs`), which neither touches.
+- **Path set before kills.** 7a measured the per-worker path set at half a 2 GB budget. 7b's
+  kills and splits subtract that term, so 7p comes first, and 7b's checkpoint measures batches,
+  not the path set.
 
 Test commands used throughout:
 
@@ -616,10 +622,106 @@ said a memory-mapped path set shared across workers would come later "if it domi
 now does. With a shared path set, a worker would map the paths and splits the scheduler
 built, instead of reading and interning them again (interners: `ctadl-index/src/index_engine/mod.rs:31-37`).
 
-**Open.** Whether this becomes its own phase before 7b, or part of 7b. It matters for 7b
-because 7b's split decision subtracts the per-worker path-set term (Phase 7, "Splitting").
-While that term is half the budget, the ddg checkpoint after 7b would mostly measure the path
-set.
+**Decided.** The scheduler builds the path set once and workers map it:
+[Phase 7p](#phase-7p-workers-map-one-shared-path-set-r7-d7-d8), before 7b (Order, wave 6). A
+cheaper encoding of `paths.parquet` alone would cut only the decode (11 of the 32 s) and keep
+the 0.9 GB per worker.
+
+## Phase 7p: workers map one shared path set (R7, D7, D8)
+
+Depends on: Phase 7a.
+
+**Why.** [After 7a: the path set](#after-7a-the-path-set): every worker spends about 40 s and
+1 GB rebuilding the path set, and 20 of Chrome's 32 s are the splits `PathSet::from_paths`
+precomputes so the fixpoint need not. The scheduler already builds all of it
+(`ctadl-ascent/src/staged/run.rs:69`). Here it writes it once, and workers map it.
+
+**What.**
+- **Plain path nodes.** `PathNode` (`ctadl-index/src/facts.rs:121-127`) holds its first segment
+  as a `SegmentId`, a new `id_handle!` over `cir::PathSegment`, not the segment itself. The node
+  is then three `u32`s, with no pointer in it.
+  - `Path::head` and `PathIter` (`facts.rs:492-532`) still return `&'static cir::PathSegment`,
+    read from the segment interner, so their callers do not change.
+  - `suffix_hash` (`facts.rs:155-163`) hashes the `SegmentId`'s bits, not the segment.
+    `cir::Symbol` is an `ArcIntern<str>`, which hashes by pointer
+    (`internment-0.8.6/src/arc.rs:364-368`), so today a stored hash means nothing in another
+    process.
+- **Interner base.** `IdInterner` (`immortal/src/id.rs:345`) can take a base before its first
+  value: values with ids 1..=N, in a slice it does not own, and a hash index over them in the
+  table's own entry format (`id | hash32 << 32`).
+  - `get` of an id up to N reads the base; above N, the shards as today.
+  - `intern` and `try_get` probe the base index first, then the shards. Shard ids start
+    above N.
+  - Installing a base into an interner that holds a value panics.
+  - The base slice is the mapped file for paths, and a leaked `Vec` for segments, which are
+    far fewer than paths.
+- **The file.** After `ProgramPaths::from_facts`, `run_staged` writes `path_set.bin` beside
+  `paths.parquet` (`run.rs:72`), atomically, before any batch.
+  - Header: a magic, a format version, counts, and the offset of each section, each aligned
+    for its element type.
+  - Segments in file order. Field names are written as strings, since they are interned
+    `ArcIntern<str>`s.
+  - Nodes 1..=N in an order where each node's tail comes before it. They are every member,
+    every tail, and every split key and its tails, with each hash recomputed in the file's
+    segment numbering.
+  - The node index, and the `PathSet` arrays (`path_set.rs:105-125`) in the file's numbering:
+    `bits`, `ranks`, `trailing`, `exact_at`, `exact`, `wild_at`, `wild`, `max_depth`. The member
+    `table`, a `hashbrown::HashTable` today, becomes an open-addressed `u32` array keyed by
+    suffix hash, which a file can hold.
+  - `StageDir` (`ctadl-index/src/staged/store.rs`) gains `path_set_file()`. The run key does not
+    cover the file, since it is derived from the facts the key does cover.
+- **Two backings for `PathSet`.** Its arrays are either owned, built by `from_paths` as today for
+  monolithic and in-process runs, or borrowed from a map. One type and one lookup code path
+  serve both, so the fixpoint does not know which it has.
+- **The worker.** `run_worker` (`ctadl-ascent/src/staged/worker.rs:25`) first maps
+  `path_set.bin` with `memmap2` (already in `Cargo.lock`, used by `lsm/`) and installs the
+  segment base, then the path base, before anything interns a path. `path_set`
+  (`ctadl-ascent/src/staged/batch.rs:132-157`) then returns the mapped `PathSet`, and its
+  log line reports the map time and the footprint it adds. A worker still parses the path
+  strings in its batch's facts, and those lookups now probe the mapped index.
+  - `InProcess` still lends the scheduler's heap path set (`executor.rs:139`). The scheduler
+    process never installs a base.
+- **Footprint.** The mapped pages are clean file pages.
+  - macOS: `phys_footprint` should leave them out. The checkpoint confirms this.
+  - Linux: `phys_footprint_mb` (`ctadl-index/src/index_engine/mod.rs:836-860`) reports
+    resident minus shared, the first two `statm` fields less the third.
+  - `worker_bytes` (`ctadl-index/src/staged/plan.rs:47-58`): `PATH_BYTES` becomes what a
+    worker allocates around the map, measured here, and Phase 13 refits it.
+
+**Files.**
+- `immortal/src/id.rs`: the base.
+- `ctadl-index/src/facts.rs`: `SegmentId`, `PathNode`, `suffix_hash`, `head`, `PathIter`.
+- `ctadl-index/src/index_engine/path_set.rs`: two backings, the `u32` member table, write and
+  map.
+- `ctadl-index/src/staged/store.rs`: `path_set_file()`.
+- `ctadl-index/src/index_engine/mod.rs`: the Linux footprint.
+- `ctadl-index/src/staged/plan.rs`: `PATH_BYTES`.
+- `ctadl-ascent/src/staged/{run,batch,worker}.rs`: write the file; map it in a worker.
+- `ctadl-index/Cargo.toml`: `memmap2`.
+- `ctadl-index/examples/path_set_load.rs`: a `--mapped` mode.
+
+**Tests.**
+- `immortal`: a base's values keep their ids, lookups find them, new values get ids above N,
+  and installing into a non-empty interner panics.
+- `path_set.rs`: write a path set built by `from_paths`, read the file's arrays back without
+  installing a base, and check that every member, split and trailing split agrees by content.
+  A unit test cannot install a base, since its process has interned paths already.
+- `facts.rs`: hashes and lookups unchanged in meaning: the existing path tests pass.
+- Existing: `ctadl-ascent/tests/integration/staged_workers.rs` passes. Its workers now map.
+- New, `staged_workers.rs`: `worker_maps_path_set`: a worker's log reports a mapped path set,
+  and its outputs equal the in-process run's.
+- Linux, in `ghidra-box`: `cargo test --workspace -- staged`, and `statm_parses` for the
+  shared field.
+
+**Checkpoint.**
+- `path_set_load --mapped` on Chrome's path set: map time, and footprint after touching every
+  page.
+- ddg with a 2 GB budget on workers, against 5b's monolithic `--outputs`: the same 7 tables,
+  each worker's path-set line, and wall time against 7a's 2633 s and in-process 272 s.
+- Monolithic ddg wall time against Phase 0's 160 s: `get` gains a branch for the base, and the
+  fixpoint reads path nodes constantly.
+
+**Gate.** fmt, clippy, `cargo test --workspace`, the Linux run, and the checkpoint.
 
 ## Phase 8: equivalence harness for in-process tests (R14, part)
 
@@ -834,18 +936,21 @@ Depends on: Phase 11.
 
 | File | Change | Phase |
 | --- | --- | --- |
-| `ctadl-index/src/index_engine/mod.rs` | `intent_rules`; `IntentInput`/`IntentOutput`; `ProgramPaths`, `EngineInput::from_slice`, `seed_paths`; `IndexConfig.staged`; Linux footprint; stats; default | 1, 2, 5, 7, 10, 11 |
+| `ctadl-index/src/index_engine/mod.rs` | `intent_rules`; `IntentInput`/`IntentOutput`; `ProgramPaths`, `EngineInput::from_slice`, `seed_paths`; `IndexConfig.staged`; Linux footprint; stats; default | 1, 2, 5, 7, 7p, 10, 11 |
 | `ctadl-index/engines/{serial,par,lsm}/src/lib.rs` | include `intent_rules`; serial gains `IntentProg`, `run_intent` | 1 |
 | `ctadl-index/src/index_engine/dump.rs` | `DumpCol` skips `staged`; `dump_outputs`; staged dump routing | 5, 10 |
 | `ctadl-index/src/index_engine/profile.rs` | per-stage entries | 10 |
-| `ctadl-index/src/lib.rs`, `ctadl-index/Cargo.toml` | `pub mod staged`; `sha2` | 3 |
-| `ctadl-index/src/staged/{mod,store}.rs` | stage directory, atomic writes, markers, key | 3, 5, 6, 9 |
-| `ctadl-index/src/staged/plan.rs` | call graph, SCCs, estimate, packing, split | 4, 6, 7, 13 |
+| `ctadl-index/src/lib.rs`, `ctadl-index/Cargo.toml` | `pub mod staged`; `sha2`; `memmap2` | 3, 7p |
+| `ctadl-index/src/staged/{mod,store}.rs` | stage directory, atomic writes, markers, key; `path_set_file` | 3, 5, 6, 7p, 9 |
+| `immortal/src/id.rs` | interner base | 7p |
+| `ctadl-index/src/facts.rs` | `SegmentId`; plain `PathNode`; process-independent `suffix_hash` | 7p |
+| `ctadl-index/src/index_engine/path_set.rs` | owned or mapped backing; `u32` member table; write and map | 7p |
+| `ctadl-index/src/staged/plan.rs` | call graph, SCCs, estimate, packing, split; `PATH_BYTES` | 4, 6, 7, 7p, 13 |
 | `ctadl-index/src/staged/shuffle.rs` | seeded shuffle | 4 |
 | `ctadl-index/src/facts/parquet.rs` | streaming, filtered reader | 3 |
 | `ctadl-index/src/facts/schema.rs` | stage-file schemas | 3 |
 | `ctadl-ascent/src/lib.rs` | `pub mod staged` | 5 |
-| `ctadl-ascent/src/staged/{mod,run,batch,executor,compare,tests}.rs` | staged run, rounds, executors, comparison | 5, 6, 7, 9, 10 |
+| `ctadl-ascent/src/staged/{mod,run,batch,executor,worker,compare,tests}.rs` | staged run, rounds, executors, comparison; mapped path set | 5, 6, 7, 7p, 9, 10 |
 | `ctadl-ascent/src/staged/footprint.rs` | worker footprint sampler | 7 |
 | `ctadl-ascent/src/index_engine.rs` | dispatch on `staged`; check mode | 5, 8 |
 | `ctadl-ascent/src/index_engine_tests.rs` | intent test; `canonical` gains tables; reference configs | 1, 5, 8, 11 |
