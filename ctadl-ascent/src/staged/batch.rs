@@ -3,13 +3,14 @@
 //! summaries, and the intent stage ([`run_intent_stage`]).
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::error::Error;
 use crate::facts::{IdMap, Path};
-use crate::index_engine::path_set::PathSetRef;
+use crate::index_engine::path_set::{PathSet, PathSetRef};
 use crate::index_engine::{EngineInput, Parallelism, ProgramPaths, phys_footprint_mb, run_engine};
+use ctadl_index::facts::can_install_path_base;
 use ctadl_index::facts::parquet::Reader;
 use ctadl_index::facts::schema;
 use ctadl_index::index_engine::IntentOutput;
@@ -128,8 +129,10 @@ pub fn run_intent_stage(stage: &StageDir) -> Result<(), Error> {
 /// share it, so it is read once per process.
 static PATH_SET: Mutex<Option<(RunKey, PathSetRef)>> = Mutex::new(None);
 
-/// The path set of the run in `stage`, read from its paths file unless this process holds it.
-fn path_set(stage: &StageDir) -> Result<PathSetRef, Error> {
+/// The path set of the run in `stage`, unless this process holds it already: mapped from its
+/// frozen path set file by a process that has interned no path yet, as a worker has not, and
+/// otherwise read from its paths file and frozen anew.
+pub fn path_set(stage: &StageDir) -> Result<PathSetRef, Error> {
     let key = RunKey::load(stage)
         .ok_or_else(|| Error::Staged(format!("no run key in {}", stage.root().display())))?;
     let mut cached = PATH_SET.lock().unwrap();
@@ -140,14 +143,19 @@ fn path_set(stage: &StageDir) -> Result<PathSetRef, Error> {
     }
     let start = Instant::now();
     let before = phys_footprint_mb();
-    let paths: Vec<Path> = Reader::new(stage.paths_file())
-        .read_vec::<schema::paths::Record>(&schema::paths::COLUMNS)?
-        .into_iter()
-        .map(|(p,)| p)
-        .collect();
-    let path_set = ProgramPaths::from_paths(paths).path_set;
+    let (path_set, how) = if can_install_path_base() {
+        let mapped = PathSet::map_file(&stage.path_set_file())?;
+        (PathSetRef(Arc::new(mapped)), "mapped")
+    } else {
+        let paths: Vec<Path> = Reader::new(stage.paths_file())
+            .read_vec::<schema::paths::Record>(&schema::paths::COLUMNS)?
+            .into_iter()
+            .map(|(p,)| p)
+            .collect();
+        (ProgramPaths::from_paths(paths).path_set, "read")
+    };
     log::info!(
-        "read the path set of {} paths in {:.2} s, {:.1} MB",
+        "{how} the path set of {} paths in {:.2} s, {:.1} MB",
         path_set.len(),
         start.elapsed().as_secs_f64(),
         phys_footprint_mb() - before

@@ -1,4 +1,6 @@
-//! Times loading a `paths.parquet` the way a staged worker does: decode, then freeze.
+//! Times loading a `paths.parquet` the way a staged worker did: decode, then freeze. With
+//! `--mapped`, the file is a `path_set.bin` instead, and it times mapping it the way a worker
+//! does now, and what touching every page of it adds to the footprint.
 use ctadl_index::facts::Path;
 use ctadl_index::facts::parquet::Reader;
 use ctadl_index::facts::schema;
@@ -7,9 +9,12 @@ use ctadl_index::index_engine::phys_footprint_mb;
 use std::time::Instant;
 
 fn main() {
-    let file = std::env::args()
-        .nth(1)
-        .expect("usage: path_set_load <paths.parquet>");
+    let file = std::env::args().nth(1).expect(
+        "usage: path_set_load <paths.parquet> [--decode|--steps] | <path_set.bin> --mapped",
+    );
+    if std::env::args().nth(2).as_deref() == Some("--mapped") {
+        return mapped(&file);
+    }
     let t = Instant::now();
     let paths: Vec<Path> = Reader::new(&file)
         .read_vec::<schema::paths::Record>(&schema::paths::COLUMNS)
@@ -98,4 +103,44 @@ fn main() {
         freeze.as_secs_f64()
     );
     drop(set);
+}
+
+/// Maps `file`, a `path_set.bin`, as the first thing this process does with paths.
+fn mapped(file: &str) {
+    let before = phys_footprint_mb();
+    let t = Instant::now();
+    let set = PathSet::map_file(std::path::Path::new(file)).unwrap();
+    let map = t.elapsed();
+    let mapped_mb = phys_footprint_mb();
+    // Touch every page: each member's splits, and each node of each path they name.
+    let t = Instant::now();
+    let mut segments = 0usize;
+    let mut splits = 0usize;
+    let mut raw = 1u32;
+    let mut seen = 0;
+    while seen < set.len() {
+        if let Some(p) = Path::from_raw(raw).filter(|p| set.contains(p)) {
+            seen += 1;
+            let s = set.splits(&p);
+            splits += s.exact.len() + s.wild.len();
+            for &(key, rest) in s.exact.iter().chain(s.wild) {
+                segments += key.len() + rest.len();
+            }
+            segments += p.len();
+            let _ = set.split_trailing_offset(&p);
+        }
+        raw += 1;
+    }
+    let touch = t.elapsed();
+    println!(
+        "{} paths, {splits} splits, {segments} segments walked; map {:.3} s, touch {:.2} s",
+        set.len(),
+        map.as_secs_f64(),
+        touch.as_secs_f64()
+    );
+    println!(
+        "footprint: {before:.0} MB before, {mapped_mb:.0} MB after map, {:.0} MB after touching \
+         every page",
+        phys_footprint_mb()
+    );
 }

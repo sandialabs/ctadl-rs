@@ -14,7 +14,7 @@ use serde::Serialize;
 
 pub use immortal::Stats;
 
-use crate::facts::{CallDispatchKey, PathId, Str};
+use crate::facts::{CallDispatchKey, PathId, SegmentId, Str};
 use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
@@ -63,6 +63,7 @@ impl MemoryProfile {
             ("Str", Str::stats()),
             ("CallDispatchKey", CallDispatchKey::stats()),
             ("Path", PathId::stats()),
+            ("PathSegment", SegmentId::stats()),
         ]);
     }
 

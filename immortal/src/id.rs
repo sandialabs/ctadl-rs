@@ -14,6 +14,12 @@
 //! shard. Each shard has room for just under `2^(32 - log2 S)` values; running out
 //! panics with the handle type's name.
 //!
+//! **Base.** An interner can take a base before its first value: values with ids `1..=N`, in a
+//! `'static` slice it does not own, such as a mapped file, and an open-addressed hash index over
+//! them in the tables' entry format. `get` of an id up to `N` reads the slice; `intern` and
+//! `try_get` probe the index before the shards, and shard ids are offset by `N`. So another
+//! process can hand over a numbered set of values without this one interning them again.
+//!
 //! **Unsized values.** `str` and `[T]` slots hold a 4-byte offset and a length into a
 //! per-shard bump arena, so a value costs no malloc block of its own.
 //!
@@ -35,7 +41,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 /// Slots in a shard's first bucket; bucket `b` holds `FIRST_BUCKET << b`.
 const FIRST_BUCKET: u64 = 64;
@@ -337,6 +343,17 @@ struct Ptrs<Slot, U> {
     chunks: [AtomicPtr<U>; CHUNKS],
 }
 
+/// The base of an [`IdInterner`]: values `1..=len`, and a hash index over them. Written once,
+/// under every shard's write lock, before any value is interned.
+struct Base<Slot> {
+    /// Published with Release after the other fields.
+    len: AtomicU32,
+    values: AtomicPtr<Slot>,
+    /// Open-addressed, `mask + 1` entries of `id | hash32 << 32`, 0 for empty.
+    index: AtomicPtr<u64>,
+    mask: AtomicUsize,
+}
+
 /// A sharded, append-only interner from `T` to [`Id<B>`](Id).
 ///
 /// `B` is the brand: there is exactly one `IdInterner` per `B` (see [`new`](Self::new)),
@@ -345,6 +362,7 @@ struct Ptrs<Slot, U> {
 pub struct IdInterner<T: ?Sized + Internable, B: 'static, const S: usize = 256> {
     shards: [Shard; S],
     ptrs: [Ptrs<T::Slot, T::Unit>; S],
+    base: Base<T::Slot>,
     /// The most values a shard may hold; below `CAP` only in tests.
     limit: u32,
     _marker: PhantomData<(fn() -> B, &'static T)>,
@@ -422,6 +440,12 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
                     chunks: [const { AtomicPtr::new(ptr::null_mut()) }; CHUNKS],
                 }
             }; S],
+            base: Base {
+                len: AtomicU32::new(0),
+                values: AtomicPtr::new(ptr::null_mut()),
+                index: AtomicPtr::new(ptr::null_mut()),
+                mask: AtomicUsize::new(0),
+            },
             limit,
             _marker: PhantomData,
         }
@@ -443,7 +467,17 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
     /// shard's length with Acquire and found the id below it.
     #[inline]
     unsafe fn value(&self, raw: u32) -> &'static T {
-        let (shard, local) = Self::decode(raw);
+        // Relaxed: the caller happens after the id was issued, which happened after the base
+        // was installed, if it was (`install_base`).
+        let n = self.base.len.load(Ordering::Relaxed);
+        if raw <= n {
+            let values = self.base.values.load(Ordering::Relaxed);
+            // SAFETY: `raw` is in `1..=n`, so it names one of the base's `n` values, which
+            // are `'static`. A base is installed only where a slot is the value itself
+            // (`install_base`), so `T::load` reads no chunk.
+            return unsafe { T::load(&*values.add(raw as usize - 1), &self.ptrs[0].chunks) };
+        }
+        let (shard, local) = Self::decode(raw - n);
         let (b, i) = split(local as u64, FIRST_BUCKET);
         let ptrs = &self.ptrs[shard];
         // Relaxed: the caller's happens-before covers this pointer's store too.
@@ -474,11 +508,47 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
             .map(|&e| Id::new(e as u32))
     }
 
+    /// The base value equal to `value`, whose hash is `h32`, given the base's length `n`.
+    #[inline]
+    fn find_base(&self, n: u32, h32: u32, value: &T) -> Option<Id<B>> {
+        if n == 0 {
+            return None;
+        }
+        // Relaxed: the caller loaded `n` with Acquire, or under a shard lock, after
+        // `install_base` stored these.
+        let mask = self.base.mask.load(Ordering::Relaxed);
+        let index = self.base.index.load(Ordering::Relaxed);
+        let mut pos = h32 as usize & mask;
+        // An index with no empty entry would probe forever, so stop after a full lap.
+        for _ in 0..=mask {
+            // SAFETY: `pos <= mask`, and the index has `mask + 1` entries.
+            let e = unsafe { *index.add(pos) };
+            if e == 0 {
+                return None;
+            }
+            let raw = e as u32;
+            // An entry naming no base value is skipped, so a bad index cannot read outside the
+            // base; it only fails to find.
+            if (e >> 32) as u32 == h32
+                && (1..=n).contains(&raw)
+                // SAFETY: `raw` is in `1..=n`, and this happens after the install.
+                && unsafe { self.value(raw) } == value
+            {
+                return Some(Id::new(raw));
+            }
+            pos = (pos + 1) & mask;
+        }
+        None
+    }
+
     /// The id of `value`, interning it if it is new.
     pub fn intern(&self, value: &T) -> Id<B> {
         let hash = hash64(value);
         let s = (hash >> 32) as usize & (S - 1);
         let h32 = hash as u32;
+        if let Some(id) = self.find_base(self.base.len.load(Ordering::Acquire), h32, value) {
+            return id;
+        }
         let shard = &self.shards[s];
         if let Some(id) = self.find(&shard.lock.read().table, h32, value) {
             return id;
@@ -488,12 +558,21 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
         if let Some(id) = self.find(&locked.table, h32, value) {
             return id;
         }
+        // Under the lock, which `install_base` held too: a base installed since the probe
+        // above is seen here, and the value may be in it.
+        let n = self.base.len.load(Ordering::Relaxed);
+        if let Some(id) = self.find_base(n, h32, value) {
+            return id;
+        }
         let local = locked.len;
-        if local >= self.limit {
+        let full = || -> ! {
             panic!(
                 "IdInterner<{}>: shard {s} is full at {local} values",
                 std::any::type_name::<B>()
-            );
+            )
+        };
+        if local >= self.limit {
+            full();
         }
         let (b, i) = split(local as u64, FIRST_BUCKET);
         let ptrs = &self.ptrs[s];
@@ -522,6 +601,12 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
         // id, which nobody has until below.
         unsafe { bucket.add(i).write(slot) };
         let raw = ((local + 1) << Self::LOG2_S) | s as u32;
+        // Shard ids sit above the base's. The slot is written but unreachable, as when the
+        // arena runs out.
+        let raw = match raw.checked_add(n) {
+            Some(raw) if raw as u64 <= self.max_raw() => raw,
+            _ => full(),
+        };
         locked
             .table
             .insert_unique(table_hash(h32), raw as u64 | (h32 as u64) << 32, |&e| {
@@ -535,17 +620,36 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
     /// The id of `value` if it was interned. Never inserts.
     pub fn try_get(&self, value: &T) -> Option<Id<B>> {
         let hash = hash64(value);
+        if let Some(id) = self.find_base(self.base.len.load(Ordering::Acquire), hash as u32, value)
+        {
+            return Some(id);
+        }
         let shard = &self.shards[(hash >> 32) as usize & (S - 1)];
         self.find(&shard.lock.read().table, hash as u32, value)
     }
 
     /// The id whose bits are `raw`, if this interner issued it. Takes no lock.
     pub fn from_raw(&self, raw: u32) -> Option<Id<B>> {
-        let (shard, local) = Self::decode(raw);
-        // `local` wraps to `u32::MAX` when `raw` has no local bits (including `raw == 0`),
-        // and no shard ever reaches that length. Acquire pairs with `intern`'s Release, so
-        // the caller happens after the slot's write.
+        // Acquire pairs with `install_base`'s Release.
+        let n = self.base.len.load(Ordering::Acquire);
+        if raw <= n {
+            return (raw != 0).then(|| Id::new(raw));
+        }
+        let (shard, local) = Self::decode(raw - n);
+        // `local` wraps to `u32::MAX` when `raw - n` has no local bits, and no shard ever
+        // reaches that length. Acquire pairs with `intern`'s Release, so the caller happens
+        // after the slot's write.
         (local < self.shards[shard].len.load(Ordering::Acquire)).then(|| Id::new(raw))
+    }
+
+    /// The largest id a shard value may take: `limit` values in the top shard.
+    fn max_raw(&self) -> u64 {
+        (self.limit as u64) << Self::LOG2_S | (S as u64 - 1)
+    }
+
+    /// How many values the base holds; 0 with no base.
+    pub fn base_len(&self) -> u32 {
+        self.base.len.load(Ordering::Acquire)
     }
 
     /// Whether this interner issued `id`. Always true for an `Id` that came from it; for
@@ -569,13 +673,76 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
 
     /// How many values this interner holds and the heap bytes it uses.
     pub fn stats(&self) -> Stats {
-        let mut stats = Stats::default();
+        // The base is not counted in `bytes`: this interner does not own it.
+        let mut stats = Stats {
+            entries: self.base_len() as usize,
+            bytes: 0,
+        };
         for shard in &self.shards {
             let locked = shard.lock.read();
             stats.entries += locked.len as usize;
             stats.bytes += locked.table.allocation_size() + locked.slot_bytes + locked.arena_bytes;
         }
         stats
+    }
+}
+
+/// The hash index [`IdInterner::install_base`] takes over `values[first..]`, which get ids
+/// `first + 1..=values.len()`. The values before `first` keep their ids, but no lookup finds them.
+/// Half full at most.
+///
+/// It hashes as the interner does, so `values` may be of any type that hashes as the interner's
+/// values do: an index built in one process serves another only where a value hashes the same
+/// in both, by contents and not by address.
+pub fn base_index<T: Hash>(values: &[T], first: usize) -> Vec<u64> {
+    let slots = ((values.len() - first.min(values.len())) * 2)
+        .next_power_of_two()
+        .max(2);
+    let mask = slots - 1;
+    let mut index = vec![0u64; slots];
+    for (i, value) in values.iter().enumerate().skip(first) {
+        let raw = u32::try_from(i + 1).expect("a base fits u32 ids");
+        let h32 = hash64(value) as u32;
+        let mut pos = h32 as usize & mask;
+        while index[pos] != 0 {
+            pos = (pos + 1) & mask;
+        }
+        index[pos] = raw as u64 | (h32 as u64) << 32;
+    }
+    index
+}
+
+impl<T: Internable<Slot = T>, B: 'static, const S: usize> IdInterner<T, B, S> {
+    /// Installs `values` as the base: `values[i]` gets id `i + 1`, and lookups find the values
+    /// `index` names, which [`base_index`] builds. An index entry that names
+    /// no value is never followed.
+    ///
+    /// Panics if the interner holds a value, or a base, or if `index`'s length is not a power
+    /// of two, or if no shard id would fit above the base.
+    pub fn install_base(&self, values: &'static [T], index: &'static [u64]) {
+        let n = u32::try_from(values.len()).expect("a base fits u32 ids");
+        assert!(index.len().is_power_of_two(), "a base index's length");
+        assert!(
+            (n as u64) < self.max_raw(),
+            "IdInterner<{}>: a base of {n} values leaves no ids",
+            std::any::type_name::<B>()
+        );
+        // Every write lock, so that no `intern` inserts while the base appears.
+        let guards: Vec<_> = self.shards.iter().map(|s| s.lock.write()).collect();
+        assert!(
+            guards.iter().all(|g| g.len == 0) && self.base.len.load(Ordering::Relaxed) == 0,
+            "IdInterner<{}>: a base is installed only into an empty interner",
+            std::any::type_name::<B>()
+        );
+        self.base
+            .values
+            .store(values.as_ptr().cast_mut(), Ordering::Relaxed);
+        self.base
+            .index
+            .store(index.as_ptr().cast_mut(), Ordering::Relaxed);
+        self.base.mask.store(index.len() - 1, Ordering::Relaxed);
+        self.base.len.store(n, Ordering::Release);
+        drop(guards);
     }
 }
 
@@ -842,6 +1009,71 @@ mod tests {
         assert_eq!(I256::decode(top), (255, I256::CAP - 1));
         assert!(split(I1::CAP as u64 - 1, FIRST_BUCKET).0 < BUCKETS);
         assert!(split(u32::MAX as u64, FIRST_CHUNK).0 < CHUNKS);
+    }
+
+    #[test]
+    fn base_values_keep_their_ids() {
+        struct Based;
+        static I: IdInterner<u64, Based, 4> =
+            // SAFETY: the only interner branded `Based`.
+            unsafe { IdInterner::new() };
+        // Value 0 has id 1 but is left out of the index, as a placeholder.
+        let values: &'static [u64] = Vec::leak((0..scale(1000, 50) as u64).collect());
+        let index = Vec::leak(base_index(values, 1));
+        I.install_base(values, index);
+        assert_eq!(I.base_len(), values.len() as u32);
+        for (i, v) in values.iter().enumerate().skip(1) {
+            let id = I.intern(v);
+            assert_eq!(id.raw(), i as u32 + 1);
+            assert_eq!(I.try_get(v), Some(id));
+            assert_eq!(*I.get(id), *v);
+            assert_eq!(I.from_raw(id.raw()), Some(id));
+        }
+        // The placeholder keeps its id but no lookup finds it.
+        assert_eq!(*I.get(I.from_raw(1).unwrap()), 0);
+        assert_eq!(I.try_get(&0), None);
+        // New values get ids above the base, and are found again.
+        let n = values.len() as u32;
+        let fresh: Vec<Id<Based>> = (0..scale(500, 30) as u64)
+            .map(|k| I.intern(&(1_000_000 + k)))
+            .collect();
+        for (k, id) in fresh.iter().enumerate() {
+            assert!(id.raw() > n, "{}", id.raw());
+            assert_eq!(*I.get(*id), 1_000_000 + k as u64);
+            assert_eq!(I.intern(&(1_000_000 + k as u64)), *id);
+            assert_eq!(I.from_raw(id.raw()), Some(*id));
+        }
+        assert_eq!(I.from_raw(0), None);
+        // A shard id's bits less the base, with no local bits, was never issued.
+        for shard in 0..4 {
+            assert_eq!(
+                I.from_raw(n + shard),
+                if shard == 0 { Some(Id::new(n)) } else { None }
+            );
+        }
+        assert_eq!(I.stats().entries, values.len() + fresh.len());
+    }
+
+    #[test]
+    fn base_into_a_used_interner_panics() {
+        id_handle! { struct H(u64) in 4 shards; }
+        H::intern(&7);
+        let values: &'static [u64] = Vec::leak(vec![1, 2, 3]);
+        let index = Vec::leak(base_index(values, 0));
+        let err = std::panic::catch_unwind(|| H::interner().install_base(values, index))
+            .expect_err("the interner holds a value");
+        let msg = err.downcast_ref::<String>().unwrap();
+        assert!(msg.contains("empty interner"), "{msg}");
+    }
+
+    #[test]
+    fn a_base_twice_panics() {
+        id_handle! { struct H(u64) in 4 shards; }
+        let values: &'static [u64] = Vec::leak(vec![1, 2, 3]);
+        let index = Vec::leak(base_index(values, 0));
+        H::interner().install_base(values, index);
+        assert_eq!(H::intern(&2).raw(), 2);
+        assert!(std::panic::catch_unwind(|| H::interner().install_base(values, index)).is_err());
     }
 
     #[test]

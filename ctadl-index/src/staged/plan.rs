@@ -44,9 +44,10 @@ pub const VARIABLE_BYTES: u64 = 64;
 /// The summary rows a function is expected to have per formal, in thousandths, beyond those its
 /// facts seed. Measured 290, 410 and 890 on the two apps and a synthetic program.
 pub const SUMMARY_MILLIROWS_PER_FORMAL: u64 = 400;
-/// Bytes a worker holds per member of the program's path set: the frozen path set's share
-/// (measured 91 and 101 B) and the interned path's (66 and 76 B).
-pub const PATH_BYTES: u64 = 176;
+/// Bytes a worker holds per member of the program's path set beside the path set file it maps,
+/// whose clean pages its footprint leaves out: the segments and the tables it builds on mapping.
+/// Measured 4 B on an Android app of 10.3M paths (40.7 MB per worker).
+pub const PATH_BYTES: u64 = 4;
 /// A worker's footprint before it reads anything. Not fitted: a whole index run of a small
 /// synthetic program peaked at 80 MB, which bounds it.
 pub const WORKER_BASE_BYTES: u64 = 32 << 20;

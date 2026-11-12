@@ -112,14 +112,23 @@ lazy_static::lazy_static! {
     pub static ref EMPTY_STR: Str = Str::from("");
 }
 
-/// One cons cell of an interned [`Path`]: its first segment and the handle of the rest.
+immortal::id_handle! {
+    /// A handle to an interned [`cir::PathSegment`], the head of a [`PathNode`].
+    pub struct SegmentId(cir::PathSegment) in 16 shards;
+}
+
+/// One cons cell of an interned [`Path`]: the handle of its first segment and of the rest.
 ///
 /// Every suffix of an interned path is itself interned, so a path's tail is one arena read.
 /// Equality reads `head` and `tail` only, and hashing reads `hash` only, which is a function of
 /// them.
+///
+/// Three `u32`s with no pointer, so a file can hold nodes that a process maps as its interner's
+/// base ([`crate::index_engine::path_set`]): `tail` is 0 for `None`.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct PathNode {
-    head: cir::PathSegment,
+    head: SegmentId,
     tail: Option<PathId>,
     /// The suffix hash `mix(head, tail's hash)`, so the hash of `segments · rest` folds from
     /// `rest`'s without walking it.
@@ -148,14 +157,96 @@ immortal::id_handle! {
 }
 
 /// The suffix hash of the empty path.
-const EMPTY_PATH_HASH: u32 = 0;
+pub(crate) const EMPTY_PATH_HASH: u32 = 0;
 
-/// The suffix hash of `head · tail`, given `tail`'s.
+/// A [`PathNode`] as a file holds it: the bits of its head's [`SegmentId`], of its tail's
+/// [`PathId`] (0 for none) and its suffix hash.
+pub(crate) type RawNode = [u32; 3];
+
+/// Hashes as a [`PathNode`] whose suffix hash it holds does, so an index over a file's nodes can
+/// be built from their [`RawNode`]s.
+struct NodeHash(u32);
+
+impl std::hash::Hash for NodeHash {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.0);
+    }
+}
+
+/// The hash index of a file's path nodes for [`install_path_base`]. Node 0 is the placeholder
+/// that holds [`Path::EMPTY`]'s id, so the index leaves it out.
+pub(crate) fn path_base_index(nodes: &[RawNode]) -> Vec<u64> {
+    let hashes: Vec<NodeHash> = nodes.iter().map(|n| NodeHash(n[2])).collect();
+    immortal::base_index(&hashes, 1)
+}
+
+/// Whether this process can take a path base: it has interned no path and no segment.
+pub fn can_install_path_base() -> bool {
+    PathId::stats().entries == 0 && SegmentId::stats().entries == 0
+}
+
+/// Makes `segments` segments `1..=K` and `nodes` paths `1..=N` of this process, as numbered in
+/// the file they came from, so that a path's bits there are its bits here. `nodes[0]`, whose bits
+/// are [`Path::EMPTY`]'s, is a placeholder no lookup finds. `node_index` is
+/// [`path_base_index`] of `nodes`. Every path interned afterwards gets bits above `N`.
+///
+/// Fails, installing nothing, if this process has interned a path or a segment, or if the segments
+/// repeat, or if a node names a segment that is not one of `segments`, or a tail that does not come
+/// before it.
+pub(crate) fn install_path_base(
+    segments: Vec<cir::PathSegment>,
+    nodes: &'static [RawNode],
+    node_index: &'static [u64],
+) -> Result<(), String> {
+    if !can_install_path_base() {
+        return Err("this process has interned paths already".to_string());
+    }
+    let k = segments.len();
+    if segments.iter().collect::<hashbrown::HashSet<_>>().len() != k {
+        return Err("a segment repeats".to_string());
+    }
+    if !nodes.is_empty() && !node_index.len().is_power_of_two() {
+        return Err("the node index's length is not a power of two".to_string());
+    }
+    for (i, &[head, tail, _]) in nodes.iter().enumerate() {
+        // Node `i` has bits `i + 1`, and its tail must be an earlier node other than the
+        // placeholder.
+        if !(1..=k).contains(&(head as usize)) || !(tail == 0 || (2..=i as u32).contains(&tail)) {
+            return Err(format!(
+                "node {} has segment {head} of {k} and tail {tail}",
+                i + 1
+            ));
+        }
+    }
+    let segment_index = immortal::base_index(&segments, 0);
+    SegmentId::interner().install_base(Vec::leak(segments), Vec::leak(segment_index));
+    if !nodes.is_empty() {
+        // SAFETY: `PathNode` is `repr(C)` with three 4-byte fields, as `RawNode` is: `head` a
+        // `NonZeroU32` that each node's is (checked above), `tail` an `Option` of one whose
+        // `None` is 0, and `hash` a `u32`. Every `head` is a segment of the base just
+        // installed, and every `tail` a node before it, so each is an id the interners issue.
+        let nodes: &'static [PathNode] =
+            unsafe { std::slice::from_raw_parts(nodes.as_ptr().cast(), nodes.len()) };
+        PathId::interner().install_base(nodes, node_index);
+    }
+    Ok(())
+}
+
+/// The suffix hash of `head · tail`, given `tail`'s. It hashes the segment's id, not the segment,
+/// so it is the same in every process that numbers segments the same; a `cir::Symbol` hashes by
+/// address.
 #[inline]
-pub(crate) fn suffix_hash(head: &cir::PathSegment, tail_hash: u32) -> u32 {
-    use std::hash::{Hash, Hasher};
+pub(crate) fn suffix_hash(head: SegmentId, tail_hash: u32) -> u32 {
+    suffix_hash_raw(head.raw(), tail_hash)
+}
+
+/// [`suffix_hash`] of the segment whose id has bits `head`.
+#[inline]
+pub(crate) fn suffix_hash_raw(head: u32, tail_hash: u32) -> u32 {
+    use std::hash::Hasher;
     let mut h = rustc_hash::FxHasher::default();
-    head.hash(&mut h);
+    h.write_u32(head);
     h.write_u32(tail_hash);
     // FxHash mixes its low output bits poorly; fold a full multiply over it.
     let m = (h.finish() as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15);
@@ -230,7 +321,13 @@ impl Path {
     /// offsets, and `head` is not a zero offset.
     #[inline]
     fn cons(head: cir::PathSegment, tail: Path) -> Path {
-        let hash = suffix_hash(&head, tail.suffix_hash());
+        Path::cons_id(SegmentId::intern(&head), tail)
+    }
+
+    /// [`Path::cons`] of a segment already interned.
+    #[inline]
+    fn cons_id(head: SegmentId, tail: Path) -> Path {
+        let hash = suffix_hash(head, tail.suffix_hash());
         Path::from_id(Some(PathId::intern(&PathNode {
             head,
             tail: tail.id(),
@@ -252,7 +349,50 @@ impl Path {
     /// The first segment and the rest, in one arena read. `None` for the empty path.
     #[inline]
     pub(crate) fn uncons(self) -> Option<(&'static cir::PathSegment, Path)> {
-        self.node().map(|n| (&n.head, Path::from_id(n.tail)))
+        self.node().map(|n| (n.head.get(), Path::from_id(n.tail)))
+    }
+
+    /// As [`Path::uncons`], with the first segment's handle.
+    #[inline]
+    pub(crate) fn uncons_id(self) -> Option<(SegmentId, Path)> {
+        self.node().map(|n| (n.head, Path::from_id(n.tail)))
+    }
+
+    /// The handles of this path's segments, from the innermost out.
+    fn segment_ids(self) -> Vec<SegmentId> {
+        let mut out = Vec::new();
+        let mut p = self;
+        while let Some((head, tail)) = p.uncons_id() {
+            out.push(head);
+            p = tail;
+        }
+        out
+    }
+
+    /// The path of `segments`, which are a prefix of a path's segments, and so normal already:
+    /// the normal form's equations are between neighbors only.
+    fn from_prefix(segments: &[SegmentId]) -> Path {
+        segments
+            .iter()
+            .rev()
+            .fold(Path::EMPTY, |tail, &head| Path::cons_id(head, tail))
+    }
+
+    /// This path without its last segment. The empty path for the empty path.
+    pub fn without_last(&self) -> Path {
+        let comps = self.segment_ids();
+        Path::from_prefix(&comps[..comps.len().saturating_sub(1)])
+    }
+
+    /// The path whose bits are `raw`, unchecked.
+    ///
+    /// # Safety
+    ///
+    /// `raw` is 1, [`Path::EMPTY`]'s bits, or the bits of a [`PathId`] this process issued.
+    #[inline]
+    pub(crate) unsafe fn from_raw_unchecked(raw: u32) -> Path {
+        // SAFETY: neither is 0.
+        Path(unsafe { NonZeroU32::new_unchecked(raw) })
     }
 
     /// Creates a path from a sequence of accesses
@@ -319,7 +459,7 @@ impl Path {
             match (a.node(), b.node()) {
                 (None, _) => return Ordering::Less,
                 (_, None) => return Ordering::Greater,
-                (Some(x), Some(y)) => match x.head.cmp(&y.head) {
+                (Some(x), Some(y)) => match x.head.get().cmp(y.head.get()) {
                     Ordering::Equal => (a, b) = (Path::from_id(x.tail), Path::from_id(y.tail)),
                     unequal => return unequal,
                 },
@@ -365,7 +505,7 @@ impl Path {
 
     /// Concatenates self onto other, returning new path
     pub fn concat(&self, other: &Self) -> Self {
-        Self::from_accesses(self.iter().chain(other.iter()).cloned())
+        prepend_onto(self, *other)
     }
 
     /// Substitutes given prefix of path with new_prefix and returns the new path.
@@ -415,12 +555,12 @@ impl Path {
     ///
     /// `rest` is a tail of this path, so it shares its storage; each `key` is interned anew.
     pub fn prefix_keys(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
+        let comps = self.segment_ids();
         let mut out = Vec::with_capacity(comps.len() + 1);
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
         for k in 0..=comps.len() {
-            let key = Path::from_accesses(comps[..k].iter().cloned());
+            let key = Path::from_prefix(&comps[..k]);
             out.push((key, rest));
             rest = rest.tail();
         }
@@ -435,16 +575,16 @@ impl Path {
     /// [`Path::prefix_keys`], so a wild match excludes it. A `#value` component splits the same
     /// way, `rest` beginning with `#value`, and matches every `key.[m]`.
     pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
-        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
+        let comps = self.segment_ids();
         let mut out = Vec::new();
         // `rest` is `comps[k..]`, a tail of this path.
         let mut rest = *self;
         for k in 0..comps.len() {
             if matches!(
-                comps[k],
+                comps[k].get(),
                 cir::PathSegment::Offset(_) | cir::PathSegment::Value
             ) {
-                let key = Path::from_accesses(comps[..k].iter().cloned());
+                let key = Path::from_prefix(&comps[..k]);
                 out.push((key, rest));
             }
             rest = rest.tail();
@@ -468,12 +608,10 @@ impl Path {
     /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
     /// path and for a path whose last component is a symbol.
     pub fn split_trailing_offset(&self) -> Option<(Path, i64)> {
-        let comps: Vec<cir::PathSegment> = self.iter().cloned().collect();
-        match comps.last() {
-            Some(cir::PathSegment::Offset(cir::Offset(m))) => {
-                let m = *m;
-                let key = Path::from_accesses(comps[..comps.len() - 1].iter().cloned());
-                Some((key, m))
+        let comps = self.segment_ids();
+        match comps.last()?.get() {
+            cir::PathSegment::Offset(cir::Offset(m)) => {
+                Some((Path::from_prefix(&comps[..comps.len() - 1]), *m))
             }
             _ => None,
         }
@@ -490,7 +628,7 @@ impl Path {
     /// The first component. `None` for the empty path.
     #[inline]
     pub fn head(&self) -> Option<&'static cir::PathSegment> {
-        self.node().map(|n| &n.head)
+        self.node().map(|n| n.head.get())
     }
 
     /// The value of the first component if it is an offset.
@@ -528,7 +666,7 @@ impl Iterator for PathIter {
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.0.node()?;
         self.0 = Path::from_id(node.tail);
-        Some(&node.head)
+        Some(node.head.get())
     }
 }
 
@@ -544,7 +682,7 @@ impl Serialize for Path {
                     None => serializer.serialize_unit_variant("Node", 0, "Nil"),
                     Some(node) => {
                         let mut state = serializer.serialize_struct("Node", 2)?;
-                        state.serialize_field("head", &node.head)?;
+                        state.serialize_field("head", node.head.get())?;
                         state.serialize_field("tail", &Node(Path::from_id(node.tail)))?;
                         state.end()
                     }
@@ -1741,7 +1879,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, path: &Path) -
 fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     use cir::{Offset, PathSegment};
     // `new_prefix` is a short program path prefix (usually 0–2 components).
-    let comps: Vec<PathSegment> = new_prefix.iter().cloned().collect();
+    let comps = new_prefix.segment_ids();
     if comps.is_empty() {
         return suffix; // result is exactly the shared suffix — no interning at all
     }
@@ -1751,7 +1889,7 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
     // - two offsets sum, and a zero sum vanishes;
     // - `[k].#value` is `#value`, so an offset before a `#value` head is dropped;
     // - `#value.[k]` and `#value.#value` are `#value`, so after a `#value` the head is dropped.
-    let (mut acc, upto) = match (comps.last(), suffix.head()) {
+    let (mut acc, upto) = match (comps.last().map(|s| s.get()), suffix.head()) {
         (Some(PathSegment::Offset(Offset(a))), Some(PathSegment::Offset(Offset(b)))) => {
             let sum = a + b;
             let rest = if sum == 0 {
@@ -1768,8 +1906,8 @@ fn prepend_onto(new_prefix: &Path, suffix: Path) -> Path {
         _ => (suffix, comps.len()),
     };
     // Prepend the remaining `new_prefix` components so iteration yields them head-first.
-    for comp in comps[..upto].iter().rev() {
-        acc = Path::cons(comp.clone(), acc);
+    for &comp in comps[..upto].iter().rev() {
+        acc = Path::cons_id(comp, acc);
     }
     acc
 }
@@ -2114,8 +2252,65 @@ mod tests {
         assert_eq!(p.tail().tail().tail().tail(), Path::EMPTY);
         assert_eq!(p.len(), 4);
         let node = p.node().unwrap();
-        assert_eq!(node.hash, suffix_hash(&node.head, p.tail().suffix_hash()));
+        assert_eq!(node.hash, suffix_hash(node.head, p.tail().suffix_hash()));
         assert_eq!(Path::EMPTY.suffix_hash(), EMPTY_PATH_HASH);
+    }
+
+    /// A file's node index, built from raw nodes, probes as the path interner does, which
+    /// hashes the nodes themselves.
+    #[test]
+    fn path_base_index_hashes_as_the_interner() {
+        let paths = [".a.b.[4].c", ".x", ".x.#value"].map(|s| Path::parse(s).unwrap());
+        let nodes: Vec<PathNode> = paths.iter().map(|p| p.node().unwrap().clone()).collect();
+        let raw: Vec<RawNode> = nodes
+            .iter()
+            .map(|n| [n.head.raw(), n.tail.map_or(0, PathId::raw), n.hash])
+            .collect();
+        assert_eq!(path_base_index(&raw), immortal::base_index(&nodes, 1));
+    }
+
+    /// `concat` prepends onto the shared suffix, and agrees with rebuilding the whole path; the
+    /// prefix splits agree with rebuilding each key.
+    #[test]
+    fn concat_and_splits_agree_with_rebuilding() {
+        use cir::PathSegment;
+        let parts = [
+            "",
+            ".x",
+            ".[2]",
+            ".[-2]",
+            ".x.[2]",
+            ".[2].x",
+            ".x.y",
+            ".#value",
+            ".x.#value",
+            ".deref",
+            ".[2].deref",
+            ".x.[2].deref.#value",
+            ".[3].#value",
+        ];
+        for a in parts {
+            let pa = Path::parse(a).unwrap();
+            for b in parts {
+                let pb = Path::parse(b).unwrap();
+                let want = Path::from_accesses(pa.iter().chain(pb.iter()).cloned());
+                assert_eq!(pa.concat(&pb), want, "{a} · {b}");
+            }
+            let comps: Vec<PathSegment> = pa.iter().cloned().collect();
+            for (k, (key, rest)) in pa.prefix_keys().into_iter().enumerate() {
+                assert_eq!(key, Path::from_accesses(comps[..k].iter().cloned()));
+                assert_eq!(key.concat(&rest), pa);
+            }
+            for (key, rest) in pa.prefix_keys_wild() {
+                assert_eq!(key.concat(&rest), pa, "{a}");
+            }
+            if let Some((key, m)) = pa.split_trailing_offset() {
+                assert_eq!(
+                    key.concat(&Path::from_accesses([PathSegment::Offset(Offset(m))])),
+                    pa
+                );
+            }
+        }
     }
 
     #[test]

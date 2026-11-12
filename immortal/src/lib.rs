@@ -1,6 +1,6 @@
 mod id;
 
-pub use id::{Id, IdInterner, Internable, Stats};
+pub use id::{Id, IdInterner, Internable, Stats, base_index};
 
 use hashbrown::HashTable;
 use parking_lot::RwLock;

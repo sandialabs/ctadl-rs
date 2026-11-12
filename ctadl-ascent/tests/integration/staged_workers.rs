@@ -131,3 +131,31 @@ fn worker_failure_fails_run() {
     assert!(stage.is_done(Stage::Batch(0)));
     assert!(!stage.is_done(Stage::Batch(1)));
 }
+
+/// Each worker maps the run's frozen path set instead of reading and freezing its paths, and its
+/// tables are those of the run on the calling thread.
+#[test]
+fn worker_maps_path_set() {
+    let (facts, id_map) = facts("poly.tnt");
+    let in_process = tempfile::tempdir().unwrap();
+    let workers = tempfile::tempdir().unwrap();
+    run(
+        facts.clone(),
+        ONE_SCC_PER_BATCH,
+        in_process.path(),
+        &mut InProcess::new(Parallelism::Serial, Some(&id_map)),
+    )
+    .unwrap();
+    let mut executor = Process::new(worker_exe(), Parallelism::Serial).env("RUST_LOG", "info");
+    run(facts, ONE_SCC_PER_BATCH, workers.path(), &mut executor).unwrap();
+    let diff = compare_index_dirs(in_process.path(), workers.path(), Some(&id_map)).unwrap();
+    assert!(diff.is_empty(), "in process < > workers\n{diff}");
+    let logs: Vec<String> = std::fs::read_dir(StageDir::new(workers.path()).logs_dir())
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    assert!(!logs.is_empty());
+    for log in logs {
+        assert!(log.contains("mapped the path set of"), "{log}");
+    }
+}

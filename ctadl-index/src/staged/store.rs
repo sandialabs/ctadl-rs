@@ -8,6 +8,7 @@ Its layout:
 | --- | --- |
 | `facts/` | the program's facts, one file per relation |
 | `paths.parquet` | the program-wide path set |
+| `path_set.bin` | the same set frozen, with its splits, for workers to map |
 | `plan.json` | the plan of batches |
 | `config.json` | the run's [`KeyConfig`] |
 | `key` | the [`RunKey`] of the facts and configuration the files were made from |
@@ -110,6 +111,14 @@ impl StageDir {
 
     pub fn paths_file(&self) -> PathBuf {
         self.root.join("paths.parquet")
+    }
+
+    /// The frozen path set that [`PathSet::write_file`] writes and a worker maps. The run key does
+    /// not cover it: it is derived from the facts, which the key covers.
+    ///
+    /// [`PathSet::write_file`]: crate::index_engine::path_set::PathSet::write_file
+    pub fn path_set_file(&self) -> PathBuf {
+        self.root.join("path_set.bin")
     }
 
     pub fn plan_file(&self) -> PathBuf {

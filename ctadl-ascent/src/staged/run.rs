@@ -44,8 +44,9 @@ pub struct SccRounds {
 /// Computes the index of `facts` in stages and writes its tables to `index_dir`, keeping the
 /// stage directory under it.
 ///
-/// Before any batch runs, it plans the batches, writes the facts, the path set, the plan and
-/// the run key to the stage directory, and drops the facts. It then runs the batches in plan
+/// Before any batch runs, it plans the batches, writes the facts, the path set (as rows, and
+/// frozen for workers to map), the plan and the run key to the stage directory, and drops the
+/// facts. It then runs the batches in plan
 /// order on `executor`, the global frame and the intent stage, and streams their outputs into
 /// the tables. A stage directory already there is removed first.
 pub fn run_staged(
@@ -74,6 +75,11 @@ pub fn run_staged(
             .rows_per_group(STAGE_ROWS_PER_GROUP)
             .write_iter(&schema::paths::COLUMNS, paths)
     })?;
+    write_atomic(&stage.path_set_file(), |tmp| path_set.write_file(tmp))?;
+    log::debug!(
+        "[mem cp] staged: path set written: {:.1} MB",
+        phys_footprint_mb()
+    );
     plan.save(&stage)?;
     write_facts(&stage, &mut facts, &plan)?;
     log::debug!(

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::Error;
 use crate::index_engine::Parallelism;
+use crate::staged::batch::path_set;
 use crate::staged::executor::Job;
 use crate::staged::footprint;
 use ctadl_index::staged::store::StageDir;
@@ -21,7 +22,8 @@ pub const NOISE_BYTES: usize = 2 << 20;
 pub const TEST_HOOK_FAIL_STATUS: i32 = 3;
 
 /// Runs `job` of the run in `stage_dir`, on the engine of `parallelism`, while reporting this
-/// process's footprint on stdout.
+/// process's footprint on stdout. It maps the run's path set first, before anything interns a
+/// path, so that the job's paths are numbered as the file numbers them.
 pub fn run_worker(stage_dir: &Path, job: Job, parallelism: Parallelism) -> Result<(), Error> {
     footprint::report_to_stdout()?;
     if test_hook("fail", job) {
@@ -34,7 +36,9 @@ pub fn run_worker(stage_dir: &Path, job: Job, parallelism: Parallelism) -> Resul
             log::trace!("{line}");
         }
     }
-    job.run(&StageDir::from_root(stage_dir), parallelism, None)
+    let stage = StageDir::from_root(stage_dir);
+    path_set(&stage)?;
+    job.run(&stage, parallelism, None)
 }
 
 /// Whether [`TEST_HOOK_VAR`] sets hook `name` for `job`.

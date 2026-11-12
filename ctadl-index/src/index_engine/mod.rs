@@ -833,8 +833,10 @@ pub fn phys_footprint_mb() -> f64 {
     }
 }
 
-/// Elsewhere, the resident set size from `/proc/self/statm` in MB. Unlike the macOS footprint, it
-/// leaves out swapped and compressed pages. Returns -1.0 without `/proc`, or on error.
+/// Elsewhere, the resident pages from `/proc/self/statm` less the shared ones, in MB. Leaving out
+/// shared pages leaves out a mapped file's clean pages, as the macOS footprint does. Unlike that
+/// footprint, it also leaves out swapped and compressed pages. Returns -1.0 without `/proc`, or on
+/// error.
 #[cfg(not(target_os = "macos"))]
 pub fn phys_footprint_mb() -> f64 {
     #[cfg(unix)]
@@ -843,7 +845,7 @@ pub fn phys_footprint_mb() -> f64 {
         let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         let pages = std::fs::read_to_string("/proc/self/statm")
             .ok()
-            .and_then(|statm| statm_resident_pages(&statm));
+            .and_then(|statm| statm_private_pages(&statm));
         if let (Ok(page_bytes @ 1..), Some(pages)) = (u64::try_from(page_bytes), pages) {
             return (pages * page_bytes) as f64 / (1024.0 * 1024.0);
         }
@@ -851,21 +853,24 @@ pub fn phys_footprint_mb() -> f64 {
     -1.0
 }
 
-/// The resident pages in the text of `/proc/<pid>/statm`: its second field.
+/// The resident pages that are not shared, in the text of `/proc/<pid>/statm`: its second field
+/// less its third.
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
-fn statm_resident_pages(statm: &str) -> Option<u64> {
-    statm.split_ascii_whitespace().nth(1)?.parse().ok()
+fn statm_private_pages(statm: &str) -> Option<u64> {
+    let mut fields = statm.split_ascii_whitespace().skip(1);
+    let resident: u64 = fields.next()?.parse().ok()?;
+    let shared: u64 = fields.next()?.parse().ok()?;
+    Some(resident.saturating_sub(shared))
 }
 
 #[cfg(test)]
 #[test]
 fn statm_parses() {
-    assert_eq!(
-        statm_resident_pages("12345 678 90 12 0 3456 0\n"),
-        Some(678)
-    );
-    assert_eq!(statm_resident_pages("12345"), None);
-    assert_eq!(statm_resident_pages("12345 x 90"), None);
+    assert_eq!(statm_private_pages("12345 678 90 12 0 3456 0\n"), Some(588));
+    assert_eq!(statm_private_pages("12345"), None);
+    assert_eq!(statm_private_pages("12345 678"), None);
+    assert_eq!(statm_private_pages("12345 x 90"), None);
+    assert_eq!(statm_private_pages("12345 678 x"), None);
 }
 
 /// Computes `alias_of_formal`: the whole-variable copy-closure of the formals and globals over
@@ -982,9 +987,9 @@ fn with_value_paths(paths: Vec<(Path,)>) -> Vec<(Path,)> {
         let segments: Vec<PathSegment> = p.iter().cloned().collect();
         match segments.iter().position(is_value) {
             None => base.push(p),
-            Some(i) if i + 1 == segments.len() => {
-                base.push(Path::from_accesses(segments[..i].iter().cloned()))
-            }
+            // `p` is `q.#value`, and `q` its prefix, which a trailing split gives without
+            // interning `q`'s segments anew.
+            Some(i) if i + 1 == segments.len() => base.push(p.without_last()),
             // `#value·rest`: never admissible.
             Some(_) => {}
         }
