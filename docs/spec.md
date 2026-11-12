@@ -126,14 +126,39 @@ separately.
    SSA, copy propagation) runs over the project's imports; each pass is correct, or an
    approximation, with respect to [ir.md](ir.md)'s semantics. Codegen turns IR, call-resolution policy and
    propagation models into Datalog facts; the index engine runs them to fixpoint, producing
-   the call graph and summaries, saved as parquet.
+   the call graph and summaries, saved as parquet. By default the fixpoint runs in stages, so
+   that peak memory follows the largest stage rather than the program:
+   1. **Batches** of functions, callees first. The call graph's SCCs are packed into batches
+      whose estimated memory fits a budget (`--index-budget`, half of physical memory by
+      default). Each batch runs the index rules on its functions' facts and its callees'
+      summaries, and writes its functions' summaries and assignments and the flows between
+      globals it found. A recursive SCC too large for the budget is split into parts that run
+      in rounds, each part rerun while a callee in another part gained summaries, until a
+      round reruns none.
+   2. **The global frame**: the union of every batch's flows between globals.
+   3. **The intent rules**, over the functions that send intents and the frame, when any
+      function does.
+
+   The tables are then streamed from the stage files into `index/`. `--monolithic` runs one
+   fixpoint over the whole program instead; it computes the same tables and is the reference a
+   staged run is checked against.
 
 ### 4.2 Analysis
 
 - **Engines.** Index rules are written once as Datalog in Rust with
   [Ascent](https://s-arash.github.io/ascent/) and compiled into engines that differ only in
   execution and storage: serial, parallel (rayon), and serial with large relations in
-  memory-mapped LSM stores.
+  memory-mapped LSM stores. The LSM engine runs only monolithic (`--lsm` requires
+  `--monolithic`). A staged run runs each batch, round part and the intent stage in a worker
+  process of its own (`ctadl index-worker`), as many at once as `-j` and the budget allow; a
+  job running alone gets every thread. Workers read their inputs only from the stage directory,
+  and all map one frozen copy of the program's path set. The scheduler holds only the plan, and
+  starts the next ready batch while the estimates of the running ones and it fit the budget.
+  When the workers' footprints go over the budget, it kills the largest worker holding more than
+  one function and requeues its job, split in two if that worker alone was over the budget; if
+  every worker holds one function, it kills all but the largest, which runs alone. After a kill,
+  every estimate is scaled by the largest ratio of footprint to estimate seen. The budget does
+  not cover the scheduler itself.
 - **Semantics.** What the analysis computes is [ir.md](ir.md)'s least labeling: local flow is
   its assignment rules, flow- and path-insensitive, with order kept only as far as SSA keeps
   it. The engines approximate it, and every deviation is a row of the
@@ -201,6 +226,18 @@ The store, under `$XDG_STATE_HOME` by default, holds `imports/` and `projects/`.
 IR and VMT (`bitcode`) plus source info (parquet), stamped with a format version. A project
 holds its import list, index configuration, and index facts and summaries (parquet,
 inspectable with DuckDB; see [debugging.md](debugging.md)).
+
+`ctadl index` removes the index's stamp before it writes anything there, and writes it last, so
+an index reads as absent until every table is on disk. A staged run keeps its stage directory
+in `index/staging/`: the facts partitioned by batch, the path set, the plan, each batch's and
+round's outputs, the frame and the intent outputs. Every file is written atomically, and each
+stage, once all its files are written, gets a done marker. The directory also holds a run key,
+a hash of the facts and of the configuration that changes the plan or the tables (the budget
+included, the engine not). A run writes its facts and plan to a fresh directory and computes
+the key; if it equals the stored one, it resumes: it discards the files no marker vouches for
+and skips the stages that are done, and a split SCC stopped midway goes on from its parts'
+latest runs. Otherwise the fresh directory replaces the old one. `index/staging/` is removed
+after the stamp.
 
 ## 5. Verification
 
