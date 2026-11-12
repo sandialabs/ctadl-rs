@@ -20,6 +20,7 @@ use crate::index_engine::Parallelism;
 use crate::index_engine::path_set::PathSetRef;
 use crate::staged::batch::{run_batch, run_intent_stage, share_path_set};
 use crate::staged::footprint;
+use crate::staged::worker::{TEST_HOOK_VAR, test_hook};
 use ctadl_index::staged::plan::BatchId;
 use ctadl_index::staged::store::StageDir;
 
@@ -104,12 +105,28 @@ pub trait Executor {
     /// it ends, and it may use every thread.
     fn start(&mut self, stage: &StageDir, job: Job, alone: bool) -> Result<(), Error>;
 
-    /// Waits for a started job to end, and returns it with how it ended. Call it only while a
-    /// started job has not been returned.
-    fn wait(&mut self) -> (Job, Result<(), Error>);
+    /// Waits a short while for a started job to end, and returns it with how it ended, or
+    /// `None` if none ended, so that the caller can look at the [`Executor::footprints`] again.
+    /// Call it only while a started job has not been returned.
+    fn wait(&mut self) -> Option<(Job, Result<(), Error>)>;
+
+    /// The latest footprint, in bytes, of each started job that has not been returned and has
+    /// reported one. None for an executor whose jobs report none.
+    fn footprints(&self) -> Vec<(Job, u64)> {
+        Vec::new()
+    }
+
+    /// Stops `job`, started and not returned, and forgets it: [`Executor::wait`] never returns
+    /// it. It may have ended already, and written its outputs and marker.
+    fn kill(&mut self, job: Job);
 
     /// Stops every started job that has not been returned, and forgets it.
     fn stop_all(&mut self);
+
+    /// What the scheduler multiplies every estimate by: 1, unless a test hook says otherwise.
+    fn estimate_scale(&self) -> f64 {
+        1.0
+    }
 }
 
 /// Runs each job on the calling thread when it starts, one at a time, on the engine of
@@ -146,10 +163,16 @@ impl Executor for InProcess<'_> {
         Ok(())
     }
 
-    fn wait(&mut self) -> (Job, Result<(), Error>) {
-        self.ended
-            .pop_front()
-            .expect("waiting for a job, but none was started")
+    fn wait(&mut self) -> Option<(Job, Result<(), Error>)> {
+        Some(
+            self.ended
+                .pop_front()
+                .expect("waiting for a job, but none was started"),
+        )
+    }
+
+    fn kill(&mut self, job: Job) {
+        self.ended.retain(|(j, _)| *j != job);
     }
 
     fn stop_all(&mut self) {
@@ -162,7 +185,8 @@ impl Executor for InProcess<'_> {
 /// run the serial engine.
 ///
 /// A worker's stdout carries its footprint samples, and its stderr goes to a file in the stage
-/// directory's logs, so that a verbose worker never blocks on a full pipe.
+/// directory's logs, so that a verbose worker never blocks on a full pipe. The scheduler reads
+/// the samples through [`Executor::footprints`] and stops a worker with [`Executor::kill`].
 pub struct Process {
     exe: PathBuf,
     parallelism: Parallelism,
@@ -182,14 +206,33 @@ struct Worker {
     reader: Option<JoinHandle<()>>,
 }
 
-/// A worker's footprint samples, in MB, as `f64` bits.
-#[derive(Default)]
+/// A worker's footprint samples, in MB, as `f64` bits. `latest` is [`Footprint::NONE`] until
+/// the first sample.
 struct Footprint {
     latest: AtomicU64,
     peak: AtomicU64,
 }
 
+impl Default for Footprint {
+    fn default() -> Self {
+        Self {
+            latest: AtomicU64::new(Self::NONE),
+            peak: AtomicU64::new(0f64.to_bits()),
+        }
+    }
+}
+
 impl Footprint {
+    const NONE: u64 = u64::MAX;
+
+    /// The latest sample, in bytes.
+    fn latest(&self) -> Option<u64> {
+        match self.latest.load(Ordering::Relaxed) {
+            Self::NONE => None,
+            bits => Some((f64::from_bits(bits).max(0.0) * MB) as u64),
+        }
+    }
+
     fn record(&self, mb: f64) {
         self.latest.store(mb.to_bits(), Ordering::Relaxed);
         if mb > f64::from_bits(self.peak.load(Ordering::Relaxed)) {
@@ -201,6 +244,8 @@ impl Footprint {
         f64::from_bits(self.peak.load(Ordering::Relaxed))
     }
 }
+
+const MB: f64 = (1u64 << 20) as f64;
 
 /// The most of a failed worker's log that its error quotes.
 const LOG_TAIL_BYTES: u64 = 16 << 10;
@@ -272,6 +317,40 @@ impl Process {
         })
     }
 
+    /// The first worker that has exited, with how it ended.
+    fn reap(&mut self) -> Option<(Job, Result<(), Error>)> {
+        for i in 0..self.workers.len() {
+            match self.workers[i].child.try_wait() {
+                Ok(Some(status)) => return Some(Self::ended(self.workers.swap_remove(i), status)),
+                Ok(None) => {}
+                Err(e) => {
+                    let worker = self.workers.swap_remove(i);
+                    return Some((
+                        worker.job,
+                        Err(Error::from(e))
+                            .err_context(|| format!("waiting for the worker of {}", worker.job)),
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// Kills `worker` and waits for it to exit.
+    fn stop(mut worker: Worker, how: &str) {
+        let _ = worker.child.kill();
+        let _ = worker.child.wait();
+        if let Some(reader) = worker.reader.take() {
+            let _ = reader.join();
+        }
+        log::debug!(
+            "{}: worker {how} after {:.2} s, peak footprint {:.1} MB",
+            worker.job,
+            worker.started.elapsed().as_secs_f64(),
+            worker.footprint.peak()
+        );
+    }
+
     /// How the worker that exited with `status` ended.
     fn ended(mut worker: Worker, status: ExitStatus) -> (Job, Result<(), Error>) {
         if let Some(reader) = worker.reader.take() {
@@ -313,40 +392,49 @@ impl Executor for Process {
         Ok(())
     }
 
-    fn wait(&mut self) -> (Job, Result<(), Error>) {
+    /// Returns once a worker exits, a worker reports its footprint, or [`POLL`] passes.
+    fn wait(&mut self) -> Option<(Job, Result<(), Error>)> {
         assert!(
             !self.workers.is_empty(),
             "waiting for a job, but none was started"
         );
-        loop {
-            for i in 0..self.workers.len() {
-                match self.workers[i].child.try_wait() {
-                    Ok(Some(status)) => return Self::ended(self.workers.swap_remove(i), status),
-                    Ok(None) => {}
-                    Err(e) => {
-                        let worker = self.workers.swap_remove(i);
-                        return (
-                            worker.job,
-                            Err(Error::from(e)).err_context(|| {
-                                format!("waiting for the worker of {}", worker.job)
-                            }),
-                        );
-                    }
-                }
-            }
-            let _ = self.wake.1.recv_timeout(POLL);
+        if let Some(ended) = self.reap() {
+            return Some(ended);
         }
+        let _ = self.wake.1.recv_timeout(POLL);
+        // Drain the samples that came meanwhile, so the next wait waits for a new one.
+        while self.wake.1.try_recv().is_ok() {}
+        self.reap()
+    }
+
+    fn footprints(&self) -> Vec<(Job, u64)> {
+        self.workers
+            .iter()
+            .filter_map(|w| Some((w.job, w.footprint.latest()?)))
+            .collect()
+    }
+
+    fn kill(&mut self, job: Job) {
+        let i = self
+            .workers
+            .iter()
+            .position(|w| w.job == job)
+            .unwrap_or_else(|| panic!("killing {job}, which is not running"));
+        Self::stop(self.workers.swap_remove(i), "killed");
     }
 
     fn stop_all(&mut self) {
-        for mut worker in self.workers.drain(..) {
-            let _ = worker.child.kill();
-            let _ = worker.child.wait();
-            if let Some(reader) = worker.reader.take() {
-                let _ = reader.join();
-            }
-            log::debug!("{}: worker stopped", worker.job);
+        for worker in self.workers.drain(..) {
+            Self::stop(worker, "stopped");
         }
+    }
+
+    fn estimate_scale(&self) -> f64 {
+        self.env
+            .iter()
+            .filter(|(k, _)| k == TEST_HOOK_VAR)
+            .find_map(|(_, v)| test_hook(&v.to_string_lossy(), "scale", None)?.parse().ok())
+            .unwrap_or(1.0)
     }
 }
 

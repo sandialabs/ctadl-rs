@@ -71,6 +71,29 @@ pub struct CallGraph {
 }
 
 impl CallGraph {
+    /// The graph of `functions`, sorted, with `edges` between their nodes, caller first, and an
+    /// estimate per node.
+    fn new(functions: Vec<FunctionId>, mut edges: Vec<(u32, u32)>, estimates: Vec<u64>) -> Self {
+        edges.sort_unstable();
+        edges.dedup();
+        let mut callees_at = Vec::with_capacity(functions.len() + 1);
+        let mut at = 0;
+        for n in 0..functions.len() as u32 {
+            callees_at.push(at as u32);
+            while at < edges.len() && edges[at].0 == n {
+                at += 1;
+            }
+        }
+        callees_at.push(edges.len() as u32);
+        let callees = edges.into_iter().map(|(_, callee)| callee).collect();
+        CallGraph {
+            functions,
+            callees_at,
+            callees,
+            estimates,
+        }
+    }
+
     /// The node of `f`, if it has facts.
     pub fn node(&self, f: FunctionId) -> Option<u32> {
         self.functions.binary_search(&f).ok().map(|n| n as u32)
@@ -172,19 +195,6 @@ pub fn call_graph(facts: &IndexFacts) -> CallGraph {
         instantiated[caller as usize] += summary_rows(&counts[callee as usize]);
         edges.push((caller, callee));
     }
-    edges.sort_unstable();
-    edges.dedup();
-    let mut callees_at = Vec::with_capacity(functions.len() + 1);
-    let mut at = 0;
-    for n in 0..functions.len() as u32 {
-        callees_at.push(at as u32);
-        while at < edges.len() && edges[at].0 == n {
-            at += 1;
-        }
-    }
-    callees_at.push(edges.len() as u32);
-    let callees = edges.into_iter().map(|(_, callee)| callee).collect();
-
     let estimates = counts
         .iter()
         .zip(&instantiated)
@@ -195,12 +205,7 @@ pub fn call_graph(facts: &IndexFacts) -> CallGraph {
                 .saturating_add(VARIABLE_BYTES.saturating_mul(c.variables))
         })
         .collect();
-    CallGraph {
-        functions,
-        callees_at,
-        callees,
-        estimates,
-    }
+    CallGraph::new(functions, edges, estimates)
 }
 
 pub type BatchId = u32;
@@ -220,10 +225,13 @@ pub struct Batch {
     pub id: BatchId,
     /// Sorted.
     pub functions: Vec<FunctionId>,
+    /// Each function's estimate, in bytes, in the order of `functions`.
+    pub estimates: Vec<u64>,
     /// The callees outside the batch, sorted, each with the batch that holds it.
     pub callees: Vec<(FunctionId, BatchId)>,
     /// The batches that must be done before this one starts: those that hold its callees, less
-    /// the other parts of its own split SCC. Sorted, and all earlier than this one.
+    /// the other parts of its own split SCC. Sorted, and all earlier than this one unless
+    /// [`Plan::split_batch`] made one of them.
     pub deps: Vec<BatchId>,
     /// Bytes, including one worker's fixed cost.
     pub estimate: u64,
@@ -250,7 +258,8 @@ pub struct SplitScc {
     pub parts: Vec<BatchId>,
 }
 
-/// The batches of a staged run, in an order that runs every batch after its callees'.
+/// The batches of a staged run, in an order that runs every batch after its callees', except
+/// the batches [`Plan::split_batch`] adds at the end.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
     /// The memory budget, in bytes.
@@ -315,6 +324,250 @@ impl Plan {
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("a plan serializes")
     }
+
+    /// Writes the descriptors of `batches`, then the plan file, as [`Plan::save`] does, after
+    /// [`Plan::split_batch`] changed them.
+    pub fn save_batches(&self, stage: &StageDir, batches: &[BatchId]) -> Result<(), Error> {
+        for id in batches {
+            write_json(
+                &Batch::descriptor_file(stage, *id),
+                &self.batches[*id as usize],
+            )?;
+        }
+        write_json(&stage.plan_file(), self)
+    }
+
+    /// Splits batch `id`, of two functions or more, in two, given `calls`, the `call` edges
+    /// from its functions (caller, callee). The batch keeps its id and the first half of a
+    /// callees-first order of its functions; the second half is a new batch, whose id is the
+    /// next free one. The halves' estimates are as near equal as the cut allows.
+    ///
+    /// - A batch of whole SCCs, more than one, is cut between two of them, so the first half
+    ///   calls nothing in the second.
+    /// - A batch of one recursive SCC is cut between two functions, and becomes a new split SCC
+    ///   of two parts.
+    /// - A part of a split SCC is cut between two functions, and the second half becomes the
+    ///   part after it.
+    ///
+    /// Every batch that calls into the second half then names it, and depends on it unless it
+    /// is a part of the same split SCC. A batch's dependencies may then come after it in the
+    /// plan, and the scheduler orders them by its dependencies alone.
+    ///
+    /// Returns `None`, and changes nothing, for a batch of one function.
+    pub fn split_batch(
+        &mut self,
+        id: BatchId,
+        calls: &[(FunctionId, FunctionId)],
+    ) -> Option<Split> {
+        let batch = &self.batches[id as usize];
+        if batch.functions.len() < 2 {
+            return None;
+        }
+        let node = |f: FunctionId| batch.functions.binary_search(&f).ok().map(|n| n as u32);
+        let edges = calls
+            .iter()
+            .filter_map(|(caller, callee)| Some((node(*caller)?, node(*callee)?)))
+            .collect();
+        let graph = CallGraph::new(batch.functions.clone(), edges, batch.estimates.clone());
+        let nodes: Vec<u32> = (0..graph.functions.len() as u32).collect();
+        // Runs of nodes that stay together, callees first, and how the batch is split.
+        let (runs, kind): (Vec<Vec<u32>>, SplitKind) = match batch.part {
+            Some(part) => (
+                callees_first(&graph, &nodes, |_| true)
+                    .into_iter()
+                    .map(|n| vec![n])
+                    .collect(),
+                SplitKind::Part(part.scc),
+            ),
+            None => {
+                let sccs: Sccs<u32, u32> = Sccs::new(&graph);
+                if sccs.num_sccs() > 1 {
+                    let mut runs = vec![Vec::new(); sccs.num_sccs()];
+                    for n in nodes {
+                        runs[sccs.scc(n) as usize].push(n);
+                    }
+                    (runs, SplitKind::Sccs)
+                } else {
+                    let runs = callees_first(&graph, &nodes, |_| true)
+                        .into_iter()
+                        .map(|n| vec![n])
+                        .collect();
+                    (runs, SplitKind::NewScc(self.split_sccs.len() as u32))
+                }
+            }
+        };
+        // The cut whose first half's estimate is nearest half the whole's, with a run on each
+        // side.
+        let weight =
+            |run: &Vec<u32>| -> u64 { run.iter().map(|n| graph.estimates[*n as usize]).sum() };
+        let total: u64 = runs.iter().map(weight).sum();
+        let mut best = (u64::MAX, 1);
+        let mut sum = 0u64;
+        for (k, run) in runs.iter().enumerate().take(runs.len() - 1) {
+            sum += weight(run);
+            best = best.min((sum.abs_diff(total - sum), k + 1));
+        }
+        let half = |runs: &[Vec<u32>]| -> (Vec<FunctionId>, Vec<u64>) {
+            let mut nodes: Vec<u32> = runs.concat();
+            nodes.sort_unstable();
+            nodes
+                .iter()
+                .map(|n| (graph.functions[*n as usize], graph.estimates[*n as usize]))
+                .unzip()
+        };
+        let (first, first_estimates) = half(&runs[..best.1]);
+        let (second, second_estimates) = half(&runs[best.1..]);
+
+        let second_id = self.batches.len() as BatchId;
+        let old = &self.batches[id as usize];
+        let old_part = old.part;
+        // The batch that holds each callee outside the batch.
+        let outside: HashMap<FunctionId, BatchId> = old.callees.iter().copied().collect();
+        let callees_of = |functions: &[FunctionId], other: &[FunctionId], other_id: BatchId| {
+            let mut callees: Vec<(FunctionId, BatchId)> = calls
+                .iter()
+                .filter(|(caller, _)| functions.binary_search(caller).is_ok())
+                .filter_map(|(_, callee)| {
+                    if other.binary_search(callee).is_ok() {
+                        Some((*callee, other_id))
+                    } else {
+                        Some((*callee, *outside.get(callee)?))
+                    }
+                })
+                .collect();
+            callees.sort_unstable();
+            callees.dedup();
+            callees
+        };
+        let first_callees = callees_of(&first, &second, second_id);
+        let second_callees = callees_of(&second, &first, id);
+        let (first_part, second_part) = match kind {
+            SplitKind::Sccs => (None, None),
+            SplitKind::NewScc(scc) => {
+                self.split_sccs.push(SplitScc {
+                    parts: vec![id, second_id],
+                });
+                (Some(Part { scc, index: 0 }), Some(Part { scc, index: 1 }))
+            }
+            SplitKind::Part(scc) => {
+                let parts = &mut self.split_sccs[scc as usize].parts;
+                let at = parts
+                    .iter()
+                    .position(|b| *b == id)
+                    .expect("a part is in its SCC");
+                parts.insert(at + 1, second_id);
+                (old_part, Some(Part { scc, index: 0 }))
+            }
+        };
+        let estimate = |estimates: &[u64]| {
+            estimates
+                .iter()
+                .fold(self.worker_bytes, |sum, e| sum.saturating_add(*e))
+        };
+        let new = Batch {
+            id: second_id,
+            estimate: estimate(&second_estimates),
+            functions: second,
+            estimates: second_estimates,
+            callees: second_callees,
+            deps: Vec::new(),
+            part: second_part,
+        };
+        let batch = &mut self.batches[id as usize];
+        batch.estimate = estimate(&first_estimates);
+        batch.functions = first;
+        batch.estimates = first_estimates;
+        batch.callees = first_callees;
+        batch.part = first_part;
+        self.batches.push(new);
+
+        let mut changed = vec![id, second_id];
+        let (others, [new]) = self.batches.split_at_mut(second_id as usize) else {
+            unreachable!("the new batch is the last");
+        };
+        let moved = &new.functions;
+        for batch in others {
+            let mut renamed = false;
+            for (f, b) in &mut batch.callees {
+                if *b == id && moved.binary_search(f).is_ok() {
+                    *b = second_id;
+                    renamed = true;
+                }
+            }
+            if renamed {
+                changed.push(batch.id);
+            }
+        }
+        if let SplitKind::Part(scc) | SplitKind::NewScc(scc) = kind {
+            for (index, b) in self.split_sccs[scc as usize]
+                .parts
+                .clone()
+                .into_iter()
+                .enumerate()
+            {
+                let part = self.batches[b as usize].part.as_mut().expect("a part");
+                if part.index != index as u32 {
+                    part.index = index as u32;
+                    changed.push(b);
+                }
+            }
+        }
+        changed.sort_unstable();
+        changed.dedup();
+        for b in &changed {
+            let deps = self.deps(&self.batches[*b as usize]);
+            self.batches[*b as usize].deps = deps;
+        }
+        if self.intent_batches.binary_search(&id).is_ok() {
+            self.intent_batches.push(second_id);
+            self.intent_batches.sort_unstable();
+        }
+        Some(Split {
+            second: second_id,
+            kind,
+            changed,
+        })
+    }
+
+    /// The batches `batch` depends on: those that hold its callees, less the other parts of its
+    /// own split SCC. Sorted.
+    fn deps(&self, batch: &Batch) -> Vec<BatchId> {
+        let same_scc = |b: BatchId| match (batch.part, self.batches[b as usize].part) {
+            (Some(p), Some(q)) => p.scc == q.scc,
+            _ => false,
+        };
+        let mut deps: Vec<BatchId> = batch
+            .callees
+            .iter()
+            .map(|(_, b)| *b)
+            .filter(|b| !same_scc(*b))
+            .collect();
+        deps.sort_unstable();
+        deps.dedup();
+        deps
+    }
+}
+
+/// What [`Plan::split_batch`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Split {
+    /// The new batch, which holds the second half.
+    pub second: BatchId,
+    pub kind: SplitKind,
+    /// The batches whose descriptors changed, sorted: the halves, and every batch that calls
+    /// into the second half or whose place in its split SCC moved.
+    pub changed: Vec<BatchId>,
+}
+
+/// How [`Plan::split_batch`] split a batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitKind {
+    /// Between two of its SCCs: the halves are batches of whole SCCs.
+    Sccs,
+    /// Between two functions of its one recursive SCC, which became this split SCC.
+    NewScc(u32),
+    /// Between two functions of a part of this split SCC.
+    Part(u32),
 }
 
 /// The estimate of a rerun of `part`, a part of a split SCC, seeded with `callee_rows` summary
@@ -342,6 +595,38 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Result<T, 
         context: format!("reading {}", path.display()),
         source: Box::new(e),
     })
+}
+
+/// A callees-first order of `nodes`, sorted, as far as their cycles allow: the postorder of a
+/// depth-first search over the edges to callees that `within` accepts, from the lowest node,
+/// callees in [`FunctionId`] order. A run of such an order cuts fewer of the edges than an
+/// arbitrary part would.
+fn callees_first(graph: &CallGraph, nodes: &[u32], within: impl Fn(u32) -> bool) -> Vec<u32> {
+    let mut visited: HashSet<u32> = HashSet::with_capacity(nodes.len());
+    let mut order = Vec::with_capacity(nodes.len());
+    let mut stack: Vec<(u32, usize)> = Vec::new();
+    for &root in nodes {
+        if !visited.insert(root) {
+            continue;
+        }
+        stack.push((root, 0));
+        while let Some((n, i)) = stack.last_mut() {
+            let callees = graph.callees(*n);
+            match callees.get(*i) {
+                Some(&c) => {
+                    *i += 1;
+                    if within(c) && visited.insert(c) {
+                        stack.push((c, 0));
+                    }
+                }
+                None => {
+                    order.push(*n);
+                    stack.pop();
+                }
+            }
+        }
+    }
+    order
 }
 
 /// Packs the SCCs of a call graph into batches.
@@ -429,39 +714,11 @@ impl<'a> Planner<'a> {
         *open_sum = self.worker;
     }
 
-    /// Splits a recursive SCC into contiguous runs of a callees-first order of it: the
-    /// postorder of a depth-first search over its internal edges, from its lowest function,
-    /// callees in [`FunctionId`] order. A run of such an order cuts fewer of the SCC's edges
-    /// than an arbitrary part would, and every edge between parts costs rounds.
+    /// Splits a recursive SCC into contiguous runs of a [`callees_first`] order of it over its
+    /// internal edges, since every edge between parts costs rounds.
     fn split(&mut self, sccs: &Sccs<u32, u32>, scc: u32, nodes: &[u32]) {
         let graph = self.graph;
-        let order = {
-            let mut visited: HashSet<u32> = HashSet::with_capacity(nodes.len());
-            let mut order = Vec::with_capacity(nodes.len());
-            let mut stack: Vec<(u32, usize)> = Vec::new();
-            for &root in nodes {
-                if !visited.insert(root) {
-                    continue;
-                }
-                stack.push((root, 0));
-                while let Some((n, i)) = stack.last_mut() {
-                    let callees = graph.callees(*n);
-                    match callees.get(*i) {
-                        Some(&c) => {
-                            *i += 1;
-                            if sccs.scc(c) == scc && visited.insert(c) {
-                                stack.push((c, 0));
-                            }
-                        }
-                        None => {
-                            order.push(*n);
-                            stack.pop();
-                        }
-                    }
-                }
-            }
-            order
-        };
+        let order = callees_first(graph, nodes, |c| sccs.scc(c) == scc);
         let id = self.split_sccs.len() as u32;
         let mut parts = Vec::new();
         let mut part: Vec<u32> = Vec::new();
@@ -529,6 +786,7 @@ impl<'a> Planner<'a> {
                 Batch {
                     id,
                     functions: nodes.iter().map(|n| graph.functions[*n as usize]).collect(),
+                    estimates: nodes.iter().map(|n| graph.estimates[*n as usize]).collect(),
                     callees,
                     deps,
                     estimate: self.estimate(nodes),
@@ -595,8 +853,36 @@ mod tests {
     }
 
     /// Checks what holds of every plan: batches number from 0 in order, every function is in
-    /// exactly one batch, and every callee is outside its batch and in the batch named.
+    /// exactly one batch, every callee is outside its batch and in the batch named, and every
+    /// batch depends only on earlier ones.
     fn check(plan: &Plan) {
+        check_split(plan);
+        for batch in &plan.batches {
+            assert!(batch.deps.iter().all(|d| *d < batch.id));
+        }
+    }
+
+    /// Checks what holds of a plan after splits: [`check`]'s, but a batch may depend on a later
+    /// one, and each batch's estimates and dependencies agree with its functions and callees,
+    /// and each split SCC's parts with their places.
+    fn check_split(plan: &Plan) {
+        for batch in &plan.batches {
+            assert_eq!(batch.estimates.len(), batch.functions.len());
+            assert_eq!(
+                batch.estimate,
+                plan.worker_bytes + batch.estimates.iter().sum::<u64>()
+            );
+            assert_eq!(batch.deps, plan.deps(batch));
+        }
+        for (scc, split) in plan.split_sccs.iter().enumerate() {
+            for (index, b) in split.parts.iter().enumerate() {
+                let part = Part {
+                    scc: scc as u32,
+                    index: index as u32,
+                };
+                assert_eq!(plan.batches[*b as usize].part, Some(part));
+            }
+        }
         let mut seen = std::collections::BTreeMap::new();
         for (i, batch) in plan.batches.iter().enumerate() {
             assert_eq!(batch.id as usize, i);
@@ -613,8 +899,78 @@ mod tests {
                 assert_ne!(*b, batch.id);
                 assert_eq!(seen[f], *b);
             }
-            assert!(batch.deps.iter().all(|d| *d < batch.id));
         }
+    }
+
+    /// The `call` edges of `facts`, caller first.
+    fn calls(facts: &IndexFacts) -> Vec<(FunctionId, FunctionId)> {
+        facts
+            .call
+            .iter()
+            .map(|(site, callee)| (unpack_site(site).func_id, *callee))
+            .collect()
+    }
+
+    /// A batch of whole SCCs is cut between two of them, callees first, and the batches that
+    /// called into the second half now depend on it.
+    #[test]
+    fn split_batch_cuts_between_sccs() {
+        let (a, b, c, d) = (0, 1, 2, 3);
+        let facts = facts(4, 10, &[(a, b), (b, c), (c, d)]);
+        let mut plan = Plan::new(&facts, budget_for(&facts, 2), usize::MAX, 0);
+        assert_eq!(functions(&plan), vec![vec![c, d], vec![a, b]]);
+        let split = plan.split_batch(0, &calls(&facts)).unwrap();
+        check_split(&plan);
+        assert_eq!(
+            split,
+            Split {
+                second: 2,
+                kind: SplitKind::Sccs,
+                changed: vec![0, 1, 2]
+            }
+        );
+        assert_eq!(functions(&plan), vec![vec![d], vec![a, b], vec![c]]);
+        assert_eq!(plan.batches[2].deps, vec![0]);
+        assert_eq!(plan.batches[1].deps, vec![2]);
+        assert_eq!(plan.batches[1].callees, vec![(FunctionId::new(c), 2)]);
+        assert!(plan.batches[0].callees.is_empty());
+        assert_eq!(plan.split_batch(0, &calls(&facts)), None);
+    }
+
+    /// A batch of one recursive SCC becomes a split SCC of two parts, and a part of it is cut
+    /// again into two parts of the same SCC.
+    #[test]
+    fn split_batch_cuts_a_recursive_scc_into_parts() {
+        let (a, b, c, d, e) = (0, 1, 2, 3, 4);
+        let facts = facts(5, 10, &[(a, b), (b, c), (c, d), (d, a), (e, a)]);
+        let mut plan = Plan::new(&facts, u64::MAX, usize::MAX, 0);
+        assert_eq!(functions(&plan), vec![vec![a, b, c, d, e]]);
+        let split = plan.split_batch(0, &calls(&facts)).unwrap();
+        assert_eq!(split.kind, SplitKind::Sccs);
+        // `e` calls into the SCC, so it is the second half.
+        assert_eq!(functions(&plan), vec![vec![a, b, c, d], vec![e]]);
+        let split = plan.split_batch(0, &calls(&facts)).unwrap();
+        check_split(&plan);
+        assert_eq!(split.kind, SplitKind::NewScc(0));
+        assert_eq!(plan.split_sccs[0].parts, vec![0, 2]);
+        // The postorder of a search from `a`: `d`, `c`, `b`, `a`.
+        assert_eq!(functions(&plan), vec![vec![c, d], vec![e], vec![a, b]]);
+        assert!(plan.batches[0].deps.is_empty() && plan.batches[2].deps.is_empty());
+        assert_eq!(plan.batches[1].deps, vec![2]);
+
+        let split = plan.split_batch(0, &calls(&facts)).unwrap();
+        check_split(&plan);
+        assert_eq!(split.kind, SplitKind::Part(0));
+        assert_eq!(split.changed, vec![0, 2, 3]);
+        assert_eq!(plan.split_sccs[0].parts, vec![0, 3, 2]);
+        assert_eq!(functions(&plan)[0], vec![d]);
+        assert_eq!(functions(&plan)[3], vec![c]);
+        assert_eq!(
+            plan.batches[2].callees,
+            vec![(FunctionId::new(c), 3)],
+            "`b` calls `c`, now in the new part"
+        );
+        assert!(plan.batches[2].deps.is_empty());
     }
 
     /// The budget that fits `k` functions of `facts`, all of one estimate, in a batch.

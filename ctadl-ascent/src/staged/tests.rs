@@ -525,11 +525,15 @@ impl Executor for Deferred<'_> {
         Ok(())
     }
 
-    fn wait(&mut self) -> (Job, Result<(), crate::error::Error>) {
+    fn wait(&mut self) -> Option<(Job, Result<(), crate::error::Error>)> {
         let (job, alone) = self.running.pop().expect("a job was started");
         let stage = self.stage.as_ref().unwrap();
         self.inner.start(stage, job, alone).unwrap();
         self.inner.wait()
+    }
+
+    fn kill(&mut self, job: Job) {
+        self.running.retain(|(j, _)| *j != job);
     }
 
     fn stop_all(&mut self) {

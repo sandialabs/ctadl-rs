@@ -341,6 +341,24 @@ where
     Ok(rows)
 }
 
+/// The `call` edges from `functions`, which are sorted, caller first.
+pub fn read_calls(
+    stage: &StageDir,
+    functions: &[FunctionId],
+) -> Result<Vec<(FunctionId, FunctionId)>, Error> {
+    use schema::call;
+    let calls: Vec<call::Record> = read_of(
+        stage.facts_dir().join(call::FILENAME),
+        &call::COLUMNS,
+        functions,
+        &mut Vec::new(),
+    )?;
+    Ok(calls
+        .into_iter()
+        .map(|(caller, _, callee)| (caller, callee))
+        .collect())
+}
+
 /// Reads `batch`'s input: its functions' facts from `facts/`, and its callees' summaries from
 /// the `summary` files of the batches that hold them, which must be done. A part of a split SCC
 /// reads the other parts' summaries from their latest runs, and none from a part yet to run.
@@ -553,6 +571,41 @@ pub fn read_summary_counts(
     serde_json::from_slice(&json).map_err(|e| Error::Context {
         context: format!("reading {}", path.display()),
         source: Box::new(e),
+    })
+}
+
+/// Copies the run of part `from` of split SCC `scc` in `round` to part `to`, as its run in that
+/// round, with the summary-row counts of `functions` alone, which are sorted. The copy's files
+/// are hard links where the file system allows.
+pub fn copy_part_run(
+    stage: &StageDir,
+    scc: u32,
+    from: BatchId,
+    to: BatchId,
+    round: u32,
+    functions: &[FunctionId],
+) -> Result<(), Error> {
+    use schema::*;
+    let source = stage.round_dir(scc, from, round);
+    let counts: Vec<(FunctionId, u64)> = read_summary_counts(stage, scc, from, round)?
+        .into_iter()
+        .filter(|(f, _)| functions.binary_search(f).is_ok())
+        .collect();
+    write_atomic(&stage.round_dir(scc, to, round), |tmp| {
+        std::fs::create_dir(tmp)?;
+        for name in [summary::FILENAME, assign::FILENAME, frame_edge::FILENAME] {
+            let (from, to) = (source.join(name), tmp.join(name));
+            if std::fs::hard_link(&from, &to).is_err() {
+                std::fs::copy(&from, &to)
+                    .map_err(Error::from)
+                    .err_context(|| format!("copying {} to {}", from.display(), to.display()))?;
+            }
+        }
+        std::fs::write(
+            tmp.join(SUMMARY_COUNTS),
+            serde_json::to_vec(&counts).expect("counts serialize"),
+        )?;
+        Ok(())
     })
 }
 

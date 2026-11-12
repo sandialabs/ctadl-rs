@@ -16,13 +16,14 @@ use ctadl_index::facts::parquet::Writer;
 use ctadl_index::facts::schema;
 use ctadl_index::index_engine::IntentOutput;
 use ctadl_index::staged::files::{
-    assemble, finish_split_scc, read_summary_counts, run_frame, write_facts, write_intent_output,
+    assemble, copy_part_run, finish_split_scc, read_calls, read_summary_counts, run_frame,
+    write_facts, write_intent_output,
 };
-use ctadl_index::staged::plan::{BatchId, Plan, rerun_estimate};
+use ctadl_index::staged::plan::{BatchId, Plan, SplitKind, rerun_estimate};
 use ctadl_index::staged::store::{
     KeyConfig, LatestRounds, RunKey, STAGE_ROWS_PER_GROUP, Stage, StageDir, write_atomic,
 };
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 /// What a staged run did.
 #[derive(Debug, Default)]
@@ -34,6 +35,15 @@ pub struct RunStats {
     pub skipped: Vec<BatchId>,
     /// Each split SCC's rounds, in plan order.
     pub split_sccs: Vec<SccRounds>,
+    /// The workers killed because the running ones were over the budget.
+    pub kills: u32,
+    /// The batches split after a kill, each with the new batch that took its second half.
+    pub splits: Vec<(BatchId, BatchId)>,
+    /// What every estimate was multiplied by in the end: at least the largest footprint over
+    /// estimate of a killed worker, and 1 if none was killed.
+    pub alpha: f64,
+    /// The batches of one function that ran alone over the budget.
+    pub over_budget_alone: Vec<BatchId>,
 }
 
 /// A test hook: set to a batch id, it makes a staged run that the CLI starts stop once that
@@ -102,7 +112,7 @@ pub fn run_staged_until(
     fresh.create()?;
 
     let ProgramPaths { paths, path_set } = ProgramPaths::from_facts(&facts, config.deref_paths);
-    let plan = Plan::new(&facts, staged.budget, staged.floor, paths.len());
+    let mut plan = Plan::new(&facts, staged.budget, staged.floor, paths.len());
     log::debug!("[mem cp] staged: planned: {:.1} MB", phys_footprint_mb());
     write_atomic(&fresh.paths_file(), |tmp| {
         Writer::new(tmp)
@@ -130,6 +140,10 @@ pub fn run_staged_until(
     let resumed = stage.is_done(Stage::Facts) && RunKey::load(&stage) == Some(key);
     if resumed {
         remove_dir_if_exists(fresh.root())?;
+        // The earlier run may have split batches. Its descriptors are rewritten, in case it
+        // stopped while it saved a split.
+        plan = Plan::load(&stage)?;
+        plan.save(&stage)?;
         stage.discard_unmarked(&plan)?;
         log::info!(
             "staged index: resuming the run in {}, whose facts and configuration are the same",
@@ -170,12 +184,16 @@ pub fn run_staged_until(
 
     executor.lend_path_set(&stage, path_set)?;
     let ran = (|| {
-        let mut stats = Scheduler::new(&stage, &plan, stop_after).run(executor)?;
+        let mut stats = Scheduler::new(&stage, &mut plan, stop_after).run(executor)?;
         stats.resumed = resumed;
         log::info!(
-            "staged index: batches done in {:.1} s, {} of them by an earlier run, {:.1} MB",
+            "staged index: batches done in {:.1} s, {} of them by an earlier run, {} workers \
+             killed, {} batches split, estimates scaled by {:.2}, {:.1} MB",
             start.elapsed().as_secs_f64(),
             stats.skipped.len(),
+            stats.kills,
+            stats.splits.len(),
+            stats.alpha,
             phys_footprint_mb()
         );
         if stage.is_done(Stage::Frame) {
@@ -194,7 +212,11 @@ pub fn run_staged_until(
             write_intent_output(&stage, IntentOutput::default())?;
         } else {
             executor.start(&stage, Job::Intent, true)?;
-            executor.wait().1?;
+            loop {
+                if let Some((_, result)) = executor.wait() {
+                    break result?;
+                }
+            }
         }
         log::debug!(
             "[mem cp] staged: intent stage done: {:.1} MB",
@@ -232,11 +254,16 @@ enum Unit {
 }
 
 /// Runs the batches of a plan on an executor: each once the batches that hold its callees are
-/// done, in plan order, as many at once as the executor's threads and the budget allow.
+/// done, in plan order, as many at once as the executor's threads and the budget allow, and
+/// kills workers while those running are over the budget.
+///
+/// While workers run it holds the plan, and of each unit only its batches, dependencies and
+/// estimates: the facts and the call graph are dropped before it starts.
 struct Scheduler<'a> {
     stage: &'a StageDir,
-    plan: &'a Plan,
-    /// In plan order, which runs every unit after those it depends on.
+    plan: &'a mut Plan,
+    /// In plan order, which runs every unit after those it depends on, then those that splits
+    /// made.
     units: Vec<Unit>,
     /// The units each unit waits for, less those done.
     waiting: Vec<usize>,
@@ -244,18 +271,32 @@ struct Scheduler<'a> {
     dependents: Vec<Vec<usize>>,
     /// Units whose dependencies are done and that are not running or done, by plan order.
     ready: BTreeSet<usize>,
-    /// The running jobs, with their units, estimates and threads.
-    running: HashMap<Job, (usize, u64, usize)>,
+    running: HashMap<Job, Running>,
     /// Whether each unit is done.
     finished: Vec<bool>,
     done: usize,
     /// The batch after which to stop.
     stop_after: Option<BatchId>,
+    /// What the executor multiplies every estimate by.
+    scale: f64,
+    /// What every estimate is multiplied by besides `scale`: the largest footprint over
+    /// estimate of a killed worker, at least 1.
+    alpha: f64,
+    /// The jobs of one function logged as running alone over the budget.
+    over_budget_alone: HashSet<Job>,
     stats: RunStats,
 }
 
+/// A running job.
+struct Running {
+    unit: usize,
+    /// As the plan estimates it, before `scale` and `alpha`.
+    estimate: u64,
+    threads: usize,
+}
+
 impl<'a> Scheduler<'a> {
-    fn new(stage: &'a StageDir, plan: &'a Plan, stop_after: Option<BatchId>) -> Self {
+    fn new(stage: &'a StageDir, plan: &'a mut Plan, stop_after: Option<BatchId>) -> Self {
         let mut units = Vec::new();
         let mut unit_of = vec![0; plan.batches.len()];
         let mut scc_unit = HashMap::new();
@@ -300,17 +341,22 @@ impl<'a> Scheduler<'a> {
             running: HashMap::new(),
             done: 0,
             stop_after,
+            scale: 1.0,
+            alpha: 1.0,
+            over_budget_alone: HashSet::new(),
             stats: RunStats::default(),
         }
     }
 
     /// Runs every unit, and stops at the first job that fails.
     ///
-    /// It starts the first ready unit's next job while a thread is free and the estimates of the
-    /// running jobs and that one fit the budget together. It never passes over that unit for a
-    /// smaller one behind it, which could starve it, and starts it whatever its estimate when
-    /// nothing runs. A job is alone, and takes every thread, when nothing runs beside it and
-    /// nothing else is ready.
+    /// It starts the first ready unit's next job while a thread is free and the running jobs
+    /// and that one fit the budget together: each running job counts as its estimate or its
+    /// latest footprint, whichever is larger. It never passes over that unit for a smaller one
+    /// behind it, which could starve it, and starts it whatever its estimate when nothing runs.
+    /// A job is alone, and takes every thread, when nothing runs beside it and nothing else is
+    /// ready. Between starts, it keeps the running jobs' footprints within the budget
+    /// ([`Scheduler::enforce`]).
     ///
     /// Units a run before this one did are skipped, and a split SCC it left midway resumes.
     fn run(mut self, executor: &mut dyn Executor) -> Result<RunStats, Error> {
@@ -341,7 +387,9 @@ impl<'a> Scheduler<'a> {
         }
         self.stats.skipped.sort_unstable();
         let threads = executor.threads();
+        self.scale = executor.estimate_scale();
         while self.done < self.units.len() {
+            let footprints: HashMap<Job, u64> = executor.footprints().into_iter().collect();
             while let Some(&u) = self.ready.first() {
                 let Some((job, estimate)) = self.next_job(u) else {
                     self.ready.remove(&u);
@@ -354,23 +402,34 @@ impl<'a> Scheduler<'a> {
                     self.stop_if_asked(u)?;
                     continue;
                 };
-                let used: usize = self.running.values().map(|r| r.2).sum();
-                let held: u64 = self.running.values().map(|r| r.1).sum();
+                let used: usize = self.running.values().map(|r| r.threads).sum();
+                let held = self.running.iter().fold(0u64, |sum, (job, r)| {
+                    let footprint = footprints.get(job).copied().unwrap_or(0);
+                    sum.saturating_add(self.scaled(r.estimate).max(footprint))
+                });
                 if !self.running.is_empty()
-                    && (used >= threads || held.saturating_add(estimate) > self.plan.budget)
+                    && (used >= threads
+                        || held.saturating_add(self.scaled(estimate)) > self.plan.budget)
                 {
                     break;
                 }
                 let alone = self.running.is_empty() && self.ready.len() == 1;
                 log::debug!(
-                    "{job}: starting, estimate {:.1} MB, {:.1} MB of estimates running",
-                    estimate as f64 / MB,
+                    "{job}: starting, estimate {:.1} MB, {:.1} MB running",
+                    self.scaled(estimate) as f64 / MB,
                     held as f64 / MB
                 );
                 executor.start(self.stage, job, alone)?;
                 self.ready.remove(&u);
-                self.running
-                    .insert(job, (u, estimate, if alone { threads } else { 1 }));
+                let threads = if alone { threads } else { 1 };
+                self.running.insert(
+                    job,
+                    Running {
+                        unit: u,
+                        estimate,
+                        threads,
+                    },
+                );
             }
             if self.done == self.units.len() {
                 break;
@@ -382,31 +441,206 @@ impl<'a> Scheduler<'a> {
                     self.units.len()
                 )));
             }
-            let (job, result) = executor.wait();
-            result?;
-            let (u, _, _) = self
-                .running
-                .remove(&job)
-                .expect("the executor ended a job it was given");
-            match (&mut self.units[u], job) {
-                (
-                    Unit::Scc(scc),
-                    Job::Batch {
-                        id,
-                        round: Some(round),
-                    },
-                ) => {
-                    scc.ran(self.stage, id, round)?;
-                    self.ready.insert(u);
-                }
-                _ => {
-                    self.finish(u);
-                    self.stop_if_asked(u)?;
-                }
+            if let Some((job, result)) = executor.wait() {
+                result?;
+                let running = self
+                    .running
+                    .remove(&job)
+                    .expect("the executor ended a job it was given");
+                self.ended(job, running.unit)?;
             }
+            self.enforce(executor)?;
         }
         self.stats.split_sccs.sort_by_key(|s| s.scc);
+        self.stats.alpha = self.alpha;
         Ok(self.stats)
+    }
+
+    /// `estimate` multiplied by the executor's scale and by alpha.
+    fn scaled(&self, estimate: u64) -> u64 {
+        // A cast from `f64` saturates.
+        (estimate as f64 * self.scale * self.alpha) as u64
+    }
+
+    /// Records that `job` of unit `u` ended well.
+    fn ended(&mut self, job: Job, u: usize) -> Result<(), Error> {
+        match (&mut self.units[u], job) {
+            (
+                Unit::Scc(scc),
+                Job::Batch {
+                    id,
+                    round: Some(round),
+                },
+            ) => {
+                scc.ran(self.stage, self.plan, id, round)?;
+                self.ready.insert(u);
+            }
+            _ => {
+                self.finish(u);
+                self.stop_if_asked(u)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Kills workers until the latest footprints of those running fit the budget. It kills the
+    /// largest worker that holds more than one function. When every one holds one, it kills all
+    /// but the largest, which then runs alone to its end, however large.
+    fn enforce(&mut self, executor: &mut dyn Executor) -> Result<(), Error> {
+        loop {
+            let footprints = executor.footprints();
+            let total = footprints
+                .iter()
+                .fold(0u64, |sum, (_, f)| sum.saturating_add(*f));
+            if total <= self.plan.budget {
+                return Ok(());
+            }
+            let functions = |job: &Job| match job {
+                Job::Batch { id, .. } => self.plan.batches[*id as usize].functions.len(),
+                Job::Intent => 1,
+            };
+            let largest = footprints
+                .iter()
+                .filter(|(job, _)| functions(job) > 1)
+                .max_by_key(|(_, f)| *f);
+            if let Some(&(job, footprint)) = largest {
+                self.kill(executor, job, footprint, total)?;
+                continue;
+            }
+            let &(largest, footprint) = footprints
+                .iter()
+                .max_by_key(|(_, f)| *f)
+                .expect("over the budget, so a worker runs");
+            if self.over_budget_alone.insert(largest) {
+                log::warn!(
+                    "staged index: {largest} holds one function and uses {:.1} MB, with {:.1} MB \
+                     running against a {:.1} MB budget; it runs alone to its end",
+                    footprint as f64 / MB,
+                    total as f64 / MB,
+                    self.plan.budget as f64 / MB
+                );
+                if let Job::Batch { id, .. } = largest {
+                    self.stats.over_budget_alone.push(id);
+                }
+            }
+            for &(job, f) in &footprints {
+                if job != largest {
+                    self.kill(executor, job, f, total)?;
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    /// Kills `job`, whose latest footprint is `footprint` of the `total` running, discards its
+    /// files and requeues it: split in two if it is over the budget alone, and otherwise whole,
+    /// to run when fewer run beside it. Raises alpha to its footprint over its estimate.
+    fn kill(
+        &mut self,
+        executor: &mut dyn Executor,
+        job: Job,
+        footprint: u64,
+        total: u64,
+    ) -> Result<(), Error> {
+        executor.kill(job);
+        let running = self
+            .running
+            .remove(&job)
+            .expect("the scheduler kills only jobs it started");
+        let Job::Batch { id, round } = job else {
+            unreachable!("the intent stage runs after the scheduler");
+        };
+        let marker = match round {
+            Some(round) => Stage::Round { batch: id, round },
+            None => Stage::Batch(id),
+        };
+        if self.stage.is_done(marker) {
+            log::debug!("{job}: ended before it was killed");
+            return self.ended(job, running.unit);
+        }
+        self.stage
+            .discard_run(&self.plan.batches[id as usize], round)?;
+        self.stats.kills += 1;
+        let estimated = running.estimate as f64 * self.scale;
+        if estimated > 0.0 {
+            self.alpha = self.alpha.max(footprint as f64 / estimated);
+        }
+        let batch = &self.plan.batches[id as usize];
+        // Splitting cannot lower what every worker holds, but the plan's estimates count that
+        // in the budget, and a batch over the budget alone holds more than that.
+        let split = footprint > self.plan.budget && batch.functions.len() > 1;
+        log::info!(
+            "staged index: killed {job} of {} functions at {:.1} MB (estimate {:.1} MB), with \
+             {:.1} MB running against a {:.1} MB budget; {}; estimates now scaled by {:.2}",
+            batch.functions.len(),
+            footprint as f64 / MB,
+            running.estimate as f64 * self.scale / MB,
+            total as f64 / MB,
+            self.plan.budget as f64 / MB,
+            if split {
+                "splitting it in two"
+            } else {
+                "requeued whole"
+            },
+            self.alpha
+        );
+        if split {
+            self.split(running.unit, id)?;
+        }
+        self.ready.insert(running.unit);
+        Ok(())
+    }
+
+    /// Splits batch `id` of unit `u` in two with [`Plan::split_batch`], saves the batches that
+    /// changed, and updates the units: the second half of a batch of whole SCCs is a new unit
+    /// that the unit's dependents wait for, and a batch of one SCC becomes a split SCC.
+    fn split(&mut self, u: usize, id: BatchId) -> Result<(), Error> {
+        let calls = read_calls(self.stage, &self.plan.batches[id as usize].functions)?;
+        let Some(split) = self.plan.split_batch(id, &calls) else {
+            return Ok(());
+        };
+        let second = split.second;
+        if let (SplitKind::Part(_), Unit::Scc(scc)) = (split.kind, &mut self.units[u]) {
+            scc.split_part(self.stage, self.plan, id, second)?;
+        }
+        self.plan.save_batches(self.stage, &split.changed)?;
+        self.stats.splits.push((id, second));
+        let size = |b: BatchId| {
+            let batch = &self.plan.batches[b as usize];
+            (batch.functions.len(), batch.estimate as f64 / MB)
+        };
+        let ((n1, e1), (n2, e2)) = (size(id), size(second));
+        log::info!(
+            "staged index: split batch {id} {}: {n1} functions, estimate {e1:.1} MB, stay; \
+             {n2} functions, estimate {e2:.1} MB, are batch {second}",
+            match split.kind {
+                SplitKind::Sccs => "between SCCs".to_string(),
+                SplitKind::NewScc(scc) => format!("within its SCC, now split SCC {scc}"),
+                SplitKind::Part(scc) => format!("within split SCC {scc}"),
+            }
+        );
+        match split.kind {
+            SplitKind::Sccs => {
+                let v = self.units.len();
+                self.units.push(Unit::Batch(second));
+                self.finished.push(false);
+                let dependents = self.dependents[u].clone();
+                for d in &dependents {
+                    self.waiting[*d] += 1;
+                }
+                self.dependents.push(dependents);
+                let waits = self.plan.batches[second as usize].deps.contains(&id);
+                self.waiting.push(usize::from(waits));
+                if waits {
+                    self.dependents[u].push(v);
+                } else {
+                    self.ready.insert(v);
+                }
+            }
+            SplitKind::NewScc(scc) => self.units[u] = Unit::Scc(SplitRun::new(self.plan, scc)),
+            SplitKind::Part(_) => {}
+        }
+        Ok(())
     }
 
     /// The next job of unit `u` and its estimate, or `None` if `u` is a split SCC whose
@@ -499,29 +733,14 @@ struct SplitRun {
 
 impl SplitRun {
     fn new(plan: &Plan, scc: u32) -> Self {
-        let parts: Vec<_> = plan.split_sccs[scc as usize]
-            .parts
-            .iter()
-            .map(|b| &plan.batches[*b as usize])
-            .collect();
-        // Each part's callees in other parts: those of the batches it does not depend on.
-        let callees = parts
-            .iter()
-            .map(|part| {
-                part.callees
-                    .iter()
-                    .filter(|(_, b)| part.deps.binary_search(b).is_err())
-                    .map(|(f, _)| *f)
-                    .collect()
-            })
-            .collect();
+        let parts = plan.split_sccs[scc as usize].parts.clone();
         Self {
             scc,
-            parts: parts.iter().map(|p| p.id).collect(),
-            callees,
+            callees: part_callees(plan, &parts),
             rows: HashMap::new(),
             seen: vec![None; parts.len()],
             runs: vec![0; parts.len()],
+            parts,
             latest: LatestRounds::default(),
             round: 0,
             next: 0,
@@ -599,7 +818,13 @@ impl SplitRun {
 
     /// Records the run of `batch`, the part [`SplitRun::next`] returned, in `round`, and
     /// deletes its previous run.
-    fn ran(&mut self, stage: &StageDir, batch: BatchId, round: u32) -> Result<(), Error> {
+    fn ran(
+        &mut self,
+        stage: &StageDir,
+        plan: &Plan,
+        batch: BatchId,
+        round: u32,
+    ) -> Result<(), Error> {
         let i = self.next;
         assert_eq!(
             (self.parts[i], self.round),
@@ -615,8 +840,9 @@ impl SplitRun {
         let previous = self.latest.latest.insert(batch, round);
         self.latest.save(stage, self.scc)?;
         if let Some(previous) = previous {
-            #[cfg(debug_assertions)]
-            assert_rows_grew(stage, self.scc, batch, previous, round);
+            if cfg!(debug_assertions) {
+                assert_rows_grew(stage, plan, self.scc, batch, previous, round);
+            }
             stage.unmark(Stage::Round {
                 batch,
                 round: previous,
@@ -628,6 +854,43 @@ impl SplitRun {
         self.runs[i] += 1;
         self.ran += 1;
         self.next += 1;
+        Ok(())
+    }
+
+    /// Records that part `first`, the part [`SplitRun::next`] returned, was split, and that
+    /// `second` holds the second half of its functions as the part after it. Both run next.
+    ///
+    /// If `first` ran before, `second` gets a copy of that run, so the parts that read
+    /// `second`'s summaries, `first` among them, still read what they read from `first`: their
+    /// summaries then never shrink, as the rounds need.
+    fn split_part(
+        &mut self,
+        stage: &StageDir,
+        plan: &Plan,
+        first: BatchId,
+        second: BatchId,
+    ) -> Result<(), Error> {
+        let i = self.next;
+        assert_eq!(
+            self.parts[i], first,
+            "split SCC {} split a part out of turn",
+            self.scc
+        );
+        self.parts.insert(i + 1, second);
+        self.callees = part_callees(plan, &self.parts);
+        self.seen[i] = None;
+        self.seen.insert(i + 1, None);
+        self.runs.insert(i + 1, 0);
+        if let Some(&round) = self.latest.latest.get(&first) {
+            let functions = &plan.batches[second as usize].functions;
+            copy_part_run(stage, self.scc, first, second, round, functions)?;
+            stage.mark_done(Stage::Round {
+                batch: second,
+                round,
+            })?;
+            self.latest.latest.insert(second, round);
+            self.latest.save(stage, self.scc)?;
+        }
         Ok(())
     }
 
@@ -651,10 +914,32 @@ impl SplitRun {
     }
 }
 
-/// Asserts that the `summary` rows of part `batch`'s run in `round` include those of its run in
-/// `previous`, as the rounds' termination needs.
-#[cfg(debug_assertions)]
-fn assert_rows_grew(stage: &StageDir, scc: u32, batch: BatchId, previous: u32, round: u32) {
+/// Each of `parts`' callees in other parts: those of the batches it does not depend on.
+fn part_callees(plan: &Plan, parts: &[BatchId]) -> Vec<Vec<FunctionId>> {
+    parts
+        .iter()
+        .map(|b| {
+            let part = &plan.batches[*b as usize];
+            part.callees
+                .iter()
+                .filter(|(_, b)| part.deps.binary_search(b).is_err())
+                .map(|(f, _)| *f)
+                .collect()
+        })
+        .collect()
+}
+
+/// Asserts that the `summary` rows of part `batch`'s run in `round` include those of its
+/// functions in its run in `previous`, as the rounds' termination needs. The previous run may be
+/// a copy of the run of the part it was split from.
+fn assert_rows_grew(
+    stage: &StageDir,
+    plan: &Plan,
+    scc: u32,
+    batch: BatchId,
+    previous: u32,
+    round: u32,
+) {
     use ctadl_index::facts::parquet::Reader;
     use hashbrown::HashSet;
     let read = |round| -> HashSet<schema::summary::Record> {
@@ -669,7 +954,11 @@ fn assert_rows_grew(stage: &StageDir, scc: u32, batch: BatchId, previous: u32, r
         .collect()
     };
     let new = read(round);
-    let lost = read(previous).difference(&new).count();
+    let functions = &plan.batches[batch as usize].functions;
+    let lost = read(previous)
+        .difference(&new)
+        .filter(|r| functions.binary_search(&r.0).is_ok())
+        .count();
     assert_eq!(
         lost, 0,
         "part {batch} lost {lost} summary rows from round {previous} to {round}"

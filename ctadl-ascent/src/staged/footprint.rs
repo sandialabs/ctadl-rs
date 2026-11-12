@@ -12,13 +12,14 @@ pub const PERIOD: Duration = Duration::from_millis(100);
 const PREFIX: &str = "footprint_mb ";
 
 /// Starts a thread that writes this process's footprint to stdout every [`PERIOD`], one line per
-/// sample, until stdout closes or the process exits. Nothing else may write to stdout.
-pub fn report_to_stdout() -> std::io::Result<()> {
+/// sample, until stdout closes or the process exits. Nothing else may write to stdout. A test
+/// hook passes the footprint to report in place of the process's, in MB.
+pub fn report_to_stdout(reported: Option<f64>) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("footprint".to_string())
-        .spawn(|| {
+        .spawn(move || {
             loop {
-                let mb = phys_footprint_mb();
+                let mb = reported.unwrap_or_else(phys_footprint_mb);
                 let mut out = std::io::stdout().lock();
                 if writeln!(out, "{PREFIX}{mb:.1}")
                     .and_then(|()| out.flush())

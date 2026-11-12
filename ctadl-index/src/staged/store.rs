@@ -227,6 +227,26 @@ impl StageDir {
         Ok(())
     }
 
+    /// Removes what a killed run of `batch` left, in `round` if it is a part of a split SCC:
+    /// its outputs, whole or partly written. Call it only if the run left no marker.
+    pub fn discard_run(&self, batch: &Batch, round: Option<u32>) -> Result<(), Error> {
+        match (batch.part, round) {
+            (Some(part), Some(round)) => {
+                let dir = self.round_dir(part.scc, batch.id, round);
+                if dir.exists() {
+                    remove_path(&dir)?;
+                }
+                // A partly written run is a temporary directory beside it.
+                let parent = dir.parent().expect("a round has a part directory");
+                clear_dir(parent, is_temporary)
+            }
+            _ => {
+                let descriptor = Batch::descriptor_file(self, batch.id);
+                clear_dir(&self.batch_dir(batch.id), |path| path != descriptor)
+            }
+        }
+    }
+
     /// Keeps, of split SCC `scc` with `parts`, only the latest done run of each part that is not
     /// itself done, and their markers.
     fn discard_stale_rounds(&self, scc: u32, parts: &[u32]) -> Result<(), Error> {
@@ -316,13 +336,18 @@ fn remove_path(path: &Path) -> Result<(), Error> {
         .err_context(|| format!("removing {}", path.display()))
 }
 
+/// Whether `path` is a temporary path of [`write_atomic`].
+fn is_temporary(path: &Path) -> bool {
+    path.file_name()
+        .map(|name| name.to_string_lossy())
+        .is_some_and(|name| name.starts_with('.') && name.ends_with(".tmp"))
+}
+
 /// Removes every temporary path [`write_atomic`] left under `dir`.
 fn remove_temporaries(dir: &Path) -> Result<(), Error> {
     for entry in read_dir_if_exists(dir)? {
         let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.') && name.ends_with(".tmp") {
+        if is_temporary(&path) {
             remove_path(&path)?;
         } else if entry.file_type().map_err(Error::from)?.is_dir() {
             remove_temporaries(&path)?;
