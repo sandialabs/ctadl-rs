@@ -582,6 +582,21 @@ time spent loading. The CLI does not run staged until Phase 10 (`cli/mod.rs:434`
 `worker_exe`), so the checkpoint used a change that was not committed. Rerunning it needs
 the same kind of change.
 
+**What takes the time.** `cargo run --release -p ctadl-index --example path_set_load -- <paths.parquet> --steps`
+times the load alone, outside a run. On the largest path set at hand (Chrome's `paths.parquet`,
+7.9M paths, 26.7M segments, depth at most 10), the load takes 32 s and 1.1 GB, so ddg's 40 s
+is not a fluke:
+- Decoding and interning the paths: 11 s, about 400 ns per segment.
+- `PathSet::from_paths`: 20 s, and almost all of that is the splits. `Path::prefix_keys` takes
+  18 s for 34.6M splits, and `prefix_keys_wild` 6 s (each timed alone, so with interning).
+  Sorting takes 0.1 s.
+- A prefix key is a new cons list. `prefix_keys` builds each one from scratch with
+  `Path::from_accesses`, so a path of depth d does about d²/2 interner lookups
+  (`ctadl-index/src/facts.rs:417-428`). Each lookup is a hash probe into a sharded table of
+  tens of millions of nodes (`immortal/src/lib.rs:34-59`), which is mostly cache misses. The
+  time stays the same when every key is already interned: `from_paths` took 20 s after the
+  step timings had interned them all. So the cost is the lookups, not new nodes.
+
 **What it does to the budget.** The scheduler and the planner charge each worker
 `worker_bytes(paths)` = `WORKER_BASE_BYTES` + `PATH_BYTES` (176 B) per path
 (`ctadl-index/src/staged/plan.rs:47-58`). On ddg the measured 1.03 GB is half of a 2 GB budget,
