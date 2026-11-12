@@ -586,7 +586,13 @@ the same kind of change.
 times the load alone, outside a run. On the largest path set at hand (Chrome's `paths.parquet`,
 7.9M paths, 26.7M segments, depth at most 10), the load takes 32 s and 1.1 GB, so ddg's 40 s
 is not a fluke:
-- Decoding and interning the paths: 11 s, about 400 ns per segment.
+- Decoding and interning the paths: 11 s, about 400 ns per segment. A `Path` column is a
+  string (`ctadl-index/src/facts/parquet.rs:862-895`). With `--decode`, parsing the strings
+  takes 3.3 s, and consing every segment takes 7.1 s even when every node is already interned
+  (26.7M lookups, about 265 ns each). There are 8.0M distinct nodes, about one per path, since
+  the path set holds each member's tails. An encoding that stores each path as its head segment
+  and its tail's row would cons once per path and parse no strings, so it would cut the 11 s to
+  about 2-3 s. It does not touch `from_paths`.
 - `PathSet::from_paths`: 20 s, and almost all of that is the splits. `Path::prefix_keys` takes
   18 s for 34.6M splits, and `prefix_keys_wild` 6 s (each timed alone, so with interning).
   Sorting takes 0.1 s.

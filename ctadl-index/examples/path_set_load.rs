@@ -18,6 +18,39 @@ fn main() {
         .collect();
     let read = t.elapsed();
     let segs: usize = paths.iter().map(|p| p.len()).sum();
+    if std::env::args().nth(2).as_deref() == Some("--decode") {
+        // What a decode costs beyond consing: the strings alone, and consing alone.
+        let strings: Vec<String> = paths.iter().map(Path::to_dot_string).collect();
+        let t = Instant::now();
+        let n: usize = strings
+            .iter()
+            .map(|s| ctadl_ir::cir::parse_segments(s).unwrap().len())
+            .sum();
+        println!(
+            "parse_segments {:.2} s ({n} segments)",
+            t.elapsed().as_secs_f64()
+        );
+        let segs: Vec<Vec<_>> = paths.iter().map(|p| p.iter().cloned().collect()).collect();
+        let t = Instant::now();
+        let n = segs
+            .iter()
+            .map(|s| Path::from_accesses(s.iter().cloned()))
+            .filter(|p| !p.is_empty())
+            .count();
+        println!(
+            "cons every segment, all interned {:.2} s ({n} paths)",
+            t.elapsed().as_secs_f64()
+        );
+        // Distinct nodes: a path and each of its tails.
+        let mut nodes = std::collections::HashSet::new();
+        for p in &paths {
+            let mut q = *p;
+            while !q.is_empty() && nodes.insert(q) {
+                q = q.tail();
+            }
+        }
+        println!("{} distinct nodes", nodes.len());
+    }
     if std::env::args().nth(2).as_deref() == Some("--steps") {
         // `PathSet::from_paths`'s per-member work, one step at a time, in its order.
         let mut sorted = paths.clone();
