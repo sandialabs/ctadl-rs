@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
+from compression import zstd
 from pathlib import Path
 
 TAINTED_PATH = "C0001.tainted-path"
@@ -67,6 +69,19 @@ def _numeric_leaves(obj, prefix: str, out: dict, depth: int = 0) -> None:
     elif isinstance(obj, dict):
         for k, v in obj.items():
             _numeric_leaves(v, f"{prefix}.{k}" if prefix else k, out, depth + 1)
+
+
+def compress_sarif(work: Path) -> None:
+    """Replace `results.sarif` with `results.sarif.zst` (read it with `zstdcat`). Nothing reads the
+    SARIF once it is scored, and uncompressed it is most of what the work dirs hold."""
+    sarif = work / "results.sarif"
+    if not sarif.exists():
+        return
+    tmp = work / "results.sarif.zst.tmp"
+    with open(sarif, "rb") as src, zstd.open(tmp, "wb") as dst:
+        shutil.copyfileobj(src, dst, 1 << 20)
+    tmp.rename(work / "results.sarif.zst")
+    sarif.unlink()
 
 
 def score(spec: dict, work: Path, ctx) -> tuple[dict[str, float], dict[str, str]]:

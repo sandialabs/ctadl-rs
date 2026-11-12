@@ -478,6 +478,10 @@ class Daemon:
                 self.conn.execute("INSERT OR REPLACE INTO artifacts(run_id, name, value) VALUES (?,?,?)",
                                   (run_id, "score_error", err))
                 self.log("score-error", f"{u['suite']}/{u['bench']}: {err.splitlines()[-1]}")
+            try:
+                score.compress_sarif(self.work_dir(u))
+            except OSError as e:
+                self.log("error", f"compressing {u['suite']}/{u['bench']} SARIF: {e}")
         self.maybe_clean(u)
 
     def check_budget(self, a: Active, run_id: int, metrics: dict, outcome: str) -> None:
