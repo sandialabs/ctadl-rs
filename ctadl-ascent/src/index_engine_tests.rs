@@ -946,3 +946,19 @@ fn intent_program_matches_full_program() {
     expected_resolved.sort();
     assert_eq!(resolved, expected_resolved);
 }
+
+/// The staged check passes on a program the staged runs index alike, and panics naming the
+/// table when a staged run loses one `summary` row.
+#[test]
+#[should_panic(expected = "summary: left only 1, right only 0")]
+fn check_mode_catches_a_difference() {
+    let (program, _) = program_from_string(SRC);
+    let (facts, source_info) = index_program(program);
+    let id_map = Some(&source_info.sites);
+    let config = IndexConfig::default();
+    let result = taint_index_with_config(facts.clone(), config.clone(), id_map);
+    check_staged_with(facts.clone(), &config, id_map, &result, |_| {});
+    check_staged_with(facts, &config, id_map, &result, |run| {
+        run.summary.pop();
+    });
+}

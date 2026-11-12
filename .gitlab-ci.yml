@@ -102,6 +102,9 @@ test:
   stage: test
   script:
     - cargo test --workspace --verbose
+    # Every test that indexes in process also checks the staged runs of its facts against the
+    # monolithic serial run.
+    - CTADL_INDEX_CHECK_STAGED=1 cargo test --workspace
 
 ctadl-ascent-ci:
   stage: trigger

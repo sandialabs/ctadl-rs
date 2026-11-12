@@ -30,6 +30,15 @@ pub fn taint_index_with_config(
     config: IndexConfig,
     id_map: Option<&IdMap>,
 ) -> IndexResult {
+    let checked = check_staged_enabled().then(|| (facts.clone(), config.clone()));
+    let result = run_configured(facts, config, id_map);
+    if let Some((facts, config)) = checked {
+        check_staged_with(facts, &config, id_map, &result, |_| {});
+    }
+    result
+}
+
+fn run_configured(facts: IndexFacts, config: IndexConfig, id_map: Option<&IdMap>) -> IndexResult {
     if let Some(staged) = config.staged {
         return crate::staged::run::run_in_process(facts, config, staged, id_map);
     }
@@ -40,6 +49,90 @@ pub fn taint_index_with_config(
         std::mem::size_of::<FlowVariable>()
     );
     result
+}
+
+/// Set to `1`, it makes [`taint_index_with_config`] check every index it computes against the
+/// staged runs of the same facts (see [`check_staged_with`]). It is read once per process.
+pub const CHECK_STAGED_VAR: &str = "CTADL_INDEX_CHECK_STAGED";
+
+fn check_staged_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var(CHECK_STAGED_VAR).is_ok_and(|v| v == "1"))
+}
+
+/// The staged configurations the check runs: one SCC per batch, whole, and every recursive SCC
+/// split down to single functions.
+const CHECKED_STAGINGS: [StagedConfig; 2] = [
+    StagedConfig {
+        budget: 0,
+        floor: usize::MAX,
+    },
+    StagedConfig {
+        budget: 0,
+        floor: 1,
+    },
+];
+
+/// The seed of the shuffle of the facts each checked staged run indexes.
+const CHECK_SEED: u64 = 1;
+
+/// Checks `result`, the index of `facts` under `config`, against the monolithic serial run:
+/// `result` itself unless it is that run, and the staged runs of [`CHECKED_STAGINGS`] on the
+/// facts shuffled. `edit` changes each staged run's tables before they are compared, so that a
+/// test can see a difference caught.
+///
+/// Panics on the first run whose tables differ, with the rows that differ in each table.
+pub(crate) fn check_staged_with(
+    facts: IndexFacts,
+    config: &IndexConfig,
+    id_map: Option<&IdMap>,
+    result: &IndexResult,
+    edit: impl Fn(&mut IndexResult),
+) {
+    let serial = IndexConfig {
+        parallelism: Parallelism::Serial,
+        storage: Storage::Memory,
+        staged: None,
+        ..config.clone()
+    };
+    let monolithic;
+    let reference = if *config == serial {
+        result
+    } else {
+        monolithic = run_configured(facts.clone(), serial.clone(), id_map);
+        assert_same_tables(&monolithic, result, id_map, &format!("{config:?}"));
+        &monolithic
+    };
+    let mut shuffled = facts;
+    ctadl_index::staged::shuffle::shuffle_facts(&mut shuffled, CHECK_SEED);
+    for staged in CHECKED_STAGINGS {
+        let config = IndexConfig {
+            staged: Some(staged),
+            ..serial.clone()
+        };
+        let mut run = run_configured(shuffled.clone(), config, id_map);
+        edit(&mut run);
+        assert_same_tables(
+            reference,
+            &run,
+            id_map,
+            &format!("staged {staged:?}, facts shuffled with seed {CHECK_SEED}"),
+        );
+    }
+}
+
+fn assert_same_tables(
+    reference: &IndexResult,
+    run: &IndexResult,
+    id_map: Option<&IdMap>,
+    what: &str,
+) {
+    let diff = crate::staged::compare::compare_results(reference, run, id_map);
+    assert!(
+        diff.is_empty(),
+        "{CHECK_STAGED_VAR}: the index of {what} differs from the monolithic serial run's \
+         (< monolithic, > {what}):\n{diff}"
+    );
 }
 
 /// Runs `input` to fixpoint on the engine its config selects.
