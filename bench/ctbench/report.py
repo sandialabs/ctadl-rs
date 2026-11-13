@@ -165,8 +165,11 @@ def status(cfg) -> None:
         print(f"  {c['sha'][:10]} build={c['build_status']:8s} units {c['done']}/{c['units']} "
               f"({c['bad']} failed/skipped)  {c['subject'][:60]}")
     print("running:")
-    for r in conn.execute("SELECT r.id, r.start_tier, r.started_at, u.suite, u.bench, u.phase FROM runs r "
-                          "JOIN units u ON u.id=r.unit_id WHERE r.outcome IS NULL"):
+    running = conn.execute("SELECT r.id, r.start_tier, r.started_at, u.suite, u.bench, u.phase FROM runs r "
+                           "JOIN units u ON u.id=r.unit_id WHERE r.outcome IS NULL").fetchall()
+    if not running:
+        print("  (nothing)")
+    for r in running:
         print(f"  run {r['id']} {r['suite']}/{r['bench']}/{r['phase']} tier={r['start_tier']} "
               f"for {time.time() - r['started_at']:.0f}s")
     s = sweep_summary(conn)
