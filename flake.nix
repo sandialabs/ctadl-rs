@@ -147,7 +147,10 @@
         };
       in
       {
-        packages.default = naersk-lib.buildPackage ./.;
+        packages.default = naersk-lib.buildPackage {
+          src = ./.;
+          version = workspaceVersion;
+        };
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cil.cecilDump;
         packages.cil-fixtures = cil.cilFixtures;
