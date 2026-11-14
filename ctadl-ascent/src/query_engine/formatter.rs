@@ -2771,15 +2771,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         span_to_location.insert(*span_key, location.clone());
     }
 
-    let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (span_key, details)) in &results_by_path {
+    // Each path's own code flow. A path is reported as one result, so it carries only its
+    // flow, not those of other paths reported at the same span.
+    let mut code_flow_by_path: BTreeMap<&Vec<u32>, CodeFlow> = BTreeMap::new();
+    for (path, (_span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
         // The previous step's location identity, and its instruction.
         let mut last_loc_id: Option<(String, Option<String>)> = None;
         let mut last_site: Option<(u32, u64)> = None;
         // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
-        // so a viewer/`jq` can order steps unambiguously across the (possibly several)
-        // code flows a result carries.
+        // so a viewer/`jq` can order steps unambiguously.
         let mut exec_order: i64 = 0;
         // Resolve a function id to its (possibly obfuscated) fully-qualified name so a
         // step reads as `... in LX/09h;->A02(...)` rather than a bare vertex token.
@@ -3009,7 +3010,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         }
 
         if !thread_flow_locations.is_empty() {
-            code_flows_by_span.entry(*span_key).or_default().push(
+            code_flow_by_path.insert(
+                path,
                 CodeFlow::builder()
                     .thread_flows(vec![
                         ThreadFlow::builder()
@@ -3153,7 +3155,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
     let mut path_stats = PathStats::default();
     if profile_finds_paths(profile) {
-        for (_path, (span_key, details)) in results_by_path {
+        for (path, (span_key, details)) in &results_by_path {
+            let span_key = *span_key;
             let location = if let Some(loc) = span_to_location.get(&span_key) {
                 loc.clone()
             } else {
@@ -3165,7 +3168,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
             let mut labels_set = BTreeSet::new();
 
-            for (src, _sink, _) in &details {
+            for (src, _sink, _) in details {
                 labels_set.insert(src.label.to_string());
             }
 
@@ -3204,7 +3207,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             // carries the source *kind*; this adds the source/sink *function names*.
             let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
-            for (src, sink_opt, _lbl) in &details {
+            for (src, sink_opt, _lbl) in details {
                 if let Some(name) = source_data
                     .id_to_name
                     .get(&endpoint_callee(src, &call_callee).id)
@@ -3247,7 +3250,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .additional_properties(additional_properties)
                 .build();
 
-            if let Some(code_flows) = code_flows_by_span.get(&span_key) {
+            if let Some(code_flow) = code_flow_by_path.get(path) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
                     // A reported taint path is a finding, not a note: `kind: "fail"` puts
@@ -3259,7 +3262,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .message(Message::builder().text(final_msg_text).build())
                     .locations(vec![location])
                     .properties(properties)
-                    .code_flows(code_flows.clone())
+                    .code_flows(vec![code_flow.clone()])
                     .build();
 
                 results.push(result);
