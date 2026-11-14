@@ -199,6 +199,100 @@ fn test_cli_query_c_sources_and_sinks() {
     });
 }
 
+/// One source reaching two sinks (`tests/tnt/one_source_two_sinks.tnt`) gives two paths,
+/// both reported at the source's span. Each path's result must carry its own code flow only: when every result
+/// at a span carried the flows of all paths there, a consumer reading a result's first
+/// flow saw the same sink for both results and lost the other flow.
+#[test]
+fn test_cli_query_each_path_result_carries_only_its_flow() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let tnt: PathBuf = [
+            env!("CARGO_MANIFEST_DIR"),
+            "tests",
+            "tnt",
+            "one_source_two_sinks.tnt",
+        ]
+        .iter()
+        .collect();
+        let import =
+            ArtifactImport::try_create("test_two_sinks", ArtifactLanguage::Flowy, &tnt).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let project = AnalysisProject::try_create(
+            "test_two_sinks_proj",
+            &["test_two_sinks"],
+            SubImports::All,
+        )
+        .unwrap();
+        cli::index(
+            &project,
+            &[],
+            &[],
+            false,
+            cli::IndexOptions {
+                strategy: CallResolutionStrategy::default(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(&project, &[], &sarif, SarifProfile::default(), None).unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let paths: Vec<_> = doc["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .collect();
+
+        let mut sinks = std::collections::BTreeSet::new();
+        for result in &paths {
+            let flows = result["codeFlows"].as_array().unwrap();
+            assert_eq!(
+                flows.len(),
+                1,
+                "a path result has several code flows: {text}"
+            );
+            let last = flows[0]["threadFlows"][0]["locations"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["location"]["message"]["text"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let sink = ["to_a", "to_b"]
+                .into_iter()
+                .find(|s| last.contains(s))
+                .unwrap_or_else(|| panic!("last step names no sink: {last}"));
+            let callee = result["properties"]["sinkCallee"].as_str().unwrap();
+            assert!(
+                callee.contains(sink),
+                "result names sink {callee} but its flow ends at {last}"
+            );
+            sinks.insert(sink);
+        }
+        assert_eq!(
+            sinks.into_iter().collect::<Vec<_>>(),
+            ["to_a", "to_b"],
+            "expected one flow to each sink: {text}"
+        );
+    });
+}
+
 #[test]
 fn test_android_phase4_explicit_activity_extra_flow() {
     run_store_test(|| {

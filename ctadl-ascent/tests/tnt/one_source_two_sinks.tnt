@@ -1,0 +1,31 @@
+// One source reaching two sinks through a shared callee, `copy`. The SARIF formatter reports
+// each source -> sink path as its own `tainted-path` result, at the first span (in file order)
+// where the path's source and sink meet: here both paths meet at `copy(r)`, so both results
+// are reported at that one span. Each must carry only its own code flow:
+// `test_cli_query_each_path_result_carries_only_its_flow` in `tests/integration/cli.rs`
+// checks that on the SARIF. `main` comes first so its span sorts before the sinks' spans.
+def main() {
+s:
+  r = source(S);
+  copy(r);
+  return;
+}
+
+def copy(u) {
+s:
+  to_a(u);
+  to_b(u);
+  return;
+}
+
+def to_a(x) {
+s:
+  sink(x, S);
+  return;
+}
+
+def to_b(y) {
+s:
+  sink(y, S);
+  return;
+}
