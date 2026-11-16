@@ -209,10 +209,15 @@ Instruction ids are project-global (`facts.rs:1178`), so one map per side,
   interned signature). The signature is interned in the diff's process and compared by
   content, never by hash, so two instructions get one name only when their fact sets are
   equal.
-- **No other instructions inside a signature.** Codegen builds every call-argument variable
-  of an input fact from that fact's own site (`ctadl-ascent/src/codegen/mod.rs:1159-1199`),
-  so an input row names one instruction. If an input row names a second instruction, `load`
-  fails with an error naming the row and the diff exits 2 rather than guess (see C1).
+- **No other instructions inside a signature.** No writer of an input table puts a
+  call-argument variable of another instruction in a row: `call` has no variable column;
+  `callee_info`'s receiver is a local (`ctadl-ascent/src/codegen/mod.rs:701`);
+  `call_target_assign`'s destination is a local or an argument of the row's own call
+  (`mod.rs:961-969`, `:1168-1183`); `actual_param`'s variable is a translated expression, a
+  return variable, a formal, or a bridge temporary (`mod.rs:1207-1219`,
+  `codegen/model_matches.rs:362-390`, `languages/jni.rs:1223`). If an input row ever names
+  a second instruction, `load` fails with an error naming the row and the diff exits 2. It
+  does not refine names in rounds.
 - **No facts.** An instruction in no input table has the empty signature; all of a
   function's such instructions share one name, and their rows differ only by multiplicity.
 - **Cost of naming by content.** A change to an instruction's input facts (an added argument,
@@ -311,12 +316,13 @@ Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **An input fact that names two instructions.** D3 assumes each input row names only its
-  own instruction, which codegen keeps. Android intent bridges are the known exception
-  elsewhere: `android_intent.rs:156-172` adds a synthetic instruction at index time whose
-  facts point at the send call's argument. Those facts go to `assign`, a result table, so
-  they are renamed like any result row and do not enter a signature. If such a row ever
-  reaches an input table, the options are: fail (assumed, D3), which keeps the naming
-  simple and makes the case visible; or refine names in rounds, each round adding the
-  names of referenced instructions to a signature until no name changes, which handles it
-  at the cost of an iterative step in the trusted code.
+- C1. **Ids inside bridge temporary names.** Model-match bridges name their temporaries
+  `$bridge<func_id>_<insn_id>#<index>` (`ctadl-ascent/src/codegen/model_matches.rs:426-429`):
+  a function id and an instruction id written into a local's string. They appear in
+  `actual_param` (so in signatures) and in `assign`. When either id differs between runs,
+  every row with a bridge temporary differs though nothing changed. Options: (a) name the
+  temporary by content in codegen, if per-site uniqueness (`model_matches.rs:304`) can be
+  kept without the instruction id; (b) have the diff parse the pattern and rename the ids
+  in it, which ties trusted code to a naming convention; (c) make the temporary a
+  structured variable kind carrying (site, index), as call arguments are, which changes
+  the parquet encoding and needs a format version bump. Undecided.
