@@ -100,7 +100,10 @@ does not sequence the work.
   - no value is reported twice.
 - R17. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
-- R18. **Metamorphic tests.** On real indexes written by the test suite:
+- R18. **The proof is rechecked.** The nightly CI workflow runs the Kani harnesses with a
+  pinned Kani version and fails when a proof fails. The repository documents the one command
+  that runs them locally, and that command names the pinned version.
+- R19. **Metamorphic tests.** On real indexes written by the test suite:
   - a copy whose rows are shuffled, whose row groups are split differently, whose
     function ids are renumbered consistently, or whose instruction and span ids are
     renumbered arbitrarily reports `IDENTICAL`;
@@ -108,19 +111,19 @@ does not sequence the work.
     `IDENTICAL`;
   - deleting one row reports exactly that row only in A; duplicating one row reports
     exactly that row with multiplicity 1 vs 2.
-- R19. **Agrees with the existing comparers.** On the regression corpus, the tables both
+- R20. **Agrees with the existing comparers.** On the regression corpus, the tables both
   can compare give the same verdict as the duckdb `EXCEPT` recipe, after accounting for
   multiplicity.
 
 ### One implementation
 
-- R20. **Shared core.** `assert_same_index` and `xtask regression --compare-paths` use the
+- R21. **Shared core.** `assert_same_index` and `xtask regression --compare-paths` use the
   same multiset core. `assert_same_index` covers every `IndexResult` field, including
   `const_reaches`, `intent_pair` and `global_flow`.
-- R21. **Docs.** `docs/debugging.md` tells readers to compare two index runs with
+- R22. **Docs.** `docs/debugging.md` tells readers to compare two index runs with
   `ctadl diff-index` and not with a hand-written script. The duckdb recipe stays, for ad-hoc
   questions the command does not answer. `docs/spec.md` F12 names the command.
-- R22. **Unchanged.** The on-disk index format, `INDEX_FORMAT_VERSION`, the `CTADL_DUMP_RELATIONS`
+- R23. **Unchanged.** The on-disk index format, `INDEX_FORMAT_VERSION`, the `CTADL_DUMP_RELATIONS`
   dump and `scripts/fact-dump-diff.sh` do not change.
 
 ## Design
@@ -221,28 +224,35 @@ remainder is printed as a count (R12).
   sits next to `inspect_project` in `ctadl-ascent/src/cli/mod.rs`.
 - `assert_same_index` keeps its stats checks and replaces `canonical()` with a call to
   `multiset_diff` per `IndexResult` field (all of them), failing with the rendered
-  differences rather than a whole-vector `assert_eq!` (R20).
+  differences rather than a whole-vector `assert_eq!` (R21).
 - `compare_paths` loads each side as today and calls `multiset_diff` instead of
-  `BTreeSet::difference` (R20).
+  `BTreeSet::difference` (R21).
 
-### D7. Help and docs
+### D7. Running the proof
+
+The pinned nixpkgs has no Kani package, and `cargo kani setup` downloads its own nightly
+toolchain and CBMC, which the network-less Nix sandbox forbids. So the proof is not a
+`checks` derivation in `flake.nix` (`flake.nix:193`). It is its own job in
+`.github/workflows/nightly.yml`, using Kani's GitHub Action at a pinned version (R18).
+Locally, `cargo xtask kani` runs `cargo kani` on the crate that holds the core when the
+pinned version is installed, and otherwise prints the install command for that version and
+exits non-zero. The harnesses are compiled only under `cfg(kani)`, so the ordinary build and
+toolchain (`rust-toolchain.toml`) are unaffected.
+
+### D8. Help and docs
 
 Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **Kani toolchain.** Kani is not in the flake or `rust-toolchain.toml`, and needs its
-  own nightly toolchain. Options: add it to the dev shell and run it in the nightly suite;
-  or run it by hand only, with proptest as the gate in `cargo test`. The spec assumes the
-  harnesses are checked in and run nightly, and that proptest gates every build.
-- C2. **Relation counts as a difference.** R7 makes a changed internal relation count fail
+- C1. **Relation counts as a difference.** R7 makes a changed internal relation count fail
   the diff, as `assert_same_index` does. That is right for engine comparisons; across a rule
   change, internal counts are expected to move while outputs do not. Options: count them
   (assumed), or report them only and add `--outputs-only`.
-- C3. **Memory.** Per-table loading keeps both sides of the largest table in memory: `assign`
+- C2. **Memory.** Per-table loading keeps both sides of the largest table in memory: `assign`
   at tens of millions of rows is a few GB for both sides. Options: accept it (assumed);
   partition by function name and diff partition by partition, which bounds memory but costs
   a second pass over the files.
-- C4. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
+- C3. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
   If an index legitimately writes duplicate rows, the diff reports a difference they do not.
-  The spec assumes duplicates are meaningful and reports them; R19 accounts for it.
+  The spec assumes duplicates are meaningful and reports them; R20 accounts for it.
