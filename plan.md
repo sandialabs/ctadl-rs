@@ -14,14 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P1. **The format check compares with the current version.** R3 refuses only when the two
-  versions differ. But the decoders read only the current format and panic on anything else
-  (`ctadl-import/src/project.rs:949-953`), so two indexes that are both at an older version
-  (`"7"`) would pass R3 and then panic. D5 also treats only "a directory holding
-  `index_config.json`" as a path, so a path to an index with no config falls through to a
-  project lookup and reports "no such project" rather than R3's refusal. This plan assumes:
-  each side's version must equal `INDEX_FORMAT_VERSION` (`project.rs:186`), and any existing
-  directory is used as is, with a missing `index_config.json` refused under R3.
 - P2. **A deletion from an input table renames an instruction.** R18 says deleting one row
   reports exactly its canonical row. Under D3, a row of `call`, `actual_param`,
   `call_target_assign` or `callee_info` is part of its instruction's signature, so deleting
@@ -403,7 +395,7 @@ Depends on: 3.
 - **The command.**
   - `Command::DiffIndex` (`ctadl-ascent/src/main.rs:31-73`) takes `A`, `B`, `--limit N`
     (default 20), `--table` (repeatable), `--function` and `--json`.
-  - Resolution (D5 as P1 corrects it): an existing directory is used as is; otherwise
+  - Resolution (D5): an existing directory is used as is; otherwise
     `AnalysisProject::try_load_name(..).dir().join("index")`, as at `cli/mod.rs:2001`. It does
     not use `index_path()`, which creates the directory (`ctadl-import/src/project.rs:869-875`).
   - Each side's `IndexConfig` (`project.rs:211`) must have version `INDEX_FORMAT_VERSION`.
