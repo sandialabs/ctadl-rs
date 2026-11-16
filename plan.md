@@ -14,14 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P5. **D5's memory estimate leaves things out.** `read_vec` grows its `Vec` by doubling and
-  then shrinks it (`ctadl-index/src/facts/parquet.rs:164-169`), so a load briefly holds about
-  3x the table. Mapping a loaded `Vec<Record>` to `Vec<Canon>` holds both. The signature
-  interner and both sides' instruction maps also stay loaded throughout (D3). Peak is
-  therefore the largest table pair, plus the maps, plus whatever the load holds transiently.
-  This plan assumes: tables load through a streaming map into a presized `Vec<Canon>` (Phase
-  3), so the transient term is one batch. D5's estimate should be restated as "largest
-  canonical table pair plus the instruction maps".
 - P6. **`DiffTable`'s comparisons need a context.** D2's `content_cmp(a, b)` and
   `render(row, out)` take no context. But comparing or printing a `CanonInsn` by content means
   reading its signature from the per-diff `SignatureInterner`. Making that interner global
@@ -198,9 +190,6 @@ an agent would build it:
    - Module paths are unchanged, so external users compile as is: `cli/mod.rs:2285-2320`,
      `formatter.rs`, `android_intent.rs:194`, and in xtask `regression.rs:378` and `:388`,
      `apk.rs`, `android_icc.rs:91` and `cil/taint.rs:370`.
-   - `save_load!` gains `try_load_map(dir, f)`, built on a new
-     `Reader::read_map(cols, f: FnMut(T) -> Option<U>)`. It presizes from the file's row count
-     and maps each batch straight into the output, so no raw `Vec<Record>` exists (P5).
      `read_vec` stays as is.
 2. **Names.**
    - `FunctionNames` maps `FunctionId -> Function` by `function_id.parquet`'s `id` column, not
@@ -210,7 +199,7 @@ an agent would build it:
    - `ImportNames` maps `ImportId -> String`.
 3. **Canonical instructions (D3).**
    - **Building.** `InsnNames` reads `call`, `actual_param`, `call_target_assign` and
-     `callee_info` one table at a time through `try_load_map`. It does not use
+     `callee_info` one table at a time through each module's `try_load`, dropping each before the next. It does not use
      `IndexFacts::try_load` (`ctadl-index/src/index_engine/mod.rs:219`), which loads them all
      at once. Each row goes, with the row's own instruction as `This`, into one flat
      `Vec<(InsnId, Function, SigRow)>`, which is then `sort_unstable`d and `dedup`ed. That is
@@ -244,7 +233,8 @@ an agent would build it:
    function id). Comparing two `SignatureId`s by content needs the interner, so `content_cmp`
    and `render` take a context (P6).
 5. **`DiffTable`, once per table (D2).**
-   - `load` uses `try_load_map` and applies the `--function` filter inside the map, cached per
+   - `load` calls `try_load` and consumes the result with `into_iter().filter_map(..)`, which
+     maps to `Canon` and applies the `--function` filter, cached per
      `Function`.
    - `diff_table` dispatches with an exhaustive `match` on `Table`, with no wildcard arm.
    - For each table it `sort_unstable`s both sides and runs `multiset_diff`. While iterating,
@@ -273,7 +263,6 @@ an agent would build it:
 
 **Files.**
 - `ctadl-index/src/facts/schema.rs`.
-- `ctadl-index/src/facts/parquet.rs:153`: add `read_map` beside `read_vec`.
 - `ctadl-index/src/index_engine/dump.rs:31`, `:233`.
 - `ctadl-index/src/lib.rs:5-7`: `pub mod diff;`.
 - `ctadl-index/src/diff/` (new): `mod.rs`, `names.rs`, `insn.rs`, `canon.rs`, `table.rs`,
@@ -284,8 +273,6 @@ into `tempfile` directories.
 - **Schema:** the existing round trips (`schema.rs:262-520`) pass unchanged.
   `table_filenames_unique`: 22 tables. `from_filename_round_trips`, where
   `update_sans_path.parquet` gives `None`.
-- **`read_map`:** it returns the same rows as `read_vec`, and its output capacity equals the
-  row count.
 - **Instructions:**
   - `equal_facts_share_a_name`;
   - `different_arguments_differ`;
@@ -451,8 +438,7 @@ Depends on: 3.
 | `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani` | 1 |
 | `flake.nix` | `duckdb` in `testEnv` and the dev shell | 5 |
 | `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests | 2 |
-| `ctadl-index/src/facts/schema.rs` | `tables!`, `Table`, `try_load_map` | 3 |
-| `ctadl-index/src/facts/parquet.rs` | `Reader::read_map` | 3 |
+| `ctadl-index/src/facts/schema.rs` | `tables!`, `Table` | 3 |
 | `ctadl-index/src/index_engine/dump.rs` | `Cx::new`, `pub push_col` | 3 |
 | `ctadl-index/src/lib.rs`, `ctadl-index/src/diff/` | the diff library | 3 |
 | `ctadl-ascent/src/index_engine_tests.rs`, `ctadl-ascent/Cargo.toml` | `assert_same_index` on the core | 4 |
@@ -483,12 +469,13 @@ Not touched:
   - Every difference must be a row naming a `$bridge` local, paired one-to-one with a row that
     differs only in that local's name.
   - Capture the output outside the repo.
-- **Memory (D5, P5).**
+- **Memory (D5).**
   - Under a memory cap, run `ctadl diff-index` on the largest corpus index (the `apk:*` index
     of `xtask/tests/dex/com.noto_54.apk`) against a copy of it.
   - Record peak physical footprint, the largest table's row count and wall time.
-  - Peak should be about two copies of the largest canonical table plus the instruction maps.
-    A peak near the sum of all tables means a pair was not freed.
+  - Peak should match D5's estimate: the largest table's canonical rows on both sides, its raw
+    rows briefly, and the instruction maps. A peak near the sum of all tables means a pair was
+    not freed.
 - **Greps.** Each of these finds nothing:
   - `rg 'fn canonical\(' ctadl-ascent/src/index_engine_tests.rs`;
   - `rg '\.difference\(' xtask/src/regression.rs`;
