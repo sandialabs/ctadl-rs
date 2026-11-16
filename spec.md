@@ -226,7 +226,7 @@ Instruction ids are project-global (`facts.rs:1178`), so one map per side,
   `call_target_assign`'s destination is a local or an argument of the row's own call
   (`mod.rs:961-969`, `:1168-1183`); `actual_param`'s variable is a translated expression, a
   return variable, a formal, or a bridge temporary (`mod.rs:1207-1219`,
-  `codegen/model_matches.rs:362-390`, `languages/jni.rs:1223`). If an input row ever names
+  `codegen/model_matches.rs:352-380`, `languages/jni.rs:1223`). If an input row ever names
   a second instruction, `load` fails with an error naming the row and the diff exits 2. It
   does not refine names in rounds.
 - **No facts.** An instruction in no input table has the empty signature; all of a
@@ -323,7 +323,7 @@ so nothing to fetch). The nightly workflow builds `checks.kani` the way it build
 
 ### D9. Bridge temporary names
 
-`temp_for` (`ctadl-ascent/src/codegen/model_matches.rs:426-429`) names a bridge temporary
+`temp_for` (`ctadl-ascent/src/codegen/model_matches.rs:420-424`) names a bridge temporary
 `$bridge{func_id}_{insn_id}#{index}`, ids that differ between runs. It becomes
 `$bridge[{file}:{label}]{callee}#{index}`: `file` is the model file's name without its
 directory, `label` the rule's label (`portcullis/mod.rs:345-353`), `callee` the bridge's
@@ -331,12 +331,12 @@ directory, `label` the rule's label (`portcullis/mod.rs:345-353`), `callee` the 
 takes the callee's name, or the `ResolvedBridge`, instead of the callee's id alone.
 
 Why it stays unique: a local is scoped to its function, so the caller's id adds nothing.
-`emit_bridge` makes a fresh site per grounded bridge (`model_matches.rs:315`), so the
+`emit_bridge` makes a fresh site per grounded bridge (`model_matches.rs:305`), so the
 instruction only tells bridges of one caller apart. The emitter merges all ports of one rule
 for one `(from, to)` into one bridge, across per-import emission
-(`portcullis/emit.rs:503-531`, `portcullis/mod.rs:601-611`), so (rule, callee) identifies a
+(`portcullis/emit.rs:508-536`, `portcullis/mod.rs:608-619`), so (rule, callee) identifies a
 bridge within its caller, and the index identifies its port. The comment at
-`model_matches.rs:304-309` changes to say the temporaries are keyed on the bridge's content.
+`model_matches.rs:296-298` changes to say the temporaries are keyed on the bridge's content.
 
 The one way two bridges share a name: model files with the same file name in different
 directories, rules with the same label, bridging the same `(caller, callee)`. They then
