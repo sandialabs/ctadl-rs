@@ -38,7 +38,7 @@ does not sequence the work.
 | Term | Meaning |
 |---|---|
 | side | One of the two index directories, A (left) and B (right). |
-| canonical row | A table row with every function id replaced by the function's name, so it has the same value in any run that derived the same fact. |
+| canonical row | A table row with every function id replaced by the function's name, every import id by the import's name, and every instruction and span id removed, so it has the same value in any run that derived the same fact. |
 | multiset diff | For each distinct canonical row, its count in A and in B; a row differs when the counts differ. |
 
 ## Requirements
@@ -66,9 +66,11 @@ does not sequence the work.
 - R8. **Multisets of content.** Two tables are equal when they hold the same canonical rows
   with the same multiplicities. Row order, row-group layout, function numbering and
   interning order do not affect the result.
-- R9. **Ids with no content name.** Instruction ids, import ids and span ids are compared as
-  stored. When the two sides' import hashes differ, the output says these columns may not
-  correspond.
+- R9. **Ids with no content name are dropped.** Instruction ids and span ids are not
+  compared: front ends may assign them in any order, even across two imports of one artifact.
+  They are removed from every column, including the instruction inside a call-argument
+  variable, whose argument index is kept. Import ids are compared by the import's name. The
+  output's first lines say that a fact is compared by its function, not by its instruction.
 
 ### Output
 
@@ -99,8 +101,9 @@ does not sequence the work.
 - R17. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
 - R18. **Metamorphic tests.** On real indexes written by the test suite:
-  - a copy whose rows are shuffled, whose row groups are split differently, or whose
-    function ids are renumbered consistently reports `IDENTICAL`;
+  - a copy whose rows are shuffled, whose row groups are split differently, whose
+    function ids are renumbered consistently, or whose instruction and span ids are
+    renumbered arbitrarily reports `IDENTICAL`;
   - two indexes of one program written by processes that intern in opposite orders report
     `IDENTICAL`;
   - deleting one row reports exactly that row only in A; duplicating one row reports
@@ -190,7 +193,7 @@ canonical row the diff compares was interned in the diff's own process.
 - Resolve A and B: an existing directory holding `index_config.json` is used as is;
   otherwise the name is looked up as a project, and its `index/` directory is used (R1).
 - Read both `index_config.json`. Refuse on a version mismatch or a missing file (R3); print
-  differences in `call_policy`, `engine` and `import_hashes` (R4, R9).
+  differences in `call_policy`, `engine` and `import_hashes` (R4).
 - List both directories. Every file is a known table, `index_config.json`, `profile.json`,
   or reported as not compared (R6).
 - Compare tables one at a time, freeing each pair before loading the next, so peak memory is
@@ -221,26 +224,18 @@ Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **Instructions have no content name.** `InsnId` is a project-global counter, inside
-  columns and call-argument variables; `FileSpanId` is per import. Two indexes of
-  different builds of an import number instructions differently, so every row with an
-  instruction differs. Options: (a) compare as stored and warn when import hashes differ
-  (cheap, exact for the common same-import case, useless across import changes); (b) map
-  each `InsnId` to (function name, ordinal within the function), which survives a reimport
-  that leaves the function's body alone, but needs the IR or `index_source_map`; (c) map
-  to source location, which is not unique. The spec assumes (a) (R9).
-- C2. **Kani toolchain.** Kani is not in the flake or `rust-toolchain.toml`, and needs its
+- C1. **Kani toolchain.** Kani is not in the flake or `rust-toolchain.toml`, and needs its
   own nightly toolchain. Options: add it to the dev shell and run it in the nightly suite;
   or run it by hand only, with proptest as the gate in `cargo test`. The spec assumes the
   harnesses are checked in and run nightly, and that proptest gates every build.
-- C3. **Relation counts as a difference.** R7 makes a changed internal relation count fail
+- C2. **Relation counts as a difference.** R7 makes a changed internal relation count fail
   the diff, as `assert_same_index` does. That is right for engine comparisons; across a rule
   change, internal counts are expected to move while outputs do not. Options: count them
   (assumed), or report them only and add `--outputs-only`.
-- C4. **Memory.** Per-table loading keeps both sides of the largest table in memory: `assign`
+- C3. **Memory.** Per-table loading keeps both sides of the largest table in memory: `assign`
   at tens of millions of rows is a few GB for both sides. Options: accept it (assumed);
   partition by function name and diff partition by partition, which bounds memory but costs
   a second pass over the files.
-- C5. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
+- C4. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
   If an index legitimately writes duplicate rows, the diff reports a difference they do not.
   The spec assumes duplicates are meaningful and reports them; R19 accounts for it.
