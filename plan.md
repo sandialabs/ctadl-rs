@@ -14,13 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P6. **`DiffTable`'s comparisons need a context.** D2's `content_cmp(a, b)` and
-  `render(row, out)` take no context. But comparing or printing a `CanonInsn` by content means
-  reading its signature from the per-diff `SignatureInterner`. Making that interner global
-  would never free it, which D3's "Memory" bullet rules out. This plan assumes:
-  `content_cmp(cx, a, b)` and `render(cx, row, out)`, where `cx` is the dump `Cx` extended with
-  `&SignatureInterner`. D3's memory bullet should also state the cost: about 16 bytes per
-  instruction for each side's map, and about 130 bytes per distinct signature.
 - P7. **Background citations.**
   - `canonical()` is at `ctadl-ascent/src/index_engine_tests.rs:73` and `assert_same_index` at
     `:188`; the spec swaps them.
@@ -231,7 +224,7 @@ an agent would build it:
    must not reuse `FlowVariable::content_cmp` (`facts.rs:1410`, which orders call arguments by
    packed bits) or `CallTargetObject::content_cmp` (`facts.rs:1562-1567`, which orders by
    function id). Comparing two `SignatureId`s by content needs the interner, so `content_cmp`
-   and `render` take a context (P6).
+   and `render` take a context (D2).
 5. **`DiffTable`, once per table (D2).**
    - `load` calls `try_load` and consumes the result with `into_iter().filter_map(..)`, which
      maps to `Canon` and applies the `--function` filter, cached per
