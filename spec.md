@@ -185,8 +185,8 @@ trait DiffTable {
     const NAME: &'static str;         // the schema module's FILENAME
     type Canon: Ord + Clone;          // the canonical row
     fn load(dir: &Path, names: &FunctionNames) -> Result<Vec<Self::Canon>, Error>;
-    fn content_cmp(a: &Self::Canon, b: &Self::Canon) -> Ordering;
-    fn render(row: &Self::Canon, out: &mut String);
+    fn content_cmp(cx: &Cx<'_>, a: &Self::Canon, b: &Self::Canon) -> Ordering;
+    fn render(cx: &Cx<'_>, row: &Self::Canon, out: &mut String);
     fn function(row: &Self::Canon) -> Option<&Function>;   // for --function
 }
 ```
@@ -206,6 +206,9 @@ trait DiffTable {
   what the other tables have been rewritten away from.
 - `render` prints by content, the way `index_engine/dump.rs` does (`dump.rs:1-12`); the
   column printers there are shared, not copied.
+- `content_cmp` and `render` take `cx`, the dump's `Cx` (`dump.rs:31`) extended with the
+  diff's signature interner (D3), because a canonical instruction is compared and printed by
+  its signature's content. The interner is not global, so it is freed with the diff.
 
 The schema modules are declared in one macro invocation in `schema.rs` that emits each
 module (as `save_load!` does today, `schema.rs:22`) and a `Table` enum with one variant per
