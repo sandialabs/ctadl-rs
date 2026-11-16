@@ -1681,6 +1681,9 @@ fn a_migrated_file_names_generators_not_rules() {
     );
     assert_eq!(portcullis.provenance(1), format!("{}:0", path.display()));
     assert_eq!(portcullis.provenance(2), format!("{}:1", path.display()));
+    // The rule name drops the directory, so it is the same however the path is spelled.
+    let name = path.file_name().unwrap().to_string_lossy();
+    assert_eq!(portcullis.rule_name(2), format!("{name}:1"));
 
     // An error inside the third rule names generator 1, and says where to read the rule.
     let mut errors = PortcullisErrors::default();
