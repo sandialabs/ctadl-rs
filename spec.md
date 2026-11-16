@@ -51,8 +51,8 @@ does not sequence the work.
   project name in the store or a path to an index directory.
 - R2. **Exit codes.** 0 when the indexes are the same, 1 when they differ, 2 on an error
   (unreadable file, incompatible format).
-- R3. **Comparability.** If the two `index_config.json` format versions differ, or either is
-  missing, the command exits 2 without comparing rows.
+- R3. **Comparability.** If either side's `index_config.json` is missing, or its format version
+  is not the version this build reads, the command exits 2 without comparing rows.
 
 ### What is compared
 
@@ -251,10 +251,11 @@ canonical row the diff compares was interned in the diff's own process.
 
 ### D5. Driver and preconditions
 
-- Resolve A and B: an existing directory holding `index_config.json` is used as is;
-  otherwise the name is looked up as a project, and its `index/` directory is used (R1).
-- Read the format version from both `index_config.json`. Refuse on a mismatch or a missing
-  file (R3).
+- Resolve A and B: an existing directory is used as is; otherwise the name is looked up as a
+  project, and its `index/` directory is used (R1).
+- Read the format version from both `index_config.json`. Refuse if either is missing or is not
+  `INDEX_FORMAT_VERSION` (`project.rs:186`): the decoders read only the current format and
+  panic on any other (`project.rs:949-953`), so two equal old versions are refused too (R3).
 - List the `.parquet` files in both directories. Each is a known table or is reported as not
   compared (R5).
 - Build both sides' instruction maps from the input tables (D3).
