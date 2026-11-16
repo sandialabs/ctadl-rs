@@ -361,7 +361,9 @@ Depends on: 3.
       script.
     - The duckdb recipe (`:178-185`) stays, with a note that it compares raw ids as sets.
     - `:129-133` stops calling instruction ids byte-stable across indexes. It also says that
-      instructions with no input facts (Android intent bridges) share one name per function.
+      instructions with no input facts share one name per function. Android intent bridges
+      (`android_intent.rs:157`) are the common case: a receiver swap between two sends in
+      one function is invisible to the diff. This was decided; the spec's D3 accepts it.
   - `docs/spec.md` F12 (`:88-89`) names the command, and §5 (`:233-240`) adds the Kani check
     and the property and metamorphic tests.
   - `nightly/README.md` lists `checks.kani`.
