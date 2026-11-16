@@ -14,19 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P3. **R19 has no duckdb to run.** duckdb is in no Cargo dependency, in neither the dev shell
-  nor `testEnv` (`flake.nix:96-138`, `:298`), so R19 as written cannot run in the nightly.
-  datafusion 55 is already linked (`ctadl-ascent/Cargo.toml:36`) and reads parquet
-  (`ctadl-ascent/src/query_engine/formatter.rs:1725-1730`). The corpus also writes one index
-  per case, so R19 does not say which two indexes to compare. "No instruction column" must
-  also exclude tables whose flow variables can hold a call argument (`assign`). This plan
-  assumes: an xtask regression check, run after the cases like `--compare-paths`
-  (`xtask/src/regression.rs:350`), diffs pairs of distinct corpus indexes (each case's index
-  against the next one's, by name). For every table with no instruction id anywhere in a row
-  (`formal_param`, `callee_resolvents`, `summary`, `globals`, `global_flow`, `paths`,
-  `external_function`, `function_id`, `import_id`), it checks the command's per-table counts
-  against datafusion SQL: `GROUP BY` with `count(*)` on each side, function ids joined to
-  names, then a full outer join on the canonical columns.
 - P4. **Tables are not always sets.** The Terms entry "multiplicity" says a canonical row's
   multiplicity is above 1 only when rows collapse under canonicalizing. That is false. The
   input tables are written from `Vec`s with no dedup (`ctadl-index/src/index_engine/mod.rs:160-214`):
@@ -78,10 +65,11 @@ independent of 3 and changes only test and xtask comparers. Phase 5 is the first
 sees.
 
 Shared files:
-- `Cargo.lock` changes in Phases 1, 2, 4 and 5. Phase 4 is the only one in wave 3 that
+- `Cargo.lock` changes in Phases 1, 2 and 4. Phase 4 is the only one in wave 3 that
   changes it.
-- `xtask/src/regression.rs` and `xtask/Cargo.toml` are edited by Phase 4 (`compare_paths`) and
-  Phase 5 (the SQL check), which are in different waves.
+- `flake.nix` is edited by Phase 1 (Kani) and Phase 5 (duckdb), which are in different waves.
+- `xtask/src/regression.rs` is edited by Phase 4 (`compare_paths`) and Phase 5 (the SQL
+  check), which are in different waves.
 
 Test commands used throughout (`test.yml` runs the first three):
 
@@ -398,12 +386,16 @@ Depends on: 3.
   - Intern order: `determinism.rs`'s `forward` and `reverse` children
     (`determinism.rs:225-245`), which pre-intern in opposite orders (`pre_intern`, `:117`),
     have their two `index/` directories diffed by the parent.
-- **SQL agreement (R19 as P3 corrects it).** `xtask/src/diff_sql.rs` runs after the cases, as
-  `compare_paths` does (`regression.rs:350`).
+- **SQL agreement (R19).** `xtask/src/diff_sql.rs` runs after the cases, as `compare_paths`
+  does (`regression.rs:350`).
   - It pairs consecutive corpus indexes by name.
-  - For P3's tables, it checks `ctadl diff-index --json --table t` against datafusion
-    `GROUP BY` counts with a full outer join, in both directions.
-  - A disagreement fails the run. With fewer than two indexes, it reports `SKIP`.
+  - For R19's tables, it checks `ctadl diff-index --json --table t` against SQL that it runs
+    through the `duckdb` CLI (`duckdb -json -c ...` over the parquet files), in both
+    directions.
+  - `pkgs.duckdb` is added to `testEnv` (`flake.nix:96-138`) and to the dev shell
+    (`flake.nix:298`).
+  - A disagreement fails the run. With fewer than two indexes, or with no `duckdb` on `PATH`
+    (as the SARIF check self-skips without `checksarif`), it reports `SKIP` with the reason.
 - **Docs (R21).**
   - `docs/debugging.md`:
     - It gains "Comparing two index runs", which says to use `ctadl diff-index` and not a
@@ -424,10 +416,8 @@ Depends on: 3.
 - `ctadl-ascent/tests/integration/main.rs:4-27`.
 - `ctadl-ascent/tests/integration/determinism.rs`.
 - `xtask/src/diff_sql.rs` (new), `xtask/src/main.rs` and `xtask/src/regression.rs:350`.
-- `xtask/Cargo.toml`: `datafusion = "55"`, already built for `ctadl-ascent`
-  (`Cargo.lock:1451`).
+- `flake.nix:96-138` (`testEnv`) and `:298` (dev shell): `duckdb`.
 - `docs/debugging.md`, `docs/spec.md` and `nightly/README.md`.
-- `Cargo.lock`.
 
 **Tests.**
 - **Parsing:** `diff_index_parses`, in `main.rs`'s test module.
@@ -461,17 +451,19 @@ Depends on: 3.
 | File | Change | Phase |
 | --- | --- | --- |
 | `Cargo.toml` | member `multiset-diff`; `cfg(kani)` check-cfg | 1 |
-| `Cargo.lock` | new crate, proptest, datafusion for xtask | 1, 2, 4, 5 |
+| `Cargo.lock` | new crate, proptest | 1, 2, 4 |
 | `multiset-diff/src/lib.rs` | signature and stub; then the merge | 1, 2 |
 | `multiset-diff/src/proofs.rs` | harnesses as expected failures; then required | 1, 2 |
 | `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani` | 1 |
+| `flake.nix` | `duckdb` in `testEnv` and the dev shell | 5 |
 | `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests | 2 |
 | `ctadl-index/src/facts/schema.rs` | `tables!`, `Table`, `try_load_map` | 3 |
 | `ctadl-index/src/facts/parquet.rs` | `Reader::read_map` | 3 |
 | `ctadl-index/src/index_engine/dump.rs` | `Cx::new`, `pub push_col` | 3 |
 | `ctadl-index/src/lib.rs`, `ctadl-index/src/diff/` | the diff library | 3 |
 | `ctadl-ascent/src/index_engine_tests.rs`, `ctadl-ascent/Cargo.toml` | `assert_same_index` on the core | 4 |
-| `xtask/src/regression.rs`, `xtask/Cargo.toml` | `compare_paths` on the core; the SQL check | 4, 5 |
+| `xtask/src/regression.rs` | `compare_paths` on the core; the SQL check | 4, 5 |
+| `xtask/Cargo.toml` | `multiset-diff` | 4 |
 | `ctadl-ascent/src/main.rs`, `ctadl-ascent/src/cli/{mod,diff_index}.rs` | the command | 5 |
 | `ctadl-ascent/tests/integration/{cli,diff_index,main,determinism}.rs` | command and metamorphic tests | 5 |
 | `xtask/src/{diff_sql,main}.rs` | SQL agreement | 5 |
