@@ -78,11 +78,14 @@
 
         # The one version this tree has. Read rather than repeated so these
         # derivations stay named after it; see the root Cargo.toml.
-        workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+        rootManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        workspaceVersion = rootManifest.workspace.package.version;
 
         android = import ./nix/android-jvm.nix { inherit pkgs naersk-lib workspaceVersion; };
 
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
+
+        kani = import ./nix/kani.nix { inherit pkgs fenix; };
 
         # The external toolchain `xtask regression` expects on PATH.
         # Deliberately excludes this repo's own package so that the
@@ -283,9 +286,46 @@
               PROPTEST_CASES = "4096";
             };
 
+            # The Kani proofs of multiset-diff, which must hold. The crate has no
+            # dependencies, so it is checked alone, in a workspace of its own
+            # that supplies what it inherits from the root one: no vendoring,
+            # nothing to fetch.
+            kaniCheck =
+              let
+                manifest = (pkgs.formats.toml { }).generate "Cargo.toml" {
+                  workspace = {
+                    resolver = "3";
+                    members = [ "multiset-diff" ];
+                    package.version = workspaceVersion;
+                    inherit (rootManifest.workspace) lints;
+                  };
+                };
+              in
+              pkgs.runCommand "ctadl-checks-kani"
+                {
+                  # rustToolchain's cargo only dispatches to `cargo-kani`, which
+                  # builds with Kani's own nightly.
+                  nativeBuildInputs = [
+                    kani
+                    rustToolchain
+                  ];
+                }
+                ''
+                  mkdir work
+                  cd work
+                  cp -R ${./multiset-diff} multiset-diff
+                  cp ${manifest} Cargo.toml
+                  chmod -R u+w .
+                  export HOME="$TMPDIR"
+                  cargo generate-lockfile --offline
+                  cargo kani --output-format terse
+                  mkdir -p "$out"
+                '';
+
           in
           {
             inherit regression lsm-property-tests;
+            kani = kaniCheck;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
 
@@ -324,6 +364,8 @@
               jadx
               scrcpy
               android.androidLldb
+              # `cargo kani`, for the proofs in multiset-diff.
+              kani
             ];
             packages = [ testEnv ];
 

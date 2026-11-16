@@ -24,6 +24,7 @@ members = [
     "immortal",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
+    "multiset-diff",
     "trie",
     "xtask",
 ]
@@ -37,6 +38,8 @@ version = "0.1.7"
 
 [workspace.lints.rust]
 rust-2018-idioms = "deny"
+# Kani sets `cfg(kani)` when it compiles a crate's proofs.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [workspace.lints.clippy]
 # Require a "SAFETY" comment preceding any unsafe code

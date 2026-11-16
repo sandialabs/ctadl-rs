@@ -136,6 +136,30 @@ implementation yet, and run them from a pinned Kani in Nix.
 
 Then stop for review of `multiset-diff/src/proofs.rs`.
 
+**As built.**
+- D8's version facts hold for the downloaded bundles: Kani 0.68.0's `rust-toolchain-version`
+  is `nightly-2026-08-21-<target>` and its `rustc-version` is
+  `rustc 1.100.0-nightly (8925ea358 2026-08-20)`, which the fenix nightly's `rustc --version`
+  matches. `nix/kani.nix` checks both at build time.
+- goto-cc preprocesses by running `gcc`, which the macOS stdenv does not provide by that name
+  (outside Nix, Xcode's `/usr/bin/gcc` does). The wrappers therefore also prepend
+  `$out/libexec/kani`, which holds `gcc` linked to `stdenv.cc`'s `cc`. Beyond that they do
+  what `kani-verifier`'s `exec` does, except that they do not filter rustup toolchain paths
+  out of `LD_LIBRARY_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` (nothing under Nix sets them).
+- The library check runs `kani-compiler` under the loader's own tracing
+  (`DYLD_PRINT_LIBRARIES` on macOS, `LD_TRACE_LOADED_OBJECTS` on Linux) and requires the
+  loaded `librustc_driver-*` and `libLLVM` to be the toolchain's. The bundle's binaries are
+  not stripped (`dontStrip`).
+- On aarch64 Linux, cbmc, goto-cc, goto-instrument and goto-analyzer are static;
+  autoPatchelfHook patches the others (kani-driver, kani-compiler, kani-cov, kissat).
+- The check runs `cargo kani --output-format terse`, to keep the nightly log short. The
+  generated workspace takes its lints from the root `Cargo.toml` (read with `fromTOML`), so
+  they cannot drift; `cargo` there is `rustToolchain`'s, which only dispatches to
+  `cargo-kani`.
+- The harnesses use `#[kani::unwind(13)]` (`2 * N + 1` for `N` = 6), and record what the
+  core yields in a fixed array of `2 * N` entries, so an implementation that yields more, or
+  loops past the bound, fails rather than passing unchecked.
+
 ## Phase 2: the multiset core (R15, R16, D1)
 
 Depends on: 1.

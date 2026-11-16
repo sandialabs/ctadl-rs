@@ -1,0 +1,10 @@
+[package]
+name = "multiset-diff"
+version.workspace = true
+edition = "2024"
+
+# No dependencies and no dev-dependencies: the Kani check in flake.nix runs on
+# this crate alone, with nothing to fetch.
+
+[lints]
+workspace = true
