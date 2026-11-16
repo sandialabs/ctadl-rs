@@ -2,7 +2,7 @@
 
 Source: `intent.md`, `spec.md`. This plans the order of the work, the files each step
 changes and the tests that prove it. R* and D* numbers are the spec's; where this plan and the
-spec disagree, the spec wins, except for the corrections listed below. Each phase builds,
+spec disagree, the spec wins. Each phase builds,
 passes the gate named in it, and is one commit.
 
 The bridge rename (R23, D9) is already done, in commit `1314bbdc7`: `temp_for` at
@@ -11,21 +11,6 @@ The bridge rename (R23, D9) is already done, in commit `1314bbdc7`: `temp_for` a
 the acceptance run carry.
 
 Code, `--help` text and docs must not cite this plan's or the spec's numbers (D10).
-
-## Corrections to the spec
-
-- P7. **Background citations.**
-  - `canonical()` is at `ctadl-ascent/src/index_engine_tests.rs:73` and `assert_same_index` at
-    `:188`; the spec swaps them.
-  - `function_id`, `import_id` and `index_source_map` are written by `IndexSourceInfo::try_save`
-    (`ctadl-index/src/index_engine/source_info.rs:70-105`), not by the two writers the spec
-    names.
-  - `external_function` is written twice (`mod.rs:213` and `:700`); the second write wins.
-  - The tables `index` does not write are at `schema.rs:149-178` and `:238-260`, not all of
-    `:149-258`.
-  - The nightly's build step is `.github/workflows/nightly.yml:36`.
-  - D9's comment change landed in `temp_for`'s doc (`model_matches.rs:411-418`), not at the
-    old `:296-298`.
 
 ## Order
 
