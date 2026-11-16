@@ -245,7 +245,9 @@ Instruction ids are project-global (`facts.rs:1178`), so one map per side,
   say) changes its name, so every row about that instruction shows as removed and added.
   That is accepted: the instruction did change.
 - **Memory.** The two maps, one entry per instruction, stay loaded while the tables are
-  diffed. The signatures are built from the input tables before any table is diffed.
+  diffed. The signatures are built from the input tables, one table at a time, before any
+  table is diffed. The cost is about 16 bytes per instruction per side, plus about 130 bytes
+  per distinct signature, shared by both sides: roughly 2 GB at 20M call sites.
 
 ### D4. Sorting: by intern id, then by content for printing
 
@@ -269,10 +271,13 @@ canonical row the diff compares was interned in the diff's own process.
 - List the `.parquet` files in both directories. Each is a known table or is reported as not
   compared (R5).
 - Build both sides' instruction maps from the input tables (D3).
-- Compare tables one at a time, freeing each pair before loading the next, so peak memory is
-  the largest table on both sides, not the whole index. A canonical `assign` row is about 32
-  bytes, so 30M rows is about 2 GB for both sides; that is accepted, and tables are not
-  partitioned.
+- Compare tables one at a time, freeing each pair before loading the next, so peak memory
+  tracks the largest table, not the whole index. Each table loads with the schema's
+  `try_load`, whose `read_vec` grows its `Vec` by doubling and then shrinks it
+  (`parquet.rs:164-169`), and is then mapped to canonical rows. So while B loads, memory holds
+  A's canonical rows, plus B's raw rows briefly at up to 3x, plus B's canonical rows. The
+  instruction maps (D3) sit on top. A canonical `assign` row is about 36 bytes, so 30M rows
+  peaks at several GB. That is accepted: tables are not partitioned and not streamed.
 
 ### D6. Output
 
