@@ -352,6 +352,13 @@ impl PortcullisFile {
         format!("{}:{}", self.path.display(), self.label(rule))
     }
 
+    /// `name:index`: [`Self::provenance`] with the file's name in place of its path, so it is
+    /// the same however the path was spelled.
+    pub fn rule_name(&self, rule: usize) -> String {
+        let name = self.path.file_name().unwrap_or(self.path.as_os_str());
+        format!("{}:{}", name.to_string_lossy(), self.label(rule))
+    }
+
     /// `errors`, rendered against this file. A migrated file's errors name the generator their
     /// rule came from, rather than a line of text its author has never seen.
     pub fn error(&self, errors: PortcullisErrors) -> Error {
@@ -603,6 +610,7 @@ impl<'a> PortcullisMatcher<'a> {
                         rule,
                         &state.solutions,
                         &file.provenance(ri),
+                        &file.rule_name(ri),
                         file.label(ri),
                         out,
                         &mut self.emitted[fi],
@@ -662,6 +670,7 @@ impl<'a> PortcullisMatcher<'a> {
                             &file.program.rules[ri],
                             &state.solutions,
                             &file.provenance(ri),
+                            &file.rule_name(ri),
                             file.label(ri),
                             out,
                             &mut rows,

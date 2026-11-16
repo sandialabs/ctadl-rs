@@ -29,7 +29,7 @@ use crate::facts::{
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::models::matches::{Disposition, ModelPort, PropagationMatch};
-use crate::models::spec::PortPair;
+use crate::models::spec::{PortPair, ResolvedBridge};
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
 /// What phase 2 did with one bridge generator, for the unconditional `info` line.
@@ -269,15 +269,7 @@ fn codegen_bridges(
         };
         // A bridge is a call (S15): it maps the written ports and nothing for globals, which
         // both sides already share (G5, G7).
-        emit_bridge(
-            &bridge.provenance,
-            a,
-            b,
-            &bridge.ports,
-            num_params,
-            facts,
-            source_info,
-        );
+        emit_bridge(bridge, a, b, num_params, facts, source_info);
         stats.push(BridgeStats {
             provenance: bridge.provenance.clone(),
             from_matched: 1,
@@ -294,25 +286,23 @@ fn codegen_bridges(
 /// as the three steps that make that true: name the callee's parameter locally, wire the
 /// caller's port to it, pass it.
 fn emit_bridge(
-    provenance: &str,
+    bridge: &ResolvedBridge,
     a: FunctionId,
     b: FunctionId,
-    ports: &[PortPair],
     num_params: &HashMap<FunctionId, i16>,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
     // A *fresh* site. Call-argument pseudo-variables are keyed on the instruction id, so
     // reusing an existing site's id would alias its argument n to this bridge's argument n --
-    // a spurious bidirectional flow between two unrelated arguments. Under cross-product
-    // pairing several bridge sites routinely share one caller, which is also why the
-    // temporaries below are keyed on `(site, index)` rather than on the index alone.
+    // a spurious bidirectional flow between two unrelated arguments.
     //
     // The site gets no `source_map` entry: a synthetic site has no span, and the SARIF step
     // emitter returns early for a location-less site rather than inventing one. Attributing the
     // crossing to the stub's own declaration span is a scoped follow-up.
+    let ports = &bridge.ports;
+    let provenance = &bridge.provenance;
     let site = source_info.add_insn_site(a);
-    let insn = site.insn_id;
     let site: PackedInsnSiteId = site.try_into().expect("packing a fresh bridge site");
     facts.call.push((site, b));
 
@@ -372,7 +362,7 @@ fn emit_bridge(
         // that the caller's port corresponds to a *sub-path* of the callee's parameter; the
         // temporary is what expresses it. Ports sharing a callee index are then separated by
         // field-sensitivity instead of collapsing onto one pseudo-variable and aliasing.
-        let t = temp_for(a, insn, port.to.index);
+        let t = temp_for(bridge, port.to.index);
         if temp_made.insert(*port.to.index) {
             // The temporary IS the callee's parameter, so it is passed whole. It needs no
             // `formal_param` row of its own: `locals` seeds from formals and a temporary is a
@@ -419,13 +409,17 @@ fn emit_bridge(
     }
 }
 
-/// The local standing for callee parameter `index` at one bridge site.
+/// The local standing for callee parameter `index` of `bridge`.
 ///
-/// Keyed on `(site, index)`, not on the index alone: cross-product pairing puts several bridge
-/// sites in one caller, and a temporary named only for its index would merge their parameters.
-fn temp_for(func: FunctionId, insn: crate::facts::InsnId, index: FormalIndex) -> FlowVariable {
+/// Keyed on the bridge's content, `(rule, callee, index)`, with no function or instruction id,
+/// so two indexes of one program name it alike. A local is scoped to its caller, and the
+/// emitter merges every port of one rule for one `(caller, callee)` into one bridge, so
+/// `(rule, callee)` tells apart the bridges of one caller; the index tells apart its ports.
+/// Two model files with one file name and a rule label in common, bridging the same pair,
+/// share their temporaries, which merges their flows: less precise, never missing a flow.
+fn temp_for(bridge: &ResolvedBridge, index: FormalIndex) -> FlowVariable {
     FlowVariable::local(facts::Str::from(
-        format!("$bridge{}_{}#{}", func.id, insn.id, *index).as_str(),
+        format!("$bridge[{}]{}#{}", bridge.rule_name, bridge.to, *index).as_str(),
     ))
 }
 

@@ -276,6 +276,7 @@ impl RuleEmitter {
         rule: &Rule,
         solutions: &RuleSolutions,
         provenance: &str,
+        rule_name: &str,
         label: usize,
         out: &mut ProgramModelMatches,
         emitted: &mut Emitted,
@@ -307,6 +308,7 @@ impl RuleEmitter {
                     out: &mut *out,
                     emitted: &mut *emitted,
                     label,
+                    rule_name,
                 };
                 emit_head(rule, head, &binding, provenance, rows, tally, errors);
             }
@@ -326,6 +328,8 @@ struct Rows<'r> {
     out: &'r mut ProgramModelMatches,
     emitted: &'r mut Emitted,
     label: usize,
+    /// [`super::PortcullisFile::rule_name`].
+    rule_name: &'r str,
 }
 
 fn emit_head(
@@ -341,6 +345,7 @@ fn emit_head(
         out,
         emitted,
         label: rule_label,
+        rule_name,
     } = rows;
     match &head.kind {
         HeadKind::Source {
@@ -522,6 +527,7 @@ fn emit_head(
                     tally.bridge_slots.insert(key, out.resolved_bridges.len());
                     out.resolved_bridges.push(ResolvedBridge {
                         provenance: provenance.to_string(),
+                        rule_name: rule_name.to_string(),
                         rule: rule.index,
                         from: from.function,
                         to: to.function,
