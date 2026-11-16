@@ -205,7 +205,9 @@ canonical row the diff compares was interned in the diff's own process.
 - List the `.parquet` files in both directories. Each is a known table or is reported as not
   compared (R5).
 - Compare tables one at a time, freeing each pair before loading the next, so peak memory is
-  the largest table on both sides, not the whole index.
+  the largest table on both sides, not the whole index. A canonical `assign` row is about 32
+  bytes, so 30M rows is about 2 GB for both sides; that is accepted, and tables are not
+  partitioned.
 
 ### D5. Output
 
@@ -271,10 +273,6 @@ Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **Memory.** Per-table loading keeps both sides of the largest table in memory: `assign`
-  at tens of millions of rows is a few GB for both sides. Options: accept it (assumed);
-  partition by function name and diff partition by partition, which bounds memory but costs
-  a second pass over the files.
-- C2. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
+- C1. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
   If an index legitimately writes duplicate rows, the diff reports a difference they do not.
   The spec assumes duplicates are meaningful and reports them; R18 accounts for it.
