@@ -18,7 +18,9 @@ Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
 - Adding a table to the index without teaching the diff about it fails to
   compile.
 - Before comparing rows, it checks the two runs are comparable (index
-  format version) and reports differences in their configuration and import.
+  format version).
+- It diffs the index's parquet tables and nothing else: not `profile.json`,
+  not the index configuration, not relation dumps.
 - Its output is meant for an agent to read: a first line that says
   `IDENTICAL` or summarizes per-table counts, then bounded, sorted samples
   that always say how many were left out; a `--json` form; filters by table
