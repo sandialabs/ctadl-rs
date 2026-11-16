@@ -10,11 +10,12 @@ that are not comparable, or truncating output without saying so.
 
 Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
 
-- It compares every table an index run writes, as sets of rows keyed
-  by content, not by row order or run-specific ids. Instruction and span
-  ids are dropped entirely: front ends may assign them in any order (in
-  parallel, say), so a fact is compared by its function, not by its
-  instruction or source span.
+- It compares every table an index run writes, as multisets of rows keyed
+  by content, not by row order or run-specific ids. Front ends may assign
+  instruction ids in any order (in parallel, say), so an instruction is
+  named by its facts: its function and the set of input facts about it.
+  Instructions with the same facts share a name, and the diff counts how
+  many rows collapse onto each name. Span ids are dropped.
 - Adding a table to the index without teaching the diff about it fails to
   compile.
 - Before comparing rows, it checks the two runs are comparable (index
@@ -25,12 +26,12 @@ Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
   `IDENTICAL` or summarizes per-table counts, then bounded, sorted samples
   that always say how many were left out; a `--json` form; filters by table
   and function; exit codes 0 (same), 1 (different), 2 (error).
-- The core that compares two sorted row sequences as sets is small and
+- The core that compares two sorted row sequences as multisets is small and
   proved correct with Kani (bounded). Kani is pinned in a Nix derivation,
   and the proof is rerun nightly from it. The rest is checked with metamorphic
   tests (shuffled rows, renumbered function ids, reversed interning order
   must report no difference; one deleted row must report exactly that
-  row) and against the existing comparers.
+  row; swapped call targets at two distinct sites must be reported) and against the existing comparers.
 - The existing comparers in Rust (`assert_same_index` in the engine tests,
   `xtask regression --compare-paths`) use the same core instead of their
   own.

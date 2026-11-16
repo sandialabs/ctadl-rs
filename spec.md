@@ -38,8 +38,10 @@ does not sequence the work.
 | Term | Meaning |
 |---|---|
 | side | One of the two index directories, A (left) and B (right). |
-| canonical row | A table row with every function id replaced by the function's name, every import id by the import's name, and every instruction and span id removed, so it has the same value in any run that derived the same fact. |
-| set diff | The canonical rows only in A and those only in B. Each table is a Datalog relation, so a set; after canonicalizing, rows that differed only in a dropped id are one row. |
+| signature | The set of an instruction's input facts (D3), canonicalized, with each reference to the instruction itself replaced by a marker for "this instruction". |
+| canonical instruction | An instruction named by content: its function's name and its signature. Instructions of one function with equal signatures have the same name. |
+| canonical row | A table row with every function id replaced by the function's name, every instruction id by its canonical instruction, every import id by the import's name, and every span id removed, so it has the same value in any run that derived the same fact. |
+| multiplicity | How many rows of a table map to one canonical row. Each table is a Datalog relation, so a set; a canonical row's multiplicity is above 1 only when rows collapse under canonicalizing. |
 
 ## Requirements
 
@@ -59,95 +61,99 @@ does not sequence the work.
 - R5. **Nothing skipped silently.** A `.parquet` file in either directory that no schema
   names is listed as not compared. Files that are not parquet are not read, apart from the
   format version (R3).
-- R6. **Sets of content.** Two tables are equal when they hold the same set of canonical
-  rows. Row order, row-group layout, function numbering and
-  interning order do not affect the result.
-- R7. **Ids with no content name are dropped.** Instruction ids and span ids are not
-  compared: front ends may assign them in any order, even across two imports of one artifact.
-  They are removed from every column, including the instruction inside a call-argument
-  variable, whose argument index is kept. Import ids are compared by the import's name. The
-  output's first lines say that a fact is compared by its function, not by its instruction.
+- R6. **Content with multiplicity.** Two tables are equal when they hold the same canonical
+  rows, each with the same multiplicity. Row order, row-group layout, function numbering,
+  instruction numbering and interning order do not affect the result.
+- R7. **Instructions are named by their facts.** Instruction ids are not compared: front
+  ends may assign them in any order, even across two imports of one artifact. Every
+  instruction id, in a column or inside a call-argument variable, is replaced by its
+  canonical instruction. So if `foo` calls `bar` at two sites with the same arguments and B
+  loses one, `call` differs in multiplicity; if two sites with different arguments swap
+  targets, `call` differs in rows.
+- R8. **Other ids.** Span ids are dropped, since they number spans per import. Import ids are
+  compared by the import's name.
 
 ### Output
 
-- R8. **First line.** The first line of output is `IDENTICAL`, or `DIFFERENT` followed by
+- R9. **First line.** The first line of output is `IDENTICAL`, or `DIFFERENT` followed by
   how many tables differ.
-- R9. **Per-table summary.** For each table, it prints the row counts on each side, the
-  number of distinct canonical rows on each side, and the number only in A and only in B.
-  Equal tables print one line each.
-- R10. **Samples.** For each differing table, at most `--limit N` (default 20) differing
-  rows per side are printed, by content, in content order. The count of rows not printed
+- R10. **Per-table summary.** For each table, it prints the row counts on each side, the
+  number of canonical rows only in A, only in B, and on both sides with different
+  multiplicity. Equal tables print one line each.
+- R11. **Samples.** For each differing table, at most `--limit N` (default 20) differing
+  rows per side are printed, by content, in content order, each with its multiplicity on
+  both sides. The count of rows not printed
   is always printed.
-- R11. **Deterministic.** The output for the same two indexes is byte-identical across
+- R12. **Deterministic.** The output for the same two indexes is byte-identical across
   runs, and swapping A and B swaps the sides in the output and changes nothing else.
-- R12. **Filters.** `--table NAME` (repeatable) limits the comparison to those tables;
+- R13. **Filters.** `--table NAME` (repeatable) limits the comparison to those tables;
   `--function SUBSTR` limits rows to those whose function name contains it. A filter that
   is applied is named in the output.
-- R13. **JSON.** `--json` prints the same information as one JSON document on stdout, with
+- R14. **JSON.** `--json` prints the same information as one JSON document on stdout, with
   the same exit codes.
 
 ### Correctness
 
-- R14. **Proved core.** The function that diffs two sorted sequences as sets is proved
+- R15. **Proved core.** The function that diffs two sorted sequences as multisets is proved
   with Kani, for sequences up to a stated bound, to satisfy:
   - diffing a sequence with itself reports nothing;
   - swapping the inputs swaps the sides;
-  - a value is reported only in A exactly when it occurs in A and not in B, and only in B
-    likewise; duplicates within one input do not change the result;
+  - a value is reported exactly when its count in A differs from its count in B, and the
+    reported counts are those counts;
   - no value is reported twice.
-- R15. **Property tests.** The same properties hold under proptest on unbounded inputs in
+- R16. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
-- R16. **Kani is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
+- R17. **Kani is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
   Kani version, in the dev shell and in a `checks` derivation that runs the harnesses with
   no network. The nightly workflow builds that check, and a failed proof fails the night.
-- R17. **Metamorphic tests.** On real indexes written by the test suite:
+- R18. **Metamorphic tests.** On real indexes written by the test suite:
   - a copy whose rows are shuffled, whose row groups are split differently, whose
     function ids are renumbered consistently, or whose instruction and span ids are
-    renumbered arbitrarily reports `IDENTICAL`;
+    renumbered arbitrarily (consistently across tables) reports `IDENTICAL`;
   - two indexes of one program written by processes that intern in opposite orders report
     `IDENTICAL`;
-  - deleting one row whose canonical row is unique reports exactly that row only in A;
-    duplicating a row reports `IDENTICAL`.
-- R18. **Agrees with the existing comparers.** On the regression corpus, the tables both
-  can compare give the same rows as duckdb `EXCEPT` in both directions over the same
-  canonical columns.
+  - deleting one row reports exactly its canonical row, with multiplicities n and n-1;
+  - swapping the call targets of two call sites of one function whose arguments differ
+    reports the two `call` rows on each side.
+- R19. **Agrees with an independent query.** On the regression corpus, for every table with
+  no instruction column, the result equals duckdb's `GROUP BY` with `count(*)` over the same
+  canonical columns (function ids joined to names), compared in both directions.
 
 ### One implementation
 
-- R19. **Shared core.** `assert_same_index` and `xtask regression --compare-paths` use the
-  same set-diff core. `assert_same_index` covers every `IndexResult` field, including
+- R20. **Shared core.** `assert_same_index` and `xtask regression --compare-paths` use the
+  same multiset core. `assert_same_index` covers every `IndexResult` field, including
   `const_reaches`, `intent_pair` and `global_flow`.
-- R20. **Docs.** `docs/debugging.md` tells readers to compare two index runs with
+- R21. **Docs.** `docs/debugging.md` tells readers to compare two index runs with
   `ctadl diff-index` and not with a hand-written script. The duckdb recipe stays, for ad-hoc
   questions the command does not answer. `docs/spec.md` F12 names the command.
-- R21. **Unchanged.** The on-disk index format, `INDEX_FORMAT_VERSION`, the `CTADL_DUMP_RELATIONS`
+- R22. **Unchanged.** The on-disk index format, `INDEX_FORMAT_VERSION`, the `CTADL_DUMP_RELATIONS`
   dump and `scripts/fact-dump-diff.sh` do not change.
 
 ## Design
 
-### D1. The core: `set_diff`
+### D1. The core: `multiset_diff`
 
-A new workspace crate, `set-diff`, with no dependencies and no dev-dependencies, so
-the Nix check can run Kani on it alone without vendoring the workspace's crates (D7). The
+A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies, so
+the Nix check can run Kani on it alone without vendoring the workspace's crates (D8). The
 proptest properties live in `ctadl-index`'s tests, which call it.
 
 ```rust
-pub enum Side { A, B }
+pub struct Delta<'a, T> { pub row: &'a T, pub count_a: usize, pub count_b: usize }
 
-/// Both inputs sorted by `cmp`, duplicates allowed. Yields each value in one input and not
-/// the other, once, with the side it is in, in `cmp` order.
-pub fn set_diff<T, F>(a: &[T], b: &[T], cmp: F) -> impl Iterator<Item = (Side, &T)>
+/// Both inputs sorted by `cmp`. Yields each value whose counts differ, once, in `cmp` order.
+pub fn multiset_diff<'a, T, F>(a: &'a [T], b: &'a [T], cmp: F) -> impl Iterator<Item = Delta<'a, T>>
 where F: Fn(&T, &T) -> Ordering;
 ```
 
 It is a single merge pass: advance past the run of equal values on each side, and report a
-value whose run is on one side only. It allocates nothing. Its precondition, sorted input, is established by
+value whose two run lengths differ (a missing run has length 0). It allocates nothing. Its precondition, sorted input, is established by
 its only callers, which sort immediately before calling, and is checked with a
 `debug_assert`.
 
 The Kani harnesses live beside it under `#[cfg(kani)]`, over `u8` values and a total order,
-with a stated length bound (R14). The proptest versions are the same properties as ordinary
-tests (R15).
+with a stated length bound (R15). The proptest versions are the same properties as ordinary
+tests (R16).
 
 ### D2. Canonical rows
 
@@ -168,15 +174,14 @@ trait DiffTable {
   through that side's own `function_id.parquet`. This includes the `FunctionId` inside
   `CallTargetObjectKind::FunctionId`. `Canon` types are built so that they cannot contain a
   `FunctionId`: canonical counterparts of `CallTargetObject` hold a `Function` instead.
-- `load` drops every `InsnId` and `FileSpanId`, and maps each `ImportId` to its name through
-  that side's `import_id.parquet`. A call-argument `FlowVariable` becomes a canonical variable
-  that holds only the argument index (R7). `Canon` types cannot contain an `InsnId`,
-  `FileSpanId` or `ImportId`.
-- Rows that differ only in a dropped instruction or span become one canonical row. So the
-  diff does not see a fact that moves between instructions of one function, or that is lost
-  at some instructions while it remains at another: if `foo` calls `bar` at two sites and
-  B loses one, `call(foo, bar)` is in both. This is accepted.
-- `function_id` itself is compared by name only, as a set of names, since its ids are
+- `load` maps each `InsnId` to its canonical instruction (D3), including the instruction
+  inside a call-argument `FlowVariable`, which becomes (canonical instruction, argument
+  index). It drops every `FileSpanId`, and maps each `ImportId` to its name through that
+  side's `import_id.parquet` (R8). `Canon` types cannot contain an `InsnId`, `FileSpanId`
+  or `ImportId`.
+- `load` returns the canonical rows unsorted and with repeats; the repeats are the
+  multiplicities (R6).
+- `function_id` itself is compared by name only, since its ids are
   what the other tables have been rewritten away from.
 - `render` prints by content, the way `index_engine/dump.rs` does (`dump.rs:1-12`); the
   column printers there are shared, not copied.
@@ -186,19 +191,49 @@ module (as `save_load!` does today, `schema.rs:22`) and a `Table` enum with one 
 module. The diff dispatches with an exhaustive `match` on `Table` that names each module's
 `DiffTable` impl, so a table added to the schema without one fails to compile (R4).
 
-### D3. Sorting: by intern id, then by content for printing
+### D3. Canonical instructions
+
+Instruction ids are project-global (`facts.rs:1178`), so one map per side,
+`InsnId -> CanonInsn`, renames every instruction reference in that side's tables.
+
+- **Input facts.** An instruction's signature is built from the tables written before the
+  fixpoint that have an instruction column: `call`, `actual_param`, `call_target_assign` and
+  `callee_info` (`index_engine/mod.rs:160-214`). These state the program; they do not
+  depend on what the analysis derived. The result tables (`resolved_call`, `intent_pair`,
+  `assign`, ...) are never part of a signature, so a change in results never renames an
+  instruction, and "same instruction, different result" shows as a changed result row.
+- **Building it.** For each input row that names instruction `i`, canonicalize the row with
+  function ids as names, `i` itself (as a column or inside a call-argument variable) as
+  the marker `This`, and the instruction column removed. The signature of `i` is the sorted,
+  deduplicated set of those rows, tagged with their table. `CanonInsn` is (function name,
+  interned signature). The signature is interned in the diff's process and compared by
+  content, never by hash, so two instructions get one name only when their fact sets are
+  equal.
+- **No other instructions inside a signature.** Codegen builds every call-argument variable
+  of an input fact from that fact's own site (`ctadl-ascent/src/codegen/mod.rs:1159-1199`),
+  so an input row names one instruction. If an input row names a second instruction, `load`
+  fails with an error naming the row and the diff exits 2 rather than guess (see C1).
+- **No facts.** An instruction in no input table has the empty signature; all of a
+  function's such instructions share one name, and their rows differ only by multiplicity.
+- **Cost of naming by content.** A change to an instruction's input facts (an added argument,
+  say) changes its name, so every row about that instruction shows as removed and added.
+  That is accepted: the instruction did change.
+- **Memory.** The two maps, one entry per instruction, stay loaded while the tables are
+  diffed. The signatures are built from the input tables before any table is diffed.
+
+### D4. Sorting: by intern id, then by content for printing
 
 Both sides load into one process, so one interner: two canonical rows are equal exactly when
 their contents are equal, whatever order either run interned in. The diff therefore sorts each
-side with the derived `Ord` (integer compares on intern ids), runs `set_diff`, and sorts
+side with the derived `Ord` (integer compares on intern ids), runs `multiset_diff`, and sorts
 only the differing rows with `content_cmp` before printing. This keeps the full-table sort
 cheap on tables of tens of millions of rows and keeps the output independent of load order
-(R6, R11).
+(R6, R12).
 
 Invariant: no two canonical rows from different processes are compared by intern id. Every
 canonical row the diff compares was interned in the diff's own process.
 
-### D4. Driver and preconditions
+### D5. Driver and preconditions
 
 - Resolve A and B: an existing directory holding `index_config.json` is used as is;
   otherwise the name is looked up as a project, and its `index/` directory is used (R1).
@@ -206,30 +241,31 @@ canonical row the diff compares was interned in the diff's own process.
   file (R3).
 - List the `.parquet` files in both directories. Each is a known table or is reported as not
   compared (R5).
+- Build both sides' instruction maps from the input tables (D3).
 - Compare tables one at a time, freeing each pair before loading the next, so peak memory is
   the largest table on both sides, not the whole index. A canonical `assign` row is about 32
   bytes, so 30M rows is about 2 GB for both sides; that is accepted, and tables are not
   partitioned.
 
-### D5. Output
+### D6. Output
 
-A `Report` struct holds, per table: distinct row counts on each side, the two difference counts, and the
+A `Report` struct holds, per table: row counts on each side, the three difference counts, and the
 sampled rows rendered as strings. The text and the `--json` forms are two printers of the same
-`Report` (R13), so they cannot disagree. Tables print in name order. The sample limit
+`Report` (R14), so they cannot disagree. Tables print in name order. The sample limit
 applies after the content sort, so the printed rows are the first N by content, and the
-remainder is printed as a count (R10).
+remainder is printed as a count (R11).
 
-### D6. Consumers
+### D7. Consumers
 
 - The `Command` enum (`ctadl-ascent/src/main.rs:31`) gains `DiffIndex`; its implementation
   sits next to `inspect_project` in `ctadl-ascent/src/cli/mod.rs`.
 - `assert_same_index` keeps its stats checks and replaces `canonical()` with a call to
-  `set_diff` per `IndexResult` field (all of them), failing with the rendered
-  differences rather than a whole-vector `assert_eq!` (R19).
-- `compare_paths` loads each side as today and calls `set_diff` instead of
-  `BTreeSet::difference` (R19).
+  `multiset_diff` per `IndexResult` field (all of them), failing with the rendered
+  differences rather than a whole-vector `assert_eq!` (R20).
+- `compare_paths` loads each side as today and calls `multiset_diff` instead of
+  `BTreeSet::difference` (R20).
 
-### D7. Kani in the flake
+### D8. Kani in the flake
 
 The pinned nixpkgs has no Kani package, and `cargo kani setup` downloads a bundle and a
 nightly toolchain, which the Nix sandbox forbids. The flake instead does what that setup does,
@@ -264,15 +300,23 @@ The derivation, `nix/kani.nix`:
   nightly date and its manifest hash, and four bundle hashes.
 
 The flake adds that package to `devShells.default` and adds `checks.kani`, which runs
-`cargo kani` on a copy of `set-diff` alone (its own trivial lockfile, no dependencies,
+`cargo kani` on a copy of `multiset-diff` alone (its own trivial lockfile, no dependencies,
 so nothing to fetch). The nightly workflow builds `checks.kani` the way it builds
 `checks.regression` (`.github/workflows/nightly.yml:35`). The harnesses compile only under
 `cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
 
-### D8. Help and docs
+### D9. Help and docs
 
 Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-None open.
+- C1. **An input fact that names two instructions.** D3 assumes each input row names only its
+  own instruction, which codegen keeps. Android intent bridges are the known exception
+  elsewhere: `android_intent.rs:156-172` adds a synthetic instruction at index time whose
+  facts point at the send call's argument. Those facts go to `assign`, a result table, so
+  they are renamed like any result row and do not enter a signature. If such a row ever
+  reaches an input table, the options are: fail (assumed, D3), which keeps the naming
+  simple and makes the case visible; or refine names in rounds, each round adding the
+  names of referenced instructions to a signature until no name changes, which handles it
+  at the cost of an iterative step in the trusted code.
