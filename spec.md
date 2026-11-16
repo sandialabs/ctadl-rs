@@ -112,9 +112,13 @@ does not sequence the work.
     renumbered arbitrarily (consistently across tables) reports `IDENTICAL`;
   - two indexes of one program written by processes that intern in opposite orders report
     `IDENTICAL`;
-  - deleting one row reports exactly its canonical row, with multiplicities n and n-1;
+  - deleting one row of a table that is not an instruction's input (D3), `function_id` or
+    `import_id` reports exactly its canonical row, with multiplicities n and n-1;
+  - deleting one row of an input table renames its instruction (D3), so that table differs
+    and every differing row names the edited instruction;
   - swapping the call targets of two call sites of one function whose arguments differ
-    reports the two `call` rows on each side.
+    reports the two original `call` rows only in A and the two swapped rows only in B, among
+    the other rows of those two renamed instructions.
 - R19. **Agrees with an independent query.** On the regression corpus, for every table with
   no instruction column, the result equals duckdb's `GROUP BY` with `count(*)` over the same
   canonical columns (function ids joined to names), compared in both directions.
