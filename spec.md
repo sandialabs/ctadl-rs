@@ -119,9 +119,15 @@ does not sequence the work.
   - swapping the call targets of two call sites of one function whose arguments differ
     reports the two original `call` rows only in A and the two swapped rows only in B, among
     the other rows of those two renamed instructions.
-- R19. **Agrees with an independent query.** On the regression corpus, for every table with
-  no instruction column, the result equals duckdb's `GROUP BY` with `count(*)` over the same
-  canonical columns (function ids joined to names), compared in both directions.
+- R19. **Agrees with an independent query.** After the regression cases run, each corpus
+  index is diffed against the next one by name. For every table with no instruction id
+  anywhere in a row (`formal_param`, `callee_resolvents`, `summary`, `globals`,
+  `global_flow`, `paths`, `external_function`, `function_id`, `import_id`; not `assign`,
+  whose variables can hold a call argument), the per-table counts equal duckdb's: a
+  `GROUP BY` with `count(*)` on each side over the same canonical columns (function and
+  import ids joined to names, spans left out), then a full outer join. This is checked in
+  both directions. duckdb comes from the flake, in the dev shell and in the regression
+  check's environment.
 
 ### One implementation
 
