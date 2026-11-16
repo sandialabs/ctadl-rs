@@ -130,6 +130,17 @@ does not sequence the work.
 - R22. **Unchanged.** The on-disk index format, `INDEX_FORMAT_VERSION`, the `CTADL_DUMP_RELATIONS`
   dump and `scripts/fact-dump-diff.sh` do not change.
 
+### No ids in names
+
+- R23. **Bridge temporaries are named by content.** A model-match bridge's temporary local is
+  named from the bridge's callee name, its rule (model file name and rule label) and the
+  callee index, with no function or instruction id. Two indexes of one program with the
+  same model files give their bridge temporaries the same names however the files' paths
+  were spelled.
+- R24. **Same flows.** Renaming bridge temporaries changes no derived flow: every index table
+  is equal, under this diff, to the one written before the rename, except for the
+  temporaries' names.
+
 ## Design
 
 ### D1. The core: `multiset_diff`
@@ -310,19 +321,32 @@ so nothing to fetch). The nightly workflow builds `checks.kani` the way it build
 `checks.regression` (`.github/workflows/nightly.yml:35`). The harnesses compile only under
 `cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
 
-### D9. Help and docs
+### D9. Bridge temporary names
+
+`temp_for` (`ctadl-ascent/src/codegen/model_matches.rs:426-429`) names a bridge temporary
+`$bridge{func_id}_{insn_id}#{index}`, ids that differ between runs. It becomes
+`$bridge[{file}:{label}]{callee}#{index}`: `file` is the model file's name without its
+directory, `label` the rule's label (`portcullis/mod.rs:345-353`), `callee` the bridge's
+`to` name, which `codegen_bridges` already holds (`model_matches.rs:240`). `emit_bridge`
+takes the callee's name, or the `ResolvedBridge`, instead of the callee's id alone.
+
+Why it stays unique: a local is scoped to its function, so the caller's id adds nothing.
+`emit_bridge` makes a fresh site per grounded bridge (`model_matches.rs:315`), so the
+instruction only tells bridges of one caller apart. The emitter merges all ports of one rule
+for one `(from, to)` into one bridge, across per-import emission
+(`portcullis/emit.rs:503-531`, `portcullis/mod.rs:601-611`), so (rule, callee) identifies a
+bridge within its caller, and the index identifies its port. The comment at
+`model_matches.rs:304-309` changes to say the temporaries are keyed on the bridge's content.
+
+The one way two bridges share a name: model files with the same file name in different
+directories, rules with the same label, bridging the same `(caller, callee)`. They then
+share a temporary, and the analysis merges their flows: less precise, never missing a flow.
+This is accepted. Nothing else creates or parses `$bridge` names.
+
+### D10. Help and docs
 
 Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **Ids inside bridge temporary names.** Model-match bridges name their temporaries
-  `$bridge<func_id>_<insn_id>#<index>` (`ctadl-ascent/src/codegen/model_matches.rs:426-429`):
-  a function id and an instruction id written into a local's string. They appear in
-  `actual_param` (so in signatures) and in `assign`. When either id differs between runs,
-  every row with a bridge temporary differs though nothing changed. Options: (a) name the
-  temporary by content in codegen, if per-site uniqueness (`model_matches.rs:304`) can be
-  kept without the instruction id; (b) have the diff parse the pattern and rename the ids
-  in it, which ties trusted code to a naming convention; (c) make the temporary a
-  structured variable kind carrying (site, index), as call arguments are, which changes
-  the parquet encoding and needs a format version bump. Undecided.
+None open.

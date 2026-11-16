@@ -38,5 +38,9 @@ Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
 - `docs/debugging.md` tells readers, agents included, to use it rather than
   writing a comparison script.
 
+Model-match bridge temporaries are named with function and instruction ids
+in the string. They are renamed by content (callee, rule, index), so the
+diff never has to parse a name.
+
 Out of scope for now: diffing `CTADL_DUMP_RELATIONS` TSV dumps
 (`scripts/fact-dump-diff.sh` stays), though the core should not preclude it.
