@@ -65,6 +65,21 @@ its path. Nothing is committed.
 **Gate.** The run finishes with its usual pass/xfail counts, and the run root holds an
 `index/` directory per case.
 
+**As built.**
+- The pre-rename binary is `/Volumes/Shampoo/cargo-target/ctadl-pre-rename/release/ctadl`
+  (built from `6587da638` = `1314bbdc7^`, worktree kept at
+  `/Volumes/Shampoo/tmp/ctadl-index-diff/phase0/pre-rename`).
+- Run root: `/Volumes/Shampoo/tmp/ctadl-index-diff/nix-shell.1srVhU/ctadl_xtask_34330`.
+  `nix develop` sets its own `TMPDIR` inside the exported one, so the run root lands under a
+  `nix-shell.*` directory. Result: 156 passed, 1 xfail (`Jvm:ClassIdMergedTryFlow`), 132
+  `index/` directories.
+- No index in the run has a `$bridge` temporary. The suite's only bridge models
+  (`nightly/tests/jni/jni-flow.bridge.ctadl`, `jni-arg-shift.bridge.ctadl`) use path-less
+  ports, which collapse to a direct `actual_param` (`model_matches.rs:319`, `:351`) and never
+  call `temp_for`. So these indexes alone make R24 hold trivially. The acceptance check for R24
+  therefore also runs a bridge model with sub-path ports (for example
+  `F::arg(0).f <-> G::arg(2)`) through both binaries.
+
 ## Phase 1: the core's properties, stated in Kani, as an expected failure (R15, R17, D8)
 
 Depends on: nothing.
@@ -449,6 +464,9 @@ Not touched:
   - Every difference must be a row naming a `$bridge` local, paired one-to-one with a row that
     differs only in that local's name.
   - Capture the output outside the repo.
+  - Also run a JNI case with a bridge model whose ports have sub-paths through both the
+    pre-rename binary and the new one, and diff those indexes the same way, so that at least
+    one comparison has `$bridge` rows (see Phase 0's as-built note).
 - **Memory (D5).**
   - Under a memory cap, run `ctadl diff-index` on the largest corpus index (the `apk:*` index
     of `xtask/tests/dex/com.noto_54.apk`) against a copy of it.
