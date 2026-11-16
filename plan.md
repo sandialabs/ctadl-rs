@@ -14,17 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P2. **A deletion from an input table renames an instruction.** R18 says deleting one row
-  reports exactly its canonical row. Under D3, a row of `call`, `actual_param`,
-  `call_target_assign` or `callee_info` is part of its instruction's signature, so deleting
-  it renames that instruction: every row about it shows as removed and added. Deleting a row
-  of `function_id` or `import_id` that other rows reference is a load error (exit 2), not a
-  difference. Likewise, R18's call-target swap changes both instructions' signatures, since a
-  `call` row is part of them. So all of the two instructions' rows differ, not only the two
-  `call` rows. This plan assumes: the deletion test runs on every table except those six, and
-  asserts exactly one difference there. For the four input tables, it asserts that the table
-  differs and that every row only in A or only in B names the edited instruction. The swap
-  test asserts that the two `call` rows are among the differences on each side.
 - P3. **R19 has no duckdb to run.** duckdb is in no Cargo dependency, in neither the dev shell
   nor `testEnv` (`flake.nix:96-138`, `:298`), so R19 as written cannot run in the nightly.
   datafusion 55 is already linked (`ctadl-ascent/Cargo.toml:36`) and reads parquet
@@ -402,7 +391,7 @@ Depends on: 3.
   - `main` returns `anyhow::Result` (`main.rs:672`), so errors exit 1 today. The arm therefore
     prints the report, flushes, and calls `std::process::exit` with 0, 1 or 2; any error goes
     to stderr with exit 2.
-- **Metamorphic tests (R18 as P2 corrects it).**
+- **Metamorphic tests (R18).**
   - They run over real indexes from `cli::index`, as `determinism.rs:172` does: the C program
     at `index_engine_tests.rs:56-68`, and a bridging fixture from `bridging_end_to_end.rs`.
   - The perturbations are test helpers that `try_load`, rewrite and `try_save` each table.
@@ -453,9 +442,10 @@ Depends on: 3.
   - `renumbered_functions`, inside `CallTargetObject`, `QueryEndpoint`, `FlowEdge` and
     `PackedInsnSiteId` too;
   - `renumbered_insns_and_spans`;
-  - `deleting_a_row_reports_it`, per P2;
+  - `deleting_a_row_reports_it`: one row per table, with the input tables checked as R18
+    says;
   - `swapped_call_targets_reported`: in `wrap`, the `apply(twice, b)` and `through(&o, r)`
-    sites;
+    sites. The two original `call` rows are only in A, and the two swapped rows only in B;
   - `swap_sides_mirror`.
 - **Intern order:** `output_does_not_depend_on_intern_order` also asserts `IDENTICAL` between
   its two indexes.
