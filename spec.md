@@ -11,8 +11,12 @@ does not sequence the work.
   `ctadl-index/src/facts/schema.rs` with typed `Record`, `COLUMNS`, `FILENAME` and
   `try_save`/`try_load` (`schema.rs:22-37`). `index` writes the pre-fixpoint tables from
   `IndexFacts::try_save` (`ctadl-index/src/index_engine/mod.rs:160`) and the results from
-  `IndexResult::try_save` (`mod.rs:667`). `schema.rs` also declares `taint`, `taint_edge` and
-  `manifest_*` (`schema.rs:149-258`), which `index` does not write. Old index directories
+  `IndexResult::try_save` (`mod.rs:667`), and `function_id`, `import_id` and
+  `index_source_map` from `IndexSourceInfo::try_save`
+  (`ctadl-index/src/index_engine/source_info.rs:70-105`). `external_function` is written twice
+  (`mod.rs:213`, `:700`), and the second write wins. `schema.rs` also declares `taint`,
+  `taint_edge` (`schema.rs:149-178`) and `manifest_*` (`:238-260`), which `index` does not
+  write. Old index directories
   hold files no current schema names (for example `update_sans_path.parquet`).
 - Row order of `assign`, `summary`, `paths` and `index_source_map` differs between runs; only
   their sets are stable (`docs/debugging.md:122`).
@@ -28,7 +32,7 @@ does not sequence the work.
   (`project.rs:186`, `:207`). This command reads it only to refuse mismatched formats; it
   reads no other non-parquet file.
 - Comparers today: `scripts/fact-dump-diff.sh` (relation dumps, `sort -u`, so sets);
-  `assert_same_index`/`canonical()` (`ctadl-ascent/src/index_engine_tests.rs:73`, `:188`),
+  `assert_same_index`/`canonical()` (`ctadl-ascent/src/index_engine_tests.rs:188`, `:73`),
   which skips `const_reaches`, `intent_pair` and `global_flow`; `xtask regression
   --compare-paths` (`xtask/src/regression.rs:365`), `paths` only, as sets; and a duckdb
   `EXCEPT` recipe (`docs/debugging.md:178`), also sets.
@@ -337,7 +341,7 @@ The derivation, `nix/kani.nix`:
 The flake adds that package to `devShells.default` and adds `checks.kani`, which runs
 `cargo kani` on a copy of `multiset-diff` alone (its own trivial lockfile, no dependencies,
 so nothing to fetch). The nightly workflow builds `checks.kani` the way it builds
-`checks.regression` (`.github/workflows/nightly.yml:35`). The harnesses compile only under
+`checks.regression` (`.github/workflows/nightly.yml:36`). The harnesses compile only under
 `cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
 
 ### D9. Bridge temporary names
@@ -354,8 +358,8 @@ Why it stays unique: a local is scoped to its function, so the caller's id adds 
 instruction only tells bridges of one caller apart. The emitter merges all ports of one rule
 for one `(from, to)` into one bridge, across per-import emission
 (`portcullis/emit.rs:508-536`, `portcullis/mod.rs:608-619`), so (rule, callee) identifies a
-bridge within its caller, and the index identifies its port. The comment at
-`model_matches.rs:296-298` changes to say the temporaries are keyed on the bridge's content.
+bridge within its caller, and the index identifies its port. `temp_for`'s doc
+(`model_matches.rs:411-418`) says the temporaries are keyed on the bridge's content.
 
 The one way two bridges share a name: model files with the same file name in different
 directories, rules with the same label, bridging the same `(caller, callee)`. They then
