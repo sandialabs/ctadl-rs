@@ -166,6 +166,13 @@ trait DiffTable {
   through that side's own `function_id.parquet`. This includes the `FunctionId` inside
   `CallTargetObjectKind::FunctionId`. `Canon` types are built so that they cannot contain a
   `FunctionId`: canonical counterparts of `CallTargetObject` hold a `Function` instead.
+- `load` drops every `InsnId` and `FileSpanId`, and maps each `ImportId` to its name through
+  that side's `import_id.parquet`. A call-argument `FlowVariable` becomes a canonical variable
+  that holds only the argument index (R9). `Canon` types cannot contain an `InsnId`,
+  `FileSpanId` or `ImportId`.
+- Dropping instructions and spans loses no counts: rows that differ only in them become one
+  canonical row with a higher multiplicity. What it gives up is seeing facts that move
+  between instructions of one function while their counts stay the same.
 - `function_id` itself is compared by name only, as a multiset of names, since its ids are
   what the other tables have been rewritten away from.
 - `render` prints by content, the way `index_engine/dump.rs` does (`dump.rs:1-12`); the

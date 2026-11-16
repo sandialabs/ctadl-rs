@@ -11,7 +11,10 @@ that are not comparable, or truncating output without saying so.
 Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
 
 - It compares every table an index run writes, as multisets of rows keyed
-  by content, not by row order or run-specific ids.
+  by content, not by row order or run-specific ids. Instruction and span
+  ids are dropped entirely: front ends may assign them in any order (in
+  parallel, say), so a fact is compared by its function, not by its
+  instruction or source span.
 - Adding a table to the index without teaching the diff about it fails to
   compile.
 - Before comparing rows, it checks the two runs are comparable (index
