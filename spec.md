@@ -41,7 +41,7 @@ does not sequence the work.
 | signature | The set of an instruction's input facts (D3), canonicalized, with each reference to the instruction itself replaced by a marker for "this instruction". |
 | canonical instruction | An instruction named by content: its function's name and its signature. Instructions of one function with equal signatures have the same name. |
 | canonical row | A table row with every function id replaced by the function's name, every instruction id by its canonical instruction, every import id by the import's name, and every span id removed, so it has the same value in any run that derived the same fact. |
-| multiplicity | How many rows of a table map to one canonical row. Each table is a Datalog relation, so a set; a canonical row's multiplicity is above 1 only when rows collapse under canonicalizing. |
+| multiplicity | How many rows of a table map to one canonical row. A table may hold repeated rows, since the input tables are written without removing duplicates (`model_matches.rs:340-345`, `models/codegen.rs:34`), and canonicalizing can collapse further rows into one. |
 
 ## Requirements
 
