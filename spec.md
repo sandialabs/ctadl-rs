@@ -39,7 +39,7 @@ does not sequence the work.
 |---|---|
 | side | One of the two index directories, A (left) and B (right). |
 | canonical row | A table row with every function id replaced by the function's name, every import id by the import's name, and every instruction and span id removed, so it has the same value in any run that derived the same fact. |
-| multiset diff | For each distinct canonical row, its count in A and in B; a row differs when the counts differ. |
+| set diff | The canonical rows only in A and those only in B. Each table is a Datalog relation, so a set; after canonicalizing, rows that differed only in a dropped id are one row. |
 
 ## Requirements
 
@@ -59,8 +59,8 @@ does not sequence the work.
 - R5. **Nothing skipped silently.** A `.parquet` file in either directory that no schema
   names is listed as not compared. Files that are not parquet are not read, apart from the
   format version (R3).
-- R6. **Multisets of content.** Two tables are equal when they hold the same canonical rows
-  with the same multiplicities. Row order, row-group layout, function numbering and
+- R6. **Sets of content.** Two tables are equal when they hold the same set of canonical
+  rows. Row order, row-group layout, function numbering and
   interning order do not affect the result.
 - R7. **Ids with no content name are dropped.** Instruction ids and span ids are not
   compared: front ends may assign them in any order, even across two imports of one artifact.
@@ -73,8 +73,8 @@ does not sequence the work.
 - R8. **First line.** The first line of output is `IDENTICAL`, or `DIFFERENT` followed by
   how many tables differ.
 - R9. **Per-table summary.** For each table, it prints the row counts on each side, the
-  number of canonical rows only in A, only in B, and present on both sides with different
-  multiplicity. Equal tables print one line each.
+  number of distinct canonical rows on each side, and the number only in A and only in B.
+  Equal tables print one line each.
 - R10. **Samples.** For each differing table, at most `--limit N` (default 20) differing
   rows per side are printed, by content, in content order. The count of rows not printed
   is always printed.
@@ -88,11 +88,12 @@ does not sequence the work.
 
 ### Correctness
 
-- R14. **Proved core.** The function that diffs two sorted sequences as multisets is proved
+- R14. **Proved core.** The function that diffs two sorted sequences as sets is proved
   with Kani, for sequences up to a stated bound, to satisfy:
   - diffing a sequence with itself reports nothing;
   - swapping the inputs swaps the sides;
-  - for every value, its reported counts equal its counts in A and in B;
+  - a value is reported only in A exactly when it occurs in A and not in B, and only in B
+    likewise; duplicates within one input do not change the result;
   - no value is reported twice.
 - R15. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
@@ -105,16 +106,16 @@ does not sequence the work.
     renumbered arbitrarily reports `IDENTICAL`;
   - two indexes of one program written by processes that intern in opposite orders report
     `IDENTICAL`;
-  - deleting one row reports exactly that row only in A; duplicating one row reports
-    exactly that row with multiplicity 1 vs 2.
+  - deleting one row whose canonical row is unique reports exactly that row only in A;
+    duplicating a row reports `IDENTICAL`.
 - R18. **Agrees with the existing comparers.** On the regression corpus, the tables both
-  can compare give the same verdict as the duckdb `EXCEPT` recipe, after accounting for
-  multiplicity.
+  can compare give the same rows as duckdb `EXCEPT` in both directions over the same
+  canonical columns.
 
 ### One implementation
 
 - R19. **Shared core.** `assert_same_index` and `xtask regression --compare-paths` use the
-  same multiset core. `assert_same_index` covers every `IndexResult` field, including
+  same set-diff core. `assert_same_index` covers every `IndexResult` field, including
   `const_reaches`, `intent_pair` and `global_flow`.
 - R20. **Docs.** `docs/debugging.md` tells readers to compare two index runs with
   `ctadl diff-index` and not with a hand-written script. The duckdb recipe stays, for ad-hoc
@@ -124,23 +125,23 @@ does not sequence the work.
 
 ## Design
 
-### D1. The core: `multiset_diff`
+### D1. The core: `set_diff`
 
-A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies, so
+A new workspace crate, `set-diff`, with no dependencies and no dev-dependencies, so
 the Nix check can run Kani on it alone without vendoring the workspace's crates (D7). The
 proptest properties live in `ctadl-index`'s tests, which call it.
 
 ```rust
 pub enum Side { A, B }
-pub struct Delta<T> { pub row: T, pub count_a: usize, pub count_b: usize }
 
-/// Both inputs sorted by `cmp`. Yields each value whose counts differ, once, in `cmp` order.
-pub fn multiset_diff<T, F>(a: &[T], b: &[T], cmp: F) -> impl Iterator<Item = Delta<&T>>
+/// Both inputs sorted by `cmp`, duplicates allowed. Yields each value in one input and not
+/// the other, once, with the side it is in, in `cmp` order.
+pub fn set_diff<T, F>(a: &[T], b: &[T], cmp: F) -> impl Iterator<Item = (Side, &T)>
 where F: Fn(&T, &T) -> Ordering;
 ```
 
-It is a single merge pass: advance through the run of equal values on each side, compare
-the run lengths. It allocates nothing. Its precondition, sorted input, is established by
+It is a single merge pass: advance past the run of equal values on each side, and report a
+value whose run is on one side only. It allocates nothing. Its precondition, sorted input, is established by
 its only callers, which sort immediately before calling, and is checked with a
 `debug_assert`.
 
@@ -171,10 +172,11 @@ trait DiffTable {
   that side's `import_id.parquet`. A call-argument `FlowVariable` becomes a canonical variable
   that holds only the argument index (R7). `Canon` types cannot contain an `InsnId`,
   `FileSpanId` or `ImportId`.
-- Dropping instructions and spans loses no counts: rows that differ only in them become one
-  canonical row with a higher multiplicity. What it gives up is seeing facts that move
-  between instructions of one function while their counts stay the same.
-- `function_id` itself is compared by name only, as a multiset of names, since its ids are
+- Rows that differ only in a dropped instruction or span become one canonical row. So the
+  diff does not see a fact that moves between instructions of one function, or that is lost
+  at some instructions while it remains at another: if `foo` calls `bar` at two sites and
+  B loses one, `call(foo, bar)` is in both. This is accepted.
+- `function_id` itself is compared by name only, as a set of names, since its ids are
   what the other tables have been rewritten away from.
 - `render` prints by content, the way `index_engine/dump.rs` does (`dump.rs:1-12`); the
   column printers there are shared, not copied.
@@ -188,7 +190,7 @@ module. The diff dispatches with an exhaustive `match` on `Table` that names eac
 
 Both sides load into one process, so one interner: two canonical rows are equal exactly when
 their contents are equal, whatever order either run interned in. The diff therefore sorts each
-side with the derived `Ord` (integer compares on intern ids), runs `multiset_diff`, and sorts
+side with the derived `Ord` (integer compares on intern ids), runs `set_diff`, and sorts
 only the differing rows with `content_cmp` before printing. This keeps the full-table sort
 cheap on tables of tens of millions of rows and keeps the output independent of load order
 (R6, R11).
@@ -211,7 +213,7 @@ canonical row the diff compares was interned in the diff's own process.
 
 ### D5. Output
 
-A `Report` struct holds, per table: counts on each side, the three difference counts, and the
+A `Report` struct holds, per table: distinct row counts on each side, the two difference counts, and the
 sampled rows rendered as strings. The text and the `--json` forms are two printers of the same
 `Report` (R13), so they cannot disagree. Tables print in name order. The sample limit
 applies after the content sort, so the printed rows are the first N by content, and the
@@ -222,9 +224,9 @@ remainder is printed as a count (R10).
 - The `Command` enum (`ctadl-ascent/src/main.rs:31`) gains `DiffIndex`; its implementation
   sits next to `inspect_project` in `ctadl-ascent/src/cli/mod.rs`.
 - `assert_same_index` keeps its stats checks and replaces `canonical()` with a call to
-  `multiset_diff` per `IndexResult` field (all of them), failing with the rendered
+  `set_diff` per `IndexResult` field (all of them), failing with the rendered
   differences rather than a whole-vector `assert_eq!` (R19).
-- `compare_paths` loads each side as today and calls `multiset_diff` instead of
+- `compare_paths` loads each side as today and calls `set_diff` instead of
   `BTreeSet::difference` (R19).
 
 ### D7. Kani in the flake
@@ -262,7 +264,7 @@ The derivation, `nix/kani.nix`:
   nightly date and its manifest hash, and four bundle hashes.
 
 The flake adds that package to `devShells.default` and adds `checks.kani`, which runs
-`cargo kani` on a copy of `multiset-diff` alone (its own trivial lockfile, no dependencies,
+`cargo kani` on a copy of `set-diff` alone (its own trivial lockfile, no dependencies,
 so nothing to fetch). The nightly workflow builds `checks.kani` the way it builds
 `checks.regression` (`.github/workflows/nightly.yml:35`). The harnesses compile only under
 `cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
@@ -273,6 +275,4 @@ Code and `--help` must not cite requirement numbers from this spec.
 
 ## Concerns
 
-- C1. **Multiplicity vs the other comparers.** The dump script and the duckdb recipe use sets.
-  If an index legitimately writes duplicate rows, the diff reports a difference they do not.
-  The spec assumes duplicates are meaningful and reports them; R18 accounts for it.
+None open.
