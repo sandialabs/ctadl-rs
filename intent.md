@@ -24,7 +24,8 @@ Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
   that always say how many were left out; a `--json` form; filters by table
   and function; exit codes 0 (same), 1 (different), 2 (error).
 - The core that compares two sorted row sequences as multisets is small and
-  proved correct with Kani (bounded), and the proof is rerun nightly. The rest is checked with metamorphic
+  proved correct with Kani (bounded). Kani is pinned in a Nix derivation,
+  and the proof is rerun nightly from it. The rest is checked with metamorphic
   tests (shuffled rows, renumbered function ids, reversed interning order
   must report no difference; one deleted or duplicated row must report
   exactly that row) and against the existing comparers.

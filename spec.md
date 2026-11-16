@@ -100,9 +100,9 @@ does not sequence the work.
   - no value is reported twice.
 - R17. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
-- R18. **The proof is rechecked.** The nightly CI workflow runs the Kani harnesses with a
-  pinned Kani version and fails when a proof fails. The repository documents the one command
-  that runs them locally, and that command names the pinned version.
+- R18. **Kani is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
+  Kani version, in the dev shell and in a `checks` derivation that runs the harnesses with
+  no network. The nightly workflow builds that check, and a failed proof fails the night.
 - R19. **Metamorphic tests.** On real indexes written by the test suite:
   - a copy whose rows are shuffled, whose row groups are split differently, whose
     function ids are renumbered consistently, or whose instruction and span ids are
@@ -130,7 +130,9 @@ does not sequence the work.
 
 ### D1. The core: `multiset_diff`
 
-A new module in `ctadl-index` (it has no dependency on ctadl types):
+A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies, so
+the Nix check can run Kani on it alone without vendoring the workspace's crates (D7). The
+proptest properties live in `ctadl-index`'s tests, which call it.
 
 ```rust
 pub enum Side { A, B }
@@ -228,16 +230,45 @@ remainder is printed as a count (R12).
 - `compare_paths` loads each side as today and calls `multiset_diff` instead of
   `BTreeSet::difference` (R21).
 
-### D7. Running the proof
+### D7. Kani in the flake
 
-The pinned nixpkgs has no Kani package, and `cargo kani setup` downloads its own nightly
-toolchain and CBMC, which the network-less Nix sandbox forbids. So the proof is not a
-`checks` derivation in `flake.nix` (`flake.nix:193`). It is its own job in
-`.github/workflows/nightly.yml`, using Kani's GitHub Action at a pinned version (R18).
-Locally, `cargo xtask kani` runs `cargo kani` on the crate that holds the core when the
-pinned version is installed, and otherwise prints the install command for that version and
-exits non-zero. The harnesses are compiled only under `cfg(kani)`, so the ordinary build and
-toolchain (`rust-toolchain.toml`) are unaffected.
+The pinned nixpkgs has no Kani package, and `cargo kani setup` downloads a bundle and a
+nightly toolchain, which the Nix sandbox forbids. The flake instead does what that setup does,
+from fixed-hash inputs. What setup does, from Kani 0.68.0's `src/setup.rs`:
+
+1. Unpack the release bundle `kani-<ver>-<target>.tar.gz` into `$KANI_HOME/kani-<ver>/`.
+   The bundle holds `bin/` (`kani-driver`, `kani-compiler`, `cbmc`, `goto-cc`,
+   `goto-instrument`, `goto-analyzer`, `kissat`, `kani-cov`), Kani's library sources,
+   `rust-toolchain-version` and `rustc-version`. Bundles exist for all four flake systems
+   (aarch64/x86_64, darwin/linux).
+2. Symlink `kani-<ver>/toolchain` to the nightly that `rust-toolchain-version` names, after
+   checking its `rustc --version` equals `rustc-version`. Kani 0.68.0 needs
+   `nightly-2026-08-21` (`rustc 1.100.0-nightly (8925ea358 2026-08-20)`) with `llvm-tools`,
+   `rustc-dev`, `rust-src` and `rustfmt`.
+3. On NixOS only, patchelf the ELF binaries' interpreter, and `cbmc`'s and the solvers'
+   rpath to the C++ runtime (`src/os_hacks.rs`). Nothing on macOS. No Python is installed.
+
+The derivation, `nix/kani.nix`:
+
+- Fetches the bundle per system with a fixed hash, and builds the nightly from the `fenix`
+  input the flake already has (`flake.nix:7`), with those four components.
+- Lays out `$out/kani-<ver>/` as setup would: the unpacked bundle plus the `toolchain`
+  symlink into the store. On Linux, `autoPatchelfHook` replaces step 3. On both, it checks
+  that `kani-compiler` resolves `librustc_driver-*` and `libLLVM` from that toolchain's
+  `lib/` (on macOS they are `@rpath` loads), and fails the build otherwise.
+- Provides `cargo-kani` and `kani` as wrappers that do what `kani-verifier`'s `exec` does
+  (`src/lib.rs`): set `KANI_HOME`, prepend `kani-<ver>/bin` to `PATH`, set
+  `RUSTUP_TOOLCHAIN` to the bundle's version, and exec `kani-driver` with `argv[0]` set to
+  the wrapper's name. This replaces the `kani-verifier` crate, whose only other job is the
+  download.
+- Pins the version in one place, `nix/kani.nix`. Bumping it means changing the version, the
+  nightly date and its manifest hash, and four bundle hashes.
+
+The flake adds that package to `devShells.default` and adds `checks.kani`, which runs
+`cargo kani` on a copy of `multiset-diff` alone (its own trivial lockfile, no dependencies,
+so nothing to fetch). The nightly workflow builds `checks.kani` the way it builds
+`checks.regression` (`.github/workflows/nightly.yml:35`). The harnesses compile only under
+`cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
 
 ### D8. Help and docs
 
