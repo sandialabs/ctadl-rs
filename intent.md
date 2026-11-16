@@ -1,0 +1,35 @@
+# Intent: a verified diff of two index runs
+
+Comparing two `ctadl index` runs is something agents do constantly (serial vs
+parallel vs LSM, before vs after a change, build vs build). Each time, the
+comparison code is written afresh (pyarrow scripts, duckdb `EXCEPT`, `comm`
+over sorted dumps), and each fresh copy can be wrong in the same few ways:
+comparing rows in file order, folding duplicates, comparing run-specific ids,
+dropping NULLs in tagged-union columns, leaving tables out, comparing runs
+that are not comparable, or truncating output without saying so.
+
+Ship one small, trustworthy tool for it instead: `ctadl diff-index A B`.
+
+- It compares every table an index run writes, as multisets of rows keyed
+  by content, not by row order or run-specific ids.
+- Adding a table to the index without teaching the diff about it fails to
+  compile.
+- Before comparing rows, it checks the two runs are comparable (index
+  format version) and reports differences in their configuration and import.
+- Its output is meant for an agent to read: a first line that says
+  `IDENTICAL` or summarizes per-table counts, then bounded, sorted samples
+  that always say how many were left out; a `--json` form; filters by table
+  and function; exit codes 0 (same), 1 (different), 2 (error).
+- The core that compares two sorted row sequences as multisets is small and
+  proved correct with Kani (bounded). The rest is checked with metamorphic
+  tests (shuffled rows, renumbered function ids, reversed interning order
+  must report no difference; one deleted or duplicated row must report
+  exactly that row) and against the existing comparers.
+- The existing comparers in Rust (`assert_same_index` in the engine tests,
+  `xtask regression --compare-paths`) use the same core instead of their
+  own.
+- `docs/debugging.md` tells readers, agents included, to use it rather than
+  writing a comparison script.
+
+Out of scope for now: diffing `CTADL_DUMP_RELATIONS` TSV dumps
+(`scripts/fact-dump-diff.sh` stays), though the core should not preclude it.
