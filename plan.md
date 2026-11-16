@@ -14,12 +14,6 @@ Code, `--help` text and docs must not cite this plan's or the spec's numbers (D1
 
 ## Corrections to the spec
 
-- P4. **Tables are not always sets.** The Terms entry "multiplicity" says a canonical row's
-  multiplicity is above 1 only when rows collapse under canonicalizing. That is false. The
-  input tables are written from `Vec`s with no dedup (`ctadl-index/src/index_engine/mod.rs:160-214`):
-  bridges push a `formal_param` row per port (`ctadl-ascent/src/codegen/model_matches.rs:340-345`),
-  and `synth_call` appends to `call` (`ctadl-ascent/src/models/codegen.rs:34`). Behavior is
-  unchanged, since the diff already compares multisets. Only the Terms text is wrong.
 - P5. **D5's memory estimate leaves things out.** `read_vec` grows its `Vec` by doubling and
   then shrinks it (`ctadl-index/src/facts/parquet.rs:164-169`), so a load briefly holds about
   3x the table. Mapping a loaded `Vec<Record>` to `Vec<Canon>` holds both. The signature
