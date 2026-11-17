@@ -119,6 +119,7 @@ fn run(
         for b in to {
             matches.resolved_bridges.push(ResolvedBridge {
                 provenance: "test.ctadl:0".to_string(),
+                rule_name: "test.ctadl:0".to_string(),
                 rule: 0,
                 from: facts::Str::from(*a),
                 to: facts::Str::from(*b),
@@ -231,6 +232,10 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
         .map(|(_, dst, src)| (vertex_str(dst), vertex_str(src)))
         .collect();
     let t_name = local_name(t);
+    assert_eq!(
+        t_name, "local($bridge[test.ctadl:0]l_add#0)",
+        "the temporary is named by the bridge's rule, callee and index, with no ids"
+    );
     assert!(rows.contains(&(format!("{t_name}.stack.[1]"), "formal(0)".to_string())));
     assert!(rows.contains(&(format!("{t_name}.stack.[2]"), "formal(1)".to_string())));
     // ... and the out-direction port is the converse, writing the caller's return formal.

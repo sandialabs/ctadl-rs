@@ -408,6 +408,9 @@ impl BridgeSpec {
 pub struct ResolvedBridge {
     /// `file:rule`, for the per-bridge `info` line.
     pub provenance: String,
+    /// The rule by its file's name, without the directory, and its label: what the bridge's
+    /// temporaries are named for, so the names do not depend on how the file's path was spelled.
+    pub rule_name: String,
     /// The rule this came from, which is also what groups several ports into one bridge.
     pub rule: usize,
     /// Side A: the call side.
