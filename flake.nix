@@ -289,7 +289,7 @@
               PROPTEST_CASES = "4096";
             };
 
-            # Runs the Verus proof in multiset-diff/src/lib.rs.
+            # Runs the Verus proofs in multiset-diff/src/lib.rs and name-by-facts/src/lib.rs.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
                 {
@@ -297,8 +297,11 @@
                 }
                 ''
                   export HOME="$TMPDIR"
-                  cp -r ${./multiset-diff/src} src
-                  verus --crate-type=lib --edition=2024 --no-report-long-running src/lib.rs
+                  for crate in multiset-diff:${./multiset-diff/src} name-by-facts:${./name-by-facts/src}; do
+                    mkdir -p "''${crate%%:*}"
+                    cp -r "''${crate#*:}" "''${crate%%:*}/src"
+                    verus --crate-type=lib --edition=2024 --no-report-long-running "''${crate%%:*}/src/lib.rs"
+                  done
                   mkdir -p "$out"
                 '';
 

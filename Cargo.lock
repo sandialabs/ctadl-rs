@@ -3143,6 +3143,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "name-by-facts"
+version = "0.1.7"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

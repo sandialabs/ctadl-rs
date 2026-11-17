@@ -26,6 +26,7 @@ members = [
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
+    "name-by-facts",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -59,6 +60,7 @@ default-members = [
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
+    "name-by-facts",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -90,6 +92,7 @@ immortal = { path = "immortal" }
 jvm-reader = { path = "readers/jvm-reader" }
 lsm = { path = "lsm" }
 multiset-diff = { path = "multiset-diff" }
+name-by-facts = { path = "name-by-facts" }
 pcode-reader = { path = "readers/pcode-reader" }
 rustc_graphviz = { path = "rustc_graphviz" }
 source-info = { path = "source-info" }

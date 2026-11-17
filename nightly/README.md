@@ -28,8 +28,9 @@ files, in both directions. A disagreement fails the run. Without `duckdb` on `PA
 dev shell and the flake check provide it), or with fewer than two indexes, the check
 reports `SKIP`.
 
-The nightly workflow also builds `checks.<system>.verus`, the Verus proof of the merge at
-the core of `ctadl diff-index`. A failed proof fails the night:
+The nightly workflow also builds `checks.<system>.verus`, the Verus proofs at the core of
+`ctadl diff-index`: the merge, and the naming of instructions by their facts. A failed proof
+fails the night:
 
 ```sh
 nix build .#checks.aarch64-darwin.verus
