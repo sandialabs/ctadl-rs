@@ -102,8 +102,7 @@ does not sequence the work.
   with Verus, for sequences of any length, to satisfy the following. The proof is of an
   entry point that takes the order as a ghost argument, for any element type and any `cmp`
   that computes a total order, and is restated for `u8` under `Ord::cmp` with `==` and plain
-  counts. Verus checks a copy of the merge, because the crate cannot depend on `vstd`; a
-  token check fails the proof unless the copy's code is the crate's, less what Verus adds.
+  counts. Verus checks the crate's own source, the code a plain build compiles.
   - diffing a sequence with itself reports nothing;
   - swapping the inputs swaps the sides;
   - a value is reported exactly when its count in A differs from its count in B, and the
@@ -112,9 +111,8 @@ does not sequence the work.
 - R16. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
 - R17. **Verus is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
-  Verus version, in the dev shell and in `checks.verus`, which runs the token check and the
-  proof with no network. The nightly workflow builds that check, and a failed proof, or a
-  copy that has drifted from the crate, fails the night.
+  Verus version, in the dev shell and in `checks.verus`, which runs the proof with no
+  network. The nightly workflow builds that check, and a failed proof fails the night.
 - R18. **Metamorphic tests.** On real indexes written by the test suite:
   - a copy whose rows are shuffled, whose row groups are split differently, whose
     function ids are renumbered consistently, or whose instruction and span ids are
@@ -164,9 +162,9 @@ does not sequence the work.
 
 ### D1. The core: `multiset_diff`
 
-A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies. Its
-proof is beside it, in `multiset-diff/verus/`, and needs nothing from the workspace (D8). The
-proptest properties live in `ctadl-index`'s tests, which call it.
+A new workspace crate, `multiset-diff`, whose only dependencies are Verus's `vstd`,
+`verus_builtin` and `verus_builtin_macros`, and no dev-dependencies. Its proof is in its own
+source (D8). The proptest properties live in `ctadl-index`'s tests, which call it.
 
 ```rust
 pub struct Delta<'a, T> { pub row: &'a T, pub count_a: usize, pub count_b: usize }
@@ -181,15 +179,16 @@ value whose two run lengths differ (a missing run has length 0). It allocates no
 its only callers, which sort immediately before calling, and is checked with a
 `debug_assert`.
 
-The Verus proof is `multiset-diff/verus/multiset_diff.rs`: a copy of the merge whose
-iterator is proved to yield exactly a spec-level merge, for any `T` and any `cmp` computing a
-total order passed as a ghost argument (`multiset_diff_by`); the four properties as theorems
-about that spec; and a `u8` client that restates them over what the iterator yields (R15).
-`multiset-diff/verus/same_code.py` takes `next` from the crate and from the copy, strips from
-the copy what Verus adds (proof blocks, asserts, ghost lets, loop invariants and decreases
-clauses) and comments and whitespace from both, and fails unless the tokens are the same.
-The crate's merge must stay in a form Verus can check, and a change to it is made to both.
-The proptest versions are the same properties, run on the crate's own code (R16).
+The crate is written in Verus, inside `verus! { }`. `src/lib.rs` holds the code with its
+specs: the iterator is proved to yield exactly a spec-level merge, for any `T` and any `cmp`
+computing a total order passed as a ghost argument (`multiset_diff_by`). `src/proofs.rs`
+holds the four properties as theorems about that spec, and `src/proofs/client.rs` a `u8`
+client that restates them over what the iterator yields (R15). A plain `cargo build` erases
+the specs, proofs, ghost fields and `multiset_diff_by` (the last two gated on
+`cfg(verus_keep_ghost)`, which Verus sets), leaving the merge; the client is compiled only
+by Verus. The `debug_assert`s live in an `external_body` helper with no postcondition, since
+Verus does not model `is_sorted_by`. The merge must stay in a form Verus can check. The
+proptest versions are the same properties, run by `cargo test` (R16).
 
 ### D2. Canonical rows
 
@@ -332,15 +331,23 @@ The pinned nixpkgs has no Verus package, and Verus normally runs its verifier th
   toolchain's `bin/` first on `PATH` and its `lib/` on the loader path (`rust_verify` loads
   `librustc_driver` and `libLLVM` by `@rpath` on macOS; `autoPatchelfHook` patches it on
   Linux).
-- Pins the version in one place. Bumping it means changing the version, the Rust release and
-  its manifest hash, the Z3 version, and the four bundle hashes; the build-time checks fail
-  if any of them disagree.
+- Pins the version in one place for the verifier. Bumping it means changing the version, the
+  Rust release and its manifest hash, the Z3 version, and the four bundle hashes; the
+  build-time checks fail if any of them disagree. The crate's pins on Verus's crates (below)
+  move with it; nothing checks that they agree.
 
-The flake adds `verus` to `devShells.default` and adds `checks.verus`, which runs
-`same_code.py` with nixpkgs' Python, then `verus` on the copy; neither fetches anything. The
-nightly workflow builds `checks.verus` the way it builds `checks.regression`
-(`.github/workflows/nightly.yml:36`). The crate itself is untouched by Verus, so the ordinary
-build and `rust-toolchain.toml` are unaffected.
+The flake adds `verus` to `devShells.default` and adds `checks.verus`, which runs `verus` on
+`multiset-diff/src/lib.rs` and fetches nothing. The nightly workflow builds `checks.verus`
+the way it builds `checks.regression` (`.github/workflows/nightly.yml:36`).
+
+For the ordinary build, `multiset-diff` depends on `vstd`, `verus_builtin` and
+`verus_builtin_macros` from crates.io, pinned with `=` to `0.0.0-2026-11-01-0251`, the
+version of the Verus in `nix/verus.nix`; their source is that release's (commit 8bf68ee),
+apart from a README. They build on the workspace's toolchain (`rust-toolchain.toml`), which
+need not be the one Verus runs on; the macros erase what only Verus needs. They come from
+crates.io, not git, because the git crates inherit `[lints]` from Verus's workspace, which
+naersk's vendoring drops. Bumping Verus means bumping these three pins with it. The
+workspace's `check-cfg` names `cfg(verus_keep_ghost)`.
 
 ### D9. Bridge temporary names
 

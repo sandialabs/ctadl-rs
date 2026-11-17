@@ -230,6 +230,18 @@ no expected failures. `cargo test -p multiset-diff -p ctadl-index` and
   that what remains to be yielded is `diff_from(...)` (33 verified, 1 error), so
   `checks.aarch64-darwin.verus` failed. The derivation's inputs were checked to hold the
   break; both files were then reverted.
+- Later, the proof moved into the crate, and the copy and `same_code.py` were removed. "The
+  crate cannot depend on `vstd`" was untested and wrong: `vstd` and the Verus macros build on
+  the workspace's 1.94.1 and erase the proof in a plain build. `multiset-diff` depends on them
+  from crates.io at `=0.0.0-2026-11-01-0251`, the pinned Verus's version, whose source was
+  checked to be commit 8bf68ee's (git dependencies broke naersk: they inherit `[lints]` from
+  Verus's workspace). The code is in `src/lib.rs`, the theorems in `src/proofs.rs`, and the
+  `u8` client in `src/proofs/client.rs`, compiled only by Verus; `checks.verus` runs `verus`
+  on `src/lib.rs`. Still 34 verified, 0 errors. The proof was checked to fail when `next`
+  yields only on `count_a > count_b` (an invariant fails) and when the client's swap
+  assertion compares the wrong counts (the assertion fails). `nix build` of the default
+  package and `checks.aarch64-darwin.verus`, `cargo clippy`, `cargo fmt --check`, and
+  `cargo test -p multiset-diff -p ctadl-index` pass.
 
 ## Phase 3: the diff library (R4-R14, D2-D6)
 
@@ -580,7 +592,8 @@ Depends on: 3.
 | `Cargo.lock` | new crate, proptest | 1, 2, 4 |
 | `multiset-diff/src/lib.rs` | signature and stub; then the merge | 1, 2 |
 | `multiset-diff/src/proofs.rs` | Kani harnesses as expected failures; then removed | 1, 2 |
-| `multiset-diff/verus/{multiset_diff.rs,same_code.py}` | the Verus proof and the token check | 2 |
+| `multiset-diff/verus/{multiset_diff.rs,same_code.py}` | the Verus proof and the token check; then removed | 2 |
+| `multiset-diff/Cargo.toml`, `multiset-diff/src/{lib.rs,proofs.rs,proofs/client.rs}`, `Cargo.toml` | the proof in the crate, Verus's crates, `cfg(verus_keep_ghost)` check-cfg | 2 |
 | `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani`; then removed | 1, 2 |
 | `nix/verus.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Verus, `checks.verus` | 2 |
 | `flake.nix` | `duckdb` in `testEnv` and the dev shell | 5 |

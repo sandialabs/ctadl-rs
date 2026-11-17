@@ -289,23 +289,17 @@
               PROPTEST_CASES = "4096";
             };
 
-            # The Verus proof of multiset-diff's merge, for inputs of any length. Verus
-            # checks a copy of the merge, in multiset-diff/verus; same_code.py fails the
-            # check if that copy's `next` is not the crate's.
+            # The Verus proof of multiset-diff's merge, for inputs of any length, in the
+            # crate's own source.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
                 {
-                  nativeBuildInputs = [
-                    verus
-                    pkgs.python3
-                  ];
+                  nativeBuildInputs = [ verus ];
                 }
                 ''
                   export HOME="$TMPDIR"
-                  python3 -I ${./multiset-diff/verus/same_code.py} \
-                    ${./multiset-diff/src/lib.rs} ${./multiset-diff/verus/multiset_diff.rs}
-                  cp ${./multiset-diff/verus/multiset_diff.rs} multiset_diff.rs
-                  verus --crate-type=lib --edition=2024 --no-report-long-running multiset_diff.rs
+                  cp -r ${./multiset-diff/src} src
+                  verus --crate-type=lib --edition=2024 --no-report-long-running src/lib.rs
                   mkdir -p "$out"
                 '';
 

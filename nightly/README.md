@@ -29,8 +29,7 @@ dev shell and the flake check provide it), or with fewer than two indexes, the c
 reports `SKIP`.
 
 The nightly workflow also builds `checks.<system>.verus`, the Verus proof of the merge at
-the core of `ctadl diff-index`. A failed proof, or a copy of the merge that has drifted
-from the crate's, fails the night:
+the core of `ctadl diff-index`. A failed proof fails the night:
 
 ```sh
 nix build .#checks.aarch64-darwin.verus

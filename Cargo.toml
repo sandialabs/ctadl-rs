@@ -38,6 +38,8 @@ version = "0.1.7"
 
 [workspace.lints.rust]
 rust-2018-idioms = "deny"
+# Set by Verus when it compiles multiset-diff, to keep specs and proofs.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
 
 [workspace.lints.clippy]
 # Require a "SAFETY" comment preceding any unsafe code
