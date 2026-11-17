@@ -31,7 +31,8 @@ sees.
 Shared files:
 - `Cargo.lock` changes in Phases 1, 2 and 4. Phase 4 is the only one in wave 3 that
   changes it.
-- `flake.nix` is edited by Phase 1 (Kani) and Phase 5 (duckdb), which are in different waves.
+- `flake.nix` is edited by Phase 1 (Kani, replaced by Verus in Phase 2), Phase 2 (Verus) and
+  Phase 5 (duckdb), which are in different waves.
 - `xtask/src/regression.rs` is edited by Phase 4 (`compare_paths`) and Phase 5 (the SQL
   check), which are in different waves.
 
@@ -42,7 +43,7 @@ Test commands used throughout (`test.yml` runs the first three):
     cargo test --workspace
     cargo test -p ctadl-ascent --test integration <filter>
     cargo xtask regression --frontend <list> [--compare-paths <dir>]
-    nix build .#checks.<system>.kani
+    nix build .#checks.<system>.verus
 
 Put `CARGO_TARGET_DIR` and `TMPDIR` outside the repo, as `.envrc.local` already does. Run long
 measurements under a memory cap, and capture their output to files outside the repo.
@@ -159,6 +160,10 @@ Then stop for review of `multiset-diff/src/proofs.rs`.
 - The harnesses use `#[kani::unwind(13)]` (`2 * N + 1` for `N` = 6), and record what the
   core yields in a fixed array of `2 * N` entries, so an implementation that yields more, or
   loops past the bound, fails rather than passing unchecked.
+- Kani was replaced by Verus in Phase 2, at the user's decision, after the Kani check of the
+  implemented core ran 2h53m at bound 6 without finishing (two of the four harnesses had
+  verified, at 17 and 79 minutes). The harnesses, `nix/kani.nix`, `checks.kani` and the
+  `cfg(kani)` check-cfg are gone; Phase 2's as-built notes say what replaced them.
 
 ## Phase 2: the multiset core (R15, R16, D1)
 
@@ -190,6 +195,41 @@ if one looks wrong, stop and raise it.
 **Gate.** `nix build .#checks.aarch64-darwin.kani` and `.#checks.aarch64-linux.kani` pass with
 no expected failures. `cargo test -p multiset-diff -p ctadl-index` and
 `cargo clippy -- -Dwarnings` pass.
+
+**As built.**
+- Verus replaced Kani, at the user's decision. The four properties are proved for inputs of
+  any length, not up to a bound: `multiset-diff/verus/multiset_diff.rs` holds a copy of the
+  merge whose `next` is proved to yield exactly a spec-level merge, for any `T` and any `cmp`
+  that computes a total order passed as a ghost argument (`multiset_diff_by`); the four
+  properties are theorems about that spec, restated for `u8` under `Ord::cmp` with `==`.
+  Verus checks the copy because the crate cannot depend on `vstd`;
+  `multiset-diff/verus/same_code.py` fails `checks.verus` unless the copy's `next`, less what
+  Verus adds, is the crate's token for token. The proof was written on a separate spike
+  (`2771a45ad`) and brought in here.
+- `nix/verus.nix` pins Verus `0.2026.11.02.8bf68ee` from its release bundle, with the Rust
+  1.99.1 it was built against from `fenix` and its bundled Z3 4.16.0, run with
+  `VERUS_USE_RUSTUP=0`. `flake.nix` adds `checks.verus` (the token check, with nixpkgs'
+  Python, then `verus`; nothing fetched) and `verus` in the dev shell; the nightly builds
+  `checks.x86_64-linux.verus`. Removed: `multiset-diff/src/proofs.rs`, `nix/kani.nix`,
+  `checks.kani`, Kani in the dev shell, the `rootManifest` binding only the Kani check used,
+  and the `cfg(kani)` check-cfg in `Cargo.toml`. spec.md (R15, R17, D1, D8) and intent.md
+  were updated to match.
+- The merge is the spike's: for each value, it measures the run on each side with a loop of
+  its own and yields a `Delta` when the lengths differ. Under Kani that nesting was the
+  problem (an element-per-step merge was tried and was faster, but still too slow at bound
+  6); Verus does not care, and the crate keeps the shape the proof was written for. The
+  `debug_assert`s use `is_sorted_by`, which allocates nothing.
+- `checks.aarch64-darwin.verus`: 34 verified, 0 errors, in about 7 seconds.
+- The proptests draw inputs of up to 255 elements, half from `0..8` so that repeats and
+  shared values are common; "no bound" means no bound on length like a model checker's, but
+  proptest needs a size range.
+- No aarch64-linux check was run, at the user's request.
+- The failed-proof check made both the crate and the Verus copy skip a value whose run in `b`
+  is empty (`count_a != count_b && count_b != 0`). The token check passed, as the two still
+  agreed, and Verus failed: `invariant not satisfied at end of loop body`, on the invariant
+  that what remains to be yielded is `diff_from(...)` (33 verified, 1 error), so
+  `checks.aarch64-darwin.verus` failed. The derivation's inputs were checked to hold the
+  break; both files were then reverted.
 
 ## Phase 3: the diff library (R4-R14, D2-D6)
 
@@ -403,9 +443,9 @@ Depends on: 3.
       instructions with no input facts share one name per function. Android intent bridges
       (`android_intent.rs:157`) are the common case: a receiver swap between two sends in
       one function is invisible to the diff. This was decided; the spec's D3 accepts it.
-  - `docs/spec.md` F12 (`:88-89`) names the command, and §5 (`:233-240`) adds the Kani check
+  - `docs/spec.md` F12 (`:88-89`) names the command, and §5 (`:233-240`) adds the Verus check
     and the property and metamorphic tests.
-  - `nightly/README.md` lists `checks.kani`.
+  - `nightly/README.md` lists `checks.verus`.
   - No doc, help text or code cites spec numbers.
 
 **Files.**
@@ -450,11 +490,13 @@ Depends on: 3.
 
 | File | Change | Phase |
 | --- | --- | --- |
-| `Cargo.toml` | member `multiset-diff`; `cfg(kani)` check-cfg | 1 |
+| `Cargo.toml` | member `multiset-diff`; `cfg(kani)` check-cfg, then removed | 1, 2 |
 | `Cargo.lock` | new crate, proptest | 1, 2, 4 |
 | `multiset-diff/src/lib.rs` | signature and stub; then the merge | 1, 2 |
-| `multiset-diff/src/proofs.rs` | harnesses as expected failures; then required | 1, 2 |
-| `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani` | 1 |
+| `multiset-diff/src/proofs.rs` | Kani harnesses as expected failures; then removed | 1, 2 |
+| `multiset-diff/verus/{multiset_diff.rs,same_code.py}` | the Verus proof and the token check | 2 |
+| `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani`; then removed | 1, 2 |
+| `nix/verus.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Verus, `checks.verus` | 2 |
 | `flake.nix` | `duckdb` in `testEnv` and the dev shell | 5 |
 | `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests | 2 |
 | `ctadl-index/src/facts/schema.rs` | `tables!`, `Table` | 3 |
@@ -479,7 +521,8 @@ Not touched:
 
 - `cargo fmt --all -- --check`, `cargo clippy -- -Dwarnings` and `cargo test --workspace`
   pass.
-- `nix build .#checks.aarch64-darwin.kani` and `.#checks.aarch64-linux.kani` pass.
+- `nix build .#checks.aarch64-darwin.verus` passes. No aarch64-linux builds: the user does not
+  want Linux runs now. The nightly still builds `checks.x86_64-linux.verus`.
 - `cargo xtask regression`, then `nix build .#checks.aarch64-darwin.regression`, pass,
   including the SQL check.
 - **R24.**

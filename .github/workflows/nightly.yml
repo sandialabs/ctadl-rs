@@ -37,4 +37,4 @@ jobs:
             '.#checks.x86_64-linux.dex-reader-tests' \
             '.#checks.x86_64-linux.jvm-reader-tests' \
             '.#checks.x86_64-linux.lsm-property-tests' \
-            '.#checks.x86_64-linux.kani'
+            '.#checks.x86_64-linux.verus'

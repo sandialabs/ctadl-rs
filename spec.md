@@ -99,7 +99,11 @@ does not sequence the work.
 ### Correctness
 
 - R15. **Proved core.** The function that diffs two sorted sequences as multisets is proved
-  with Kani, for sequences up to a stated bound, to satisfy:
+  with Verus, for sequences of any length, to satisfy the following. The proof is of an
+  entry point that takes the order as a ghost argument, for any element type and any `cmp`
+  that computes a total order, and is restated for `u8` under `Ord::cmp` with `==` and plain
+  counts. Verus checks a copy of the merge, because the crate cannot depend on `vstd`; a
+  token check fails the proof unless the copy's code is the crate's, less what Verus adds.
   - diffing a sequence with itself reports nothing;
   - swapping the inputs swaps the sides;
   - a value is reported exactly when its count in A differs from its count in B, and the
@@ -107,9 +111,10 @@ does not sequence the work.
   - no value is reported twice.
 - R16. **Property tests.** The same properties hold under proptest on unbounded inputs in
   ordinary `cargo test`.
-- R17. **Kani is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
-  Kani version, in the dev shell and in a `checks` derivation that runs the harnesses with
-  no network. The nightly workflow builds that check, and a failed proof fails the night.
+- R17. **Verus is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
+  Verus version, in the dev shell and in `checks.verus`, which runs the token check and the
+  proof with no network. The nightly workflow builds that check, and a failed proof, or a
+  copy that has drifted from the crate, fails the night.
 - R18. **Metamorphic tests.** On real indexes written by the test suite:
   - a copy whose rows are shuffled, whose row groups are split differently, whose
     function ids are renumbered consistently, or whose instruction and span ids are
@@ -159,8 +164,8 @@ does not sequence the work.
 
 ### D1. The core: `multiset_diff`
 
-A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies, so
-the Nix check can run Kani on it alone without vendoring the workspace's crates (D8). The
+A new workspace crate, `multiset-diff`, with no dependencies and no dev-dependencies. Its
+proof is beside it, in `multiset-diff/verus/`, and needs nothing from the workspace (D8). The
 proptest properties live in `ctadl-index`'s tests, which call it.
 
 ```rust
@@ -176,9 +181,15 @@ value whose two run lengths differ (a missing run has length 0). It allocates no
 its only callers, which sort immediately before calling, and is checked with a
 `debug_assert`.
 
-The Kani harnesses live beside it under `#[cfg(kani)]`, over `u8` values and a total order,
-with a stated length bound (R15). The proptest versions are the same properties as ordinary
-tests (R16).
+The Verus proof is `multiset-diff/verus/multiset_diff.rs`: a copy of the merge whose
+iterator is proved to yield exactly a spec-level merge, for any `T` and any `cmp` computing a
+total order passed as a ghost argument (`multiset_diff_by`); the four properties as theorems
+about that spec; and a `u8` client that restates them over what the iterator yields (R15).
+`multiset-diff/verus/same_code.py` takes `next` from the crate and from the copy, strips from
+the copy what Verus adds (proof blocks, asserts, ghost lets, loop invariants and decreases
+clauses) and comments and whitespace from both, and fails unless the tokens are the same.
+The crate's merge must stay in a form Verus can check, and a change to it is made to both.
+The proptest versions are the same properties, run on the crate's own code (R16).
 
 ### D2. Canonical rows
 
@@ -304,45 +315,32 @@ remainder is printed as a count (R11).
 - `compare_paths` loads each side as today and calls `multiset_diff` instead of
   `BTreeSet::difference` (R20).
 
-### D8. Kani in the flake
+### D8. Verus in the flake
 
-The pinned nixpkgs has no Kani package, and `cargo kani setup` downloads a bundle and a
-nightly toolchain, which the Nix sandbox forbids. The flake instead does what that setup does,
-from fixed-hash inputs. What setup does, from Kani 0.68.0's `src/setup.rs`:
+The pinned nixpkgs has no Verus package, and Verus normally runs its verifier through
+`rustup run <toolchain>`, which the Nix sandbox cannot do. The derivation, `nix/verus.nix`:
 
-1. Unpack the release bundle `kani-<ver>-<target>.tar.gz` into `$KANI_HOME/kani-<ver>/`.
-   The bundle holds `bin/` (`kani-driver`, `kani-compiler`, `cbmc`, `goto-cc`,
-   `goto-instrument`, `goto-analyzer`, `kissat`, `kani-cov`), Kani's library sources,
-   `rust-toolchain-version` and `rustc-version`. Bundles exist for all four flake systems
-   (aarch64/x86_64, darwin/linux).
-2. Symlink `kani-<ver>/toolchain` to the nightly that `rust-toolchain-version` names, after
-   checking its `rustc --version` equals `rustc-version`. Kani 0.68.0 needs
-   `nightly-2026-08-21` (`rustc 1.100.0-nightly (8925ea358 2026-08-20)`) with `llvm-tools`,
-   `rustc-dev`, `rust-src` and `rustfmt`.
-3. On NixOS only, patchelf the ELF binaries' interpreter, and `cbmc`'s and the solvers'
-   rpath to the C++ runtime (`src/os_hacks.rs`). Nothing on macOS. No Python is installed.
+- Fetches the release bundle per system (aarch64/x86_64, darwin/linux) with a fixed hash.
+  The bundle holds the `verus` driver, `rust_verify` (a rustc driver linked against one
+  stable toolchain's `librustc_driver`), the prebuilt `vstd` library and the Z3 the release
+  was tested with. The pinned version is `0.2026.11.02.8bf68ee`.
+- Builds the stable Rust it was built against, 1.99.1 (`rustc`, `cargo`, `rust-std`), from
+  the `fenix` input the flake already has, and checks at build time that the bundle's
+  `version.json` names that toolchain and that version.
+- Uses the bundled Z3, and checks that it is 4.16.0, the version Verus requires.
+- Wraps `verus` with `VERUS_USE_RUSTUP=0`, so it runs `rust_verify` directly, with the
+  toolchain's `bin/` first on `PATH` and its `lib/` on the loader path (`rust_verify` loads
+  `librustc_driver` and `libLLVM` by `@rpath` on macOS; `autoPatchelfHook` patches it on
+  Linux).
+- Pins the version in one place. Bumping it means changing the version, the Rust release and
+  its manifest hash, the Z3 version, and the four bundle hashes; the build-time checks fail
+  if any of them disagree.
 
-The derivation, `nix/kani.nix`:
-
-- Fetches the bundle per system with a fixed hash, and builds the nightly from the `fenix`
-  input the flake already has (`flake.nix:7`), with those four components.
-- Lays out `$out/kani-<ver>/` as setup would: the unpacked bundle plus the `toolchain`
-  symlink into the store. On Linux, `autoPatchelfHook` replaces step 3. On both, it checks
-  that `kani-compiler` resolves `librustc_driver-*` and `libLLVM` from that toolchain's
-  `lib/` (on macOS they are `@rpath` loads), and fails the build otherwise.
-- Provides `cargo-kani` and `kani` as wrappers that do what `kani-verifier`'s `exec` does
-  (`src/lib.rs`): set `KANI_HOME`, prepend `kani-<ver>/bin` to `PATH`, set
-  `RUSTUP_TOOLCHAIN` to the bundle's version, and exec `kani-driver` with `argv[0]` set to
-  the wrapper's name. This replaces the `kani-verifier` crate, whose only other job is the
-  download.
-- Pins the version in one place, `nix/kani.nix`. Bumping it means changing the version, the
-  nightly date and its manifest hash, and four bundle hashes.
-
-The flake adds that package to `devShells.default` and adds `checks.kani`, which runs
-`cargo kani` on a copy of `multiset-diff` alone (its own trivial lockfile, no dependencies,
-so nothing to fetch). The nightly workflow builds `checks.kani` the way it builds
-`checks.regression` (`.github/workflows/nightly.yml:36`). The harnesses compile only under
-`cfg(kani)`, so the ordinary build and `rust-toolchain.toml` are unaffected.
+The flake adds `verus` to `devShells.default` and adds `checks.verus`, which runs
+`same_code.py` with nixpkgs' Python, then `verus` on the copy; neither fetches anything. The
+nightly workflow builds `checks.verus` the way it builds `checks.regression`
+(`.github/workflows/nightly.yml:36`). The crate itself is untouched by Verus, so the ordinary
+build and `rust-toolchain.toml` are unaffected.
 
 ### D9. Bridge temporary names
 

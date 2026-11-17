@@ -78,14 +78,13 @@
 
         # The one version this tree has. Read rather than repeated so these
         # derivations stay named after it; see the root Cargo.toml.
-        rootManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-        workspaceVersion = rootManifest.workspace.package.version;
+        workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
         android = import ./nix/android-jvm.nix { inherit pkgs naersk-lib workspaceVersion; };
 
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
-        kani = import ./nix/kani.nix { inherit pkgs fenix; };
+        verus = import ./nix/verus.nix { inherit pkgs fenix; };
 
         # The external toolchain `xtask regression` expects on PATH.
         # Deliberately excludes this repo's own package so that the
@@ -164,6 +163,7 @@
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         packages.checksarif = checksarif;
+        packages.verus = verus;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
         # `packages.<system>.<name>` to be a flat derivation, but this is a
@@ -286,46 +286,30 @@
               PROPTEST_CASES = "4096";
             };
 
-            # The Kani proofs of multiset-diff, which must hold. The crate has no
-            # dependencies, so it is checked alone, in a workspace of its own
-            # that supplies what it inherits from the root one: no vendoring,
-            # nothing to fetch.
-            kaniCheck =
-              let
-                manifest = (pkgs.formats.toml { }).generate "Cargo.toml" {
-                  workspace = {
-                    resolver = "3";
-                    members = [ "multiset-diff" ];
-                    package.version = workspaceVersion;
-                    inherit (rootManifest.workspace) lints;
-                  };
-                };
-              in
-              pkgs.runCommand "ctadl-checks-kani"
+            # The Verus proof of multiset-diff's merge, for inputs of any length. Verus
+            # checks a copy of the merge, in multiset-diff/verus; same_code.py fails the
+            # check if that copy's `next` is not the crate's.
+            verusCheck =
+              pkgs.runCommand "ctadl-checks-verus"
                 {
-                  # rustToolchain's cargo only dispatches to `cargo-kani`, which
-                  # builds with Kani's own nightly.
                   nativeBuildInputs = [
-                    kani
-                    rustToolchain
+                    verus
+                    pkgs.python3
                   ];
                 }
                 ''
-                  mkdir work
-                  cd work
-                  cp -R ${./multiset-diff} multiset-diff
-                  cp ${manifest} Cargo.toml
-                  chmod -R u+w .
                   export HOME="$TMPDIR"
-                  cargo generate-lockfile --offline
-                  cargo kani --output-format terse
+                  python3 -I ${./multiset-diff/verus/same_code.py} \
+                    ${./multiset-diff/src/lib.rs} ${./multiset-diff/verus/multiset_diff.rs}
+                  cp ${./multiset-diff/verus/multiset_diff.rs} multiset_diff.rs
+                  verus --crate-type=lib --edition=2024 --no-report-long-running multiset_diff.rs
                   mkdir -p "$out"
                 '';
 
           in
           {
             inherit regression lsm-property-tests;
-            kani = kaniCheck;
+            verus = verusCheck;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
 
@@ -364,8 +348,8 @@
               jadx
               scrcpy
               android.androidLldb
-              # `cargo kani`, for the proofs in multiset-diff.
-              kani
+              # `verus`, for multiset-diff's Verus proof.
+              verus
             ];
             packages = [ testEnv ];
 
