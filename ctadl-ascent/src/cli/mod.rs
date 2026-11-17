@@ -12,6 +12,7 @@ as parameters.
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+pub mod diff_index;
 mod model_check;
 pub use model_check::{ModelCheckOutcome, check_models, check_programs};
 

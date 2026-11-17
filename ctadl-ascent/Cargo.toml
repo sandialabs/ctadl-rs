@@ -25,6 +25,7 @@ ctadl-dex.workspace = true
 ctadl-cil.workspace = true
 ctadl-frontends = { workspace = true, features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
 ctadl-index.workspace = true
+ctadl-index-diff.workspace = true
 ctadl-index-lsm.workspace = true
 ctadl-index-par.workspace = true
 ctadl-index-serial.workspace = true
@@ -78,6 +79,7 @@ elsa = "1.11"
 immortal.workspace = true
 [dev-dependencies]
 test-log = "0.2.19"
+multiset-diff.workspace = true
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
 zip = { version = "9.0.5", default-features = false }
 # For `examples/show-regions.rs` only. Examples see dev-dependencies, so putting

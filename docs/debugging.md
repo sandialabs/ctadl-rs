@@ -129,9 +129,12 @@ What is stable and what is not:
 
 - **Deterministic:** everything written before the fixpoint --- `formal_param`,
   `actual_param`, `call`, `call_target_assign`, `callee_info`,
-  `callee_resolvents`, `external_function`, and the `function_id` IdMap. Function
-  ids, instruction ids, and therefore the vertex numbers that appear in SARIF are
-  byte-stable across indexes.
+  `callee_resolvents`, `external_function`, and the `function_id` IdMap --- as
+  facts about functions and call sites. Instruction ids are not part of that
+  promise: a front end may number instructions in any order (in parallel, say),
+  even across two imports of one artifact, so do not compare instruction ids, or
+  the vertex numbers in SARIF that carry them, across indexes. `ctadl diff-index`
+  (next section) names instructions by content instead.
 - **Nondeterministic:** the row *order* of `assign`, `summary` and `paths`
   (written post-fixpoint by `IndexResult::try_save`) and of
   `index_source_map`. The *contents* are identical --- these tables are stable as
@@ -176,7 +179,49 @@ Consequences for measurement:
   rendered flow.
   The `nightly` harness does this today; keep it that way.
 
-Check that two indexes agree as sets (0/0 means order-only difference):
+# Comparing two index runs
+
+To check whether two `ctadl index` runs wrote the same index (serial and parallel, before and
+after a change, two builds), use `ctadl diff-index`. Do not write a comparison script: the
+command already avoids the ways a fresh one goes wrong (comparing rows in file order, comparing
+ids a run numbers for itself, losing NULLs in tagged columns, leaving tables out, comparing
+indexes of different formats, cutting output short without saying so).
+
+```
+ctadl diff-index app app-par                    # two projects in the store
+ctadl diff-index before/index after/index       # two index directories
+ctadl diff-index A B --table call --function onCreate --limit 50
+ctadl diff-index A B --json
+```
+
+Each side is a project name or an index directory. Both must be in the index format this build
+reads; otherwise the command exits 2 without comparing anything. Every table either index holds
+is compared as a multiset of rows. Row order, row groups, function numbering, instruction
+numbering and the order values were interned in do not matter, span ids are not compared, and
+import ids are compared by the import's name. A `.parquet` file that holds no known table is
+listed as not compared. `profile.json`, the index configuration and relation dumps are not
+compared.
+
+The first line is `IDENTICAL`, or `DIFFERENT: N of M tables differ:` and their names. Then each
+table gets a line: its row counts, and how many distinct rows are only in A, only in B, or on
+both sides a different number of times. Each differing table prints at most `--limit` rows per
+side (20 by default), first by content, each as `[A n, B m]` followed by the row, and says how
+many it did not show. `--json` prints the same report as one JSON document. The exit code is 0
+for the same, 1 for different, 2 for an error.
+
+An instruction is named by its facts: its function, and its rows of `call`, `actual_param`,
+`call_target_assign` and `callee_info`, printed as `caller@callee(arguments)`. An instruction
+whose input facts change, an added argument for example, gets a new name, so every row about it
+shows up as removed and added. Instructions of one function with the same facts share a name,
+and the diff counts how many rows land on it. In particular, every instruction with no input
+facts in a function shares one name (`caller@<no facts>`). Android intent sends are the common
+case: each send gets a bridge instruction whose facts are all derived, so if two sends in one
+function swap their receivers, `intent_pair` holds the same rows and the diff does not see it.
+
+For ad-hoc questions the command does not answer, query the tables with DuckDB. This recipe
+compares raw ids as sets, so it only means something between indexes whose function and
+instruction ids agree, and it does not count repeated rows (0/0 means an order-only
+difference):
 
 ```sql
 SELECT

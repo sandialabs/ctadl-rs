@@ -20,6 +20,22 @@ nix build .#checks.x86_64-linux.regression       # Linux / CI
 
 This is the supported way to run the suite, and it is what the nightly GitHub
 workflow runs on a schedule. Add expensive tests here, not in YAML.
+
+After the cases, the suite checks `ctadl diff-index` against DuckDB: it pairs each index
+the cases wrote with the next, by path, and compares the per-table counts of the tables
+whose rows name no instruction with a `GROUP BY` and full outer join over the same parquet
+files, in both directions. A disagreement fails the run. Without `duckdb` on `PATH` (the
+dev shell and the flake check provide it), or with fewer than two indexes, the check
+reports `SKIP`.
+
+The nightly workflow also builds `checks.<system>.verus`, the Verus proofs at the core of
+`ctadl diff-index`: the merge, and the naming of instructions by their facts. A failed proof
+fails the night:
+
+```sh
+nix build .#checks.aarch64-darwin.verus
+```
+
 For iterating on individual cases, run the harness directly — the dev shell
 already carries the full regression toolchain on `PATH`:
 

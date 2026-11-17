@@ -10,6 +10,7 @@ mod class_predicates;
 mod cli;
 mod default_models;
 mod determinism;
+mod diff_index;
 mod dispatch_models;
 mod flowy_tests;
 mod global_ports;

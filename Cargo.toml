@@ -5,6 +5,7 @@ members = [
     "ctadl-frontends",
     "ctadl-import",
     "ctadl-index",
+    "ctadl-index-diff",
     "ctadl-index/engines/lsm",
     "ctadl-index/engines/par",
     "ctadl-index/engines/serial",
@@ -24,6 +25,8 @@ members = [
     "immortal",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
+    "multiset-diff",
+    "name-by-facts",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -36,6 +39,7 @@ default-members = [
     "ctadl-frontends",
     "ctadl-import",
     "ctadl-index",
+    "ctadl-index-diff",
     "ctadl-index/engines/lsm",
     "ctadl-index/engines/par",
     "ctadl-index/engines/serial",
@@ -55,6 +59,8 @@ default-members = [
     "immortal",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
+    "multiset-diff",
+    "name-by-facts",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -73,6 +79,7 @@ ctadl-flowy = { path = "frontends/ctadl-flowy" }
 ctadl-frontends = { path = "ctadl-frontends" }
 ctadl-import = { path = "ctadl-import" }
 ctadl-index = { path = "ctadl-index" }
+ctadl-index-diff = { path = "ctadl-index-diff" }
 ctadl-index-lsm = { path = "ctadl-index/engines/lsm" }
 ctadl-index-par = { path = "ctadl-index/engines/par" }
 ctadl-index-serial = { path = "ctadl-index/engines/serial" }
@@ -84,6 +91,8 @@ dex-reader = { path = "readers/dex-reader" }
 immortal = { path = "immortal" }
 jvm-reader = { path = "readers/jvm-reader" }
 lsm = { path = "lsm" }
+multiset-diff = { path = "multiset-diff" }
+name-by-facts = { path = "name-by-facts" }
 pcode-reader = { path = "readers/pcode-reader" }
 rustc_graphviz = { path = "rustc_graphviz" }
 source-info = { path = "source-info" }
@@ -98,6 +107,8 @@ version = "0.1.7"
 
 [workspace.lints.rust]
 rust-2018-idioms = "deny"
+# Set by Verus when it compiles multiset-diff, to keep specs and proofs.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
 
 [workspace.lints.clippy]
 # Require a "SAFETY" comment preceding any unsafe code

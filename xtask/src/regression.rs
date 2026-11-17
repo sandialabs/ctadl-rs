@@ -30,6 +30,7 @@ use crate::apk;
 use crate::assertions;
 use crate::cil;
 use crate::dex;
+use crate::diff_sql;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
 use crate::jvm;
@@ -351,7 +352,8 @@ pub fn run(opts: &Options) -> Result<bool> {
         Some(baseline) => compare_paths(baseline, &run_root())?,
         None => true,
     };
-    Ok(failures == 0 && paths_equal)
+    let sql_agrees = diff_sql::check(&run_root(), &ctadl_bin()?)?;
+    Ok(failures == 0 && paths_equal && sql_agrees)
 }
 
 /// Compares the admissible path set of every index under `run` with the same case's under
@@ -384,11 +386,16 @@ pub fn compare_paths(baseline: &Path, run: &Path) -> Result<bool> {
         }
         Ok(out)
     }
-    let load = |dir: &Path| -> Result<BTreeSet<String>> {
-        Ok(schema::paths::try_load(dir)?
+    // Sorted and deduplicated: parsing normalizes, so two spellings in an older run can load
+    // as one path, and the comparison is of sets.
+    let load = |dir: &Path| -> Result<Vec<String>> {
+        let mut paths: Vec<String> = schema::paths::try_load(dir)?
             .into_iter()
             .map(|(p,): (FactPath,)| p.to_dot_string())
-            .collect())
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        Ok(paths)
     };
     let base = indexes(baseline)?;
     let ours = indexes(run)?;
@@ -401,10 +408,19 @@ pub fn compare_paths(baseline: &Path, run: &Path) -> Result<bool> {
         };
         compared += 1;
         let (a, b) = (load(base_dir)?, load(dir)?);
-        if a != b {
+        let (mut lost, mut gained) = (Vec::new(), Vec::new());
+        for d in multiset_diff::multiset_diff(&a, &b, String::cmp) {
+            let side = if d.count_a > d.count_b {
+                &mut lost
+            } else {
+                &mut gained
+            };
+            if side.len() < PATH_DELTAS_SHOWN {
+                side.push(d.row);
+            }
+        }
+        if !lost.is_empty() || !gained.is_empty() {
             equal = false;
-            let lost: Vec<&String> = a.difference(&b).take(8).collect();
-            let gained: Vec<&String> = b.difference(&a).take(8).collect();
             println!(
                 "  PATHS differ: {} ({} vs {} paths)\n        lost: {lost:?}\n        gained: {gained:?}",
                 rel.display(),
@@ -420,6 +436,9 @@ pub fn compare_paths(baseline: &Path, run: &Path) -> Result<bool> {
     );
     Ok(equal)
 }
+
+/// How many lost and how many gained paths [`compare_paths`] prints for one index.
+const PATH_DELTAS_SHOWN: usize = 8;
 
 /// How many of the slowest tasks the report names, so a slow case is noticed before it is the
 /// one that sets the suite's wall clock.
@@ -2923,7 +2942,9 @@ fn scratch_path(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Outcome, apply_xfail_allowlists, explain_lost_flow, from_summary_links};
+    use super::{
+        Outcome, apply_xfail_allowlists, compare_paths, explain_lost_flow, from_summary_links,
+    };
     use ctadl_import::notifications::{
         DEFAULT_MESSAGE, Level, MERGED_CLASSES_NOT_SPLIT, Notifications, STACK_SLOTS_PROMOTED_FULLY,
     };
@@ -2996,5 +3017,32 @@ mod tests {
                    summary projects\n";
         assert_eq!(from_summary_links(log), Some(2));
         assert_eq!(from_summary_links("no bridge line here\n"), None);
+    }
+
+    /// Two run roots whose one index differs by a path compare unequal; the same paths, one of
+    /// them stored twice, compare equal, since the comparison is of sets.
+    #[test]
+    fn compare_paths_compares_path_sets() {
+        use ctadl_ascent::facts::{Path as FactPath, schema};
+        let root = std::env::temp_dir().join(format!(
+            "ctadl_xtask_compare_paths_test_{}",
+            std::process::id()
+        ));
+        let write = |run: &str, paths: &[&str]| {
+            let index = root.join(run).join("Jvm_Case").join("index");
+            std::fs::create_dir_all(&index).unwrap();
+            let rows = paths.iter().map(|p| (FactPath::parse(p).unwrap(),));
+            schema::paths::try_save(&index, rows).unwrap();
+            root.join(run)
+        };
+        let base = write("base", &[".a", ".b", ".c"]);
+        let fewer = write("fewer", &[".a", ".b"]);
+        let repeated = write("repeated", &[".a", ".b", ".b", ".c"]);
+        let result = (
+            compare_paths(&base, &fewer).unwrap(),
+            compare_paths(&base, &repeated).unwrap(),
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(result, (false, true));
     }
 }

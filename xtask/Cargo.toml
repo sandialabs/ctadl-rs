@@ -44,6 +44,8 @@ ctadl-ascent.workspace = true
 # The `--mem2reg` cases and `apk:merged-classes` read the `notifications.sarif` an import or
 # an index writes, through the module that writes it. Already built for ctadl-ascent.
 ctadl-import.workspace = true
+# `--compare-paths` diffs two runs' path sets with it.
+multiset-diff.workspace = true
 # The JNI `+apk` cases package a DEX and a shared library into an APK so the
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in
 # practice: dex-reader already builds `zip` to read APKs.

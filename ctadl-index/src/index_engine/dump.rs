@@ -32,7 +32,12 @@ pub struct Cx<'a> {
     id_map: Option<&'a IdMap>,
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
+    /// `id_map` names function ids.
+    pub fn new(id_map: Option<&'a IdMap>) -> Self {
+        Cx { id_map }
+    }
+
     fn function(&self, f: FunctionId, out: &mut String) {
         match self.id_map.and_then(|m| m.get_function(f)) {
             Some(name) => out.push_str(name.0.as_ref()),
@@ -64,6 +69,8 @@ macro_rules! dump_display {
 }
 dump_display!(
     i64,
+    u32,
+    String,
     FormalIndex,
     crate::facts::Root,
     crate::facts::GlobalId,
@@ -83,7 +90,12 @@ macro_rules! dump_debug {
         }
     )*};
 }
-dump_debug!(FormalType, IntentKind, IntentPairKind);
+dump_debug!(
+    FormalType,
+    IntentKind,
+    IntentPairKind,
+    crate::facts::TaintState
+);
 
 impl DumpCol for FunctionId {
     fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
@@ -229,10 +241,16 @@ dump_row_tuple!(A, B, C, D, E, F);
 dump_row_tuple!(A, B, C, D, E, F, G);
 dump_row_tuple!(A, B, C, D, E, F, G, H);
 
-/// Prints `col`, escaping what would break the line-per-row, tab-per-column format.
+/// Prints `col`, escaped as [`push_escaped`] does.
 fn push_col(col: &impl DumpCol, cx: &Cx<'_>, out: &mut String) {
+    push_escaped(out, |out| col.dump_col(cx, out))
+}
+
+/// Appends what `write` appends to `out`, escaping what would break the line-per-row,
+/// tab-per-column format.
+pub fn push_escaped(out: &mut String, write: impl FnOnce(&mut String)) {
     let start = out.len();
-    col.dump_col(cx, out);
+    write(out);
     if out[start..].contains(['\\', '\t', '\n', '\r']) {
         let raw = out.split_off(start);
         for c in raw.chars() {
@@ -282,7 +300,7 @@ impl<'a> RelationDump<'a> {
         log::info!("dumping the index relations to {}", dir.display());
         Some(RelationDump {
             dir,
-            cx: Cx { id_map },
+            cx: Cx::new(id_map),
             written: Vec::new(),
         })
     }

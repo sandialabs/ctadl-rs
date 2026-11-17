@@ -84,6 +84,8 @@
 
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
+        verus = import ./nix/verus.nix { inherit pkgs fenix; };
+
         # The external toolchain `xtask regression` expects on PATH.
         # Deliberately excludes this repo's own package so that the
         # dev shell can be used to run parts of the suite against a locally
@@ -103,6 +105,9 @@
             # `xtask regression` validates the SARIF each taint case emits by
             # running this; without it on PATH the checks self-skip.
             checksarif
+            # `xtask regression` checks `ctadl diff-index`'s counts against SQL
+            # run by this; without it on PATH the check self-skips.
+            pkgs.duckdb
             # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
             # would also claim `cc`, and on Darwin that is fatal: rustc links
             # through `cc`, and gcc passes -no_compact_unwind, so the binary
@@ -161,6 +166,7 @@
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         packages.checksarif = checksarif;
+        packages.verus = verus;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
         # `packages.<system>.<name>` to be a flat derivation, but this is a
@@ -283,9 +289,26 @@
               PROPTEST_CASES = "4096";
             };
 
+            # Runs the Verus proofs in multiset-diff/src/lib.rs and name-by-facts/src/lib.rs.
+            verusCheck =
+              pkgs.runCommand "ctadl-checks-verus"
+                {
+                  nativeBuildInputs = [ verus ];
+                }
+                ''
+                  export HOME="$TMPDIR"
+                  for crate in multiset-diff:${./multiset-diff/src} name-by-facts:${./name-by-facts/src}; do
+                    mkdir -p "''${crate%%:*}"
+                    cp -r "''${crate#*:}" "''${crate%%:*}/src"
+                    verus --crate-type=lib --edition=2024 --no-report-long-running "''${crate%%:*}/src/lib.rs"
+                  done
+                  mkdir -p "$out"
+                '';
+
           in
           {
             inherit regression lsm-property-tests;
+            verus = verusCheck;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
 
@@ -324,6 +347,8 @@
               jadx
               scrcpy
               android.androidLldb
+              # `verus`, for multiset-diff's Verus proof.
+              verus
             ];
             packages = [ testEnv ];
 
