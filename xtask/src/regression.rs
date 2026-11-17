@@ -3022,7 +3022,7 @@ mod tests {
     /// Two run roots whose one index differs by a path compare unequal; the same paths, one of
     /// them stored twice, compare equal, since the comparison is of sets.
     #[test]
-    fn compare_paths_reports_multiset_difference() {
+    fn compare_paths_compares_path_sets() {
         use ctadl_ascent::facts::{Path as FactPath, schema};
         let root = std::env::temp_dir().join(format!(
             "ctadl_xtask_compare_paths_test_{}",

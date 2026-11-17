@@ -928,8 +928,8 @@ propagation(F::return <- F::arg(0)) :-
   fun(F, name = "canonicalize_url");
 "#;
 
-/// Runs `ctadl diff-index` and returns its exit code: 0 if the indexes are the same, 1 if they
-/// differ, 2 on an error, which goes to stderr. The report is flushed before this returns.
+/// Runs `ctadl diff-index` and returns its exit code, as [`Command::DiffIndex`] documents it.
+/// An error goes to stderr. The report is flushed before this returns.
 fn diff_index(args: &DiffIndexArgs) -> i32 {
     use std::io::Write;
 

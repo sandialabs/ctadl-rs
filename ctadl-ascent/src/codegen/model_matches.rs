@@ -293,6 +293,8 @@ fn emit_bridge(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
+    let ports = &bridge.ports;
+    let provenance = &bridge.provenance;
     // A *fresh* site. Call-argument pseudo-variables are keyed on the instruction id, so
     // reusing an existing site's id would alias its argument n to this bridge's argument n --
     // a spurious bidirectional flow between two unrelated arguments.
@@ -300,8 +302,6 @@ fn emit_bridge(
     // The site gets no `source_map` entry: a synthetic site has no span, and the SARIF step
     // emitter returns early for a location-less site rather than inventing one. Attributing the
     // crossing to the stub's own declaration span is a scoped follow-up.
-    let ports = &bridge.ports;
-    let provenance = &bridge.provenance;
     let site = source_info.add_insn_site(a);
     let site: PackedInsnSiteId = site.try_into().expect("packing a fresh bridge site");
     facts.call.push((site, b));

@@ -289,8 +289,7 @@
               PROPTEST_CASES = "4096";
             };
 
-            # The Verus proof of multiset-diff's merge, for inputs of any length, in the
-            # crate's own source.
+            # Runs the Verus proof in multiset-diff/src/lib.rs.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
                 {

@@ -6,11 +6,9 @@
 //! tables are equal when they hold the same canonical rows, each the same number of times, in
 //! any order.
 //!
-//! An instruction is named by its facts: its function, and the set of rows of `call`,
-//! `actual_param`, `call_target_assign` and `callee_info` about it, each with the instruction
-//! itself replaced by a marker. Instructions of one function with the same facts share a name,
-//! and the diff counts how many rows collapse onto it. An instruction in none of those tables
-//! has the empty set of facts.
+//! An instruction is named by its function and its input facts ([`CanonInsn`]); instructions
+//! of one function with the same facts share a name, and the diff counts how many rows
+//! collapse onto it.
 //!
 //! Each side is sorted by intern id, which is consistent across the two sides because both are
 //! loaded into this one process, and the two are compared with

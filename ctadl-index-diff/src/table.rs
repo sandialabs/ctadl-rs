@@ -11,8 +11,9 @@ use rustc_hash::FxHashMap;
 
 use ctadl_index::facts::schema::{self, Table};
 use ctadl_index::facts::{
-    CallDispatchKey, FlowEdge, FlowVariable, FlowVariableKind, FormalIndex, FunctionId, GlobalId,
-    InsnId, IntentPairKind, PackedInsnSiteId, Path, QueryEndpoint, Root, Str, TaintState,
+    CallArgId, CallDispatchKey, CallTargetObject, FlowEdge, FlowVariable, FlowVariableKind,
+    FormalIndex, FunctionId, GlobalId, InsnId, IntentPairKind, PackedInsnSiteId, Path,
+    QueryEndpoint, Root, Str, TaintState,
 };
 use ctadl_index::index_engine::unpack_site;
 
@@ -79,7 +80,7 @@ impl LoadCx<'_> {
             FlowVariableKind::Formal(i) => CanonVar::Formal(i),
             FlowVariableKind::Global(g) => CanonVar::Global(g),
             FlowVariableKind::CallArg(packed) => {
-                let arg: ctadl_index::facts::CallArgId = packed
+                let arg: CallArgId = packed
                     .try_into()
                     .map_err(|e| format!("undecodable call argument {packed:?}: {e}"))?;
                 CanonVar::CallArg(self.insn(f, arg.insn_id), arg.formal())
@@ -87,7 +88,7 @@ impl LoadCx<'_> {
         })
     }
 
-    fn target(&self, t: ctadl_index::facts::CallTargetObject) -> Result<CanonTarget, String> {
+    fn target(&self, t: CallTargetObject) -> Result<CanonTarget, String> {
         CanonTarget::from_object(t, |f| self.func(f))
     }
 
