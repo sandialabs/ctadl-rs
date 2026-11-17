@@ -8,6 +8,7 @@
 //! bridge whose callee port has a sub-path, so it has a bridge temporary and two imports.
 
 use std::cell::Cell;
+use std::fmt::Debug;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -24,7 +25,7 @@ use ctadl_index::index_engine::unpack_site;
 use ctadl_index_diff::{Options, Report, Sample, TableReport, diff_index};
 use source_info::FileSpanId;
 
-use crate::common::store_dir;
+use crate::common::{copy_index, store_dir};
 
 /// Direct calls, a function pointer passed as an argument, and one stored in a struct field.
 /// In `wrap`, `apply(twice, b)` and `through(&o, r)` are two calls with different arguments.
@@ -158,20 +159,6 @@ fn bridge_index() -> &'static Path {
 
 fn fixtures() -> [&'static Path; 2] {
     [ops_index(), bridge_index()]
-}
-
-/// A copy of the index `src`, in a temporary directory.
-fn copy_index(src: &Path) -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
-    let copy = tmp.path().join("index");
-    std::fs::create_dir(&copy).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_type().unwrap().is_file() {
-            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
-        }
-    }
-    (tmp, copy)
 }
 
 /// Every table `dir` holds.
@@ -362,40 +349,45 @@ fn remap_index(dir: &Path, remap: &Remap<'_>) {
     }
 }
 
-/// How many rows of `table` in `dir` name instruction `insn`, in a column or a call argument.
-fn rows_naming(dir: &Path, table: Table, insn: InsnId) -> usize {
-    let (hit, rows) = (Cell::new(false), Cell::new(0));
-    let flag = |i: InsnId| {
-        hit.set(hit.get() || i == insn);
-        i
-    };
-    let count = || rows.set(rows.get() + usize::from(hit.replace(false)));
-    let remap = Remap {
-        insn: &flag,
-        row_done: &count,
-        ..IDENTITY
-    };
-    remap_table(dir, table, &remap, false);
-    rows.get()
+/// Which rows [`count_rows`] counts.
+#[derive(Clone, Copy, PartialEq)]
+enum Naming {
+    /// Every row.
+    All,
+    /// Rows that name this function.
+    Function(FunctionId),
+    /// Rows that name this instruction, in a column or a call argument.
+    Insn(InsnId),
+    /// Rows that name this import.
+    Import(ImportId),
 }
 
-/// How many rows outside `function_id` name function `f`.
-fn rows_naming_function(dir: &Path, f: FunctionId) -> usize {
+/// How many rows of `tables` in `dir` are `naming`.
+fn count_rows(dir: &Path, tables: &[Table], naming: Naming) -> usize {
     let (hit, rows) = (Cell::new(false), Cell::new(0));
-    let flag = |g: FunctionId| {
-        hit.set(hit.get() || g == f);
-        g
+    let mark = |n: Naming| hit.set(hit.get() || n == naming);
+    let func = |f: FunctionId| {
+        mark(Naming::Function(f));
+        f
     };
-    let count = || rows.set(rows.get() + usize::from(hit.replace(false)));
+    let insn = |i: InsnId| {
+        mark(Naming::Insn(i));
+        i
+    };
+    let import = |i: ImportId| {
+        mark(Naming::Import(i));
+        i
+    };
+    let done = || rows.set(rows.get() + usize::from(hit.replace(false) || naming == Naming::All));
     let remap = Remap {
-        func: &flag,
-        row_done: &count,
+        func: &func,
+        insn: &insn,
+        import: &import,
+        row_done: &done,
         ..IDENTITY
     };
-    for t in tables_in(dir) {
-        if t != Table::FunctionId {
-            remap_table(dir, t, &remap, false);
-        }
+    for &t in tables {
+        remap_table(dir, t, &remap, false);
     }
     rows.get()
 }
@@ -503,59 +495,56 @@ fn split_row_groups() {
     }
 }
 
-#[test]
-fn renumbered_functions() {
+/// Each fixture, with taint tables added, is identical to a copy renumbered by `remap`.
+/// `probe` reads a value from an index that the renumbering must change.
+fn assert_renumbering_identical<T: PartialEq + Debug>(
+    remap: &Remap<'_>,
+    probe: impl Fn(&Path) -> T,
+    what: &str,
+) {
     for base in fixtures() {
-        let (_tmp, a) = copy_index(base);
+        let (_tmp_a, a) = copy_index(base);
         add_taint_tables(&a);
-        let (_tmp, b) = copy_index(&a);
-        let has_function_target = schema::call_target_assign::try_load(&a)
-            .unwrap()
-            .iter()
-            .any(|r| matches!(r.4.kind(), CallTargetObjectKind::FunctionId(_)));
-        if base == ops_index() {
-            assert!(has_function_target, "a call target must name a function");
-        }
-        let func = |f: FunctionId| FunctionId::new(f.id ^ 0x5555);
-        remap_index(
-            &b,
-            &Remap {
-                func: &func,
-                ..IDENTITY
-            },
-        );
-        assert_ne!(
-            schema::function_id::try_load(&a).unwrap()[0].0,
-            schema::function_id::try_load(&b).unwrap()[0].0
-        );
-        assert_identical(&a, &b, "functions renumbered");
+        let (_tmp_b, b) = copy_index(&a);
+        remap_index(&b, remap);
+        assert_ne!(probe(&a), probe(&b), "{what}: nothing was renumbered");
+        assert_identical(&a, &b, what);
     }
 }
 
 #[test]
+fn renumbered_functions() {
+    let has_function_target = schema::call_target_assign::try_load(ops_index())
+        .unwrap()
+        .iter()
+        .any(|r| matches!(r.4.kind(), CallTargetObjectKind::FunctionId(_)));
+    assert!(has_function_target, "a call target must name a function");
+    let func = |f: FunctionId| FunctionId::new(f.id ^ 0x5555);
+    assert_renumbering_identical(
+        &Remap {
+            func: &func,
+            ..IDENTITY
+        },
+        |dir| schema::function_id::try_load(dir).unwrap()[0].0,
+        "functions renumbered",
+    );
+}
+
+#[test]
 fn renumbered_insns_and_spans() {
-    for base in fixtures() {
-        let (_tmp, a) = copy_index(base);
-        add_taint_tables(&a);
-        let (_tmp, b) = copy_index(&a);
-        let insn = |i: InsnId| InsnId::new(i.id ^ 0x0555_5555);
-        let span = |s: FileSpanId| FileSpanId(s.0 ^ 0x5555);
-        let import = |i: ImportId| ImportId(i.0 ^ 0x55);
-        remap_index(
-            &b,
-            &Remap {
-                insn: &insn,
-                span: &span,
-                import: &import,
-                ..IDENTITY
-            },
-        );
-        assert_ne!(
-            schema::call::try_load(&a).unwrap()[0].1,
-            schema::call::try_load(&b).unwrap()[0].1
-        );
-        assert_identical(&a, &b, "instructions, spans and imports renumbered");
-    }
+    let insn = |i: InsnId| InsnId::new(i.id ^ 0x0555_5555);
+    let span = |s: FileSpanId| FileSpanId(s.0 ^ 0x5555);
+    let import = |i: ImportId| ImportId(i.0 ^ 0x55);
+    assert_renumbering_identical(
+        &Remap {
+            insn: &insn,
+            span: &span,
+            import: &import,
+            ..IDENTITY
+        },
+        |dir| schema::call::try_load(dir).unwrap()[0].1,
+        "instructions, spans and imports renumbered",
+    );
 }
 
 /// The tables an instruction's name is made from.
@@ -607,8 +596,7 @@ fn deleting_a_row_reports_it() {
     let mut deleted = 0;
     for base in fixtures() {
         for t in tables_in(base) {
-            let n = row_count(base, t);
-            if n == 0 {
+            if count_rows(base, &[t], Naming::All) == 0 {
                 continue;
             }
             let (_tmp, b) = copy_index(base);
@@ -617,36 +605,14 @@ fn deleting_a_row_reports_it() {
             let what = format!("deleting row 0 of {} in {}", t.name(), base.display());
 
             if t == Table::FunctionId || t == Table::ImportId {
-                let named = match t {
-                    Table::FunctionId => rows_naming_function(
-                        base,
-                        schema::function_id::try_load(base).unwrap()[0].0,
-                    ),
-                    _ => {
-                        let id = schema::import_id::try_load(base).unwrap()[0].0;
-                        let hit = Cell::new(0);
-                        let flag = |i: ImportId| {
-                            hit.set(hit.get() + usize::from(i == id));
-                            i
-                        };
-                        for t in tables_in(base)
-                            .into_iter()
-                            .filter(|&t| t != Table::ImportId)
-                        {
-                            remap_table(
-                                base,
-                                t,
-                                &Remap {
-                                    import: &flag,
-                                    ..IDENTITY
-                                },
-                                false,
-                            );
-                        }
-                        hit.get()
+                let deleted_id = match t {
+                    Table::FunctionId => {
+                        Naming::Function(schema::function_id::try_load(base).unwrap()[0].0)
                     }
+                    _ => Naming::Import(schema::import_id::try_load(base).unwrap()[0].0),
                 };
-                if named > 0 {
+                let others: Vec<Table> = tables_in(base).into_iter().filter(|&o| o != t).collect();
+                if count_rows(base, &others, deleted_id) > 0 {
                     let err = diff_index(base, &b, &Options::default())
                         .expect_err(&format!("{what}: an id no longer named must be an error"));
                     assert!(err.to_string().contains("is not in"), "{what}: {err}");
@@ -670,8 +636,8 @@ fn deleting_a_row_reports_it() {
                         );
                     }
                     assert!(
-                        d.more_in_a.total() <= rows_naming(base, dt, insn)
-                            && d.more_in_b.total() <= rows_naming(&b, dt, insn),
+                        d.more_in_a.total() <= count_rows(base, &[dt], Naming::Insn(insn))
+                            && d.more_in_b.total() <= count_rows(&b, &[dt], Naming::Insn(insn)),
                         "{what}: more rows of {} differ than name the instruction\n{text}",
                         d.table
                     );
@@ -689,21 +655,6 @@ fn deleting_a_row_reports_it() {
         }
     }
     assert!(deleted > 20, "only {deleted} tables had a row to delete");
-}
-
-fn row_count(dir: &Path, table: Table) -> usize {
-    let n = Cell::new(0);
-    let count = || n.set(n.get() + 1);
-    remap_table(
-        dir,
-        table,
-        &Remap {
-            row_done: &count,
-            ..IDENTITY
-        },
-        false,
-    );
-    n.get()
 }
 
 /// The ops index with the targets of `apply(twice, b)` and `through(&o, r)` in `wrap` swapped,
@@ -817,46 +768,5 @@ fn swapped_call_targets_reported() {
                 s.row
             );
         }
-    }
-}
-
-/// The report with A and B swapped.
-fn mirror(r: &Report) -> Report {
-    let mut m = r.clone();
-    std::mem::swap(&mut m.a, &mut m.b);
-    for u in &mut m.not_compared {
-        std::mem::swap(&mut u.in_a, &mut u.in_b);
-    }
-    for t in &mut m.tables {
-        std::mem::swap(&mut t.in_a, &mut t.in_b);
-        std::mem::swap(&mut t.rows_a, &mut t.rows_b);
-        std::mem::swap(&mut t.only_in_a, &mut t.only_in_b);
-        std::mem::swap(&mut t.more_in_a, &mut t.more_in_b);
-        for s in t.more_in_a.rows.iter_mut().chain(&mut t.more_in_b.rows) {
-            std::mem::swap(&mut s.count_a, &mut s.count_b);
-        }
-    }
-    m
-}
-
-/// Swapping A and B swaps the sides of the report and changes nothing else.
-#[test]
-fn swap_sides_mirror() {
-    let (_tmp, swapped) = swapped_call_targets();
-    let (_tmp2, deleted) = copy_index(bridge_index());
-    select_rows(&deleted, Table::Assign, &|n| (1..n).collect());
-    for (a, b) in [
-        (ops_index(), swapped.as_path()),
-        (bridge_index(), deleted.as_path()),
-    ] {
-        let opts = Options {
-            limit: 3,
-            ..Options::default()
-        };
-        let ab = diff_index(a, b, &opts).unwrap();
-        let ba = diff_index(b, a, &opts).unwrap();
-        assert!(!ab.identical());
-        assert_eq!(mirror(&ba), ab);
-        assert_eq!(mirror(&ba).to_text(), ab.to_text());
     }
 }

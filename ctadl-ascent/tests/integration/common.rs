@@ -1,6 +1,6 @@
 //! What the tests in this binary share.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use ctadl_ascent::project::init_store_path;
@@ -19,6 +19,20 @@ pub fn store_dir() -> &'static Path {
         dir
     })
     .path()
+}
+
+/// A copy of the index directory `src`, its files only, as `index` in a temporary directory.
+pub fn copy_index(src: &Path) -> (TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let copy = tmp.path().join("index");
+    std::fs::create_dir(&copy).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+        }
+    }
+    (tmp, copy)
 }
 
 /// Every `warn`-level log message any test in this binary has emitted since the first call,

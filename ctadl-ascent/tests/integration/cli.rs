@@ -1426,16 +1426,7 @@ fn diff_index_project() -> &'static (String, PathBuf) {
 
 /// A copy of the `diff-index` project's index directory, in a temporary directory.
 fn copy_of_index() -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempdir().unwrap();
-    let copy = tmp.path().join("index");
-    std::fs::create_dir(&copy).unwrap();
-    for entry in std::fs::read_dir(&diff_index_project().1).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_type().unwrap().is_file() {
-            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
-        }
-    }
-    (tmp, copy)
+    crate::common::copy_index(&diff_index_project().1)
 }
 
 /// Runs `ctadl diff-index` on `a` and `b` against the store this binary uses, and returns its

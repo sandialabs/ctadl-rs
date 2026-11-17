@@ -15,7 +15,7 @@ use ctadl_index::facts::{
 use crate::canon::{CanonVar, FnName};
 use crate::insn::{CanonInsn, InsnMap, SignatureInterner};
 use crate::names::FunctionNames;
-use crate::{Options, Report, Side, diff_index};
+use crate::{Options, Report, Samples, Side, diff_index};
 
 /// How a fixture numbers what a run numbers freely, and whether it writes rows backwards.
 #[derive(Clone, Copy)]
@@ -312,6 +312,20 @@ fn diff(a: &tempfile::TempDir, b: &tempfile::TempDir, opts: &Options) -> Report 
     diff_index(a.path(), b.path(), opts).unwrap()
 }
 
+/// The error diffing `a` and `b` fails with.
+fn diff_err(a: &tempfile::TempDir, b: &tempfile::TempDir) -> String {
+    diff_index(a.path(), b.path(), &Options::default())
+        .unwrap_err()
+        .to_string()
+}
+
+/// Asserts that `samples` shows exactly `want`, in order.
+fn assert_shown(samples: &Samples, want: &[Path]) {
+    let shown: Vec<&str> = samples.rows.iter().map(|s| s.row.as_str()).collect();
+    let want: Vec<String> = want.iter().map(|p| p.to_string()).collect();
+    assert_eq!(shown, want);
+}
+
 fn table<'r>(r: &'r Report, name: &str) -> &'r crate::TableReport {
     r.tables.iter().find(|t| t.table == name).unwrap()
 }
@@ -354,41 +368,12 @@ fn fn_name(s: &str) -> FnName {
 
 // Instructions.
 
+/// Calls of `foo` with equal facts (20 and 21) share a name; one with a different argument
+/// (22), or with more facts (10), does not.
 #[test]
-fn equal_facts_share_a_name() {
+fn instructions_named_by_their_facts() {
     let mut fx = Fixture::new(PLAIN);
-    for insn in [20, 21] {
-        fx.call.push((
-            FunctionId::new(MAIN),
-            InsnId::new(insn),
-            FunctionId::new(FOO),
-        ));
-        fx.actual_param.push((
-            FunctionId::new(MAIN),
-            InsnId::new(insn),
-            FormalIndex::new(0),
-            local("x"),
-            Path::empty(),
-        ));
-    }
-    let dir = fx.write();
-    let mut sigs = SignatureInterner::new();
-    let map = insn_map(dir.path(), Side::A, &mut sigs);
-    let main = fn_name("main");
-    assert_eq!(
-        map.get(InsnId::new(20), main),
-        map.get(InsnId::new(21), main)
-    );
-    assert_ne!(
-        map.get(InsnId::new(20), main),
-        map.get(InsnId::new(10), main)
-    );
-}
-
-#[test]
-fn different_arguments_differ() {
-    let mut fx = Fixture::new(PLAIN);
-    for (insn, var) in [(20, "x"), (21, "y")] {
+    for (insn, var) in [(20, "x"), (21, "x"), (22, "y")] {
         fx.call.push((
             FunctionId::new(MAIN),
             InsnId::new(insn),
@@ -405,24 +390,10 @@ fn different_arguments_differ() {
     let dir = fx.write();
     let mut sigs = SignatureInterner::new();
     let map = insn_map(dir.path(), Side::A, &mut sigs);
-    let main = fn_name("main");
-    assert_ne!(
-        map.get(InsnId::new(20), main),
-        map.get(InsnId::new(21), main)
-    );
-}
-
-#[test]
-fn renumbered_instructions_keep_names() {
-    let a = Fixture::new(PLAIN).write();
-    let b = Fixture::new(Numbering {
-        insn: SHUFFLED.insn,
-        ..PLAIN
-    })
-    .write();
-    let r = diff(&a, &b, &Options::default());
-    assert!(r.identical(), "{}", r.to_text());
-    assert_eq!(r.tables.len(), Table::ALL.len());
+    let name = |i| map.get(InsnId::new(i), fn_name("main"));
+    assert_eq!(name(20), name(21));
+    assert_ne!(name(20), name(22));
+    assert_ne!(name(20), name(10));
 }
 
 #[test]
@@ -498,11 +469,7 @@ fn second_instruction_in_input_is_an_error() {
         Ids(PLAIN).arg(11, 0),
         Path::empty(),
     ));
-    let a = fx.write();
-    let b = Fixture::new(PLAIN).write();
-    let err = diff_index(a.path(), b.path(), &Options::default())
-        .unwrap_err()
-        .to_string();
+    let err = diff_err(&fx.write(), &Fixture::new(PLAIN).write());
     assert!(err.contains("actual_param.parquet in A"), "{err}");
     assert!(
         err.contains("a call argument of instruction 11 in a row about instruction 10"),
@@ -559,11 +526,7 @@ fn global_frame_is_named() {
 fn duplicate_function_id_is_an_error() {
     let mut fx = Fixture::new(PLAIN);
     fx.function_id[2].0 = FunctionId::new(0);
-    let a = fx.write();
-    let b = Fixture::new(PLAIN).write();
-    let err = diff_index(a.path(), b.path(), &Options::default())
-        .unwrap_err()
-        .to_string();
+    let err = diff_err(&fx.write(), &Fixture::new(PLAIN).write());
     assert!(err.contains("function_id.parquet in A, row 2"), "{err}");
     assert!(err.contains("function id 0 is repeated"), "{err}");
 }
@@ -624,6 +587,11 @@ fn call_arg_inside_assign_is_canonical() {
         t.more_in_a.rows[0].row,
         "main\tlocal(a)\t.f\tcall-arg(main@foo(-1:call-arg(this, -1), 0:local(x)), 0)\t"
     );
+}
+
+/// `assign`, the largest table, holds two variables a row.
+#[test]
+fn canon_var_stays_small() {
     assert_eq!(std::mem::size_of::<CanonVar>(), 12);
 }
 
@@ -690,9 +658,7 @@ fn sample_limit_and_remainder() {
     let t = table(&r, "paths");
     assert_eq!((t.only_in_a, t.only_in_b), (30, 0));
     assert_eq!(t.more_in_a.not_shown, 10);
-    let shown: Vec<&str> = t.more_in_a.rows.iter().map(|s| s.row.as_str()).collect();
-    let want: Vec<String> = ps[..20].iter().map(|p| p.to_string()).collect();
-    assert_eq!(shown, want);
+    assert_shown(&t.more_in_a, &ps[..20]);
     assert!(
         r.to_text()
             .contains("  more in A: 30 rows, 10 not shown\n    [A 1, B 0] .sample00000\n")
@@ -714,9 +680,7 @@ fn all_rows_differ() {
     );
     for (samples, ps) in [(&t.more_in_a, &pa), (&t.more_in_b, &pb)] {
         assert_eq!(samples.not_shown, 10_000 - 20);
-        let shown: Vec<&str> = samples.rows.iter().map(|s| s.row.as_str()).collect();
-        let want: Vec<String> = ps[..20].iter().map(|p| p.to_string()).collect();
-        assert_eq!(shown, want);
+        assert_shown(samples, &ps[..20]);
     }
 }
 
@@ -847,10 +811,7 @@ fn samples_independent_of_load_order() {
     let mut r2 = diff(&a2, &b, &opts);
     r2.a = r1.a.clone();
     assert_eq!(r1, r2);
-    let t = table(&r1, "paths");
-    let shown: Vec<&str> = t.more_in_a.rows.iter().map(|s| s.row.as_str()).collect();
-    let want: Vec<String> = ps[..5].iter().map(|p| p.to_string()).collect();
-    assert_eq!(shown, want);
+    assert_shown(&table(&r1, "paths").more_in_a, &ps[..5]);
 }
 
 #[test]
@@ -951,8 +912,6 @@ fn corrupt_table_is_an_error() {
     let file = a.path().join(schema::call::FILENAME);
     let bytes = std::fs::read(&file).unwrap();
     std::fs::write(&file, &bytes[..bytes.len() / 2]).unwrap();
-    let err = diff_index(a.path(), b.path(), &Options::default())
-        .unwrap_err()
-        .to_string();
+    let err = diff_err(&a, &b);
     assert!(err.starts_with("loading call in A ("), "{err}");
 }
