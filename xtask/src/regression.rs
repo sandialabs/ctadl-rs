@@ -30,6 +30,7 @@ use crate::apk;
 use crate::assertions;
 use crate::cil;
 use crate::dex;
+use crate::diff_sql;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
 use crate::jvm;
@@ -351,7 +352,8 @@ pub fn run(opts: &Options) -> Result<bool> {
         Some(baseline) => compare_paths(baseline, &run_root())?,
         None => true,
     };
-    Ok(failures == 0 && paths_equal)
+    let sql_agrees = diff_sql::check(&run_root(), &ctadl_bin()?)?;
+    Ok(failures == 0 && paths_equal && sql_agrees)
 }
 
 /// Compares the admissible path set of every index under `run` with the same case's under

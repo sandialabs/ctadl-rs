@@ -86,7 +86,8 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 **Inspection**
 
 - F12. Inspect the store, print imported IR, report call-graph statistics, and dump the index
-  and taint graphs (Graphviz).
+  and taint graphs (Graphviz). Compare two index runs table by table, by content
+  (`ctadl diff-index`).
 - F13. Run import, index and query in one command (`ctadl go`).
 
 ### 3.2 Non-functional
@@ -238,6 +239,15 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
 - A nightly regression suite (`cargo xtask regression`, or the `regression` flake check):
   small programs in every front end, each with a known answer (the source lines a flow must
   reach), built with real toolchains (javac, dx, gcc, Ghidra, the Android SDK) from Nix.
+  After the cases, it checks `ctadl diff-index`'s per-table counts on the indexes they wrote
+  against an independent DuckDB query.
+- A machine-checked proof (Verus, the `verus` flake check, run nightly) that the core of
+  `ctadl diff-index`, the merge that compares two sorted sequences as multisets, reports
+  exactly the values whose counts differ, with those counts, once each, for inputs of any
+  length. Property tests check the same properties on the crate's own code.
+- Metamorphic tests of `ctadl diff-index` on real indexes: shuffled rows, split row groups,
+  renumbered function, instruction, span and import ids, and opposite interning orders report
+  no difference; a deleted row or two swapped call targets are reported as exactly that.
 
 ## 6. Known limitations
 

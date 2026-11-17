@@ -5,7 +5,8 @@
 //! interned in a different order. [`output_does_not_depend_on_intern_order`] runs the fixture's
 //! whole pipeline in child processes of this test binary: one to list the values the pipeline
 //! interns, then one that pre-interns them in content order and one in reverse. It asserts that
-//! both render byte-identical graphviz, relation dumps and SARIF.
+//! both render byte-identical graphviz, relation dumps and SARIF, and that `diff-index` finds
+//! their two indexes identical.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -327,4 +328,19 @@ fn output_does_not_depend_on_intern_order() {
         differing.is_empty(),
         "output depends on intern order: {differing:?}"
     );
+
+    // The two indexes, compared by this process, which interned in neither child's order.
+    let index = |out: &Path| {
+        out.join("store")
+            .join("projects")
+            .join("ties_proj")
+            .join("index")
+    };
+    let report = ctadl_index::diff::diff_index(
+        &index(&forward),
+        &index(&reverse),
+        &ctadl_index::diff::Options::default(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(report.first_line(), "IDENTICAL", "{}", report.to_text());
 }

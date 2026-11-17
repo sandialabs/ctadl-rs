@@ -535,6 +535,43 @@ Depends on: 3.
 `cargo xtask regression --frontend lua,c`, `cargo clippy -- -Dwarnings`, and
 `ctadl diff-index --help` by hand.
 
+**As built.**
+- `cli::diff_index` returns `anyhow::Result`: `resolve_index` (a directory, else the project's
+  `index/`, never created), `check_index_format` (reads `index_config.json` itself, so it
+  works on a bare directory, and names both formats) and `diff_indexes`. `main` prints
+  `Error: {e:#}` and exits 2; a failed write of the report (a closed pipe) is also exit 2.
+- The command tests run the built binary (`CARGO_BIN_EXE_ctadl`, with `--store` set to the
+  test store) on one project indexed once from `xfer.c`, and on copies of its index.
+- The C fixture is a copy of `index_engine_tests.rs`'s program, not shared with it. The
+  bridge fixture is the pathful bridge of `bridging_end_to_end.rs` (two Lua imports); it
+  asserts that `actual_param` passes a `$bridge` temporary.
+- The perturbations are one macro over every table `index` writes plus `taint` and
+  `taint_edge`: a row rewrite through a `Remap` (function, instruction, span and import ids)
+  and a row selection (shuffle, delete). `split_row_groups` rewrites each file through arrow
+  with one row per row group. `index` writes no `taint` or `taint_edge`, so the renumbering
+  tests add a row of each per call site, which puts a `QueryEndpoint`, a `FlowEdge` and the
+  `PackedInsnSiteId`s inside them under the renumbering. `renumbered_insns_and_spans` also
+  renumbers import ids.
+- Renumbered instruction ids stay below 2^28: `FlowVariable::call_actual` panics ("CallArg
+  top bits must be 0") for an instruction id with bit 30 or 31 set, though `1 << 32` packs.
+  Real ids are far smaller; the packing bug is left alone here.
+- `deleting_a_row_reports_it` deletes row 0 of every non-empty table of both fixtures. For an
+  input table it checks that the table differs, that every differing row in every table prints
+  the edited instruction's function as `caller@`, and that no table has more differing rows on
+  a side than rows naming the instruction there. Deleting a `function_id` or `import_id` row
+  that another table names is an error ("is not in"), and the test expects it; one nothing
+  names is checked like any other row.
+- `swap_sides_mirror` checks that the report of B against A, with its sides swapped back, is
+  equal to the report of A against B, as a value and as text.
+- The SQL check runs one `ctadl diff-index --json --limit 0` per pair and direction with
+  every checked table as a `--table`, and one duckdb query per pair and direction with a row
+  per table, instead of one of each per table. Indexes are the directories under the run root
+  that hold `index_config.json`, sorted by path. A table missing on either side of a pair is
+  left out of that pair; a pair without `function_id` and `import_id` on both sides is
+  skipped with a `SKIP` line. `<globals>` is joined in for the reserved global-frame id.
+- `duckdb` is added to `testEnv` only: the dev shell has `packages = [ testEnv ]`, so it gets
+  it from there.
+
 ## Files that change
 
 | File | Change | Phase |

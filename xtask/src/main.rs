@@ -27,6 +27,7 @@ mod cil_codegen;
 mod dex;
 mod dex_opcodes;
 mod dexlib2;
+mod diff_sql;
 mod discovery;
 mod exec;
 mod jvm;

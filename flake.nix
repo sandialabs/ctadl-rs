@@ -105,6 +105,9 @@
             # `xtask regression` validates the SARIF each taint case emits by
             # running this; without it on PATH the checks self-skip.
             checksarif
+            # `xtask regression` checks `ctadl diff-index`'s counts against SQL
+            # run by this; without it on PATH the check self-skips.
+            pkgs.duckdb
             # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
             # would also claim `cc`, and on Darwin that is fatal: rustc links
             # through `cc`, and gcc passes -no_compact_unwind, so the binary

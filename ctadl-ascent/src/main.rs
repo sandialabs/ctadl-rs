@@ -65,11 +65,58 @@ pub enum Command {
     /// Inspect the CTADL store
     Inspect(InspectArgs),
 
+    /// Compare two index runs table by table, by content. (See 'index')
+    ///
+    /// Use this, not a hand-written script, to check whether two `ctadl index` runs (serial and
+    /// parallel, before and after a change, two builds) wrote the same index. Every table either
+    /// index holds is compared as a multiset of rows: row order, function numbering, instruction
+    /// numbering and the order values were interned in do not matter, and span ids are not
+    /// compared. An instruction is named by its function and its facts in `call`,
+    /// `actual_param`, `call_target_assign` and `callee_info`; instructions of one function with
+    /// the same facts share a name, and the diff counts how many rows land on it. A `.parquet`
+    /// file that holds no known table is listed as not compared.
+    ///
+    /// The first line of output is `IDENTICAL`, or `DIFFERENT` and the tables that differ. Then
+    /// a line per table, and for each differing table at most `--limit` rows per side, ordered by
+    /// content, each with how many times A and B hold it, and how many rows were not shown.
+    ///
+    /// Exits 0 when the indexes are the same, 1 when they differ, and 2 on an error: a missing
+    /// or unreadable index, or an index in a format other than the one this build reads.
+    DiffIndex(DiffIndexArgs),
+
     /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
     ///
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
     /// analysis; no index is read, and none is written.
     Report(ReportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DiffIndexArgs {
+    /// The first index: an index directory, or the name of a project in the store.
+    #[arg(value_name = "A")]
+    pub a: String,
+
+    /// The second index, named the same way.
+    #[arg(value_name = "B")]
+    pub b: String,
+
+    /// The most differing rows printed per table and side.
+    #[arg(long, value_name = "N", default_value_t = 20)]
+    pub limit: usize,
+
+    /// Compare only this table (repeatable), by name (`call`) or file name (`call.parquet`).
+    #[arg(long = "table", value_name = "NAME")]
+    pub tables: Vec<String>,
+
+    /// Compare only the rows about a function whose name contains SUBSTR. Rows about no
+    /// function, such as those of `paths`, are left out.
+    #[arg(long, value_name = "SUBSTR")]
+    pub function: Option<String>,
+
+    /// Print the report as one JSON document.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -709,6 +756,7 @@ fn main() -> anyhow::Result<()> {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
+        Command::DiffIndex(args) => std::process::exit(diff_index(args)),
         Command::Report(args) => {
             report_project(args)
                 .with_context(|| format!("running 'report' project: {:?}", args.name))?;
@@ -879,6 +927,36 @@ sink(F::arg(1), kind = "input_data") :-
 propagation(F::return <- F::arg(0)) :-
   fun(F, name = "canonicalize_url");
 "#;
+
+/// Runs `ctadl diff-index` and returns its exit code: 0 if the indexes are the same, 1 if they
+/// differ, 2 on an error, which goes to stderr. The report is flushed before this returns.
+fn diff_index(args: &DiffIndexArgs) -> i32 {
+    use std::io::Write;
+
+    let opts = ctadl_index::diff::Options {
+        limit: args.limit,
+        tables: args.tables.clone(),
+        function: args.function.clone(),
+    };
+    let report = match cli::diff_index::diff_indexes(&args.a, &args.b, &opts) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            return 2;
+        }
+    };
+    let mut out = std::io::stdout().lock();
+    let written = if args.json {
+        report.write_json(&mut out).map_err(std::io::Error::from)
+    } else {
+        report.write_text(&mut out)
+    };
+    if let Err(e) = written.and_then(|()| out.flush()) {
+        eprintln!("Error: writing the report: {e}");
+        return 2;
+    }
+    if report.identical() { 0 } else { 1 }
+}
 
 fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     std::fs::write(&args.output, MODEL_TEMPLATE)
@@ -1354,6 +1432,46 @@ mod tests {
         };
         assert_eq!(args.name.as_deref(), Some("p"));
         assert_eq!(args.dump_index_graph.as_deref(), Some(Path::new("g.dot")));
+    }
+
+    #[test]
+    fn diff_index_parses() {
+        let cli = Cli::try_parse_from([
+            "ctadl",
+            "diff-index",
+            "a",
+            "some/dir",
+            "--limit",
+            "5",
+            "--table",
+            "call",
+            "--table",
+            "paths.parquet",
+            "--function",
+            "main",
+            "--json",
+        ])
+        .expect("must parse");
+        let Command::DiffIndex(args) = cli.cmd else {
+            panic!("expected the diff-index subcommand");
+        };
+        assert_eq!((args.a.as_str(), args.b.as_str()), ("a", "some/dir"));
+        assert_eq!(args.limit, 5);
+        assert_eq!(args.tables, ["call", "paths.parquet"]);
+        assert_eq!(args.function.as_deref(), Some("main"));
+        assert!(args.json);
+
+        let cli = Cli::try_parse_from(["ctadl", "diff-index", "a", "b"]).expect("must parse");
+        let Command::DiffIndex(args) = cli.cmd else {
+            panic!("expected the diff-index subcommand");
+        };
+        assert_eq!(args.limit, 20);
+        assert!(args.tables.is_empty() && args.function.is_none() && !args.json);
+
+        assert!(
+            Cli::try_parse_from(["ctadl", "diff-index", "a"]).is_err(),
+            "two indexes are required"
+        );
     }
 
     #[test]

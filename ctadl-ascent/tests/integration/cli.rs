@@ -1409,6 +1409,122 @@ fn index_version_gate_rejects_a_different_version() {
 }
 
 // ---------------------------------------------------------------------------
+// `ctadl diff-index`: run as a process, since what it answers with is its exit code (0 the
+// same, 1 different, 2 an error).
+// ---------------------------------------------------------------------------
+
+/// The project `xfer.c` is indexed into, once, for the `diff-index` tests, and its index
+/// directory.
+fn diff_index_project() -> &'static (String, PathBuf) {
+    static PROJECT: std::sync::OnceLock<(String, PathBuf)> = std::sync::OnceLock::new();
+    PROJECT.get_or_init(|| {
+        crate::common::store_dir();
+        let project = index_xfer_project("diff_index_xfer", "diff_index_xfer_proj");
+        (project.name.clone(), project.dir().join("index"))
+    })
+}
+
+/// A copy of the `diff-index` project's index directory, in a temporary directory.
+fn copy_of_index() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempdir().unwrap();
+    let copy = tmp.path().join("index");
+    std::fs::create_dir(&copy).unwrap();
+    for entry in std::fs::read_dir(&diff_index_project().1).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+        }
+    }
+    (tmp, copy)
+}
+
+/// Runs `ctadl diff-index` on `a` and `b` against the store this binary uses, and returns its
+/// exit code, stdout and stderr.
+fn run_diff_index(
+    a: impl AsRef<std::ffi::OsStr>,
+    b: impl AsRef<std::ffi::OsStr>,
+) -> (i32, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_ctadl"))
+        .arg("--store")
+        .arg(crate::common::store_dir())
+        .arg("diff-index")
+        .arg(a)
+        .arg(b)
+        .output()
+        .unwrap();
+    (
+        out.status.code().expect("exited, not killed"),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// A project compared with itself is identical, named by project or by index directory.
+#[test]
+fn same_project_is_identical() {
+    let (name, dir) = diff_index_project();
+    for (a, b) in [
+        (name.as_str(), name.as_str()),
+        (dir.to_str().unwrap(), name.as_str()),
+    ] {
+        let (code, out, err) = run_diff_index(a, b);
+        assert_eq!(code, 0, "{a} vs {b}: {out}{err}");
+        assert_eq!(out.lines().next(), Some("IDENTICAL"), "{out}");
+        assert!(
+            out.contains("call: same,"),
+            "every table gets a line: {out}"
+        );
+    }
+}
+
+/// An index in another format is refused before any row is read, on one side or on both: the
+/// decoders read only this build's format, so two equal old formats are not comparable either.
+#[test]
+fn refuses_old_format() {
+    let (name, _) = diff_index_project();
+    let (_tmp, old) = copy_of_index();
+    std::fs::write(old.join(INDEX_CONFIG_FILE), r#"{"version":"7"}"#).unwrap();
+    for (a, b) in [
+        (name.as_str(), old.to_str().unwrap()),
+        (old.to_str().unwrap(), old.to_str().unwrap()),
+    ] {
+        let (code, out, err) = run_diff_index(a, b);
+        assert_eq!(code, 2, "{a} vs {b}: {out}{err}");
+        assert!(out.is_empty(), "nothing is compared: {out}");
+        assert!(
+            err.contains("index format 7") && err.contains(INDEX_FORMAT_VERSION),
+            "the error names both formats: {err}"
+        );
+    }
+}
+
+/// An index directory with no config is refused, and the error says so.
+#[test]
+fn refuses_missing_config() {
+    let (name, _) = diff_index_project();
+    let (_tmp, copy) = copy_of_index();
+    std::fs::remove_file(copy.join(INDEX_CONFIG_FILE)).unwrap();
+    let (code, out, err) = run_diff_index(&copy, name);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains(&format!("has no {INDEX_CONFIG_FILE}")),
+        "the error says what is missing: {err}"
+    );
+}
+
+/// A table that does not decode is an error naming it, not a difference.
+#[test]
+fn unreadable_table() {
+    let (name, _) = diff_index_project();
+    let (_tmp, copy) = copy_of_index();
+    std::fs::write(copy.join("call.parquet"), b"not parquet").unwrap();
+    let (code, out, err) = run_diff_index(name, &copy);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(out.is_empty(), "no report is printed: {out}");
+    assert!(err.contains("call"), "the error names the table: {err}");
+}
+
+// ---------------------------------------------------------------------------
 // `inspect --dump-index-graph`: rendering the index graph from a finished index.
 //
 // `inspect` reads the two tables the graph needs back from the index directory, so what these
