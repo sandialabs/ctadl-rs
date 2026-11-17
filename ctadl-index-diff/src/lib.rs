@@ -8,7 +8,9 @@
 //!
 //! An instruction is named by its function and its input facts ([`CanonInsn`]); instructions
 //! of one function with the same facts share a name, and the diff counts how many rows
-//! collapse onto it.
+//! collapse onto it. Which instructions share a signature is computed by
+//! [`name_by_facts::Names`], proved with Verus to give two instructions, on either side, one
+//! signature exactly when they have one set of facts.
 //!
 //! Each side is sorted by intern id, which is consistent across the two sides because both are
 //! loaded into this one process, and the two are compared with
@@ -29,7 +31,7 @@ use std::fmt;
 
 pub use canon::{CanonEdge, CanonEndpoint, CanonTarget, CanonVar, FnName};
 pub use driver::{Options, diff_index};
-pub use insn::{CanonInsn, SigRow, SigVar, SignatureId, SignatureInterner};
+pub use insn::{CanonInsn, SigRow, SigVar, SignatureId, Signatures};
 pub use report::{Filters, Report, Sample, Samples, TableReport, UnknownFile};
 
 /// One of the two index directories.

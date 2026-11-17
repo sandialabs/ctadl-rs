@@ -241,10 +241,11 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   reach), built with real toolchains (javac, dx, gcc, Ghidra, the Android SDK) from Nix.
   After the cases, it checks `ctadl diff-index`'s per-table counts on the indexes they wrote
   against an independent DuckDB query.
-- A machine-checked proof (Verus, the `verus` flake check, run nightly) that the core of
-  `ctadl diff-index`, the merge that compares two sorted sequences as multisets, reports
-  exactly the values whose counts differ, with those counts, once each, for inputs of any
-  length.
+- Machine-checked proofs (Verus, the `verus` flake check, run nightly) of the two cores of
+  `ctadl diff-index`, for inputs of any length: the merge that compares two sorted sequences
+  as multisets reports exactly the values whose counts differ, with those counts, once each
+  (`multiset-diff`); and two instructions, on either side, get one name exactly when they
+  have one set of input facts (`name-by-facts`).
 - Metamorphic tests of `ctadl diff-index` on real indexes: shuffled rows, split row groups,
   renumbered function, instruction, span and import ids, and opposite interning orders report
   no difference; a deleted row or two swapped call targets are reported as exactly that.

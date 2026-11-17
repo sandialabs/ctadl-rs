@@ -5,7 +5,7 @@ use std::path::Path as FsPath;
 
 use ctadl_index::facts::schema::Table;
 
-use crate::insn::{InsnMap, SignatureInterner};
+use crate::insn::{InsnMap, Signatures};
 use crate::names::{FunctionNames, ImportNames};
 use crate::render::Cx;
 use crate::report::{Filters, Report, UnknownFile};
@@ -78,14 +78,14 @@ pub fn diff_index(a: &FsPath, b: &FsPath, opts: &Options) -> Result<Report, Erro
         ImportNames::load(a, Side::A, present(0, Table::ImportId))?,
         ImportNames::load(b, Side::B, present(1, Table::ImportId))?,
     ];
-    let mut sigs = SignatureInterner::new();
-    let insns = if selected.iter().any(|&t| needs_insns(t)) {
-        [
-            InsnMap::build(a, Side::A, |t| present(0, t), &fns[0], &mut sigs)?,
-            InsnMap::build(b, Side::B, |t| present(1, t), &fns[1], &mut sigs)?,
-        ]
+    let (sigs, insns) = if selected.iter().any(|&t| needs_insns(t)) {
+        InsnMap::build_both(
+            [a, b],
+            [&|t| present(0, t), &|t| present(1, t)],
+            [&fns[0], &fns[1]],
+        )?
     } else {
-        [InsnMap::empty(), InsnMap::empty()]
+        (Signatures::empty(), [InsnMap::empty(), InsnMap::empty()])
     };
 
     let cx = Cx::new(&sigs);

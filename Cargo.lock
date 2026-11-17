@@ -1289,8 +1289,8 @@ version = "0.1.7"
 dependencies = [
  "ctadl-index",
  "ctadl-ir",
- "hashbrown 0.16.1",
  "multiset-diff",
+ "name-by-facts",
  "rustc-hash",
  "serde",
  "serde_json",

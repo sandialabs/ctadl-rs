@@ -13,7 +13,7 @@ use ctadl_index::facts::{
 };
 
 use crate::canon::{CanonVar, FnName};
-use crate::insn::{CanonInsn, InsnMap, SignatureInterner};
+use crate::insn::{CanonInsn, InsnMap, Signatures};
 use crate::names::FunctionNames;
 use crate::{Options, Report, Samples, Side, diff_index};
 
@@ -356,10 +356,20 @@ fn mirror(r: &Report) -> Report {
     m
 }
 
-/// `dir`'s instruction map, built into `sigs`.
-fn insn_map(dir: &FsPath, side: Side, sigs: &mut SignatureInterner) -> InsnMap {
-    let fns = FunctionNames::load(dir, side, true).unwrap();
-    InsnMap::build(dir, side, |t| dir.join(t.filename()).exists(), &fns, sigs).unwrap()
+/// The instruction maps of `a` and `b`, and their signatures.
+fn insn_maps(a: &FsPath, b: &FsPath) -> (Signatures, [InsnMap; 2]) {
+    let fns = [
+        FunctionNames::load(a, Side::A, true).unwrap(),
+        FunctionNames::load(b, Side::B, true).unwrap(),
+    ];
+    InsnMap::build_both(
+        [a, b],
+        [&|t| a.join(t.filename()).exists(), &|t| {
+            b.join(t.filename()).exists()
+        }],
+        [&fns[0], &fns[1]],
+    )
+    .unwrap()
 }
 
 fn fn_name(s: &str) -> FnName {
@@ -388,8 +398,7 @@ fn instructions_named_by_their_facts() {
         ));
     }
     let dir = fx.write();
-    let mut sigs = SignatureInterner::new();
-    let map = insn_map(dir.path(), Side::A, &mut sigs);
+    let (_, [map, _]) = insn_maps(dir.path(), dir.path());
     let name = |i| map.get(InsnId::new(i), fn_name("main"));
     assert_eq!(name(20), name(21));
     assert_ne!(name(20), name(22));
@@ -420,9 +429,7 @@ fn two_sides_share_signatures() {
     let main = fn_name("main");
     let foo = fn_name("foo");
     let names = |first: &FsPath, second: &FsPath, plain_first: bool| {
-        let mut sigs = SignatureInterner::new();
-        let m1 = insn_map(first, Side::A, &mut sigs);
-        let m2 = insn_map(second, Side::B, &mut sigs);
+        let (sigs, [m1, m2]) = insn_maps(first, second);
         let (plain, shuffled) = if plain_first { (m1, m2) } else { (m2, m1) };
         for (k, f) in [(10, main), (11, main), (12, foo)] {
             assert_eq!(
@@ -481,16 +488,15 @@ fn second_instruction_in_input_is_an_error() {
 fn instruction_with_no_facts_has_empty_signature() {
     let mut fx = Fixture::new(PLAIN);
     let dir = fx.write();
-    let mut sigs = SignatureInterner::new();
-    let map = insn_map(dir.path(), Side::A, &mut sigs);
+    let (sigs, [map, _]) = insn_maps(dir.path(), dir.path());
     assert_eq!(
         map.get(InsnId::new(12), fn_name("foo")),
         CanonInsn {
             function: fn_name("foo"),
-            signature: SignatureInterner::EMPTY
+            signature: Signatures::EMPTY
         }
     );
-    assert!(sigs.get(SignatureInterner::EMPTY).is_empty());
+    assert!(sigs.get(Signatures::EMPTY).is_empty());
 
     // Two such instructions of one function share a name, so their rows differ only in count.
     let b = fx.write();

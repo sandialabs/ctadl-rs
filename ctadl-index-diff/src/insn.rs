@@ -8,11 +8,9 @@
 
 use std::cmp::Ordering;
 use std::fmt::Write as _;
-use std::hash::BuildHasher;
 use std::path::Path as FsPath;
 
-use hashbrown::HashTable;
-use rustc_hash::FxBuildHasher;
+use name_by_facts::Names;
 
 use ctadl_index::facts::schema::{Table, actual_param, call, call_target_assign, callee_info};
 use ctadl_index::facts::{
@@ -26,7 +24,7 @@ use crate::render::{Col, Cx};
 use crate::table::load_raw;
 use crate::{Error, Side};
 
-/// A signature's index in its [`SignatureInterner`].
+/// A signature's id in [`Signatures`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SignatureId(u32);
 
@@ -137,58 +135,40 @@ impl SigRow {
     }
 }
 
-/// The signatures of both sides' instructions, each stored once. Not a process-wide interner:
-/// it is freed with the diff.
-///
-/// A signature is stored sorted by content, so two signatures are equal exactly when their
-/// slices are, and are ordered by content by comparing the slices row by row.
-pub struct SignatureInterner {
+/// Both sides' distinct instruction signatures, named by [`name_by_facts::Names`]: a
+/// signature's id is 0 for the empty one, and otherwise its rank by content among both sides'
+/// distinct signatures. So two instructions, on either side, have one id exactly when they have
+/// one set of facts, and ids are ordered as their signatures are.
+pub struct Signatures {
     rows: Vec<SigRow>,
-    /// Signature `i` is `rows[starts[i]..starts[i + 1]]`.
+    /// Signature `id` is `rows[starts[id]..starts[id + 1]]`.
     starts: Vec<usize>,
-    table: HashTable<u32>,
-    hasher: FxBuildHasher,
 }
 
-impl Default for SignatureInterner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SignatureInterner {
+impl Signatures {
     /// The signature of an instruction with no input facts.
     pub const EMPTY: SignatureId = SignatureId(0);
 
-    pub fn new() -> Self {
-        let mut s = SignatureInterner {
+    /// No signatures but the empty one, for a diff of tables that name no instruction.
+    pub fn empty() -> Self {
+        Signatures {
             rows: Vec::new(),
-            starts: vec![0],
-            table: HashTable::new(),
-            hasher: FxBuildHasher,
-        };
-        let empty = s.intern(&[]);
-        debug_assert_eq!(empty, Self::EMPTY);
-        s
+            starts: vec![0, 0],
+        }
     }
 
-    /// The id of `sig`, which must be sorted by content and hold no repeats.
-    pub fn intern(&mut self, sig: &[SigRow]) -> SignatureId {
-        debug_assert!(sig.is_sorted_by(|a, b| a.content_cmp(b) == Ordering::Less));
-        let hash = self.hasher.hash_one(sig);
-        let (rows, starts) = (&self.rows, &self.starts);
-        let slice = |id: u32| &rows[starts[id as usize]..starts[id as usize + 1]];
-        if let Some(&id) = self.table.find(hash, |&id| slice(id) == sig) {
-            return SignatureId(id);
+    /// Each of `names`' signatures, once.
+    fn of(names: &Names<InsnId, SigRow>) -> Self {
+        let mut sigs = Signatures {
+            rows: Vec::new(),
+            starts: vec![0],
+        };
+        for id in 0..names.len() {
+            let id = u32::try_from(id).expect("fewer than 2^32 signatures");
+            sigs.rows.extend_from_slice(names.facts_of(id));
+            sigs.starts.push(sigs.rows.len());
         }
-        let id = u32::try_from(self.starts.len() - 1).expect("fewer than 2^32 signatures");
-        self.rows.extend_from_slice(sig);
-        self.starts.push(self.rows.len());
-        let (rows, starts, hasher) = (&self.rows, &self.starts, &self.hasher);
-        self.table.insert_unique(hash, id, |&id| {
-            hasher.hash_one(&rows[starts[id as usize]..starts[id as usize + 1]])
-        });
-        SignatureId(id)
+        sigs
     }
 
     /// The rows of signature `id`, sorted by content.
@@ -207,19 +187,10 @@ impl SignatureInterner {
         false
     }
 
-    /// Orders two signatures by content: row by row, a proper prefix first.
+    /// Orders two signatures by content: row by row, a proper prefix first. Ids are ranks in
+    /// that order.
     pub fn content_cmp(&self, a: SignatureId, b: SignatureId) -> Ordering {
-        if a == b {
-            return Ordering::Equal;
-        }
-        let (a, b) = (self.get(a), self.get(b));
-        for (x, y) in a.iter().zip(b) {
-            match x.content_cmp(y) {
-                Ordering::Equal => {}
-                unequal => return unequal,
-            }
-        }
-        a.len().cmp(&b.len())
+        a.cmp(&b)
     }
 }
 
@@ -228,20 +199,73 @@ pub(crate) struct InsnMap {
     map: Vec<(InsnId, CanonInsn)>,
 }
 
+/// One side's input facts: each instruction's function, and its signature rows, sorted by
+/// instruction and then by content.
+struct SideFacts {
+    functions: Vec<(InsnId, FnName)>,
+    rows: Vec<(InsnId, SigRow)>,
+}
+
 impl InsnMap {
     pub(crate) fn empty() -> Self {
         InsnMap { map: Vec::new() }
     }
 
-    /// Reads `dir`'s input tables, one at a time, and names each instruction in them.
-    /// `present` says which tables the directory holds.
-    pub(crate) fn build(
+    /// Reads both sides' input tables and names each instruction in them by its facts.
+    /// `present[i]` says which tables side `i`'s directory holds.
+    pub(crate) fn build_both(
+        dirs: [&FsPath; 2],
+        present: [&dyn Fn(Table) -> bool; 2],
+        fns: [&FunctionNames; 2],
+    ) -> Result<(Signatures, [InsnMap; 2]), Error> {
+        let a = SideFacts::load(dirs[0], Side::A, present[0], fns[0])?;
+        let b = SideFacts::load(dirs[1], Side::B, present[1], fns[1])?;
+        let names = Names::build(&a.rows, &b.rows, &InsnId::cmp, &SigRow::content_cmp).ok_or_else(
+            || Error::new("naming instructions: input facts out of order or too many"),
+        )?;
+        let map = |facts: SideFacts, side_b: bool| InsnMap {
+            map: facts
+                .functions
+                .into_iter()
+                .map(|(insn, function)| {
+                    let signature = SignatureId(names.name(side_b, &insn, &InsnId::cmp));
+                    (
+                        insn,
+                        CanonInsn {
+                            function,
+                            signature,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let maps = [map(a, false), map(b, true)];
+        // Every instruction's facts are no longer needed, only each signature's, once.
+        Ok((Signatures::of(&names), maps))
+    }
+
+    /// The canonical instruction `insn`. One in no input table has the empty signature and
+    /// `function`, the function of the row that names it.
+    pub(crate) fn get(&self, insn: InsnId, function: FnName) -> CanonInsn {
+        match self.map.binary_search_by_key(&insn, |e| e.0) {
+            Ok(i) => self.map[i].1,
+            Err(_) => CanonInsn {
+                function,
+                signature: Signatures::EMPTY,
+            },
+        }
+    }
+}
+
+impl SideFacts {
+    /// Reads `dir`'s input tables, one at a time. `present` says which tables the directory
+    /// holds.
+    fn load(
         dir: &FsPath,
         side: Side,
-        present: impl Fn(Table) -> bool,
+        present: &dyn Fn(Table) -> bool,
         fns: &FunctionNames,
-        sigs: &mut SignatureInterner,
-    ) -> Result<InsnMap, Error> {
+    ) -> Result<SideFacts, Error> {
         let mut flat: Vec<(InsnId, FnName, SigRow)> = Vec::new();
         if present(Table::Call) {
             let rows = load_raw(dir, side, Table::Call, |d| call::try_load(d))?;
@@ -296,11 +320,12 @@ impl InsnMap {
                 flat.push((*insn, f, r));
             }
         }
-        flat.sort_unstable();
-        flat.dedup();
+        // By instruction, then function, so each instruction's rows are together and a second
+        // function shows up in them.
+        flat.sort_unstable_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(&y.1)));
 
-        let mut map = Vec::new();
-        let mut sig = Vec::new();
+        let mut functions = Vec::new();
+        let mut rows = Vec::with_capacity(flat.len());
         for group in flat.chunk_by(|x, y| x.0 == y.0) {
             let (insn, function, _) = group[0];
             if let Some((_, other, _)) = group.iter().find(|r| r.1 != function) {
@@ -311,31 +336,12 @@ impl InsnMap {
                     other.as_str()
                 )));
             }
-            sig.clear();
-            sig.extend(group.iter().map(|r| r.2));
-            sig.sort_unstable_by(SigRow::content_cmp);
-            let signature = sigs.intern(&sig);
-            map.push((
-                insn,
-                CanonInsn {
-                    function,
-                    signature,
-                },
-            ));
+            functions.push((insn, function));
+            let start = rows.len();
+            rows.extend(group.iter().map(|r| (insn, r.2)));
+            rows[start..].sort_unstable_by(|x, y| x.1.content_cmp(&y.1));
         }
-        Ok(InsnMap { map })
-    }
-
-    /// The canonical instruction `insn`. One in no input table has the empty signature and
-    /// `function`, the function of the row that names it.
-    pub(crate) fn get(&self, insn: InsnId, function: FnName) -> CanonInsn {
-        match self.map.binary_search_by_key(&insn, |e| e.0) {
-            Ok(i) => self.map[i].1,
-            Err(_) => CanonInsn {
-                function,
-                signature: SignatureInterner::EMPTY,
-            },
-        }
+        Ok(SideFacts { functions, rows })
     }
 }
 

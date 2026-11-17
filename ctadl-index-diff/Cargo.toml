@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 ctadl-index.workspace = true
-hashbrown = "0.16"
 multiset-diff.workspace = true
+name-by-facts.workspace = true
 rustc-hash = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

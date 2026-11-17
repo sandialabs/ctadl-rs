@@ -3,16 +3,16 @@
 
 use ctadl_index::index_engine::dump::{self, DumpCol};
 
-use crate::insn::SignatureInterner;
+use crate::insn::Signatures;
 
 /// What a canonical row needs to be ordered and printed by content.
 pub struct Cx<'a> {
     dump: dump::Cx<'a>,
-    signatures: &'a SignatureInterner,
+    signatures: &'a Signatures,
 }
 
 impl<'a> Cx<'a> {
-    pub fn new(signatures: &'a SignatureInterner) -> Self {
+    pub fn new(signatures: &'a Signatures) -> Self {
         // A canonical row holds no function id, so no id map is needed.
         Cx {
             dump: dump::Cx::new(None),
@@ -20,7 +20,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    pub fn signatures(&self) -> &'a SignatureInterner {
+    pub fn signatures(&self) -> &'a Signatures {
         self.signatures
     }
 }
