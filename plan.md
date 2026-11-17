@@ -242,6 +242,9 @@ no expected failures. `cargo test -p multiset-diff -p ctadl-index` and
   assertion compares the wrong counts (the assertion fails). `nix build` of the default
   package and `checks.aarch64-darwin.verus`, `cargo clippy`, `cargo fmt --check`, and
   `cargo test -p multiset-diff -p ctadl-index` pass.
+- Then `ctadl-index/tests/multiset_diff_props.rs` and `ctadl-index`'s proptest
+  dev-dependency were removed, at the user's decision: they checked the four properties on
+  the code Verus now proves them of (R16 removed).
 
 ## Phase 3: the diff library (R4-R14, D2-D6)
 
@@ -597,7 +600,7 @@ Depends on: 3.
 | `nix/kani.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Kani, `checks.kani`; then removed | 1, 2 |
 | `nix/verus.nix`, `flake.nix`, `.github/workflows/nightly.yml` | pinned Verus, `checks.verus` | 2 |
 | `flake.nix` | `duckdb` in `testEnv` and the dev shell | 5 |
-| `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests | 2 |
+| `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests; then the proptests removed | 2 |
 | `ctadl-index/src/facts/schema.rs` | `tables!`, `Table` | 3 |
 | `ctadl-index/src/index_engine/dump.rs` | `Cx::new`, `pub push_col` | 3 |
 | `ctadl-index/src/lib.rs`, `ctadl-index/src/diff/` | the diff library | 3 |

@@ -1271,7 +1271,6 @@ dependencies = [
  "packed_struct",
  "parquet",
  "paste",
- "proptest",
  "rayon",
  "regex",
  "rustc-hash",

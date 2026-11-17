@@ -108,8 +108,7 @@ does not sequence the work.
   - a value is reported exactly when its count in A differs from its count in B, and the
     reported counts are those counts;
   - no value is reported twice.
-- R16. **Property tests.** The same properties hold under proptest on unbounded inputs in
-  ordinary `cargo test`.
+- R16. Removed: the proptests of the same properties ran on the code R15 proves.
 - R17. **Verus is pinned in Nix, and the proof is rechecked.** The flake provides one pinned
   Verus version, in the dev shell and in `checks.verus`, which runs the proof with no
   network. The nightly workflow builds that check, and a failed proof fails the night.
@@ -164,7 +163,7 @@ does not sequence the work.
 
 A new workspace crate, `multiset-diff`, whose only dependencies are Verus's `vstd`,
 `verus_builtin` and `verus_builtin_macros`, and no dev-dependencies. Its proof is in its own
-source (D8). The proptest properties live in `ctadl-index`'s tests, which call it.
+source (D8).
 
 ```rust
 pub struct Delta<'a, T> { pub row: &'a T, pub count_a: usize, pub count_b: usize }
@@ -187,8 +186,7 @@ client that restates them over what the iterator yields (R15). A plain `cargo bu
 the specs, proofs, ghost fields and `multiset_diff_by` (the last two gated on
 `cfg(verus_keep_ghost)`, which Verus sets), leaving the merge; the client is compiled only
 by Verus. The `debug_assert`s live in an `external_body` helper with no postcondition, since
-Verus does not model `is_sorted_by`. The merge must stay in a form Verus can check. The
-proptest versions are the same properties, run by `cargo test` (R16).
+Verus does not model `is_sorted_by`. The merge must stay in a form Verus can check.
 
 ### D2. Canonical rows
 
