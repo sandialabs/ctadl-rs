@@ -15,6 +15,7 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::PathBuf;
 
+use crate::diff::SignatureInterner;
 use crate::facts::{
     CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVertex, FormalIndex,
     FormalType, FunctionId, IdMap, InsnId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
@@ -30,9 +31,27 @@ pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
 /// What a column needs to print itself by content.
 pub struct Cx<'a> {
     id_map: Option<&'a IdMap>,
+    signatures: Option<&'a SignatureInterner>,
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
+    /// `id_map` names function ids; `signatures` holds the instruction signatures that the
+    /// index diff's canonical rows refer to.
+    pub fn new(id_map: Option<&'a IdMap>, signatures: Option<&'a SignatureInterner>) -> Self {
+        Cx { id_map, signatures }
+    }
+
+    /// The signatures this context was built with.
+    ///
+    /// # Panics
+    ///
+    /// If it was built without them: only the index diff prints a signature, and it always
+    /// passes them.
+    pub fn signatures(&self) -> &'a SignatureInterner {
+        self.signatures
+            .expect("a canonical instruction is printed with its signatures")
+    }
+
     fn function(&self, f: FunctionId, out: &mut String) {
         match self.id_map.and_then(|m| m.get_function(f)) {
             Some(name) => out.push_str(name.0.as_ref()),
@@ -64,6 +83,8 @@ macro_rules! dump_display {
 }
 dump_display!(
     i64,
+    u32,
+    String,
     FormalIndex,
     crate::facts::Root,
     crate::facts::GlobalId,
@@ -83,7 +104,12 @@ macro_rules! dump_debug {
         }
     )*};
 }
-dump_debug!(FormalType, IntentKind, IntentPairKind);
+dump_debug!(
+    FormalType,
+    IntentKind,
+    IntentPairKind,
+    crate::facts::TaintState
+);
 
 impl DumpCol for FunctionId {
     fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
@@ -282,7 +308,7 @@ impl<'a> RelationDump<'a> {
         log::info!("dumping the index relations to {}", dir.display());
         Some(RelationDump {
             dir,
-            cx: Cx { id_map },
+            cx: Cx::new(id_map, None),
             written: Vec::new(),
         })
     }
