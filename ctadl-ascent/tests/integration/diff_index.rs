@@ -362,7 +362,7 @@ enum Naming {
     Import(ImportId),
 }
 
-/// How many rows of `tables` in `dir` are `naming`.
+/// How many rows of `tables` in `dir` match `naming`.
 fn count_rows(dir: &Path, tables: &[Table], naming: Naming) -> usize {
     let (hit, rows) = (Cell::new(false), Cell::new(0));
     let mark = |n: Naming| hit.set(hit.get() || n == naming);

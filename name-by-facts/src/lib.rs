@@ -10,7 +10,7 @@
 //! are equal exactly when `i` and `j` have the same set of facts. Keys and facts are the same
 //! when the orders `cmp_i` and `cmp_r` compute call them `Equal`. A key on no row has no facts.
 //! The rest of the crate's guarantees are checks at run time: `build` returns `None` if the
-//! rows are not sorted, so the theorem holds for anything it returns.
+//! rows are not sorted, so the theorem holds for anything it returns. `facts_of` is not verified.
 
 use std::cmp::Ordering;
 use vstd::prelude::*;
@@ -1301,13 +1301,13 @@ impl<I: Copy, R: Copy> Names<I, R> {
         self.reps@.len() + 1
     }
 
-    /// Whether `id` is `0`, the name of a key with no facts. Never true of `len`.
+    /// Always false: 0, the name of a key with no facts, is always a name.
     pub fn is_empty(&self) -> bool {
         false
     }
 
     /// The facts named `id`, strictly sorted: empty for 0, and otherwise the facts of a key
-    /// named `id`.
+    /// named `id`. Not verified.
     #[verifier::external_body]
     pub fn facts_of(&self, id: u32) -> &[R] {
         if id == 0 {

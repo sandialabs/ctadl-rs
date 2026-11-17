@@ -168,7 +168,7 @@ impl ContentOrd for CanonInsn {
     fn content_order(&self, other: &Self, cx: &Cx<'_>) -> Ordering {
         self.function
             .content_order(&other.function, cx)
-            .then_with(|| cx.signatures().content_cmp(self.signature, other.signature))
+            .then_with(|| self.signature.cmp(&other.signature))
     }
 }
 

@@ -24,7 +24,8 @@ use crate::render::{Col, Cx};
 use crate::table::load_raw;
 use crate::{Error, Side};
 
-/// A signature's id in [`Signatures`].
+/// A signature's id in [`Signatures`]. Ids are ordered as their signatures are by content: row
+/// by row, a proper prefix first.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SignatureId(u32);
 
@@ -135,10 +136,9 @@ impl SigRow {
     }
 }
 
-/// Both sides' distinct instruction signatures, named by [`name_by_facts::Names`]: a
-/// signature's id is 0 for the empty one, and otherwise its rank by content among both sides'
-/// distinct signatures. So two instructions, on either side, have one id exactly when they have
-/// one set of facts, and ids are ordered as their signatures are.
+/// Both sides' distinct instruction signatures, each stored once, with the ids
+/// [`name_by_facts::Names`] gives them: equal exactly when the facts are, and ordered as the
+/// signatures are by content.
 pub struct Signatures {
     rows: Vec<SigRow>,
     /// Signature `id` is `rows[starts[id]..starts[id + 1]]`.
@@ -185,12 +185,6 @@ impl Signatures {
     /// Always false: the empty signature is always there.
     pub fn is_empty(&self) -> bool {
         false
-    }
-
-    /// Orders two signatures by content: row by row, a proper prefix first. Ids are ranks in
-    /// that order.
-    pub fn content_cmp(&self, a: SignatureId, b: SignatureId) -> Ordering {
-        a.cmp(&b)
     }
 }
 
