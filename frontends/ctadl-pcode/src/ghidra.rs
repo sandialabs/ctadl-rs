@@ -12,6 +12,8 @@ pub const DEFAULT_MAX_HEAP_MIB: u64 = 40 * 1024;
 const LAUNCH_MODE: &str = "fg";
 /// Upper bound on the JVM's garbage-collector and JIT compiler threads.
 const MAX_JVM_HELPER_THREADS: usize = 4;
+/// Keeps the JVM from starting a GUI toolkit; see `jvm_args`.
+const HEADLESS: &str = "-Djava.awt.headless=true";
 
 /// Name of the file, inside the import directory, that captures everything Ghidra
 /// writes to its stdout/stderr. See [`run_and_log`].
@@ -337,13 +339,17 @@ pub fn run_ghidra_export_source(
 
 /// The JVM options `launch.sh` takes as one space-separated argument.
 ///
+/// `-Djava.awt.headless=true` is what Ghidra's own `analyzeHeadless` passes. Without it,
+/// `ghidra.Ghidra` starts AppKit on macOS, which registers the app with launchservicesd; a
+/// sandbox that denies that lookup makes macOS abort the JVM (exit 134) before Ghidra starts.
+///
 /// Under a `jobs` limit, `ActiveProcessorCount` makes the JVM report that many cores, which
 /// bounds every pool sized from `availableProcessors()`: the JVM's own, Ghidra's, and the
 /// export script's.
 fn jvm_args(jobs: usize) -> String {
     if jobs == 0 {
         return format!(
-            "-XX:ParallelGCThreads={MAX_JVM_HELPER_THREADS} \
+            "{HEADLESS} -XX:ParallelGCThreads={MAX_JVM_HELPER_THREADS} \
              -XX:CICompilerCount={MAX_JVM_HELPER_THREADS}"
         );
     }
@@ -351,7 +357,7 @@ fn jvm_args(jobs: usize) -> String {
     // The tiered JIT refuses fewer than two compiler threads.
     let compilers = helpers.max(2);
     format!(
-        "-XX:ActiveProcessorCount={jobs} -XX:ParallelGCThreads={helpers} \
+        "{HEADLESS} -XX:ActiveProcessorCount={jobs} -XX:ParallelGCThreads={helpers} \
          -XX:CICompilerCount={compilers}"
     )
 }
@@ -747,6 +753,16 @@ mod tests {
     }
 
     // --- Fact compression ------------------------------------------------------
+
+    #[test]
+    fn jvm_args_are_headless() {
+        for jobs in [0, 1, 16] {
+            assert!(
+                jvm_args(jobs).starts_with("-Djava.awt.headless=true "),
+                "{jobs}"
+            );
+        }
+    }
 
     #[test]
     fn jvm_args_leave_the_core_count_alone_by_default() {
