@@ -189,8 +189,9 @@ let
   # The readers' source: the workspace root plus the two readers, not the
   # whole tree, so that editing the rest of the repo does not rebuild
   # them. The root manifest still lists every member, which cargo would
-  # fail to load, so `preBuild` cuts `members` down to the two readers;
-  # naersk runs it in its dependency pass too.
+  # fail to load, so `preBuild` cuts `members` and `default-members` (the
+  # `g` matches both) down to the two readers; naersk runs it in its
+  # dependency pass too.
   readersSrc = pkgs.lib.fileset.toSource {
     root = ../.;
     fileset = pkgs.lib.fileset.unions [
@@ -201,7 +202,7 @@ let
     ];
   };
   readersPreBuild = ''
-    sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|' Cargo.toml
+    sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|g' Cargo.toml
   '';
 
   # The dumper of the reader crate `name`. Each dumper is an *example* of
