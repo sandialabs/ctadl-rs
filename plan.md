@@ -436,6 +436,21 @@ Depends on: 2.
 **Gate.** `cargo test -p ctadl-ascent --lib index_engine_tests`, `cargo test -p xtask`,
 `cargo clippy -- -Dwarnings`.
 
+**As built.**
+- `assert_same_index` checks the stats and calls `assert_same_rows`, which destructures one
+  `IndexResult` with no `..` and hands each field, with the other result's, to
+  `assert_same_relation`. That sorts both, runs `multiset_diff` under `Ord::cmp`, and panics
+  with `<relation> differs (<n> vs <m> rows)` and the first 8 deltas as `row: count_a vs
+  count_b`, then how many more. `context_joins_agree` calls `assert_same_rows` with the join's
+  name as a prefix, so its stats checks stay its own (it checks a different set of them).
+- The `const_reaches` fixture is built with `FunctionBuilder`, not C: the C front end emits no
+  string constants, and `const_reaches` is derived only in an intent frame, so the test adds
+  the function to `intent_frame` itself. Its guard that the fixture derived rows avoids the
+  word `const_reaches` in its message, which the expected panic would otherwise match.
+- `compare_paths` deduplicates each side after sorting. Parsing normalizes, so two spellings
+  in an older run can load as one path; deduplicating keeps the comparison one of sets, so
+  what passed still passes. Its test also checks that a path stored twice compares equal.
+
 ## Phase 5: `ctadl diff-index`, tested on real indexes, and documented (R1-R3, R12, R18, R19, R21)
 
 Depends on: 3.

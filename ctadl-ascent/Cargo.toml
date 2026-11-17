@@ -79,6 +79,7 @@ immortal = { path = "../immortal" }
 
 [dev-dependencies]
 test-log = "0.2.19"
+multiset-diff = { path = "../multiset-diff" }
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
 zip = { version = "9.0.5", default-features = false }
 # For `examples/show-regions.rs` only. Examples see dev-dependencies, so putting

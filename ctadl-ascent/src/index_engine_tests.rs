@@ -2,7 +2,7 @@
 //! `codegen` first. They live in this crate because `codegen` does.
 
 use crate::codegen::{CallResolutionStrategy, codegen_program};
-use crate::facts::{CallTargetObject, FlowVariable, FunctionId, IdMap, InsnId, Path};
+use crate::facts::{FlowVariable, FunctionId, IdMap, Path};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::*;
 use ctadl_ir::ProgramInfo;
@@ -67,46 +67,6 @@ const SRC: &str = r"
         int s = through(&o, r);
         return s + apply(id, a) + o.tag;
     }";
-
-/// The output relations of one run, each sorted, so two runs compare as sets.
-#[allow(clippy::type_complexity)]
-fn canonical(
-    result: IndexResult,
-) -> (
-    Vec<FunctionSummary>,
-    Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
-    Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
-    Vec<(FunctionId, InsnId, FunctionId)>,
-    Vec<(Path,)>,
-    Vec<(FunctionId,)>,
-) {
-    let IndexResult {
-        mut summary,
-        mut assign_like,
-        mut call_target_assign_like,
-        mut resolved_call,
-        const_reaches: _,
-        intent_pair: _,
-        mut paths,
-        mut external_function,
-        global_flow: _,
-        stats: _,
-    } = result;
-    summary.sort();
-    assign_like.sort();
-    call_target_assign_like.sort();
-    resolved_call.sort();
-    paths.sort();
-    external_function.sort();
-    (
-        summary,
-        assign_like,
-        call_target_assign_like,
-        resolved_call,
-        paths,
-        external_function,
-    )
-}
 
 /// The two engines are one rule text under two macros, so they must agree on every
 /// relation they return, and on the sizes of the internal ones they do not. Run the parallel
@@ -184,7 +144,11 @@ fn lsm_storage_matches_memory() {
     assert_same_index(memory, on_lsm);
 }
 
-/// Asserts two runs of the same facts derived the same index.
+/// Asserts two runs of the same facts derived the same index: the same sizes of the internal
+/// relations, and the same rows in every returned relation, compared as multisets.
+///
+/// The rows are compared by their raw ids. Both runs share one process and one set of facts,
+/// so an id names the same function, variable, path or string in each.
 fn assert_same_index(a: IndexResult, b: IndexResult) {
     // The internal relations first: a count that differs points straight at the rule group
     // that diverged, which the output diff below would only show as a symptom.
@@ -211,7 +175,110 @@ fn assert_same_index(a: IndexResult, b: IndexResult) {
         s.hybrid_context_summary, p.hybrid_context_summary,
         "context_summary"
     );
-    assert_eq!(canonical(a), canonical(b));
+    assert_same_rows("", a, b);
+}
+
+/// Asserts `a` and `b` hold the same rows in every returned relation, as multisets, and fails
+/// naming the first relation that differs, prefixed by `context`. Ids are compared raw, as in
+/// [`assert_same_index`].
+fn assert_same_rows(context: &str, a: IndexResult, b: IndexResult) {
+    // No `..`: a relation added to `IndexResult` has to be added here too.
+    let IndexResult {
+        summary,
+        assign_like,
+        call_target_assign_like,
+        resolved_call,
+        const_reaches,
+        intent_pair,
+        paths,
+        external_function,
+        global_flow,
+        stats: _,
+    } = a;
+    assert_same_relation(context, "summary", summary, b.summary);
+    assert_same_relation(context, "assign_like", assign_like, b.assign_like);
+    assert_same_relation(
+        context,
+        "call_target_assign_like",
+        call_target_assign_like,
+        b.call_target_assign_like,
+    );
+    assert_same_relation(context, "resolved_call", resolved_call, b.resolved_call);
+    assert_same_relation(context, "const_reaches", const_reaches, b.const_reaches);
+    assert_same_relation(context, "intent_pair", intent_pair, b.intent_pair);
+    assert_same_relation(context, "paths", paths, b.paths);
+    assert_same_relation(
+        context,
+        "external_function",
+        external_function,
+        b.external_function,
+    );
+    assert_same_relation(context, "global_flow", global_flow, b.global_flow);
+}
+
+/// How many differing rows a failure of [`assert_same_relation`] prints.
+const DELTAS_SHOWN: usize = 8;
+
+/// Fails if `a` and `b` differ as multisets, naming `relation` and printing the first
+/// [`DELTAS_SHOWN`] rows whose counts differ, with both counts.
+fn assert_same_relation<T: Ord + std::fmt::Debug>(
+    context: &str,
+    relation: &str,
+    mut a: Vec<T>,
+    mut b: Vec<T>,
+) {
+    a.sort();
+    b.sort();
+    let mut deltas = multiset_diff::multiset_diff(&a, &b, T::cmp);
+    let shown: Vec<String> = deltas
+        .by_ref()
+        .take(DELTAS_SHOWN)
+        .map(|d| format!("\n  {:?}: {} vs {}", d.row, d.count_a, d.count_b))
+        .collect();
+    if shown.is_empty() {
+        return;
+    }
+    let more = deltas.count();
+    let more = if more > 0 {
+        format!("\n  and {more} more")
+    } else {
+        String::new()
+    };
+    panic!(
+        "{context}{relation} differs ({} vs {} rows); the rows whose counts differ, with each count:{}{more}",
+        a.len(),
+        b.len(),
+        shown.concat()
+    );
+}
+
+/// A run and a copy of it missing one `const_reaches` row differ, and the failure names the
+/// relation.
+#[test]
+#[should_panic(expected = "const_reaches")]
+fn assert_same_index_reports_const_reaches() {
+    let mut f = FunctionData {
+        name: "consts".to_string(),
+        return_type: ReturnType { arity: 1 },
+        ..Default::default()
+    };
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    let dst = b.new_local_var("dst");
+    b.create_assign(dst.clone(), vec![Exp::new_str("hello")]);
+    b.create_ret(vec![dst.into()]);
+    let (mut facts, source_info) = index_program(Program::new(Functions::new([f])));
+    // Strings propagate only in an intent frame.
+    facts
+        .intent_frame
+        .push((func_id(&source_info.sites, "consts"),));
+    let a = taint_index_with_config(facts, IndexConfig::default(), Some(&source_info.sites));
+    // Not "const_reaches": the expected panic would match it.
+    assert!(!a.const_reaches.is_empty(), "fixture propagated no string");
+    let mut b = a.clone();
+    b.const_reaches.pop();
+    assert_same_index(a, b);
 }
 
 /// The three context joins are three ways to pair the same two relations, so they must
@@ -233,11 +300,9 @@ fn context_joins_agree() {
         )
     };
     let scan = run(ContextJoin::Scan);
-    let scan_stats = scan.stats.clone();
-    let scan_rows = canonical(scan);
     for other in [ContextJoin::Sets, ContextJoin::Unfold] {
         let r = run(other);
-        let (s, p) = (&scan_stats, &r.stats);
+        let (s, p) = (&scan.stats, &r.stats);
         assert_eq!(s.final_locals, p.final_locals, "{other}: locals");
         assert_eq!(s.hybrid_resolvent, p.hybrid_resolvent, "{other}: resolvent");
         assert_eq!(
@@ -256,7 +321,7 @@ fn context_joins_agree() {
             s.hybrid_context_assign > 0,
             "fixture derived no context_assign rows"
         );
-        assert_eq!(scan_rows, canonical(r), "{other}");
+        assert_same_rows(&format!("{other}: "), scan.clone(), r);
     }
 }
 
