@@ -1,0 +1,20 @@
+[package]
+name = "ctadl-index-diff"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ctadl-index = { path = "../ctadl-index" }
+hashbrown = "0.16"
+multiset-diff = { path = "../multiset-diff" }
+rustc-hash = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+source-info = { path = "../source-info", features = ["serde"] }
+tempfile = "3"
+
+[lints]
+workspace = true

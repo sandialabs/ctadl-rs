@@ -9,19 +9,19 @@ use std::path::Path as FsPath;
 use multiset_diff::{Delta, multiset_diff};
 use rustc_hash::FxHashMap;
 
-use crate::facts::schema::{self, Table};
-use crate::facts::{
+use ctadl_index::facts::schema::{self, Table};
+use ctadl_index::facts::{
     CallDispatchKey, FlowEdge, FlowVariable, FlowVariableKind, FormalIndex, FunctionId, GlobalId,
     InsnId, IntentPairKind, PackedInsnSiteId, Path, QueryEndpoint, Root, Str, TaintState,
 };
-use crate::index_engine::dump::{Cx, DumpRow};
-use crate::index_engine::unpack_site;
+use ctadl_index::index_engine::unpack_site;
 
-use super::canon::{CanonEdge, CanonEndpoint, CanonTarget, CanonVar, ContentOrd, FType, FnName};
-use super::insn::{CanonInsn, InsnMap};
-use super::names::{FunctionNames, ImportNames};
-use super::report::{Sample, Samples, TableReport};
-use super::{Error, Side, error_chain};
+use crate::canon::{CanonEdge, CanonEndpoint, CanonTarget, CanonVar, ContentOrd, FType, FnName};
+use crate::insn::{CanonInsn, InsnMap};
+use crate::names::{FunctionNames, ImportNames};
+use crate::render::{Cx, Row};
+use crate::report::{Sample, Samples, TableReport};
+use crate::{Error, Side, error_chain};
 
 /// Loads `table` from `dir` with `load`, its schema module's `try_load`. An error, or a panic in
 /// the decoder, becomes an [`Error`] naming the table and the side.
@@ -29,7 +29,7 @@ pub(crate) fn load_raw<R>(
     dir: &FsPath,
     side: Side,
     table: Table,
-    load: impl FnOnce(&FsPath) -> Result<Vec<R>, crate::error::Error>,
+    load: impl FnOnce(&FsPath) -> Result<Vec<R>, ctadl_index::error::Error>,
 ) -> Result<Vec<R>, Error> {
     let context = || format!("loading {} in {side} ({})", table.name(), dir.display());
     match catch_unwind(AssertUnwindSafe(|| load(dir))) {
@@ -79,7 +79,7 @@ impl LoadCx<'_> {
             FlowVariableKind::Formal(i) => CanonVar::Formal(i),
             FlowVariableKind::Global(g) => CanonVar::Global(g),
             FlowVariableKind::CallArg(packed) => {
-                let arg: crate::facts::CallArgId = packed
+                let arg: ctadl_index::facts::CallArgId = packed
                     .try_into()
                     .map_err(|e| format!("undecodable call argument {packed:?}: {e}"))?;
                 CanonVar::CallArg(self.insn(f, arg.insn_id), arg.formal())
@@ -87,7 +87,7 @@ impl LoadCx<'_> {
         })
     }
 
-    fn target(&self, t: crate::facts::CallTargetObject) -> Result<CanonTarget, String> {
+    fn target(&self, t: ctadl_index::facts::CallTargetObject) -> Result<CanonTarget, String> {
         CanonTarget::from_object(t, |f| self.func(f))
     }
 
@@ -125,8 +125,8 @@ pub(crate) trait DiffTable {
     /// Whether a row can name an instruction, so that the instruction maps are needed.
     const INSNS: bool;
     type Record: Debug;
-    type Canon: Ord + ContentOrd + DumpRow;
-    fn try_load(dir: &FsPath) -> Result<Vec<Self::Record>, crate::error::Error>;
+    type Canon: Ord + ContentOrd + Row;
+    fn try_load(dir: &FsPath) -> Result<Vec<Self::Record>, ctadl_index::error::Error>;
     fn canon(cx: &LoadCx<'_>, row: &Self::Record) -> Result<Self::Canon, String>;
     /// The function the row is about, for the function filter.
     fn function(row: &Self::Canon) -> Option<FnName>;
@@ -146,7 +146,7 @@ macro_rules! diff_table {
             type Record = schema::$module::Record;
             type Canon = $canon;
 
-            fn try_load(dir: &FsPath) -> Result<Vec<Self::Record>, crate::error::Error> {
+            fn try_load(dir: &FsPath) -> Result<Vec<Self::Record>, ctadl_index::error::Error> {
                 schema::$module::try_load(dir)
             }
 
@@ -509,7 +509,7 @@ fn diff_table<T: DiffTable>(
     }
     let render = |row: &T::Canon| {
         let mut s = String::new();
-        row.dump_row(cx, &mut s);
+        row.row(cx, &mut s);
         s
     };
     Ok(TableReport {

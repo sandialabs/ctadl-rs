@@ -8,13 +8,14 @@
 use std::cmp::Ordering;
 use std::fmt::Write as _;
 
-use crate::facts::{
+use ctadl_index::facts::{
     CallDispatchKey, CallTargetObject, CallTargetObjectKind, FormalIndex, FormalType, FunctionId,
     GlobalId, IntentPairKind, Path, Root, Str, TaintDirection, TaintState,
 };
-use crate::index_engine::dump::{Cx, DumpCol};
+use ctadl_index::index_engine::dump::{self, DumpCol};
 
-use super::insn::{CanonInsn, SigVar};
+use crate::insn::{CanonInsn, SigVar};
+use crate::render::{Col, Cx};
 
 /// A function, by name.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -270,19 +271,19 @@ content_tuple!(A 0, B 1, C 2, D 3, E 4, F 5);
 content_tuple!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
 
 impl DumpCol for FnName {
-    fn dump_col(&self, _: &Cx<'_>, out: &mut String) {
+    fn dump_col(&self, _: &dump::Cx<'_>, out: &mut String) {
         out.push_str(self.as_str())
     }
 }
 
 impl DumpCol for FType {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+    fn dump_col(&self, cx: &dump::Cx<'_>, out: &mut String) {
         self.0.dump_col(cx, out)
     }
 }
 
-impl DumpCol for CanonVar {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+impl Col for CanonVar {
+    fn col(&self, cx: &Cx<'_>, out: &mut String) {
         match self {
             CanonVar::Uninit => out.push_str("uninit"),
             CanonVar::Local(s) => write!(out, "local({s})").unwrap(),
@@ -290,7 +291,7 @@ impl DumpCol for CanonVar {
             CanonVar::Global(g) => write!(out, "{g}").unwrap(),
             CanonVar::CallArg(insn, i) => {
                 out.push_str("call-arg(");
-                insn.dump_col(cx, out);
+                insn.col(cx, out);
                 write!(out, ", {i})").unwrap()
             }
         }
@@ -298,7 +299,7 @@ impl DumpCol for CanonVar {
 }
 
 impl DumpCol for SigVar {
-    fn dump_col(&self, _: &Cx<'_>, out: &mut String) {
+    fn dump_col(&self, _: &dump::Cx<'_>, out: &mut String) {
         match self {
             SigVar::Uninit => out.push_str("uninit"),
             SigVar::Local(s) => write!(out, "local({s})").unwrap(),
@@ -310,7 +311,7 @@ impl DumpCol for SigVar {
 }
 
 impl DumpCol for CanonTarget {
-    fn dump_col(&self, _: &Cx<'_>, out: &mut String) {
+    fn dump_col(&self, _: &dump::Cx<'_>, out: &mut String) {
         match self.0 {
             Target::Function(f) => write!(out, "ptr<{}>", f.as_str()).unwrap(),
             Target::Class(c) => write!(out, "{c}").unwrap(),
@@ -318,8 +319,8 @@ impl DumpCol for CanonTarget {
     }
 }
 
-impl DumpCol for CanonEdge {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+impl Col for CanonEdge {
+    fn col(&self, cx: &Cx<'_>, out: &mut String) {
         match self {
             CanonEdge::Intra => out.push_str("intra"),
             CanonEdge::Global => out.push_str("global"),
@@ -329,21 +330,21 @@ impl DumpCol for CanonEdge {
                 } else {
                     "return("
                 });
-                i.dump_col(cx, out);
+                i.col(cx, out);
                 out.push(')')
             }
         }
     }
 }
 
-impl DumpCol for CanonEndpoint {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+impl Col for CanonEndpoint {
+    fn col(&self, cx: &Cx<'_>, out: &mut String) {
         write!(out, "{} ", self.infunc.as_str()).unwrap();
-        self.var.dump_col(cx, out);
+        self.var.col(cx, out);
         write!(out, "{} label {} {}", self.path, self.label, self.direction).unwrap();
         if let Some(site) = &self.call_site {
             out.push_str(" at ");
-            site.dump_col(cx, out);
+            site.col(cx, out);
         }
         if self.saturating {
             out.push_str(" saturating");

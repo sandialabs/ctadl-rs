@@ -15,7 +15,6 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use crate::diff::SignatureInterner;
 use crate::facts::{
     CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVertex, FormalIndex,
     FormalType, FunctionId, IdMap, InsnId, IntentKind, IntentPairKind, PackedInsnSiteId, Path, Str,
@@ -31,25 +30,12 @@ pub const DUMP_ENV: &str = "CTADL_DUMP_RELATIONS";
 /// What a column needs to print itself by content.
 pub struct Cx<'a> {
     id_map: Option<&'a IdMap>,
-    signatures: Option<&'a SignatureInterner>,
 }
 
 impl<'a> Cx<'a> {
-    /// `id_map` names function ids; `signatures` holds the instruction signatures that the
-    /// index diff's canonical rows refer to.
-    pub fn new(id_map: Option<&'a IdMap>, signatures: Option<&'a SignatureInterner>) -> Self {
-        Cx { id_map, signatures }
-    }
-
-    /// The signatures this context was built with.
-    ///
-    /// # Panics
-    ///
-    /// If it was built without them: only the index diff prints a signature, and it always
-    /// passes them.
-    pub fn signatures(&self) -> &'a SignatureInterner {
-        self.signatures
-            .expect("a canonical instruction is printed with its signatures")
+    /// `id_map` names function ids.
+    pub fn new(id_map: Option<&'a IdMap>) -> Self {
+        Cx { id_map }
     }
 
     fn function(&self, f: FunctionId, out: &mut String) {
@@ -255,10 +241,16 @@ dump_row_tuple!(A, B, C, D, E, F);
 dump_row_tuple!(A, B, C, D, E, F, G);
 dump_row_tuple!(A, B, C, D, E, F, G, H);
 
-/// Prints `col`, escaping what would break the line-per-row, tab-per-column format.
+/// Prints `col`, escaped as [`push_escaped`] does.
 fn push_col(col: &impl DumpCol, cx: &Cx<'_>, out: &mut String) {
+    push_escaped(out, |out| col.dump_col(cx, out))
+}
+
+/// Appends what `write` appends to `out`, escaping what would break the line-per-row,
+/// tab-per-column format.
+pub fn push_escaped(out: &mut String, write: impl FnOnce(&mut String)) {
     let start = out.len();
-    col.dump_col(cx, out);
+    write(out);
     if out[start..].contains(['\\', '\t', '\n', '\r']) {
         let raw = out.split_off(start);
         for c in raw.chars() {
@@ -308,7 +300,7 @@ impl<'a> RelationDump<'a> {
         log::info!("dumping the index relations to {}", dir.display());
         Some(RelationDump {
             dir,
-            cx: Cx::new(id_map, None),
+            cx: Cx::new(id_map),
             written: Vec::new(),
         })
     }

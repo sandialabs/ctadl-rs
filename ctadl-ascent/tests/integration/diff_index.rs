@@ -20,7 +20,7 @@ use ctadl_ascent::facts::{
     Path as FactPath, QueryEndpoint, Str, TaintDirection, TaintState,
 };
 use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
-use ctadl_index::diff::{Options, Report, Sample, TableReport, diff_index};
+use ctadl_index_diff::{Options, Report, Sample, TableReport, diff_index};
 use ctadl_index::index_engine::unpack_site;
 use source_info::FileSpanId;
 

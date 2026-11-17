@@ -933,7 +933,7 @@ propagation(F::return <- F::arg(0)) :-
 fn diff_index(args: &DiffIndexArgs) -> i32 {
     use std::io::Write;
 
-    let opts = ctadl_index::diff::Options {
+    let opts = ctadl_index_diff::Options {
         limit: args.limit,
         tables: args.tables.clone(),
         function: args.function.clone(),

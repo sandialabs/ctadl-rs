@@ -1,10 +1,10 @@
 //! `ctadl diff-index`: finds the two index directories, refuses an index this build cannot
-//! read, and compares them with [`ctadl_index::diff`].
+//! read, and compares them with [`ctadl_index_diff`].
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use ctadl_index::diff::{Options, Report, diff_index};
+use ctadl_index_diff::{Options, Report, diff_index};
 
 use crate::project::{AnalysisProject, INDEX_CONFIG_FILE, INDEX_FORMAT_VERSION, IndexConfig};
 

@@ -336,10 +336,10 @@ fn output_does_not_depend_on_intern_order() {
             .join("ties_proj")
             .join("index")
     };
-    let report = ctadl_index::diff::diff_index(
+    let report = ctadl_index_diff::diff_index(
         &index(&forward),
         &index(&reverse),
-        &ctadl_index::diff::Options::default(),
+        &ctadl_index_diff::Options::default(),
     )
     .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(report.first_line(), "IDENTICAL", "{}", report.to_text());

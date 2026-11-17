@@ -4,18 +4,18 @@ use std::path::Path as FsPath;
 
 use source_info::FileSpanId;
 
-use crate::facts::schema::{self, Table};
-use crate::facts::{
+use ctadl_index::facts::schema::{self, Table};
+use ctadl_index::facts::{
     CallDispatchKey, CallDispatchKeyKind, CallTargetObject, CallTargetObjectKind, FlowEdge,
     FlowVariable, FlowVertex, FormalIndex, FormalType, Function, FunctionId, GLOBAL_FRAME,
     GLOBAL_FRAME_NAME, GlobalId, ImportId, InsnId, IntentPairKind, Label, PackedInsnSiteId, Path,
     QueryEndpoint, Root, Str, TaintDirection, TaintState,
 };
 
-use super::canon::{CanonVar, FnName};
-use super::insn::{CanonInsn, InsnMap, SignatureInterner};
-use super::names::FunctionNames;
-use super::{Options, Report, Side, diff_index};
+use crate::canon::{CanonVar, FnName};
+use crate::insn::{CanonInsn, InsnMap, SignatureInterner};
+use crate::names::FunctionNames;
+use crate::{Options, Report, Side, diff_index};
 
 /// How a fixture numbers what a run numbers freely, and whether it writes rows backwards.
 #[derive(Clone, Copy)]
@@ -261,7 +261,7 @@ impl Fixture {
         fn put<R: Clone>(
             rows: &[R],
             reverse: bool,
-            save: impl FnOnce(Vec<R>) -> Result<(), crate::error::Error>,
+            save: impl FnOnce(Vec<R>) -> Result<(), ctadl_index::error::Error>,
         ) {
             let mut rows = rows.to_vec();
             if reverse {
@@ -312,7 +312,7 @@ fn diff(a: &tempfile::TempDir, b: &tempfile::TempDir, opts: &Options) -> Report 
     diff_index(a.path(), b.path(), opts).unwrap()
 }
 
-fn table<'r>(r: &'r Report, name: &str) -> &'r super::TableReport {
+fn table<'r>(r: &'r Report, name: &str) -> &'r crate::TableReport {
     r.tables.iter().find(|t| t.table == name).unwrap()
 }
 
@@ -463,9 +463,9 @@ fn two_sides_share_signatures() {
         let rendered: Vec<String> = [10, 11, 12]
             .iter()
             .map(|&k| {
-                let cx = crate::index_engine::dump::Cx::new(None, Some(&sigs));
+                let cx = crate::render::Cx::new(&sigs);
                 let mut s = String::new();
-                crate::index_engine::dump::DumpCol::dump_col(
+                crate::render::Col::col(
                     &plain.get(InsnId::new(k), if k == 12 { foo } else { main }),
                     &cx,
                     &mut s,

@@ -250,7 +250,7 @@ no expected failures. `cargo test -p multiset-diff -p ctadl-index` and
 
 Depends on: 2.
 
-**What.** `ctadl_index::diff::diff_index(a, b, &Options) -> Result<Report, Error>` over two
+**What.** `ctadl_index_diff::diff_index(a, b, &Options) -> Result<Report, Error>` over two
 resolved, version-checked index directories, and everything under it. No CLI yet. In the order
 an agent would build it:
 
@@ -337,7 +337,7 @@ an agent would build it:
 - `ctadl-index/src/facts/schema.rs`.
 - `ctadl-index/src/index_engine/dump.rs:31`, `:233`.
 - `ctadl-index/src/lib.rs:5-7`: `pub mod diff;`.
-- `ctadl-index/src/diff/` (new): `mod.rs`, `names.rs`, `insn.rs`, `canon.rs`, `table.rs`,
+- `ctadl-index-diff/src/` (new crate): `lib.rs`, `names.rs`, `insn.rs`, `canon.rs`, `table.rs`,
   `driver.rs` and `report.rs`.
 
 **Tests.** All in `ctadl-index`, over hand-built tables written with the schema's `try_save`
@@ -406,7 +406,7 @@ into `tempfile` directories.
   function.
 - An instruction that the input tables put in two functions is an error, like a row naming a
   second instruction.
-- The error type is `ctadl_index::diff::Error`, a message naming the table, the side and, for a
+- The error type is `ctadl_index_diff::Error`, a message naming the table, the side and, for a
   row that cannot be made canonical, the row.
 - Text output: the first line is `IDENTICAL` or `DIFFERENT: N of M tables differ: t1, t2`; then
   `A:`/`B:` paths, the filters, files not compared, and a line per table (`call: same, 2 rows`,
@@ -603,7 +603,7 @@ Depends on: 3.
 | `ctadl-index/Cargo.toml`, `ctadl-index/tests/multiset_diff_props.rs` | core dependency, proptests; then the proptests removed | 2 |
 | `ctadl-index/src/facts/schema.rs` | `tables!`, `Table` | 3 |
 | `ctadl-index/src/index_engine/dump.rs` | `Cx::new`, `pub push_col` | 3 |
-| `ctadl-index/src/lib.rs`, `ctadl-index/src/diff/` | the diff library | 3 |
+| `ctadl-index-diff/` | the diff library | 3 |
 | `ctadl-ascent/src/index_engine_tests.rs`, `ctadl-ascent/Cargo.toml` | `assert_same_index` on the core | 4 |
 | `xtask/src/regression.rs` | `compare_paths` on the core; the SQL check | 4, 5 |
 | `xtask/Cargo.toml` | `multiset-diff` | 4 |
@@ -647,7 +647,7 @@ Not touched:
   - `rg 'fn canonical\(' ctadl-ascent/src/index_engine_tests.rs`;
   - `rg '\.difference\(' xtask/src/regression.rs`;
   - `rg '\$bridge\{' ctadl-ascent`;
-  - `rg '\b[RDP][0-9]+\b' ctadl-index/src/diff ctadl-ascent/src/cli/diff_index.rs docs`.
+  - `rg '\b[RDP][0-9]+\b' ctadl-index-diff/src ctadl-ascent/src/cli/diff_index.rs docs`.
 
 **Acceptance, as run.** At `4fd3c9fbd`, on aarch64-darwin. The greps, fmt, clippy and the
 workspace tests had already passed there and were not rerun. Outputs are under

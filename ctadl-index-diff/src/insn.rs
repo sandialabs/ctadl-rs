@@ -14,17 +14,17 @@ use std::path::Path as FsPath;
 use hashbrown::HashTable;
 use rustc_hash::FxBuildHasher;
 
-use crate::facts::schema::{Table, actual_param, call, call_target_assign, callee_info};
-use crate::facts::{
+use ctadl_index::facts::schema::{Table, actual_param, call, call_target_assign, callee_info};
+use ctadl_index::facts::{
     CallArgId, CallDispatchKey, FlowVariable, FlowVariableKind, FormalIndex, GlobalId, InsnId,
     Path, Str,
 };
-use crate::index_engine::dump::{Cx, DumpCol};
 
-use super::canon::{CanonTarget, FnName};
-use super::names::FunctionNames;
-use super::table::load_raw;
-use super::{Error, Side};
+use crate::canon::{CanonTarget, FnName};
+use crate::names::FunctionNames;
+use crate::render::{Col, Cx};
+use crate::table::load_raw;
+use crate::{Error, Side};
 
 /// A signature's index in its [`SignatureInterner`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -357,8 +357,8 @@ fn row_context<T>(
 
 /// Prints the instruction's function, then `@`, then its signature in short: the callees,
 /// then the actual parameters in parentheses, then any receiver and call targets.
-impl DumpCol for CanonInsn {
-    fn dump_col(&self, cx: &Cx<'_>, out: &mut String) {
+impl Col for CanonInsn {
+    fn col(&self, cx: &Cx<'_>, out: &mut String) {
         out.push_str(self.function.as_str());
         out.push('@');
         let sig = cx.signatures().get(self.signature);
@@ -384,7 +384,7 @@ impl DumpCol for CanonInsn {
         for r in sig {
             if let SigRow::ActualParam(i, v, p) = r {
                 write!(out, "{sep}{i}:").unwrap();
-                v.dump_col(cx, out);
+                v.col(cx, out);
                 write!(out, "{p}").unwrap();
                 sep = ", ";
             }
@@ -394,14 +394,14 @@ impl DumpCol for CanonInsn {
             match r {
                 SigRow::CalleeInfo(v, p, k) => {
                     out.push_str(" recv ");
-                    v.dump_col(cx, out);
+                    v.col(cx, out);
                     write!(out, "{p} {k}").unwrap();
                 }
                 SigRow::CallTargetAssign(v, p, t) => {
                     out.push(' ');
-                    v.dump_col(cx, out);
+                    v.col(cx, out);
                     write!(out, "{p}=").unwrap();
-                    t.dump_col(cx, out);
+                    t.col(cx, out);
                 }
                 SigRow::Call(_) | SigRow::ActualParam(..) => {}
             }

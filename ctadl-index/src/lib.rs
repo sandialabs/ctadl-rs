@@ -2,7 +2,6 @@
 //! for and that the query engine reads. `ctadl-ascent` re-exports these modules under their
 //! own names.
 
-pub mod diff;
 pub mod error;
 pub mod facts;
 pub mod index_engine;

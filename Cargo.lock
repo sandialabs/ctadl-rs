@@ -1077,6 +1077,7 @@ dependencies = [
  "ctadl-frontends",
  "ctadl-import",
  "ctadl-index",
+ "ctadl-index-diff",
  "ctadl-index-lsm",
  "ctadl-index-par",
  "ctadl-index-serial",
@@ -1267,7 +1268,6 @@ dependencies = [
  "libc",
  "log",
  "lsm",
- "multiset-diff",
  "packed_struct",
  "parquet",
  "paste",
@@ -1281,6 +1281,21 @@ dependencies = [
  "streaming-iterator",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "ctadl-index-diff"
+version = "0.1.7"
+dependencies = [
+ "ctadl-index",
+ "ctadl-ir",
+ "hashbrown 0.16.1",
+ "multiset-diff",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "source-info",
+ "tempfile",
 ]
 
 [[package]]

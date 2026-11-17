@@ -3,14 +3,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path as FsPath;
 
-use crate::facts::schema::Table;
-use crate::index_engine::dump::Cx;
+use ctadl_index::facts::schema::Table;
 
-use super::insn::{InsnMap, SignatureInterner};
-use super::names::{FunctionNames, ImportNames};
-use super::report::{Filters, Report, UnknownFile};
-use super::table::{FunctionFilter, LoadCx, TablePair, diff_one, needs_insns};
-use super::{Error, Side, error_chain};
+use crate::insn::{InsnMap, SignatureInterner};
+use crate::names::{FunctionNames, ImportNames};
+use crate::render::Cx;
+use crate::report::{Filters, Report, UnknownFile};
+use crate::table::{FunctionFilter, LoadCx, TablePair, diff_one, needs_insns};
+use crate::{Error, Side, error_chain};
 
 /// What to compare and how much to print.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,7 +88,7 @@ pub fn diff_index(a: &FsPath, b: &FsPath, opts: &Options) -> Result<Report, Erro
         [InsnMap::empty(), InsnMap::empty()]
     };
 
-    let cx = Cx::new(None, Some(&sigs));
+    let cx = Cx::new(&sigs);
     let mut filter = FunctionFilter::new(opts.function.as_deref());
     let mut tables = Vec::new();
     for t in selected {

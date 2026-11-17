@@ -21,6 +21,7 @@ mod canon;
 mod driver;
 mod insn;
 mod names;
+mod render;
 mod report;
 mod table;
 #[cfg(test)]

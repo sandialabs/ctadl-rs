@@ -4,12 +4,12 @@ use std::path::Path as FsPath;
 
 use rustc_hash::FxHashMap;
 
-use crate::facts::schema::{Table, function_id, import_id};
-use crate::facts::{FunctionId, GLOBAL_FRAME, GLOBAL_FRAME_NAME, ImportId, Str};
+use ctadl_index::facts::schema::{Table, function_id, import_id};
+use ctadl_index::facts::{FunctionId, GLOBAL_FRAME, GLOBAL_FRAME_NAME, ImportId, Str};
 
-use super::canon::FnName;
-use super::table::load_raw;
-use super::{Error, Side};
+use crate::canon::FnName;
+use crate::table::load_raw;
+use crate::{Error, Side};
 
 /// `FunctionId -> name`, from `function_id.parquet`'s `id` column, not from row positions.
 /// [`GLOBAL_FRAME`], which the table never holds, is named [`GLOBAL_FRAME_NAME`].

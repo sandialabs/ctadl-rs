@@ -5,6 +5,7 @@ members = [
     "ctadl-frontends",
     "ctadl-import",
     "ctadl-index",
+    "ctadl-index-diff",
     "ctadl-index/engines/lsm",
     "ctadl-index/engines/par",
     "ctadl-index/engines/serial",
