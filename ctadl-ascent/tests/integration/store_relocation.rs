@@ -75,10 +75,14 @@ fn configs_are_store_relative_and_survive_a_copy() {
         );
     }
 
-    // Copy the store elsewhere and resolve the copied configs against their new root.
+    // Copy the store elsewhere and resolve the copied configs against their new root. Only
+    // this test's import and project are copied: the other tests in this binary share the
+    // store and create and delete directories in it while this one runs.
     let elsewhere = tempdir().unwrap();
     let moved = elsewhere.path().join("ctadl");
-    copy_dir(&root, &moved);
+    for own in ["imports/copy_app", "projects/copy_proj"] {
+        copy_dir(&root.join(own), &moved.join(own));
+    }
 
     let text = fs::read_to_string(moved.join("imports/copy_app").join(IMPORT_CONFIG_FILE)).unwrap();
     let copied: ArtifactImport = serde_json::from_str(&text).unwrap();
