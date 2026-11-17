@@ -633,6 +633,56 @@ Not touched:
   - `rg '\$bridge\{' ctadl-ascent`;
   - `rg '\b[RDP][0-9]+\b' ctadl-index/src/diff ctadl-ascent/src/cli/diff_index.rs docs`.
 
+**Acceptance, as run.** At `4fd3c9fbd`, on aarch64-darwin. The greps, fmt, clippy and the
+workspace tests had already passed there and were not rerun. Outputs are under
+`$TMPDIR/acceptance/` (`TMPDIR` = the project's scratch directory on the external disk), named
+below relative to it.
+- **Regression.** `cargo xtask regression` (all frontends, debug `ctadl`): 255 passed,
+  0 skipped, 0 failed, 5 xfail (`AndroidIcc:droidbench-activity-communication-2`,
+  `C:defaultmodels`, `C:example`, `Cil:delegates`, `Jvm:ClassIdMergedTryFlow`) of 260.
+  "Checked diff-index against SQL: 4032 table comparison(s) over 224 pair(s) of 225 indexes,
+  both directions: all agree". Scratch root `$TMPDIR/nix-shell.d5SKvH/ctadl_xtask_10818`; log
+  `regression.log`.
+- `nix build .#checks.aarch64-darwin.regression`: the same 255 passed, 0 failed, the same
+  5 xfail of 260. "Checked diff-index against SQL: 3996 table comparison(s) over 222 pair(s)
+  of 223 indexes, both directions: all agree" (two indexes fewer than the cargo run). Scratch
+  root `/nix/var/nix/builds/nix-28888-1451807179/ctadl_xtask_45102`, removed with the build;
+  log `nix-regression.log`.
+- **R24, the suite's indexes.** `r24a.sh` ran `ctadl diff-index` on each of Phase 0's 132
+  indexes against the index at the same relative path in the new run: all 132 `IDENTICAL`
+  (exit 0), the `apk-index` one included. The new run's other 93 indexes are frontends Phase 0
+  did not run. Outputs `r24a/`, summary `r24a-summary.txt`.
+- **R24, a bridge with sub-path ports.** `r24b/jni-flow.pathful.bridge.ctadl` (outside the
+  repo) bridges `nativeStash` with `F::arg(0) <-> G::arg(2).f`, `F::arg(0).g -> G::arg(2)` and
+  `F::arg(0) -> G::arg(1).h`, and `nativeFetch` with a path-less return. `r24b/run.sh` imports
+  `JniFlow.dex` and `libjniflow.so` (from Phase 0's `Jni_JniFlow+bridge`) and indexes them with
+  `--no-jni-bridge -m` that model, once with the pre-rename binary (`r24b/old`) and once with
+  the new one (`r24b/new`), each in its own store. The old index names the temporaries
+  `$bridge6_119#1` and `$bridge6_119#2`; the new one
+  `$bridge[jni-flow.pathful.bridge.ctadl:0]Java_JniFlow_nativeStash#1` and `#2`. `diff-index`
+  (`r24b/diff.txt`, `r24b/diff.json`): `DIFFERENT: 3 of 17 tables differ: actual_param,
+  assign, call`, with 2, 9 and 1 rows only in A and as many only in B; every row of the 14
+  other tables is the same. Each differing row names a `$bridge` local, directly or inside the
+  bridge site's call instruction. Renaming the old names to the new ones in the 12 A-only rows
+  gives exactly the 12 B-only rows. For example, A's `formal(0) → local($bridge6_119#2).f`
+  pairs with B's `formal(0) →
+  local($bridge[jni-flow.pathful.bridge.ctadl:0]Java_JniFlow_nativeStash#2).f`. The two
+  queries' SARIF results (3 each) are equal.
+- **Memory (D5).** Release `ctadl diff-index` on the `apk-index` index (the `app` import of
+  `xtask/tests/dex/com.noto_54.apk`) against a copy of it, under `memguard.sh 8` with
+  `/usr/bin/time -l`: `IDENTICAL`, 7.6 s wall, peak physical footprint 632 MiB
+  (`mem/diff.txt`, `mem/guard.txt`). The largest table is `assign`, 2,280,830 rows, then `paths`
+  (1,407,700); the index holds about 5.8M rows in all. With `--table` alone (`mem/per-table.txt`):
+  `assign` 445 MiB, `paths` 126, `actual_param` 187, `index_source_map` 178, `call` 149,
+  `import_id` 15 (no instruction maps). So the instruction maps are about 130 MiB and `assign`
+  on both sides, with its raw rows, about 300 MiB, which D5's estimate fits (2 x 2.28M x
+  36 bytes = 164 MB canonical, plus raw rows). The whole run's footprint never falls
+  (`mem/trajectory.txt`), but that is the allocator, not a pair kept alive: `vmmap --summary`
+  at 4.6 s, in the later tables (`mem/vmmap-4.6s.txt`), shows 139 MiB allocated in the malloc
+  zone, about the instruction maps, beside 481 MiB of "Malloc Large (empty)", freed large
+  blocks the allocator keeps dirty and that still count in the footprint. The peak is not near
+  the sum of the tables but sits about 190 MiB above `assign`'s own.
+
 ## Deferred
 
 - Generate `inspect_parquet`'s `match_schema!` list (`ctadl-ascent/src/cli/mod.rs:2292-2320`)
