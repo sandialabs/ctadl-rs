@@ -1,0 +1,6 @@
+{
+  "name": "CPP_301_ref_result_global",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& gref() { return g; }`; `gref() = source(); sink(g)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_302_ref_result_method_returns_param",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& S::pass(int& o) { return o; }`; `s.pass(x) = source()` stores into `x`. Spec 036 used to record `o` as a returned member. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

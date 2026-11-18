@@ -1,0 +1,6 @@
+{
+  "name": "CPP_307_ref_result_other_param_negative",
+  "description": "C++ reference results as locations (spec 048), NEGATIVE: `int& second(int& a, int& b) { return b; }`; `second(x, y) = source(); sink(x)`: only `y` is written. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

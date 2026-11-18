@@ -1,0 +1,6 @@
+{
+  "name": "CPP_305_ref_result_member_of_param",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& fld(Q& q) { return q.v; }`; `fld(q) = source(); sink(q.v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

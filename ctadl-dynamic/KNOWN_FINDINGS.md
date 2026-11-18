@@ -34,12 +34,38 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
+## F9 — A reference result through a pointer parameter, or with several places, is not a location (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F9"` on `CPP_309`, `CPP_310` and `CPP_311`.
+  Opened 2026-11-18 by spec 048, as its out-of-scope remainder.
+- **What:** spec 048 records the place a reference-returning definition's result names: a reference
+  parameter, or a global, followed by a `.` member path. Each call site re-roots that place at its
+  own arguments, so `pick(x) = v`, `int& r = pick(x)` and `set(pick(x))` all reach `x`
+  (`Context::returned_places`, `Context::result_locations`). Two shapes get no place. They keep the
+  call's result temp, so a write through the result is lost:
+  - **A place through a pointer parameter:** `int& at(int* a) { return a[1]; }` (`CPP_309`),
+    `int& deref(int* p) { return *p; }` (`CPP_310`), and `return p->v;`.
+  - **Several places:** `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`
+    (`CPP_311`), `return c ? a : b;`, and a recursion such as `return rec(v, n - 1);` beside
+    `return v;`.
+- **Fix direction:** in the frontend.
+  - For a pointer parameter, re-root at the argument's *value* as an address, not at its
+    location: `deref_location` of the argument node for `*p`, and the subscript's
+    `push_element` on it for `a[i]`. This must work with the C pointer model's address-taken
+    `<cell x>` locals.
+  - For several places, write each candidate **weakly** (`target := target ⊔ value`). A plain
+    store to a local is a strong update, which would kill a candidate that was not chosen.
+    Copy-back into each candidate is already sound, because the cell starts as the union of
+    their values.
+
+---
+
 ## F8 — A C++ reference parameter outside a reference cell cannot write back (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F8"` on `CPP_280` (lambda), `CPP_281`
-  (template) and `CPP_295` (a call's reference result as the argument). Opened 2026-10-20 by the
-  merge of `treesitter_feature_branch` (#154). The constructor arm (`CPP_282`) was resolved
-  2026-11-18 by spec 047.
+- **Status:** **open**, allowlisted as `known_gap: "F8"` on `CPP_280` (lambda) and `CPP_281`
+  (template). Opened 2026-10-20 by the merge of `treesitter_feature_branch` (#154). Two arms were
+  resolved on 2026-11-18: the constructor arm (`CPP_282`) by spec 047, and the reference-result
+  argument (`CPP_295`) by spec 048.
 - **What:** since #154, SSA writes every parameter back at its entry version, so assigning a
   parameter (`out = v`) never reaches the caller, whatever its `ParameterType`. Before that, a
   `Shared` (`ByRef`) `T&` carried a root write back. The C++ frontend now lowers a non-const
@@ -47,20 +73,19 @@ field from the manifest **and** mark the entry below RESOLVED.
   direct call passes the argument through a temp's `.deref` and copies it back
   (`is_reference_cell_param`, `Context::pass_reference_args`). That covers free, method,
   virtual, static and dependent calls (`CPP_38`, `CPP_271`–`CPP_279`), and, since spec 047, every
-  construction form (`CPP_282`–`CPP_294`). Three shapes still lose the write:
+  construction form (`CPP_282`–`CPP_294`). Since spec 048 it also covers an argument that is
+  itself a call's reference result (`set(pick(x))`, `CPP_295`–`CPP_297`). Two shapes still lose
+  the write:
   - a lambda's `int&` parameter, because a closure is called through a pointer that cannot pass
     the temp (`CPP_280`);
   - a template parameter's `T&`, whose method calls dispatch on the parameter itself, spec 043
-    (`CPP_281`);
-  - an argument that is itself a call's reference result, `set(pick(x))` or
-    `B b(pick(x), 0)` with `int& pick(int&)`. The cell is copied in, but a call is not a plain
-    lvalue (`is_plain_lvalue`), so nothing is copied back, at any call site (`CPP_295`).
+    (`CPP_281`).
 - **Reads are unaffected:** a reference cell also stores its root into `.deref` on entry, so a
   caller that passes the plain value (through a function pointer) is still read (`CPP_275`).
-- **Fix direction:** in the frontend. Copy back at a closure call whose lambda is known; lower
-  `T&` as a cell once spec 043's receivers can be `.deref` paths; and let a reference-returning
-  call's result (spec 036's `DispatchOut::location`) be a copy-back location. The constructor
-  paths were done by spec 047, which threads the argument nodes into `emit_ctor_edge`.
+- **Fix direction:** in the frontend. Copy back at a closure call whose lambda is known, and lower
+  `T&` as a cell once spec 043's receivers can be `.deref` paths. Spec 047 threads the argument
+  nodes into `emit_ctor_edge`. Spec 048 records each call's result location as it is lowered
+  (`result_locations`), and the copy-back reads it.
 
 ---
 

@@ -5277,3 +5277,143 @@ fn cpp_mvp_element_arg_reads_the_element() {
         }
     }
 }
+
+/// What `<call> = 1` stores to in `main`, given the definitions `defs` (spec 048). `x` and `y` are
+/// `main`'s first two locals, `%L0` and `%L1`.
+fn reference_result_store(defs: &str, call: &str) -> Vec<String> {
+    main_lines(&format!(
+        "{defs} int main() {{ int x = 0; int y = 0; Q q; q.v = 0; {call} = 1; return x; }}"
+    ))
+    .into_iter()
+    .filter(|l| l.ends_with(":= <const: \"1\">") || l.ends_with("= <const: \"1\">"))
+    .collect()
+}
+
+/// A reference-returning definition's result names the place every `return` names, in its own
+/// terms (spec 048 FR-1); anything else keeps the result temp.
+#[test]
+fn cpp_reference_result_places_are_discovered() {
+    let defs = r"
+        struct Q { int v; };
+        int g = 0;
+        int& pick(int& v) { return v; }
+        int& second(int& a, int& b) { return b; }
+        int& fld(Q& q) { return q.v; }
+        int& gref() { return g; }
+        int& outer(int& v) { return pick(v); }
+        int& choose(int& a, int& b, int c) { if (c) return a; return b; }
+        int& local(int& v) { int l = 0; return l; }
+        int& byval(int v) { return v; }
+        int& deref(int* p) { return *p; }
+        int& shadow(int& v) { { int v = 0; return v; } }
+        const int& cpick(const int& v) { return v; }
+    ";
+    for (call, store) in [
+        ("pick(x)", "assign %L0 = <const: \"1\">"),
+        ("second(x, y)", "assign %L1 = <const: \"1\">"),
+        ("fld(q)", "store %L2.v := <const: \"1\">"),
+        ("gref()", "store $globals.g := <const: \"1\">"),
+        ("outer(x)", "assign %L0 = <const: \"1\">"),
+        ("pick(pick(x))", "assign %L0 = <const: \"1\">"),
+    ] {
+        assert_eq!(reference_result_store(defs, call), [store], "{call}");
+    }
+    // No place: the store lands on the call's own result temp, never on `x`, `y` or `q`.
+    for call in [
+        "choose(x, y, 1)",
+        "local(x)",
+        "byval(x)",
+        "deref(&x)",
+        "shadow(x)",
+        "cpick(x)",
+    ] {
+        let stores = reference_result_store(defs, call);
+        assert!(
+            stores.iter().all(|l| !l.starts_with("assign %L0 ")
+                && !l.starts_with("assign %L1 ")
+                && !l.starts_with("store %L2.")),
+            "{call}: {stores:?}"
+        );
+    }
+}
+
+/// `pick(x) = 1` stores into `x` after `pick` is called, and `pick` is called exactly once
+/// (spec 048 FR-2/3).
+#[test]
+fn cpp_assignment_through_a_reference_result_stores_the_argument() {
+    let lines = main_lines(
+        r"int& pick(int& v) { return v; }
+          int main() { int x = 0; pick(x) = 1; return x; }",
+    );
+    let calls: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("direct-call pick("))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(calls.len(), 1, "{lines:#?}");
+    let store = lines
+        .iter()
+        .position(|l| l == "assign %L0 = <const: \"1\">")
+        .unwrap_or_else(|| panic!("`x` is not stored: {lines:#?}"));
+    assert!(store > calls[0], "{lines:#?}");
+}
+
+/// `set(pick(x))` copies `set`'s reference cell back into `x`, the place `pick` returns, and
+/// lowers `pick` once (spec 048 FR-3).
+#[test]
+fn cpp_reference_result_argument_copies_back() {
+    let lines = main_lines(
+        r"int& pick(int& v) { return v; }
+          void set(int& o) { o = 1; }
+          int main() { int x = 0; set(pick(x)); return x; }",
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.contains("direct-call pick("))
+            .count(),
+        1,
+        "{lines:#?}"
+    );
+    let set = lines
+        .iter()
+        .position(|l| l.contains("direct-call set("))
+        .unwrap_or_else(|| panic!("no call to `set`: {lines:#?}"));
+    let cell = lines[set]
+        .split_once("set(")
+        .and_then(|(_, rest)| rest.strip_suffix(')'))
+        .unwrap();
+    let value = lines[set + 1..]
+        .iter()
+        .find_map(|l| l.strip_suffix(&format!(" = load {cell}.deref")))
+        .unwrap_or_else(|| panic!("no copy out of {cell}: {lines:#?}"));
+    assert!(
+        lines[set + 1..].contains(&format!("assign %L0 = {value}")),
+        "{lines:#?}"
+    );
+}
+
+/// A method returning its own reference parameter returns that parameter, not a member of the
+/// same name: spec 036's `returns_member` skips names the method declares (spec 048).
+#[test]
+fn cpp_reference_param_is_not_a_returned_member() {
+    let lines = main_lines(
+        r"struct S { int v; int& pass(int& o) { return o; } int& same(int& v) { return v; } };
+          int main() { S s; s.v = 0; int x = 0; s.pass(x) = 1; s.same(x) = 2; return x; }",
+    );
+    assert!(
+        lines.contains(&"assign %L1 = <const: \"1\">".to_string()),
+        "{lines:#?}"
+    );
+    assert!(
+        lines.contains(&"assign %L1 = <const: \"2\">".to_string()),
+        "{lines:#?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("store %L0.o") || l.starts_with("store %L0.v := <const: \"1")),
+        "{lines:#?}"
+    );
+}

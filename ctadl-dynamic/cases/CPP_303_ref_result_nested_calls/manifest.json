@@ -1,0 +1,6 @@
+{
+  "name": "CPP_303_ref_result_nested_calls",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `pick(pick(x)) = source()`: the inner call's location is the outer call's argument. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_296_ref_result_copy_back_free_call",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `set(pick(x))` with `int& pick(int& v) { return v; }`: `set`'s reference cell is copied back into `x`, the place `pick` returns. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

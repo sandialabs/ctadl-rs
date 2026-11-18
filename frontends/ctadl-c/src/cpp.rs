@@ -27,15 +27,16 @@ use ctadl_ir::mir::{
 };
 use ctadl_ir::{PathSegment, ThinVec, thin_vec};
 use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, QueryCursor};
 
 use super::{
     ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, RawPath,
-    ScopeView, TranslationUnit, VarKind, compile_query_for, declarator_leaf_ident, declared_class,
-    function_declarator_of, is_class_member_definition, is_namespaced_definition, lower_units,
-    mangle_overload, param_types, returns_void, signature_text, template_erased_name, to_str,
-    unparenthesize,
+    ReturnedPlace, ScopeView, TranslationUnit, VarKind, compile_query_for, declarator_leaf_ident,
+    declared_class, function_declarator_of, is_class_member_definition, is_namespaced_definition,
+    lower_units, mangle_overload, node_has_const_qualifier, param_types, returns_void,
+    signature_text, template_erased_name, to_str, unparenthesize, unparenthesized_callee,
 };
 use ctadl_import::error::Error;
 
@@ -180,16 +181,35 @@ fn operator_method_name(text: &str) -> String {
 /// member name, written unqualified (`return v;`) or through `this` (`return this->v;` /
 /// `return (*this).v;`). Whether the name really is a member of the class is checked by the
 /// caller against [`ClassInfo::members`] (which is not yet complete while a class body is being
-/// walked). Anything else — an element, a computed reference, a call — is out of scope and left
-/// to the ordinary lowering. Only ever asked about a C++ definition; C has no reference returns.
-fn body_returns_member<'a>(body: Node<'_>, source: &'a str) -> Option<&'a str> {
+/// walked). A bare name the method declares itself, as a parameter in `params` or a local of
+/// `body`, is not a member: `int& pass(int& o) { return o; }` returns its parameter, a place spec
+/// 048 records instead. Anything else — an element, a computed reference, a call — is out of scope
+/// and left to the ordinary lowering. Only ever asked about a C++ definition; C has no reference
+/// returns.
+fn body_returns_member<'a>(
+    body: Node<'_>,
+    params: Option<Node<'_>>,
+    source: &'a str,
+) -> Option<&'a str> {
+    let declared_here = |name: &str| {
+        params.is_some_and(|list| {
+            let mut c = list.walk();
+            list.children(&mut c)
+                .filter(|pd| pd.kind() == "parameter_declaration")
+                .filter_map(|pd| pd.child_by_field_name("declarator"))
+                .any(|d| declarator_leaf_ident(d, source) == Some(name))
+        }) || body_declarations_and_returns(body, source).0.contains(name)
+    };
     let mut stack = vec![body];
     while let Some(n) = stack.pop() {
         if n.kind() == "return_statement"
             && let Some(val) = n.named_child(0)
         {
             match val.kind() {
-                "identifier" => return Some(to_str(&val, source)),
+                "identifier" => {
+                    let name = to_str(&val, source);
+                    return (!declared_here(name)).then_some(name);
+                }
                 // `return this->v;` / `return (*this).v;` — the same member, spelled explicitly.
                 "field_expression" => {
                     let arg = val.child_by_field_name("argument")?;
@@ -1045,7 +1065,13 @@ fn cpp_collect_methods<'a>(
                         // (spec 023 FR-4). Never a static method, and never one that already
                         // returns `*this`.
                         let returns_member = (!is_static && is_reference_return && !returns_self)
-                            .then(|| body_returns_member(method_body, source))
+                            .then(|| {
+                                body_returns_member(
+                                    method_body,
+                                    func_declr.child_by_field_name("parameters"),
+                                    source,
+                                )
+                            })
                             .flatten()
                             .map(str::to_string);
                         // A class returned by value makes the call's result an object (spec 041).
@@ -1206,7 +1232,7 @@ fn cpp_collect_methods<'a>(
             // Same reference-to-member record the inline path builds (spec 023 FR-4).
             let returns_member =
                 (!is_ctor && decl.kind() == "reference_declarator" && !returns_self)
-                    .then(|| body_returns_member(body, source))
+                    .then(|| body_returns_member(body, Some(params), source))
                     .flatten()
                     .map(str::to_string);
             let member_inits = if is_ctor {
@@ -1323,6 +1349,9 @@ fn cpp_collect_methods<'a>(
     // before any body is lowered (phase 2b, and `lower_definitions` after it), so a call site
     // anywhere in the unit finds the record regardless of definition order.
     cpp_discover_byval_class_params(ctx, source, root)?;
+    // Phase 1.8: what each reference-returning definition's result names (spec 048), so a call
+    // site anywhere in the unit can re-root it at its arguments.
+    cpp_discover_returned_places(ctx, source, root)?;
 
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.
@@ -1618,6 +1647,261 @@ fn cpp_discover_byval_class_params(
     ctx.byval_class_params.extend(found);
     ctx.reference_cell_slots.extend(found_cells);
     Ok(())
+}
+
+/// A definition returning a non-const lvalue reference, as [`cpp_discover_returned_places`] reads
+/// it.
+struct ReturningDef<'t> {
+    /// The IR name a call site resolves to, as for [`Context::reference_cell_slots`].
+    key: String,
+    /// Each explicit parameter's name, and whether it is an lvalue reference (`T&`, not `&&`).
+    params: Vec<(Option<String>, bool)>,
+    /// Every name declared anywhere in the body. A returned name among them is not the parameter
+    /// or global of that name.
+    shadowed: HashSet<String>,
+    /// Whether this is a member function. There, an unqualified name that is no parameter may be
+    /// a member (spec 036's), so it is never read as a global.
+    is_member: bool,
+    /// The body's `return` values, outside nested lambdas and local classes.
+    returns: Vec<Node<'t>>,
+}
+
+/// Record what every reference-returning definition of this unit returns, in its own terms:
+/// [`Context::returned_places`] (spec 048). A place is a reference parameter or a global, then a
+/// `.` member path. A `return` of another such call (`return pick(v);`) takes that callee's place
+/// with its parameter mapped through the call's arguments; those are closed by iterating until no
+/// definition gains a place, so a recursion that reaches no other place never gets one.
+///
+/// A definition gets a place only when every `return` names the same one. Anything else keeps the
+/// result temp it has today: several places, a local, a by-value parameter, `*this` or a member
+/// (spec 036's), a pointer parameter, a `const T&` or `T&&` result. Inert for C, which has no
+/// reference returns.
+fn cpp_discover_returned_places(
+    ctx: &mut Context<'_>,
+    source: &str,
+    root: Node<'_>,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(r#"(function_definition) @def"#);
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    let mut defs: Vec<ReturningDef<'_>> = Vec::new();
+    while let Some(m) = it.next() {
+        let extract = MatchExtractor::new(&query, m);
+        let def = extract.get("def")?;
+        // `T& f(...)` wraps the function declarator in a `&` reference declarator.
+        let returns_lvalue_ref = def
+            .child_by_field_name("declarator")
+            .and_then(unparenthesize)
+            .is_some_and(|d| {
+                d.kind() == "reference_declarator"
+                    && d.child(0).is_some_and(|op| to_str(&op, source) == "&")
+            });
+        if !returns_lvalue_ref || node_has_const_qualifier(&def, source) {
+            continue;
+        }
+        let (Some((base, ptypes)), Some(body)) = (
+            overload_base_name(def, source),
+            def.child_by_field_name("body"),
+        ) else {
+            continue;
+        };
+        let Some(params) = def
+            .child_by_field_name("declarator")
+            .and_then(function_declarator_of)
+            .and_then(|(func_declr, _)| func_declr.child_by_field_name("parameters"))
+        else {
+            continue;
+        };
+        let mut pcursor = params.walk();
+        let params: Vec<(Option<String>, bool)> = params
+            .children(&mut pcursor)
+            .filter(|pd| pd.kind() == "parameter_declaration")
+            .map(|pd| {
+                let declarator = pd.child_by_field_name("declarator");
+                let name = declarator
+                    .and_then(|d| declarator_leaf_ident(d, source))
+                    .map(str::to_string);
+                let is_ref = declarator.and_then(unparenthesize).is_some_and(|d| {
+                    d.kind() == "reference_declarator"
+                        && d.child(0).is_some_and(|op| to_str(&op, source) == "&")
+                });
+                (name, is_ref)
+            })
+            .collect();
+        let is_member = base
+            .rsplit_once("::")
+            .is_some_and(|(owner, _)| ctx.classes.contains_key(owner));
+        let key = mangle_overload(
+            &ctx.overloads,
+            &base,
+            ptypes.len(),
+            &signature_text(&ptypes),
+        );
+        let (shadowed, returns) = body_declarations_and_returns(body, source);
+        defs.push(ReturningDef {
+            key,
+            params,
+            shadowed,
+            is_member,
+            returns,
+        });
+    }
+    drop(it);
+    drop(cursor);
+    loop {
+        let mut grew = false;
+        for def in &defs {
+            if def.returns.is_empty() || ctx.returned_places.contains_key(&def.key) {
+                continue;
+            }
+            let mut places = def.returns.iter().map(|r| place_of(ctx, def, *r, source));
+            let Some(Some(first)) = places.next() else {
+                continue;
+            };
+            if places.all(|p| p.as_ref() == Some(&first)) {
+                ctx.returned_places.insert(def.key.clone(), first);
+                grew = true;
+            }
+        }
+        if !grew {
+            return Ok(());
+        }
+    }
+}
+
+/// The names `body` declares anywhere, and its `return` values outside nested lambdas and local
+/// classes (whose returns are their own).
+fn body_declarations_and_returns<'t>(
+    body: Node<'t>,
+    source: &str,
+) -> (HashSet<String>, Vec<Node<'t>>) {
+    let mut declared = HashSet::default();
+    let mut returns = Vec::new();
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "lambda_expression" | "class_specifier" | "struct_specifier" | "union_specifier" => {
+                continue;
+            }
+            "return_statement" => match n.named_child(0) {
+                Some(value) => returns.push(value),
+                // A bare `return;` names nothing: the body has no single place.
+                None => returns.push(n),
+            },
+            "declaration" | "for_range_loop" => {
+                let mut c = n.walk();
+                for d in n.children_by_field_name("declarator", &mut c) {
+                    // `int v = 0;` declares through an `init_declarator`.
+                    let d = match d.kind() {
+                        "init_declarator" => d.child_by_field_name("declarator").unwrap_or(d),
+                        _ => d,
+                    };
+                    if let Some(name) = declarator_leaf_ident(d, source) {
+                        declared.insert(name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut c = n.walk();
+        stack.extend(n.children(&mut c));
+    }
+    (declared, returns)
+}
+
+/// The place the returned expression `expr` names in `def`'s terms, given the places found so far
+/// ([`Context::returned_places`]). `None` for anything else.
+fn place_of(
+    ctx: &Context<'_>,
+    def: &ReturningDef<'_>,
+    expr: Node<'_>,
+    source: &str,
+) -> Option<ReturnedPlace> {
+    match expr.kind() {
+        "parenthesized_expression" => place_of(ctx, def, expr.named_child(0)?, source),
+        "identifier" => {
+            let name = to_str(&expr, source);
+            if def.shadowed.contains(name) {
+                return None;
+            }
+            match def
+                .params
+                .iter()
+                .position(|(param, _)| param.as_deref() == Some(name))
+            {
+                // A by-value parameter is the callee's own copy: a dangling reference.
+                Some(index) => def.params[index].1.then(|| ReturnedPlace::Param {
+                    index,
+                    fields: Vec::new(),
+                }),
+                None => (!def.is_member && ctx.global_variables.contains(name)).then(|| {
+                    ReturnedPlace::Global {
+                        name: name.to_string(),
+                        fields: Vec::new(),
+                    }
+                }),
+            }
+        }
+        // `q.v` on a place is a member of it; `p->v` goes through a pointer (out of scope).
+        "field_expression"
+            if expr
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == ".") =>
+        {
+            let mut place = place_of(ctx, def, expr.child_by_field_name("argument")?, source)?;
+            let field = to_str(&expr.child_by_field_name("field")?, source).to_string();
+            match &mut place {
+                ReturnedPlace::Param { fields, .. } | ReturnedPlace::Global { fields, .. } => {
+                    fields.push(field)
+                }
+            }
+            Some(place)
+        }
+        // `return pick(v);`: the callee's place, its parameter mapped through this call.
+        "call_expression" => {
+            let args = expr.child_by_field_name("arguments")?;
+            let callee = unparenthesized_callee(expr.child_by_field_name("function")?);
+            let name = match callee.kind() {
+                "identifier" => {
+                    let name = to_str(&callee, source);
+                    if def.shadowed.contains(name)
+                        || def.params.iter().any(|(p, _)| p.as_deref() == Some(name))
+                    {
+                        return None;
+                    }
+                    ctx.resolve_callee_name(name)
+                        .unwrap_or_else(|| name.to_string())
+                }
+                "qualified_identifier" | "template_function" => {
+                    template_erased_name(callee, source)
+                }
+                _ => return None,
+            };
+            let shapes = ctx.arg_shapes(args, source);
+            let targets: Vec<String> = ctx
+                .overload_targets(&name, shapes.len(), &shapes)
+                .iter()
+                .map(|t| ctx.resolve_reference(t))
+                .collect();
+            match ctx.common_returned_place(&targets)? {
+                ReturnedPlace::Param { index, fields } => {
+                    let mut cursor = args.walk();
+                    let arg = args
+                        .children(&mut cursor)
+                        .filter(|c| c.is_named())
+                        .nth(index)?;
+                    let mut place = place_of(ctx, def, arg, source)?;
+                    match &mut place {
+                        ReturnedPlace::Param { fields: f, .. }
+                        | ReturnedPlace::Global { fields: f, .. } => f.extend(fields),
+                    }
+                    Some(place)
+                }
+                global @ ReturnedPlace::Global { .. } => Some(global),
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Copy-construct a call's **by-value class** arguments — the C++ `GrammarHooks::copy_args`
@@ -2356,8 +2640,9 @@ fn emit_ctor_edge<'a>(
 
 /// The location a constructor argument names, to copy a reference-cell parameter back into
 /// (spec 047): a most-vexing-parse `parameter_declaration` through [`mvp_arg_location`], any
-/// other argument through `flatten_lvalue` when it is a plain lvalue (`x`, `o.v`, `a[1]`, `*p`).
-/// `None` for a value that names no location (a call, a literal, arithmetic).
+/// other argument through `Context::argument_location`: a plain lvalue (`x`, `o.v`, `a[1]`, `*p`),
+/// or a call whose reference result names a location (spec 048). `None` for a value that names no
+/// location (a literal, arithmetic, any other call).
 fn ctor_arg_location<'a>(
     ctx: &mut Context<'a>,
     program: &mut Program,
@@ -2368,10 +2653,8 @@ fn ctor_arg_location<'a>(
     if node.kind() == "parameter_declaration" {
         return Ok(mvp_arg_location(ctx, program, scope_view, source, node));
     }
-    if !super::is_plain_lvalue(node, source) {
-        return Ok(None);
-    }
-    Ok(Some(ctx.flatten_lvalue(program, node, source, scope_view)?))
+    // A plain lvalue, or a call whose reference result names a location (spec 048).
+    ctx.argument_location(program, node, source, scope_view)
 }
 
 /// The named children of a constructor's `argument_list`/`initializer_list`, indexed as

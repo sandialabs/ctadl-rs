@@ -1,0 +1,6 @@
+{
+  "name": "CPP_297_ref_result_copy_back_method_call",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `s.set(pick(x))`: a method's reference cell is copied back through `pick`'s result into `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

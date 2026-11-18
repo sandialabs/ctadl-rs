@@ -1,0 +1,6 @@
+{
+  "name": "CPP_299_ref_result_bind_reference_local",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& r = pick(x); r = source()`: `r` aliases `x`, not the call's result temp. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

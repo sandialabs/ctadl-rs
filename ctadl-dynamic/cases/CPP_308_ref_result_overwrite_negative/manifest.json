@@ -1,0 +1,6 @@
+{
+  "name": "CPP_308_ref_result_overwrite_negative",
+  "description": "C++ reference results as locations (spec 048), NEGATIVE: `pick(x) = source(); x = 0; sink(x)`: the later strong update kills it. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

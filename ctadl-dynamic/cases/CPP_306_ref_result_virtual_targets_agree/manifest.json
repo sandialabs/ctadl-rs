@@ -1,0 +1,6 @@
+{
+  "name": "CPP_306_ref_result_virtual_targets_agree",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `a->pass(x) = source()`, where both CHA targets `A::pass` and `D::pass` return `o`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

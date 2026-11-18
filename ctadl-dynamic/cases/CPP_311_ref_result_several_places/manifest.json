@@ -1,0 +1,7 @@
+{
+  "name": "CPP_311_ref_result_several_places",
+  "description": "C++ reference results as locations (spec 048), POSITIVE, KNOWN GAP F9: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `choose(x, y, 1) = source(); sink(x)`. Several places need a weak update. s=none d=flow.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F9"
+}

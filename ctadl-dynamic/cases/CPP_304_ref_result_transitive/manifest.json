@@ -1,0 +1,6 @@
+{
+  "name": "CPP_304_ref_result_transitive",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& outer(int& v) { return pick(v); }`; `outer(x) = source()`, the place closed through `pick`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

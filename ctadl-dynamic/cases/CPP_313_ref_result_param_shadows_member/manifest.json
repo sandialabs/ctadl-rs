@@ -1,0 +1,6 @@
+{
+  "name": "CPP_313_ref_result_param_shadows_member",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& B::f(int& v) { return v; }` with a member `v` too: the result is the parameter, so `b.f(x) = source()` stores into `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

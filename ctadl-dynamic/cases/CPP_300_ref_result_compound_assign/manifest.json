@@ -1,0 +1,6 @@
+{
+  "name": "CPP_300_ref_result_compound_assign",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `pick(x) += source()`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

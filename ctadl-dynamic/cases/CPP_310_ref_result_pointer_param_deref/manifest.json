@@ -1,0 +1,7 @@
+{
+  "name": "CPP_310_ref_result_pointer_param_deref",
+  "description": "C++ reference results as locations (spec 048), POSITIVE, KNOWN GAP F9: `int& deref(int* p) { return *p; }`; `deref(&x) = source(); sink(x)`. A place through a pointer parameter is out of spec 048's scope. s=none d=flow.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F9"
+}

@@ -942,6 +942,18 @@ struct RecvObj {
     write_back: Option<RawPath>,
 }
 
+/// Where a reference-returning definition's result points, in the definition's own terms (spec
+/// 048): what every one of its `return`s names. A call site re-roots it at its own arguments
+/// ([`Context::returned_place_location`]). Only C++ defines reference returns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ReturnedPlace {
+    /// Explicit parameter `index` (a reference parameter; a method's `this` is not counted), then
+    /// the members `fields`: `int& f(Q& q) { return q.v; }` is `Param { 0, [v] }`.
+    Param { index: usize, fields: Vec<String> },
+    /// The namespace-scope variable `name`, then the members `fields`.
+    Global { name: String, fields: Vec<String> },
+}
+
 /// The outcome of lowering a C++ instance-method (or chained) call in [`Context::dispatch_call`].
 struct DispatchOut {
     /// The call's result value (a temp), for use as an ordinary rvalue.
@@ -1317,6 +1329,15 @@ struct Context<'a> {
     /// Copies back out of the temps [`Context::pass_reference_args`] passed, as `(argument
     /// location, temp cell)`, made by [`Context::emit_post_call_copies`] right after the call.
     reference_copies_out: Vec<(RawPath, RawPath)>,
+    /// The place each reference-returning definition's result names, in its own terms, by the IR
+    /// name a call site resolves to (spec 048). Filled by the C++ `collect_aux` hook before any
+    /// body is lowered; empty for C.
+    returned_places: HashMap<String, ReturnedPlace>,
+    /// The location each call lowered in the current function denotes as an lvalue, by the call
+    /// node's id: a reference result's place re-rooted at the call site (spec 048), or a method's
+    /// [`DispatchOut::location`] (spec 036). Recorded when the call is emitted, so a consumer never
+    /// lowers the call a second time to find it. Reset per function; empty for C.
+    result_locations: HashMap<usize, RawPath>,
     /// The class type each free function returns by value, by its base IR name (spec 041); see
     /// [`ClassInfo::returns_object`]. Filled by the C++ `collect_aux` hook; empty for C.
     function_returns_object: HashMap<String, String>,
@@ -1706,6 +1727,8 @@ impl Context<'_> {
             reference_cell_slots: HashMap::default(),
             reference_cells: HashSet::default(),
             reference_copies_out: Vec::new(),
+            returned_places: HashMap::default(),
+            result_locations: HashMap::default(),
             function_returns_object: HashMap::default(),
             template_params: HashSet::default(),
             local_dependent: HashSet::default(),
@@ -6951,16 +6974,86 @@ impl<'a> Context<'a> {
                 continue;
             }
             let cell = self.reference_cell_arg(program, scope_view, arg);
-            if let Some(node) = arg_nodes
-                .get(i)
-                .copied()
-                .filter(|n| is_plain_lvalue(*n, source))
+            if let Some(&node) = arg_nodes.get(i)
+                && let Some(location) = self.argument_location(program, node, source, scope_view)?
             {
-                let location = self.flatten_lvalue(program, node, source, scope_view)?;
                 self.reference_copies_out.push((location, cell));
             }
         }
         Ok(())
+    }
+
+    /// The location an argument node names, to copy a reference cell back into or to re-root a
+    /// reference result at: a plain lvalue through [`Self::flatten_lvalue`] (side-effect free), or
+    /// a call whose result location was recorded when it was lowered
+    /// ([`Self::result_locations`], spec 048). `None` for a value that names no location.
+    fn argument_location(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Option<RawPath>, Error> {
+        if is_plain_lvalue(node, source) {
+            return Ok(Some(
+                self.flatten_lvalue(program, node, source, scope_view)?,
+            ));
+        }
+        let call = unparenthesize(node).unwrap_or(node);
+        Ok(self.result_locations.get(&call.id()).cloned())
+    }
+
+    /// The place every one of `targets` returns, when they all return the same one (spec 048).
+    /// `None` when any target has no recorded place, or two disagree: the call then keeps its
+    /// result temp.
+    fn common_returned_place(&self, targets: &[String]) -> Option<ReturnedPlace> {
+        let (first, rest) = targets.split_first()?;
+        let place = self.returned_places.get(first)?;
+        rest.iter()
+            .all(|t| self.returned_places.get(t) == Some(place))
+            .then(|| place.clone())
+    }
+
+    /// The location `place` denotes at a call whose explicit arguments are `arg_list`'s named
+    /// children (spec 048): the argument's own location for a parameter
+    /// ([`Self::argument_location`], so nested reference results compose), the global's path for a
+    /// global, then the members. `None` when the argument names no location.
+    fn returned_place_location(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        source: &'a str,
+        place: &ReturnedPlace,
+        arg_list: Node<'_>,
+    ) -> Result<Option<RawPath>, Error> {
+        let (mut path, fields) = match place {
+            ReturnedPlace::Param { index, fields } => {
+                let mut cursor = arg_list.walk();
+                let Some(arg) = arg_list
+                    .children(&mut cursor)
+                    .filter(|c| c.is_named())
+                    .nth(*index)
+                else {
+                    return Ok(None);
+                };
+                let Some(path) = self.argument_location(program, arg, source, scope_view)? else {
+                    return Ok(None);
+                };
+                (path, fields)
+            }
+            ReturnedPlace::Global { name, fields } => (
+                self.build_access_path(
+                    name,
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                ),
+                fields,
+            ),
+        };
+        path.fields
+            .extend(fields.iter().map(|f| PathSegment::symbol(f.as_str())));
+        Ok(Some(path))
     }
 
     /// Which of `arity` explicit argument positions any of `targets` takes as a reference cell.
@@ -7249,6 +7342,8 @@ impl<'a> Context<'a> {
         }
         let mut method_args: ThinVec<Exp> = ctadl_ir::thin_vec![recv.exp.clone()];
         method_args.extend(explicit_args);
+        // The place the method's reference result names, when every target agrees (spec 048).
+        let place = self.common_returned_place(&targets);
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -7299,6 +7394,15 @@ impl<'a> Context<'a> {
                 Some(loc)
             }
             _ => None,
+        };
+        // Otherwise a reference result naming one of the method's parameters or a global is that
+        // place, re-rooted at this call's arguments (spec 048). Spec 036's locations win.
+        let location = match (location, place, arg_list) {
+            (Some(location), _, _) => Some(location),
+            (None, Some(place), Some(arg_list)) => {
+                self.returned_place_location(program, scope_view, source, &place, arg_list)?
+            }
+            (None, _, _) => None,
         };
         let aliased = match (returns_self, recv_loc) {
             (true, Some(loc)) => {
@@ -7520,6 +7624,11 @@ impl<'a> Context<'a> {
         if let Some(out) =
             self.dispatch_call(program, node, source, scope_view, temp_name.clone())?
         {
+            // What the call denotes as an lvalue, for a consumer that meets it as an argument
+            // (spec 048).
+            if let Some(location) = out.location {
+                self.result_locations.insert(node.id(), location);
+            }
             return Ok(out.value);
         }
 
@@ -7598,6 +7707,8 @@ impl<'a> Context<'a> {
             &mut args,
         )?;
 
+        // The place the callee's reference result names, when every target agrees (spec 048).
+        let place = self.common_returned_place(&callees);
         let call_edges = CallEdges::Explicit(callees.into_iter().collect());
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
@@ -7690,6 +7801,7 @@ impl<'a> Context<'a> {
             Variable::GlobalHeap => CallStyle::DirectCall { call_edges },
         };
 
+        let direct = matches!(style, CallStyle::DirectCall { .. });
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
@@ -7701,6 +7813,15 @@ impl<'a> Context<'a> {
             self.cur_span,
         ));
         self.emit_post_call_copies(program, scope_view);
+        // A reference result re-rooted at this call's arguments is the location the call denotes
+        // (spec 048), recorded for `flatten_lvalue` and the copy-back consumers.
+        if direct
+            && let Some(place) = place
+            && let Some(location) =
+                self.returned_place_location(program, scope_view, source, &place, arg_node)?
+        {
+            self.result_locations.insert(node.id(), location);
+        }
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
             self.build_access_path(
@@ -7835,6 +7956,7 @@ impl<'a> Context<'a> {
         self.captured_globals.clear();
         self.post_call_copies.clear();
         self.reference_cells.clear();
+        self.result_locations.clear();
         self.template_params.clear();
         self.local_dependent.clear();
         self.lookup_prefixes = scope_prefixes(func_name);
@@ -8336,12 +8458,20 @@ impl<'a> Context<'a> {
                         ..
                     }) => Ok(RawPath::new(v, ThinVec::new())),
                     Some(_) => self.not_a_location(program, node, scope_view),
-                    // Any other call: the value it returns, held in a variable (or an address).
-                    None => match self.flatten_expr(program, node, source, scope_view)? {
-                        Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                        Exp::AccessPath(ap) => Ok(raw_path_of(&ap)),
-                        _ => self.not_a_location(program, node, scope_view),
-                    },
+                    // Any other call: the place its reference result names, recorded as it was
+                    // lowered (spec 048), else the value it returns, held in a variable (or an
+                    // address).
+                    None => {
+                        let value = self.flatten_expr(program, node, source, scope_view)?;
+                        if let Some(location) = self.result_locations.get(&node.id()) {
+                            return Ok(location.clone());
+                        }
+                        match value {
+                            Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                            Exp::AccessPath(ap) => Ok(raw_path_of(&ap)),
+                            _ => self.not_a_location(program, node, scope_view),
+                        }
+                    }
                 }
             }
             // A cast in lvalue position. The cast is value-preserving, so the location it
