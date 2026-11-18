@@ -1,0 +1,6 @@
+{
+  "name": "CPP_286_ctor_ref_arg_temporary",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: the temporary in `B(x).get()` with `B(int& o)` writing `o = source()`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

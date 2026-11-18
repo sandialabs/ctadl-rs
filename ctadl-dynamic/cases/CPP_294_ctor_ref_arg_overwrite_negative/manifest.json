@@ -1,0 +1,6 @@
+{
+  "name": "CPP_294_ctor_ref_arg_overwrite_negative",
+  "description": "C++ constructor reference arguments (spec 047), NEGATIVE: `B b(x)` taints `x` through the constructor's `int& o`, and `x = 0` then overwrites it before `sink(x)`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

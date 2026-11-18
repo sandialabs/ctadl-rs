@@ -1,4 +1,4 @@
-/* C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a constructor writing its `int& o`. Construction copies the argument into a temp cell but has no argument node to copy back into. s=none d=flow. */
+/* C++ reference parameters after #154, POSITIVE: a constructor writing its `int& o`. Construction copies the cell back into the argument, as any call does (spec 047; was known gap F8). s=flow d=flow agree. */
 extern "C" int source();
 extern "C" void sink(int);
 

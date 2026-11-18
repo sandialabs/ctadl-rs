@@ -1,0 +1,6 @@
+{
+  "name": "CPP_290_ctor_ref_arg_member_location",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `B b(p.v)` copies the written cell back into the member `p.v`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

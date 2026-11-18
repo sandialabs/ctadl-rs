@@ -1,0 +1,6 @@
+{
+  "name": "CPP_288_ctor_ref_arg_member_init",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `H(int& o) : m(o)` passes its reference cell to a member object's constructor, which writes it. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

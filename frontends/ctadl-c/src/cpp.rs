@@ -1685,12 +1685,14 @@ fn cpp_copy_args<'a>(
             ctx,
             program,
             scope_view,
+            source,
             class,
             &obj,
             thin_vec![arg.clone()],
+            &[],
             &[ArgShape::Object(class.clone())],
             true,
-        );
+        )?;
         let ap = ctx.build_access_path(
             &obj,
             Default::default(),
@@ -1813,9 +1815,16 @@ fn cpp_try_construct<'a>(
     // `shapes` is what the arguments can *mean*, read off the syntax before any of them is
     // lowered — and before the object itself is registered, so `Box b(&a)` classifies `a`
     // (spec 024 FR-2). An empty `shapes` goes with a copy construction, which resolves by key.
-    let (obj_node, args, shapes, copy): (Node<'_>, ThinVec<Exp>, Vec<ArgShape>, bool) = match declr
-        .kind()
-    {
+    // `arg_nodes` are the arguments' nodes, positionally, for a reference-cell parameter's copy
+    // back (spec 047): `parameter_declaration`s under the most vexing parse, expressions otherwise.
+    #[allow(clippy::type_complexity)]
+    let (obj_node, args, arg_nodes, shapes, copy): (
+        Node<'_>,
+        ThinVec<Exp>,
+        Vec<Node<'_>>,
+        Vec<ArgShape>,
+        bool,
+    ) = match declr.kind() {
         // Most-vexing-parse direct init: `Box b(args)`.
         "function_declarator" => {
             let Some(obj_node) = declr
@@ -1848,13 +1857,13 @@ fn cpp_try_construct<'a>(
                 .map(|pd| mvp_arg_shape(ctx, source, *pd))
                 .collect();
             let mut args: ThinVec<Exp> = ThinVec::new();
-            for pd in pds {
+            for &pd in &pds {
                 args.push(reconstruct_mvp_arg(ctx, source, program, scope_view, pd)?);
             }
-            (obj_node, args, shapes, copy)
+            (obj_node, args, pds, shapes, copy)
         }
         // Default construction `Box b;` runs the default constructor (spec 028).
-        "identifier" => (declr, ThinVec::new(), Vec::new(), false),
+        "identifier" => (declr, ThinVec::new(), Vec::new(), Vec::new(), false),
         // Copy/brace init: `Box b = Box(args)` / `Box b{args}`.
         "init_declarator" => {
             let Some(obj_node) = declr
@@ -1881,7 +1890,7 @@ fn cpp_try_construct<'a>(
                         .expect("call_expression always has arguments");
                     let shapes = ctx.arg_shapes(arg_list, source);
                     let args = ctx.collect_arguments(program, arg_list, source, scope_view)?;
-                    (obj_node, args, shapes, false)
+                    (obj_node, args, arg_nodes_of(arg_list), shapes, false)
                 }
                 // Copy initialization from an object: `Box b = a`. The value is the bare
                 // identifier `a`; when it names an object of this class and the class declares a
@@ -1891,7 +1900,7 @@ fn cpp_try_construct<'a>(
                 // is exactly the implicit member-wise copy (spec 022 FR-2).
                 "identifier" if has_copy_ctor && names_class_object(ctx, source, value, class) => {
                     let arg = ctx.flatten_expr(program, value, source, scope_view)?;
-                    (obj_node, thin_vec![arg], Vec::new(), true)
+                    (obj_node, thin_vec![arg], Vec::new(), Vec::new(), true)
                 }
                 "initializer_list" => {
                     let mut lcursor = value.walk();
@@ -1908,10 +1917,10 @@ fn cpp_try_construct<'a>(
                         .map(|elem| ctx.arg_shape(*elem, source))
                         .collect();
                     let mut args: ThinVec<Exp> = ThinVec::new();
-                    for elem in elems {
+                    for &elem in &elems {
                         args.push(ctx.flatten_expr(program, elem, source, scope_view)?);
                     }
-                    (obj_node, args, shapes, copy)
+                    (obj_node, args, elems, shapes, copy)
                 }
                 // Direct init `Box b(a, b)` whose arguments are **not** all type-like — e.g.
                 // one is a literal (`Box b(0, source())`). Because a literal cannot be a
@@ -1923,7 +1932,7 @@ fn cpp_try_construct<'a>(
                 "argument_list" => {
                     let shapes = ctx.arg_shapes(value, source);
                     let args = ctx.collect_arguments(program, value, source, scope_view)?;
-                    (obj_node, args, shapes, false)
+                    (obj_node, args, arg_nodes_of(value), shapes, false)
                 }
                 _ => return Ok(false),
             }
@@ -1932,8 +1941,8 @@ fn cpp_try_construct<'a>(
     };
 
     emit_construction(
-        ctx, source, program, scope_view, class, obj_node, args, &shapes, copy,
-    );
+        ctx, source, program, scope_view, class, obj_node, args, &arg_nodes, &shapes, copy,
+    )?;
     Ok(true)
 }
 
@@ -2080,34 +2089,102 @@ fn reconstruct_mvp_arg<'a>(
             );
             Ok(Exp::access_path(ctx.emit_loads(program, scope_view, ap)))
         }
-        // A bare value reference (`y`), or a fallback.
+        // A bare value reference (`y`), an element of one (`a[1]`, spec 047), or a fallback.
         _ => {
             // A function named as an argument (`Holder h(id)`) is a pointer to it, exactly as
             // the expression lowering reads one (spec 041).
-            if ctx
-                .scope_tree
-                .find_variable(scope_view.sidx, name)
-                .is_none()
-            {
-                let resolved = ctx
-                    .resolve_callee_name(name)
-                    .unwrap_or_else(|| name.to_string());
-                if ctx.functions.contains_key(&resolved)
-                    || ctx.declared_functions.contains(&resolved)
-                {
-                    let target = ctx.resolve_reference(&resolved);
-                    return Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())));
-                }
+            if let Some(resolved) = mvp_named_function(ctx, scope_view, name) {
+                let target = ctx.resolve_reference(&resolved);
+                return Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())));
             }
-            let ap = ctx.build_access_path(
-                name,
-                Default::default(),
+            let ap = mvp_element_path(
+                ctx,
+                program,
                 scope_view,
-                &mut program[scope_view.fidx].locals,
+                source,
+                name,
+                pd.child_by_field_name("declarator"),
             );
             Ok(Exp::access_path(ctx.emit_loads(program, scope_view, ap)))
         }
     }
+}
+
+/// The function a most-vexing-parse argument's name refers to, when it names no variable in
+/// scope but a function this unit defines or declares (`Holder h(id)`, spec 041).
+fn mvp_named_function(ctx: &Context<'_>, scope_view: &ScopeView, name: &str) -> Option<String> {
+    if ctx
+        .scope_tree
+        .find_variable(scope_view.sidx, name)
+        .is_some()
+    {
+        return None;
+    }
+    let resolved = ctx
+        .resolve_callee_name(name)
+        .unwrap_or_else(|| name.to_string());
+    (ctx.functions.contains_key(&resolved) || ctx.declared_functions.contains(&resolved))
+        .then_some(resolved)
+}
+
+/// The location a most-vexing-parse argument `pd` names (spec 047): the variable itself for a
+/// bare name (`B b(x)`), or its element for a name under abstract array declarators
+/// (`B b(a[1])`). `None` for a nested call (`abstract_function_declarator`), a function name,
+/// or any other declarator. [`reconstruct_mvp_arg`] reads the same path.
+fn mvp_arg_location(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    source: &str,
+    pd: Node<'_>,
+) -> Option<super::RawPath> {
+    let name = to_str(&pd.child_by_field_name("type")?, source);
+    let declarator = pd.child_by_field_name("declarator");
+    if declarator.is_some_and(|d| d.kind() != "abstract_array_declarator")
+        || mvp_named_function(ctx, scope_view, name).is_some()
+    {
+        return None;
+    }
+    Some(mvp_element_path(
+        ctx, program, scope_view, source, name, declarator,
+    ))
+}
+
+/// `name`, then the subscripts of the abstract array declarators `declarator` wraps it in. The
+/// innermost declarator is the first subscript: `a[1][2]` nests `[1]` inside `[2]`. Each one
+/// appends what `flatten_lvalue` appends for a subscript ([`super::push_element`]), where only an
+/// integer literal is an offset. Any other declarator contributes nothing, so a bare name is
+/// just the variable.
+fn mvp_element_path(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    source: &str,
+    name: &str,
+    declarator: Option<Node<'_>>,
+) -> super::RawPath {
+    let Some(array) = declarator.filter(|d| d.kind() == "abstract_array_declarator") else {
+        return ctx.build_access_path(
+            name,
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+    };
+    let mut path = mvp_element_path(
+        ctx,
+        program,
+        scope_view,
+        source,
+        name,
+        array.child_by_field_name("declarator"),
+    );
+    let index = array
+        .child_by_field_name("size")
+        .filter(|size| size.kind() == "number_literal")
+        .and_then(|size| super::integer_literal(to_str(&size, source)));
+    super::push_element(&mut path.fields, index);
+    path
 }
 
 /// Register the constructed local and emit the `DirectCall Class::Class(&obj, args…)`. The
@@ -2123,17 +2200,19 @@ fn reconstruct_mvp_arg<'a>(
 /// (`Box::Box#1` vs `Box::Box#2`) and a class with two ctors of one arity to the one its
 /// arguments can mean (`Box::Box#1(Box*)` for `Box b(&a)`); a single-ctor class keeps the bare
 /// `Class::Class` (identity mangler), so every existing construction is byte-for-byte unchanged.
+#[allow(clippy::too_many_arguments)]
 fn emit_construction<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
     class: &str,
     obj_node: Node<'_>,
     ctor_args: ThinVec<Exp>,
+    arg_nodes: &[Node<'_>],
     arg_shapes: &[ArgShape],
     copy: bool,
-) {
+) -> anyhow::Result<(), Error> {
     let obj_name = to_str(&obj_node, source);
     ctx.scope_tree
         .add_variable(scope_view.sidx, obj_name.to_string(), VarKind::Local);
@@ -2147,8 +2226,8 @@ fn emit_construction<'a>(
         frame.push((obj_name.to_string(), class.to_string()));
     }
     emit_ctor_call(
-        ctx, program, scope_view, class, obj_name, ctor_args, arg_shapes, copy,
-    );
+        ctx, program, scope_view, source, class, obj_name, ctor_args, arg_nodes, arg_shapes, copy,
+    )
 }
 
 /// Emit the constructor `DirectCall Class::Class#<arity>(&obj, args…)` for an **already-
@@ -2160,17 +2239,21 @@ fn emit_construction<'a>(
 /// (`Box(int)` and `Box(Box*)`), `arg_shapes` picks the one the arguments can mean —
 /// `Box::Box#1(Box*)` for `Box b(&a)` — and, when they can mean more than one, every candidate
 /// becomes a target of the one construction edge (spec 024). Shared by stack construction
-/// ([`emit_construction`]) and heap `new` ([`lower_new_expression`]).
-fn emit_ctor_call(
-    ctx: &mut Context<'_>,
+/// ([`emit_construction`]) and heap `new` ([`lower_new_expression`]). `arg_nodes` are the
+/// arguments' nodes, for [`emit_ctor_edge`]'s reference-cell copy back.
+#[allow(clippy::too_many_arguments)]
+fn emit_ctor_call<'a>(
+    ctx: &mut Context<'a>,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
+    source: &'a str,
     class: &str,
     obj_name: &str,
     ctor_args: ThinVec<Exp>,
+    arg_nodes: &[Node<'_>],
     arg_shapes: &[ArgShape],
     copy: bool,
-) {
+) -> anyhow::Result<(), Error> {
     // The object under construction is the by-ref arg 0, so resolve it to its location. A
     // plain local object is pathless (no load emitted); a global one must be loaded, which is
     // the only way the offset-only IR can name it.
@@ -2182,23 +2265,28 @@ fn emit_ctor_call(
     );
     let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv_ap));
     emit_ctor_edge(
-        ctx, program, scope_view, class, recv, ctor_args, arg_shapes, copy,
-    );
+        ctx, program, scope_view, source, class, recv, ctor_args, arg_nodes, arg_shapes, copy,
+    )
 }
 
 /// The constructor edge itself: `DirectCall Class::Class…(recv, args…)` with `recv` -- an
-/// already-resolved receiver expression -- as arg 0. See [`emit_ctor_call`].
+/// already-resolved receiver expression -- as arg 0. See [`emit_ctor_call`]. `arg_nodes` are the
+/// explicit arguments' nodes, positionally (empty where the construction has none, as for a
+/// default or copy construction); a reference-cell parameter is copied back into the location its
+/// node names.
 #[allow(clippy::too_many_arguments)]
-fn emit_ctor_edge(
-    ctx: &mut Context<'_>,
+fn emit_ctor_edge<'a>(
+    ctx: &mut Context<'a>,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
+    source: &'a str,
     class: &str,
     recv: Exp,
     ctor_args: ThinVec<Exp>,
+    arg_nodes: &[Node<'_>],
     arg_shapes: &[ArgShape],
     copy: bool,
-) {
+) -> anyhow::Result<(), Error> {
     let arity = ctor_args.len();
 
     // A **copy** construction calls the copy constructor's own key, which no arity or signature
@@ -2232,16 +2320,22 @@ fn emit_ctor_edge(
             .into_iter()
             .collect()
     };
-    // A reference-cell parameter gets its argument through a temp's cell. There is no argument
-    // node here to copy back into, so only the copy in is made.
+    // A reference-cell parameter gets its argument through a temp's cell, and when the argument
+    // is a location the cell is copied back into it after the call, exactly as at any other call
+    // site (`Context::pass_reference_args`, spec 047). Only cell positions resolve a location, so
+    // a construction without one emits what it always did.
     let mut ctor_args = ctor_args;
     let positions = ctx.reference_cell_positions(&targets, arity);
-    for (arg, _) in ctor_args
-        .iter_mut()
-        .zip(positions)
-        .filter(|(_, cell)| *cell)
-    {
-        ctx.reference_cell_arg(program, scope_view, arg);
+    for (i, arg) in ctor_args.iter_mut().enumerate() {
+        if !positions[i] {
+            continue;
+        }
+        let cell = ctx.reference_cell_arg(program, scope_view, arg);
+        if let Some(&node) = arg_nodes.get(i)
+            && let Some(location) = ctor_arg_location(ctx, program, scope_view, source, node)?
+        {
+            ctx.reference_copies_out.push((location, cell));
+        }
     }
     let mut args: ThinVec<Exp> = thin_vec![recv];
     args.extend(ctor_args);
@@ -2256,6 +2350,37 @@ fn emit_ctor_edge(
             args,
         },
     ));
+    ctx.emit_post_call_copies(program, scope_view);
+    Ok(())
+}
+
+/// The location a constructor argument names, to copy a reference-cell parameter back into
+/// (spec 047): a most-vexing-parse `parameter_declaration` through [`mvp_arg_location`], any
+/// other argument through `flatten_lvalue` when it is a plain lvalue (`x`, `o.v`, `a[1]`, `*p`).
+/// `None` for a value that names no location (a call, a literal, arithmetic).
+fn ctor_arg_location<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &mut ScopeView,
+    source: &'a str,
+    node: Node<'_>,
+) -> anyhow::Result<Option<super::RawPath>, Error> {
+    if node.kind() == "parameter_declaration" {
+        return Ok(mvp_arg_location(ctx, program, scope_view, source, node));
+    }
+    if !super::is_plain_lvalue(node, source) {
+        return Ok(None);
+    }
+    Ok(Some(ctx.flatten_lvalue(program, node, source, scope_view)?))
+}
+
+/// The named children of a constructor's `argument_list`/`initializer_list`, indexed as
+/// `collect_arguments` collects them.
+fn arg_nodes_of(list: Node<'_>) -> Vec<Node<'_>> {
+    let mut cursor = list.walk();
+    list.children(&mut cursor)
+        .filter(|c| c.is_named())
+        .collect()
 }
 
 /// Lower a C++ `new_expression` (`new Type(args)`) to a **synthetic heap object** and return
@@ -2314,6 +2439,11 @@ fn lower_new_expression<'a>(
         }
         _ => ThinVec::new(),
     };
+    let arg_nodes: Vec<Node<'_>> = new_expr
+        .child_by_field_name("arguments")
+        .filter(|args| matches!(args.kind(), "argument_list" | "initializer_list"))
+        .map(arg_nodes_of)
+        .unwrap_or_default();
 
     // Allocate the synthetic object as a fresh local, recording its (allocated) class so a
     // direct dispatch on it would resolve; the pointer that aliases it carries the *declared*
@@ -2343,12 +2473,14 @@ fn lower_new_expression<'a>(
             ctx,
             program,
             scope_view,
+            source,
             alloc_type,
             &obj,
             ctor_args,
+            &arg_nodes,
             &arg_shapes,
             copy,
-        );
+        )?;
     }
     // Returned as a `RawPath` (not lowered to loads): the caller binds the pointer local to
     // this object as an *alias*, so it must keep naming the object's storage.
@@ -2865,7 +2997,7 @@ fn construct_subobject<'a>(
         .is_some_and(|info| info.has_copy_ctor)
         && matches!(shapes.as_slice(), [ArgShape::Object(c)] if ctx.class_is_a(c, class));
     let mut args: ThinVec<Exp> = ThinVec::new();
-    for arg in arg_nodes {
+    for &arg in &arg_nodes {
         args.push(ctx.flatten_expr(program, arg, source, scope_view)?);
     }
     let location = recv.clone();
@@ -2874,12 +3006,14 @@ fn construct_subobject<'a>(
         ctx,
         program,
         scope_view,
+        source,
         class,
         recv.clone(),
         args,
+        &arg_nodes,
         &shapes,
         copy,
-    );
+    )?;
     // A member object is named by a symbolic field, which the offset-only IR can only pass as
     // the value loaded from it. Store that value back, so what the constructor wrote into the
     // receiver lands on `this.<member>` (copy-in/copy-out).
@@ -3875,7 +4009,7 @@ fn construct_temporary<'a>(
         .map(|arg| ctx.arg_shape(*arg, source))
         .collect();
     let mut args: ThinVec<Exp> = ThinVec::new();
-    for arg in arg_nodes {
+    for &arg in &arg_nodes {
         args.push(ctx.flatten_expr(program, arg, source, scope_view)?);
     }
 
@@ -3888,7 +4022,9 @@ fn construct_temporary<'a>(
         frame.push((obj.clone(), class.clone()));
     }
     if has_ctor {
-        emit_ctor_call(ctx, program, scope_view, &class, &obj, args, &shapes, copy);
+        emit_ctor_call(
+            ctx, program, scope_view, source, &class, &obj, args, &arg_nodes, &shapes, copy,
+        )?;
     }
     let path = ctx.build_access_path(
         &obj,

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_287_ctor_ref_arg_base_init",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `D(int& o) : B(o)` passes its own reference cell on to the base constructor, which writes it; two copies back reach `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

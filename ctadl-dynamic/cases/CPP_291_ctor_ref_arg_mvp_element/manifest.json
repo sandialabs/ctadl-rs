@@ -1,0 +1,6 @@
+{
+  "name": "CPP_291_ctor_ref_arg_mvp_element",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `B b(a[1])` is a most-vexing parse (`abstract_array_declarator`); the cell is copied back into the element `a[1]`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

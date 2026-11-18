@@ -1,0 +1,6 @@
+{
+  "name": "CPP_293_ctor_ref_arg_unwritten_position_negative",
+  "description": "C++ constructor reference arguments (spec 047), NEGATIVE: `B(int& a, int& o)` writes only `o`; `B b(x, y); sink(x)` stays clean. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_284_ctor_ref_arg_brace",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `B b{x}` (an `initializer_list`) with `B(int& o)` writing `o = source()`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

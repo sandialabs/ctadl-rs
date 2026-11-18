@@ -5171,3 +5171,109 @@ fn cpp_structured_binding_in_range_for() {
     let text = format!("{}", function_named(&prog, "f").unwrap());
     assert!(text.contains(".b := @p1"), "{prog}");
 }
+
+/// The lines of `main` in `src`, trimmed.
+fn main_lines(src: &str) -> Vec<String> {
+    let prog = program_from_cpp_string(src).0;
+    format!("{}", function_named(&prog, "main").unwrap())
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// A constructor's reference-cell parameter is copied back into the caller's argument, as at any
+/// other call (spec 047): `store <t>.deref := x` before the construction, then `x := load
+/// <t>.deref` after it. `x` is `main`'s first local, `%L0`.
+#[test]
+fn cpp_ctor_reference_arg_copies_back() {
+    for src in [
+        // Most vexing parse.
+        r"struct B { int k; B(int& o) : k(0) { o = 1; } };
+          int main() { int x = 0; B b(x); return x; }",
+        // `argument_list`.
+        r"struct B { int k; B(int& o, int n) : k(n) { o = 1; } };
+          int main() { int x = 0; B b(x, 0); return x; }",
+        // Heap.
+        r"struct B { int k; B(int& o) : k(0) { o = 1; } };
+          int main() { int x = 0; B* p = new B(x); return x; }",
+    ] {
+        let lines = main_lines(src);
+        let call = lines
+            .iter()
+            .position(|l| l.contains("direct-call B::B("))
+            .unwrap_or_else(|| panic!("no construction: {lines:#?}"));
+        let cell = lines[..call]
+            .iter()
+            .find_map(|l| {
+                l.strip_prefix("store ")
+                    .and_then(|r| r.strip_suffix(".deref := %L0"))
+            })
+            .unwrap_or_else(|| panic!("no copy in: {lines:#?}"));
+        let value = lines[call + 1..]
+            .iter()
+            .find_map(|l| l.strip_suffix(&format!(" = load {cell}.deref")))
+            .unwrap_or_else(|| panic!("no copy out of {cell}: {lines:#?}"));
+        assert!(
+            lines.contains(&format!("assign %L0 = {value}")),
+            "the copy out does not reach `x`: {lines:#?}"
+        );
+    }
+}
+
+/// A construction with no reference-cell parameter is untouched by spec 047: no cell, and nothing
+/// emitted after the constructor call.
+#[test]
+fn cpp_ctor_without_reference_params_is_unchanged() {
+    for src in [
+        r"struct B { int k; B(int v) : k(v) {} };
+          int main() { int x = 0; B b(x); return x; }",
+        r"struct B { int k; B(const int& v) : k(v) {} };
+          int main() { int x = 0; B b(x); return x; }",
+    ] {
+        let lines = main_lines(src);
+        assert!(!lines.iter().any(|l| l.contains(".deref")), "{lines:#?}");
+        let call = lines
+            .iter()
+            .position(|l| l.contains("direct-call B::B("))
+            .unwrap_or_else(|| panic!("no construction: {lines:#?}"));
+        assert_eq!(lines[call + 1], "return %L0", "{lines:#?}");
+    }
+}
+
+/// `B b(a[1])` is a most vexing parse whose parameter carries an `abstract_array_declarator`. Its
+/// argument is the element `a[1]`, read at the same path as the expression spelling
+/// `B b = B(a[1])`, and never the array `a` itself.
+#[test]
+fn cpp_mvp_element_arg_reads_the_element() {
+    let class = "struct B { int v; B(int in) : v(in) {} };";
+    for (decl, element, path) in [
+        ("int a[2] = {0, 0}", "a[1]", Some("%L0.[1].deref")),
+        ("int a[2][2] = {{0, 0}, {0, 0}}", "a[1][0]", None),
+    ] {
+        // The load that produces the constructor's argument: the last one before the call.
+        let arg_load = |init: &str| -> String {
+            let lines = main_lines(&format!(
+                "{class} int main() {{ {decl}; {init}; return 0; }}"
+            ));
+            let call = lines
+                .iter()
+                .position(|l| l.contains("direct-call B::B("))
+                .unwrap_or_else(|| panic!("no construction: {lines:#?}"));
+            assert!(!lines[call].ends_with(", %L0)"), "{lines:#?}");
+            lines[..call]
+                .iter()
+                .rev()
+                .find_map(|l| l.split_once(" = load ").map(|(_, p)| p.to_string()))
+                .unwrap_or_else(|| panic!("the argument is not loaded: {lines:#?}"))
+        };
+        let mvp = arg_load(&format!("B b({element})"));
+        assert_eq!(
+            mvp,
+            arg_load(&format!("B b = B({element})")),
+            "`B b({element})` reads another path than `B({element})`"
+        );
+        if let Some(path) = path {
+            assert_eq!(mvp, path);
+        }
+    }
+}

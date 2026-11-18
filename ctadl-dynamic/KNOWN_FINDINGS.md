@@ -37,27 +37,30 @@ field from the manifest **and** mark the entry below RESOLVED.
 ## F8 — A C++ reference parameter outside a reference cell cannot write back (OPEN)
 
 - **Status:** **open**, allowlisted as `known_gap: "F8"` on `CPP_280` (lambda), `CPP_281`
-  (template) and `CPP_282` (constructor). Opened 2026-10-20 by the merge of
-  `treesitter_feature_branch` (#154).
+  (template) and `CPP_295` (a call's reference result as the argument). Opened 2026-10-20 by the
+  merge of `treesitter_feature_branch` (#154). The constructor arm (`CPP_282`) was resolved
+  2026-11-18 by spec 047.
 - **What:** since #154, SSA writes every parameter back at its entry version, so assigning a
   parameter (`out = v`) never reaches the caller, whatever its `ParameterType`. Before that, a
   `Shared` (`ByRef`) `T&` carried a root write back. The C++ frontend now lowers a non-const
   reference to a scalar or a pointer as a **reference cell**: its value is at `@pN.deref`, and a
   direct call passes the argument through a temp's `.deref` and copies it back
   (`is_reference_cell_param`, `Context::pass_reference_args`). That covers free, method,
-  virtual, static and dependent calls (`CPP_38`, `CPP_271`–`CPP_279`). Three shapes stay on the
-  root model and lose the write:
+  virtual, static and dependent calls (`CPP_38`, `CPP_271`–`CPP_279`), and, since spec 047, every
+  construction form (`CPP_282`–`CPP_294`). Three shapes still lose the write:
   - a lambda's `int&` parameter, because a closure is called through a pointer that cannot pass
     the temp (`CPP_280`);
   - a template parameter's `T&`, whose method calls dispatch on the parameter itself, spec 043
     (`CPP_281`);
-  - a constructor writing its `int&`: construction copies the argument in, but has no argument
-    node to copy back into (`CPP_282`).
+  - an argument that is itself a call's reference result, `set(pick(x))` or
+    `B b(pick(x), 0)` with `int& pick(int&)`. The cell is copied in, but a call is not a plain
+    lvalue (`is_plain_lvalue`), so nothing is copied back, at any call site (`CPP_295`).
 - **Reads are unaffected:** a reference cell also stores its root into `.deref` on entry, so a
   caller that passes the plain value (through a function pointer) is still read (`CPP_275`).
-- **Fix direction:** in the frontend. Thread the argument nodes through the constructor paths
-  (`emit_ctor_call`); copy back at a closure call whose lambda is known; and lower `T&` as a cell
-  once spec 043's receivers can be `.deref` paths.
+- **Fix direction:** in the frontend. Copy back at a closure call whose lambda is known; lower
+  `T&` as a cell once spec 043's receivers can be `.deref` paths; and let a reference-returning
+  call's result (spec 036's `DispatchOut::location`) be a copy-back location. The constructor
+  paths were done by spec 047, which threads the argument nodes into `emit_ctor_edge`.
 
 ---
 

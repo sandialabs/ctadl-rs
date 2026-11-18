@@ -1,0 +1,6 @@
+{
+  "name": "CPP_289_ctor_ref_arg_delegating",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: the delegating `S(int& o) : S(o, 0)` passes its reference cell to the target constructor, which writes it. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_283_ctor_ref_arg_argument_list",
+  "description": "C++ constructor reference arguments (spec 047), POSITIVE: `B b(x, 0)` (an `argument_list`) with `B(int& o, int n)` writing `o = source()`; the cell is copied back into `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
