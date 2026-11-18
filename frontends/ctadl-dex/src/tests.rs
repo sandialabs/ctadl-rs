@@ -182,8 +182,7 @@ fn const_high16_assign() {
 }
 
 /// This is what `Exp::Int` is for: one value has one representation, no matter which opcode
-/// produced it. Under the old byte encoding these two were `[0x01]` and `[0x00, 0x01]`, which
-/// counted as two different constants.
+/// produced it.
 #[test]
 fn same_value_from_different_opcodes_is_one_constant() {
     let (four, _) = assign_from(Instruction::Const4(Format11n { a: Reg(0), lit: 1 }));
@@ -192,45 +191,6 @@ fn same_value_from_different_opcodes_is_one_constant() {
     assert_eq!(four[0].1, sixteen[0].1);
     assert_eq!(four[0].1, wide[0].1);
     assert_eq!(four[0].1.as_int(), Some(1));
-}
-
-#[test]
-fn test_throw_instruction_terminator() {
-    // Test that throw instructions generate proper Return terminators
-    // This is a conceptual test - in practice we'd need to parse actual dex with throw instructions
-
-    // The implementation should:
-    // 1. Detect Instruction::Throw(f)
-    // 2. Create Return terminator with (Exp::new_bytes(empty), throw_value)
-    // 3. Set function return type arity to 2
-
-    // For now, verify our helper functions work correctly
-    let empty_exp = Exp::new_bytes(Vec::new());
-    let mut locals = Locals::default();
-    let throw_var = VariableRef::new_local_idx(locals.get_or_intern("v0"));
-    let throw_exp = Exp::from(AccessPath::without_fields(throw_var));
-
-    // This should be the structure of a throw terminator
-    let expected_args: SmallVec<[Exp; 4]> = smallvec![empty_exp.clone(), throw_exp];
-
-    assert_eq!(
-        expected_args.len(),
-        2,
-        "Throw terminator should have 2 arguments"
-    );
-
-    // First arg should be empty (normal return value)
-    if let Exp::Bytes(bytes) = &expected_args[0] {
-        assert!(bytes.is_empty(), "First arg of throw should be empty bytes");
-    } else {
-        panic!("First arg of throw should be Bytes variant");
-    }
-
-    // Second arg should be the throw value
-    assert!(
-        matches!(&expected_args[1], Exp::Variable(_)),
-        "Second arg should be a variable"
-    );
 }
 
 #[test]

@@ -1,24 +1,24 @@
 //! A prefix-sharing (trie-like) BYODS data structure for the `assign_like` relation.
 //!
 //! After `locals`, `assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path)` is the other
-//! dominant memory consumer of the index phase. As a normal Ascent relation it is stored about 3
-//! times over; run `cargo expand` to see it. Those three copies are the physical `Vec`, the full
-//! existence index `0_1_2_3_4`, which replicates the whole tuple as its hash key, and the probe
-//! index `0_3`, which maps `(F, src-var) -> [(dst-var, dst-path, src-path)]` with the value
-//! columns stored inline. Every read of `assign_like` in the ruleset binds exactly `{col0, col3}`,
-//! that is `(FunctionId, src-var)`. So one probe view suffices, and the whole 3-times replication
-//! is pure overhead.
+//! dominant memory consumer of the index phase. As a normal Ascent relation it is stored once in
+//! the physical `Vec` and again in every index; run `cargo expand` to see it. The full existence
+//! index `0_1_2_3_4` replicates the whole tuple as its hash key, and the probe indices `0_3` and
+//! `0_3_4` store their value columns inline. Every probe of `assign_like` in the ruleset binds
+//! `(FunctionId, src-var)`, with or without the source path, so all of them can be served from
+//! one store keyed that way, and the replication is pure overhead.
 //!
 //! This module replaces all of that with one shared store, the Ascent BYODS "ind_common". The
-//! store is a two-level map, `fwd: (F, Vsrc) -> {(Vdst, Pdst, Psrc)}`, which stores each column
-//! once. It serves both logical indices as lightweight *views*:
-//!   - `0_3` point-probes `(F, Vsrc)` and iterates its leaf set.
+//! store is a map `fwd: (F, Vsrc) -> {(Psrc, Vdst, Pdst)}`, each group a [`PathGroup`] keyed on
+//! `Psrc`, which stores each column once. It serves every logical index as a lightweight *view*:
+//!   - `0_3` point-probes `(F, Vsrc)` and iterates its group.
+//!   - `0_3_4` point-probes `(F, Vsrc)` and looks `Psrc` up in its group.
+//!   - `none` walks the whole store.
 //!   - the full `0_1_2_3_4` index handles existence and dedup: it looks up `(F, Vsrc)` and tests
-//!     whether the `(Vdst, Pdst, Psrc)` leaf is a member. It also serves whole-relation iteration,
-//!     by walking the store.
+//!     whether the leaf is a member.
 //!
-//! This is the same design as `locals_trie`, but simpler. `locals` needed a `P`-level sub-trie, an
-//! inverse view, and an `fidx` side-index; `assign_like` needs none of the three.
+//! This is the same design as `locals_trie`, but simpler: `assign_like` needs neither an inverse
+//! view nor an `fidx` side-index.
 //!
 //! Correctness note, identical to `locals_trie`: a plain Ascent relation would merge the store
 //! twice, once through the ind_common and once through the index write targets, which would
@@ -31,7 +31,6 @@
 //! it is a *saved output*. Its physical `Vec` is a [`SeedVec`] that retains no tuples, so we
 //! rebuild the result Vec from the store after the run, using [`AssignTrie::into_vec`].
 
-use std::cell::{Cell, RefCell};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Index;
@@ -42,8 +41,6 @@ use ascent::internal::{
 };
 
 use crate::index_engine::locals_trie::hb_bytes;
-// Reuse two shared helpers from `locals_trie`: the boxed iterator we can clone, and the no-op
-// write target for view indices.
 use crate::index_engine::locals_trie::{DynIter, NoopWrite};
 use crate::index_engine::path_group::PathGroup;
 
@@ -58,79 +55,45 @@ pub trait FromRows<R> {
 }
 
 // ---------------------------------------------------------------------------
-// Physical `rel!` storage.
-//
-// `locals` is a derived relation whose physical store is a pure `CountingVec` holding no tuples.
-// `assign_like` differs: a `= SeedVec::from(..)` initializer *seeds* it with the original program
-// assignments, which are about 94% of the final relation. Ascent's seed path assigns the physical
-// store, then, exactly once during index build, iterates it and calls `index_insert` on each
-// tuple. For this BYODS provider that routes into the shared trie, through the full index's write
-// target.
-//
-// `SeedVec` exploits that single pass: `iter()` *drains* the seed out. So after index build the
-// seed lives only in the trie, never in a second full-size buffer. We discard every later
-// derived-row `push`, because the row is already in the trie, and keep only the row count, so that
-// `prog.assign_like.len()` and Ascent's synthetic row indices stay well-defined.
+// Physical `rel!` storage. Like `locals_trie::CountingVec`, it stores no tuples and only counts
+// the rows, so that `prog.assign_like.len()` and Ascent's synthetic row indices stay
+// well-defined. Every derived row is already in the trie, and the seed rows go into the trie
+// directly, through [`FromRows`].
 // ---------------------------------------------------------------------------
 pub struct SeedVec<T> {
-    /// The seed tuples. The single index-build `iter()` pass drains them into the trie. They need
-    /// interior mutability because that pass borrows the physical store as `&self`.
-    seed: RefCell<Vec<T>>,
-    /// Logical row count: the seed size plus the pushes we discarded. `len` reads it through
-    /// `&self` and `push` bumps it through `&mut self`, so a plain field suffices.
-    count: usize,
-    /// Set the first time `iter()` runs. It catches a future Ascent codegen change that would call
-    /// `iter()` twice, where the second call would silently see an already-drained, empty seed.
-    drained: Cell<bool>,
+    len: usize,
+    _p: PhantomData<T>,
 }
 impl<T> Default for SeedVec<T> {
     fn default() -> Self {
         Self {
-            seed: RefCell::new(Vec::new()),
-            count: 0,
-            drained: Cell::new(false),
-        }
-    }
-}
-impl<T> From<Vec<T>> for SeedVec<T> {
-    fn from(v: Vec<T>) -> Self {
-        let count = v.len();
-        Self {
-            seed: RefCell::new(v),
-            count,
-            drained: Cell::new(false),
+            len: 0,
+            _p: PhantomData,
         }
     }
 }
 impl<T> SeedVec<T> {
     #[inline(always)]
     pub fn push(&mut self, _v: T) {
-        self.count += 1;
+        self.len += 1;
     }
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.count
+        self.len
     }
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.len == 0
     }
-    /// Drain the seed. Ascent calls this exactly once, during index build and before any `push`,
-    /// to route the seed into the trie through the full index's write target. Draining is what
-    /// keeps the seed from being retained for the rest of the run.
-    #[inline]
-    pub fn iter(&self) -> std::vec::IntoIter<T> {
-        debug_assert!(
-            !self.drained.replace(true),
-            "assign_like_trie::SeedVec::iter called more than once; the seed would be lost"
-        );
-        std::mem::take(&mut *self.seed.borrow_mut()).into_iter()
+    #[inline(always)]
+    pub fn iter(&self) -> std::iter::Empty<&T> {
+        std::iter::empty()
     }
 }
 impl<T> Index<usize> for SeedVec<T> {
     type Output = T;
     fn index(&self, _index: usize) -> &T {
-        panic!("assign_like_trie::SeedVec is not randomly indexable")
+        panic!("assign_like_trie::SeedVec stores no tuples")
     }
 }
 
@@ -155,12 +118,10 @@ where
     /// serves the `0_3` probe by iterating a group, the `0_3_4` probe by looking `Psrc` up in it,
     /// and the `0_1_2_3_4` existence index by membership.
     ///
-    /// A group is a [`PathGroup`]: two words wide and one allocation while it is small, which
-    /// is the overwhelmingly common case (keyed on `(F, Vsrc)`, `assign_like` fans out to fewer
-    /// than 2 leaves per group on average; we measured 1.85 on binary targets), and a map from
-    /// source path to leaves once it grows past the small threshold, so that the exact-path
-    /// probe and dedup stay O(1) on the dense groups a summary instantiation creates (tens of
-    /// thousands of edges at one call-argument vertex).
+    /// Keyed on `(F, Vsrc)`, `assign_like` fans out to fewer than 2 leaves per group on average
+    /// (1.85 measured on binary targets), so most groups stay in [`PathGroup`]'s small regime;
+    /// its by-path regime keeps the exact-path probe and dedup O(1) on the dense groups a
+    /// summary instantiation creates (tens of thousands of edges at one call-argument vertex).
     fwd: Map<(F, Vs), PathGroup<Ps, Vd, Pd>>,
     len: usize,
 }
@@ -228,9 +189,8 @@ where
         let sz_leaf = std::mem::size_of::<(Vd, Pd, Ps)>();
         let sz_full = std::mem::size_of::<(F, Vd, Pd, Vs, Ps)>();
 
-        // The actual trie: the outer map from (F,Vs) to a Vec, plus each leaf Vec's heap
-        // allocation. We also track the largest group, because leaf dedup is O(group size), so a
-        // hot group would flag O(N^2) behaviour.
+        // The actual trie: the outer map from (F,Vs) to a group, plus each group's heap
+        // allocation, and the largest group.
         let mut trie = hb_bytes(
             self.fwd.capacity(),
             sz_key + std::mem::size_of::<PathGroup<Ps, Vd, Pd>>(),

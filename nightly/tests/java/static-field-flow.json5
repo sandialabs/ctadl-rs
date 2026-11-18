@@ -1,8 +1,7 @@
 {
   // Flow: data = source() (14) -> local = data (15) -> sink(local) (16).
-  // Line 15 is dropped: `local = data` is a pure copy that copy_alias collapses
-  // onto the static field, so the read at line 15 surfaces in neither the human
-  // code flow nor the machine tainted-instructions.
+  // Line 15 is dropped: `local = data` is a pure copy
+  // (see "Pure copies" in nightly/README.md).
   "expected_lines": [
     14,
     16

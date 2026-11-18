@@ -20,9 +20,10 @@ table is one `match` with no `_` arm, so a review compares a row to an arm:
 | `lines.rs`     | spans: source lines from the portable PDB, else IL bytes          |
 
 The IR is naive: one obvious statement per effect, every copy kept, no merging of
-temporaries. `ssa::run_pipeline` in `ctadl index` does the cleanup (copy coalescing, pruned
-SSA, copy propagation), and gives each definition of a depth-named stack variable `s{d}` its
-own version, so "which object does this `stfld` write to" is answered by copy propagation.
+temporaries. `ssa::run_pipeline_with_threads` in `ctadl index` does the cleanup (copy
+coalescing, pruned SSA, copy propagation), and gives each definition of a depth-named stack
+variable `s{d}` its own version, so "which object does this `stfld` write to" is answered by
+copy propagation.
 
 Every lowering choice the IR does not force is a policy, made in one place:
 
@@ -394,7 +395,6 @@ impl Context {
         }
     }
 
-    /// Translates one assembly into the program.
     /// Translates one assembly into the program, its spans from `spans`.
     pub fn process<'m>(
         &mut self,

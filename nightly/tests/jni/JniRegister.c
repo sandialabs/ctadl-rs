@@ -4,11 +4,11 @@
  * Neither `stash_impl` nor `fetch_impl` is spelled `Java_JniRegister_…`, so the
  * bridge's symbol tiers find nothing at all. The only record of which Java
  * method each implements is the table below, which is what
- * `ctadl_ascent::languages::jni::registry` recovers straight out of the
+ * `ctadl_pcode::jni_registry` recovers straight out of the
  * library's data section.
  *
  * See JniFlow.c for why the JNI types are declared locally instead of coming
- * from <jni.h> (the regression flake ships no NDK), and for why the taint
+ * from <jni.h> (the regression check's SDK has no NDK), and for why the taint
  * leaves through a call (`keep`) rather than a bare return: a native line is
  * assertable only where there is a call site.
  *

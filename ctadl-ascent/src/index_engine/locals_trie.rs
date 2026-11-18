@@ -1,35 +1,34 @@
-//! A flat, CSR-style BYODS data structure for the `locals` relation.
+//! A shared-store BYODS data structure for the `locals` relation.
 //!
 //! `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` uses more memory than anything
 //! else in the index phase. As a normal Ascent relation it is stored about 6 times over: once
-//! in the physical `Vec`, and again in each of the indices `none`, `0_1`, `0_1_2`, the full
-//! existence index `0_1_2_3_4`, and the inverse `0_3_4`. Every index stores its value columns
-//! *inline*, so the full 5-column tuple is copied many times.
+//! in the physical `Vec`, and again in each of the indices `none`, `0_1`, `0_1_2`, and the full
+//! existence index `0_1_2_3_4`. Every index stores its value columns *inline*, so the full
+//! 5-column tuple is copied many times.
 //!
 //! This module replaces all of that with one shared store: the Ascent BYODS "ind_common".
 //! Every logical index becomes a lightweight *view* over that single store.
 //!
 //! ## Why flat, not a nested trie
 //!
-//! The earlier design stored `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
-//! HashSet<(M,Fp)>>>`. On a representative workload the groups turned out to be *tiny*: about
-//! 5 leaves per `(F,V)` group, spread over about 2 distinct `P`. That left the two inner hash
-//! levels nearly empty. Each one pays hashbrown's minimum **4**-bucket allocation, plus
-//! control bytes, to hold about 2 elements. Most of the store's bytes went to that structural
-//! slack rather than to the data itself: 36k inner maps were about 53%, 70k leaf sets about
-//! 38%, and only about 13% was real data plus the outer map.
+//! A nested trie would store `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
+//! HashSet<(M,Fp)>>>`. On a representative workload the groups are *tiny*: about 5 leaves per
+//! `(F,V)` group, spread over about 2 distinct `P`. That leaves the two inner hash levels
+//! nearly empty. Each one pays hashbrown's minimum **4**-bucket allocation, plus control
+//! bytes, to hold about 2 elements, so most of the store's bytes go to that structural slack
+//! rather than to the data itself: measured, 36k inner maps were about 53%, 70k leaf sets
+//! about 38%, and only about 13% was real data plus the outer map.
 //!
 //! Flattening does not win all of that back. The flat form stores `P` inline on every leaf,
-//! where the nested form shared one `P` per leaf set. Measured against a faithful rebuild of
-//! the nested design over identical data, the flat design is 1.1–2.3× smaller, not about 10×.
+//! where the nested form shares one `P` per leaf set. Measured against a faithful nested store
+//! over identical data, the flat design is 1.1–2.3× smaller, not about 10×.
 //!
-//! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**.
-//! That gives us:
-//!   - one heap allocation per group, instead of `1 + (#distinct P)` tiny hash tables;
+//! We collapse both inner levels into one **[`PathGroup`] of `(P,M,Fp)` per `(F,V)` group**,
+//! which is a single [`super::hybrid_set::HybridSet`] over the whole leaf while the group is
+//! small. That gives us:
+//!   - one heap allocation per small group, instead of `1 + (#distinct P)` tiny hash tables;
 //!   - leaves packed 24 B each, with no per-element control bytes. In the small
 //!     representation the whole occupancy map is a single `u64` word beside the slots;
-//!   - a group that is only two words wide, so the outer map entry is 32 B rather than 48.
-//!     One structure changes regime as it grows; it is not an enum over two representations;
 //!   - existence checks that probe rather than scan, at every group size.
 //!
 //! ## Large groups
@@ -37,21 +36,19 @@
 //! No single representation serves both ends of the group-size distribution. A function with
 //! dense aliasing is *rare*, but its `(F,V)` group grows to tens of thousands of leaves. If
 //! the delta->total merge re-copies the whole accumulated group, then building a group of size
-//! `G` costs O(G^2). On such inputs that dominates everything else: profiling put it at about
-//! 55% of index time (see memory-investigation.md §7/§8).
+//! `G` costs O(G^2). On such inputs that dominates everything else.
 //!
-//! So a group that grows past [`SMALL_THRESHOLD`] switches to Swiss probing, using this
-//! crate's own table (see [`super::hybrid_set::swiss`]). There the merge is O(delta), because
-//! it inserts only the new leaves. Below the threshold the group probes linearly over an
+//! So a group that grows past [`SMALL_THRESHOLD`] switches to its by-path regime: a map from
+//! `P` to a set of `(M,Fp)`, each set switching to Swiss probing in turn once it is large (see
+//! [`PathGroup`] and [`super::hybrid_set::swiss`]). There the merge is O(delta), because it
+//! inserts only the new leaves. Below the threshold the group probes linearly over an
 //! allocation that holds its element slots plus one occupancy word. The switch changes the
 //! regime *within* one structure; it does not change the type. See [`super::hybrid_set`] for
 //! why that is the right small representation, why it is not an enum, and how the transition
 //! is made cheap.
 //!
 //! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
-//! iteration. We do not materialize a full inverse. As before, the `0_3_4` view is *derived*
-//! by scanning, and a small side-index `fidx: F -> {V}` narrows each `0_3_4` probe to the
-//! flow-variables of the function being probed.
+//! iteration.
 //!
 //! Correctness note (we differ here from `ascent_byods_rels::eqrel`): Ascent merges the shared
 //! store twice per iteration, once through the ind_common and once through the full-index
@@ -78,7 +75,6 @@ use super::path_group::PathGroup;
 // the fast, deterministic `FxHasher` instead of the DoS-resistant SipHash the
 // std collections use.
 type Map<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
-type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 // ---------------------------------------------------------------------------
 // Sizing hashbrown's own tables, for [`HeapReport`].
@@ -87,8 +83,7 @@ type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 // The store's leaves live in `HybridSet`s, and those report their own bytes. But the maps
 // holding those sets are hashbrown's, and hashbrown reports only `capacity()`. These three
 // items turn a capacity into bytes. They live here because this store is what they were
-// written for, and what the counting-allocator bench validates them against. `assign_like_trie`
-// and `hybrid_set`'s tests use them from here.
+// written for, and what the counting-allocator bench validates them against.
 
 /// Width in bytes of hashbrown's SIMD control group.
 ///
@@ -153,16 +148,9 @@ pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
 // A single `(F,V)` group's leaves.
 // ---------------------------------------------------------------------------
 
-/// The leaves of one `(F,V)` group, held in a [`PathGroup`] keyed on `P`.
-///
-/// While the group holds at most [`SMALL_THRESHOLD`] leaves it is one two-word
-/// [`super::hybrid_set::HybridSet`] over the whole leaf, probing linearly over its bare element
-/// slots. That is by far the common case: 67 to 100% of the groups hold exactly *one* leaf, in
-/// every store we have measured, whatever the largest group in it was. Above the threshold the
-/// leaves move into a map from `P` to the `(M, Fp)` pairs at that path, so that the exact
-/// `0_1_2` probe the local propagation rules make is one lookup rather than a scan of the group, and
-/// the per-iteration delta->total merge stays O(delta) instead of re-copying the whole
-/// accumulated group every round.
+/// The leaves of one `(F,V)` group, held in a [`PathGroup`] keyed on `P`, so that the exact
+/// `0_1_2` probe the local propagation rules make is one lookup on a large group rather than a
+/// scan of it.
 type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
@@ -255,19 +243,9 @@ where
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
-    /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
-    /// `none`, `0_1`, `0_1_2`, and existence views directly, and the `0_3_4` view by
-    /// *scanning*. Because a group is a set, existence is a probe, and `0_1_2` filters the
-    /// group for its `P` rather than slicing a run. One heap allocation per group replaces
-    /// the old nested `HashMap<P, HashSet<(M,Fp)>>`, which on tiny groups was mostly
-    /// hashbrown slack.
+    /// Forward map: `(F,V)` -> the `(P, M, Fp)` leaves for that group. It serves the `none`,
+    /// `0_1`, `0_1_2`, and existence views.
     fwd: Map<(F, V), Group<P, M, Fp>>,
-    /// Side-index: `F` -> the set of `V` present for that function. It lets a `0_3_4` probe
-    /// restrict its scan to the flow-variables of the function being probed, instead of
-    /// walking every `(F,V)` group in `fwd`. We keep it in lockstep with `fwd`'s outer keys,
-    /// one V per `(F,V)` group. That is cheap: one V (8 B plus hashbrown slack) per group,
-    /// against a store measured in gigabytes.
-    fidx: Map<F, Set<V>>,
     len: usize,
 }
 
@@ -297,19 +275,15 @@ where
         self.fwd.len()
     }
 
-    /// Phase-0 instrumentation. Estimates the heap bytes held by the forward store against
-    /// those held by the `fidx` side-index, so we can see *which* structure dominates before
-    /// we optimize. An external `phys_footprint` cannot attribute bytes to a sub-structure,
-    /// so we count them here.
+    /// Estimates the heap bytes held by the store, with the shape of its groups. An external
+    /// `phys_footprint` cannot attribute bytes to one data structure, so we count them here.
     ///
     /// Hash-table bytes include load-factor slack ([`hb_bytes`], which is exact for these
-    /// element types), and group bytes come from [`HybridSet::heap_bytes`]. The whole report
+    /// element types), and group bytes come from [`PathGroup::heap_bytes`]. The whole report
     /// therefore accounts for allocation sizes, not for payload. It takes one pass, O(rows).
     pub fn heap_report(&self) -> HeapReport {
         let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
         let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
-        let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();
-        let sz_fidx_val = std::mem::size_of::<V>();
 
         let mut r = HeapReport {
             rows: self.len,
@@ -317,10 +291,7 @@ where
             p_entries: 0,
             leaf_elems: 0,
             fwd_bytes: hb_bytes(self.fwd.capacity(), sz_outer),
-            fidx_funcs: self.fidx.len(),
-            fidx_vs: 0,
-            fidx_bytes: hb_bytes(self.fidx.capacity(), sz_fidx_outer),
-            elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
+            elem_sizes: (sz_outer, sz_leaf),
             max_group: 0,
             large_groups: 0,
             group_hist: Vec::new(),
@@ -343,10 +314,6 @@ where
             r.fwd_bytes += group.heap_bytes();
             r.p_entries += group.num_paths();
         }
-        for vs in self.fidx.values() {
-            r.fidx_vs += vs.len();
-            r.fidx_bytes += hb_bytes(vs.capacity(), sz_fidx_val);
-        }
         r
     }
 
@@ -361,17 +328,8 @@ where
 
     /// Insert a full tuple. Returns true if it was new to *this* store.
     fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
-        use hashbrown::hash_map::Entry;
         let (f, v, p, m, fp) = key;
-        // Fetch the (F,V) group. The first time a group appears, record its V in the
-        // side-index.
-        let group = match self.fwd.entry((f.clone(), v.clone())) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => {
-                self.fidx.entry(f.clone()).or_default().insert(v.clone());
-                e.insert(Group::new())
-            }
-        };
+        let group = self.fwd.entry((f.clone(), v.clone())).or_default();
         if group.insert((p.clone(), m.clone(), fp.clone())) {
             self.len += 1;
             true
@@ -384,19 +342,17 @@ where
     fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
         for ((f, v), fromgroup) in from.fwd.drain() {
-            match self.fwd.entry((f.clone(), v.clone())) {
+            match self.fwd.entry((f, v)) {
                 Entry::Occupied(e) => {
                     self.len += e.into_mut().merge(fromgroup);
                 }
                 Entry::Vacant(e) => {
-                    self.fidx.entry(f).or_default().insert(v);
                     self.len += fromgroup.len();
                     e.insert(fromgroup);
                 }
             }
         }
         from.len = 0;
-        from.fidx.clear();
     }
 }
 
@@ -414,15 +370,8 @@ pub struct HeapReport {
     pub leaf_elems: usize,
     /// Estimated bytes for the whole forward store: the outer map plus every group's leaves.
     pub fwd_bytes: usize,
-    /// Number of distinct functions in the `fidx` side-index, that is, of its outer keys.
-    pub fidx_funcs: usize,
-    /// Number of `V` entries across all `fidx` sets. Equals the number of distinct `(F,V)`
-    /// groups, which is `fv_groups`.
-    pub fidx_vs: usize,
-    /// Estimated bytes for the `fidx` side-index: the outer map plus every function's V set.
-    pub fidx_bytes: usize,
-    /// Element sizes `(outer, _unused, leaf, fidx_outer, fidx_val)`, for reference.
-    pub elem_sizes: (usize, usize, usize, usize, usize),
+    /// Element sizes `(outer, leaf)`, for reference.
+    pub elem_sizes: (usize, usize),
     /// Size in leaves of the largest single `(F,V)` group. This is what tells us whether the
     /// small, linear-probing representation is still the right one for this store.
     pub max_group: usize,
@@ -436,15 +385,8 @@ pub struct HeapReport {
 impl std::fmt::Display for HeapReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
-        let total = self.fwd_bytes + self.fidx_bytes;
-        let pct = |b: usize| {
-            if total == 0 {
-                0.0
-            } else {
-                100.0 * b as f64 / total as f64
-            }
-        };
-        let (o, _i, l, fo, fv) = self.elem_sizes;
+        let total = self.fwd_bytes;
+        let (o, l) = self.elem_sizes;
         // Read "0:12 1:3 5:1" as: 12 groups of 1 leaf, 3 groups of 2-3, and 1 group of 32-63.
         let hist = self
             .group_hist
@@ -457,10 +399,9 @@ impl std::fmt::Display for HeapReport {
         write!(
             f,
             "locals store estimate: total {:.1} MB over {} rows ({:.0} B/row) | \
-             fwd {:.1} MB ({:.0}%): {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
-             fidx {:.1} MB ({:.0}%): {} funcs, {} V entries | \
+             fwd: {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
              groups: max {}, large {}, mean {:.2}, log2hist [{}] | \
-             elem sizes o={} l={} fo={} fv={} B | group set threshold {}",
+             elem sizes o={} l={} B | group set threshold {}",
             mb(total),
             self.rows,
             if self.rows == 0 {
@@ -468,15 +409,9 @@ impl std::fmt::Display for HeapReport {
             } else {
                 total as f64 / self.rows as f64
             },
-            mb(self.fwd_bytes),
-            pct(self.fwd_bytes),
             self.fv_groups,
             self.p_entries,
             self.leaf_elems,
-            mb(self.fidx_bytes),
-            pct(self.fidx_bytes),
-            self.fidx_funcs,
-            self.fidx_vs,
             self.max_group,
             self.large_groups,
             if self.fv_groups == 0 {
@@ -487,8 +422,6 @@ impl std::fmt::Display for HeapReport {
             hist,
             o,
             l,
-            fo,
-            fv,
             SMALL_THRESHOLD,
         )
     }
@@ -505,7 +438,6 @@ where
     fn default() -> Self {
         Self {
             fwd: Map::default(),
-            fidx: Map::default(),
             len: 0,
         }
     }
@@ -522,7 +454,6 @@ where
     fn clone(&self) -> Self {
         Self {
             fwd: self.fwd.clone(),
-            fidx: self.fidx.clone(),
             len: self.len,
         }
     }
@@ -680,7 +611,6 @@ macro_rules! marker {
 marker!(ToNone, ViewNone, NoopWrite<(), (F, V, P, M, Fp)>, _rel => NoopWrite::default());
 marker!(To01, View01, NoopWrite<(F, V), (P, M, Fp)>, _rel => NoopWrite::default());
 marker!(To012, View012, NoopWrite<(F, V, P), (M, Fp)>, _rel => NoopWrite::default());
-marker!(To034, View034, NoopWrite<(F, M, Fp), (V, P)>, _rel => NoopWrite::default());
 marker!(ToFull, ViewFull, FullWrite<'a, F, V, P, M, Fp>, rel => FullWrite(rel));
 
 pub struct ViewNone<'a, F, V, P, M, Fp>(&'a LocalsIndCommon<F, V, P, M, Fp>)
@@ -698,13 +628,6 @@ where
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash;
 pub struct View012<'a, F, V, P, M, Fp>(&'a LocalsIndCommon<F, V, P, M, Fp>)
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash;
-pub struct View034<'a, F, V, P, M, Fp>(&'a LocalsIndCommon<F, V, P, M, Fp>)
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
@@ -822,7 +745,7 @@ where
     type Key = (F, V, P);
     type Value = (&'a M, &'a Fp);
     // The concrete iterator, not a boxed one: this is the probe the local propagation rules make
-    // once per derived row, and a box plus an `Rc` per probe was a measurable share of it.
+    // once per derived row, and a box plus an `Rc` per probe is a measurable share of it.
     type IteratorType = super::path_group::Get<'a, P, M, Fp>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
@@ -864,91 +787,6 @@ where
                 let it = DynIter::new(move || mfs.clone().into_iter());
                 ((f, v, p), it)
             })
-        }))
-    }
-}
-
-// ---- 0_3_4: (F,M,Fp) -> (V,P) ---------------------------------------------
-impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for View034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    type Key = (F, M, Fp);
-    type Value = (&'a V, &'a P);
-    type IteratorType = DynIter<'a, Self::Value>;
-    #[inline]
-    fn index_get(&'a self, key: &(F, M, Fp)) -> Option<Self::IteratorType> {
-        // This view is derived; there is no materialized inverse. For the probed function `f`,
-        // we visit only its flow-variables, found through the `fidx` side-index, and yield
-        // every `(v, p)` whose group holds a leaf with this `(m, fp)`. That touches one
-        // function's `(F,V)` groups instead of scanning all of `fwd`. It is a cold path: rule
-        // 2.2 makes on the order of tens of probes. We return `Some` of an iterator that may be
-        // empty, which for a join means the same thing as `None`.
-        let c = self.0;
-        let (f, m, fp) = key.clone();
-        Some(DynIter::new(move || {
-            let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
-            // We keep `fidx[f]` and `fwd` in lockstep, so every V here has an `fwd` group.
-            c.fidx.get(&f).into_iter().flat_map(move |vs| {
-                let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
-                vs.iter().flat_map(move |v| {
-                    let (m, fp) = (m.clone(), fp.clone());
-                    c.fwd
-                        .get(&(f.clone(), v.clone()))
-                        .into_iter()
-                        .flat_map(move |group| {
-                            let (m, fp) = (m.clone(), fp.clone());
-                            group.iter().filter_map(move |(p, mm, ffp)| {
-                                if *mm == m && *ffp == fp {
-                                    Some((v, p))
-                                } else {
-                                    None
-                                }
-                            })
-                        })
-                })
-            })
-        }))
-    }
-    #[inline]
-    fn len_estimate(&self) -> usize {
-        // There is no materialized inverse to size. `0_3_4` is only ever probed, never used as
-        // a join driver, so a large estimate is safe: it discourages the planner from choosing
-        // it as a driver, which is what we want. We use the row count as a conservative upper
-        // bound.
-        self.0.len()
-    }
-}
-impl<'a, F, V, P, M, Fp> RelIndexReadAll<'a> for View034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    type Key = (&'a F, &'a M, &'a Fp);
-    type Value = (&'a V, &'a P);
-    type ValueIteratorType = DynIter<'a, Self::Value>;
-    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
-    fn iter_all(&'a self) -> Self::AllIteratorType {
-        // This is not on any hot path. Rule 2.2 only ever point-probes `0_3_4`; nothing
-        // iterates it as a driver. So we give a correct fallback by inverting `fwd` on demand
-        // and throwing the result away. If this ever shows up in a profile, some rule has
-        // started iterating `0_3_4`, and we should reconsider materializing the inverse.
-        let mut groups: Map<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>> = Map::default();
-        for ((f, v), group) in self.0.fwd.iter() {
-            for (p, m, fp) in group.iter() {
-                groups.entry((f, m, fp)).or_default().push((v, p));
-            }
-        }
-        Box::new(groups.into_iter().map(|(key, vps)| {
-            let it = DynIter::new(move || vps.clone().into_iter());
-            (key, it)
         }))
     }
 }
@@ -1084,9 +922,6 @@ macro_rules! locals_trie_rel_ind {
     ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To012<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
-        $crate::index_engine::locals_trie::To034<$f, $v, $p, $m, $fp>
-    };
 
     ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [], $key:ty, $val:ty) => {
         $crate::index_engine::c_locals_trie::CToNone<$f, $v, $p, $m, $fp>
@@ -1096,9 +931,6 @@ macro_rules! locals_trie_rel_ind {
     };
     ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
         $crate::index_engine::c_locals_trie::CTo012<$f, $v, $p, $m, $fp>
-    };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
-        $crate::index_engine::c_locals_trie::CTo034<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_ind as rel_ind;
@@ -1111,11 +943,8 @@ mod tests {
 
     type Store = LocalsIndCommon<u32, u64, u64, i16, u64>;
 
-    /// Builds a store from `rows` and checks every read view against those rows.
-    ///
-    /// The views are the part of this module that changed when groups stopped being sorted.
-    /// `0_1_2` now filters where it used to slice a run, and `iter_all` buckets where it used
-    /// to split one. Callers exercise groups on both sides of `SMALL_THRESHOLD`.
+    /// Builds a store from `rows` and checks every read view against those rows. Callers
+    /// exercise groups on both sides of `SMALL_THRESHOLD`.
     fn check_views(rows: &[(u32, u64, u64, i16, u64)]) {
         let mut store = Store::default();
         for row in rows {
@@ -1193,29 +1022,6 @@ mod tests {
         got.sort_unstable();
         assert_eq!(got, want, "`0_1_2` iter_all");
 
-        // `0_3_4`: (F,M,Fp) -> (V,P), derived by scanning through `fidx`.
-        let view = View034(&store);
-        for &(f, _, _, m, fp) in &want {
-            let mut got: Vec<_> = view
-                .index_get(&(f, m, fp))
-                .unwrap()
-                .map(|(v, p)| (f, *v, *p, m, fp))
-                .collect();
-            got.sort_unstable();
-            let expect: Vec<_> = want
-                .iter()
-                .copied()
-                .filter(|r| r.0 == f && r.3 == m && r.4 == fp)
-                .collect();
-            assert_eq!(got, expect, "`0_3_4` view at {:?}", (f, m, fp));
-        }
-        let mut got: Vec<_> = view
-            .iter_all()
-            .flat_map(|((f, m, fp), vals)| vals.map(move |(v, p)| (*f, *v, *p, *m, *fp)))
-            .collect();
-        got.sort_unstable();
-        assert_eq!(got, want, "`0_3_4` iter_all");
-
         // The full existence index.
         let view = ViewFull(&store);
         for &(f, v, p, m, fp) in &want {
@@ -1255,7 +1061,7 @@ mod tests {
         let mut dup = rows(2, 4, 2);
         dup.extend_from_slice(&dup.clone());
         check_views(&dup);
-        // Straddle the small -> Swiss transition inside a group.
+        // Straddle the small -> by-path transition inside a group.
         for group in [
             SMALL_THRESHOLD - 1,
             SMALL_THRESHOLD,
@@ -1266,8 +1072,8 @@ mod tests {
         }
     }
 
-    /// `absorb` is the delta->total merge. It has to keep `len`, `fidx`, and the groups
-    /// consistent, whichever representation the two sides are in.
+    /// `absorb` is the delta->total merge. It has to keep `len` and the groups consistent,
+    /// whichever representation the two sides are in.
     #[test]
     fn absorb_unions_the_stores() {
         for (a_group, b_group) in [
@@ -1294,7 +1100,6 @@ mod tests {
             total.absorb(&mut delta);
 
             assert_eq!(delta.len(), 0, "absorbed delta must be empty");
-            assert_eq!(delta.fidx.len(), 0, "absorbed delta must drop its fidx");
 
             let mut want: Vec<_> = a_rows.iter().chain(b_rows.iter()).copied().collect();
             want.sort_unstable();
@@ -1303,18 +1108,6 @@ mod tests {
             for &(f, v, p, m, fp) in &want {
                 assert!(total.contains(&f, &v, &p, &m, &fp));
             }
-            // `fidx` must list the V of every group, or `0_3_4` can no longer find them.
-            for ((f, v), _) in total.fwd.iter() {
-                assert!(
-                    total.fidx[f].contains(v),
-                    "fidx missing {v} of function {f}"
-                );
-            }
-            assert_eq!(
-                total.fidx.values().map(|vs| vs.len()).sum::<usize>(),
-                total.fwd.len(),
-                "fidx must hold exactly one V per group"
-            );
             let report = total.heap_report();
             assert_eq!(report.rows, total.len());
             assert_eq!(report.leaf_elems, total.len(), "heap_report leaf count");

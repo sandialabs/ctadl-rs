@@ -3,8 +3,8 @@
  * (`Java_` + class + `_` + method, with no package to mangle here).
  *
  * The JNI types are declared locally rather than pulled from <jni.h>: the
- * regression flake supplies no NDK (flake.nix, includeNDK = false), and the
- * analysis only needs each function's arity and the shape of the dataflow.
+ * regression check's SDK has no NDK (nix/android-jvm.nix, includeNDK = false),
+ * and the analysis only needs each function's arity and the shape of the dataflow.
  *
  * `g_slot` is a file-scope global, not a static one, so the flow is the same
  * cross-function global flow tests/c/globalflow.c already pins -- what is new

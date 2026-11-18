@@ -154,7 +154,7 @@ impl<N: IdxOrdered> DomImpl<N> {
             // Parent of n is semidominator candidate
             let mut s = p;
 
-            // Find semidominator of w using Theorem 4.
+            // Find semidominator of `n` using Theorem 4.
             for v in graph.predecessors(n) {
                 let s1 = {
                     if self.dfnum[v] <= self.dfnum[n] {
@@ -225,7 +225,7 @@ impl<N: IdxOrdered> DomImpl<N> {
             // ancestor.
             self.ancestor[v] = Some(ancestor_a);
             // `b` might be the new "best" node, i.e., the node whose semidominator has the lowest
-            // dfnum. Up date `best` if this is the case.
+            // dfnum. Update `best` if this is the case.
             let cur_best = self.best[v];
             if self.dfnum[self.semi[b]] < self.dfnum[self.semi[cur_best]] {
                 self.best[v] = b;
@@ -237,9 +237,9 @@ impl<N: IdxOrdered> DomImpl<N> {
     /// Add edge `(child, parent)` to spanning forest.
     #[inline]
     fn link(&mut self, parent: N, child: N) {
-        // Initially `ancestor[n] points to `n`'s parent.
+        // Initially `ancestor[child]` points to `child`'s parent.
         self.ancestor[child] = Some(parent);
-        // Initially only `n` is in the path to its ancestor, so it is our current best.
+        // Initially only `child` is in the path to its ancestor, so it is our current best.
         self.best[child] = child;
     }
 }
@@ -272,7 +272,7 @@ impl<N: IdxOrdered> DominanceFrontier<N> {
         DominanceFrontier { frontier }
     }
 
-    /// Iterate over the nodes of the dominanco frontier for `n`
+    /// Iterate over the nodes of the dominance frontier for `n`
     #[inline]
     pub fn iter(&self, n: N) -> impl Iterator<Item = N> {
         self.frontier[n].iter().map(N::new)

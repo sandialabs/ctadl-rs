@@ -1,10 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    ModelRun: calls .NET library methods with marked arguments and reports
-    which inputs reach which outputs, the reference side of xtask's
-    `cil:models` check of the default models (`cil-index.jsonl`). It
-    references no NuGet packages, so it restores and builds offline, inside
-    the Nix sandbox, where the root flake's `modelRun` derivation builds it.
+    ModelRun: see Program.cs. `modelRun` in `nix/cil.nix` builds it.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

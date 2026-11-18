@@ -8,18 +8,15 @@ program, hoisting it avoids re-parsing per import, and indexing learns up front 
 bridge exists.
 
 The `where` constraints stay as raw [`serde_json::Value`]: they are evaluated later by the
-*existing* evaluator ([`super::json::ModelGeneratorIngest`]) against the *existing*
-[`super::match_index::ProgramMatchIndex`], so nothing here has to understand them. There must
-not be a second implementation of `where`; that is how `signature_match` ends up meaning two
-different things in two places.
+shared evaluator ([`super::json::ModelGeneratorIngest`]) against the shared
+[`super::match_index::ProgramMatchIndex`], so nothing here has to understand them.
+[`super::match_index`] says why there is only one evaluator.
 
 # Loader hardening
 
 The JSON schema is editor-time only -- it is never evaluated at load. So every key this module
 reads is checked explicitly, at the generator level, the `model` level, and inside `bridge`, and
-a misspelling is a hard error. For the same reason nothing here inherits the
-`.as_array().unwrap()` pattern the older `super_model_generator` / `super_model` traversal uses:
-a non-array `where` is an error, not a panic.
+a misspelling is a hard error. For the same reason a non-array `where` is an error, not a panic.
 */
 
 use std::collections::BTreeSet;
@@ -453,7 +450,7 @@ pub fn visit_model_file<F>(path: &FsPath, mut f: F) -> Result<(), Error>
 where
     F: FnMut(usize, &serde_json::Value) -> Result<(), Error>,
 {
-    use std::io::{BufRead, BufReader, Read};
+    use std::io::{BufRead, BufReader};
 
     let extension = path.extension().and_then(|s| s.to_str());
     match extension {
@@ -478,30 +475,12 @@ where
             Ok(())
         }
         other => {
-            let root: serde_json::Value = if other == Some("json5") {
-                let mut file = std::fs::File::open(path)
-                    .err_context(|| format!("opening model JSON5 file: {}", path.display()))?;
-                let mut content = String::new();
-                file.read_to_string(&mut content)
-                    .err_context(|| format!("reading model JSON5 file: {}", path.display()))?;
-                json5::from_str(&content)
-                    .err_context(|| format!("parsing model JSON5 file: {}", path.display()))?
+            let root = if other == Some("json5") {
+                super::read_json5_root(path)?
             } else {
-                let file = std::fs::File::open(path)
-                    .err_context(|| format!("opening model JSON file: {}", path.display()))?;
-                serde_json::from_reader(file)
-                    .err_context(|| format!("reading model JSON file: {}", path.display()))?
+                super::read_json_root(path)?
             };
-            let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
-                Some(arr) => arr,
-                None => {
-                    return Err(Error::from(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "missing or invalid 'model_generators' array",
-                    )));
-                }
-            };
-            for (n, value) in generators.iter().enumerate() {
+            for (n, value) in super::model_generators(&root)?.iter().enumerate() {
                 f(n, value)?;
             }
             Ok(())
@@ -509,7 +488,8 @@ where
     }
 }
 
-/// Scans every `--models` file for the specs that need no program: bridges.
+/// Scans every `--models` file for the specs that need no program: bridges, and whether any
+/// generator uses `find: "dispatch"`.
 ///
 /// Run once, before the import loop. Errors carry the file they came from.
 pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
@@ -553,8 +533,8 @@ fn parse_bridge(
 ) -> Option<BridgeSpec> {
     let before = errors.len();
 
-    // The generator object itself. `find` is a constant here (see below), so the honored keys
-    // are the same ones any generator has plus the two this design adds.
+    // The generator object itself, with the keys any generator honors. `find` is checked
+    // separately below.
     if let Some(obj) = generator.as_object() {
         check_keys(
             obj,

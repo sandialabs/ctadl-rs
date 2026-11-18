@@ -5,11 +5,12 @@
 // bless` saves this side as the goldens in xtask/cil-goldens/.
 //
 // Determinism notes:
-// - No assembly resolution outside [resolve] and [custom-attributes-resolved]:
-//   the resolver always fails, so anything else that needs resolution
-//   (foreign enum CA arguments) prints `!unresolved`. Those two sections read
-//   the image again with a resolver that probes only the input's own
-//   directory, as the Rust side's DirectoryLoader does.
+// - No assembly resolution outside [resolve], [custom-attributes-resolved]
+//   and [fields-resolved]: the resolver always fails, so anything else that
+//   needs resolution prints `!unresolved` (foreign enum CA arguments) or
+//   `!error` (the RVA of a field whose type is foreign). Those three
+//   sections read the image again with a resolver that probes only the
+//   input's own directory, as the Rust side's DirectoryLoader does.
 // - Floats print as bit patterns (IL float operands also print first as the
 //   test Formatter renders them); blobs as lowercase hex; attribute strings
 //   escaped, so every record is one line.
@@ -567,8 +568,7 @@ static class Program
 
     static List<(MetadataToken parent, CustomAttribute attr)> SortedAttributes (ModuleDefinition module)
     {
-        // Walk the raw table via GetCustomAttributes? Cecil exposes attributes
-        // per provider; recover rid order through the read-order token.
+        // Cecil exposes attributes per provider, not as a table.
         var attributes = new List<(MetadataToken parent, CustomAttribute attr)> ();
         CollectAttributes (module, attributes);
         // The CustomAttribute table is sorted by its HasCustomAttribute coded

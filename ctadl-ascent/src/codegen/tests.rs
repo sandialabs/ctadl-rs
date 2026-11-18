@@ -701,7 +701,7 @@ fn function_with_update() -> FunctionData {
 //   return q;
 // }
 //
-// Exercises the restored `Update` instruction (a functional update: `dest` is a fresh copy of
+// Exercises the `Update` instruction (a functional update: `dest` is a fresh copy of
 // `source` with one field overwritten), as opposed to `function_with_update`'s in-place `Store`.
 fn function_with_real_update() -> FunctionData {
     use ctadl_ir::mir::builder::BasicBlockBuilder;

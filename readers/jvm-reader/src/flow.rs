@@ -504,9 +504,9 @@ pub fn descriptor_return_slot_count(descriptor: &str) -> usize {
 /// Identify the method being simulated, for the error variants that report
 /// where a failure happened.
 ///
-/// Each name falls back to a placeholder rather than failing: a method whose
-/// own name cannot be read is a worse error than the one being reported, and
-/// hiding the latter behind the former is what left these sites bare.
+/// Each name falls back to a placeholder rather than failing, so a method whose
+/// own name cannot be read still reports the failure being described, not a
+/// name-lookup error in its place.
 fn method_context(cfg: &MethodBasicBlocks<'_>) -> Box<MethodContext> {
     Box::new(MethodContext {
         class_name: cfg
@@ -2587,9 +2587,8 @@ mod tests {
     }
 
     /// `sastore` (0x56) closes the array-store block; it is not a stack-shuffle
-    /// opcode. Naming it `dup2_x2` -- which is 0x5e -- also left it outside the
-    /// `0x4f..=0x55` arm, so it consumed nothing and left its arrayref, index
-    /// and value behind as phantom slots.
+    /// opcode (`dup2_x2` is 0x5e). Outside the `0x4f..=0x56` arm it would consume
+    /// nothing and leave its arrayref, index and value behind as phantom slots.
     #[test]
     fn sastore_is_an_array_store() {
         assert_eq!(super::mnemonic(0x56), "sastore");
@@ -2633,8 +2632,8 @@ mod tests {
     }
 
     /// `multianewarray` pops one int count per dimension and pushes the array.
-    /// It was decoded as neither dataflow nor a modelled stack effect, so every
-    /// `new T[a][b]` left its counts on the simulated stack.
+    /// Without that, every `new T[a][b]` would leave its counts on the simulated
+    /// stack.
     #[test]
     fn multianewarray_consumes_one_slot_per_dimension() {
         let cf = &constant_pool_with_fields();
@@ -2681,12 +2680,11 @@ mod tests {
 
     // ================= Opcode tables =================
     //
-    // These are pure lookups, so they need no fixture and are not `#[ignore]`d:
-    // a plain `cargo test` catches a regression in them.
+    // These are pure lookups, so they need no fixture.
 
     /// Every opcode in the arithmetic/logic block is a single byte with no
-    /// inline operands. `iushr` (0x7c) was listed as having two, which
-    /// desynchronized the linear decoder for the rest of the method.
+    /// inline operands. A wrong length for any of them (say, two operand bytes
+    /// for `iushr`) desynchronizes the linear decoder for the rest of the method.
     #[test]
     fn arithmetic_opcodes_are_one_byte() {
         for opcode in 0x60u8..=0x83 {
@@ -2796,9 +2794,8 @@ mod tests {
     }
 
     /// `lreturn` and `dreturn` pop two words like every other category-2
-    /// consumer. Giving all five value returns `(1, 0)` left a phantom slot,
-    /// which is inert only because a return block has no successors for it to
-    /// reach.
+    /// consumer. Popping one would leave a phantom slot, inert only because a
+    /// return block has no successors for it to reach.
     #[test]
     fn wide_returns_pop_two_slots() {
         assert_eq!(misc_stack_effect(0xac), (1, 0), "ireturn");
@@ -2833,9 +2830,8 @@ mod tests {
         assert_eq!(misc_stack_effect(0xa9), (0, 0), "ret");
     }
 
-    /// The numeric conversions had one shared mnemonic, `"conv_or_cmp"`, which
-    /// named neither the conversion nor the comparisons it swept up. It is what
-    /// the underflow diagnostics print, so a report could not say which
+    /// Each numeric conversion and comparison has its own mnemonic. It is what
+    /// the underflow diagnostics print, so a shared one could not say which
     /// instruction failed.
     #[test]
     fn numeric_conversions_have_their_own_mnemonics() {
@@ -2859,7 +2855,7 @@ mod tests {
         for (opcode, name) in expected {
             assert_eq!(super::mnemonic(opcode), name, "0x{opcode:02x}");
         }
-        // The comparisons that used to share the arm keep their own names.
+        // The comparisons keep their own names too.
         assert_eq!(super::mnemonic(0x94), "lcmp");
         assert_eq!(super::mnemonic(0x98), "dcmpg");
     }
@@ -2908,13 +2904,12 @@ mod tests {
     }
 
     /// A handler is entered with the exception reference at depth 0, so its
-    /// entry slot id is 0 like every other slot at that depth. Drawing it from
-    /// a separate counter made it the one non-positional id in the method, so a
-    /// block reachable from both a handler and a normal edge compared unequal
-    /// layouts at equal heights and failed a join that is in fact consistent.
+    /// entry slot id is 0 like every other slot at that depth, and a block
+    /// reachable from both a handler and a normal edge sees equal layouts at
+    /// equal heights.
     ///
-    /// The second handler is the one that matters: the first would draw id 0
-    /// from the counter too, and the defect would not show.
+    /// The second handler is the one that matters: an id drawn from a separate
+    /// handler counter would be 0 for the first handler too.
     #[test]
     fn a_handler_entry_slot_is_positional() {
         // 0: aconst_null      protected by the handler at 4
@@ -2942,10 +2937,10 @@ mod tests {
         normalize(code, handlers).expect("handler and normal edges agree at the join");
     }
 
-    /// The aggregate stack-effect check is the last one to fire, and it named
-    /// neither the class, the method nor the instruction. `lreturn` on a
-    /// one-deep stack reaches it: the opcode carries no dataflow, so nothing
-    /// upstream rewrites a `StackInput` and reports first.
+    /// The aggregate stack-effect check is the last one to fire, and its error
+    /// names the class, the method and the instruction. `lreturn` on a one-deep
+    /// stack reaches it: the opcode carries no dataflow, so nothing upstream
+    /// rewrites a `StackInput` and reports first.
     #[test]
     fn a_stack_underflow_names_the_instruction() {
         // 0: iconst_m1   pushes one word

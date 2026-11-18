@@ -19,10 +19,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+        env:
+          # The action exports these only when they are unset; setting them for this step keeps
+          # them out of the later steps, so tests build with the default debug info and backtraces.
+          CARGO_PROFILE_DEV_DEBUG: ""
+          RUST_BACKTRACE: ""
         with:
-          toolchain: 1.94.1
           components: rustfmt, clippy
+          # Warnings fail only the Clippy step, which passes -Dwarnings itself.
+          build-warnings: ""
+          # Swatinem/rust-cache below caches the build.
+          cache: false
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2

@@ -9,7 +9,7 @@
 //
 //     {"method": <token>, "name": "Ns.Type::Name", "trial": <n>,
 //      "args": [V...], "statics": [[<field token>, V]...], "heap": [H...],
-//      "outcome": "<canonical text>"}
+//      "uint64DoubleViaSigned": <bool>, "outcome": "<canonical text>"}
 //
 // `args` (with `this` first for an instance method; a ref/out argument's
 // pointee), `statics` (every static field of the module's types) and `heap`
@@ -41,6 +41,25 @@ using System.Text.Json;
 
 static class Program
 {
+    // .NET's x64 JIT can convert ulong through a signed conversion plus 2^64,
+    // which can round twice; ARM64 converts directly. Probe the runtime rather
+    // than assuming its conversion policy from the host ISA.
+    static readonly bool UInt64DoubleViaSigned = ProbeUInt64Double ();
+
+    [MethodImpl (MethodImplOptions.NoInlining)]
+    static double UInt64Double (ulong value) => (double) value;
+
+    static bool ProbeUInt64Double ()
+    {
+        long first = BitConverter.DoubleToInt64Bits (UInt64Double (11541544916613131022UL));
+        long second = BitConverter.DoubleToInt64Bits (UInt64Double (11651163550426862920UL));
+        if (first == 0x43e40579be763e1dL && second == 0x43e43627f0986583L)
+            return false;
+        if (first == 0x43e40579be763e1eL && second == 0x43e43627f0986582L)
+            return true;
+        throw new NotSupportedException ("Unrecognized UInt64-to-Double rounding behavior");
+    }
+
     static int Main (string [] args)
     {
         int trials = 32;
@@ -100,6 +119,7 @@ static class Program
             w.WriteNumber ("method", method.MetadataToken);
             w.WriteString ("name", name);
             w.WriteNumber ("trial", trial);
+            w.WriteBoolean ("uint64DoubleViaSigned", UInt64DoubleViaSigned);
             var enc = new Encoder (model, w);
             w.WriteStartArray ("args");
             if (!method.IsStatic)

@@ -4,7 +4,7 @@ The normal flow is that when we codegen the facts for indexing, we keep track of
 source info for each instruction. We also have to keep track of a mapping between function names
 and IDs, since the indexer uses IDs natively. This information is expensive and, ideally, would be
 streamed out as it is generated. Instead, we compress it as much as possible in memory and then
-save ot into parquet with [`IndexSourceInfo::try_save`]. *But*, there is no `try_load`, which is on
+save it into parquet with [`IndexSourceInfo::try_save`]. *But*, there is no `try_load`, which is on
 purpose. Since the source info is in parquet files, we can query them efficiently with datafusion,
 which we do when formatting.
 */

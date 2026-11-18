@@ -74,7 +74,9 @@ fn token_name(
     }
 }
 
-/// Writes `Declaring/Nested` names, outermost first.
+/// Writes `Declaring/Nested` names, outermost first, each as its
+/// `TypeFullName`: a nested type's namespace is normally empty, but one
+/// that is not is printed.
 fn push_nested_names<S: AsRef<str>>(
     names: impl DoubleEndedIterator<Item = (S, S)>,
     out: &mut String,
@@ -94,11 +96,9 @@ fn push_nested_names<S: AsRef<str>>(
 
 pub(crate) fn typedef_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) -> Result<()> {
     // TypeReference.FullName: nested types render as Declaring/Nested.
-    // Nested type names ignore the namespace column in Cecil's rendering only
-    // insofar as TypeFullName still applies; nested types normally have an
-    // empty namespace, but a non-empty one is still printed. Cecil recurses
-    // through DeclaringType, and overflows its stack on a NestedClass cycle;
-    // here a chain longer than the TypeDef table is an error.
+    // Cecil recurses through DeclaringType, and overflows its stack on a
+    // NestedClass cycle; here a chain longer than the TypeDef table is an
+    // error.
     let mut names = Vec::new();
     let mut current = Some(rid);
     while let Some(rid) = current {

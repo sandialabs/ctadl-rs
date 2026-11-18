@@ -367,10 +367,9 @@ fn every_shipped_default_file_parses() {
 ///
 /// Getting this wrong fails loudly in one direction and silently in the other. Unescaped,
 /// `Argument(0).[]` is `InvalidOffset("")`, a hard load error caught by
-/// `every_shipped_default_file_parses`. But the synthetic `.rep` these generators used to carry
-/// parses fine and simply matches nothing any frontend writes, which is how `List.add` /
-/// `List.get` chains ended up composing only with each other. Only an assertion on the decoded
-/// segment catches a silent regression back to that.
+/// `every_shipped_default_file_parses`. But a synthetic field such as `.rep` parses fine and
+/// simply matches nothing any frontend writes, so `List.add` / `List.get` chains would compose
+/// only with each other. Only an assertion on the decoded segment catches that.
 #[test]
 fn java_collection_generators_name_the_real_array_element() {
     use ctadl_ir::mir::PathSegment;
@@ -393,7 +392,7 @@ fn java_collection_generators_name_the_real_array_element() {
             .map(|p| p.to_dot_string())
             .collect::<BTreeSet<_>>()
     );
-    // And nothing still names the synthetic field it replaced.
+    // And nothing names the synthetic `.rep` field.
     let rep = PathSegment::symbol("rep");
     assert!(
         !paths.iter().any(|p| p.iter().any(|s| *s == rep)),

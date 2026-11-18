@@ -1,10 +1,9 @@
 // PORT SEMANTICS 4/6 -- `.[<numeric>]` is a real offset.
 //
-// Before the canonical access-path grammar, every model-port segment became a `Symbol`, so a
-// port `.[12]` was `Symbol("[12]")` and could never match the `Offset(12)` a binary frontend
-// emits. It is now a real `PathSegment::Offset`, and this is the end-to-end half of that: the
-// encoding is pinned by `models_loading.rs::offset_port_produces_a_real_offset`, the taint
-// semantics here.
+// A port `.[12]` is a real `PathSegment::Offset`, so it matches the `Offset(12)` a binary
+// frontend emits; as `Symbol("[12]")` it never would. This is the end-to-end half: the encoding
+// is pinned by `models_loading.rs::offset_port_produces_a_real_offset`, the taint semantics
+// here.
 //
 // `Argument(0).[12] -> Return` maps `t.[12].X` to `u.X`, so it unwraps the offset exactly the
 // way `port_in_symbol.tnt`'s named field unwraps a level.

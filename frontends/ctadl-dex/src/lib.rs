@@ -7,14 +7,12 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 handled one level up, in `ctadl-frontends`.
 */
 
-use std::fs::File;
-use std::io::{self, Read};
 use std::path::Path;
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -42,18 +40,18 @@ pub struct ApkImport {
 /// Imports the Dex code out of an APK.
 ///
 /// An APK with no `classes*.dex` yields an empty program rather than an error: a split
-/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK, as
-/// distributed by APKPure and friends -- puts the native libraries in one APK and the
-/// Dex in another, and the native half is still worth importing on its own. Callers that
-/// need to distinguish the two check [`ApkImport::dex_count`].
+/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK -- puts the
+/// native libraries in one APK and the Dex in another, and the native half is still worth
+/// importing on its own. Callers that need to distinguish the two check
+/// [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
     let parser =
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     for (sub_artifact_id, (dex_file_name, parser)) in
         parser.dex_parsers_with_filenames().into_iter().enumerate()
@@ -78,11 +76,11 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let file = file.as_ref();
     let data =
-        read_file_bytes(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
+        std::fs::read(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
     let parser =
         DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
         sub_artifact_id: 0,
@@ -95,24 +93,20 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     ctx.finish(builders)
 }
 
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_java(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
-}
-
+/// The translation of dex files into CTADL IR.
+///
+/// The expectation is to call [`Context::new`], then [`Context::process`] possibly many times,
+/// then [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
+/// files and open programs, programs that call functions for which we don't have a definition.
+///
+/// During `process`, the context records methods that are "external," meaning we haven't so
+/// far seen a definition for them. We also stub them out in the program. Since we might see a
+/// definition for them during a later call to process, we also clear those entries when we
+/// process the defined methods. We record the VMT entry for such methods in the
+/// [`Context::ext`] member.
+///
+/// During `finish`, any methods still-undefined are added to the VMT using what we recorded
+/// during processing.
 #[derive(Debug)]
 struct Context {
     counter: Counter,
@@ -120,12 +114,9 @@ struct Context {
     catch_result: Option<VariableRef>,
     call_to: HashSet<MethodId>,
     defined: HashMap<String, FunctionIdx>,
-    // vmt entries for externs so far
+    /// VMT entries for the externs seen so far.
     ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
-    /// The class whose methods are being lowered, and its direct parents. Set once per class in
-    /// [`Context::process`] and read by [`Context::decode_call`] to fill in `super_start`: an
-    /// `invoke-super` begins lookup at the enclosing class's superclass, which the instruction
-    /// itself does not name.
+    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
 }
 
@@ -139,20 +130,6 @@ struct EnclosingClass {
 }
 
 impl Context {
-    /// The context manages translation from dex into CTADL IR.
-    ///
-    /// The expectation is to call `new`, then [`Context::process`] possibly many times, then
-    /// [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
-    /// files and open programs, programs that call functions for which we don't have a definition.
-    ///
-    /// During `process`, the context records methods that are "external," meaning we haven't so
-    /// far seen a definition for them. We also stub them out in the program. Since we might see a
-    /// definition for them during a later call to process, we also clear those entries when we
-    /// process the defined methods. We record the VMT entry for such methods in the
-    /// [`Context::ext`] member.
-    ///
-    /// During `finish`, any methods still-undefined are added to the VMT using what we recorded
-    /// during processing.
     fn new() -> Self {
         Self {
             counter: Default::default(),
@@ -172,9 +149,8 @@ impl Context {
         &mut self,
         parser: &DexParser<'_>,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Iterate over all classes.
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
             log::trace!("Class: {}", class_name);
@@ -269,15 +245,10 @@ impl Context {
                         methods, natives, ..
                     } = &mut builders.vmt
                     {
-                        // In `methods` because CHA builds its resolvent map from that column:
-                        // without a row there, an `invoke-virtual` of a native method resolves
-                        // to nothing and the call site is lost -- bridge or no bridge. (A
-                        // `static` native is reached by `invoke-static`, which resolves by name
-                        // and never consults the table.) The jvm frontend lists native methods
-                        // there for the same reason, because it walks every declared method.
+                        // A row in both columns (see `natives` on `VirtualMethodTable::Java`).
+                        // A `static` native is reached by `invoke-static`, which resolves by
+                        // name and never consults the table.
                         methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
-                        // ... and in `natives` because that is where the JNI bridge looks, and
-                        // it is the only column carrying the staticness the bridge needs.
                         natives.push((
                             cls,
                             simple,
@@ -287,8 +258,6 @@ impl Context {
                         ));
                     }
                 }
-
-                // Handle instructions
 
                 // Parse the instruction stream for the method.
                 if let Some(code) = parser.method_code(enc)? {
@@ -474,30 +443,19 @@ impl Context {
 
         // define extern funcs and parameters/return value
         {
-            let funcs: HashSet<String> = builders
-                .program
-                .functions
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
-            let mut call_to: Vec<_> = self.call_to.iter().cloned().collect();
-            // Clear so that multiple calls to 'process' don't work on old data
-            self.call_to.clear();
+            // Drained so that a later `process` does not work on old data.
+            let mut call_to: Vec<_> = self.call_to.drain().collect();
             call_to.sort();
-            for extern_id in call_to.drain(..) {
-                let full_sig = parser
+            for extern_id in call_to {
+                let java_sig = parser
                     .method_signature(&extern_id)
                     .err_context(|| format!("method_signature: {extern_id:?}"))?;
-                if funcs.contains(&full_sig) {
-                    continue;
-                }
-                if self.defined.contains_key(&full_sig) {
+                if self.defined.contains_key(&java_sig) {
                     continue;
                 }
                 let fidx = builders.program.new_function();
-                self.defined.insert(full_sig.clone(), fidx);
+                self.defined.insert(java_sig.clone(), fidx);
                 let fdat = &mut builders.program.functions[fidx];
-                let java_sig = parser.method_signature(&extern_id)?;
                 fdat.name = java_sig.clone();
                 for ty in parser.method_parameters(&extern_id)?.types {
                     let ty = parser.get_type(ty.into()).unwrap();
@@ -528,7 +486,7 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let program = builders.program;
         log::trace!("program: {program}");
         // Verify the generated program.
@@ -569,10 +527,8 @@ impl Context {
         enclosing.superclass.clone()
     }
 
-    /// Decode a call instruction into a `StatementKind::CallAssign`.
-    /// Returns `None` for non‑call instructions.
-    /// The return value is a single element which can be used to process subsequent 'move-result'
-    /// type instructions. It is stored into `self.call_result`
+    /// Decodes a call instruction into a `StatementKind::CallAssign` (see
+    /// [`Context::call_assign`]); `None` for an instruction that is not a call.
     fn decode_call(
         &mut self,
         parser: &DexParser<'_>,
@@ -621,15 +577,10 @@ impl Context {
         let is_static = dispatch.is_none();
 
         // Resolve the callee name (human‑readable signature).
-        let (cls, simple_name, descriptor) = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            self.call_to.insert(*mi);
-            parser.method_triple(mi).ok()?
-        };
-        let method_id = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            parser.method_signature(mi).ok()?
-        };
+        let mi = parser.get_method(method_idx.0 as usize)?;
+        self.call_to.insert(*mi);
+        let (cls, simple_name, descriptor) = parser.method_triple(mi).ok()?;
+        let method_id = parser.method_signature(mi).ok()?;
 
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
@@ -982,7 +933,7 @@ impl Context {
         Ok(stmts)
     }
 
-    /// Returns 'ret' temporary for move-result
+    /// The `retval` temporary a call returns into and `move-result` reads.
     fn ret(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("retval"))
     }
@@ -1007,14 +958,6 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRe
     } else {
         VariableRef::new_local_idx(locals.get_or_intern(&format!("v{}", reg.0)))
     }
-}
-
-fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let path = path.as_ref();
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }
 
 #[derive(Debug, Clone, Default)]

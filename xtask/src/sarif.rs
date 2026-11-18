@@ -123,9 +123,8 @@ fn diagnostics(log: &Path) -> Result<Vec<String>> {
         let templates = templates(&run["tool"]["driver"]);
 
         for result in run["results"].as_array().into_iter().flatten() {
-            // Only an error carries an explicit level; everything else reports
-            // at the SARIF default of `warning`. Both fail, so the only levels
-            // to drop are the informational ones a rule can opt into.
+            // A level-less result is a `warning` (see the module docs); drop only
+            // the informational levels a rule can opt into.
             let level = result["level"].as_str().unwrap_or("warning");
             if !matches!(level, "error" | "warning") {
                 continue;

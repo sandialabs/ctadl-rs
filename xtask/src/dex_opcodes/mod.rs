@@ -455,7 +455,7 @@ fn manifest_for(case: &Case, class: &str) -> String {
 fn h_java() -> String {
     let mut fields = String::new();
     for r in 0..16 {
-        for (dir, _) in [("i", ()), ("o", ())] {
+        for dir in ["i", "o"] {
             let _ = writeln!(
                 fields,
                 "    public static int {dir}I{r};\n    public static float {dir}F{r};\n    public static long {dir}J{r};\n    public static double {dir}D{r};\n    public static Object {dir}L{r};"

@@ -192,7 +192,7 @@
 //! ```
 //!
 //! The third example is similar to the second, except now each node and
-//! edge now carries a reference to the string label for each node as well
+//! edge carries a reference to the string label for each node as well
 //! as that node's index. (This is another illustration of how to share
 //! structure with the graph itself, and why one might want to do so.)
 //!
@@ -339,37 +339,8 @@ impl Style {
     }
 }
 
-// There is a tension in the design of the labelling API.
-//
-// For example, I considered making a `Labeller<T>` trait that
-// provides labels for `T`, and then making the graph type `G`
-// implement `Labeller<Node>` and `Labeller<Edge>`. However, this is
-// not possible without functional dependencies. (One could work
-// around that, but I did not explore that avenue heavily.)
-//
-// Another approach that I actually used for a while was to make a
-// `Label<Context>` trait that is implemented by the client-specific
-// Node and Edge types (as well as an implementation on Graph itself
-// for the overall name for the graph). The main disadvantage of this
-// second approach (compared to having the `G` type parameter
-// implement a Labelling service) that I have encountered is that it
-// makes it impossible to use types outside of the current crate
-// directly as Nodes/Edges; you need to wrap them in newtype'd
-// structs. See e.g., the `No` and `Ed` structs in the examples. (In
-// practice clients using a graph in some other crate would need to
-// provide some sort of adapter shim over the graph anyway to
-// interface with this library).
-//
-// Another approach would be to make a single `Labeller<N,E>` trait
-// that provides three methods (graph_label, node_label, edge_label),
-// and then make `G` implement `Labeller<N,E>`. At first this did not
-// appeal to me, since I had thought I would need separate methods on
-// each data variant for dot-internal identifiers versus user-visible
-// labels. However, the identifier/label distinction only arises for
-// nodes; graphs themselves only have identifiers, and edges only have
-// labels.
-//
-// So in the end I decided to use the third approach described above.
+// The graph type implements one `Labeller` trait that labels the graph, its nodes and its
+// edges, so node and edge types from other crates need no newtype wrappers.
 
 /// Error returned by [`Id::new`].
 #[derive(Debug, PartialEq, Eq)]
@@ -413,12 +384,6 @@ impl<'a> Id<'a> {
     }
 }
 
-/// Each instance of a type that implements `Label<C>` maps to a
-/// unique identifier with respect to `C`, which is used to identify
-/// it in the generated .dot file. They can also provide more
-/// elaborate (and non-unique) label text that is used in the graphviz
-/// rendered output.
-///
 /// The graph instance is responsible for providing the DOT compatible
 /// identifiers for the nodes and (optionally) rendered labels for the nodes and
 /// edges, as well as an identifier for the graph itself.
@@ -563,16 +528,13 @@ impl<'a> LabelText<'a> {
 pub type Nodes<'a, N> = Cow<'a, [N]>;
 pub type Edges<'a, E> = Cow<'a, [E]>;
 
-// (The type parameters in GraphWalk should be associated items,
-// when/if Rust supports such.)
-
 /// GraphWalk is an abstraction over a directed graph = (nodes,edges)
-/// made up of node handles `N` and edge handles `E`, where each `E`
-/// can be mapped to its source and target nodes.
+/// made up of node handles `Node` and edge handles `Edge`, where each
+/// `Edge` can be mapped to its source and target nodes.
 ///
 /// The lifetime parameter `'a` is exposed in this trait (rather than
 /// introduced as a generic parameter on each method declaration) so
-/// that a client impl can choose `N` and `E` that have substructure
+/// that a client impl can choose `Node` and `Edge` that have substructure
 /// that is bound by the self lifetime `'a`.
 ///
 /// The `nodes` and `edges` method each return instantiations of
@@ -653,36 +615,9 @@ where
         global_edge_attrs.push(("fontcolor".into(), LabelText::LabelStr("white".into())));
     }
 
-    if !global_graph_attrs.is_empty() {
-        write!(w, "    graph [")?;
-        for (i, (name, value)) in global_graph_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
-    if !global_node_attrs.is_empty() {
-        write!(w, "    node [")?;
-        for (i, (name, value)) in global_node_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
-    if !global_edge_attrs.is_empty() {
-        write!(w, "    edge [")?;
-        for (i, (name, value)) in global_edge_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
+    write_global_attrs(w, "graph", global_graph_attrs)?;
+    write_global_attrs(w, "node", global_node_attrs)?;
+    write_global_attrs(w, "edge", global_edge_attrs)?;
 
     let mut text = Vec::new();
     for n in g.nodes().iter() {
@@ -756,6 +691,25 @@ where
     }
 
     writeln!(w, "}}")
+}
+
+/// Writes `attrs` as a `kind [name=value, ...];` statement, or nothing if empty.
+fn write_global_attrs<W: Write>(
+    w: &mut W,
+    kind: &str,
+    attrs: Vec<(Cow<'_, str>, LabelText<'_>)>,
+) -> io::Result<()> {
+    if attrs.is_empty() {
+        return Ok(());
+    }
+    write!(w, "    {kind} [")?;
+    for (i, (name, value)) in attrs.into_iter().enumerate() {
+        if i > 0 {
+            write!(w, ", ")?;
+        }
+        write!(w, "{}={}", name, value.to_dot_string())?;
+    }
+    writeln!(w, "];")
 }
 
 #[cfg(test)]

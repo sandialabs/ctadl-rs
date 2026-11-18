@@ -28,7 +28,7 @@ pub struct BasicBlocks {
 }
 
 impl Clone for BasicBlocks {
-    /// Close the blocks with an empty cache
+    /// Clones the blocks with an empty cache
     fn clone(&self) -> Self {
         let BasicBlocks { basic_blocks, .. } = self;
         BasicBlocks {
@@ -93,8 +93,7 @@ impl BasicBlocks {
         &mut self.basic_blocks
     }
 
-    /// Returns the dominance frontier. Dominance frontier computation depends on dominators, so
-    /// this function also computes dominators.
+    /// Drops the cached CFG data (the predecessor lists), so it is recomputed on next use.
     #[inline]
     pub fn invalidate_cfg_cache(&mut self) {
         if let Some(cache) = Arc::get_mut(&mut self.cache) {

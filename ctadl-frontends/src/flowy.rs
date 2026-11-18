@@ -21,7 +21,6 @@ pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
         )
     })?;
 
-    // Save requirements
     let data = bitcode::serialize(&program.requirements).map_err(Error::from)?;
     std::fs::write(import.requirements_path(), data)
         .map_err(Error::from)

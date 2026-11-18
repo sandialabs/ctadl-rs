@@ -894,17 +894,17 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// one of its keys, whose leading words are the prefix.
     pub fn prefix_groups(&self, prefix_len: usize) -> PrefixGroups<'_, K, V> {
         let bytes = prefix_len * size_of::<u64>();
-        let mem_heads: Vec<u32> = match self.memtable.prefixes.iter().find(|c| c.len == bytes) {
+        let chains = self.memtable.prefixes.iter().find(|c| c.len == bytes);
+        let mem_heads: Vec<u32> = match chains {
             Some(chains) => chains.heads.iter().copied().collect(),
             // Without chains for this length, one group per memtable key.
             None => (0..self.memtable.len as u32).collect(),
         };
-        let chained = self.memtable.prefixes.iter().any(|c| c.len == bytes);
         PrefixGroups {
             map: self,
             prefix_len,
             mem_heads: mem_heads.into_iter(),
-            chained,
+            mem_chains: chains.map(|chains| chains.next.as_slice()),
             runs: self.levels.iter().flatten().map(|run| run.keys()).collect(),
             next_run: 0,
             current: &[],
@@ -1087,7 +1087,7 @@ fn merge_keys<K: Ord>(lists: &[&[K]], mut visit: impl FnMut(&K, &[(usize, usize)
 }
 
 /// A key's `u64` words.
-fn words<K: Pod>(key: &K) -> &[u64] {
+pub(crate) fn words<K: Pod>(key: &K) -> &[u64] {
     bytemuck::cast_slice(bytemuck::bytes_of(key))
 }
 
@@ -1181,8 +1181,9 @@ pub struct PrefixGroups<'a, K, V> {
     map: &'a MmapLsmMultiMap<K, V>,
     prefix_len: usize,
     mem_heads: std::vec::IntoIter<u32>,
-    /// Whether the memtable heads start chains (or stand alone).
-    chained: bool,
+    /// The `next` links of the chains the memtable heads start, or `None` when
+    /// each head stands alone.
+    mem_chains: Option<&'a [u32]>,
     runs: SmallVec<[&'a [K]; 4]>,
     next_run: usize,
     /// The rest of the run being grouped.
@@ -1195,15 +1196,9 @@ impl<'a, K: Pod + Ord, V: Pod> Iterator for PrefixGroups<'a, K, V> {
     fn next(&mut self) -> Option<Self::Item> {
         let memtable = &self.map.memtable;
         if let Some(head) = self.mem_heads.next() {
-            let mem = if self.chained {
-                let bytes = self.prefix_len * size_of::<u64>();
-                let chains = memtable.prefixes.iter().find(|c| c.len == bytes).unwrap();
-                MemKeys::Chain {
-                    next: &chains.next,
-                    at: head,
-                }
-            } else {
-                MemKeys::All(head..head + 1)
+            let mem = match self.mem_chains {
+                Some(next) => MemKeys::Chain { next, at: head },
+                None => MemKeys::All(head..head + 1),
             };
             let keys = KeysIter {
                 memtable,

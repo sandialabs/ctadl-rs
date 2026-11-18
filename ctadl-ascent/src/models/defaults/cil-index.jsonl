@@ -320,8 +320,7 @@
 // ---- resource release and iteration: hybrid inlining, not a model ----
 // Resource release for the Java file's reasons: a Dispose or Close body is where buffered data
 // reaches a file or a socket. Iteration because most enumerators are compiler-generated `yield`
-// state machines -- about two thirds of the MoveNext bodies in Roslyn, MSBuild and Newtonsoft.Json --
-// and an iterator's own body, with any source or sink in it, runs inside MoveNext.
+// state machines, and an iterator's own body, with any source or sink in it, runs inside MoveNext.
 {"find":"dispatch","where":[{"constraint":"signature_match","names":["Dispose","DisposeAsync","Close","Flush","FlushAsync"],"parents":["[System.Private.CoreLib]System.IDisposable","[System.Private.CoreLib]System.IAsyncDisposable","[System.Private.CoreLib]System.IO.Stream","[System.Private.CoreLib]System.IO.TextReader","[System.Private.CoreLib]System.IO.TextWriter","[System.Private.CoreLib]System.IO.BinaryReader","[System.Private.CoreLib]System.IO.BinaryWriter"]}],"model":{"resolve":"inline"}}
 {"find":"dispatch","where":[{"constraint":"signature_match","names":["MoveNext","MoveNextAsync"],"parents":["[System.Private.CoreLib]System.Collections.IEnumerator","[System.Private.CoreLib]System.Collections.Generic.IAsyncEnumerator`1"]}],"model":{"resolve":"inline"}}
 // GetEnumerator and Current are inlined too, since an iterator's Current reads a generated field, not

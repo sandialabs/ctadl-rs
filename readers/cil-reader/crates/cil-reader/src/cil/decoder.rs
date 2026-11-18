@@ -94,7 +94,6 @@ pub struct Ins<'a> {
     pub offset: u32,
     pub opcode: OpCode,
     pub operand: RawOperand<'a>,
-    /// Encoded length, opcode and operand together.
     size: u32,
 }
 

@@ -231,9 +231,9 @@ impl<'p> ProgramMatchIndex<'p> {
                 .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
                 .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
 
-            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`. Descriptor-bearing and
-            // stable, but until now only ever a *value* above — never a key — which is what
-            // made exact fully-qualified matching impossible on jvm/dex.
+            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`: descriptor-bearing and
+            // stable, so keying on it is what makes exact fully-qualified matching possible on
+            // jvm/dex.
             methods
                 .iter()
                 .map(|(_cls, _name, _sig, fid)| (fid.as_ref(), fid.as_ref()))
@@ -348,7 +348,7 @@ impl<'p> ProgramMatchIndex<'p> {
                 program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
         } else {
-            // Fallback (Unknown / CplusPlus): use the IR function names directly.
+            // Fallback (Unknown): use the IR function names directly.
             for func in &program_info.program.functions.functions {
                 let name = func.name.as_str();
                 program_method_signatures
@@ -379,12 +379,9 @@ impl<'p> ProgramMatchIndex<'p> {
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
-            // Every lowered function, class method or not, plus the externals. Before the VMT
-            // carried the `functions` column there was nothing here to enumerate free functions
-            // with, so the universe was empty and a top-level `not` on lua matched *nothing* --
-            // while `matched_functions(&All)` (the sibling of this set) returned the class
-            // methods, so the two disagreed on the one frontend. The externals belong here for
-            // the same reason: a top-level `not` should see everything a model can name.
+            // Every lowered function, class method or not, plus the externals: the same set
+            // `matched_functions(&All)` enumerates, so a top-level `not` sees everything a model
+            // can name.
             VirtualMethodTable::Lua {
                 functions,
                 externals,

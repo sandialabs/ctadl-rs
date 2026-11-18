@@ -14,8 +14,8 @@
  * The container halves are the ones worth having a test for. They are modeled
  * at the ELEMENT level, so a write and a read compose only if both name the
  * array element the frontends actually emit -- `Symbol("[]")`, written `.\[]`.
- * They used to name a synthetic `.rep` that no frontend writes, which composed
- * add->get with itself and joined nothing else; and a bare read against an
+ * A synthetic path that no frontend writes, such as `.rep`, composes add->get
+ * with itself and joins nothing else; and a bare read against an
  * element-level write composes to nothing at all. Neither mistake fails
  * loudly.
  */

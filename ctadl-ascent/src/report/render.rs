@@ -239,7 +239,7 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         )?;
         writeln!(
             w,
-            "  The two above are the literal ask -- ten instructions out of {},",
+            "  The two above count sites -- a handful of instructions out of {},",
             plural(v_sites, "virtual site")
         )?;
         writeln!(

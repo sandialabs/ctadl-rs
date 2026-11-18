@@ -1,12 +1,11 @@
 //! What a SARIF location says about *where* a finding is.
 //!
-//! A URI is supposed to locate a finding within the artifact that was scanned. The formatter
-//! used to write the source file's absolute path with its leading slash removed, so a finding
-//! in a Lua tree imported from `/home/me/src/kong` was reported at
-//! `home/me/src/kong/pdk/request.lua` -- an absolute path wearing a relative path's clothes: it
-//! resolves against nothing, it says more about the machine that ran the scan than about the
-//! code, and it moves when the tree does. Locations are now written relative to the import root
-//! (`kong/pdk/request.lua`) and carry the `uriBaseId` whose absolute value `run.originalUriBaseIds`
+//! A URI is supposed to locate a finding within the artifact that was scanned. The hazard is
+//! writing the source file's absolute path with its leading slash removed: a finding in a Lua
+//! tree imported from `/home/me/src/kong` would read `home/me/src/kong/pdk/request.lua` -- an
+//! absolute path wearing a relative path's clothes, which resolves against nothing, says more
+//! about the machine that ran the scan than about the code, and moves when the tree does.
+//! Locations are written relative to the import root (`kong/pdk/request.lua`) and carry the `uriBaseId` whose absolute value `run.originalUriBaseIds`
 //! publishes once, which is the indirection SARIF §3.4.4 defines for exactly this.
 //!
 //! Lua is the frontend here because it needs no external toolchain, so this runs everywhere

@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Internal node of the SuffixSeq.
+/// Internal node of a [`Seq`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node<T>
 where
@@ -74,7 +74,7 @@ thread_local! {
     // linear-scanned `Vec` (there are only a handful of interned element types) is
     // faster than the global path here: no `RwLock` atomic and, crucially, no SipHash
     // of the `TypeId` that the global `HashMap<TypeId, _>` lookup would incur on every
-    // single `intern` call in the hot fixpoint loop.
+    // `intern` call.
     static LOCAL_INTERNERS: RefCell<Vec<(TypeId, &'static (dyn Any + Send + Sync))>> =
         const { RefCell::new(Vec::new()) };
 }
@@ -86,17 +86,14 @@ where
     let type_id = TypeId::of::<T>();
 
     // L1: thread-local, lock-free, hash-free linear scan.
-    if let Some(interner) =
-        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i))
-    {
-        return interner
-            .downcast_ref::<immortal::Interner<Node<T>>>()
-            .expect("Type mismatch in interner registry");
-    }
-
-    // L2: global registry (populates once per type), then cache into L1.
-    let interner = resolve_global_interner::<T>(type_id);
-    LOCAL_INTERNERS.with_borrow_mut(|v| v.push((type_id, interner)));
+    let cached =
+        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i));
+    let interner = cached.unwrap_or_else(|| {
+        // L2: global registry (populates once per type), then cache into L1.
+        let interner = resolve_global_interner::<T>(type_id);
+        LOCAL_INTERNERS.with_borrow_mut(|v| v.push((type_id, interner)));
+        interner
+    });
     interner
         .downcast_ref::<immortal::Interner<Node<T>>>()
         .expect("Type mismatch in interner registry")
@@ -135,12 +132,12 @@ where
         Seq(get_interner::<T>().intern(&node))
     }
 
-    /// Creates an empty `SuffixSeq`.
+    /// Creates an empty `Seq`.
     pub fn new() -> Self {
         Self::intern(Node::Nil)
     }
 
-    /// Returns a new `SuffixSeq` with `item` prepended to the current sequence.
+    /// Returns a new `Seq` with `item` prepended to the current sequence.
     pub fn push_front(&self, item: T) -> Self {
         Self::intern(Node::Cons(item, *self))
     }
@@ -153,7 +150,7 @@ where
         }
     }
 
-    /// Maps a function over the head element, returning the new sequence
+    /// Maps a function over the head element, returning the new sequence.
     pub fn map_head<F>(&self, func: F) -> Self
     where
         F: FnOnce(Option<&T>) -> T,
@@ -177,24 +174,12 @@ where
         matches!(self.0, Node::Nil)
     }
 
-    /// Returns the length of the sequence. Time complexity $O(n)
+    /// Returns the length of the sequence. $O(n)$ complexity.
     pub fn len(&self) -> usize {
-        let mut node = self;
-        let mut len = 0;
-        loop {
-            match node.0 {
-                Node::Nil => {
-                    return len;
-                }
-                Node::Cons(_, tail) => {
-                    len += 1;
-                    node = tail
-                }
-            }
-        }
+        self.iter().count()
     }
 
-    /// Returns a new `SuffixSeq` with `item` appended to the current sequence.
+    /// Returns a new `Seq` with `item` appended to the current sequence.
     /// $O(n)$ complexity as it requires rebuilding the sequence.
     pub fn push_back(&self, item: T) -> Self {
         let mut items: Vec<_> = self.iter().cloned().collect();
@@ -208,20 +193,15 @@ where
         self.iter().last()
     }
 
-    /// Returns a new `SuffixSeq` containing all but the last element of the current sequence.
+    /// Returns a new `Seq` containing all but the last element of the current sequence.
     /// $O(n)$ complexity.
     pub fn all_but_last(&self) -> Option<Self> {
-        if self.is_empty() {
-            return None;
-        }
-        let items: Vec<_> = self.iter().cloned().collect();
-        if items.is_empty() {
-            return Some(Self::new());
-        }
-        Some(items[..items.len() - 1].iter().cloned().collect())
+        let mut items: Vec<_> = self.iter().cloned().collect();
+        items.pop()?;
+        Some(items.into_iter().collect())
     }
 
-    /// Returns a new `SuffixSeq` that is the concatenation of `self` and `other`.
+    /// Returns a new `Seq` that is the concatenation of `self` and `other`.
     /// Shares `other`'s backing memory. $O(self.len())$ complexity.
     pub fn concat(&self, other: &Self) -> Self {
         let items: Vec<_> = self.iter().cloned().collect();
@@ -345,7 +325,7 @@ where
     }
 }
 
-/// An iterator over the elements of a `SuffixSeq`.
+/// An iterator over the elements of a `Seq`.
 pub struct Iter<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,

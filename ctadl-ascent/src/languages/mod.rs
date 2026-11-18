@@ -2,32 +2,22 @@ pub mod android_intent;
 pub mod android_manifest;
 pub mod jni;
 
-/// The JVM front end. It is its own crate, and it depends on `jvm-reader` and nothing else: no
-/// datalog engine and no tree-sitter. Re-exported here so the name `crate::languages::jvm::…`
-/// works.
+// Each front end is its own crate, re-exported here so `crate::languages::<name>::…` paths work.
+
+/// The JVM front end.
 pub use ctadl_jvm as jvm;
 
-/// The Dex front end. It is its own crate, and it depends on `dex-reader` and nothing else.
-/// Re-exported here so the name `crate::languages::dex::…` works.
+/// The Dex front end.
 pub use ctadl_dex as dex;
 
-/// The pcode front end. It is its own crate, and it also holds the `RegisterNatives` scanner,
-/// `ctadl_pcode::jni_registry`, because the two need each other. That module explains why they
-/// ship together. Re-exported here so the name `crate::languages::pcode::…` works.
+/// The pcode front end, which also holds the `RegisterNatives` scanner.
 pub use ctadl_pcode as pcode;
 
-/// The Lua front end. It is its own crate, and it depends on tree-sitter and the Lua grammar
-/// only, not on the C grammar. Re-exported here so the name `crate::languages::lua::…`
-/// works.
+/// The Lua front end.
 pub use ctadl_lua as lua;
 
-/// The .NET (CIL) front end. It is its own crate, and it depends on `cil-reader` and nothing
-/// else. Re-exported here so the name `crate::languages::cil::…` works.
+/// The .NET (CIL) front end.
 pub use ctadl_cil as cil;
 
-/// The C front end, which is its own crate. Its tests are unlike the other front ends'. They
-/// test the engine as much as the front end, so `ctadl-c` lists `ctadl-ascent` as a
-/// dev-dependency. That makes a cycle, which Cargo allows for dev-dependencies, and it keeps
-/// 5,000 lines of tests next to the code they test. Re-exported here so the name
-/// `crate::languages::tree_sitter_c::…` works.
+/// The C front end.
 pub use ctadl_c as tree_sitter_c;

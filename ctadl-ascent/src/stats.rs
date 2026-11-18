@@ -48,12 +48,9 @@ pub fn modes(counts: &[usize]) -> Vec<usize> {
 
 // --- weighted summaries ----------------------------------------------------
 //
-// The helpers below take `(value, weight)` pairs rather than a plain slice of values.
-// That is not a generalization for its own sake: their caller ([`crate::report`]) measures a
-// program whose call sites are grouped by signature, where thousands of sites share one
-// target count. Expanding those groups back into one entry per site would cost tens of
-// millions of `usize`s to compute a number that the grouped form gives exactly. Pass
-// `weight: 1` to get the ordinary unweighted meaning.
+// The helpers below take `(value, weight)` pairs rather than a plain slice of values: an entry
+// of weight `n` stands for `n` observations of its value, so a grouped sample is summarized
+// exactly without expanding it. Pass `weight: 1` to get the ordinary unweighted meaning.
 
 /// The `q`-quantile of a weighted sample, by the nearest-rank definition: the smallest value
 /// whose cumulative weight reaches `q` of the total.
@@ -133,10 +130,6 @@ impl Distribution {
 /// `sorted_desc` must be sorted descending by value. `n` counts *observations*, not entries:
 /// an entry of weight 5 supplies five of them, and is taken partially when `n` falls inside
 /// it. Zero when the total is zero.
-///
-/// This is the "do the worst ten call sites explain it?" number, and the partial take is why
-/// it has to be weighted -- the ten worst sites in a program routinely all share one
-/// signature.
 pub fn top_n_share(sorted_desc: &[(usize, usize)], n: usize) -> f64 {
     let total: usize = sorted_desc.iter().map(|(v, w)| v * w).sum();
     if total == 0 {

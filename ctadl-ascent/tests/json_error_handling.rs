@@ -342,7 +342,7 @@ fn set(items: &[&str]) -> BTreeSet<String> {
 
 #[test]
 fn any_of_is_union() {
-    // Regression: `any_of` used to intersect (AND) its inners and collapse to empty.
+    // `any_of` unions its inners; intersecting them would collapse this to empty.
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "any_of", "inners": [
@@ -447,7 +447,8 @@ fn extends_matches_superclass_java() {
 
 #[test]
 fn extends_on_non_java_matches_nothing() {
-    // `extends` is Java-only: on a native program it warns and matches nothing (not an error).
+    // `extends` needs a class hierarchy: on a native program it warns and matches nothing (not
+    // an error).
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "extends",
@@ -499,15 +500,15 @@ fn top_level_integer_compare_is_hard_error() {
 // ---------------------------------------------------------------------------
 // Fail-open `where` constraints are hard errors.
 //
-// A constraint the loader could not act on used to be a silent no-op, and because
-// the working set starts as `UniverseSet::all()` a no-op constraint left the
-// generator matching *every* function in the program. `CTADL0004` only reports
-// generators that matched nothing, so nothing caught it.
+// The working set starts as `UniverseSet::all()`, so a constraint the loader skipped
+// silently would leave the generator matching *every* function in the program, and
+// `CTADL0004` only reports generators that matched nothing. A constraint the loader
+// cannot act on must therefore fail the load.
 // ---------------------------------------------------------------------------
 
 /// Loads a `find: methods` generator with the given `where` against `program_info`, returning
-/// the collected model errors. Panics if the load *succeeded* — for these cases that is the
-/// bug under test.
+/// the collected model errors. Panics if the load *succeeded*, since for these cases loading
+/// means the constraint failed open.
 fn load_errors_with(program_info: &ProgramInfo, where_c: serde_json::Value) -> Vec<String> {
     let mut model_matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
@@ -559,8 +560,8 @@ fn assert_missing_field(where_c: serde_json::Value) {
 
 #[test]
 fn signature_constraint_keyed_on_name_is_hard_error() {
-    // The real typo this whole class of bug was found through: `name` where `pattern` was
-    // meant. It used to match every function in the program.
+    // A realistic typo: `name` where `pattern` was meant. Ignoring the unknown key would
+    // match every function in the program.
     assert_missing_field(json!([{"constraint": "signature", "name": ".*sink.*"}]));
     assert_unexpected_field(
         json!([{"constraint": "signature", "name": ".*sink.*"}]),
@@ -575,8 +576,8 @@ fn signature_match_with_no_selector_is_hard_error() {
 
 #[test]
 fn signature_match_with_unknown_key_is_hard_error() {
-    // `extends` was documented on `signature_match` but never implemented, so it was
-    // silently dropped — leaving the generator matching on `name` alone.
+    // `signature_match` does not implement `extends`; dropping it silently would leave the
+    // generator matching on `name` alone.
     assert_unexpected_field(
         json!([{"constraint": "signature_match", "name": "a", "extends": "Y"}]),
         "extends",
@@ -585,8 +586,7 @@ fn signature_match_with_unknown_key_is_hard_error() {
 
 #[test]
 fn dropped_unqualified_id_is_hard_error() {
-    // `unqualified-id` was a pure alias for `name` on `uses_field` and unimplemented on
-    // `signature_match`. Dropping it from the honored key sets makes both loud.
+    // `unqualified-id` is not an honored key on either constraint, so both reject it.
     assert_unexpected_field(
         json!([{"constraint": "signature_match", "unqualified-id": "a"}]),
         "unqualified-id",
@@ -604,7 +604,8 @@ fn uses_field_with_no_selector_is_hard_error() {
 
 #[test]
 fn in_function_under_find_methods_is_hard_error() {
-    // There is no caller set to narrow under `find: methods`, so this used to vanish.
+    // There is no caller set to narrow under `find: methods`, so the constraint could only
+    // be ignored.
     assert_unexpected_field(
         json!([{"constraint": "in_function",
                 "inner": {"constraint": "name", "pattern": "^a$"}}]),
@@ -618,10 +619,10 @@ fn in_function_with_no_inner_is_hard_error() {
 }
 
 #[test]
-fn fail_open_constraint_no_longer_matches_everything() {
-    // The assertion that would have caught the original bug. Each of these `where` clauses
-    // was a silent no-op, so `matched_functions` returned all of {a, b, c} — a model meant to
-    // mark one method as a source became a global source. They must now fail to load.
+fn fail_open_constraint_does_not_match_everything() {
+    // Treated as a no-op, each of these `where` clauses would make `matched_functions` return
+    // all of {a, b, c}, turning a model meant to mark one method as a source into a global
+    // source. They must fail to load.
     for where_c in [
         json!([{"constraint": "signature", "name": ".*sink.*"}]),
         json!([{"constraint": "signature_match"}]),
@@ -805,7 +806,7 @@ fn qualified_id_matches_every_function_sharing_a_qualified_name() {
 
 #[test]
 fn qualified_id_matches_java_method_id() {
-    // On jvm/dex the id is the `JavaMethod`, which until now was only ever a lookup *value*.
+    // On jvm/dex the id is the `JavaMethod`.
     assert_eq!(
         matched_functions(
             &java_program(),
@@ -821,8 +822,8 @@ fn qualified_id_matches_java_method_id() {
 
 #[test]
 fn invalid_predicate_is_reported_exactly_once() {
-    // `eval_predicate` runs once per candidate class, so reporting from inside it emitted one
-    // copy of the same error per method in the program.
+    // `eval_predicate` runs once per candidate class, so reporting from inside it would emit
+    // one copy of the same error per method in the program.
     let errors = load_errors_with(
         &java_program(),
         json!([{"constraint": "parent", "inner": {"constraint": "totally_bogus"}}]),
@@ -836,9 +837,9 @@ fn invalid_predicate_is_reported_exactly_once() {
 
 #[test]
 fn invalid_predicate_is_reported_on_non_java_frontends() {
-    // `parent` matches nothing on a native VMT and used to return before evaluating, so a
-    // broken predicate was reported zero times — the same model file loaded cleanly or failed
-    // depending on which artifact it was run against.
+    // `parent` matches nothing on a native VMT. The predicate is still validated, so the
+    // same model file does not load cleanly or fail depending on which artifact it is run
+    // against.
     let errors = load_errors_with(
         &native_program(),
         json!([{"constraint": "parent", "inner": {"constraint": "totally_bogus"}}]),
@@ -853,7 +854,7 @@ fn invalid_predicate_is_reported_on_non_java_frontends() {
 #[test]
 fn nested_signature_match_rejects_keys_it_cannot_honor() {
     // The subject of a nested `signature_match` is already a class name, so `parent` is
-    // meaningless there and was silently dropped.
+    // meaningless there and must be rejected rather than dropped.
     assert_unexpected_field(
         json!([{"constraint": "parent",
                 "inner": {"constraint": "signature_match", "name": "Child", "parent": "X"}}]),
@@ -938,8 +939,7 @@ fn variable_port_with_find_callsites_is_rejected() {
 }
 
 /// `find` is optional as far as the JSON goes, so a generator that omits it must be reported
-/// as a missing field. It used to leave a hole in a positional table and panic the *next*
-/// generator with "insertion index should be <= len".
+/// as a missing field, without disturbing the *next* generator.
 #[test]
 fn test_missing_find_field_error() {
     let program_info = ProgramInfo::default();
@@ -976,16 +976,15 @@ fn test_missing_find_field_error() {
 // ---------------------------------------------------------------------------
 // Malformed access paths in ports are hard errors.
 //
-// A port's trailing access path used to be split on '.' with every segment made a
-// `Symbol`, so nothing was ever malformed: `Argument(0).[*]` became `Symbol("[*]")`
-// (a field no frontend emits, so the generator silently matched nothing),
-// `Argument(0).a..b` became `Symbol("")`, and `Argument(0).[8]` became
-// `Symbol("[8]")` rather than the offset it reads as. Ports now parse with the one
-// canonical grammar and a violation names the port.
+// Ports parse with the one canonical grammar and a violation names the port. Splitting
+// on '.' and making every segment a `Symbol` would accept anything: `Argument(0).[*]`
+// would become `Symbol("[*]")` (a field no frontend emits, so the generator silently
+// matches nothing), `Argument(0).a..b` would become `Symbol("")`, and `Argument(0).[8]`
+// would become `Symbol("[8]")` rather than the offset it reads as.
 // ---------------------------------------------------------------------------
 
 /// Loads a generator with `port` as a source and returns the collected errors.
-/// Panics if the load succeeded — for these cases that is the bug under test.
+/// Panics if the load succeeded, since these ports are malformed.
 fn access_path_errors_for(port: &str) -> Vec<String> {
     let program_info = ProgramInfo::default();
     let mut model_matches = ProgramModelMatches::default();
@@ -1041,7 +1040,7 @@ fn unescaped_bracketed_field_name_is_hard_error() {
 }
 
 /// The port regexes are anchored, so junk around a selector is rejected rather than
-/// silently accepted. Unanchored, `Return(.*)?` matched "MyReturnType" and produced a
+/// silently accepted. Unanchored, `Return(.*)?` would match "MyReturnType" and produce a
 /// `Return` port with access path `Type`.
 #[test]
 fn unanchored_port_text_is_hard_error() {

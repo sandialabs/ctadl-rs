@@ -34,9 +34,9 @@
 //! `cap > SMALL`, an integer compare on a field every operation loads anyway. The bucket count
 //! that decides it provably cannot be ambiguous; see [`RawTable::MIN_LARGE_BUCKETS`].
 //!
-//! The result is **16 bytes**, namely `{ptr, cap, len}`, for any `T`. The enum this replaces cost
-//! 32, on *every* set the enclosing map holds, whether or not that set ever promotes. Being
-//! narrower is not the only gain: `len` and `capacity` no longer branch at all, the iterator is
+//! The result is **16 bytes**, namely `{ptr, cap, len}`, for any `T`. An enum over the two
+//! regimes would cost 32, on *every* set the enclosing map holds, whether or not that set ever
+//! promotes. Being narrower is not the only gain: `len` and `capacity` do not branch at all, the iterator is
 //! one type rather than three, and growth, promotion, cloning, dropping, and freeing are each
 //! written once for both regimes.
 //!

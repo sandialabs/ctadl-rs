@@ -207,7 +207,7 @@ fn unique_temps() {
         .iter()
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
-            StatementKind::Assign { dest, .. } => match dest.variable.as_ref() {
+            StatementKind::Assign { dest, .. } => match &dest.variable {
                 Variable::Local(idx) => {
                     let name = fun.locals.name(*idx);
                     name.starts_with("<t").then(|| name.to_string())
@@ -827,6 +827,22 @@ fn array_declaration_element_flows_to_return() {
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn array_declarations_lower_without_a_report() {
+    // #24: `int x[3];` in a body was "Unsupported expression type: array_declarator". Strict,
+    // so any report is a failure; the other shapes take the same declaration arm.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int foo() {
+            int x[3];
+            int y[2][4];
+            char *names[3];
+            int z[] = {1, 2};
+            return 0;
+        }";
+    program_from_string(src);
 }
 
 #[test_log::test]
@@ -4164,6 +4180,32 @@ fn parse_error_is_a_source_problem_not_a_frontend_gap() {
         !err.contains("Unknown token") && !err.contains("Unsupported expression type"),
         "nothing on this path may call unexpected_ast any more: {err}"
     );
+}
+
+#[test_log::test]
+fn a_report_leads_with_file_line_and_column() {
+    // A report says where (#103): `file:line:col`, 1-based, for a source problem and a
+    // frontend gap alike, and strict mode's hard error keeps it. In memory the file is `<input>`.
+    let src = "int f(int c) {\n    break;\n    return c;\n}\nint g(int x) { return (zzz)(x); }\n";
+    let reports = reports_for(src);
+    let msgs: Vec<&str> = reports.iter().map(|(_, msg)| msg.as_str()).collect();
+    assert_eq!(msgs.len(), 2, "{msgs:?}");
+    assert!(msgs[0].starts_with("<input>:2:5: `break`"), "{msgs:?}");
+    assert!(
+        msgs[1].starts_with("<input>:5:23: cast-shaped call"),
+        "{msgs:?}"
+    );
+
+    let files = [("src/a.c".to_string(), src.to_string())];
+    let _ = super::take_reports();
+    super::parse_c_files(&files).expect("non-strict ingestion must recover");
+    let reports = super::take_reports();
+    assert!(reports[0].1.starts_with("src/a.c:2:5: "), "{reports:?}");
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_files(&files).expect_err("strict mode rejects the stray `break`");
+    let err = err.to_string();
+    assert!(err.contains("src/a.c:2:5: `break` outside"), "{err}");
 }
 
 #[test_log::test]

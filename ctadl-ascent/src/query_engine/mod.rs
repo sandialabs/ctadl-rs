@@ -12,7 +12,7 @@ The default regime ([`search`]) is a demand-driven graph search: sources are par
 by label, and each label set runs one multi-start realizable-path search directly over
 the program tables (aliasing consulted through a union-find of the copy classes), with
 sinks as targets. Only the states a search reaches exist at all, and only what the
-reporting consumes is materialized. The datalog closure engi¬ne
+reporting consumes is materialized. The datalog closure engine
 ([`taint_analysis_datalog`]) computes the same taint as a fixpoint and materializes it
 in full; it remains available via `CTADL_QUERY_DATALOG=1`.
 */
@@ -22,12 +22,14 @@ use derive_builder::Builder;
 use packed_struct::prelude::*;
 
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
-    TaintEndpoint, TaintState, isout,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap,
+    InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint,
+    TaintState, isout,
 };
+use crate::index_engine::{func_name, vertex_str};
 
-// same as a TaintEndpoint but with a functionId
+/// A [`TaintEndpoint`] keyed by [`FunctionId`], plus the call site it is anchored at and
+/// whether it saturates.
 #[derive(
     Clone,
     Eq,
@@ -260,25 +262,15 @@ pub struct QueryResultDisplay<'a> {
 impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (func_id, taint_state, flow_var, path, endpoint) in &self.result.taint {
-            let var_path_str = {
-                let var_str = match flow_var.kind() {
-                    FlowVariableKind::Local(name) => name.to_string(),
-                    _ => format!("{}", flow_var),
-                };
-                format!("{}{}", var_str, path.to_dot_string())
-            };
+            let var_path_str = vertex_str(flow_var, path);
 
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             let taint_state_str = format!("{:?}", taint_state);
             writeln!(
                 f,
                 "{}({}): {:<10} {} <-- {}",
-                func_name,
+                name,
                 func_id.id,
                 taint_state_str,
                 var_path_str,
@@ -318,10 +310,11 @@ fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKe
 /// i.e. register-to-register moves `dst = src`) and returns, for every variable that
 /// is *not* its group's representative, the pair `(f, member, representative)`
 /// (`member != representative`). Singletons — variables in no copy edge — never enter
-/// the union-find and so produce no rows. This is the O(C) replacement for the old
-/// Θ(C²) all-pairs empty-path `alias_of_field` closure: instead of materializing
-/// every pair of a C-variable copy group, we hand the taint engine one edge per
-/// non-representative member and let taint equalize through the representative.
+/// the union-find and so produce no rows. This is O(C) where an all-pairs empty-path
+/// alias closure would be Θ(C²): instead of materializing every pair of a C-variable
+/// copy group, we hand the taint engine one edge per non-representative member and let
+/// taint equalize through the representative. SSA register moves form copy groups of
+/// C≈10⁴ variables, where all pairs would be 10⁸ rows or more.
 ///
 /// Copies that WRITE a formal are skipped, for the same reason the index's
 /// [`crate::index_engine`] `compute_alias_of_formal` drops them: to avoid sharing taint
@@ -335,7 +328,7 @@ pub(crate) fn compute_copy_alias(
         if !dp.is_empty() || !sp.is_empty() {
             continue;
         }
-        // The `ParamFlow` write-back described above. Union-find is direction-blind, so
+        // A copy that writes a formal; see the doc above. Union-find is direction-blind, so
         // this edge has to be dropped at construction; there is no way to union "one way".
         if dst.as_formal().is_some() {
             continue;
@@ -408,14 +401,9 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         // Copy-class equivalence, precomputed by union-find over empty-path copy
         // edges (`y = x`, both paths empty) in `compute_copy_alias`. `copy_alias(f,
         // member, rep)` maps every non-representative variable of a copy-connected
-        // group to its representative (`member != rep`). This replaces the old
-        // all-pairs empty-path `alias_of_field` closure (rules R2/R3/R4), which
-        // materialized Θ(C²) rows for a group of C copy-connected variables — the
-        // query-phase memory blowup. Register-to-register moves in firmware SSA form
-        // groups of C≈10⁴, so Θ(C²) reached 10⁸–10⁹ rows. Union-find collapses that
-        // to O(C): 2 edges (member↔rep) per variable, and FIELD taint equalizes
-        // across the group by routing through the representative in two hops (see
-        // the equalize rules just below). Value taint is not equalized.
+        // group to its representative (`member != rep`). FIELD taint equalizes across
+        // the group by routing through the representative in two hops (see the
+        // equalize rules below). Value taint is not equalized.
         relation copy_alias(FunctionId, FlowVariable, FlowVariable);
 
         // Initialize taint with source
@@ -474,8 +462,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
                 (a.direction == TaintDirection::Backward /* && isin(n2.0) */),
             call(site_id, infunc),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n2).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed);
+            let v1 = FlowVariable::call_actual(insn_id, n2);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
         taint(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone()),
@@ -491,12 +478,26 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             if a.direction == TaintDirection::Forward /* && isin(formal)) */ ||
                 (a.direction == TaintDirection::Backward && isout(&formal, *formal_ty, p2));
 
-        // R1: a field/offset read `x = a.p` seeds a field alias (`x` holds `a`'s
+        // The caller's heap formal is also the actual heap at each of its call sites.
+        // Keep the site on the edge even though all these calls share one vertex.
+        relation heap_call(FunctionId, PackedInsnSiteId, FunctionId);
+        heap_call(site.func_id, *site_id, *callee) <--
+            call(site_id, callee),
+            let site = InsnSiteId::try_from(site_id).unwrap();
+
+        taint(func, TaintState::Restricted, *v, *p, a.clone()),
+        taint_edge_directed(if a.direction == TaintDirection::Forward { FlowEdge::Call(*site) } else { FlowEdge::Return(*site) }, *func, *v, *p, *caller, *v, *p, a.direction) <--
+            taint(caller, _, v, p, a),
+            if v.as_formal() == Some(crate::codegen::GLOBALS_INDEX.into()),
+            heap_call(caller, site, func),
+            formal_param(func, v, _);
+
+        // A field/offset read `x = a.p` seeds a field alias (`x` holds `a`'s
         // field `p`). Non-empty path only; the empty-path copy case is handled by
         // the copy-class equalize rules below, not here. Gated on the base `a` being
-        // tainted ("aliases of tainted things only"). This produces O(loads) rows,
-        // not Θ(C²): it is not the blowup. Copies of `x` need not be enumerated here
-        // — the equalize rules route their taint through `x`'s representative.
+        // tainted ("aliases of tainted things only"). This produces O(loads) rows.
+        // Copies of `x` need not be enumerated here — the equalize rules route their
+        // taint through `x`'s representative.
         alias_of_field(infunc, x.clone(), a.clone(), p.clone()) <--
             taint(infunc, _, a, _, _),
             assign_like(infunc, x, Path::empty(), a, p),
@@ -575,9 +576,8 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
             if *dir == TaintDirection::Backward;
 
-        // Instruction-level facts derived from the taint closure in this same pass
-        // (they used to be recomputed by a second engine in the formatter). Both are
-        // non-recursive projections of `taint`.
+        // Instruction-level facts derived from the taint closure in this same pass. Both
+        // are non-recursive projections of `taint`.
         relation external_function(FunctionId);
         relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
@@ -662,16 +662,12 @@ impl<'a> std::fmt::Display for DisplayTaint<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Taint output")?;
         for (func_id, ts, var, path, endpoint) in self.taint {
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {}({}) {:?} {}{} <- {}",
-                func_name,
+                name,
                 func_id.id,
                 ts,
                 var,
@@ -705,15 +701,11 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             saturating: _,
         } = self.endpoint;
 
-        let func_name = self
-            .id_map
-            .and_then(|m| m.get_function(*infunc))
-            .map(|f| f.0.as_ref())
-            .unwrap_or("unknown");
+        let name = func_name(self.id_map, *infunc);
 
         write!(
             f,
-            "{label} {direction} {func_name}({}) {}{}",
+            "{label} {direction} {name}({}) {}{}",
             infunc.id,
             vertex.0,
             vertex.1.to_dot_string()
@@ -723,18 +715,4 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
         }
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // use super::*;
-
-    // #[test]
-    // fn test_read_no_taint() {
-    //     // this should not throw an exception
-    //     let _result = QueryResult::new()
-    //         .load(path::PathBuf::from("/tmp"))
-    //         .unwrap();
-    //     assert!(true);
-    // }
 }

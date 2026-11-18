@@ -87,9 +87,10 @@ pub fn find_path<G: Successors>(graph: &G, start: G::Node, end: G::Node) -> Opti
     find_path_to_set(graph, start, |n| end == n)
 }
 
-/// Find a path from `start` to the nearest node satisfying `is_target`,
-/// following successors. The returned path includes both `start` and the target
-/// node it reaches; `None` if no target is reachable.
+/// Find a path from `start` to some node satisfying `is_target`, following
+/// successors. The search is depth-first, so the path need not be the shortest
+/// and the target need not be the nearest. The returned path includes both
+/// `start` and the target node it reaches; `None` if no target is reachable.
 ///
 /// This generalizes [`find_path`] to a set of acceptable endpoints; pass
 /// `|n| n == end` to recover single-target search.
@@ -159,9 +160,10 @@ pub trait Annotation<G: LabeledSuccessors>: Clone + Eq + std::hash::Hash {
     fn expand(&self, graph: &G, from: G::Node, label: &G::Label, to: G::Node) -> Option<Self>;
 }
 
-/// Find a path from `start` to the nearest node whose `(node, annotation)` state
+/// Find a path from `start` to some node whose `(node, annotation)` state
 /// satisfies `is_target`, following successors and threading an [`Annotation`]
-/// along each path.
+/// along each path. The search is depth-first, so the path need not be the
+/// shortest.
 ///
 /// This generalizes [`find_path_to_set`]: alongside each search node it carries
 /// an annotation, seeded with [`Annotation::start`] at `start` and advanced by
@@ -303,8 +305,8 @@ impl<N, L, A> AnnotatedSetSearch<N, L, A> {
 /// exploration is done once); the graph is implicit — edges come from
 /// [`LazySuccessors::labeled_successors`] on demand, so nothing is
 /// materialized beyond the states actually reached; and instead of stopping at
-/// the nearest target it explores the whole reachable state space, recording
-/// every target state it encounters. The traversal is breadth-first, so the
+/// the first target it reaches it explores the whole reachable state space,
+/// recording every target state it encounters. The traversal is breadth-first, so the
 /// first target entry for a node lies on a shortest path from the start set.
 ///
 /// The returned [`AnnotatedSetSearch`] carries the full first-reach forest

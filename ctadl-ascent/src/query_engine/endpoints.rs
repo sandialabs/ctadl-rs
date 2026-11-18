@@ -9,8 +9,10 @@
 //! This is not a 1:1 conversion. In addition to resolving function names →
 //! [`FunctionId`](crate::facts::FunctionId), it performs two index-dependent expansions:
 //! - **call-site fan-out** — a function-anchored endpoint is fanned into one endpoint per
-//!   matching call site (via [`QueryEndpoint::anchored_at_callsites`] /
-//!   [`QueryEndpoint::anchored_at_callsites_filtered`]), needing `facts.call`;
+//!   matching call site (via
+//!   [`QueryEndpoint::anchored_at_callsites`](super::QueryEndpoint::anchored_at_callsites) /
+//!   [`QueryEndpoint::anchored_at_callsites_filtered`](super::QueryEndpoint::anchored_at_callsites_filtered)),
+//!   needing `facts.call`;
 //! - **sink wildcard expansion** — a wildcard sink port is expanded into the concrete
 //!   access paths that live on the argument's copy class (via [`super::compute_copy_alias`]),
 //!   needing `assign_like`.

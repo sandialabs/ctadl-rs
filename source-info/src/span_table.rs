@@ -46,11 +46,7 @@ impl SpanTable {
     }
 
     pub fn get(&self, id: SpanId) -> Option<&Span> {
-        let idx = id.0 as usize;
-        if idx == 0 || idx > self.spans.len() {
-            return None;
-        }
-        self.spans.get(idx - 1)
+        self.spans.get((id.0 as usize).checked_sub(1)?)
     }
 
     pub fn len(&self) -> usize {

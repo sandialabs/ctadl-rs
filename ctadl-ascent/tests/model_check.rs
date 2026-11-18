@@ -1,9 +1,9 @@
 /*! What `ctadl query` reports when there is no index, against a synthetic program and no store.
 
 Everything here drives [`cli::check_programs`], which is the half of the check that needs no
-store: it takes owned `(ImportScope, ProgramInfo)` items and does the rest. `tests/cli.rs` covers
-the store-facing half -- name resolution, and the promise that a query without an index writes
-nothing into the store.
+store: it takes owned `(ImportScope, ProgramInfo)` items and does the rest. The store-facing half
+-- name resolution, and the promise that a query without an index writes nothing into the store --
+is covered end to end by `check_model_check` in `xtask/src/apk.rs`.
 */
 use std::io::Write as _;
 

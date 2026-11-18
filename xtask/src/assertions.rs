@@ -1,6 +1,4 @@
 //! Parsing of analyzer outputs and known-answer checking.
-//!
-//! These replace the old `jq`/`grep` pipelines with structured JSON parsing.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -10,8 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Read the `expected_lines` array from a test config. An empty array denotes a
-/// negative test (no flow expected). A missing key is an error, matching the
-/// old `jq -e '.expected_lines'` check.
+/// negative test (no flow expected). A missing key is an error.
 pub fn read_expected_lines(config: &Path) -> Result<Vec<i64>> {
     let value = read_config(config)?;
     let array = value
@@ -119,10 +116,9 @@ fn line_array(array: &Value, key: &str, config: &Path) -> Result<Vec<i64>> {
         .collect()
 }
 
-/// Collect every `byteOffset` value anywhere in a SARIF document. Used for the
-/// machine profile, whose results are the tainted *instructions* (there are no code
-/// flows to scope to); the union of these with the human profile's code-flow offsets
-/// is what a DEX/JVM case's `expected_lines` must be covered by.
+/// Collect every `byteOffset` value anywhere in a SARIF document's results. Meant for
+/// the machine profile, whose results are the tainted *instructions* (there are no code
+/// flows to scope to).
 ///
 /// Endpoint results (`C0003.taint-source` / `C0004.taint-sink`) are excluded. They are
 /// emitted in every profile, and their locations are the *declared* source and sink lines
@@ -156,10 +152,9 @@ pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
 
 /// Whether some human-profile code flow connects a source to a sink: a single thread
 /// flow that carries both a `source ...` step and a `sink ...` step (the step messages
-/// the formatter emits for the two endpoints). This is the code-flow *integrity* check
-/// -- distinct from `expected_lines` coverage -- and is exactly what regressed when the
-/// step dedup collapsed every flow to its lone source step: with only a source step and
-/// no sink step, no thread connects the two.
+/// the formatter emits for the two endpoints). This is the code-flow *integrity* check,
+/// distinct from `expected_lines` coverage: a flow collapsed to its lone source step has
+/// no sink step, so no thread connects the two.
 pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
     let value = read_json(sarif)?;
     for run in value

@@ -14,8 +14,8 @@ fn test_absorbing_functions() {
 
     // main calls ExternalFunc(arg), and `arg` (formal 0 of the call) is tainted.
     // Seeding the source directly on the call-arg vertex means the single taint
-    // pass taints it, and the `absorbing_functions` rule (now part of
-    // `taint_analysis`) should report that the external function absorbs it.
+    // pass taints it, and the `absorbing_functions` rule should report that the
+    // external function absorbs it.
     let call_arg = FlowVariable::call_arg_packed(
         ctadl_ascent::facts::PackedCallArg::try_from_parts(site_id.insn_id, 0i16.into()).unwrap(),
     );

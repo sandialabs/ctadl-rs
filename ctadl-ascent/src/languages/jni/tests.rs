@@ -909,7 +909,7 @@ fn a_registration_rescues_an_overload_a_short_symbol_cannot_resolve() {
     assert_eq!(targets.len(), 2, "each overload got its own implementation");
 }
 
-/// An entry tier 1 cannot attribute is counted, never guessed at, and emits no link.
+/// An entry attribution cannot pin to one class is counted, never guessed at, and emits no link.
 #[test]
 fn an_unattributed_entry_is_counted_and_not_linked() {
     let java = "Lcom/example/A;";

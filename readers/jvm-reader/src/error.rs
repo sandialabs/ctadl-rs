@@ -43,9 +43,9 @@ pub enum ClassFileError {
     /// A well-formed modified-UTF-8 constant that holds unpaired UTF-16
     /// surrogate code units, used where a Rust `str` is required.
     ///
-    /// Such a constant is legal in a class file -- generated lexers use string
-    /// constants as packed UTF-16 tables -- but it is not a Unicode scalar
-    /// sequence, so `str` cannot hold it. Class, method, field and descriptor
+    /// Such a constant is legal in a class file (see [`crate::types::JvmString`])
+    /// but it is not a Unicode scalar sequence, so `str` cannot hold it. Class,
+    /// method, field and descriptor
     /// names can never legally contain one, so this is a hard error at those
     /// call sites; string *constants* keep their code units and go through
     /// [`crate::types::JvmString::to_string_lossy`] instead.
@@ -59,7 +59,7 @@ pub enum ClassFileError {
     /// heights.
     ///
     /// Structured rather than a formatted message so callers can recognize it
-    /// without matching on text (`xtask regression` counts these as skips).
+    /// without matching on text.
     StackHeightMismatch {
         method: Box<MethodContext>,
         /// Index and start pc of the block being entered.
@@ -281,19 +281,18 @@ mod tests {
             offset: 12,
             byte: 0xFF,
         }
-        .in_entry("com/android/tools/smali/smali/smaliFlexLexer.class");
+        .in_entry("com/example/Lexer.class");
         let msg = err.to_string();
-        assert!(msg.contains("smaliFlexLexer.class"), "{msg}");
+        assert!(msg.contains("com/example/Lexer.class"), "{msg}");
         assert!(msg.contains("#338"), "{msg}");
         assert!(msg.contains("0xff"), "{msg}");
     }
 
-    /// The join error names class, method and both sides of the edge, and is a
-    /// structured variant so `xtask` can count it without matching on text.
+    /// The join error names class, method and both sides of the edge.
     #[test]
     fn stack_height_mismatch_names_the_edge() {
         let err = ClassFileError::StackHeightMismatch {
-            method: method("ResFileDecoder", "decode", "(Ljava/lang/String;)V"),
+            method: method("com/example/Decoder", "decode", "(Ljava/lang/String;)V"),
             block: 17,
             block_pc: 221,
             pred_block: 14,
@@ -303,7 +302,7 @@ mod tests {
         };
         let msg = err.to_string();
         for needle in [
-            "ResFileDecoder",
+            "com/example/Decoder",
             "decode(Ljava/lang/String;)V",
             "block 17 (pc 221)",
             "block 14 (pc 181)",
@@ -314,17 +313,13 @@ mod tests {
         }
     }
 
-    /// The layout join error used to be a bare `&'static str`, so the one shape
-    /// it can report -- a block reached from both a handler and a normal edge --
-    /// was the one thing it did not say.
+    /// The layout join error says whether the edge is an exception edge: the one
+    /// shape it can report is a block reached from both a handler and a normal
+    /// edge.
     #[test]
     fn stack_layout_mismatch_names_the_edge_and_the_layouts() {
         let err = ClassFileError::StackLayoutMismatch {
-            method: method(
-                "AbstractFilterExpressionConverter",
-                "convert",
-                "(Ljava/lang/String;)V",
-            ),
+            method: method("com/example/Converter", "convert", "(Ljava/lang/String;)V"),
             block: 5,
             block_pc: 61,
             pred_block: 3,
@@ -335,7 +330,7 @@ mod tests {
         };
         let msg = err.to_string();
         for needle in [
-            "AbstractFilterExpressionConverter",
+            "com/example/Converter",
             "convert(Ljava/lang/String;)V",
             "block 5 (pc 61)",
             "block 3 (pc 40)",
@@ -350,7 +345,7 @@ mod tests {
     #[test]
     fn stack_underflow_names_the_instruction() {
         let err = ClassFileError::StackUnderflow {
-            method: method("org/yamcs/Processor", "start", "()V"),
+            method: method("com/example/Processor", "start", "()V"),
             pc: 94,
             opcode: 0xad,
             mnemonic: "lreturn",
@@ -359,7 +354,7 @@ mod tests {
         };
         let msg = err.to_string();
         for needle in [
-            "org/yamcs/Processor",
+            "com/example/Processor",
             "start()V",
             "pc=94",
             "opcode=0xad",

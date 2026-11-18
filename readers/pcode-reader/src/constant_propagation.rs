@@ -3,8 +3,8 @@
 # Constant Propagation
 
 The constant propagation uses a simple domain where each varnode `x` maps to `option(y) + c`
-meaning that "varnode `x` is equal to `y` plus the constant `c`. If `option(y)` is none it means
-that `x = c`. As a special case, the initial value for each varnode is `x = x + 0`. 
+meaning that "varnode `x` is equal to `y` plus the constant `c`". If `option(y)` is none it means
+that `x = c`. As a special case, the initial value for each varnode is `x = x + 0`.
 
 Constant propagation is implemented with relatively simple datalog rules and through lattice-aware
 arithmetic operations on [`SymbolicProp`].
@@ -224,14 +224,11 @@ pub fn compute_constant_propagation(facts: &PcodeFacts) -> BTreeMap<PcodeVarnode
                 ));
             }
         } else if !defined_vars.contains(vnode) {
-            let mut is_sp = false;
-            if is_register_space
-                && let Some(addr) = &data.address
-                && sp_offsets.contains(&addr.0)
-            {
-                is_sp = true;
-            }
-
+            let is_sp = is_register_space
+                && data
+                    .address
+                    .as_ref()
+                    .is_some_and(|addr| sp_offsets.contains(&addr.0));
             if is_sp {
                 prog.initial_value.push((
                     vnode.clone(),

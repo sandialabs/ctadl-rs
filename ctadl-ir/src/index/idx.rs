@@ -5,7 +5,7 @@ use std::slice::SliceIndex;
 
 /// Represents some newtyped `usize` wrapper.
 ///
-/// Purpose: avoid mixing indexes for different bitvector domains.
+/// Purpose: avoid mixing indexes for different domains.
 pub trait Idx: Copy + 'static + Eq + PartialEq + Debug + Hash {
     fn new(idx: usize) -> Self;
 

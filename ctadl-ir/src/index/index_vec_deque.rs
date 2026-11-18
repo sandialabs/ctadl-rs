@@ -6,7 +6,7 @@ use std::ops::RangeBounds;
 
 use crate::index::{idx::Idx, slice::IndexSlice};
 
-/// An owned deque of `T`s, indexed by `I` rather than:e  by `usize`.
+/// An owned deque of `T`s, indexed by `I` rather than by `usize`.
 ///
 /// ## Why use this instead of a `VecDeque`?
 ///
@@ -31,13 +31,13 @@ pub struct IndexVecDeque<I: Idx, T> {
 }
 
 impl<I: Idx, T> IndexVecDeque<I, T> {
-    /// Constructs a new, empty `IndexVec<I, T>`.
+    /// Constructs a new, empty `IndexVecDeque<I, T>`.
     #[inline]
     pub const fn new() -> Self {
         IndexVecDeque::from_raw(VecDeque::new())
     }
 
-    /// Constructs a new `IndexVec<I, T>` from a `Vec<T>`.
+    /// Constructs a new `IndexVecDeque<I, T>` from a `VecDeque<T>`.
     #[inline]
     pub const fn from_raw(raw: VecDeque<T>) -> Self {
         IndexVecDeque {
@@ -54,15 +54,11 @@ impl<I: Idx, T> IndexVecDeque<I, T> {
 
     /// Creates a new vector with a copy of `elem` for each index in `universe`.
     ///
-    /// Thus `IndexVec::from_elem(elem, &universe)` is equivalent to
-    /// `IndexVec::<I, _>::from_elem_n(elem, universe.len())`. That can help
-    /// type inference as it ensures that the resulting vector uses the same
+    /// Thus `IndexVecDeque::from_elem(elem, &universe)` is equivalent to
+    /// `IndexVecDeque::<I, _>::from_elem_n(elem, universe.len())`. That can help
+    /// type inference as it ensures that the resulting deque uses the same
     /// index type as `universe`, rather than something potentially surprising.
-    ///
-    /// For example, if you want to store data for each local in a MIR body,
-    /// using `let mut uses = IndexVec::from_elem(vec![], &body.local_decls);`
-    /// ensures that `uses` is an `IndexVec<Local, _>`, and thus can give
-    /// better error messages later if one accidentally mismatches indices.
+    /// See [`IndexVec::from_elem`](crate::index::index_vec::IndexVec::from_elem).
     #[inline]
     pub fn from_elem<S>(elem: T, universe: &IndexSlice<I, S>) -> Self
     where
@@ -71,7 +67,7 @@ impl<I: Idx, T> IndexVecDeque<I, T> {
         IndexVecDeque::from_raw(vec![elem; universe.len()].into())
     }
 
-    /// Creates a new IndexVec with n copies of the `elem`.
+    /// Creates a new IndexVecDeque with n copies of the `elem`.
     #[inline]
     pub fn from_elem_n(elem: T, n: usize) -> Self
     where
@@ -80,7 +76,7 @@ impl<I: Idx, T> IndexVecDeque<I, T> {
         IndexVecDeque::from_raw(vec![elem; n].into())
     }
 
-    /// Create an `IndexVec` with `n` elements, where the value of each
+    /// Create an `IndexVecDeque` with `n` elements, where the value of each
     /// element is the result of `func(i)`. (The underlying vector will
     /// be allocated only once, with a capacity of at least `n`.)
     #[inline]
@@ -286,7 +282,7 @@ impl<I: Idx, T> std::ops::IndexMut<I> for IndexVecDeque<I, T> {
     }
 }
 
-/// `IndexVec` is often used as a map, so it provides some map-like APIs.
+/// `IndexVecDeque` is often used as a map, so it provides some map-like APIs.
 impl<I: Idx, T> IndexVecDeque<I, Option<T>> {
     #[inline]
     pub fn insert(&mut self, index: I, value: T) -> Option<T> {
@@ -377,6 +373,6 @@ impl<I: Idx, T, const N: usize> From<[T; N]> for IndexVecDeque<I, T> {
     }
 }
 
-// SAFETY: `Send` is an unsafe trait. Whether `IndexVec` is `Send` depends only
+// SAFETY: `Send` is an unsafe trait. Whether `IndexVecDeque` is `Send` depends only
 // on the data, not the phantom data.
 unsafe impl<I: Idx, T> Send for IndexVecDeque<I, T> where T: Send {}

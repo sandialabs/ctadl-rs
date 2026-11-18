@@ -204,15 +204,14 @@ let
     sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|' Cargo.toml
   '';
 
-  # `dex-reader` is the DEX dumper the linemap step of the DEX regression
-  # tests runs. It is an *example* of the dex-reader crate, not a bin, so
-  # that a plain `cargo build` -- which is what packages.default runs --
-  # leaves it out of the distro. Examples are not built by default, so
-  # ask for it by name.
+  # The dumper of the reader crate `name`. Each dumper is an *example* of
+  # its crate, not a bin, so that a plain `cargo build` -- which is what
+  # packages.default runs -- leaves it out of the distro. Examples are not
+  # built by default, so ask for them by name.
   #
   # Two details of the target selection:
   #
-  # - The src is `readersSrc` below, not ../readers/dex-reader. dex-reader
+  # - The src is `readersSrc`, not the crate's own directory. Each reader
   #   is a workspace member, and a member cannot be built alone: its
   #   `version.workspace = true` needs the root manifest.
   # - `--lib` rides along with `--examples` for naersk's sake. naersk
@@ -223,41 +222,31 @@ let
   #   to chew on.
   #
   # naersk installs whatever cargo reports as an executable, and an
-  # example is one, so this lands at $out/bin/dex-reader.
-  dex-reader = naersk-lib.buildPackage {
-    src = readersSrc;
-    preBuild = readersPreBuild;
-    version = workspaceVersion;
-    name = "dex-reader";
-    release = false;
-    cargoBuildOptions =
-      x:
-      x
-      ++ [
-        "--package"
-        "dex-reader"
-        "--lib"
-        "--examples"
-      ];
-  };
+  # example is one, so the dumper lands at $out/bin/<name>.
+  readerExamples =
+    name:
+    naersk-lib.buildPackage {
+      src = readersSrc;
+      preBuild = readersPreBuild;
+      version = workspaceVersion;
+      inherit name;
+      release = false;
+      cargoBuildOptions =
+        x:
+        x
+        ++ [
+          "--package"
+          name
+          "--lib"
+          "--examples"
+        ];
+    };
 
-  # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
-  jvm-reader = naersk-lib.buildPackage {
-    src = readersSrc;
-    preBuild = readersPreBuild;
-    version = workspaceVersion;
-    name = "jvm-reader";
-    release = false;
-    cargoBuildOptions =
-      x:
-      x
-      ++ [
-        "--package"
-        "jvm-reader"
-        "--lib"
-        "--examples"
-      ];
-  };
+  # The DEX dumper the linemap step of the DEX regression tests runs.
+  dex-reader = readerExamples "dex-reader";
+
+  # The JVM dumper, for the JVM E2E linemap step.
+  jvm-reader = readerExamples "jvm-reader";
 
   # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
   # at the commit the specs pin instead of being committed to this repo.
@@ -280,6 +269,39 @@ let
       (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
     ];
 
+  # The pure-Rust unit tests of the reader crate `name`, built offline by
+  # naersk in test mode.
+  #
+  # `cargo test --workspace` in the test workflow covers these too. These
+  # checks are kept because they run on the nightly's Nix builder with no
+  # toolchain assumptions, and because they cost nothing to keep.
+  #
+  # `--package` is not optional here: `src` is the whole tree, so without
+  # it this would test the whole workspace, which is a far larger build
+  # than these checks want.
+  readerTests =
+    name:
+    naersk-lib.buildPackage {
+      src = ../.;
+      version = workspaceVersion;
+      name = "${name}-tests";
+      mode = "test";
+      cargoBuildOptions =
+        x:
+        x
+        ++ [
+          "--package"
+          name
+        ];
+      cargoTestOptions =
+        opts:
+        opts
+        ++ [
+          "--package"
+          name
+        ];
+    };
+
 in
 {
   inherit
@@ -299,62 +321,14 @@ in
     ;
   androidSdkBuildTools = buildToolsDir androidSdk;
   androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;
-  # dex-reader's pure-Rust unit tests, built offline by naersk in test
-  # mode. No external toolchain needed. The integration-style
+  # dex-reader's tests need no external toolchain. The integration-style
   # full-parse checks (compiled samples + the real-world APK) are in
   # `xtask regression`.
-  #
-  # `cargo test --workspace` in the test workflow covers these too. This
-  # check is kept because it runs on the nightly's Nix builder with no
-  # toolchain assumptions, and because it costs nothing to keep.
-  #
-  # `--package` is not optional here: `src` is the whole tree, so without
-  # it this would test the whole workspace, which is a far larger build
-  # than this check wants.
-  dex-reader-tests = naersk-lib.buildPackage {
-    src = ../.;
-    version = workspaceVersion;
-    name = "dex-reader-tests";
-    mode = "test";
-    cargoBuildOptions =
-      x:
-      x
-      ++ [
-        "--package"
-        "dex-reader"
-      ];
-    cargoTestOptions =
-      opts:
-      opts
-      ++ [
-        "--package"
-        "dex-reader"
-      ];
-  };
+  dex-reader-tests = readerTests "dex-reader";
 
-  # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
-  # entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
-  # What needs a compiled class is in the `jvm:*` checks in
-  # `xtask regression` and in the `SwitchFlow` / `StringSwitchFlow` /
+  # jvm-reader's tests are entirely hermetic too: no `#[ignore]`, no JDK, no
+  # fixture directory. What needs a compiled class is in the `jvm:*` checks
+  # in `xtask regression` and in the `SwitchFlow` / `StringSwitchFlow` /
   # `WideParamFlow` / `ShiftFlow` taint cases.
-  jvm-reader-tests = naersk-lib.buildPackage {
-    src = ../.;
-    version = workspaceVersion;
-    name = "jvm-reader-tests";
-    mode = "test";
-    cargoBuildOptions =
-      x:
-      x
-      ++ [
-        "--package"
-        "jvm-reader"
-      ];
-    cargoTestOptions =
-      opts:
-      opts
-      ++ [
-        "--package"
-        "jvm-reader"
-      ];
-  };
+  jvm-reader-tests = readerTests "jvm-reader";
 }

@@ -1,8 +1,8 @@
 //! Reflection type-name grammar parser.
 //!
-//! Port of `Mono.Cecil/TypeParser.cs` — needed for `typeof(...)` arguments
-//! inside custom-attribute blobs, serialized enum type names, custom
-//! marshalers, and the `GetType(name, runtimeName: true)` API.
+//! Port of `Mono.Cecil/TypeParser.cs`, for the type names that blobs spell
+//! out: `typeof(...)` arguments and serialized enum types in custom
+//! attributes, security attribute types, and custom marshalers.
 
 use crate::error::Result;
 use crate::model::handles::TypeDef;

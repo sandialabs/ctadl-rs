@@ -47,7 +47,6 @@ impl std::fmt::Display for SourceInfo {
             self.file_spans.len(),
         )?;
 
-        // Artifacts
         writeln!(f, "\nArtifacts:")?;
         for (i, a) in self.artifacts.iter().enumerate() {
             let enc = match a.encoding {
@@ -77,7 +76,6 @@ impl std::fmt::Display for SourceInfo {
             )?;
         }
 
-        // Files
         writeln!(f, "\nFiles:")?;
         for (i, file) in self.files.iter().enumerate() {
             let path = self
@@ -88,18 +86,17 @@ impl std::fmt::Display for SourceInfo {
             writeln!(f, "  [{}] artifact[{}] {}", i + 1, file.artifact.0, path)?;
         }
 
-        // Spans
         writeln!(f, "\nSpans:")?;
         for (i, span) in self.spans.iter().enumerate() {
-            let len_str = match span.len {
-                SpanLen::Empty => "(empty)".to_string(),
-                SpanLen::ByteLen(n) => format!("+{n}"),
-                SpanLen::ToLineEnd => "to-line-end".to_string(),
-            };
-            writeln!(f, "  [{}] @{} {}", i + 1, span.start, len_str)?;
+            writeln!(
+                f,
+                "  [{}] @{} {}",
+                i + 1,
+                span.start,
+                span_len_str(span.len)
+            )?;
         }
 
-        // FileSpans
         write!(f, "\nFileSpans:")?;
         for (i, fs) in self.file_spans.iter().enumerate() {
             let path = self
@@ -111,14 +108,7 @@ impl std::fmt::Display for SourceInfo {
             let span_str = self
                 .spans
                 .get(fs.span.0 as usize - 1)
-                .map(|s| {
-                    let len_str = match s.len {
-                        SpanLen::Empty => "(empty)".to_string(),
-                        SpanLen::ByteLen(n) => format!("+{n}"),
-                        SpanLen::ToLineEnd => "to-line-end".to_string(),
-                    };
-                    format!("@{} {}", s.start, len_str)
-                })
+                .map(|s| format!("@{} {}", s.start, span_len_str(s.len)))
                 .unwrap_or_else(|| "<unknown>".to_string());
             write!(
                 f,
@@ -132,6 +122,14 @@ impl std::fmt::Display for SourceInfo {
         }
 
         Ok(())
+    }
+}
+
+fn span_len_str(len: SpanLen) -> String {
+    match len {
+        SpanLen::Empty => "(empty)".to_string(),
+        SpanLen::ByteLen(n) => format!("+{n}"),
+        SpanLen::ToLineEnd => "to-line-end".to_string(),
     }
 }
 

@@ -412,13 +412,11 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
     let entry = cf.get_cp(index)?;
     Ok(match entry {
         CpEntry::Class { .. } => format!("class {}", cf.get_class_name(index)?),
-        CpEntry::String { .. } => {
-            let s = cf
-                .get_jvm_string(match entry {
-                    CpEntry::String { string_index } => *string_index,
-                    _ => unreachable!(),
-                })?
-                .to_string_replacing('?');
+        CpEntry::String { string_index } => {
+            // `?` rather than `U+FFFD`: no charset can encode a lone surrogate, so
+            // `javap`'s own output stream substitutes one, and matching it keeps
+            // the two listings comparable.
+            let s = cf.get_jvm_string(*string_index)?.to_string_replacing('?');
             let escaped = s
                 .replace('\\', "\\\\")
                 .replace('\'', "\\'")

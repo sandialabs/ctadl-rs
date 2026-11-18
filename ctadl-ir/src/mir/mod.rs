@@ -47,7 +47,7 @@ targets of control flow. Terminator instructions are returns and gotos with mult
 CIR variables are untyped, but represent an object. Variables have fields that you can load and
 store simply by accessing them with the appropriate statements.
 
-There is an CIR visitor in [`self::visit`] which can be used for immutable and mutable traversal.
+There is a CIR visitor in [`self::visit`] which can be used for immutable and mutable traversal.
 
 We have designed the CIR on purpose to exist in inconsistent states; this can be helpful when
 generating code. Once you're done generating code, it should be verified. Verification checks for
@@ -62,7 +62,7 @@ To make a program suitable for Datalog compilation, one can use SSA transformati
 Frontend language assignment statements can be modeled with [`StatementKind::Assign`] instructions.
 Assignments like `x = a + b` can be modeled with `(x, x) = (a, b)`. Expressions must be linearized
 before conversion. For instance, a frontend language expression like `x = a + (b + c)` can be
-linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t1`.
+linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t2`.
 
 Stores into objects and structures often look like `obj.x.y = w` in frontend languages. These are
 modeled as [`StatementKind::Store`] instructions whose destination is `obj`.
@@ -175,7 +175,8 @@ pub const DEREF_FIELD: &str = "deref";
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Offset(pub i64);
 
-/// A single field access, which can be either a symbolic field name or a numeric offset
+/// A single access in an [`AccessPath`]: always a numeric offset. Symbolic fields are a
+/// [`FieldRef`].
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OffsetAccess {
@@ -283,7 +284,7 @@ impl Display for OffsetAccess {
 
 /// IR Statements. They capture assignments and function calls.
 ///
-/// Frontends typically generate assign, resolve, and call instructions. The phi and param-flow
+/// Frontends typically generate assign, load, store, and call instructions. The phi and param-flow
 /// instructions are generated during SSA conversion.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -334,8 +335,11 @@ pub enum StatementKind {
     /// aggregate:
     ///
     /// ```text
-    /// dest = update (source, dest.field := value);
+    /// x = update (y.f := v)
     /// ```
+    ///
+    /// Here `x` is `dest.base`, `y` is `source`, `.f` is `dest.accesses` followed by `field`, and
+    /// `v` is `value`.
     ///
     /// An `Update` is exactly a [`StatementKind::Store`] — it writes a single symbolic `field` at
     /// the offset-only `dest` address — except that it names the `source` aggregate *separately*
@@ -345,8 +349,8 @@ pub enum StatementKind {
     /// Unlike `Store`, which defines no variable and reads its `dest` only as a location, an
     /// `Update` DEFINES `dest.base`: the new version of the aggregate. Specifying the
     /// `source` and destination separately is what lets SSA conversion rename `dest` to a fresh
-    /// version while still reading the previous `source` (e.g. `s = update (s, .foo := new_value)`
-    /// becomes `s_2 = update (s_1, .foo := new_value)`). This is the functional-update counterpart
+    /// version while still reading the previous `source` (e.g. `s = update (s.foo := new_value)`
+    /// becomes `s_2 = update (s_1.foo := new_value)`). This is the functional-update counterpart
     /// of `Store`; a frontend may emit whichever fits its memory model.
     Update {
         dest: AccessPath,
@@ -359,7 +363,7 @@ pub enum StatementKind {
     },
 
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
-    /// Multiple values may be returned. Effective all handling is complex, depending on a number
+    /// Multiple values may be returned. Call handling is complex, depending on a number
     /// of factors such as source language, whether the program analysis is partial, and others.
     /// The `style` expresses how this call should be resolved.
     CallAssign {
@@ -375,7 +379,7 @@ pub enum StatementKind {
         operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
     },
 
-    /// Function parameter SSA variables & global heap. This in an anchor for uses of a variable.
+    /// Function parameter SSA variables & global heap. This is an anchor for uses of a variable.
     /// It helps when generating code from SSA. Return instructions are instrumented with this
     /// instruction.
     ParamFlow {
@@ -405,7 +409,7 @@ pub struct SourceInfo {
 }
 
 /// A variable name or parameter reference
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
@@ -421,47 +425,39 @@ pub enum Variable {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
-    pub variable: ArcIntern<Variable>,
+    /// The referenced variable.
+    pub variable: Variable,
     pub version: Option<u32>,
 }
 
-/// An access path is a variable and a sequence of field accesses
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// An access path is a variable and an **offset-only** sequence of field accesses (pointer
 /// arithmetic, e.g. `x.[50].[4]`). Symbolic fields never appear in an access path: a field is
 /// reachable only through a [`StatementKind::Load`] (read) or [`StatementKind::Store`] (write),
-/// whose field operand is a [`FieldRef`]. The offset-only invariant is checked by verification.
+/// whose field operand is a [`FieldRef`]. The types enforce this: [`OffsetAccess`] is offset-only.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccessPath {
     pub base: VariableRef,
     pub accesses: OffsetAccesses,
 }
 
-/// A sequence of field accesses. The first or innermost field is index 0.
+/// A sequence of offset accesses. The first or innermost offset is index 0.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OffsetAccesses {
     pub offsets: ThinVec<OffsetAccess>,
 }
 
-/// A **field path**: the *symbolic*-only sequence of field accesses read by a
+/// A **field path**: the single *symbolic* field read by a
 /// [`StatementKind::Load`] or written by a [`StatementKind::Store`] (e.g. the `.deref` in
 /// `Load(dest, x.[50], .deref)`). This is the counterpart to [`AccessPath`]: offsets live in an
-/// access path, symbolic fields live in a field path, and the two meet only at a load/store. The
-/// symbolic-only invariant is checked by verification.
+/// access path, symbolic fields live in a field path, and the two meet only at a load/store.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FieldRef {
     pub field: Symbol,
 }
-/*
-impl From<Vec<&str>> for FieldAccesses {
-    fn from(vec: Vec<&str>) -> Self {
-        Self {
-            fields: vec.into_iter().map(String::from).collect(),
-        }
-    }
-}*/
+
 /// Expressions. The IR is flat, so expressions are either constants or access paths
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -690,7 +686,7 @@ mod local_names {
     }
 
     /// Publishes `locals` for the nested render. Returns `None` — allocating nothing — when name
-    /// resolution is off, which is every render but `ctadl inspect`'s.
+    /// resolution is off.
     pub(super) fn push(locals: &Locals) -> Option<FrameGuard> {
         if !is_enabled() {
             return None;
@@ -768,7 +764,7 @@ pub struct Location {
 
 /// An IR program capable of representing multiple functions and internal and external calls.
 ///
-/// Well-formed programs must satisfy certain invariants. After generating a progrom, you must call
+/// Well-formed programs must satisfy certain invariants. After generating a program, you must call
 /// [`Program::verify`] to ensure the invariants are satisfied.
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -788,6 +784,27 @@ pub struct ProgramInfo {
     /// Database of all source information allowing correlation between instructions and original
     /// artifact locations
     pub source_info: source_info::SourceInfo,
+}
+
+/// A [`ProgramInfo`] under construction, for a frontend to fill in.
+#[derive(Debug)]
+pub struct ProgramInfoBuilder {
+    pub program: Program,
+    pub vmt: VirtualMethodTable,
+    pub source_info_builder: source_info::SourceInfoBuilder,
+}
+
+impl ProgramInfoBuilder {
+    /// An empty program with no source information, whose methods `vmt` will describe.
+    pub fn new(vmt: VirtualMethodTable) -> Self {
+        Self {
+            program: Program::default(),
+            vmt,
+            source_info_builder: source_info::SourceInfoBuilder::new(
+                source_info::ArtifactMetadata::new(),
+            ),
+        }
+    }
 }
 
 impl SourceInfo {
@@ -833,14 +850,6 @@ impl VariableRef {
     /// Creates a reference to the variable with no version
     pub fn new(variable: Variable) -> Self {
         VariableRef {
-            variable: variable.into(),
-            version: None,
-        }
-    }
-
-    /// Creates a reference to the variable with no version
-    pub fn new_var_ref(variable: ArcIntern<Variable>) -> Self {
-        VariableRef {
             variable,
             version: None,
         }
@@ -850,7 +859,7 @@ impl VariableRef {
     #[inline]
     pub fn new_local_idx(idx: LocalIdx) -> Self {
         VariableRef {
-            variable: Variable::new_local(idx).into(),
+            variable: Variable::new_local(idx),
             version: None,
         }
     }
@@ -859,7 +868,7 @@ impl VariableRef {
     #[inline]
     pub fn new_global() -> Self {
         VariableRef {
-            variable: Variable::GlobalHeap.into(),
+            variable: Variable::GlobalHeap,
             version: None,
         }
     }
@@ -868,15 +877,15 @@ impl VariableRef {
     #[inline]
     pub fn new_parameter(param: ParameterIdx) -> Self {
         VariableRef {
-            variable: Variable::Param(param).into(),
+            variable: Variable::Param(param),
             version: None,
         }
     }
 
-    /// Clones the variable and uses the given version
+    /// The same variable, with the given version
     #[inline]
     pub fn with_version(&self, version: u32) -> Self {
-        let variable = self.variable.clone();
+        let variable = self.variable;
         let version = Some(version);
         VariableRef { variable, version }
     }
@@ -1084,8 +1093,6 @@ impl Exp {
 
     /// Builds an expression from an access path. A pathless access path is a bare
     /// [`Exp::Variable`]; an offset-only path is an [`Exp::AccessPath`] (pointer arithmetic).
-    /// Panics on a path that carries a symbolic (non-offset) field — read those through a
-    /// [`StatementKind::Load`].
     #[inline]
     pub fn access_path(ap: AccessPath) -> Self {
         if ap.accesses.is_empty() {
@@ -1364,7 +1371,7 @@ impl StatementKind {
         StatementKind::Store { dest, field, value }
     }
 
-    /// Constructs a functional update `dest = update (source, dest.field := value)`: `dest` becomes
+    /// Constructs a functional update `dest = update (source.field := value)`: `dest` becomes
     /// `source` with the single symbolic `field` at the offset-only `dest` address set to `value`.
     /// Unlike [`Self::store`], the resulting `dest` variable is defined (a new version of the
     /// aggregate), so the `source` and destination are given separately (see
@@ -1404,18 +1411,6 @@ impl StatementKind {
             }
         }
     }
-
-    // #[inline]
-    // pub fn assigns<B>(assigns: &[(AccessPath, Exp)]) -> B
-    // where
-    //     B: FromIterator<Self> + Sized,
-    // {
-    //     assigns
-    //         .iter()
-    //         .cloned()
-    //         .map(|(lhs, rhs)| Self::assign(lhs, rhs))
-    //         .collect()
-    // }
 
     /// Returns an iterator over variables read by this statement.
     pub fn iter_src_var<'s>(&'s self) -> VarIter<'s> {
@@ -1635,9 +1630,6 @@ pub fn store_access_path(
         _ => None,
     };
     let addr = load_access_path(base, segments, out, &mut fresh);
-    // A trailing symbol becomes the store's field; no symbol over a bare variable is an assign. An
-    // offset-terminated sequence (offsets but no field) is an error: a store always writes a
-    // symbolic field, so the caller must terminate a memory write with one (see `assign_or_store`).
     out.push(Statement::new_kind(StatementKind::assign_or_store(
         addr, field, value,
     )));
@@ -1901,7 +1893,7 @@ impl From<AccessPath> for Exp {
     /// Converts an access path into an expression. A pathless path becomes an [`Exp::Variable`]
     /// and an offset-only path becomes an [`Exp::AccessPath`] (address arithmetic). A symbolic
     /// field read cannot be expressed as an [`Exp`]; lower it into a [`StatementKind::Load`] first
-    /// (see [`load_access_path`]). Panics if the access path carries a symbolic field.
+    /// (see [`load_access_path`]).
     fn from(ap: AccessPath) -> Self {
         Exp::access_path(ap)
     }

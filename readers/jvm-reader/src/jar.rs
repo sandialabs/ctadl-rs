@@ -22,26 +22,7 @@ impl JarFileParser {
     /// Open and parse a JAR file from the given path. Only .class entries are parsed.
     pub fn open(path: &Path) -> ClassFileResult<Self> {
         let file = File::open(path).map_err(ClassFileError::Io)?;
-        let mut archive =
-            ZipArchive::new(file).map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-        let mut parsers = Vec::new();
-        for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
-                .map_err(|e| ClassFileError::InvalidZip(e.to_string()))?;
-            let name = entry.name();
-            if !name.ends_with(".class") {
-                continue;
-            }
-            let name = name.to_string();
-            let mut data = Vec::new();
-            std::io::copy(&mut entry, &mut data).map_err(ClassFileError::Io)?;
-            // Name the entry: without it a whole-JAR failure says only what went
-            // wrong, not which of the thousands of classes it went wrong in.
-            let parser = ClassFileParser::parse(&data).map_err(|e| e.in_entry(&name))?;
-            parsers.push(parser);
-        }
-        Ok(Self { parsers })
+        Self::from_reader(file)
     }
 
     /// Parse a JAR from an already-open reader (e.g. for testing or in-memory ZIPs).

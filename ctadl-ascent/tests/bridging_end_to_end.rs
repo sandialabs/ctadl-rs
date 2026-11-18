@@ -13,8 +13,8 @@
 //! same two artifacts produce no flow at all.
 //!
 //! The two-real-frontend counterpart is `cargo xtask regression --frontend jni`, whose
-//! `bridge-model` case runs the same join declaratively under `--no-jni-bridge`, as a direct A/B
-//! against the built-in pass.
+//! `Jni:<stem>+bridge` cases run the same join declaratively under `--no-jni-bridge`, as a direct
+//! A/B against the built-in pass.
 
 use ctadl_ascent::cli;
 use ctadl_ascent::project::{

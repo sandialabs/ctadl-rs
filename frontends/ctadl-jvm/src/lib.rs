@@ -4,16 +4,13 @@ Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 */
-// Mostly copied from the dex language frontend
 
-use std::fs::File;
-use std::io::{self, Read};
 use std::path::Path;
 
 use hashbrown::HashSet;
 use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -58,11 +55,10 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
 mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
-    //let data = read_file_bytes(file)?;
     let parser =
         JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     log::info!(
         "{}: {} class file(s)",
@@ -84,11 +80,11 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
     let data =
-        read_file_bytes(file).err_context(|| format!("reading class file: {}", file.display()))?;
+        std::fs::read(file).err_context(|| format!("reading class file: {}", file.display()))?;
     let parser = ClassFileParser::parse(&data)
         .err_context(|| format!("parsing class file: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
         sub_artifact_id: 0,
@@ -101,27 +97,9 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
     ctx.finish(builders)
 }
 
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_java(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Context {
-    // vmt entries for externs so far
+    /// VMT entries for the externs seen so far.
     ext: HashMap<
         String,
         (
@@ -135,10 +113,7 @@ struct Context {
     >,
     call_result: Option<VariableRef>,
     catch_result: Option<VariableRef>,
-    /// The class whose methods are being lowered, and its direct parents. Set once per class in
-    /// [`Context::process`] and read when lowering an `invokespecial` to fill in `super_start`:
-    /// a `super.m()` begins lookup at the enclosing class's superclass, which the instruction
-    /// itself does not name.
+    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
 }
 
@@ -189,9 +164,8 @@ impl Context {
         &mut self,
         parser: &ClassFileParser,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
-        // Iterate over all classes (no artificial limit).
         for class_def in parser.classes() {
             let class_name = jvm_class_symbol(parser.class_name()?);
             log::trace!("Class: {}", class_name);
@@ -245,15 +219,11 @@ impl Context {
                 let sig = parser.method_signature(enc)?;
                 let method_name = parser.method_name(enc)?;
                 let fidx = builders.program.new_function();
-                // Reset temporaries per function.
                 let fdat = &mut builders.program[fidx];
 
                 // ---------------------------------------------------------------------
-                // Collect Java virtual method information for the VMT.
-                // Insert entry into the virtual method table stored in the context.
-                // Compute a JavaSignature that contains only the parameter types and return type.
-                // The full method signature (`sig`) includes the enclosing class; we want the proto
-                // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
+                // Collect Java virtual method information for the VMT. `java_sig` is the
+                // descriptor alone, e.g. "(I)I"; `full_name` is `class->name(descriptor)`.
                 let java_sig = parser.method_proto(enc)?;
                 let full_name: String = class_name.to_owned() + "->" + &sig;
                 fdat.name = full_name.clone();
@@ -285,10 +255,8 @@ impl Context {
                         JavaSignature(java_sig.clone().into()),
                     ));
                 }
-                // Native methods are additionally listed in `natives`, the column the JNI
-                // bridge reads. They are already in `methods` above -- this frontend walks
-                // every declared method, code or not -- so the extra row is only there to
-                // carry the staticness the bridge needs to know whether slot 0 is `this`.
+                // Native methods are also listed in `natives`. They are already in `methods`
+                // above: this frontend walks every declared method, code or not.
                 if enc.access_flags & JVM_ACC_NATIVE != 0
                     && let VirtualMethodTable::Java { natives, .. } = &mut builders.vmt
                 {
@@ -494,7 +462,7 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
         for (_sig, entry) in self.ext.drain() {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
@@ -541,6 +509,28 @@ impl Context {
         })
     }
 
+    /// Records the method `java_sig` as an extern in the VMT.
+    fn declare_extern(
+        &mut self,
+        java_sig: &str,
+        class_name: &str,
+        method_name: &str,
+        descr: &str,
+        is_instance: bool,
+    ) {
+        self.ext.insert(
+            java_sig.to_owned(),
+            (
+                JavaClass(class_name.into()),
+                JavaSimpleName(method_name.into()),
+                JavaSignature(descr.into()),
+                JavaMethod(java_sig.into()),
+                jvm_descriptor_to_params(descr, is_instance),
+                ReturnType { arity: 2 },
+            ),
+        );
+    }
+
     fn decode_call(
         &mut self,
         _parser: &ClassFileParser,
@@ -552,24 +542,12 @@ impl Context {
             None => {
                 match call.call_kind {
                     CallKind::Dynamic => {
-                        // I don't know why dynamic calls with no reciever exist, but apparently makeConcatWithContants does this
-                        let class_name = "?unknown";
+                        // I don't know why dynamic calls with no receiver exist, but apparently makeConcatWithConstants does this
+                        let class_name = "L?unknown;";
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, false);
-                        // All functions return 2 values: (normal_return, exception_return)
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        self.declare_extern(&java_sig, class_name, method_name, descr, false);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -580,18 +558,7 @@ impl Context {
                         let method_name = &target.method_name;
                         let descr = &target.descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -602,19 +569,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, false);
-                        // All functions return 2 values: (normal_return, exception_return)
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, false);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -631,19 +586,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        // All functions return 2 values: (normal_return, exception_return)
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
                             cls: class_name.clone().into(),
@@ -663,19 +606,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        // All functions return 2 values: (normal_return, exception_return)
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
                             cls: class_name.clone().into(),
@@ -1106,12 +1037,4 @@ impl Context {
             _ => VariableRef::new_local_idx(locals.get_or_intern("unknownLocationType")),
         }
     }
-}
-
-fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let path = path.as_ref();
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }

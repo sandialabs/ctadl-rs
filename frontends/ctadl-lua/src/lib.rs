@@ -195,7 +195,7 @@ fn lower_lua_units(units: Vec<SourceUnit>) -> Result<ProgramInfo, Error> {
         .map_err(Error::TreeSitterLanguage)?;
 
     // A syntax error in a single-file import is worth surfacing rather than silently importing a
-    // partial tree. In a directory import it must not sink the other 600 files, so the bad unit is
+    // partial tree. In a directory import it must not sink the other files, so the bad unit is
     // dropped and counted instead.
     let single = units.len() == 1;
     let mut parsed: Vec<SourceUnit> = Vec::with_capacity(units.len());
@@ -303,7 +303,7 @@ struct UnitScope {
     /// the qualified name they denote (`<module>.T`). A table used this way is a namespace rather
     /// than a value; a global one already names itself and is not listed here.
     ///
-    /// Nesting is deliberately ignored: Kong's PDK declares its tables inside `function new()`,
+    /// Nesting is deliberately ignored: a module may declare its tables inside `function new()`,
     /// and `function _REQUEST.get_headers()` there means the same `_REQUEST` as the call
     /// `_REQUEST.get_headers()` beside it. Qualifying by file rather than by scope is what keeps
     /// the two agreeing -- and keeps two files' `_REQUEST` apart.
@@ -337,7 +337,7 @@ struct Lowerer<'a> {
     /// closure body reads it back from its synthetic self-parameter (`build_var`).
     closure_upvalues: HashMap<FunctionIdx, Vec<String>>,
 
-    // ---- class / metatable recognition (Phase 1) ----
+    // ---- class / metatable recognition ----
     /// Class table name -> its methods (`(method name, lowered function)`), gathered from
     /// `function T.m` / `function T:m` definitions. Keyed by the class table's lexical name.
     class_methods: HashMap<String, Vec<(String, FunctionIdx)>>,
@@ -349,10 +349,10 @@ struct Lowerer<'a> {
     /// `m` is not a known class method stays a name-based `DirectCall`, keeping it sound).
     method_names: HashSet<String>,
     /// Classes whose `__index` is a function value: dispatch is opaque, so their instances take the
-    /// name-based fallback rather than `LuaCall` (Phase 1c/1d).
+    /// name-based fallback rather than `LuaCall`.
     opaque_classes: HashSet<String>,
     /// Count of construction sites whose metatable could not be resolved to a class (surfaced at
-    /// import so precision regressions are visible; Phase 1d).
+    /// import so precision regressions are visible).
     opaque_alloc_count: usize,
     /// Count of call sites whose callee could not be resolved to a qualified name, and so fall
     /// back to the path as written (surfaced at import alongside `opaque_alloc_count`).
@@ -370,7 +370,7 @@ struct Lowerer<'a> {
     fidx: FunctionIdx,
     /// Upvalue names captured by the function currently being lowered; each resolves to a field of
     /// the closure's self-parameter rather than to a local or global.
-    cur_upvalues: HashMap<String, ()>,
+    cur_upvalues: HashSet<String>,
     /// Lexical scope stack; innermost last.
     scopes: Vec<HashMap<String, Binding>>,
     /// Name -> the qualified name it denotes, per lexical scope (pushed and popped with `scopes`).
@@ -423,7 +423,7 @@ impl<'a> Lowerer<'a> {
             called_names: HashSet::new(),
             vmt: VirtualMethodTable::new_lua(),
             fidx: FunctionIdx::new(0),
-            cur_upvalues: HashMap::new(),
+            cur_upvalues: HashSet::new(),
             scopes: Vec::new(),
             alias_scopes: Vec::new(),
             labels: HashMap::new(),
@@ -446,7 +446,7 @@ impl<'a> Lowerer<'a> {
             self.collect_functions(self.root_node(unit));
         }
         // Recover class/metatable structure before lowering, so construction sites can be tagged
-        // and method calls routed to `LuaCall` (Phase 1a/1c).
+        // and method calls routed to `LuaCall`.
         for unit in 0..self.units.len() {
             self.unit = unit;
             self.recognize_classes(self.root_node(unit));
@@ -800,7 +800,7 @@ impl<'a> Lowerer<'a> {
     }
 
     // ------------------------------------------------------------------
-    // Class / metatable recognition (Phase 1a/1b/1c)
+    // Class / metatable recognition
     // ------------------------------------------------------------------
 
     /// The stable class symbol for a class table's qualified name (`Account` in `oop.lua` ->
@@ -900,7 +900,7 @@ impl<'a> Lowerer<'a> {
                                 self.class_parent.insert(cls, x);
                             }
                         }
-                        // `__index` bound to a function value: dispatch is opaque (Phase 1c).
+                        // `__index` bound to a function value: dispatch is opaque.
                         Some("function_definition") => {
                             self.opaque_classes.insert(cls);
                         }
@@ -1063,8 +1063,7 @@ impl<'a> Lowerer<'a> {
     /// [`FunctionData`]; nested functions are lowered independently. An anonymous function used as
     /// a value becomes a closure object (see [`Lowerer::eval_closure`]): its captured upvalues are
     /// stored in object fields and it is tagged with a function pointer so an indirect call can
-    /// resolve it. (Resolving a closure returned *out* of a function is an engine-level limitation;
-    /// see the `closure-flow` regression XFAIL.)
+    /// resolve it.
     fn collect_nested(&mut self, node: Node<'a>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -1186,7 +1185,7 @@ impl<'a> Lowerer<'a> {
         self.loop_breaks = Vec::new();
         self.temp_counter = 0;
         self.cur_span = SourceInfo::default();
-        self.cur_upvalues = HashMap::new();
+        self.cur_upvalues = HashSet::new();
 
         // Parameters.
         let mut param_idx = 0usize;
@@ -1200,9 +1199,7 @@ impl<'a> Lowerer<'a> {
         if let Some(upvalues) = self.closure_upvalues.get(&entry.fidx).cloned() {
             self.add_param("%self", param_idx);
             param_idx += 1;
-            for u in upvalues {
-                self.cur_upvalues.insert(u, ());
-            }
+            self.cur_upvalues.extend(upvalues);
         }
         if let Some(params) = entry.params {
             let mut cursor = params.walk();
@@ -1256,7 +1253,7 @@ impl<'a> Lowerer<'a> {
     /// Largest number of expressions returned by any `return` in `body`, not descending into
     /// nested function definitions.
     fn max_return_arity(&self, body: Node<'a>) -> usize {
-        fn walk(src: &str, node: Node<'_>, max: &mut usize) {
+        fn walk(node: Node<'_>, max: &mut usize) {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 match child.kind() {
@@ -1279,18 +1276,17 @@ impl<'a> Lowerer<'a> {
                             })
                             .max()
                             .unwrap_or(0);
-                        let _ = src;
                         if count > *max {
                             *max = count;
                         }
-                        walk(src, child, max);
+                        walk(child, max);
                     }
-                    _ => walk(src, child, max),
+                    _ => walk(child, max),
                 }
             }
         }
         let mut max = 0;
-        walk(self.src(), body, &mut max);
+        walk(body, &mut max);
         max
     }
 
@@ -2012,13 +2008,13 @@ impl<'a> Lowerer<'a> {
         // Determine captured upvalues: names referenced free in the body that resolve to a local or
         // parameter of the *enclosing* function (globals and the closure's own parameters are not
         // captured).
-        let params: HashMap<String, ()> = node
+        let params: HashSet<String> = node
             .child_by_field_name("parameters")
             .map(|p| {
                 named_of(p)
                     .into_iter()
                     .filter(|n| n.kind() == "identifier")
-                    .map(|n| (self.node_text(n).to_string(), ()))
+                    .map(|n| self.node_text(n).to_string())
                     .collect()
             })
             .unwrap_or_default();
@@ -2029,13 +2025,13 @@ impl<'a> Lowerer<'a> {
             &mut names,
         );
         let mut upvalues: Vec<String> = Vec::new();
-        let mut seen: HashMap<String, ()> = HashMap::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for name in names {
-            if params.contains_key(&name) || seen.contains_key(&name) {
+            if params.contains(&name) || seen.contains(&name) {
                 continue;
             }
             if matches!(self.lookup(&name), Some(Binding::Local | Binding::Param(_))) {
-                seen.insert(name.clone(), ());
+                seen.insert(name.clone());
                 upvalues.push(name);
             }
         }
@@ -2103,7 +2099,7 @@ impl<'a> Lowerer<'a> {
 
         // `setmetatable(t, mt)` returns `t` with its metatable set. Model it as a copy of the table
         // that also carries an allocation-site object tag when `mt` names a known class, so the
-        // index engine propagates the class through returns/summaries (Phase 1b).
+        // index engine propagates the class through returns/summaries.
         if let Some(result) = self.eval_setmetatable(name_node, node, blk) {
             return result;
         }
@@ -2112,7 +2108,7 @@ impl<'a> Lowerer<'a> {
 
         // When the call is a hierarchy-resolvable method call (`o:m()` whose `m` is a known,
         // non-opaque class method), capture the receiver variable and method name so it lowers to a
-        // `LuaCall` resolved via metatable/CHA rather than a name-based `DirectCall` (Phase 4 Tier 2).
+        // `LuaCall` resolved via metatable/CHA rather than a name-based `DirectCall`.
         let mut lua_method: Option<(VariableRef, String)> = None;
 
         let callee = if let Some(name_node) = name_node {
@@ -2171,14 +2167,14 @@ impl<'a> Lowerer<'a> {
                 signature: Some("indirect-call".to_string()),
             }
         } else if let Some((receiver, method)) = lua_method {
-            // Tier 2: resolved later via the receiver's object facts + the Lua CHA. The receiver is
+            // Resolved later via the receiver's object facts + the Lua CHA. The receiver is
             // already actual arg 0 (pushed above), so codegen does not re-insert it.
             CallStyle::LuaCall {
                 receiver,
                 method: Symbol::from(method.as_str()),
             }
         } else {
-            // Tier 3: a callee the frontend could not resolve to a name gets the path as written.
+            // A callee the frontend could not resolve to a name gets the path as written.
             // It is a sound edge -- nothing else claims that name -- but it will only connect if a
             // shim or model defines the same string, so count it.
             if !callee_resolved {
@@ -2264,7 +2260,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lowers `setmetatable(t, mt)` (Phase 1b). Returns `Some(value)` where `value` is a single
+    /// Lowers `setmetatable(t, mt)`. Returns `Some(value)` where `value` is a single
     /// variable that (i) carries the table `t`'s data (setmetatable returns its first argument) and
     /// (ii) is tagged with an allocation-site object ref when `mt` resolves to a known class table.
     /// The tag rides the existing `call_target_assign` closure interprocedurally — including the
@@ -2304,7 +2300,7 @@ impl<'a> Lowerer<'a> {
             )));
         } else {
             // Computed / non-class metatable: still model the return of `t`, but record the
-            // imprecision (Phase 1d).
+            // imprecision.
             self.opaque_alloc_count += 1;
         }
         self.push_stmt(blk, StatementKind::assign(obj.clone(), sources));
@@ -2312,7 +2308,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Whether a method name must take the name-based fallback because every class defining it has
-    /// an opaque (function) `__index` (Phase 1c). Cheap and conservative: a method defined by any
+    /// an opaque (function) `__index`. Cheap and conservative: a method defined by any
     /// non-opaque class is treated as resolvable.
     fn method_is_opaque(&self, method: &str) -> bool {
         if self.opaque_classes.is_empty() {
@@ -2335,7 +2331,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The name given to a function *definition*: the bare final component of its dotted/method
-    /// name, matching how [`call_name`] and method-call desugaring name the call target.
+    /// name, as method-call desugaring names the call target.
     fn def_name(&self, node: Node<'a>) -> String {
         match node.kind() {
             "dot_index_expression" => node
@@ -2379,17 +2375,17 @@ impl<'a> Lowerer<'a> {
     // Access-path helpers
     // ------------------------------------------------------------------
 
-    /// Builds a [`RawPath`] for a bare name: a parameter or local becomes a bare variable; a free
-    /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
     /// Interns `name` into the current function's locals table and returns a reference to it.
     fn local_ref(&mut self, name: &str) -> VariableRef {
         let fidx = self.fidx;
         VariableRef::new_local_idx(self.program[fidx].locals.get_or_intern(name))
     }
 
+    /// Builds a [`RawPath`] for a bare name: a parameter or local becomes a bare variable; a free
+    /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
     fn build_var(&mut self, name: &str) -> RawPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
-        if self.cur_upvalues.contains_key(name)
+        if self.cur_upvalues.contains(name)
             && let Some(Binding::Param(idx)) = self.lookup("%self")
         {
             return RawPath {
@@ -2957,7 +2953,7 @@ mod tests {
 
     #[test]
     fn a_namespace_declared_inside_a_function_is_still_module_qualified() {
-        // Kong's PDK shape: the exported table is declared inside `new()`, not at chunk level.
+        // The exported table is declared inside `new()`, not at chunk level.
         // The definition and the call beside it must agree on the name, and two files' `_REQUEST`
         // must stay apart.
         let src = r#"
@@ -3009,8 +3005,9 @@ mod tests {
 
     #[test]
     fn every_spelling_of_a_module_resolves_to_one_name() {
-        // `package.path` reaches `a/b/init.lua` through both `?.lua` and `?/init.lua`, so Kong
-        // requires the same file as `kong.db.dao` in one place and `kong.db.dao.init` in another.
+        // `package.path` reaches `a/b/init.lua` through both `?.lua` and `?/init.lua`, so one
+        // program may require the same file as `kong.db.dao` in one place and `kong.db.dao.init`
+        // in another.
         // Both must name the definitions that file actually carries.
         let dao = "local _M = {}\nfunction _M.new() end\nreturn _M";
         let caller = r#"

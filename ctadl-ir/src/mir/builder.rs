@@ -98,19 +98,21 @@ impl<'a> BasicBlockBuilder<'a> {
     /// # Arguments
     /// * `statement` - The statement to insert
     pub fn insert_statement(&mut self, statement: Statement) {
-        // Insert at the current insertion point
         if self.insertion_point <= self.block_data.statements.len() {
-            // Use the IndexVecDeque::insert_at method directly
             self.block_data
                 .statements
                 .insert_at(StatementIdx::new(self.insertion_point), statement);
         } else {
-            // If insertion point is beyond current length, push back
             self.block_data.statements.push_back(statement);
         }
-
-        // Update insertion point to be after the inserted statement
         self.insertion_point += 1;
+    }
+
+    /// Inserts a statement of `kind` at the insertion point and returns its index.
+    fn insert_kind(&mut self, kind: StatementKind) -> StatementIdx {
+        let current_pos = self.insertion_point;
+        self.insert_statement(Statement::new_kind(kind));
+        StatementIdx::from(current_pos as u32)
     }
 
     /// Create and insert an assignment statement
@@ -123,10 +125,7 @@ impl<'a> BasicBlockBuilder<'a> {
         dest: VariableRef,
         sources: impl IntoIterator<Item = Exp>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::assign(dest, sources));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        self.insert_kind(StatementKind::assign(dest, sources))
     }
 
     /// Create and insert a load statement `dest = source.field`.
@@ -141,10 +140,7 @@ impl<'a> BasicBlockBuilder<'a> {
         source: impl Into<AccessPath>,
         field: impl Into<FieldRef>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::load(dest, source, field));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        self.insert_kind(StatementKind::load(dest, source, field))
     }
 
     /// Create and insert a store statement `store dest.field := source`.
@@ -159,11 +155,7 @@ impl<'a> BasicBlockBuilder<'a> {
         field: impl Into<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        let statement =
-            Statement::new_kind(StatementKind::store(dest.into(), field, source.into()));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        self.insert_kind(StatementKind::store(dest.into(), field, source.into()))
     }
 
     /// Create and insert an assign (`field` is `None`) or a store of `field` into `dest` (see
@@ -179,17 +171,14 @@ impl<'a> BasicBlockBuilder<'a> {
         field: Option<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::assign_or_store(
+        self.insert_kind(StatementKind::assign_or_store(
             dest.into(),
             field,
             source.into(),
-        ));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        ))
     }
 
-    /// Create and insert a functional update `dest = update (source, dest.field := value)` (see
+    /// Create and insert a functional update `dest = update (source.field := value)` (see
     /// [`StatementKind::Update`]). Unlike [`Self::create_store`], the `dest` variable is defined (a
     /// new version of the aggregate), so the `source` aggregate is named separately.
     ///
@@ -205,15 +194,12 @@ impl<'a> BasicBlockBuilder<'a> {
         field: impl Into<FieldRef>,
         value: impl Into<Exp>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(
+        self.insert_kind(StatementKind::update(
             dest.into(),
             source,
             field,
             value.into(),
-        ));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        ))
     }
 
     /// Create and insert a call statement
@@ -228,14 +214,11 @@ impl<'a> BasicBlockBuilder<'a> {
         rets: impl IntoIterator<Item = VariableRef>,
         args: impl IntoIterator<Item = Exp>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::CallAssign {
+        self.insert_kind(StatementKind::CallAssign {
             style,
             rets: rets.into_iter().collect(),
             args: args.into_iter().collect(),
-        });
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        })
     }
 
     /// Create and insert a return terminator
@@ -270,13 +253,10 @@ impl<'a> BasicBlockBuilder<'a> {
         dest: VariableRef,
         operands: impl IntoIterator<Item = (crate::mir::BasicBlockIdx, VariableRef)>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::Phi {
+        self.insert_kind(StatementKind::Phi {
             dest,
             operands: operands.into_iter().collect(),
-        });
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        })
     }
 
     /// Create and insert a param-flow statement
@@ -284,18 +264,12 @@ impl<'a> BasicBlockBuilder<'a> {
     /// # Arguments
     /// * `arity` - Number of parameters
     pub fn create_param_flow(&mut self, arity: usize) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::param_flow(arity));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        self.insert_kind(StatementKind::param_flow(arity))
     }
 
     /// Create and insert a nop statement
     pub fn create_nop(&mut self) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::Nop);
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
+        self.insert_kind(StatementKind::Nop)
     }
 
     /// Create a new local variable reference, interning `name` into the function's locals table
@@ -327,7 +301,7 @@ impl<'a> BasicBlockBuilder<'a> {
     /// Create a new offset-only access path
     ///
     /// # Arguments
-    /// * `variable` - Variable reference
+    /// * `variable_ref` - Variable reference
     /// * `offsets` - Offset (pointer-arithmetic) field accesses
     pub fn new_access_path(
         &self,
@@ -340,7 +314,7 @@ impl<'a> BasicBlockBuilder<'a> {
         }
     }
 
-    /// Create a new access path with a single offset
+    /// Create offset accesses holding a single offset
     ///
     /// # Arguments
     /// * `offset` - Numeric offset

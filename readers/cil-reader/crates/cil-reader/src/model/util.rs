@@ -1,7 +1,6 @@
 //! Small utilities for the model layer.
 
-/// SHA-1 (needed only to derive public-key tokens from full public keys, as
-/// `AssemblyNameReference.PublicKeyToken` does). Not for security use.
+/// SHA-1 of `data`. Not for security use.
 pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [
         0x6745_2301,

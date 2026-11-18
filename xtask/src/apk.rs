@@ -1,25 +1,15 @@
 //! End-to-end checks driving `ctadl` over a real-world Android app.
 //!
-//! These used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they ran on every `cargo
-//! test`. Four of them imported `xtask/tests/dex/com.noto_54.apk` -- a 6.4 MB app carrying two
-//! `classes*.dex` and some 50,000 functions -- and each paid the full ~13 s import to do it.
-//! Between them that was ~60 s of the ~77 s every test in the workspace spent executing, and
-//! taking them out halved `cargo test --workspace` end to end (33 s to 16 s on the machine this
-//! was measured on). That is a lot to charge every contributor for four cases that are not unit
-//! tests at all: they import a real artifact through the real pipeline and read the result back
-//! out of the store, which is the definition of end to end, and end-to-end work belongs in the
-//! nightly suite.
+//! They import `xtask/tests/dex/com.noto_54.apk` -- a 6.4 MB app carrying two `classes*.dex`
+//! and some 50,000 functions -- through the real pipeline and read the result back out of the
+//! store. That is end-to-end work, too slow for `cargo test`, so it belongs in the nightly suite.
 //!
-//! Moving them here changes what is actually asserted, for the better. The old tests called
-//! `ctadl_ascent::cli::import` and friends as a library, so nothing between `main.rs` and the
-//! library was covered -- skipping an up-to-date re-import, for one, is decided entirely in
-//! `main.rs` and had no test at all. These drive the shipped `ctadl` binary and assert against the store it writes and
-//! the SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
-//! scope.
+//! The checks drive the shipped `ctadl` binary and assert against the store it writes and the
+//! SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
+//! scope -- skipping an up-to-date re-import, for one, is decided entirely in `main.rs`.
 //!
-//! They also cost less than they did. The import is the expensive part and every check needs the
-//! same one, so it is done once and the checks read the same store, rather than each case
-//! importing the app for itself.
+//! The import is the expensive part (~13 s) and every check needs the same one, so it is done
+//! once and the checks read the same store.
 //!
 //! Nothing here needs a toolchain: the APK is prebuilt and checked in, so unlike the `dex:*` and
 //! `jvm:*` checks there is no javac, no `dx`, and no Ghidra in the loop. All it needs is `ctadl`.
@@ -77,7 +67,7 @@ const MODELS: &str = r#"{"model_generators": [
 ///
 /// The import is shared, so a failure in it is not one failed check -- there is nothing for the
 /// others to look at. It is reported as `apk:import` failing and the rest are Skipped naming it,
-/// which reads as what happened rather than as four independent breakages.
+/// which reads as what happened rather than as several independent breakages.
 pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
     let state = work.join("state");
     std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
@@ -817,7 +807,7 @@ fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result
 /// links the intents it sends to the components that receive them.
 ///
 /// The counts are a property of this APK, of the manifest decoder, and of intent resolution, so
-/// a deliberate change to either moves them; re-pin from `ctadl index app` and say in the commit
+/// a deliberate change to any of them moves them; re-pin from `ctadl index app` and say in the commit
 /// message which change moved them. The index is the expensive part -- several minutes on this
 /// app, which is why this lives here and not under `cargo test`.
 fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {

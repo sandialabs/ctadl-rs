@@ -206,7 +206,7 @@ pub fn import_native_libs(
     // The APK is not needed past this point and can be tens of megabytes.
     drop(apk_bytes);
 
-    let dest_dir = parent.import_path().join("native").join(abi);
+    let dest_dir = extracted_libs_dir(parent).join(abi);
     std::fs::create_dir_all(&dest_dir)
         .map_err(Error::Io)
         .err_context(|| format!("creating native library dir: '{}'", dest_dir.display()))?;
@@ -338,13 +338,17 @@ fn import_one(
 
 /// The sub-import name for one library: `<parent>__<abi>__<stem>`.
 ///
-/// It becomes a directory under the store's `imports/`, so every character outside
-/// `[A-Za-z0-9._-]` is replaced. The parent's name is the prefix because the library
-/// name alone is not unique -- two apps both shipping `libcrypto.so` would otherwise
-/// overwrite each other's import.
+/// It becomes a directory under the store's `imports/`, so it goes through [`sanitize`].
+/// The parent's name is the prefix because the library name alone is not unique -- two
+/// apps both shipping `libcrypto.so` would otherwise overwrite each other's import.
 fn sub_import_name(parent: &str, abi: &str, file_name: &str) -> String {
     let stem = file_name.strip_suffix(".so").unwrap_or(file_name);
-    let raw = format!("{parent}__{abi}__{stem}");
+    sanitize(&format!("{parent}__{abi}__{stem}"))
+}
+
+/// Replaces every character outside `[A-Za-z0-9._-]` with `_`, so the result is a single
+/// path component: it has no separator and cannot climb out of the directory it is joined to.
+pub(crate) fn sanitize(raw: &str) -> String {
     raw.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {

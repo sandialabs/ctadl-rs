@@ -1,6 +1,6 @@
 //! Artifact cache: avoid repeated parsing by caching LineMaps per ArtifactId.
 
-use std::collections::BTreeMap as HashMap;
+use std::collections::BTreeMap;
 
 use crate::ids::ArtifactId;
 use crate::line_map::LineMap;
@@ -8,13 +8,13 @@ use crate::line_map::LineMap;
 /// Caches line maps per artifact. Caller supplies content when computing.
 #[derive(Debug)]
 pub struct ArtifactCache {
-    line_maps: HashMap<ArtifactId, LineMap>,
+    line_maps: BTreeMap<ArtifactId, LineMap>,
 }
 
 impl ArtifactCache {
     pub fn new() -> Self {
         Self {
-            line_maps: HashMap::new(),
+            line_maps: BTreeMap::new(),
         }
     }
 

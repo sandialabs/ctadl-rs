@@ -48,8 +48,9 @@
 //! materialized when it resolves: `c := read P; store cell.D := c`, and `cell` is used in its
 //! place. A call copies the cell back out afterwards, `u := load cell.D`, then writes `u` into
 //! `P`. That works because SSA writes every parameter back at its entry version: the callee's
-//! `store p.D := v` on its parameter's entry version comes back to the caller's `cell`. An unresolved address argument is passed
-//! as is: it is already a pointer variable, and writes through its `D` come back to it.
+//! `store p.D := v` on its parameter's entry version comes back to the caller's `cell`. An
+//! unresolved address argument is passed as is: it is already a pointer variable, and writes
+//! through its `D` come back to it.
 //!
 //! An address taken where it may reach a use that does not resolve (two addresses merged at a
 //! join, as in C#'s `ref (c ? ref a : ref b)`) is materialized into its own variable when it

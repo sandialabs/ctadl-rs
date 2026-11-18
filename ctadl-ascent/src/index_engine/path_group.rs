@@ -1,12 +1,13 @@
 //! Everything known about one variable of one function, keyed by access path.
 //!
-//! Both BYODS stores in this module keep one *group* per `(function, variable)`. For `locals`
-//! ([`super::locals_trie`]) the group is what reaches that variable: each leaf is an access
-//! path `p` of the variable together with the formal `a.p4` that reaches `v.p`. For
-//! `assign_like` ([`super::assign_like_trie`]) the group is the edges read from that variable:
-//! each leaf is a source path `p` together with the destination vertex `v1.p1` that
-//! `v1.p1 = v.p` writes. In both, the path is the first component of the leaf, and the local
-//! propagation rules probe it exactly: "which formals reach `v.p`", "which edges read `v.p`".
+//! The BYODS stores keep one *group* per `(function, variable)`. For `locals`
+//! ([`super::locals_trie`], [`super::c_locals_trie`]) the group is what reaches that variable:
+//! each leaf is an access path `p` of the variable together with the formal `a.p4` that reaches
+//! `v.p`. For `assign_like` ([`super::assign_like_trie`], [`super::c_assign_like_trie`]) the
+//! group is the edges read from that variable: each leaf is a source path `p` together with the
+//! destination vertex `v1.p1` that `v1.p1 = v.p` writes. In both, the path is the first
+//! component of the leaf, and the local propagation rules probe it exactly: "which formals
+//! reach `v.p`", "which edges read `v.p`".
 //! So a group has to answer "the leaves at path `p`" without walking every leaf it holds.
 //!
 //! A [`HybridSet`] over the whole leaf cannot do that: it is keyed on the full tuple, so the
@@ -19,7 +20,7 @@
 //!
 //! - **Flat.** At most [`SMALL_THRESHOLD`] leaves, held in one [`HybridSet`] over the full leaf.
 //!   That is the overwhelmingly common case (67 to 100% of groups hold exactly one leaf), and it
-//!   keeps the group two words wide with one allocation. An exact probe scans, which at this
+//!   keeps the group to one allocation. An exact probe scans, which at this
 //!   size is cheaper than a second hash lookup.
 //! - **By path.** Above the threshold the leaves move into a map from path to a [`HybridSet`] of
 //!   the remaining columns. An exact probe is now one hash lookup, and the leaves shrink by the

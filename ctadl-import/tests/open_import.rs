@@ -138,11 +138,8 @@ fn incompatible_cause(err: &ctadl_import::Error) -> (String, String, String) {
 /// A store written by an older build is refused, and the error says which artifact to import
 /// again.
 ///
-/// This is the regression the reader exists for. Reading `ir-program.bitcode` directly -- which
-/// is what a downstream crate had to do before [`open_import`] was public -- cannot make this
-/// check, so a stale store either decodes into something wrong or fails with a `bitcode::Error`
-/// that names no cause. Here the bitcode is perfectly readable and the version is the only thing
-/// wrong, which is the point: the check fires on the config, before the decode.
+/// The bitcode here is perfectly readable and the version is the only thing wrong, which is the
+/// point: the check fires on the config, before the decode.
 #[test]
 fn an_import_from_an_older_build_is_refused_by_name() {
     store();

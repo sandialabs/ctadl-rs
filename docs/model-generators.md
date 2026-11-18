@@ -298,7 +298,7 @@ fields. The main ones:
 | `constraint`       | Fields | Matches |
 | ------------------ | ------ | ------- |
 | `name`             | `pattern` | Regex match against a function/variable **name**. |
-| `signature_match`  | `name` / `names`, `parent` / `parents`, `qualified-id` / `qualified-ids` | Structured match on a method signature: a simple name (or list), an owning class (`parent`/`parents`, Java only), or an exact fully-qualified id. This is the workhorse for library modeling. Fields given together are ANDed; a list field ORs within itself. |
+| `signature_match`  | `name` / `names`, `parent` / `parents`, `qualified-id` / `qualified-ids` | Structured match on a method signature: a simple name (or list), an owning class (`parent`/`parents`, Java and CIL only), or an exact fully-qualified id. This is the workhorse for library modeling. Fields given together are ANDed; a list field ORs within itself. |
 | `signature` / `signature_pattern` | `pattern` | Regex against the whole mangled signature, e.g. `".*\\(\\)Ljava/lang/String;"`. |
 | `qualified-id` / `qualified-ids` | (on `signature_match`) | **Exact, whole-string** match — not a regex — on the method's fully-qualified id. See below. |
 
@@ -333,9 +333,9 @@ An id that names no function in the program matches nothing (it does not match e
 > **On lua, do not use `%anonN` ids.** A function with no name of its own — one
 > assigned into a table literal, say `["/acme"] = { POST = function(self) … }` — is
 > named `<module>.%anonN` from a counter that runs across the whole *import*, not
-> per file. Adding or removing any file renumbers every later one (the same Kong
-> handler is `%anon449` importing `kong/` alone and `%anon451` importing the whole
-> repo), so an id that works under one import set silently matches nothing under
+> per file. Adding or removing any file renumbers every later one (the same
+> handler can be `%anon449` importing one directory alone and `%anon451` importing
+> the whole repo), so an id that works under one import set silently matches nothing under
 > another. Pin such a function by its enclosing module plus a `uses_field` or
 > `number_parameters` constraint instead, or give it a real name in the source.
 
@@ -343,8 +343,8 @@ An id that names no function in the program matches nothing (it does not match e
 
 | `constraint`   | Fields | Matches |
 | -------------- | ------ | ------- |
-| `parent`       | `inner` | **Java-only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On non-Java frontends this warns and matches nothing. |
-| `extends`      | `inner` | **Java-only.** A superclass/interface of the method's owning class satisfies `inner`. On non-Java frontends this warns and matches nothing. |
+| `parent`       | `inner` | **Java and CIL only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On other frontends this warns and matches nothing. |
+| `extends`      | `inner` | **Java and CIL only.** A superclass/interface of the method's owning class satisfies `inner`. On other frontends this warns and matches nothing. |
 | `uses_field`   | `name` / `names` | The function reads or writes the named field(s) (via an IR `Load`/`Store`). |
 
 ### Predicates on the element

@@ -645,8 +645,8 @@ tables! {
         constraint: (Coded TypeDefOrRef),
     }
 
-    // Portable PDB tables (used by the optional portable-PDB phase, but their
-    // sizes must be known so mixed table streams lay out correctly).
+    // Portable PDB tables, which `model::pdb` reads. Their sizes must be
+    // known to lay out a tables stream that mixes them with the others.
     DocumentRaw = Document {
         name: Blob,
         hash_algorithm: Guid,

@@ -181,7 +181,7 @@ fn test_find_state_2() {
     // 3 InCycleWith { 0 }
     //
     // and hence 4 will traverse the links, finding an ultimate depth of 0.
-    // If will also collapse the states to the following:
+    // It will also collapse the states to the following:
     //
     // 0 BeingVisited { 0 }
     // 1 InCycleWith { 3 }

@@ -1,13 +1,10 @@
 //! `cargo xtask report-eval` -- run `ctadl report` across a corpus of real apps.
 //!
-//! This is the harness `spec.md` §7.3 asks for, and its job is questions 2 to 4 of §7.2:
-//! are the numbers stable, do the distributions have the long tail the intent predicts, and
-//! how concentrated is the imprecision. (Question 1, whether the static tier survives a
-//! 200 MB app, was answered before any of this existed, with `ctadl import` and
-//! `ctadl inspect` alone.)
+//! It answers three questions about the call graphs of real apps: are the numbers stable,
+//! do the distributions have a long tail, and how concentrated is the imprecision.
 //!
 //! It takes a **directory** of artifacts rather than a hard-coded path, deliberately. The
-//! large apps the intent names live on one machine, with no manifest, no hashes and no
+//! large apps it is meant for live on one machine, with no manifest, no hashes and no
 //! licence to redistribute, so nothing here may depend on them: point it at that directory,
 //! or at a TaintBench app tree, or at anything else. Any number quoted from a private corpus
 //! has to name the exact file it came from, which is why the summary table is keyed by
@@ -86,7 +83,7 @@ struct Dispatch {
 /// One app's measurements, as the summary table prints them.
 struct Row {
     artifact: String,
-    /// `None` when the app failed; the message says where.
+    /// `Err` when the app failed; the message says where.
     outcome: Result<Measured>,
 }
 
@@ -109,9 +106,8 @@ struct Measured {
     /// signature is what you would special-case.
     sig10: f64,
     sig100: f64,
-    /// The interface-versus-class-virtual split, which gets its own table: it is the
-    /// comparison the whole of phase 2 exists to make, and hanging six more columns off the
-    /// table above would bury it.
+    /// The interface-versus-class-virtual split, which gets its own table
+    /// ([`render_dispatch_table`]): hanging six more columns off the main one would bury it.
     dispatch: Dispatch,
     import_secs: f64,
     report_secs: f64,
@@ -214,14 +210,13 @@ fn measure_one(
 
     // Also keep the human-readable form: the JSON is what a later run diffs against, but the
     // text is what a person reads when the diff moves. Together with the stability check
-    // below this is three reports per app rather than one -- on a 1.9-million-function app
-    // that is four minutes instead of ninety seconds, which is a fair price for having both
-    // artifacts and a reproducibility result.
+    // below this is three reports per app rather than one, roughly tripling the report time,
+    // which is a fair price for having both artifacts and a reproducibility result.
     let text = exec::capture_stdout(ctadl(&["report", "app", "--top", &top]), "ctadl report")?;
     std::fs::write(json_dir.join(format!("{slug}.txt")), &text)
         .with_context(|| format!("writing the text report for {slug}"))?;
 
-    // §7.2 question 2: two reports over one import must agree. The tables this is built on
+    // Two reports over one import must agree. The tables this is built on
     // are documented as byte-stable, so this is an assertion rather than a hope.
     let again = json_dir.join(format!("{slug}.again.json"));
     let again_str = again.to_string_lossy().into_owned();
@@ -247,6 +242,11 @@ fn measure_one(
     )
 }
 
+/// One of `program`'s `worst_signatures` shares, 0 when absent.
+fn share(program: &Value, key: &str) -> f64 {
+    program["worst_signatures"][key].as_f64().unwrap_or(0.0)
+}
+
 /// Folds a report over a whole project into one row.
 ///
 /// An `.xapk` is several programs -- one per split -- so the counts are summed across them
@@ -254,10 +254,6 @@ fn measure_one(
 /// weighted merge of two programs' percentiles would need their full tables, which the JSON
 /// deliberately does not carry; naming the biggest program's shape is honest and is what a
 /// reader wants anyway.
-fn share(program: &Value, key: &str) -> f64 {
-    program["worst_signatures"][key].as_f64().unwrap_or(0.0)
-}
-
 fn summarize(
     doc: &Value,
     import_secs: f64,
@@ -376,8 +372,8 @@ fn dispatch_split(programs: &[Value], biggest: &Value) -> Dispatch {
 ///
 /// Wall time is measured here. Peak memory comes from `/usr/bin/time -l`, whose `peak memory
 /// footprint` is the kernel's high-water mark for the process -- nothing slips between polls.
-/// Where that is unavailable (any non-macOS host, or no `/usr/bin/time`), the column is
-/// simply absent rather than filled with a number measured a different way.
+/// Off macOS, or without `/usr/bin/time`, the column is simply absent rather than filled with a
+/// number measured a different way.
 fn timed(cmd: Command, what: &str, log: &Path) -> Result<(f64, Option<f64>)> {
     let (mut cmd, wrapped) = wrap_with_time(cmd);
     let start = Instant::now();
@@ -402,11 +398,10 @@ fn timed(cmd: Command, what: &str, log: &Path) -> Result<(f64, Option<f64>)> {
     Ok((secs, peak))
 }
 
-/// Wraps `cmd` in `/usr/bin/time -l` when that exists, so the peak is a kernel high-water
-/// mark rather than something this process sampled. Returns whether it did.
+/// Wraps `cmd` in `/usr/bin/time -l` on macOS when that exists. Returns whether it did.
 fn wrap_with_time(cmd: Command) -> (Command, bool) {
     let time = Path::new("/usr/bin/time");
-    if !time.is_file() {
+    if !cfg!(target_os = "macos") || !time.is_file() {
         return (cmd, false);
     }
     let mut wrapped = Command::new(time);
@@ -415,16 +410,12 @@ fn wrap_with_time(cmd: Command) -> (Command, bool) {
     (wrapped, true)
 }
 
-/// `peak memory footprint` (macOS) or `Maximum resident set size` (GNU time), in MB.
+/// The `peak memory footprint` line of macOS `/usr/bin/time -l`, in MB.
 fn peak_mb(stderr: &str) -> Option<f64> {
     for line in stderr.lines() {
         let line = line.trim();
         if let Some(bytes) = line.strip_suffix("peak memory footprint") {
             return bytes.trim().parse::<f64>().ok().map(|b| b / 1e6);
-        }
-        // GNU time reports kilobytes.
-        if let Some(kb) = line.strip_prefix("Maximum resident set size (kbytes): ") {
-            return kb.trim().parse::<f64>().ok().map(|k| k / 1e3);
         }
     }
     None
@@ -599,16 +590,11 @@ mod tests {
     }
 
     #[test]
-    fn peak_is_parsed_from_both_time_dialects() {
-        // macOS `/usr/bin/time -l`: the number leads, the label follows.
+    fn peak_is_parsed_from_time_output() {
+        // The number leads, the label follows.
         assert_eq!(
             peak_mb("        18377276800  peak memory footprint\n"),
             Some(18377.2768)
-        );
-        // GNU time -v.
-        assert_eq!(
-            peak_mb("\tMaximum resident set size (kbytes): 2048\n"),
-            Some(2.048)
         );
         assert_eq!(peak_mb("nothing here"), None);
     }

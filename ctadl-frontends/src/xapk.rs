@@ -13,10 +13,9 @@ and record the result on the parent.
 * **The sub-import list is flat.** [`AnalysisProject::ephemeral`](ctadl_import::project::AnalysisProject::ephemeral) expands exactly
   one level -- `once(name).chain(subs)`, with no recursion. So a bundle's `sub_imports` must
   hold, for each split, *its own name followed by its own `sub_imports`*. Nesting bundle → split
-  → library without flattening drops every `.so` at index time, which looks exactly like the JNI
-  bug this all exists to fix.
-* **A resource-only split is skipped, not fatal.** They are the majority: one real bundle has 23
-  of 30. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
+  → library without flattening drops every `.so` at index time.
+* **A resource-only split is skipped, not fatal.** They are usually the majority of a bundle's
+  splits. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
 */
@@ -26,6 +25,7 @@ use std::path::{Path, PathBuf};
 use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
 
 use crate::ImportOptions;
+use crate::apk_native::sanitize;
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
@@ -106,7 +106,6 @@ pub fn import_bundle(
     for Split { name, path, .. } in &splits {
         match import_split(name, path, opts) {
             Ok(sub_imports) => {
-                // Flat, not nested: `AnalysisProject::ephemeral` expands one level only.
                 names.push(name.clone());
                 names.extend(sub_imports);
             }
@@ -144,8 +143,8 @@ struct Split {
     has_dex: bool,
 }
 
-/// Puts the Dex-bearing splits first, so [`ctadl_import::project::AnalysisProject`]'s per-import source-span scoping
-/// stays in import order and the Java half of a JNI boundary is observed before the native half.
+/// Puts the Dex-bearing splits first, so `ctadl_ascent::cli::index`'s per-import source-span
+/// scoping stays in import order and the Java half of a JNI boundary is observed before the native half.
 ///
 /// A stable sort, so the entry order -- already sorted by name -- decides within each group.
 fn order_splits(splits: &mut [Split]) {
@@ -208,21 +207,6 @@ pub fn splits_dir(parent: &ArtifactImport) -> PathBuf {
 /// own name is not unique -- every bundle has a `config.arm64_v8a.apk`.
 fn sub_import_name(parent: &str, stem: &str) -> String {
     sanitize(&format!("{parent}__{stem}"))
-}
-
-/// Replaces every character that has no business in a directory name. Both the sub-import name
-/// and the extracted file name go through this: the first becomes a directory under the store's
-/// `imports/`, and the second a file under the import's `splits/`.
-fn sanitize(raw: &str) -> String {
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

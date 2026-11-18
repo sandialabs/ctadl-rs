@@ -999,8 +999,7 @@ fn write_apk(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> Pa
 ///
 /// `native_libs: false` keeps this test off Ghidra, which the native half needs and
 /// which no unit-test worker is guaranteed to have. What is under test here is that a
-/// Dex-less APK is accepted at all -- before this, it failed outright on "APK contains
-/// no classes*.dex entries" and the libraries went with it.
+/// Dex-less APK is accepted at all.
 #[test]
 fn test_cli_import_native_only_split_apk() {
     run_store_test(|| {
@@ -1145,47 +1144,13 @@ fn test_hash_artifact_file_and_dir() {
     assert_ne!(d1, hash_artifact(&sub).unwrap());
 }
 
-//#[test]
-//fn test_cli_index() {
-//    env_logger::init();
-//    run_store_test(|| {
-//        let result =
-//            ArtifactImport::try_create("test_index_artifact", ArtifactLanguage::Dex, &dex_file);
-//        assert!(result.is_ok());
-//        let import = result.unwrap();
-//        let result = cli::import(&import, cli::ImportOptions::default());
-//        assert!(result.is_ok());
-//        //let import = result.unwrap();
-
-//        let result = AnalysisProject::try_create("test_index_project", &["test_index_artifact"], SubImports::All);
-//        assert!(result.is_ok());
-//        let project = result.unwrap();
-//        let result = cli::index(&project);
-//        assert!(result.is_ok());
-
-//        assert!(project.name == "test_index_project");
-//        assert_eq!(project.imports, &["test_index_artifact"]);
-//        assert!(project.dir().is_dir());
-//        assert!(project.index_path().is_ok());
-//        assert!(project.index_path().unwrap().is_dir());
-//        assert!(project.config_path().is_file());
-
-//        // Check that there are some files in the index dir
-//        let result = std::fs::read_dir(&project.index_path().unwrap());
-//        assert!(result.is_ok());
-//        let contents: Vec<_> = result.unwrap().into_iter().collect();
-//        assert!(contents.len() > 1);
-//    });
-//}
-
 // ---------------------------------------------------------------------------
 // The index format-version gate.
 //
 // `index` and `query` are separate processes and every access path crosses the
 // parquet boundary between them. The decoders are infallible-by-construction for
 // anything this build wrote and panic on anything else, so this gate is what turns
-// a stale `index/` into an actionable "re-run `ctadl index`" instead of a panic --
-// or, before the encoding was fixed, into silently-wrong analysis results.
+// a stale `index/` into an actionable "re-run `ctadl index`" instead of a panic.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1251,9 +1216,8 @@ fn index_version_gate_rejects_a_different_version() {
 // ---------------------------------------------------------------------------
 // `inspect --dump-index-graph`: rendering the index graph from a finished index.
 //
-// The graph used to come out of `ctadl index --dump-index-graph`, as a side effect of a run
-// that already had `assign_like` in memory. It now comes out of `inspect`, which reads the two
-// tables it needs back from the index directory -- so what these cover is that read path:
+// `inspect` reads the two tables the graph needs back from the index directory, so what these
+// cover is that read path:
 // `assign.parquet` for the edges, `function_id.parquet` for the labels.
 // ---------------------------------------------------------------------------
 
@@ -1623,8 +1587,7 @@ fn inspect_project_lists_the_tables_of_a_readable_index() {
 ///   spells it; no model supplies `deref`), the store `req->arg = line + 2` cannot carry the
 ///   pointee's taint, and `sink_hit` is missed.
 /// - With the call-site smear, `verb`'s (real) taint leaks onto its siblings, so `sink_clean`
-///   is wrongly reached -- which is also how this flow used to be "found": through the pointer
-///   `arg` at the empty path, never through the bytes.
+///   is wrongly reached.
 #[test]
 fn test_cli_query_c_pointer_field_without_models() {
     use ctadl_ascent::cli;

@@ -124,9 +124,8 @@ fn main() {
     println!(
         "\nin-mem live heap grows linearly with facts; mmap live heap stays flat\n\
          (bounded by the {MEMTABLE_LIMIT}-value memtable + run metadata — the facts\n\
-         themselves live in mmap'd files). mmap peak also stays flat: the hybrid\n\
-         run writer assembles small runs in memory but spills larger ones to\n\
-         scratch files past its threshold, so the k-way compaction merge never\n\
-         materializes a whole run on the heap."
+         themselves live in mmap'd files). mmap peak also stays flat: the run\n\
+         writer writes each run straight into its mapped file, so the k-way\n\
+         compaction merge never materializes a whole run on the heap."
     );
 }

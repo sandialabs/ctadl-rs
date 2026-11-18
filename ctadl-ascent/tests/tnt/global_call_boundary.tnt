@@ -1,0 +1,30 @@
+// A source created inside a callee must return through the caller's heap formal.
+// The same heap must also enter consume(), with call-site labels preserved.
+var g;
+var clean;
+
+def produce() {
+start:
+  x = source(Secret);
+  sink(x, Secret);
+  g = x;
+  return;
+}
+
+def consume() {
+start:
+  y = g;
+  sink(y, Secret);
+  errsink(clean, Secret);
+  return;
+}
+
+def main() {
+start:
+  produce();
+  y = g;
+  sink(y, Secret);
+  consume();
+  errsink(clean, Secret);
+  return;
+}

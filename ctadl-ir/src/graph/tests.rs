@@ -69,7 +69,7 @@ impl LabeledSuccessors for TestGraph {
 }
 
 #[test]
-fn find_path_to_set_reaches_nearest_target() {
+fn find_path_to_set_reaches_a_target() {
     // 0 -> 1 -> 2 -> 3, plus a 0 -> 4 branch.
     let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3), (0, 4)]);
 

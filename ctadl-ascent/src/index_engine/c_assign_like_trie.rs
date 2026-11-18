@@ -14,17 +14,10 @@
 //! ## Seeding, and why the physical relation holds nothing
 //!
 //! `assign_like` is seeded with the original program assignments — about 94% of the final relation
-//! on binary targets. Serially, [`super::assign_like_trie::SeedVec`] exploits the fact that Ascent
-//! iterates the physical relation exactly once during index build: `iter()` *drains* the seed into
-//! the trie, so the seed is never held in a second full-size buffer.
-//!
-//! Parallel codegen builds indices differently. It does not iterate; it runs
-//! `(0..rel.len()).into_par_iter()` and *random-accesses* `rel[i]`, which a draining store cannot
-//! serve. So the seed goes into the store directly, before the run, through
-//! [`CAssignTrie::from_rows`] — which consumes the input `Vec` and frees it, giving exactly the
-//! property `SeedVec` was written for. The physical relation is then a pure counter
-//! ([`CSeedVec`]), holding no tuples and iterating nothing, so index build has nothing to do for
-//! it.
+//! on binary targets. The seed goes into the store directly, before the run, through
+//! [`CAssignTrie::from_rows`], which consumes the input `Vec` and frees it, so the seed is never
+//! held twice. The physical relation is then a pure counter ([`CSeedVec`]), holding no tuples and
+//! iterating nothing, so index build has nothing to do for it.
 
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -195,7 +188,7 @@ where
 
     /// Insert a full tuple through a **shared** reference. Returns true if it was new to *this*
     /// store, and true for exactly one caller when several race on the same tuple: the `(f, vs)`
-    /// entry is one shard write lock, held across the leaf scan and push.
+    /// entry is one shard write lock, held across the group insert.
     fn c_insert(&self, key: &(F, Vd, Pd, Vs, Ps)) -> bool {
         let (f, vd, pd, vs, ps) = key;
         let leaf = (ps.clone(), vd.clone(), pd.clone());
@@ -339,8 +332,7 @@ where
 // Parallel iterator adaptors.
 // ---------------------------------------------------------------------------
 
-/// A group's leaves as `(&Vd, &Pd, &Ps)`, split over the leaf slice. Leaves live in a `Vec`, so
-/// this needs no intermediate allocation.
+/// A group's leaves as `(&Vd, &Pd, &Ps)`, collected into a [`CollectedParIter`].
 type LeafParIter<'a, Vd, Pd, Ps> = CollectedParIter<(&'a Vd, &'a Pd, &'a Ps)>;
 
 /// A group's leaves as `(&Vd, &Pd, &Ps)`, in the tuple's column order.

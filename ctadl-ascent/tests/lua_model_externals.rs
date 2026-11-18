@@ -13,9 +13,9 @@ use ctadl_ascent::models::{
     ImportScope, ProgramMatchIndex, ProgramModelMatches, json::ModelGeneratorIngest,
 };
 
-/// The externals column is what lets a Lua propagation model file have any effect. Before it
-/// existed, a match index was built only from the functions defined in the file, so a model
-/// that named a standard-library function matched nothing.
+/// The externals column is what lets a Lua propagation model file have any effect. A match
+/// index built only from the functions defined in the file would give a model that names a
+/// standard-library function nothing to match.
 #[test]
 fn a_model_can_name_a_lua_external() {
     let dir = tempfile::tempdir().expect("tempdir");

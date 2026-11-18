@@ -122,7 +122,7 @@ fn a_bundle_imports_its_code_splits_and_skips_its_resource_split() {
     assert!(import.program_path().is_file());
 }
 
-/// The flattening regression, stated as what [`AnalysisProject::ephemeral`] does: it chains a
+/// Why a bundle's sub-import list must be flat: [`AnalysisProject::ephemeral`] chains a
 /// name with its *own* `sub_imports` and does not recurse, so a native library two levels down
 /// is reachable only if the bundle's list already names it.
 #[test]

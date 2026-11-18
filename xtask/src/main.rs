@@ -1,10 +1,10 @@
 //! `cargo xtask` — developer task runner.
 //!
-//! Three tasks. `regression` ports the former bash harness (`nightly/tests.sh` and friends)
-//! for the source-sink taint regression tests, and is what CI runs. `report-eval` sweeps
-//! `ctadl report` across a directory of real apps and keeps the per-app JSON; it is a
-//! measurement tool rather than a check, and nothing depends on it passing. `cil`
-//! regenerates the CIL goldens and opcode table, and runs single CIL checks.
+//! Four tasks. `regression` runs the source-sink taint regression tests, and is what CI
+//! runs. `report-eval` sweeps `ctadl report` across a directory of real apps and keeps the
+//! per-app JSON; it is a measurement tool rather than a check, and nothing depends on it
+//! passing. `cil` regenerates the CIL goldens and opcode table, and runs single CIL checks.
+//! `dex-opcodes` checks dex-reader's opcode semantics against ART on a device.
 //!
 //! Usage:
 //!     cargo xtask regression
@@ -13,7 +13,7 @@
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
-//!     cargo xtask cil bless|codegen
+//!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint
 
 mod android_icc;
 mod apk;
@@ -174,10 +174,11 @@ fn parse_dex_opcodes_args(mut args: impl Iterator<Item = String>) -> Result<dex_
 }
 
 /// `cargo xtask cil <command>`: regenerate cil-reader's committed artifacts
-/// from the pinned Mono.Cecil. Checking them is `regression --frontend cil`.
+/// (`bless`, `bless-flow`, `bless-mir`, `codegen`), or run one CIL check on its own
+/// (`exec`, `models`, `taint`). The full check suite is `regression --frontend cil`.
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args.next().context(
-        "`cil` requires a command: bless, bless-flow, bless-mir, exec, models or codegen",
+        "`cil` requires a command: bless, bless-flow, bless-mir, exec, models, taint or codegen",
     )?;
     let mut cil_dir = None;
     let mut fixtures = None;
@@ -228,61 +229,35 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             other => bail!("unknown argument `{other}` (try `xtask --help`)"),
         }
     }
+    let need_fixtures = || {
+        cil::resolve_fixtures(fixtures.as_deref())?
+            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")
+    };
+    let need_goldens = || {
+        cil::resolve_goldens(goldens.as_deref())?
+            .context("goldens directory not found; pass --cil-goldens")
+    };
     if command == "bless-mir" {
-        let goldens = cil::resolve_goldens(goldens.as_deref())?
-            .context("goldens directory not found; pass --cil-goldens")?;
-        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
-            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        let goldens = need_goldens()?;
+        let fixtures = need_fixtures()?;
         return cil::frontend::bless(&goldens, &fixtures);
     }
     if command == "taint" {
-        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
-            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        let fixtures = need_fixtures()?;
         let ctadl = ctadl.context("`cil taint` requires --ctadl <path to the ctadl binary>")?;
         let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-taint"));
         std::fs::create_dir_all(&out)?;
         let outcome = cil::taint::run(&ctadl, &fixtures, &cil::taint::resolve_xtask_dir(), &out)?;
-        return Ok(match outcome {
-            regression::Outcome::Pass => {
-                println!("PASS cil:taint");
-                true
-            }
-            regression::Outcome::Skip(why) => {
-                println!("SKIP cil:taint: {why}");
-                true
-            }
-            regression::Outcome::Fail(why)
-            | regression::Outcome::HardFail(why)
-            | regression::Outcome::Xfail(why) => {
-                println!("FAIL cil:taint: {why}");
-                false
-            }
-        });
+        return Ok(report_check("cil:taint", outcome));
     }
     if command == "models" {
         let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-models"));
         std::fs::create_dir_all(&out)?;
         let outcome = cil::models::run(&cil::models::resolve_xtask_dir(), &out)?;
-        return Ok(match outcome {
-            regression::Outcome::Pass => {
-                println!("PASS cil:models");
-                true
-            }
-            regression::Outcome::Skip(why) => {
-                println!("SKIP cil:models: {why}");
-                true
-            }
-            regression::Outcome::Fail(why)
-            | regression::Outcome::HardFail(why)
-            | regression::Outcome::Xfail(why) => {
-                println!("FAIL cil:models: {why}");
-                false
-            }
-        });
+        return Ok(report_check("cil:models", outcome));
     }
     if command == "exec" {
-        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
-            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        let fixtures = need_fixtures()?;
         let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-exec"));
         return cil::exec::run_standalone(&fixtures, &out, filter.as_deref());
     }
@@ -292,23 +267,40 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         .context("no Cecil checkout: pass --cecil-src or set CECIL_SRC (the dev shell does)")?;
     match command.as_str() {
         "bless" => {
-            let goldens = cil::resolve_goldens(goldens.as_deref())?
-                .context("goldens directory not found; pass --cil-goldens")?;
+            let goldens = need_goldens()?;
             cil::bless(&goldens, &cecil, filter.as_deref())
         }
         "bless-flow" => {
-            let goldens = cil::resolve_goldens(goldens.as_deref())?
-                .context("goldens directory not found; pass --cil-goldens")?;
-            let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
-                .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+            let goldens = need_goldens()?;
+            let fixtures = need_fixtures()?;
             cil::flow::bless(&goldens, &fixtures)
         }
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
         other => {
             bail!(
                 "unknown `cil` command `{other}` (expected bless, bless-flow, bless-mir, exec, \
-                 models or codegen)"
+                 models, taint or codegen)"
             )
+        }
+    }
+}
+
+/// Prints a one-line verdict for the check `name`; returns whether it passed or skipped.
+fn report_check(name: &str, outcome: regression::Outcome) -> bool {
+    match outcome {
+        regression::Outcome::Pass => {
+            println!("PASS {name}");
+            true
+        }
+        regression::Outcome::Skip(why) => {
+            println!("SKIP {name}: {why}");
+            true
+        }
+        regression::Outcome::Fail(why)
+        | regression::Outcome::HardFail(why)
+        | regression::Outcome::Xfail(why) => {
+            println!("FAIL {name}: {why}");
+            false
         }
     }
 }
@@ -348,8 +340,6 @@ fn parse_report_eval_args(mut args: impl Iterator<Item = String>) -> Result<repo
             other => bail!("unknown argument `{other}` (try `xtask --help`)"),
         }
     }
-    // Required rather than defaulted: the corpora this sweeps are one machine's local files,
-    // and a hard-coded path would make a result look reproducible when it is not.
     opts.apks = apks.context("report-eval requires --apks <dir>")?;
     Ok(opts)
 }

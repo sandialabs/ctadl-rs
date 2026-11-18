@@ -21,7 +21,7 @@ macro_rules! indexvec {
     };
 }
 
-/// Generates a newtype for an index type using thex `Idx` trait.
+/// Generates a newtype for an index type using the `Idx` trait.
 /// This macro requires that your crate has a feature called "serde". If the crate feature is
 /// enabled, it derives Serialize and Deserialize.
 ///

@@ -80,12 +80,10 @@ where
     V: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashSet::new()));
-        }
         Self {
-            shards: shards.into_boxed_slice(),
+            shards: (0..num_shards)
+                .map(|_| RwLock::new(HashSet::new()))
+                .collect(),
         }
     }
 
@@ -209,8 +207,10 @@ where
             Some(std::cmp::Ordering::Equal)
         } else if self.is_subset(other) {
             Some(std::cmp::Ordering::Less)
-        } else {
+        } else if other.is_subset(self) {
             Some(std::cmp::Ordering::Greater)
+        } else {
+            None
         }
     }
 }
@@ -282,11 +282,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
 
     /// Returns the number of sequences in the `Trie`.
     pub fn len(&self) -> usize {
-        let mut count = if self.0.value.is_some() { 1 } else { 0 };
-        for child in self.0.children.values() {
-            count += child.len();
-        }
-        count
+        usize::from(self.0.value.is_some()) + self.0.children.values().map(Self::len).sum::<usize>()
     }
 
     /// Inserts a sequence into the `Trie` with a value.
@@ -328,21 +324,14 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         self.get(sequence).is_some()
     }
 
-    /// Returns `true` if the `Trie` contains a prefix of the given sequence.
+    /// Returns `true` if the given sequence is a path from the root: empty, or a prefix of
+    /// some sequence in the `Trie`.
     pub fn contains_prefix<I>(&self, sequence: I) -> bool
     where
         I: IntoIterator,
         I::Item: Borrow<T>,
     {
-        let mut current = self;
-        for item in sequence {
-            if let Some(next) = current.0.children.get(item.borrow()) {
-                current = next;
-            } else {
-                return false;
-            }
-        }
-        true
+        self.get_subtrie(sequence).is_some()
     }
 
     /// Returns the sub-trie at the given prefix, if it exists.
@@ -383,7 +372,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
                 if let Some(mut child) = node.children.get(item_borrow).cloned()
                     && remove_recursive(&mut child, prefix)
                 {
-                    if child.0.children.is_empty() && child.0.value.is_none() {
+                    if child.is_empty() {
                         node.children.remove(item_borrow);
                     } else {
                         node.children.insert(item_borrow.clone(), child);
@@ -414,26 +403,20 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         I::Item: Borrow<T>,
         J: IntoIterator<Item = T>,
     {
-        if let Some(subtrie) = self.get_subtrie(prefix.clone()) {
-            let mut result = *self;
-            result.remove_prefix(prefix);
+        let mut substituted = self.get_subtrie(prefix.clone())?;
+        let mut result = *self;
+        result.remove_prefix(prefix);
 
-            let mut substituted = subtrie;
-            let mut items: Vec<T> = new_prefix.into_iter().collect();
-            while let Some(item) = items.pop() {
-                let mut node = Node {
-                    children: BTreeMap::new(),
-                    value: None,
-                };
-                node.children.insert(item, substituted);
-                substituted = Self::intern(node);
-            }
-
-            result.union(&substituted);
-            Some(result)
-        } else {
-            None
+        let mut items: Vec<T> = new_prefix.into_iter().collect();
+        while let Some(item) = items.pop() {
+            substituted = Self::intern(Node {
+                children: BTreeMap::from([(item, substituted)]),
+                value: None,
+            });
         }
+
+        result.union(&substituted);
+        Some(result)
     }
 
     /// Merges another `Trie` into this one.
@@ -604,17 +587,13 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
             return false;
         }
 
-        for (item, child) in &self.0.children {
-            if let Some(other_child) = other.0.children.get(item) {
-                if !child.is_subset(other_child) {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-
-        true
+        self.0.children.iter().all(|(item, child)| {
+            other
+                .0
+                .children
+                .get(item)
+                .is_some_and(|other_child| child.is_subset(other_child))
+        })
     }
 
     /// Returns `true` if this trie is a superset of another trie.
@@ -646,7 +625,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
                 if !std::ptr::eq(old_child_ptr, child.0 as *const _) {
                     modified = true;
                 }
-                if child.0.value.is_none() && child.0.children.is_empty() {
+                if child.is_empty() {
                     keys_to_remove.push(item.clone());
                     modified = true;
                 }
@@ -979,6 +958,26 @@ mod tests {
         assert!(empty.is_subset(&t1));
         assert!(!t1.is_subset(&empty));
         assert!(t1.is_superset(&empty));
+    }
+
+    #[test]
+    fn test_partial_cmp_orders_by_subset() {
+        use std::cmp::Ordering;
+
+        let mut t1 = Trie::new();
+        t1.insert("app".chars(), 1);
+
+        let mut t2 = t1;
+        t2.insert("banana".chars(), 2);
+
+        let mut t3 = Trie::new();
+        t3.insert("cherry".chars(), 3);
+
+        assert_eq!(t1.partial_cmp(&t1), Some(Ordering::Equal));
+        assert_eq!(t1.partial_cmp(&t2), Some(Ordering::Less));
+        assert_eq!(t2.partial_cmp(&t1), Some(Ordering::Greater));
+        assert_eq!(t1.partial_cmp(&t3), None);
+        assert_eq!(t3.partial_cmp(&t1), None);
     }
 
     #[test]

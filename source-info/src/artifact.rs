@@ -1,5 +1,5 @@
 //! Artifact table: immutable source artifacts with interning by
-//! (canonical_path, sub_artifact_id, content_hash).
+//! (canonical_path, sub_artifact_id, content_hash, encoding).
 
 use crate::ids::ArtifactId;
 use crate::store::{ArtifactsStore, KvStore};
@@ -191,21 +191,17 @@ impl ArtifactTable {
         }
         let id = ArtifactId(self.artifacts.len() as u32 + 1);
         self.artifacts.push(ArtifactRecord {
-            canonical_path: key.path.clone(),
+            canonical_path: key.path,
             sub_artifact_id: key.sub_artifact_id,
             encoding: key.encoding,
-            content_hash: key.hash.clone(),
+            content_hash: key.hash,
         });
         self.store.insert(&key_bytes, id.0.to_be_bytes());
         id
     }
 
     pub fn get(&self, id: ArtifactId) -> Option<&ArtifactRecord> {
-        let idx = id.0 as usize;
-        if idx == 0 || idx > self.artifacts.len() {
-            return None;
-        }
-        self.artifacts.get(idx - 1)
+        self.artifacts.get((id.0 as usize).checked_sub(1)?)
     }
 
     /// Builds a table from metadata and records (e.g. when deserializing). Assigns IDs 1, 2, ...

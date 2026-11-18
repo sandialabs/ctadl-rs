@@ -35,7 +35,6 @@ dataflow edge, so deleting its def removes only edges that had no sink.
 */
 use std::collections::{HashMap, HashSet};
 
-use internment::ArcIntern;
 use smallvec::SmallVec;
 
 use crate::index::idx::Idx;
@@ -56,13 +55,13 @@ pub fn eliminate_dead_temps(program: &mut Program) {
 
 /// If `kind` is a side-effect-free def of an unversioned local — the only kind
 /// of statement this pass may delete — returns that local; otherwise `None`.
-fn removable_dest(kind: &StatementKind) -> Option<&ArcIntern<Variable>> {
+fn removable_dest(kind: &StatementKind) -> Option<&Variable> {
     let dest = match kind {
         StatementKind::Assign { dest, .. } => dest,
         StatementKind::Load { dest, .. } => dest,
         _ => return None,
     };
-    (dest.version.is_none() && matches!(dest.variable.as_ref(), Variable::Local(_)))
+    (dest.version.is_none() && matches!(&dest.variable, Variable::Local(_)))
         .then_some(&dest.variable)
 }
 
@@ -76,21 +75,20 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     // Use counts over the whole function, plus the location of every removable
     // def keyed by the variable it defines. Terminator reads (return arguments)
     // count as uses so a returned temp is never considered dead.
-    let mut uses: HashMap<ArcIntern<Variable>, u32> = HashMap::new();
-    let mut def_sites: HashMap<ArcIntern<Variable>, SmallVec<[(BasicBlockIdx, usize); 2]>> =
-        HashMap::new();
+    let mut uses: HashMap<Variable, u32> = HashMap::new();
+    let mut def_sites: HashMap<Variable, SmallVec<[(BasicBlockIdx, usize); 2]>> = HashMap::new();
     for (bb, block) in function.blocks.iter_enumerated() {
         for (pos, stmt) in block.statements.iter().enumerate() {
             for v in stmt.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
             if let Some(var) = removable_dest(&stmt.kind) {
-                def_sites.entry(var.clone()).or_default().push((bb, pos));
+                def_sites.entry(*var).or_default().push((bb, pos));
             }
         }
         if let Some(term) = block.terminator_opt() {
             for v in term.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
         }
     }
@@ -112,11 +110,10 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     // Propagate: deleting a def drops the uses it made, so a variable that
     // thereby reaches zero uses makes its own removable def(s) dead in turn.
     while let Some((bb, pos)) = worklist.pop() {
-        let read: SmallVec<[ArcIntern<Variable>; 4]> = function.blocks[bb].statements
-            [StatementIdx::new(pos)]
-        .iter_src_var()
-        .map(|v| v.variable.clone())
-        .collect();
+        let read: SmallVec<[Variable; 4]> = function.blocks[bb].statements[StatementIdx::new(pos)]
+            .iter_src_var()
+            .map(|v| v.variable)
+            .collect();
         for var in read {
             let count = uses.get_mut(&var).expect("use was counted");
             *count -= 1;

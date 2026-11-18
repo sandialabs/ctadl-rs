@@ -152,7 +152,7 @@ fn leaf(i: usize, paths: usize) -> (P, M, Fp) {
     ((i % paths) as P, (i / paths) as M, i as Fp)
 }
 
-/// The `(F, V)` key of group `g`. 64 groups per function, so `fidx` holds a realistic fan-out.
+/// The `(F, V)` key of group `g`, with 64 groups per function.
 #[inline]
 fn key(g: usize) -> (F, V) {
     ((g / 64) as F, g as V)
@@ -210,7 +210,7 @@ fn build(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
         peak: mem.peak,
         live_all: mem.live,
         live_total,
-        est_total: report.fwd_bytes + report.fidx_bytes,
+        est_total: report.fwd_bytes,
         allocs: mem.allocs,
     }
 }
@@ -274,7 +274,7 @@ fn build_par(groups: usize, group_size: usize, rounds: usize, paths: usize) -> R
         peak: mem.peak,
         live_all: mem.live,
         live_total,
-        est_total: report.fwd_bytes + report.fidx_bytes,
+        est_total: report.fwd_bytes,
         allocs: mem.allocs,
     }
 }

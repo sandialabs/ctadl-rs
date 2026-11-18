@@ -440,10 +440,8 @@ struct Pattern {
 }
 
 fn read_known(path: &Path) -> Result<Vec<(Known, Pattern)>> {
-    if !path.is_file() {
-        return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(path)?;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading CIL known exceptions {}", path.display()))?;
     let entries: Vec<Known> =
         json5::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let mut out = Vec::new();

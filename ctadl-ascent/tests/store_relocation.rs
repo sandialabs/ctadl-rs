@@ -102,8 +102,8 @@ fn configs_are_store_relative_and_survive_a_copy() {
     assert!(moved.join(&copied.project_dir).is_dir());
 }
 
-/// Configs written before the paths went relative name a directory in the store that wrote them,
-/// so a copy of such a store would resolve back to the original location. Reading one rewrites
+/// A legacy config names its directory by absolute path, inside the store that wrote it, so a
+/// copy of such a store would resolve back to the original location. Reading one rewrites
 /// the path from the name, which the fixed layout determines.
 #[test]
 fn a_legacy_absolute_config_reads_as_store_relative() {

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//Decompile the function at the cursor and its callees, then output facts files corresponding to the pcodes
+//Decompile every function in the program, then output facts files corresponding to the pcodes
 //@category PCode
 
 import java.io.BufferedWriter;
@@ -222,7 +222,6 @@ class Database {
 		contents = new EnumMap<>(PredicateFile.class);
 		for (PredicateFile predicateFile : EnumSet.allOf(PredicateFile.class))
 			contents.put(predicateFile, new HashSet<List<String>>());
-		// contents.put(predicateFile, new ArrayList<List<String>>());
 		everCleared = false;
 	}
 
@@ -247,7 +246,6 @@ class Database {
 				try {
 					writeFile(this.contents.get(predicateFile), predicateFile, directory);
 				} catch (Exception e) {
-					// System.out.println(e);
 					ghidra.util.Msg.info(this, e);
 					for (java.lang.StackTraceElement st : e.getStackTrace()) {
 						ghidra.util.Msg.info(this, st);
@@ -261,7 +259,6 @@ class Database {
 			while (!es.awaitTermination(30, TimeUnit.SECONDS))
 				;
 		} catch (Exception e) {
-			// System.out.println(e);
 			ghidra.util.Msg.info(this, e);
 			for (java.lang.StackTraceElement st : e.getStackTrace()) {
 				ghidra.util.Msg.info(this, st);
@@ -340,7 +337,6 @@ class ItemCounter {
     private final AtomicInteger counter = new AtomicInteger(3);
 
     public int getUniqueNumber(String item) {
-        // Check if the item has been seen
         return seenItems.computeIfAbsent(item, key -> counter.incrementAndGet());
     }
 }
@@ -381,7 +377,6 @@ class HighFunctionExporter {
 	}
 
 	public void processFunction(DecompileResults res, Function f, DecompInterface decompiler) {
-		// System.out.println("processing " + f.getName() + SEP + f.getEntryPoint());
 		varnodes = new HashSet<String>();
 		extraGlobals = new HashMap<HighVariable, VarnodeAST>();
 
@@ -437,7 +432,7 @@ class HighFunctionExporter {
 			bbset.add(bb.getIndex());
 			debug("Starting basic block " + bb.getIndex());
 			int bbIndex = 0;
-			Iterator<PcodeOp> opiter = bb.getIterator(); // high.getPcodeOps();
+			Iterator<PcodeOp> opiter = bb.getIterator();
 			while (opiter.hasNext()) {
 				PcodeOp op = opiter.next();
 				if (op != null) {
@@ -455,8 +450,6 @@ class HighFunctionExporter {
 	}
 
 	private BigInteger readInteger(Program program, Address addr, int size) {
-		//AddressFactory addrFactory = program.getAddressFactory();
-		//int spaceID = addr.getAddressSpace().getSpaceID();
 		try {
 			byte[] dest = new byte[size];
 			program.getMemory().getBytes(addr, dest, 0, size);
@@ -486,14 +479,12 @@ class HighFunctionExporter {
 		Address addr = sym.getAddress();
 		if (program.getMemory().getBlock(addr).isExternalBlock())
 			return;
-		// SymbolTable symbolTable = program.getSymbolTable();
 		AddressFactory addrFactory = program.getAddressFactory();
 		int ptrBytes = program.getAddressFactory().getDefaultAddressSpace().getSize() / 8;
 
-		// Skip first two addresses to get to function pointer table
-		// BigInteger classOffset = readInteger(program, addr, ptrBytes);
+		// Skip the first two pointers (class offset, type info) to get to the
+		// function pointer table
 		addr = addr.add(ptrBytes);
-		// BigInteger typeInfo = readInteger(program, addr, ptrBytes);
 		addr = addr.add(ptrBytes);
 		Address tableAddr = addr;
 
@@ -502,7 +493,7 @@ class HighFunctionExporter {
 		BigInteger funPtrInt;
 		Address funPtrAddr;
 		while (true) {
-			// Breaks if we hit another vtable
+			// Breaks if we hit another vtable (vtables is never populated)
 			if (vtables.contains(addr))
 				break;
 
@@ -511,20 +502,15 @@ class HighFunctionExporter {
 			funPtrAddr = addrFactory.getAddress(addrFactory.getDefaultAddressSpace().getSpaceID(),
 					funPtrInt.longValue());
 
-			// The table ends when one of three things is true:
+			// The table ends when one of two things is true:
 			// 1. Reading a zero
-			if (funPtrInt == BigInteger.ZERO)
+			if (funPtrInt.signum() == 0)
 				break;
 
-			// 2. If there are defined symbols, we are out of the vtable, so break
-			// if (symbolTable.getSymbols(funPtrAddr).length > 0)
-			// break;
-
-			// emit fact
 			export(PredicateFile.VTABLE, className.toString(), addressString(tableAddr),
 					Integer.toString(funOffset * ptrBytes), funPtrInt.toString());
-			//
-			// 3. if next block is different from ours, break
+
+			// 2. if next block is different from ours, break
 			if (program.getMemory().getBlock(funPtrAddr) == null
 					|| program.getMemory().getBlock(funPtrAddr.add(ptrBytes)) == null)
 				break;
@@ -544,15 +530,6 @@ class HighFunctionExporter {
 			processVTable(program, sym);
 		}
 	}
-
-//	private void initializeSet(SymbolTable table) {
-//		vtables.clear();
-//		SymbolIterator iter = table.getSymbols("vtable");
-//		while (iter.hasNext()) {
-//			Symbol sym2 = iter.next();
-//			vtables.add(sym2.getAddress());
-//		}
-//	}
 
 	private HighFunction getHighFunction(DecompileResults res, Function func, DecompInterface decompiler) {
 		HighFunction high = res.getHighFunction();
@@ -664,17 +641,14 @@ class HighFunctionExporter {
 		export(PredicateFile.VNODE_NAME, id, "vn" + String.valueOf(vn.getUniqueId()));
 		long offset = vn.getOffset();
 		export(PredicateFile.VNODE_OFFSET, id, Long.toHexString(offset));
-		// if (offset < Long.MAX_VALUE && offset > Long.MIN_VALUE) {
 		exportL(PredicateFile.VNODE_OFFSET_N, id, offset);
                 export(PredicateFile.OFFSET_INDEX, String.valueOf(offset),
                     String.valueOf(offsets.getUniqueNumber(String.valueOf(offset))));
-		// }
 		export(PredicateFile.VNODE_SIZE, id, Integer.toString(vn.getSize()));
 		export(PredicateFile.VNODE_SPACE, id, vn.getAddress().getAddressSpace().getName());
 		export(PredicateFile.VNODE_HFUNC, id, hfuncID(hfn));
 		HighVariable hv = vn.getHigh();
 		if (hv == null) {
-			// export("VNODE_TOSTR", id, funcID(hfn.getFunction())+SEP+vn.toString());
 			export(PredicateFile.VNODE_TOSTR, id,
 					funcID(hfn.getFunction()) + SEP + vn.getPCAddress().toString() + SEP + vn.toString());
 		} else {
@@ -683,7 +657,6 @@ class HighFunctionExporter {
 					extraGlobals.put(hv, vn);
 				}
 			}
-			// export("VNODE_TOSTR", id, funcID(hfn.getFunction())+hvarName(hfn,hv));
 			export(PredicateFile.VNODE_TOSTR, id,
 					funcID(hfn.getFunction()) + SEP + vn.getPCAddress().toString() + SEP + hvarName(hfn, hv));
 			export(PredicateFile.VNODE_HVAR, id, hvarID(hfn, hv));
@@ -755,9 +728,6 @@ class HighFunctionExporter {
 				export(PredicateFile.TYPE_POINTER_BASE, id, dtID(baseType));
 				exportType(baseType);
 			}
-			// else {
-			// System.err.println("TEST");
-			// }
 		}
 		if (dataType instanceof Array) {
 			export(PredicateFile.TYPE_ARRAY, id);
@@ -948,13 +918,6 @@ class HighFunctionExporter {
 			export(PredicateFile.PROTO_PARAMETER_DATATYPE, hsid, dtID(param.getDataType()));
 			exportType(param.getDataType());
 		}
-		/*
-		 * ParameterDefinition[] parameterDefinitions = proto.getParameterDefinitions();
-		 * if (parameterDefinitions != null) { for (ParameterDefinition def :
-		 * parameterDefinitions) { exportN("PROTO_PARAMETER_DEFINITION", id,
-		 * def.getOrdinal(), def.getName()); export("PROTO_PARAMETER_DATATYPE",
-		 * def.getName(), dtID(def.getDataType())); exportType(def.getDataType()); } }
-		 */
 		DataType returnType = proto.getReturnType();
 		if (returnType != null) {
 			export(PredicateFile.PROTO_RETTYPE, id, dtID(returnType));
@@ -1087,53 +1050,8 @@ class HighFunctionExporter {
 		} catch (IOException e) {
 			throw new RuntimeException(e.toString());
 		}
-		// db.add(PredicateFile.PcodeOps, s);
 	}
 }
-
-//class ResultWriter implements Runnable {
-//	BlockingQueue<DecompileResults> q = new ArrayBlockingQueue<>(50);
-//	
-//	HighFunctionExporter ex;
-//	DecompilerConfigurer configurer;
-//	
-//	boolean shutDown = false;
-//
-//	private TaskMonitor monitor;
-//	
-//	public ResultWriter(HighFunctionExporter ex, DecompilerConfigurer configurer, TaskMonitor tMonitor) {
-//		this.ex = ex;
-//		this.configurer = configurer;
-//		this.monitor = tMonitor;
-//	}
-//	
-//	BlockingQueue<DecompileResults> getQueue() {
-//		return q;
-//	}
-//
-//	@Override
-//	public void run() {
-//        try {
-//        	int count = 0;
-//            while(!(shutDown && q.isEmpty())){
-//            	monitor.checkCancelled();
-//            	DecompileResults results = q.take();
-//
-//            	ex.processFunction(results, results.getFunction(), configurer.getInteface());
-//            	
-//            	count++;
-//            	if (count > 50) {
-//                  ex.writeFacts();
-//            		count = 0;
-//            	}
-//            }
-//        } catch (InterruptedException | IOException | CancelledException e) {}
-//	}
-//	
-//	public void done() {
-//		shutDown = true;
-//	}
-//}
 
 public class ExportPcode extends GhidraScript {
 
@@ -1154,11 +1072,7 @@ public class ExportPcode extends GhidraScript {
 			outputDirectory = askDirectory("Select Directory for Results", "OK");
 		}
 
-		// System.setProperty("cpu.core.override", "10");
-		// String cpuOverrideString = System.getProperty("cpu.core.override");
 		long startTime = System.nanoTime();
-		// GThreadPool threadPool = GThreadPool.getSharedThreadPool("Parallel
-		// Decompiler");
 
 		HighFunctionExporter ex = new HighFunctionExporter(outputDirectory.getAbsolutePath());
 		ex.getDatabase().add(PredicateFile.LANGUAGE, "PCODE");
@@ -1180,12 +1094,6 @@ public class ExportPcode extends GhidraScript {
 			// results will stall.
 			public synchronized DecompileResults process(DecompileResults results, TaskMonitor tMonitor)
 					throws Exception {
-				// This routine could pass the results to another thread's queue to add to the
-				// DB
-				// then there is only one DB writer and no synchronization needed. Decompiler
-				// threads can go as fast as they can without waiting for writing.
-				// With the chunking method, all decompiler threads would stall until the write
-				// was finished and a new chunk of functions could be gotten.
 				ex.processFunction(results, results.getFunction(), configurer.getInteface());
 				count++;
 				if (count > 20) {
@@ -1217,8 +1125,6 @@ public class ExportPcode extends GhidraScript {
 		ex.writeFacts(true);
 
 		ParallelDecompiler.decompileFunctions(callback, toProcessList, monitor);
-
-		// System.out.println("Done producing");
 
 		ex.processVTables(currentProgram);
 		// waiting until the end to write all datatypes TYPE_ may not save much time.

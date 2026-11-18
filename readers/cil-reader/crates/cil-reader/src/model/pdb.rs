@@ -2,9 +2,10 @@
 //!
 //! A portable PDB is metadata with no PE around it: a root at offset 0, a
 //! `#Pdb` stream, and the debug tables, which index the tables of the
-//! assembly it describes. [`PortablePdb`] reads the parts the frontend maps
-//! IL offsets to source lines with, as Cecil's `MetadataReader` reads them
-//! (`InitializeDocuments`, `ReadSequencePoints`, `ReadDocumentName`).
+//! assembly it describes. [`PortablePdb`] reads the documents and sequence
+//! points, which map IL offsets to source lines, as Cecil's `MetadataReader`
+//! reads them (`InitializeDocuments`, `ReadSequencePoints`,
+//! `ReadDocumentName`).
 //!
 //! [`PdbSource::locate`] finds a module's PDB as Cecil's
 //! `DefaultSymbolReaderProvider` does: debug tables in the module itself,

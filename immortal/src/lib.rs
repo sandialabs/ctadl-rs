@@ -10,13 +10,11 @@ pub struct Interner<T: ?Sized + 'static> {
 
 impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
     pub fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashTable::new()));
-        }
         Self {
             state: FxBuildHasher,
-            shards: shards.into_boxed_slice(),
+            shards: (0..num_shards)
+                .map(|_| RwLock::new(HashTable::new()))
+                .collect(),
         }
     }
 
@@ -71,7 +69,7 @@ macro_rules! immortal {
         $vis struct $name(&'static $inner);
 
         impl $name {
-            /// Interns a value into a thread-local static interner for this type.
+            /// Interns a value into this type's process-wide static interner.
             #[inline]
             $vis fn intern(val: &$inner) -> Self {
                 static INTERNER: ::std::sync::OnceLock<$crate::Interner<$inner>> = ::std::sync::OnceLock::new();
