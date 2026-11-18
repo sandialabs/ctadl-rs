@@ -23,6 +23,12 @@
 - **A C file-scope initializer is not lowered.** `int *p = &x;` or `struct ops o = {.f = h};` at
   file scope gives the global no value, so a flow or a call target that only the initializer
   supplies is lost, a false negative.
+- **A `toString` override that returns a field loses that field's taint.** The default Java and
+  CIL models resolve every `toString()`/`ToString()` call site by a dispatch model instead of the
+  overrides (`ctadl-ascent/src/models/defaults/java-index.ctadl`, `cil-index.ctadl`), and the model
+  is taint flow from the receiver: the string is computed from the object, so taint held in the
+  object's fields does not reach it. An override like `ToString() => text` returns `text` itself,
+  so a flow through it is lost, a false negative (`Cil:assemblies`).
 - **JVM and Dex drop an exception a callee does not catch.** An exception is the last result of
   every call, but the JVM and Dex front ends do not pass a callee's escaping exception on to the
   caller's handler, so taint carried by an exception thrown in a callee and caught in a caller is
@@ -58,6 +64,7 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | query | Call/return matching by one bit, not a site stack | adds (witness only) | no |
 |  | `--summary` | Only unconditional rows cross: a summary project's `Always` summaries, including rows rooted at a global, and its program-level flows between globals | loses | docs/spec.md §6 |
 |  | front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
+|  | default models | The `toString` dispatch model is taint flow, so an override returning a field loses it | loses | the list above |
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
 |  | front ends | C: a file-scope initializer is not lowered | loses | the list above |
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |

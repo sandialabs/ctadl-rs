@@ -24,138 +24,171 @@
 // - Nothing else. A library type's own fields are invisible to the analysis, so its contents ARE the
 //   object: a `StringBuilder`, a `Uri`, a reader. ValueTuple is the exception, because C# reads its
 //   public fields directly.
+//
+// OBJECT FLOW AND TAINT FLOW. A bare pair is object flow: the output IS the input, so everything
+// reachable through the input is reachable through the output. An output ending in `#value` is
+// taint flow only: computed from the input, sharing nothing reachable through it (docs/ir.md,
+// `value`). Containers, enumerators, tasks, tuples and a method returning `this` are object flow;
+// strings, numbers, parsed, encoded and formatted results are taint flow. A method that changes
+// what a receiver holds (`StringBuilder.Append`, `Stream.Write`) writes the taint at
+// `arg(0).#value` and at `arg(0)."#contents".#value`, a field no program can name, which reaches
+// a caller one call up, as field-held values do and `arg(0).#value` does not (S8 of
+// docs/ir.md). A method reading the receiver's state reads both, and a sink, wildcard by
+// default, sees both.
 // Overloads that differ in where the data is (a `String` or a `String[]`) are split by a
 // `regex_match` over the signature, e.g. `(System.String[])->System.String`.
 
 // ---- System.Object ----
-propagation(F::return <- F::arg(0)) :-
+// A string computed from the object. Taint held in the object's fields does not reach it.
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Object");
 
 // ---- System.String ----
 // Element overloads of Concat/Join take an array or a sequence; the rest take the strings themselves.
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"Concat", "Concat``1"}, parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\((System\\.String\\[\\]|System\\.Object\\[\\]|System\\.Collections\\.Generic\\.IEnumerable`1<[^>]*>)\\)");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "Concat", parent = "[System.Private.CoreLib]System.String"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\((System\\.String\\[\\]|System\\.Object\\[\\]|System\\.Collections\\.Generic\\.IEnumerable`1<[^>]*>)\\)|^\\(System\\.ReadOnlySpan`1<System\\.Char>"));
 
 // A string's characters are elements when it is taken apart, as ToCharArray, a span, a memory or
 // an enumerator over it take it, and are read back as elements.
-propagation(F::return <- F::arg(0)."[]"),
-  propagation(F::return <- F::arg(1)."[]"),
-  propagation(F::return <- F::arg(2)."[]"),
-  propagation(F::return <- F::arg(3)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]"),
+  propagation(F::return.#value <- F::arg(1)."[]"),
+  propagation(F::return.#value <- F::arg(2)."[]"),
+  propagation(F::return.#value <- F::arg(3)."[]") :-
   fun(F, name = "Concat", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.ReadOnlySpan`1<System\\.Char>");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(1)."[]") :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)."[]") :-
   fun(F, name in {"Join", "Join``1"}, parent = "[System.Private.CoreLib]System.String");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(1)."[]") :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)."[]") :-
   fun(F, name = "Format", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String,System\\.Object\\[\\]\\)");
 
-propagation(F::return <- F::arg(1)),
-  propagation(F::return <- F::arg(2)."[]") :-
+propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(2)."[]") :-
   fun(F, name = "Format", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.IFormatProvider,System\\.String,System\\.Object\\[\\]\\)");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"Format", "Format``1", "Format``2", "Format``3"}, parent = "[System.Private.CoreLib]System.String"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "System\\.Object\\[\\]\\)"));
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"Substring", "Trim", "TrimStart", "TrimEnd", "ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant", "PadLeft", "PadRight", "Normalize", "Remove", "ToString", "Clone", "get_Chars", "Copy", "Intern", "IsInterned"}, parent = "[System.Private.CoreLib]System.String");
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"Substring", "Trim", "TrimStart", "TrimEnd", "ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant", "PadLeft", "PadRight", "Normalize", "Remove", "get_Chars", "Copy"}, parent = "[System.Private.CoreLib]System.String");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(2)) :-
+// These hand back the string itself.
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ToString", "Clone", "Intern", "IsInterned"}, parent = "[System.Private.CoreLib]System.String");
+
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(2)) :-
   fun(F, name in {"Insert", "Replace", "ReplaceLineEndings"}, parent = "[System.Private.CoreLib]System.String");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name in {"Split", "ToCharArray", "GetEnumerator", "EnumerateRunes"}, parent = "[System.Private.CoreLib]System.String");
 
 propagation(F::return <- F::arg(0)."[]") :-
   fun(F, name = "get_Current", parent = "[System.Private.CoreLib]System.CharEnumerator");
 
-propagation(F::arg(2)."[]" <- F::arg(0)) :-
+propagation(F::arg(2)."[]".#value <- F::arg(0)) :-
   fun(F, name = "CopyTo", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "Char\\[\\]");
 
-propagation(F::arg(0) <- F::arg(1)."[]") :-
+propagation(F::arg(0).#value <- F::arg(1)."[]") :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.(Char\\[\\]|ReadOnlySpan`1)");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)) :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.String"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.(Char\\[\\]|ReadOnlySpan`1)"));
 
 // ---- System.Text.StringBuilder ----
-// A builder's contents are the builder. The writers return the builder itself, so the receiver flows
-// to the result too; but no model can say the result IS the receiver, so a chain whose result is
-// dropped (`sb.Append(a).Append(src); sb.ToString()`) taints only the first link's result, not `sb`,
-// as with the Java models. Array, sequence, span and memory overloads read their argument's elements.
+// The writers return the builder itself (`return <- arg(0)`) and write what they append into it as
+// taint. A model's result is not an alias of its receiver, though, so a chain whose result is
+// dropped (`sb.Append(a).Append(src); sb.ToString()`) taints the chain's result, not `sb`, as
+// with the Java models. Array, sequence, span and memory overloads read their argument's
+// elements.
 propagation(F::return <- F::arg(0)),
-  propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(2)),
-  propagation(F::arg(0) <- F::arg(3)),
-  propagation(F::arg(0) <- F::arg(4)),
-  propagation(F::return <- F::arg(1)),
-  propagation(F::return <- F::arg(2)),
-  propagation(F::return <- F::arg(3)),
-  propagation(F::return <- F::arg(4)) :-
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(3)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)),
+  propagation(F::arg(0).#value <- F::arg(4)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(4)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(2)),
+  propagation(F::return.#value <- F::arg(3)),
+  propagation(F::return.#value <- F::arg(4)) :-
   fun(F, name in {"Append", "AppendLine", "AppendFormat", "AppendFormat``1", "AppendFormat``2", "AppendFormat``3", "AppendJoin", "AppendJoin``1", "Insert", "Replace"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "\\[\\]|IEnumerable|Memory`1|Span`1"));
 
 propagation(F::return <- F::arg(0)),
-  propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(1)."[]"),
-  propagation(F::return <- F::arg(1)),
-  propagation(F::return <- F::arg(1)."[]"),
-  propagation(F::arg(0) <- F::arg(2)),
-  propagation(F::arg(0) <- F::arg(2)."[]"),
-  propagation(F::return <- F::arg(2)),
-  propagation(F::return <- F::arg(2)."[]"),
-  propagation(F::arg(0) <- F::arg(3)),
-  propagation(F::arg(0) <- F::arg(3)."[]"),
-  propagation(F::return <- F::arg(3)),
-  propagation(F::return <- F::arg(3)."[]") :-
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]"),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(2)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)."[]"),
+  propagation(F::return.#value <- F::arg(2)),
+  propagation(F::return.#value <- F::arg(2)."[]"),
+  propagation(F::arg(0).#value <- F::arg(3)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)),
+  propagation(F::arg(0).#value <- F::arg(3)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)."[]"),
+  propagation(F::return.#value <- F::arg(3)),
+  propagation(F::return.#value <- F::arg(3)."[]") :-
   fun(F, name in {"Append", "AppendLine", "AppendFormat", "AppendFormat``1", "AppendFormat``2", "AppendFormat``3", "AppendJoin", "AppendJoin``1", "Insert", "Replace"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "\\[\\]|IEnumerable|Memory`1|Span`1");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"ToString", "get_Chars"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder");
 
-propagation(F::arg(2)."[]" <- F::arg(0)) :-
+propagation(F::arg(2)."[]".#value <- F::arg(0)),
+  propagation(F::arg(2)."[]".#value <- F::arg(0)."#contents") :-
   fun(F, name = "CopyTo", parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "Char\\[\\]");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)) :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Text.StringBuilder");
 
 // `sb.Append($"...")` builds through a handler that writes into the builder it was made with, and
 // the Append that takes the handler hands the result back.
-propagation(F::arg(0).deref <- F::arg(3)) :-
+propagation(F::arg(0).deref.#value <- F::arg(3)) :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Text.StringBuilder/AppendInterpolatedStringHandler");
 
-propagation(F::arg(0).deref <- F::arg(1)) :-
+propagation(F::arg(0).deref.#value <- F::arg(1)) :-
   fun(F, name in {"AppendLiteral", "AppendFormatted", "AppendFormatted``1"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder/AppendInterpolatedStringHandler");
 
-propagation(F::arg(0) <- F::arg(1).deref),
-  propagation(F::return <- F::arg(1).deref),
-  propagation(F::arg(0) <- F::arg(2).deref),
-  propagation(F::return <- F::arg(2).deref) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(1).deref),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1).deref),
+  propagation(F::return.#value <- F::arg(1).deref),
+  propagation(F::arg(0).#value <- F::arg(2).deref),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2).deref),
+  propagation(F::return.#value <- F::arg(2).deref) :-
   fun(F, name in {"Append", "AppendLine"}, parent = "[System.Private.CoreLib]System.Text.StringBuilder"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "AppendInterpolatedStringHandler&");
@@ -164,13 +197,13 @@ propagation(F::arg(0) <- F::arg(1).deref),
 // `$"..{x}.."` compiles to a DefaultInterpolatedStringHandler local: a struct, so every call gets a
 // pointer to it. `cil:models` cannot call these (a ref struct cannot be boxed); the Cil:library case
 // covers them end to end.
-propagation(F::arg(0).deref <- F::arg(1)) :-
+propagation(F::arg(0).deref.#value <- F::arg(1)) :-
   fun(F, name in {"AppendLiteral", "AppendFormatted", "AppendFormatted``1"}, parent = "[System.Private.CoreLib]System.Runtime.CompilerServices.DefaultInterpolatedStringHandler");
 
-propagation(F::return <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"ToStringAndClear", "ToString"}, parent = "[System.Private.CoreLib]System.Runtime.CompilerServices.DefaultInterpolatedStringHandler");
 
-propagation(F::return <- F::arg(1).deref) :-
+propagation(F::return.#value <- F::arg(1).deref) :-
   fun(F, name = "Create", parent = "[System.Private.CoreLib]System.String"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "DefaultInterpolatedStringHandler&");
@@ -178,172 +211,181 @@ propagation(F::return <- F::arg(1).deref) :-
 // ---- primitives: parsing and formatting ----
 // Parse and TryParse are static; the out parameter is always the last. ToString is an instance method
 // on a struct, so it reads through the receiver's pointer.
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"Parse", "ParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"});
 
-propagation(F::arg(1).deref <- F::arg(0)) :-
+propagation(F::arg(1).deref.#value <- F::arg(0)) :-
   fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\([^,]*,[^,]*&\\)");
 
-propagation(F::arg(2).deref <- F::arg(0)) :-
+propagation(F::arg(2).deref.#value <- F::arg(0)) :-
   fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*&\\)");
 
-propagation(F::arg(3).deref <- F::arg(0)) :-
+propagation(F::arg(3).deref.#value <- F::arg(0)) :-
   fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*,[^,]*&\\)");
 
-propagation(F::arg(4).deref <- F::arg(0)) :-
+propagation(F::arg(4).deref.#value <- F::arg(0)) :-
   fun(F, name in {"TryParse", "TryParseExact"}, parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*,[^,]*,[^,]*&\\)");
 
 // A format string's literal text is copied into the result.
-propagation(F::return <- F::arg(0).deref),
-  propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(0).deref),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name = "ToString", parent in {"[System.Private.CoreLib]System.Boolean", "[System.Private.CoreLib]System.Byte", "[System.Private.CoreLib]System.SByte", "[System.Private.CoreLib]System.Char", "[System.Private.CoreLib]System.Int16", "[System.Private.CoreLib]System.UInt16", "[System.Private.CoreLib]System.Int32", "[System.Private.CoreLib]System.UInt32", "[System.Private.CoreLib]System.Int64", "[System.Private.CoreLib]System.UInt64", "[System.Private.CoreLib]System.Single", "[System.Private.CoreLib]System.Double", "[System.Private.CoreLib]System.Decimal", "[System.Private.CoreLib]System.Guid", "[System.Private.CoreLib]System.DateTime", "[System.Private.CoreLib]System.DateTimeOffset", "[System.Private.CoreLib]System.TimeSpan"});
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant"}, parent = "[System.Private.CoreLib]System.Char");
 
 // ---- conversions and codecs: a decode is as much a propagation as an encode ----
 // Bytes and chars in an array are its elements: an encoder reads `arg(n)."[]"`, a decoder
 // writes `return."[]"`.
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ToBoolean", "ToByte", "ToChar", "ToDateTime", "ToDecimal", "ToDouble", "ToInt16", "ToInt32", "ToInt64", "ToSByte", "ToSingle", "ToString", "ToUInt16", "ToUInt32", "ToUInt64", "ChangeType"}, parent = "[System.Private.CoreLib]System.Convert");
 
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"ToBase64String", "ToHexString"}, parent = "[System.Private.CoreLib]System.Convert"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ToBase64String", "ToHexString"}, parent = "[System.Private.CoreLib]System.Convert"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.Byte\\[\\]"));
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name in {"FromBase64String", "FromHexString"}, parent = "[System.Private.CoreLib]System.Convert");
 
-propagation(F::return."[]" <- F::arg(0)."[]") :-
+propagation(F::return."[]".#value <- F::arg(0)."[]") :-
   fun(F, name = "FromBase64CharArray", parent = "[System.Private.CoreLib]System.Convert");
 
-propagation(F::arg(3)."[]" <- F::arg(0)."[]") :-
+propagation(F::arg(3)."[]".#value <- F::arg(0)."[]") :-
   fun(F, name = "ToBase64CharArray", parent = "[System.Private.CoreLib]System.Convert");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name = "GetBytes", parent = "[System.Private.CoreLib]System.BitConverter");
 
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"ToString", "ToBoolean", "ToChar", "ToDouble", "ToInt16", "ToInt32", "ToInt64", "ToSingle", "ToUInt16", "ToUInt32", "ToUInt64"}, parent = "[System.Private.CoreLib]System.BitConverter"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
 
-propagation(F::return."[]" <- F::arg(1)) :-
+propagation(F::return."[]".#value <- F::arg(1)) :-
   fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String(,System\\.Int32,System\\.Int32)?\\)");
 
-propagation(F::return."[]" <- F::arg(1)."[]") :-
+propagation(F::return."[]".#value <- F::arg(1)."[]") :-
   fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Char\\[\\](,System\\.Int32,System\\.Int32)?\\)");
 
-propagation(F::arg(4)."[]" <- F::arg(1)) :-
+propagation(F::arg(4)."[]".#value <- F::arg(1)) :-
   fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String,System\\.Int32,System\\.Int32,System\\.Byte\\[\\]");
 
-propagation(F::arg(4)."[]" <- F::arg(1)."[]") :-
+propagation(F::arg(4)."[]".#value <- F::arg(1)."[]") :-
   fun(F, name = "GetBytes", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Char\\[\\],System\\.Int32,System\\.Int32,System\\.Byte\\[\\]");
 
-propagation(F::return <- F::arg(1)."[]") :-
+propagation(F::return.#value <- F::arg(1)."[]") :-
   fun(F, name = "GetString", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
 
-propagation(F::return."[]" <- F::arg(1)."[]") :-
+propagation(F::return."[]".#value <- F::arg(1)."[]") :-
   fun(F, name = "GetChars", parent in {"[System.Private.CoreLib]System.Text.Encoding", "[System.Private.CoreLib]System.Text.UTF8Encoding", "[System.Private.CoreLib]System.Text.ASCIIEncoding", "[System.Private.CoreLib]System.Text.UnicodeEncoding", "[System.Private.CoreLib]System.Text.UTF32Encoding", "[System.Private.CoreLib]System.Text.Latin1Encoding"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\](,System\\.Int32,System\\.Int32)?\\)");
 
 // ---- paths, URIs, web encodings ----
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"Combine", "Join", "GetFileName", "GetDirectoryName", "GetFullPath", "GetExtension", "GetFileNameWithoutExtension", "ChangeExtension", "GetRelativePath", "GetPathRoot", "TrimEndingDirectorySeparator"}, parent = "[System.Private.CoreLib]System.IO.Path"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String\\[\\]\\)");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"Combine", "Join", "GetFileName", "GetDirectoryName", "GetFullPath", "GetExtension", "GetFileNameWithoutExtension", "ChangeExtension", "GetRelativePath", "GetPathRoot", "TrimEndingDirectorySeparator"}, parent = "[System.Private.CoreLib]System.IO.Path"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.String\\[\\]\\)"));
 
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(2)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(2)) :-
   fun(F, name = ".ctor", parent = "[System.Private.Uri]System.Uri");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"get_AbsolutePath", "get_AbsoluteUri", "get_Authority", "get_DnsSafeHost", "get_Fragment", "get_Host", "get_IdnHost", "get_LocalPath", "get_OriginalString", "get_PathAndQuery", "get_Query", "get_Scheme", "get_UserInfo", "ToString", "GetComponents", "GetLeftPart", "MakeRelativeUri"}, parent = "[System.Private.Uri]System.Uri");
 
-propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name = "MakeRelativeUri", parent = "[System.Private.Uri]System.Uri");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name = "get_Segments", parent = "[System.Private.Uri]System.Uri");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"EscapeDataString", "EscapeUriString", "UnescapeDataString"}, parent = "[System.Private.Uri]System.Uri");
 
-propagation(F::arg(2).deref <- F::arg(0)),
-  propagation(F::arg(2).deref <- F::arg(1)) :-
+propagation(F::arg(2).deref.#value <- F::arg(0)),
+  propagation(F::arg(2).deref.#value <- F::arg(1)) :-
   fun(F, name = "TryCreate", parent = "[System.Private.Uri]System.Uri"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\([^,]*,[^,]*,[^,]*&\\)");
 
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(2)),
-  propagation(F::arg(0) <- F::arg(3)),
-  propagation(F::arg(0) <- F::arg(4)),
-  propagation(F::arg(0) <- F::arg(5)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(3)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)),
+  propagation(F::arg(0).#value <- F::arg(4)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(4)),
+  propagation(F::arg(0).#value <- F::arg(5)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(5)) :-
   fun(F, name = ".ctor", parent = "[System.Private.Uri]System.UriBuilder");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)) :-
   fun(F, name in {"set_Fragment", "set_Host", "set_Password", "set_Path", "set_Query", "set_Scheme", "set_UserName"}, parent = "[System.Private.Uri]System.UriBuilder");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"get_Uri", "ToString", "get_Fragment", "get_Host", "get_Path", "get_Query"}, parent = "[System.Private.Uri]System.UriBuilder");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"UrlEncode", "UrlDecode", "HtmlEncode", "HtmlDecode"}, parent = "[System.Private.CoreLib]System.Net.WebUtility"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String\\)");
 
-propagation(F::arg(1) <- F::arg(0)) :-
+propagation(F::arg(1).#value <- F::arg(0)),
+  propagation(F::arg(1)."#contents".#value <- F::arg(0)) :-
   fun(F, name in {"HtmlEncode", "HtmlDecode"}, parent = "[System.Private.CoreLib]System.Net.WebUtility"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.String,System\\.IO\\.TextWriter\\)");
 
-propagation(F::return."[]" <- F::arg(0)."[]") :-
+propagation(F::return."[]".#value <- F::arg(0)."[]") :-
   fun(F, name in {"UrlEncodeToBytes", "UrlDecodeToBytes"}, parent = "[System.Private.CoreLib]System.Net.WebUtility");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"UrlEncode", "UrlDecode", "UrlPathEncode", "HtmlEncode", "HtmlDecode", "HtmlAttributeEncode", "JavaScriptStringEncode", "UrlEncodeUnicode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "Byte\\[\\]|TextWriter"));
 
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"UrlEncode", "UrlDecode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
 
-propagation(F::arg(1) <- F::arg(0)) :-
+propagation(F::arg(1).#value <- F::arg(0)),
+  propagation(F::arg(1)."#contents".#value <- F::arg(0)) :-
   fun(F, name in {"HtmlEncode", "HtmlDecode", "HtmlAttributeEncode"}, parent = "[System.Web.HttpUtility]System.Web.HttpUtility"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "TextWriter\\)");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name = "ParseQueryString", parent = "[System.Web.HttpUtility]System.Web.HttpUtility");
 
 // ---- containers: element-level, so writes and reads compose ----
@@ -434,7 +476,10 @@ propagation(F::arg(0) <- F::arg(1)) :-
   fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/KeyCollection", "[System.Private.CoreLib]System.Collections.Generic.Dictionary`2/ValueCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/KeyCollection", "[System.Collections]System.Collections.Generic.SortedDictionary`2/ValueCollection"});
 
 propagation(F::return <- F::arg(0).deref) :-
-  fun(F, name in {"get_Key", "get_Value", "ToString"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
+  fun(F, name in {"get_Key", "get_Value"}, parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
+
+propagation(F::return.#value <- F::arg(0).deref) :-
+  fun(F, name = "ToString", parent in {"[System.Private.CoreLib]System.Collections.Generic.KeyValuePair`2", "[System.Private.CoreLib]System.Collections.DictionaryEntry"});
 
 propagation(F::arg(1).deref <- F::arg(0).deref),
   propagation(F::arg(2).deref <- F::arg(0).deref) :-
@@ -558,28 +603,30 @@ propagation(F::return <- F::arg(0)."[]") :-
   fun(F, name in {"SelectMany``2", "SelectMany``3"}, parent = "[System.Linq]System.Linq.Enumerable");
 
 // ---- serialization ----
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"Serialize", "Serialize``1", "SerializeToDocument", "SerializeToDocument``1", "SerializeToElement", "SerializeToElement``1", "SerializeToNode", "SerializeToNode``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "->System\\.Void$"));
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)) :-
   fun(F, name in {"Serialize", "Serialize``1", "SerializeAsync", "SerializeAsync``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.(IO\\.Stream|Text\\.Json\\.Utf8JsonWriter),");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name in {"SerializeToUtf8Bytes", "SerializeToUtf8Bytes``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(0).deref) :-
+// A new object built from the text: taint flow. A field read of the result finds nothing either way.
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"Deserialize", "Deserialize``1", "DeserializeAsync", "DeserializeAsync``1", "DeserializeAsyncEnumerable``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"Parse", "ParseAsync", "ParseValue"}, parent = "[System.Text.Json]System.Text.Json.JsonDocument"),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "Memory`1"));
 
-propagation(F::return <- F::arg(0)."[]") :-
+propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name = "Parse", parent = "[System.Text.Json]System.Text.Json.JsonDocument"),
   fun(F, signature = Sig0),
   regex_match(Sig0, "Memory`1");
@@ -591,7 +638,11 @@ propagation(F::return."[]" <- F::arg(0).deref) :-
   fun(F, name in {"EnumerateArray", "EnumerateObject"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
 
 propagation(F::return <- F::arg(0).deref) :-
-  fun(F, name in {"GetProperty", "GetString", "GetRawText", "ToString", "get_Item", "Clone", "GetBoolean", "GetInt32", "GetInt64", "GetDouble", "GetDecimal", "GetGuid", "GetDateTime", "GetBytesFromBase64"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
+  fun(F, name in {"GetProperty", "get_Item", "Clone"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
+
+// The scalar getters compute a value from the element.
+propagation(F::return.#value <- F::arg(0).deref) :-
+  fun(F, name in {"GetString", "GetRawText", "ToString", "GetBoolean", "GetInt32", "GetInt64", "GetDouble", "GetDecimal", "GetGuid", "GetDateTime", "GetBytesFromBase64"}, parent = "[System.Text.Json]System.Text.Json.JsonElement");
 
 propagation(F::arg(2).deref <- F::arg(0).deref) :-
   fun(F, name = "TryGetProperty", parent = "[System.Text.Json]System.Text.Json.JsonElement");
@@ -603,99 +654,140 @@ propagation(F::return <- F::arg(0).deref) :-
   fun(F, name = "GetEnumerator", parent in {"[System.Text.Json]System.Text.Json.JsonElement/ArrayEnumerator", "[System.Text.Json]System.Text.Json.JsonElement/ObjectEnumerator"});
 
 propagation(F::return <- F::arg(0).deref) :-
-  fun(F, name in {"get_Value", "get_Name"}, parent = "[System.Text.Json]System.Text.Json.JsonProperty");
+  fun(F, name in {"get_Value"}, parent = "[System.Text.Json]System.Text.Json.JsonProperty");
+
+propagation(F::return.#value <- F::arg(0).deref) :-
+  fun(F, name = "get_Name", parent = "[System.Text.Json]System.Text.Json.JsonProperty");
 
 // Newtonsoft.Json is not part of .NET, so `cil:models` cannot load it; these two are unchecked.
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"SerializeObject", "DeserializeObject", "DeserializeObject``1"}, parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name = "SerializeObject", parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
+
+// A new object built from the text: taint flow. A field read of the result finds nothing either way.
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"DeserializeObject", "DeserializeObject``1"}, parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
 
 // ---- readers, writers, streams ----
-// A reader's or a stream's contents are the object; a buffer argument is filled element-wise.
-propagation(F::return <- F::arg(0)) :-
+// What a reader or a stream holds is taint on the object, at `#value` and `."#contents".#value`; a
+// buffer argument is filled element-wise.
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"ReadToEnd", "ReadLine", "Read", "Peek", "ReadToEndAsync", "ReadLineAsync", "ReadBlock", "ReadAsync", "ReadBlockAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"}),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "^\\(System\\.Char\\[\\]"));
 
-propagation(F::arg(1)."[]" <- F::arg(0)) :-
+propagation(F::arg(1)."[]".#value <- F::arg(0)),
+  propagation(F::arg(1)."[]".#value <- F::arg(0)."#contents") :-
   fun(F, name in {"Read", "ReadBlock", "ReadAsync", "ReadBlockAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.(Char\\[\\]|Memory`1|Span`1)");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
   fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.IO.TextReader", "[System.Private.CoreLib]System.IO.StreamReader", "[System.Private.CoreLib]System.IO.StringReader"});
 
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(2)),
-  propagation(F::arg(0) <- F::arg(3)),
-  propagation(F::arg(0) <- F::arg(4)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(3)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)),
+  propagation(F::arg(0).#value <- F::arg(4)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(4)) :-
   fun(F, name in {"Write", "WriteLine", "WriteAsync", "WriteLineAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"}),
   !(fun(F, signature = Sig0) && regex_match(Sig0, "\\[\\]|Memory`1|Span`1"));
 
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(1)."[]"),
-  propagation(F::arg(0) <- F::arg(2)),
-  propagation(F::arg(0) <- F::arg(2)."[]") :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(2)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)."[]") :-
   fun(F, name in {"Write", "WriteLine", "WriteAsync", "WriteLineAsync"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "\\[\\]|Memory`1|Span`1");
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"ToString", "GetStringBuilder"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"});
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
+  fun(F, name in {"ToString"}, parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"});
 
-propagation(F::arg(1)."[]" <- F::arg(0)) :-
+// The builder a StringWriter writes into: the object itself.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(0)."#contents") :-
+  fun(F, name = "GetStringBuilder", parent in {"[System.Private.CoreLib]System.IO.TextWriter", "[System.Private.CoreLib]System.IO.StreamWriter", "[System.Private.CoreLib]System.IO.StringWriter"});
+
+propagation(F::arg(1)."[]".#value <- F::arg(0)),
+  propagation(F::arg(1)."[]".#value <- F::arg(0)."#contents") :-
   fun(F, name in {"Read", "ReadAsync", "ReadExactly", "ReadAtLeast", "ReadExactlyAsync", "ReadAtLeastAsync"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.(Byte\\[\\]|Memory`1|Span`1)");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name = "ReadByte", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
 
-propagation(F::arg(0) <- F::arg(1)."[]") :-
+propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
   fun(F, name in {"Write", "WriteAsync"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.(Byte\\[\\]|ReadOnlyMemory`1|ReadOnlySpan`1)");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)) :-
   fun(F, name = "WriteByte", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
 
-propagation(F::arg(1) <- F::arg(0)) :-
+propagation(F::arg(1).#value <- F::arg(0)),
+  propagation(F::arg(1).#value <- F::arg(0)."#contents"),
+  propagation(F::arg(1)."#contents".#value <- F::arg(0)),
+  propagation(F::arg(1)."#contents".#value <- F::arg(0)."#contents") :-
   fun(F, name in {"CopyTo", "CopyToAsync", "WriteTo"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)),
+  propagation(F::return."[]".#value <- F::arg(0)."#contents") :-
   fun(F, name in {"ToArray", "GetBuffer"}, parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"});
 
-propagation(F::arg(0) <- F::arg(1)."[]") :-
+propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
   fun(F, name = ".ctor", parent in {"[System.Private.CoreLib]System.IO.Stream", "[System.Private.CoreLib]System.IO.MemoryStream", "[System.Private.CoreLib]System.IO.FileStream", "[System.Private.CoreLib]System.IO.BufferedStream", "[System.Private.CoreLib]System.IO.UnmanagedMemoryStream"}),
   fun(F, signature = Sig0),
   regex_match(Sig0, "^\\(System\\.Byte\\[\\]");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"ReadString", "ReadBoolean", "ReadByte", "ReadChar", "ReadDecimal", "ReadDouble", "ReadInt16", "ReadInt32", "ReadInt64", "ReadSingle", "ReadUInt16", "ReadUInt32", "ReadUInt64", "Read7BitEncodedInt"}, parent = "[System.Private.CoreLib]System.IO.BinaryReader");
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)),
+  propagation(F::return."[]".#value <- F::arg(0)."#contents") :-
   fun(F, name in {"ReadBytes", "ReadChars"}, parent = "[System.Private.CoreLib]System.IO.BinaryReader");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.IO.BinaryReader");
 
 // ---- regular expressions ----
 // A match holds the text it matched; its groups are elements of the group collection.
 // The static Replace takes (input, pattern, replacement) and the instance one (input, replacement),
 // so the input is `arg(0)` in one and `arg(1)` in the other, and both share descriptors.
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "Replace", parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name in {"Match", "Escape", "Unescape"}, parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
 
-propagation(F::return."[]" <- F::arg(0)),
-  propagation(F::return."[]" <- F::arg(1)) :-
+propagation(F::return."[]".#value <- F::arg(0)),
+  propagation(F::return."[]".#value <- F::arg(1)) :-
   fun(F, name in {"Matches", "Split"}, parent = "[System.Text.RegularExpressions]System.Text.RegularExpressions.Regex");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"get_Value", "ToString", "NextMatch", "get_ValueSpan"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.Match", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Group", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Capture"});
 
-propagation(F::return."[]" <- F::arg(0)) :-
+propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name in {"get_Groups", "get_Captures"}, parent in {"[System.Text.RegularExpressions]System.Text.RegularExpressions.Match", "[System.Text.RegularExpressions]System.Text.RegularExpressions.Group"});
 
 propagation(F::return <- F::arg(0)."[]"),
@@ -751,7 +843,10 @@ propagation(F::arg(0).deref <- F::arg(1)) :-
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Threading.Tasks.ValueTask`1");
 
 propagation(F::return <- F::arg(0).deref) :-
-  fun(F, name in {"get_Value", "GetValueOrDefault", "ToString"}, parent = "[System.Private.CoreLib]System.Nullable`1");
+  fun(F, name in {"get_Value", "GetValueOrDefault"}, parent = "[System.Private.CoreLib]System.Nullable`1");
+
+propagation(F::return.#value <- F::arg(0).deref) :-
+  fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Nullable`1");
 
 propagation(F::return <- F::arg(1)) :-
   fun(F, name = "GetValueOrDefault", parent = "[System.Private.CoreLib]System.Nullable`1");
@@ -775,7 +870,10 @@ propagation(F::arg(0) <- F::arg(1)),
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`2");
 
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"get_Item1", "get_Item2", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`2");
+  fun(F, name in {"get_Item1", "get_Item2"}, parent = "[System.Private.CoreLib]System.Tuple`2");
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Tuple`2");
 
 propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`3::Item1>" <- F::arg(1)),
   propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`3::Item2>" <- F::arg(2)),
@@ -793,7 +891,10 @@ propagation(F::arg(0) <- F::arg(1)),
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`3");
 
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"get_Item1", "get_Item2", "get_Item3", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`3");
+  fun(F, name in {"get_Item1", "get_Item2", "get_Item3"}, parent = "[System.Private.CoreLib]System.Tuple`3");
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Tuple`3");
 
 propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item1>" <- F::arg(1)),
   propagation(F::arg(0).deref."<[System.Private.CoreLib]System.ValueTuple`4::Item2>" <- F::arg(2)),
@@ -814,7 +915,10 @@ propagation(F::arg(0) <- F::arg(1)),
   fun(F, name = ".ctor", parent = "[System.Private.CoreLib]System.Tuple`4");
 
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"get_Item1", "get_Item2", "get_Item3", "get_Item4", "ToString"}, parent = "[System.Private.CoreLib]System.Tuple`4");
+  fun(F, name in {"get_Item1", "get_Item2", "get_Item3", "get_Item4"}, parent = "[System.Private.CoreLib]System.Tuple`4");
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name = "ToString", parent = "[System.Private.CoreLib]System.Tuple`4");
 
 // ============================================================================================
 // DISPATCH MODELS (`K::dispatch(...)`). The Java file's section of the same name says what these
@@ -828,28 +932,28 @@ propagation(F::return <- F::arg(0)) :-
 // A constrained call on a type parameter passes the receiver by address, so the Object contract
 // reads `arg(0).deref` as well as `arg(0)`; for a class receiver that port is empty.
 // ---- the Object contract ----
-K::dispatch(return <- arg(_)),
-  K::dispatch(return <- arg(0).deref) :-
+K::dispatch(return.#value <- arg(_)),
+  K::dispatch(return.#value <- arg(0).deref) :-
   callsig(K, name = "ToString"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)->System\\.String$");
 
 // GetHashCode and Equals are models, not skips, as in Java. Equals is any one-parameter overload:
 // a C# record and an IEquatable<T> implementation declare `Equals(T)` beside `Equals(object)`.
-K::dispatch(return <- arg(_)),
-  K::dispatch(return <- arg(0).deref) :-
+K::dispatch(return.#value <- arg(_)),
+  K::dispatch(return.#value <- arg(0).deref) :-
   callsig(K, name = "GetHashCode"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)->System\\.Int32$");
 
-K::dispatch(return <- arg(_)),
-  K::dispatch(return <- arg(0).deref) :-
+K::dispatch(return.#value <- arg(_)),
+  K::dispatch(return.#value <- arg(0).deref) :-
   callsig(K, name = "Equals"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\([^,]+\\)->System\\.Boolean$");
 
 // An equality comparer is the same contract, with the receiver as an argument.
-K::dispatch(return <- arg(_)) :-
+K::dispatch(return.#value <- arg(_)) :-
   callsig(K, name in {"Equals", "GetHashCode"}, parent in {"[System.Private.CoreLib]System.Collections.IEqualityComparer", "[System.Private.CoreLib]System.Collections.Generic.IEqualityComparer`1", "[System.Private.CoreLib]System.Collections.Generic.EqualityComparer`1"});
 
 // ---- the container contract, element-level so reads and writes compose ----

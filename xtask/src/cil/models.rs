@@ -618,13 +618,21 @@ fn expand(port: &ModelPort, arity: usize) -> Vec<Loc> {
 }
 
 /// Whether the pair `(s, d)` covers the flow `f -> t`: the same ports, and the flow's paths are
-/// the pair's extended by one suffix.
+/// the pair's extended by one suffix. A pair into `q.#value` (taint flow) covers the flow from
+/// exactly `s` into `q`, as in `cil:taint`: observing `q` observes `q.#value` (S17 of
+/// docs/ir.md), and `#value` is terminal, so no suffix rides along.
 fn covers(s: &Loc, d: &Loc, f: &Loc, t: &Loc) -> bool {
-    s.0 == f.0
-        && d.0 == t.0
-        && f.1.starts_with(&s.1)
+    if s.0 != f.0 || d.0 != t.0 {
+        return false;
+    }
+    let suffix_rides = f.1.starts_with(&s.1)
         && t.1.starts_with(&d.1)
-        && f.1[s.1.len()..] == t.1[d.1.len()..]
+        && f.1[s.1.len()..] == t.1[d.1.len()..];
+    let into_value = f.1 == s.1
+        && d.1.split_last().is_some_and(|(last, init)| {
+            last == ctadl_ir::cir::path_syntax::VALUE && init == t.1.as_slice()
+        });
+    suffix_rides || into_value
 }
 
 /// A location in port spelling: `Argument(0).\[]`, `Return.deref`.
@@ -685,6 +693,36 @@ mod tests {
         assert!(!covers(
             &loc(0, &["[]"]),
             &loc(-1, &[]),
+            &loc(1, &["[]"]),
+            &loc(-1, &[])
+        ));
+    }
+
+    #[test]
+    fn a_value_pair_covers_exactly_its_source() {
+        // `Return.#value <- Argument(1)` covers the flow into `Return` from `Argument(1)` ...
+        assert!(covers(
+            &loc(1, &[]),
+            &loc(-1, &["#value"]),
+            &loc(1, &[]),
+            &loc(-1, &[])
+        ));
+        assert!(covers(
+            &loc(1, &["[]"]),
+            &loc(0, &["deref", "#value"]),
+            &loc(1, &["[]"]),
+            &loc(0, &["deref"])
+        ));
+        // ... but carries nothing reachable through `Argument(1)`.
+        assert!(!covers(
+            &loc(1, &[]),
+            &loc(-1, &["#value"]),
+            &loc(1, &["[]"]),
+            &loc(-1, &["[]"])
+        ));
+        assert!(!covers(
+            &loc(1, &[]),
+            &loc(-1, &["#value"]),
             &loc(1, &["[]"]),
             &loc(-1, &[])
         ));

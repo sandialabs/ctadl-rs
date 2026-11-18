@@ -17,80 +17,125 @@
 //   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument, which a
 //     propagation model cannot express.
 //
-// Every port here is bare -- the strictly more permissive choice. The element field IS
-// modelable: the frontend emits `PathSegment::Symbol("[_elem_]")`, which a port spells as the
-// quoted field `."[_elem_]"`. The level-correct variants, held back until they are measured,
-// are: `table.concat` reading `arg(0)."[_elem_]"`, `rawset` writing `arg(0)."[_elem_]"`, and a
-// `table.remove`/`unpack` that unwraps one level with `return <- arg(0)."[_elem_]"`. They
-// distinguish "the table is tainted" from "an element is"; the bare ports below do not.
-propagation(F::return <- F::arg(_)) :-
+// OBJECT FLOW AND TAINT FLOW. A bare pair is object flow: the output IS the input, so everything
+// reachable through the input is reachable through the output. An output ending in `#value` is
+// taint flow only: computed from the input, sharing nothing reachable through it (docs/ir.md,
+// `value`). Strings and numbers computed by a library function are taint flow; a value handed
+// back as it is (`assert`, an element out of a table) is object flow. A file a `write` changes
+// holds the taint at `arg(0).#value` and at `arg(0)."#contents".#value`, a field no script can
+// name, which reaches a caller one call up as `arg(0).#value` does not; `read` reads both.
+//
+// TABLES are element-level: the frontend emits `PathSegment::Symbol("[_elem_]")` for an element,
+// which a port spells as the quoted field `."[_elem_]"`. A read is `return <- arg(0)."[_elem_]"`
+// and a write `arg(0)."[_elem_]" <- ...`, the two halves of one prefix substitution, so they
+// compose with each other and with the frontend's own `t[k]`. A key contributes only taint.
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"format", "rep", "sub", "upper", "lower", "reverse", "char"});
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F),
   F in {"format", "rep", "sub", "upper", "lower", "reverse", "char"};
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"gsub", "match", "gmatch", "byte", "len"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"gsub", "match", "gmatch", "byte", "len"};
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"table.concat", "table.remove", "table.unpack", "unpack"});
-propagation(F::return <- F::arg(0)) :-
+// `table.concat(t, sep, i, j)` joins the elements into a new string.
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(0)."[_elem_]") :-
+  fun(F, name = "table.concat");
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(0)."[_elem_]") :-
   fun(F),
-  F in {"table.concat", "table.remove", "table.unpack", "unpack"};
+  F = "table.concat";
 
-propagation(F::return <- F::arg(0)) :-
+// `table.remove(t, pos)` and `unpack(t, i, j)` hand back elements.
+propagation(F::return <- F::arg(0)."[_elem_]") :-
+  fun(F, name in {"table.remove", "table.unpack", "unpack"});
+propagation(F::return <- F::arg(0)."[_elem_]") :-
+  fun(F),
+  F in {"table.remove", "table.unpack", "unpack"};
+
+// `rawget(t, k)` and `next(t, k)` hand back an element (`next` its key too).
+propagation(F::return <- F::arg(0)."[_elem_]"),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name in {"rawget", "next"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return <- F::arg(0)."[_elem_]"),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F),
   F in {"rawget", "next"};
 
-propagation(F::arg(0) <- F::arg(2)) :-
+// `rawset(t, k, v)` stores an element and returns `t`.
+propagation(F::arg(0)."[_elem_]" <- F::arg(2)),
+  propagation(F::return <- F::arg(0)) :-
   fun(F, name = "rawset");
-propagation(F::arg(0) <- F::arg(2)) :-
+propagation(F::arg(0)."[_elem_]" <- F::arg(2)),
+  propagation(F::return <- F::arg(0)) :-
   fun(F),
   F = "rawset";
 
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"tostring", "tonumber"});
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F),
+  F in {"tostring", "tonumber"};
+
+// `assert(v, ...)` returns its arguments themselves.
 propagation(F::return <- F::arg(_)) :-
-  fun(F, name in {"tostring", "tonumber", "assert"});
+  fun(F, name = "assert");
 propagation(F::return <- F::arg(_)) :-
   fun(F),
-  F in {"tostring", "tonumber", "assert"};
+  F = "assert";
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"os.date", "os.getenv", "os.tmpname"});
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F),
   F in {"os.date", "os.getenv", "os.tmpname"};
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."#contents") :-
   fun(F, name in {"io.open", "io.read", "io.lines", "read"});
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."#contents") :-
   fun(F),
   F in {"io.open", "io.read", "io.lines", "read"};
 
-propagation(F::arg(0) <- F::arg(1)) :-
+// `file:write(...)` returns the file and takes any number of values. `io.write(...)` is also
+// called `write`, and there `arg(0)` is the first value, not a file: the rule then relates the
+// values to each other, which no sink observes unless one is itself written.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(_)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(_)) :-
   fun(F, name = "write");
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(_)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(_)) :-
   fun(F),
   F = "write";
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"cjson.encode", "cjson.decode", "cjson.safe.encode", "cjson.safe.decode"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"cjson.encode", "cjson.safe.encode"});
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
-  F in {"cjson.encode", "cjson.decode", "cjson.safe.encode", "cjson.safe.decode"};
+  F in {"cjson.encode", "cjson.safe.encode"};
 
-propagation(F::return <- F::arg(0)) :-
+// A new object built from the text: taint flow. A field read of the result finds nothing either way.
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"cjson.decode", "cjson.safe.decode"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"cjson.decode", "cjson.safe.decode"};
+
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"};
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"};

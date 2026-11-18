@@ -1,0 +1,8 @@
+// Loaded by `flowy_tests.rs` for the sibling `model_value_flow.tnt`, as `ctadl index --models`
+// would: the default models' `StringBuilder.append`, with `."#contents"` spelled `.contents`.
+skip_analysis(F),
+  propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).contents.#value <- F::arg(1)) :-
+  fun(F, name = "append");

@@ -16,165 +16,256 @@
 // A port pair is a PREFIX SUBSTITUTION, not a filter: `return <- arg(0)."[]"` unwraps a level,
 // `arg(0)."[]" <- arg(1)` adds one. See docs/portcullis.md §6 and the fixtures in
 // `tests/tnt/port_*.tnt`.
-propagation(F::return <- F::arg(_)) :-
+//
+// OBJECT FLOW AND TAINT FLOW. A bare pair (`return <- arg(0)`) is object flow: the output IS the
+// input, so everything reachable through the input is reachable through the output. A pair whose
+// output ends in `#value` (`return.#value <- arg(1)`) is taint flow only: the output was computed
+// from the input, and nothing reachable through the input becomes reachable through the output
+// (docs/ir.md, `value`). Object flow implies taint flow, not the reverse. Use object flow only
+// where the method really hands back the object it was given -- `this` from a builder, an
+// element from a container -- and taint flow for everything computed: strings, numbers, parsed
+// and encoded results.
+//
+// MUTATED RECEIVERS. A method that changes what a receiver holds (`StringBuilder.append`,
+// `OutputStream.write`, `MessageDigest.update`) writes the taint twice: at `arg(0).#value`, which
+// the caller's own variable sees, and at `arg(0)."#contents".#value`, a field no source program
+// can name, which reaches a caller one call up, as field-held values do and `arg(0).#value` does
+// not (S8 of docs/ir.md). A method that reads the receiver's state reads
+// both. A sink is wildcard by default, so a sink on the receiver sees `."#contents"` as well.
+//
+// ARRAYS carry their taint bare: a model producing a `byte[]` or `char[]` writes `return.#value`,
+// not `return."[]"`. A model reading one reads both `arg(n)` and `arg(n)."[]"`, since a source on
+// an array return labels only the bare array, while `a[i] = x` stores at the element.
+// A string computed from the object. Taint held in the object's fields does not reach it.
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "toString"),
   fun(F, signature = Sig0),
   regex_match(Sig0, ".*\\(\\)Ljava/lang/String;");
 
+// `String.toString` returns `this`.
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name = "toString", parent in {"Ljava/lang/String;", "Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+  fun(F, name = "toString", parent = "Ljava/lang/String;");
 
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
+  fun(F, name = "toString", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+
+// `append` returns `this`; what it appends is only taint.
 propagation(F::return <- F::arg(0)),
-  propagation(F::arg(0) <- F::arg(0)),
-  propagation(F::return <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(1)) :-
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
   fun(F, name = "append", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
 
-propagation(F::return <- F::arg(_)) :-
+// `insert(int offset, x, ...)`: the inserted value is `arg(2)`; `arg(1)` is the offset.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(2)),
+  propagation(F::return.#value <- F::arg(2)."[]"),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(2)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)."[]") :-
+  fun(F, name = "insert", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."[]") :-
   fun(F, name = "valueOf", parent in {"Ljava/lang/Character;", "Ljava/lang/String;", "Ljava/lang/Boolean;", "Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;", "Ljava/lang/BigInteger;"});
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "forDigit", parent = "Ljava/lang/Character;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "booleanValue", parent = "Ljava/lang/Boolean;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name = "readLine", parent = "Ljava/io/BufferedReader;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "ordinal", parent = "Ljava/lang/Enum;");
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"getBytes", "indexOf", "isEmpty", "lastIndexOf", "replace", "split", "subSequence", "toCharArray", "charAt", "indexOf", "subSequence"}, parent in {"Ljava/lang/String;", "Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"getBytes", "indexOf", "isEmpty", "lastIndexOf", "replace", "split", "subSequence", "toCharArray", "charAt"}, parent = "Ljava/lang/String;");
 
-propagation(F::return <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(1)) :-
-  fun(F, name = "insert", parent = "Ljava/lang/StringBuilder;");
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
+  fun(F, name in {"indexOf", "isEmpty", "lastIndexOf", "subSequence", "charAt"}, parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"substring", "toLowerCase", "toUpperCase", "trim"}, parent = "Ljava/lang/String;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "getOutputStream", parent = "Ljava/net/HttpURLConnection;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "getAddress", parent = "Ljava/net/InetAddress;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "openConnection", parent = "Ljava/net/URL;");
 
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name = "getString", parent = "Lorg/json/JSONObject;");
-
-propagation(F::return <- F::arg(0)) :-
-  fun(F, name = "next", parent = "Ljava/util/Iterator;");
-
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "toJson", parent = "Lcom/android/ad/du/DuAdData;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"getAbsolutePath", "getAbsoluteFile", "getCanonicalFile", "getName", "getParentFile", "getPath"}, parent = "Ljava/io/File;");
 
-propagation(F::arg(1) <- F::arg(0)) :-
+// `read()` returns a byte; `read(byte[] b, ...)` fills `b`.
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents"),
+  propagation(F::arg(1).#value <- F::arg(0)),
+  propagation(F::arg(1).#value <- F::arg(0)."#contents") :-
   fun(F, name = "read", parent in {"Ljava/io/ByteArrayInputStream;", "Ljava/io/BufferedInputStream;", "Ljava/io/FileInputStream;", "Ljava/io/InputStream;", "Ljava/io/RandomAccessFile;"});
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
   fun(F, name = "<init>", parent = "Lorg/apache/http/entity/ByteArrayEntity;");
 
-propagation(F::arg(0) <- F::arg(1)) :-
-  fun(F, name in {"write", "writeBoolean", "writeByte", "writeBytes", "writeChars", "writeChar", "writeDouble", "writeFloat", "writeInt", "writeLong", "writeShort", "writeUTF"}, parent in {"Ljava/io/RandomAccessFile;", "Ljava/io/OutputStream;", "Ljava/io/FilterOutputStream;", "Ljava/io/BufferedOutputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/ByteArrayOutputStream;", "Ljava/io/PipedOutputStream;"});
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
+  fun(F, name in {"write", "writeBoolean", "writeByte", "writeBytes", "writeChars", "writeChar", "writeDouble", "writeFloat", "writeInt", "writeLong", "writeShort", "writeUTF", "writeObject"}, parent in {"Ljava/io/RandomAccessFile;", "Ljava/io/OutputStream;", "Ljava/io/FilterOutputStream;", "Ljava/io/BufferedOutputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/ByteArrayOutputStream;", "Ljava/io/PipedOutputStream;", "Ljava/io/ObjectOutputStream;", "Ljava/util/zip/GZIPOutputStream;"});
 
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::return <- F::arg(0)) :-
-  fun(F, name = "<init>", parent in {"Ljava/io/BufferedReader;", "Ljava/io/ByteArrayInputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/File;", "Ljava/io/FileInputStream;", "Ljava/io/InputStreamReader;", "Ljava/lang/String;", "Ljavax/activation/DataHandler;", "Ljava/net/URL;", "Ljava/lang/Integer;", "Ljava/lang/Short;", "Ljava/lang/Long;", "Ljava/lang/Byte;", "Ljava/lang/Float;", "Ljava/lang/Double;", "Ljava/lang/Exception;", "Ljava/lang/Throwable;"});
+// A constructor that wraps or converts its argument: a stream over a stream, a string over bytes,
+// a boxed number over a string, an exception over its message. What the object holds is derived
+// from the argument, and from what the argument holds when it is itself a wrapper.
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
+  fun(F, name = "<init>", parent in {"Ljava/io/BufferedReader;", "Ljava/io/ByteArrayInputStream;", "Ljava/io/ObjectInputStream;", "Ljava/io/File;", "Ljava/io/FileInputStream;", "Ljava/io/InputStreamReader;", "Ljava/lang/String;", "Ljavax/activation/DataHandler;", "Ljava/net/URL;", "Ljava/lang/Integer;", "Ljava/lang/Short;", "Ljava/lang/Long;", "Ljava/lang/Byte;", "Ljava/lang/Float;", "Ljava/lang/Double;", "Ljava/lang/Exception;", "Ljava/lang/Throwable;"});
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "getMessage", parent in {"Ljava/lang/Throwable;", "Ljava/lang/Exception;"});
 
-propagation(F::arg(0) <- F::arg(1)) :-
-  fun(F, name = "<init>", parent in {"Ljava/io/BufferedReader;", "Ljava/io/ByteArrayInputStream;", "Ljava/io/ObjectInputStream;"});
+// An OUTPUT wrapper writes through to the stream it wraps, after it is made, so the link is a
+// store, not a flow at construction: the wrapped stream's `."#contents"` is the wrapper's, and a
+// later write to the wrapper lands in both. (A wrapper a callee makes and returns is not linked.)
+propagation(F::arg(1)."#contents" <- F::arg(0)."#contents") :-
+  fun(F, name = "<init>", parent in {"Ljava/io/ObjectOutputStream;", "Ljava/io/BufferedOutputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/FilterOutputStream;", "Ljava/io/PrintStream;", "Ljava/io/PrintWriter;", "Ljava/io/OutputStreamWriter;", "Ljava/io/BufferedWriter;", "Ljava/util/zip/GZIPOutputStream;"});
 
-propagation(F::arg(_) <- F::arg(0)) :-
-  fun(F, name = "<init>", parent = "Ljava/io/ObjectOutputStream;");
-
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "normalize", parent = "Ljava/text/Normalizer;");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"parseByte", "parseShort", "parseInt", "parseLong", "parseFloat", "parseDouble", "toHexString", "toBinaryString", "toOctalString"}, parent in {"Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;"});
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"highestOneBit", "numberOfTrailingZeros", "parseLong"}, parent = "Ljava/lang/Long;");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name in {"min", "max"}, parent in {"Ljava/lang/Math;", "Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;"});
 
-propagation(F::return <- F::arg(_)) :-
+// `format(String, Object...)` takes its arguments in an array: read the elements too.
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."[]") :-
   fun(F, name in {"format", "concat", "replaceAll", "replace"}, parent = "Ljava/lang/String;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "toASCII", parent = "Ljava/net/IDN;");
 
-propagation(F::arg(2) <- F::arg(0)) :-
+// `arraycopy(src, srcPos, dest, destPos, length)`: the elements themselves move.
+propagation(F::arg(2)."[]" <- F::arg(0)."[]"),
+  propagation(F::arg(2).#value <- F::arg(0)) :-
   fun(F, name = "arraycopy", parent = "Ljava/lang/System;");
 
-propagation(F::return <- F::arg(_)) :-
-  fun(F, name in {"add", "and", "andNot", "divide", "divideAndRemainder", "gcd", "max", "min", "mod", "modInverse", "modPow", "multiply", "or", "xor"}, parent = "Ljava/lang/BigInteger;");
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"add", "and", "andNot", "divide", "divideAndRemainder", "gcd", "max", "min", "mod", "modInverse", "modPow", "multiply", "or", "xor"}, parent = "Ljava/math/BigInteger;");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "obtain", parent = "Landroid/os/Message;");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "create", parent = "Ljava/net/URI;");
 
-propagation(F::arg(0) <- F::arg(2)) :-
-  fun(F, name in {"addFlags", "setFlags", "parseIntent", "parseUri"}, parent = "Landroid/content/Intent;");
+// `addFlags` and `setFlags` return `this`.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)) :-
+  fun(F, name in {"addFlags", "setFlags"}, parent = "Landroid/content/Intent;");
 
-propagation(F::arg(0) <- F::arg(2)) :-
-  fun(F, name in {"asList", "copyOf"}, parent = "Ljava/util/Arrays;");
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"parseIntent", "parseUri"}, parent = "Landroid/content/Intent;");
 
+// `asList` is a view over the array: the same elements, at the same level.
 propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "asList", parent = "Ljava/util/Arrays;");
+
+propagation(F::return."[]" <- F::arg(0)."[]"),
+  propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"copyOf", "copyOfRange"}, parent = "Ljava/util/Arrays;");
+
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name = "toString", parent = "Ljava/util/Arrays;");
 
-propagation(F::return <- F::arg(_)) :-
+// The `put` family returns `this`.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)) :-
   fun(F, name in {"put", "putChar", "putDouble", "putFloat", "putInt", "putLong", "putShort"}, parent = "Ljava/nio/ByteBuffer;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "unmarshall", parent = "Landroid/os/Parcel;");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."[]") :-
   fun(F, name = "createFromPdu", parent in {"Landroid/telephony/SmsMessage;", "Landroid/telephony/gsm/SmsMessage;"});
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name = "toByteArray", parent = "Ljava/io/ByteArrayOutputStream;");
 
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "matcher", parent = "Ljava/util/regex/Pattern;");
 
-propagation(F::return <- F::arg(0)),
-  propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name = "equalsIgnoreCase", parent = "Ljava/lang/String;");
 
 propagation(F::return <- F::arg(0)) :-
   fun(F, name = "getExtras", parent = "Landroid/content/Intent;");
 
-propagation(F::return <- F::arg(_)) :-
+// `get(key)` and `get(key, defaultValue)`: the value comes out of the bundle, or is the default.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
   fun(F, signature = Sig0),
   regex_match(Sig0, ".*get.*"),
   fun(F, parent = "Landroid/os/Bundle;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "getString", parent = "Landroid/database/Cursor;");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]") :-
   fun(F, name = "update", parent = "Ljava/security/MessageDigest;");
 
-propagation(F::return <- F::arg(0)) :-
+// `digest()`, and `digest(byte[])`, which updates first.
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents"),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(1)."[]") :-
   fun(F, name = "digest", parent = "Ljava/security/MessageDigest;");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
   fun(F, name = "setEntity", parent = "Lorg/apache/http/client/methods/HttpPost;");
 
 propagation(F::return."[]" <- F::arg(0)."[]") :-
@@ -187,21 +278,21 @@ propagation(F::return <- F::arg(0)."[]") :-
 // A read is `return <- arg(0)."[]"` and a write is `arg(0)."[]" <- ...`, the two
 // halves of one prefix substitution. Mixing a bare read with an element-level write (or the
 // reverse) silently composes to nothing: the write would put taint one level below where the
-// read looks for it.
+// read looks for it. These are object flow: a container hands back the very object put in it.
 // Writers carry BOTH `arg(1)` and `arg(2)` because these methods are overloaded on arity --
 // `add(E)` and `add(int, E)`, `put(K, V)`, `set(int, E)` -- and a rule matches by name, so it
 // sees every overload. `arg(_)` would cover them too but would also add a self-edge
 // `arg(0)."[]" <- arg(0)`, which deepens a path every time it fires.
 propagation(F::return <- F::arg(0)."[]") :-
-  fun(F, name in {"get", "getOrDefault", "remove"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+  fun(F, name in {"get", "getOrDefault", "remove"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/Properties;", "Ljava/util/concurrent/ConcurrentHashMap;"});
 
 propagation(F::arg(0)."[]" <- F::arg(1)),
   propagation(F::arg(0)."[]" <- F::arg(2)) :-
-  fun(F, name in {"put", "putIfAbsent"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+  fun(F, name in {"put", "putIfAbsent"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/Properties;", "Ljava/util/concurrent/ConcurrentHashMap;"});
 
 // Views share the map's elements at the same level, so a bare port is exactly right.
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"keySet", "values", "entrySet"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+  fun(F, name in {"keySet", "values", "entrySet"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/Properties;", "Ljava/util/concurrent/ConcurrentHashMap;"});
 
 propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"getKey", "getValue"}, parent = "Ljava/util/Map$Entry;");
@@ -211,85 +302,180 @@ propagation(F::return <- F::arg(0)."[]") :-
 
 propagation(F::arg(0)."[]" <- F::arg(1)),
   propagation(F::arg(0)."[]" <- F::arg(2)) :-
-  fun(F, name in {"add", "addAll", "push", "offer", "addFirst", "addLast", "set"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
+  fun(F, name in {"add", "push", "offer", "addFirst", "addLast", "set"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
+
+// `addAll(c)` and `addAll(int, c)` add `c`'s elements, not `c`.
+propagation(F::arg(0)."[]" <- F::arg(1)."[]"),
+  propagation(F::arg(0)."[]" <- F::arg(2)."[]") :-
+  fun(F, name = "addAll", parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
 
 // Bulk views are collections over the same elements: bare, so the element level rides along.
 propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"toArray", "subList", "stream"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
 
-propagation(F::return <- F::arg(_)) :-
-  fun(F, name in {"unmodifiableList", "unmodifiableMap", "unmodifiableSet", "unmodifiableCollection", "singletonList", "singleton", "nCopies"}, parent = "Ljava/util/Collections;");
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"unmodifiableList", "unmodifiableMap", "unmodifiableSet", "unmodifiableCollection"}, parent = "Ljava/util/Collections;");
+
+propagation(F::return."[]" <- F::arg(0)) :-
+  fun(F, name in {"singletonList", "singleton"}, parent = "Ljava/util/Collections;");
+
+// `nCopies(int n, T o)`.
+propagation(F::return."[]" <- F::arg(1)) :-
+  fun(F, name = "nCopies", parent = "Ljava/util/Collections;");
 
 propagation(F::return <- F::arg(0)) :-
-  fun(F, name in {"copyOfRange", "stream"}, parent = "Ljava/util/Arrays;");
+  fun(F, name = "stream", parent = "Ljava/util/Arrays;");
 
 // ---- text ----
-propagation(F::return <- F::arg(_)) :-
+// `join(delimiter, elements...)` and `join(delimiter, Iterable)` read the elements.
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."[]") :-
   fun(F, name in {"join", "copyValueOf", "strip", "stripLeading", "stripTrailing", "repeat", "intern"}, parent = "Ljava/lang/String;");
 
+// Mutators return `this`. The replacement text of `replace(int, int, String)` is `arg(3)`.
 propagation(F::return <- F::arg(0)),
-  propagation(F::arg(0) <- F::arg(_)) :-
-  fun(F, name in {"reverse", "deleteCharAt", "replace", "setCharAt", "substring"}, parent in {"Ljava/lang/StringBuilder;", "Ljava/lang/StringBuffer;"});
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(3)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)) :-
+  fun(F, name in {"reverse", "deleteCharAt", "replace", "setCharAt"}, parent in {"Ljava/lang/StringBuilder;", "Ljava/lang/StringBuffer;"});
+
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
+  fun(F, name = "substring", parent in {"Ljava/lang/StringBuilder;", "Ljava/lang/StringBuffer;"});
 
 // ---- codecs: a decode is as much a propagation as an encode ----
-propagation(F::return <- F::arg(1)) :-
+propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return.#value <- F::arg(1)."[]") :-
   fun(F, name in {"encode", "encodeToString", "decode"}, parent in {"Ljava/util/Base64$Encoder;", "Ljava/util/Base64$Decoder;"});
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."[]") :-
   fun(F, name in {"encode", "encodeToString", "decode", "decodeToString"}, parent = "Landroid/util/Base64;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"encode", "decode"}, parent in {"Ljava/net/URLEncoder;", "Ljava/net/URLDecoder;"});
 
 // ---- readers, writers, properties ----
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"next", "nextLine", "nextInt", "nextLong", "nextDouble", "nextBoolean"}, parent = "Ljava/util/Scanner;");
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
   fun(F, name = "<init>", parent = "Ljava/util/Scanner;");
 
-propagation(F::return <- F::arg(0)) :-
+// `Properties` is a map: element-level, like the java.util maps. `getProperty(key, default)`
+// may return the default; `load` parses elements out of a stream or reader.
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
   fun(F, name = "getProperty", parent = "Ljava/util/Properties;");
 
-propagation(F::arg(0) <- F::arg(2)) :-
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
   fun(F, name = "setProperty", parent = "Ljava/util/Properties;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::arg(0)."[]".#value <- F::arg(1)),
+  propagation(F::arg(0)."[]".#value <- F::arg(1)."#contents") :-
+  fun(F, name = "load", parent = "Ljava/util/Properties;");
+
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."#contents") :-
   fun(F, name in {"readAllBytes", "readNBytes", "lines"}, parent in {"Ljava/io/InputStream;", "Ljava/io/Reader;", "Ljava/io/BufferedReader;", "Ljava/io/InputStreamReader;"});
 
-propagation(F::arg(0) <- F::arg(1)) :-
-  fun(F, name in {"print", "println", "printf", "format", "append"}, parent in {"Ljava/io/PrintStream;", "Ljava/io/PrintWriter;", "Ljava/io/Writer;", "Ljava/io/BufferedWriter;"});
+// `printf`, `format` and `append` return `this`. `printf(fmt, args...)` and
+// `printf(locale, fmt, args...)` take their arguments in an array.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."[]"),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0).#value <- F::arg(2)."[]"),
+  propagation(F::arg(0).#value <- F::arg(3)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)."[]"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(3)."[]") :-
+  fun(F, name in {"print", "println", "printf", "format", "append", "write"}, parent in {"Ljava/io/PrintStream;", "Ljava/io/PrintWriter;", "Ljava/io/Writer;", "Ljava/io/BufferedWriter;", "Ljava/io/OutputStreamWriter;"});
 
-propagation(F::arg(0) <- F::arg(1)) :-
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)."#contents"),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(1)."#contents") :-
   fun(F, name = "<init>", parent in {"Ljava/util/zip/GZIPInputStream;", "Ljava/util/zip/InflaterInputStream;", "Ljava/util/zip/ZipInputStream;"});
 
 // ---- serialization ----
-propagation(F::return <- F::arg(_)),
-  propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::arg(0) <- F::arg(2)) :-
-  fun(F, name in {"get", "getJSONObject", "getJSONArray", "getString", "optString", "put", "<init>"}, parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+// org.json is a container, element-level like java.util's maps: `put(key, value)`,
+// `put(value)` and `put(index, value)` store an element and return `this`; a getter hands one
+// back, and its key or index contributes only taint. `optString(key, fallback)` may return the
+// fallback.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name = "put", parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
 
-propagation(F::return <- F::arg(1)) :-
-  fun(F, name in {"toJson", "fromJson"}, parent = "Lcom/google/gson/Gson;");
+propagation(F::return <- F::arg(0)."[]"),
+  propagation(F::return.#value <- F::arg(1)) :-
+  fun(F, name in {"get", "getJSONObject", "getJSONArray", "getString", "opt", "optJSONObject", "optJSONArray", "optString"}, parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+
+propagation(F::return <- F::arg(2)) :-
+  fun(F, name = "optString", parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+
+// `new JSONObject(String)` parses its elements out of the text; `new JSONObject(Map)` and
+// `new JSONArray(Collection)` take the elements over.
+propagation(F::arg(0).#value <- F::arg(1)),
+  propagation(F::arg(0)."[]".#value <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(1)."[]") :-
+  fun(F, name = "<init>", parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(0)."[]") :-
+  fun(F, name = "toString", parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+
+propagation(F::return.#value <- F::arg(1)) :-
+  fun(F, name = "toJson", parent = "Lcom/google/gson/Gson;");
+
+// A new object built from the text: taint flow. A field read of the result finds nothing either way.
+propagation(F::return.#value <- F::arg(1)) :-
+  fun(F, name = "fromJson", parent = "Lcom/google/gson/Gson;");
 
 // ---- misc ----
-propagation(F::return <- F::arg(_)) :-
-  fun(F, name in {"toString", "requireNonNull", "requireNonNullElse", "requireNonNullElseGet"}, parent = "Ljava/util/Objects;");
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name = "toString", parent = "Ljava/util/Objects;");
+
+// `requireNonNull(obj)` and `requireNonNull(obj, message)` return `obj`; the `Else` forms may
+// return their second argument instead.
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"requireNonNull", "requireNonNullElse", "requireNonNullElseGet"}, parent = "Ljava/util/Objects;");
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "requireNonNullElse", parent = "Ljava/util/Objects;");
 
 propagation(F::return <- F::arg(_)) :-
   fun(F, name in {"of", "ofNullable", "get", "orElse", "orElseGet"}, parent = "Ljava/util/Optional;");
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "name", parent = "Ljava/lang/Enum;");
 
 // ---- android ----
-propagation(F::return <- F::arg(_)) :-
+propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name in {"parse", "toString", "getQueryParameter", "buildUpon", "build"}, parent in {"Landroid/net/Uri;", "Landroid/net/Uri$Builder;"});
 
-propagation(F::return <- F::arg(0)) :-
+// `getString(key, defValue)`: the stored value, or the default itself.
+propagation(F::return.#value <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::return <- F::arg(2)) :-
   fun(F, name in {"getString", "getStringSet"}, parent = "Landroid/content/SharedPreferences;");
 
-propagation(F::arg(0) <- F::arg(2)) :-
+// `putString(key, value)` returns the editor.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(2)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(2)) :-
   fun(F, name in {"putString", "putStringSet"}, parent = "Landroid/content/SharedPreferences$Editor;");
 
 // ============================================================================================
@@ -317,19 +503,20 @@ propagation(F::arg(0) <- F::arg(2)) :-
 // field, 13 into an object allocated in the body, 10 unattributed, and none into an argument or
 // a static.
 // ---- the Object contract ----
-K::dispatch(return <- arg(_)) :-
+K::dispatch(return.#value <- arg(_)) :-
   callsig(K, name = "toString"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)Ljava/lang/String;$");
 
 // hashCode and equals are models, not skips: the primitive is derived from the receiver's
-// CONTENTS, and a configuration that follows an integer is entitled to.
-K::dispatch(return <- arg(_)) :-
+// CONTENTS, and a configuration that follows an integer is entitled to. The primitive is
+// computed, not handed back, so it is taint flow only.
+K::dispatch(return.#value <- arg(_)) :-
   callsig(K, name = "hashCode"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)I$");
 
-K::dispatch(return <- arg(_)) :-
+K::dispatch(return.#value <- arg(_)) :-
   callsig(K, name = "equals"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(Ljava/lang/Object;\\)Z$");

@@ -67,6 +67,11 @@ const CIL_KNOWN_FAILURES: &[&str] = &[
     // `Handler`'s source line off the reported path. See the CIL delegate entry of
     // `docs/limitations.md`.
     "Cil:delegates",
+    // `Sink3(o.ToString())` with the app's override `Shows.ToString() => text`. The default
+    // `ToString` dispatch model replaces the site's targets, so the override is not analyzed,
+    // and the model is taint flow from the receiver: taint held in `o.text` does not reach the
+    // string. See the `toString` entry of `docs/limitations.md`.
+    "Cil:assemblies",
 ];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
