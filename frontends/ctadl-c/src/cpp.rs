@@ -32,11 +32,12 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, QueryCursor};
 
 use super::{
-    ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, RawPath,
-    ReturnedPlace, ScopeView, TranslationUnit, VarKind, compile_query_for, declarator_leaf_ident,
-    declared_class, function_declarator_of, is_class_member_definition, is_namespaced_definition,
-    lower_units, mangle_overload, node_has_const_qualifier, param_types, returns_void,
-    signature_text, template_erased_name, to_str, unparenthesize, unparenthesized_callee,
+    ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, PlaceRoot,
+    RawPath, ReturnedPlace, RootOp, ScopeView, TranslationUnit, VarKind, compile_query_for,
+    declarator_leaf_ident, declared_class, function_declarator_of, integer_literal,
+    is_class_member_definition, is_namespaced_definition, lower_units, mangle_overload,
+    node_has_const_qualifier, param_types, returns_void, signature_text, template_erased_name,
+    to_str, unparenthesize, unparenthesized_callee,
 };
 use ctadl_import::error::Error;
 
@@ -1654,28 +1655,45 @@ fn cpp_discover_byval_class_params(
 struct ReturningDef<'t> {
     /// The IR name a call site resolves to, as for [`Context::reference_cell_slots`].
     key: String,
-    /// Each explicit parameter's name, and whether it is an lvalue reference (`T&`, not `&&`).
-    params: Vec<(Option<String>, bool)>,
+    /// The explicit parameters, in order.
+    params: Vec<ReturningParam>,
     /// Every name declared anywhere in the body. A returned name among them is not the parameter
     /// or global of that name.
     shadowed: HashSet<String>,
     /// Whether this is a member function. There, an unqualified name that is no parameter may be
     /// a member (spec 036's), so it is never read as a global.
     is_member: bool,
-    /// The body's `return` values, outside nested lambdas and local classes.
+    /// The body's `return` values, outside nested lambdas and local classes. A bare `return;`
+    /// is the statement itself.
     returns: Vec<Node<'t>>,
 }
 
-/// Record what every reference-returning definition of this unit returns, in its own terms:
-/// [`Context::returned_places`] (spec 048). A place is a reference parameter or a global, then a
-/// `.` member path. A `return` of another such call (`return pick(v);`) takes that callee's place
-/// with its parameter mapped through the call's arguments; those are closed by iterating until no
-/// definition gains a place, so a recursion that reaches no other place never gets one.
+/// One explicit parameter of a [`ReturningDef`].
+struct ReturningParam {
+    name: Option<String>,
+    /// `T&`, not `&&`: the parameter is the caller's object, a place in itself.
+    is_ref: bool,
+    /// A pointer or array declarator, possibly under a `&` (`int* p`, `int a[]`, `int*& p`):
+    /// `*p`, `p[k]` and `p->f` are places through it (spec 049).
+    is_pointer: bool,
+}
+
+/// What a returned expression may name, in its definition's terms. `None` is a value this
+/// analysis cannot name as a place; the definition is then placeless.
+type PlaceSet = Option<Vec<ReturnedPlace>>;
+
+/// Record the places every reference-returning definition of this unit may return, in its own
+/// terms: [`Context::returned_places`] (specs 048, 049). A place is one of:
+/// - a reference parameter;
+/// - a pointer parameter under `*`, `[k]` or `->f`;
+/// - a global;
 ///
-/// A definition gets a place only when every `return` names the same one. Anything else keeps the
-/// result temp it has today: several places, a local, a by-value parameter, `*this` or a member
-/// (spec 036's), a pointer parameter, a `const T&` or `T&&` result. Inert for C, which has no
-/// reference returns.
+/// then `.` members. A definition's set is the union over its `return`s, including both arms of
+/// a `?:` and a `return` of another such call (its places mapped through the call's arguments).
+/// This is computed as a least fixed point: every definition starts with no places, and a call in
+/// a cycle contributes what its callee has so far. So `if (n) return rec(v, n - 1); return v;`
+/// has the single place `v`. A `return` that names no place makes the whole definition placeless,
+/// and so does a cycle that never reaches one. Inert for C, which has no reference returns.
 fn cpp_discover_returned_places(
     ctx: &mut Context<'_>,
     source: &str,
@@ -1692,10 +1710,7 @@ fn cpp_discover_returned_places(
         let returns_lvalue_ref = def
             .child_by_field_name("declarator")
             .and_then(unparenthesize)
-            .is_some_and(|d| {
-                d.kind() == "reference_declarator"
-                    && d.child(0).is_some_and(|op| to_str(&op, source) == "&")
-            });
+            .is_some_and(|d| is_lvalue_reference_declarator(d, source));
         if !returns_lvalue_ref || node_has_const_qualifier(&def, source) {
             continue;
         }
@@ -1713,19 +1728,20 @@ fn cpp_discover_returned_places(
             continue;
         };
         let mut pcursor = params.walk();
-        let params: Vec<(Option<String>, bool)> = params
+        let params: Vec<ReturningParam> = params
             .children(&mut pcursor)
             .filter(|pd| pd.kind() == "parameter_declaration")
             .map(|pd| {
                 let declarator = pd.child_by_field_name("declarator");
-                let name = declarator
-                    .and_then(|d| declarator_leaf_ident(d, source))
-                    .map(str::to_string);
-                let is_ref = declarator.and_then(unparenthesize).is_some_and(|d| {
-                    d.kind() == "reference_declarator"
-                        && d.child(0).is_some_and(|op| to_str(&op, source) == "&")
-                });
-                (name, is_ref)
+                ReturningParam {
+                    name: declarator
+                        .and_then(|d| declarator_leaf_ident(d, source))
+                        .map(str::to_string),
+                    is_ref: declarator
+                        .and_then(unparenthesize)
+                        .is_some_and(|d| is_lvalue_reference_declarator(d, source)),
+                    is_pointer: declarator.is_some_and(declarator_is_pointer),
+                }
             })
             .collect();
         let is_member = base
@@ -1748,25 +1764,76 @@ fn cpp_discover_returned_places(
     }
     drop(it);
     drop(cursor);
+    // Every definition starts with no places (the least element). Two definitions under one
+    // key cannot be told apart at a call site, so that key is placeless from the start.
+    let mut states: HashMap<String, PlaceSet> = HashMap::default();
+    for def in &defs {
+        if states.insert(def.key.clone(), Some(Vec::new())).is_some() {
+            states.insert(def.key.clone(), None);
+        }
+    }
     loop {
         let mut grew = false;
         for def in &defs {
-            if def.returns.is_empty() || ctx.returned_places.contains_key(&def.key) {
+            if !matches!(states.get(&def.key), Some(Some(_))) {
                 continue;
             }
-            let mut places = def.returns.iter().map(|r| place_of(ctx, def, *r, source));
-            let Some(Some(first)) = places.next() else {
-                continue;
-            };
-            if places.all(|p| p.as_ref() == Some(&first)) {
-                ctx.returned_places.insert(def.key.clone(), first);
+            let mut next: PlaceSet = (!def.returns.is_empty()).then(Vec::new);
+            for r in &def.returns {
+                match (next.as_mut(), places_of(ctx, def, *r, &states, source)) {
+                    (Some(places), Some(more)) => places.extend(more),
+                    _ => {
+                        next = None;
+                        break;
+                    }
+                }
+            }
+            if let Some(places) = next.as_mut() {
+                places.sort();
+                places.dedup();
+            }
+            if states.get(&def.key) != Some(&next) {
+                states.insert(def.key.clone(), next);
                 grew = true;
             }
         }
         if !grew {
-            return Ok(());
+            break;
         }
     }
+    for (key, places) in states {
+        if let Some(places) = places.filter(|p| !p.is_empty()) {
+            ctx.returned_places.insert(key, places);
+        }
+    }
+    Ok(())
+}
+
+/// Whether `declarator` is an lvalue reference declarator (`&`, not `&&`).
+fn is_lvalue_reference_declarator(declarator: Node<'_>, source: &str) -> bool {
+    declarator.kind() == "reference_declarator"
+        && declarator
+            .child(0)
+            .is_some_and(|op| to_str(&op, source) == "&")
+}
+
+/// Whether a parameter's declarator declares a pointer or an array, possibly under a reference
+/// (`int* p`, `int a[]`, `int*& p`).
+fn declarator_is_pointer(declarator: Node<'_>) -> bool {
+    let mut node = unparenthesize(declarator);
+    while let Some(n) = node {
+        match n.kind() {
+            "pointer_declarator" | "array_declarator" => return true,
+            "reference_declarator" => {
+                node = n
+                    .child_by_field_name("declarator")
+                    .or_else(|| n.named_child(0))
+                    .and_then(unparenthesize);
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The names `body` declares anywhere, and its `return` values outside nested lambdas and local
@@ -1785,7 +1852,7 @@ fn body_declarations_and_returns<'t>(
             }
             "return_statement" => match n.named_child(0) {
                 Some(value) => returns.push(value),
-                // A bare `return;` names nothing: the body has no single place.
+                // A bare `return;` names nothing: the body has no place.
                 None => returns.push(n),
             },
             "declaration" | "for_range_loop" => {
@@ -1809,55 +1876,132 @@ fn body_declarations_and_returns<'t>(
     (declared, returns)
 }
 
-/// The place the returned expression `expr` names in `def`'s terms, given the places found so far
-/// ([`Context::returned_places`]). `None` for anything else.
-fn place_of(
+/// The index of the pointer parameter `expr` names bare (parentheses peeled), if it does.
+fn bare_pointer_param(def: &ReturningDef<'_>, expr: Node<'_>, source: &str) -> Option<usize> {
+    let expr = unparenthesized_callee(expr);
+    if expr.kind() != "identifier" {
+        return None;
+    }
+    let name = to_str(&expr, source);
+    if def.shadowed.contains(name) {
+        return None;
+    }
+    def.params
+        .iter()
+        .position(|p| p.name.as_deref() == Some(name))
+        .filter(|&i| def.params[i].is_pointer)
+}
+
+/// `{Param(index), op}`, with no members.
+fn pointer_place(index: usize, op: RootOp) -> PlaceSet {
+    Some(vec![ReturnedPlace {
+        root: PlaceRoot::Param(index),
+        op: Some(op),
+        fields: Vec::new(),
+    }])
+}
+
+/// The places the returned expression `expr` may name in `def`'s terms, given every
+/// definition's places so far (`states`). `None` for anything else.
+fn places_of(
     ctx: &Context<'_>,
     def: &ReturningDef<'_>,
     expr: Node<'_>,
+    states: &HashMap<String, PlaceSet>,
     source: &str,
-) -> Option<ReturnedPlace> {
+) -> PlaceSet {
     match expr.kind() {
-        "parenthesized_expression" => place_of(ctx, def, expr.named_child(0)?, source),
+        "parenthesized_expression" => places_of(ctx, def, expr.named_child(0)?, states, source),
+        // Either arm may be the referent.
+        "conditional_expression" => {
+            let mut places = places_of(
+                ctx,
+                def,
+                expr.child_by_field_name("consequence")?,
+                states,
+                source,
+            )?;
+            places.extend(places_of(
+                ctx,
+                def,
+                expr.child_by_field_name("alternative")?,
+                states,
+                source,
+            )?);
+            Some(places)
+        }
         "identifier" => {
             let name = to_str(&expr, source);
             if def.shadowed.contains(name) {
                 return None;
             }
-            match def
+            let root = match def
                 .params
                 .iter()
-                .position(|(param, _)| param.as_deref() == Some(name))
+                .position(|p| p.name.as_deref() == Some(name))
             {
                 // A by-value parameter is the callee's own copy: a dangling reference.
-                Some(index) => def.params[index].1.then(|| ReturnedPlace::Param {
-                    index,
-                    fields: Vec::new(),
-                }),
-                None => (!def.is_member && ctx.global_variables.contains(name)).then(|| {
-                    ReturnedPlace::Global {
-                        name: name.to_string(),
-                        fields: Vec::new(),
-                    }
-                }),
-            }
+                Some(index) => def.params[index]
+                    .is_ref
+                    .then_some(PlaceRoot::Param(index))?,
+                None => (!def.is_member && ctx.global_variables.contains(name))
+                    .then(|| PlaceRoot::Global(name.to_string()))?,
+            };
+            Some(vec![ReturnedPlace {
+                root,
+                op: None,
+                fields: Vec::new(),
+            }])
         }
-        // `q.v` on a place is a member of it; `p->v` goes through a pointer (out of scope).
-        "field_expression"
-            if expr
-                .child_by_field_name("operator")
-                .is_some_and(|op| to_str(&op, source) == ".") =>
-        {
-            let mut place = place_of(ctx, def, expr.child_by_field_name("argument")?, source)?;
+        "field_expression" => {
+            let argument = expr.child_by_field_name("argument")?;
             let field = to_str(&expr.child_by_field_name("field")?, source).to_string();
-            match &mut place {
-                ReturnedPlace::Param { fields, .. } | ReturnedPlace::Global { fields, .. } => {
-                    fields.push(field)
+            let arrow = expr
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == "->");
+            // `(*p).f` is `p->f`, as `flatten_lvalue` reads it.
+            let object = unparenthesized_callee(argument);
+            let deref_operand = (!arrow
+                && object.kind() == "pointer_expression"
+                && object
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "*"))
+            .then(|| object.child_by_field_name("argument"))
+            .flatten();
+            match (arrow, deref_operand) {
+                (true, _) => pointer_place(
+                    bare_pointer_param(def, argument, source)?,
+                    RootOp::Arrow(field),
+                ),
+                (false, Some(pointer)) => pointer_place(
+                    bare_pointer_param(def, pointer, source)?,
+                    RootOp::Arrow(field),
+                ),
+                (false, None) => {
+                    let mut places = places_of(ctx, def, argument, states, source)?;
+                    for place in &mut places {
+                        place.fields.push(field.clone());
+                    }
+                    Some(places)
                 }
             }
-            Some(place)
         }
-        // `return pick(v);`: the callee's place, its parameter mapped through this call.
+        "pointer_expression"
+            if expr
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == "*") =>
+        {
+            let operand = expr.child_by_field_name("argument")?;
+            pointer_place(bare_pointer_param(def, operand, source)?, RootOp::Deref)
+        }
+        "subscript_expression" => {
+            let index = bare_pointer_param(def, expr.child_by_field_name("argument")?, source)?;
+            let constant = Some((ctx.hooks.subscript_index)(expr))
+                .filter(|i| i.kind() == "number_literal")
+                .and_then(|i| integer_literal(to_str(&i, source)));
+            pointer_place(index, RootOp::Element(constant))
+        }
+        // `return pick(v);`: the callee's places, each parameter mapped through this call.
         "call_expression" => {
             let args = expr.child_by_field_name("arguments")?;
             let callee = unparenthesized_callee(expr.child_by_field_name("function")?);
@@ -1865,7 +2009,7 @@ fn place_of(
                 "identifier" => {
                     let name = to_str(&callee, source);
                     if def.shadowed.contains(name)
-                        || def.params.iter().any(|(p, _)| p.as_deref() == Some(name))
+                        || def.params.iter().any(|p| p.name.as_deref() == Some(name))
                     {
                         return None;
                     }
@@ -1883,22 +2027,43 @@ fn place_of(
                 .iter()
                 .map(|t| ctx.resolve_reference(t))
                 .collect();
-            match ctx.common_returned_place(&targets)? {
-                ReturnedPlace::Param { index, fields } => {
-                    let mut cursor = args.walk();
-                    let arg = args
-                        .children(&mut cursor)
-                        .filter(|c| c.is_named())
-                        .nth(index)?;
-                    let mut place = place_of(ctx, def, arg, source)?;
-                    match &mut place {
-                        ReturnedPlace::Param { fields: f, .. }
-                        | ReturnedPlace::Global { fields: f, .. } => f.extend(fields),
-                    }
-                    Some(place)
-                }
-                global @ ReturnedPlace::Global { .. } => Some(global),
+            if targets.is_empty() {
+                return None;
             }
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node<'_>> = args
+                .children(&mut cursor)
+                .filter(|c| c.is_named())
+                .collect();
+            let mut places = Vec::new();
+            for target in &targets {
+                // Not a reference-returning definition of this unit: no place.
+                for callee_place in states.get(target)?.as_ref()? {
+                    match (&callee_place.root, &callee_place.op) {
+                        (PlaceRoot::Global(_), _) => places.push(callee_place.clone()),
+                        (PlaceRoot::Param(i), None) => {
+                            for mut place in
+                                places_of(ctx, def, *arg_nodes.get(*i)?, states, source)?
+                            {
+                                place.fields.extend(callee_place.fields.iter().cloned());
+                                places.push(place);
+                            }
+                        }
+                        // A pointer op on the callee's parameter stays a pointer op on ours,
+                        // when the argument is our pointer parameter itself.
+                        (PlaceRoot::Param(i), Some(op)) => places.push(ReturnedPlace {
+                            root: PlaceRoot::Param(bare_pointer_param(
+                                def,
+                                *arg_nodes.get(*i)?,
+                                source,
+                            )?),
+                            op: Some(op.clone()),
+                            fields: callee_place.fields.clone(),
+                        }),
+                    }
+                }
+            }
+            Some(places)
         }
         _ => None,
     }
@@ -2616,9 +2781,9 @@ fn emit_ctor_edge<'a>(
         }
         let cell = ctx.reference_cell_arg(program, scope_view, arg);
         if let Some(&node) = arg_nodes.get(i)
-            && let Some(location) = ctor_arg_location(ctx, program, scope_view, source, node)?
+            && let Some(locations) = ctor_arg_location(ctx, program, scope_view, source, node)?
         {
-            ctx.reference_copies_out.push((location, cell));
+            ctx.push_copy_back(locations, cell);
         }
     }
     let mut args: ThinVec<Exp> = thin_vec![recv];
@@ -2640,21 +2805,22 @@ fn emit_ctor_edge<'a>(
 
 /// The location a constructor argument names, to copy a reference-cell parameter back into
 /// (spec 047): a most-vexing-parse `parameter_declaration` through [`mvp_arg_location`], any
-/// other argument through `Context::argument_location`: a plain lvalue (`x`, `o.v`, `a[1]`, `*p`),
-/// or a call whose reference result names a location (spec 048). `None` for a value that names no
-/// location (a literal, arithmetic, any other call).
+/// other argument through `Context::argument_locations`: a plain lvalue (`x`, `o.v`, `a[1]`,
+/// `*p`), or a call or conditional whose result names locations (specs 048, 049). Several
+/// locations are copied back weakly. `None` for a value that names no location (a literal,
+/// arithmetic, any other call).
 fn ctor_arg_location<'a>(
     ctx: &mut Context<'a>,
     program: &mut Program,
     scope_view: &mut ScopeView,
     source: &'a str,
     node: Node<'_>,
-) -> anyhow::Result<Option<super::RawPath>, Error> {
+) -> anyhow::Result<Option<Vec<super::RawPath>>, Error> {
     if node.kind() == "parameter_declaration" {
-        return Ok(mvp_arg_location(ctx, program, scope_view, source, node));
+        return Ok(mvp_arg_location(ctx, program, scope_view, source, node).map(|l| vec![l]));
     }
-    // A plain lvalue, or a call whose reference result names a location (spec 048).
-    ctx.argument_location(program, node, source, scope_view)
+    // A plain lvalue, or a call or conditional whose result names locations (specs 048, 049).
+    ctx.argument_locations(program, node, source, scope_view)
 }
 
 /// The named children of a constructor's `argument_list`/`initializer_list`, indexed as

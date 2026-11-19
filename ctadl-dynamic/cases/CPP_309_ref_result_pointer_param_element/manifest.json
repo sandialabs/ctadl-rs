@@ -1,7 +1,6 @@
 {
   "name": "CPP_309_ref_result_pointer_param_element",
-  "description": "C++ reference results as locations (spec 048), POSITIVE, KNOWN GAP F9: `int& at(int* a) { return a[1]; }`; `at(arr) = source(); sink(arr[1])`. A place through a pointer parameter is out of spec 048's scope. s=none d=flow.",
+  "description": "C++ reference results as locations (spec 048), POSITIVE: `int& at(int* a) { return a[1]; }`; `at(arr) = source(); sink(arr[1])` writes what `arr[1]` names (spec 049; was known gap F9). s=flow d=flow agree.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F9"
+  "expect_flow": true
 }

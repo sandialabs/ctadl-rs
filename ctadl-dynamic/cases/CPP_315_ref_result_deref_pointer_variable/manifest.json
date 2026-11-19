@@ -1,0 +1,6 @@
+{
+  "name": "CPP_315_ref_result_deref_pointer_variable",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& deref(int* p) { return *p; }`; `int* q = &x; deref(q) = source(); sink(x)` writes what `*q` names, which is `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

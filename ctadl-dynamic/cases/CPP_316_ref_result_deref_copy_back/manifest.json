@@ -1,0 +1,6 @@
+{
+  "name": "CPP_316_ref_result_deref_copy_back",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& deref(int* p) { return *p; }`; `set(deref(&x))` copies `set`'s reference cell back into `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

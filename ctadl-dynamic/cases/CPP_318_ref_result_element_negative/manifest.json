@@ -1,0 +1,6 @@
+{
+  "name": "CPP_318_ref_result_element_negative",
+  "description": "C++ reference results through pointers and with several places (spec 049), NEGATIVE: `int& at(int* a) { return a[1]; }`; `at(arr) = source(); sink(arr[0])`: only element 1 is written. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

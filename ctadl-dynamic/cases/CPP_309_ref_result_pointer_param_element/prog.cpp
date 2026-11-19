@@ -1,4 +1,4 @@
-/* C++ reference results as locations (spec 048), POSITIVE, KNOWN GAP F9: `int& at(int* a) { return a[1]; }`; `at(arr) = source(); sink(arr[1])`. A place through a pointer parameter is out of spec 048's scope. s=none d=flow. */
+/* C++ reference results as locations (spec 048), POSITIVE: `int& at(int* a) { return a[1]; }`; `at(arr) = source(); sink(arr[1])` writes what `arr[1]` names (spec 049; was known gap F9). s=flow d=flow agree. */
 extern "C" int source();
 extern "C" void sink(int);
 

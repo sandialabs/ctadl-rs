@@ -1,0 +1,6 @@
+{
+  "name": "CPP_321_ref_result_several_second_candidate",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `choose(x, y, 0) = source(); sink(y)`: both candidates are written weakly. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

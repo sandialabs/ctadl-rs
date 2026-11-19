@@ -1,0 +1,6 @@
+{
+  "name": "CPP_331_conditional_argument_copy_back",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `set(c ? x : y); sink(x)`, where `set` writes its `int&`: the cell is copied back weakly into both arms. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_329_caller_conditional_lvalue",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `(c ? x : y) = source(); sink(x)` with no call: a conditional of two lvalues names both, written weakly. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_327_ref_result_several_weak_copy_back_keeps_other",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `y = source(); clear(choose(x, y, 1)); sink(y)`, where `clear` writes 0: the copy back is weak, so `y` keeps its taint. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

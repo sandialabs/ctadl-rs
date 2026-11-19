@@ -5301,10 +5301,8 @@ fn cpp_reference_result_places_are_discovered() {
         int& fld(Q& q) { return q.v; }
         int& gref() { return g; }
         int& outer(int& v) { return pick(v); }
-        int& choose(int& a, int& b, int c) { if (c) return a; return b; }
         int& local(int& v) { int l = 0; return l; }
         int& byval(int v) { return v; }
-        int& deref(int* p) { return *p; }
         int& shadow(int& v) { { int v = 0; return v; } }
         const int& cpick(const int& v) { return v; }
     ";
@@ -5318,21 +5316,23 @@ fn cpp_reference_result_places_are_discovered() {
     ] {
         assert_eq!(reference_result_store(defs, call), [store], "{call}");
     }
-    // No place: the store lands on the call's own result temp, never on `x`, `y` or `q`.
-    for call in [
-        "choose(x, y, 1)",
-        "local(x)",
-        "byval(x)",
-        "deref(&x)",
-        "shadow(x)",
-        "cpick(x)",
-    ] {
-        let stores = reference_result_store(defs, call);
+    // No place: the store lands on the call's own result temp. (`choose` and `deref` have
+    // places since spec 049; see its tests below.)
+    for call in ["local(x)", "byval(x)", "shadow(x)", "cpick(x)"] {
+        let callee = call.split_once('(').unwrap().0;
+        let lines = main_lines(&format!(
+            "{defs} int main() {{ int x = 0; int y = 0; Q q; q.v = 0; {call} = 1; return x; }}"
+        ));
+        let result = lines
+            .iter()
+            .find_map(|l| {
+                l.split_once(&format!(" = direct-call {callee}("))
+                    .map(|(r, _)| r)
+            })
+            .unwrap_or_else(|| panic!("{call}: no call: {lines:#?}"));
         assert!(
-            stores.iter().all(|l| !l.starts_with("assign %L0 ")
-                && !l.starts_with("assign %L1 ")
-                && !l.starts_with("store %L2.")),
-            "{call}: {stores:?}"
+            lines.contains(&format!("assign {result} = <const: \"1\">")),
+            "{call}: {lines:#?}"
         );
     }
 }
@@ -5416,4 +5416,129 @@ fn cpp_reference_param_is_not_a_returned_member() {
             .any(|l| l.starts_with("store %L0.o") || l.starts_with("store %L0.v := <const: \"1")),
         "{lines:#?}"
     );
+}
+
+/// The location `main` last writes the constant `1` to, whose body is `body` after `defs`, with
+/// every temp base resolved to the load that defines it (`%L3.v` with `%L3 = load %L0.q` is
+/// `%L0.q.v`), so two lowerings that number their temps differently compare equal.
+fn last_write_of_one(defs: &str, body: &str) -> String {
+    fn resolve(lines: &[String], path: &str) -> String {
+        let (base, rest) = path.split_once('.').unwrap_or((path, ""));
+        match lines
+            .iter()
+            .find_map(|l| l.strip_prefix(&format!("{base} = load ")))
+        {
+            Some(source) if rest.is_empty() => resolve(lines, source),
+            Some(source) => format!("{}.{rest}", resolve(lines, source)),
+            None => path.to_string(),
+        }
+    }
+    let lines = main_lines(&format!("{defs} int main() {{ {body} return 0; }}"));
+    let write = lines
+        .iter()
+        .rev()
+        .find(|l| l.contains("<const: \"1\">"))
+        .unwrap_or_else(|| panic!("no write of 1: {lines:#?}"));
+    let target = write
+        .strip_prefix("store ")
+        .and_then(|w| w.split_once(" := "))
+        .or_else(|| {
+            write
+                .strip_prefix("assign ")
+                .and_then(|w| w.split_once(" = "))
+        })
+        .map(|(target, _)| target)
+        .unwrap_or_else(|| panic!("not a write: {write}"));
+    resolve(&lines, target)
+}
+
+/// A reference result through a pointer parameter denotes what the returned expression denotes
+/// written at the call site with the argument as its operand (spec 049 FR-1): `deref(&x)` is
+/// `*(&x)`, `at(arr)` is `arr[1]`, `fld(&q)` is `(&q)->v`, `deep(&r)` is `(&r)->q.v`.
+#[test]
+fn cpp_pointer_reference_results_are_reroots_of_the_argument() {
+    let defs = r"
+        struct Q { int v; };
+        struct R { Q q; };
+        int& deref(int* p) { return *p; }
+        int& at(int* a) { return a[1]; }
+        int& fld(Q* q) { return q->v; }
+        int& deep(R* r) { return r->q.v; }
+        int& outer(int* p) { return deref(p); }
+    ";
+    for (decl, call, written) in [
+        ("int x = 0;", "deref(&x)", "*(&x)"),
+        ("int x = 0; int* p = &x;", "deref(p)", "*p"),
+        ("int x = 0;", "outer(&x)", "*(&x)"),
+        ("int arr[2] = {0, 0};", "at(arr)", "arr[1]"),
+        ("Q q; q.v = 0;", "fld(&q)", "(&q)->v"),
+        ("R r; r.q.v = 0;", "deep(&r)", "(&r)->q.v"),
+    ] {
+        let through_call = last_write_of_one(defs, &format!("{decl} {call} = 1;"));
+        let written_here = last_write_of_one(defs, &format!("{decl} {written} = 1;"));
+        assert_eq!(through_call, written_here, "{call} vs {written}");
+    }
+}
+
+/// A result that may name several locations is written weakly at each, `L := v, L`, while a
+/// recursion whose every path returns the same parameter keeps one location and a strong store
+/// (spec 049 FR-2/3).
+#[test]
+fn cpp_several_place_result_is_written_weakly() {
+    let defs = r"
+        int& choose(int& a, int& b, int c) { if (c) return a; return b; }
+        int& tern(int& a, int& b, int c) { return c ? a : b; }
+        int& rec(int& v, int n) { if (n) return rec(v, n - 1); return v; }
+    ";
+    for call in ["choose(x, y, 1)", "tern(x, y, 1)", "(c ? x : y)"] {
+        let lines = main_lines(&format!(
+            "{defs} int main() {{ int x = 0; int y = 0; int c = 1; {call} = 1; return x; }}"
+        ));
+        for weak in [
+            "assign %L0 = <const: \"1\">, %L0",
+            "assign %L1 = <const: \"1\">, %L1",
+        ] {
+            assert!(lines.contains(&weak.to_string()), "{call}: {lines:#?}");
+        }
+        assert!(
+            !lines.contains(&"assign %L0 = <const: \"1\">".to_string()),
+            "{call}: {lines:#?}"
+        );
+    }
+    let lines = main_lines(&format!(
+        "{defs} int main() {{ int x = 0; rec(x, 1) = 1; return x; }}"
+    ));
+    assert!(
+        lines.contains(&"assign %L0 = <const: \"1\">".to_string()),
+        "{lines:#?}"
+    );
+}
+
+/// Copying a reference cell back into an argument that may name several locations is weak too:
+/// a strong copy would overwrite the candidates that are not the referent (spec 049 FR-3).
+#[test]
+fn cpp_weak_copy_back_into_several_locations() {
+    let lines = main_lines(
+        r"int& choose(int& a, int& b, int c) { if (c) return a; return b; }
+          void set(int& o) { o = 1; }
+          int main() { int x = 0; int y = 0; set(choose(x, y, 1)); return x; }",
+    );
+    let set = lines
+        .iter()
+        .position(|l| l.contains("direct-call set("))
+        .unwrap_or_else(|| panic!("no call to `set`: {lines:#?}"));
+    let cell = lines[set]
+        .split_once("set(")
+        .and_then(|(_, rest)| rest.strip_suffix(')'))
+        .unwrap();
+    let after = &lines[set + 1..];
+    for x in ["%L0", "%L1"] {
+        assert!(
+            after.windows(2).any(|w| {
+                w[0].strip_suffix(&format!(" = load {cell}.deref"))
+                    .is_some_and(|v| w[1] == format!("assign {x} = {v}, {x}"))
+            }),
+            "no weak copy into {x}: {lines:#?}"
+        );
+    }
 }

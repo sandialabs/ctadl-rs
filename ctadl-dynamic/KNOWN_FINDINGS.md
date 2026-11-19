@@ -34,29 +34,41 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F9 — A reference result through a pointer parameter, or with several places, is not a location (OPEN)
+## F9 — A reference bound to a result with several places aliases nothing (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F9"` on `CPP_309`, `CPP_310` and `CPP_311`.
-  Opened 2026-11-18 by spec 048, as its out-of-scope remainder.
-- **What:** spec 048 records the place a reference-returning definition's result names: a reference
-  parameter, or a global, followed by a `.` member path. Each call site re-roots that place at its
-  own arguments, so `pick(x) = v`, `int& r = pick(x)` and `set(pick(x))` all reach `x`
-  (`Context::returned_places`, `Context::result_locations`). Two shapes get no place. They keep the
-  call's result temp, so a write through the result is lost:
-  - **A place through a pointer parameter:** `int& at(int* a) { return a[1]; }` (`CPP_309`),
-    `int& deref(int* p) { return *p; }` (`CPP_310`), and `return p->v;`.
-  - **Several places:** `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`
-    (`CPP_311`), `return c ? a : b;`, and a recursion such as `return rec(v, n - 1);` beside
-    `return v;`.
+- **Status:** **open**, allowlisted as `known_gap: "F9"` on `CPP_330`. Opened 2026-11-18 by spec
+  048 for pointer-parameter places and results with several places. Spec 049 resolved both
+  (`CPP_309`–`CPP_311`, `CPP_314`–`CPP_329`, `CPP_331`–`CPP_332`); what remains is below.
+- **What is modelled now:**
+  - A reference result's places (specs 048, 049) are re-rooted at each call:
+    - a reference parameter;
+    - a pointer parameter under `*`, `[k]` or `->f`, lowered exactly as that expression written
+      at the call site with the argument as its operand;
+    - a global;
+
+    then `.` members.
+  - A definition's set is the least fixed point of the union over its `return`s, so recursion
+    that always bottoms out in one place keeps that place.
+  - One location is written strongly. Several (and a caller-side `c ? x : y` of two lvalues) are
+    written **weakly**, `L := v, L`, by assignment, compound assignment, `++`/`--` and
+    reference-cell copy-back.
+- **What is still lost:**
+  - **Binding a reference local to several locations:** `int& r = choose(x, y, c)` (`CPP_330`) or
+    `int& r = c ? x : y`. `reference_aliases` maps a name to one path, so the binding takes the
+    result temp, and a write through `r` reaches neither candidate.
+  - **A pointer root on a global**, `int& f() { return *gp; }`.
+  - **A pointer root composed through anything but a bare parameter:** `return deref(&v);`,
+    `return deref(q.p);`.
+  - **A pointer root re-rooted at a side-effecting argument**, `deref(next())`. Lowering the
+    argument again would repeat its effects, so the call keeps its result temp.
+  - **Arithmetic in the returned expression** beyond a subscript (`return *(p + i);`), a
+    conditional arm that is a call (`(c ? x : pick(y)) = v`), and lambdas or function pointers
+    returning references.
 - **Fix direction:** in the frontend.
-  - For a pointer parameter, re-root at the argument's *value* as an address, not at its
-    location: `deref_location` of the argument node for `*p`, and the subscript's
-    `push_element` on it for `a[i]`. This must work with the C pointer model's address-taken
-    `<cell x>` locals.
-  - For several places, write each candidate **weakly** (`target := target ⊔ value`). A plain
-    store to a local is a strong update, which would kill a candidate that was not chosen.
-    Copy-back into each candidate is already sound, because the cell starts as the union of
-    their values.
+  - For a reference bound to several locations, let `reference_aliases` hold a set: a read
+    through the reference blends the candidates, and a write is weak on each.
+  - For the rest, extend `place_of` and `root_op_location` shape by shape, keeping the rule that
+    a re-rooted place lowers the way that expression written at the call site would.
 
 ---
 

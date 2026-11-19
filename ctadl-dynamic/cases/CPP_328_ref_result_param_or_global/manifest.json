@@ -1,0 +1,6 @@
+{
+  "name": "CPP_328_ref_result_param_or_global",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& pg(int& a, int c) { if (c) return a; return g; }`; `pg(x, 0) = source(); sink(g)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

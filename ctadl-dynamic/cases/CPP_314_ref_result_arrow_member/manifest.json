@@ -1,0 +1,6 @@
+{
+  "name": "CPP_314_ref_result_arrow_member",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& fld(Q* q) { return q->v; }`; `fld(&q) = source(); sink(q.v)` writes what `(&q)->v` names. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

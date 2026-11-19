@@ -1,0 +1,6 @@
+{
+  "name": "CPP_326_ref_result_several_copy_back",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `set(choose(x, y, 1)); sink(x)`: the cell is copied back weakly into both candidates. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

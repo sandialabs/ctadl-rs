@@ -113,7 +113,7 @@ enum VarKind {
 /// Access paths in the IR are offset-only and load/store fields are single symbols, so C member
 /// and subscript accesses are threaded here and lowered via [`mir::load_access_path`] /
 /// [`mir::store_access_path`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct RawPath {
     base: VariableRef,
     fields: ThinVec<PathSegment>,
@@ -942,16 +942,47 @@ struct RecvObj {
     write_back: Option<RawPath>,
 }
 
-/// Where a reference-returning definition's result points, in the definition's own terms (spec
-/// 048): what every one of its `return`s names. A call site re-roots it at its own arguments
-/// ([`Context::returned_place_location`]). Only C++ defines reference returns.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ReturnedPlace {
-    /// Explicit parameter `index` (a reference parameter; a method's `this` is not counted), then
-    /// the members `fields`: `int& f(Q& q) { return q.v; }` is `Param { 0, [v] }`.
-    Param { index: usize, fields: Vec<String> },
-    /// The namespace-scope variable `name`, then the members `fields`.
-    Global { name: String, fields: Vec<String> },
+/// One place a reference-returning definition's result may point at, in the definition's own
+/// terms (specs 048, 049). A call site re-roots it at its own arguments
+/// ([`Context::returned_places_locations`]). Only C++ defines reference returns.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ReturnedPlace {
+    /// What the place hangs off.
+    root: PlaceRoot,
+    /// The pointer operation applied to the root first (spec 049); always `None` on a global.
+    op: Option<RootOp>,
+    /// The `.` members after it: `int& f(Q& q) { return q.v; }` is `Param(0)`, no op, `[v]`.
+    fields: Vec<String>,
+}
+
+/// The root of a [`ReturnedPlace`].
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PlaceRoot {
+    /// Explicit parameter `index` (a method's `this` is not counted).
+    Param(usize),
+    /// The namespace-scope variable of that name.
+    Global(String),
+}
+
+/// A pointer operation on a pointer parameter (spec 049). At a call site it is lowered exactly as
+/// `flatten_lvalue` lowers that expression written there with the argument as its operand.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RootOp {
+    /// `*p`, through [`Context::deref_location`].
+    Deref,
+    /// `p[k]`, through [`Context::element_location`]; `None` for a non-constant `k`.
+    Element(Option<i64>),
+    /// `p->f` (and `(*p).f`), through [`Context::member_base`] and [`Context::push_member`].
+    Arrow(String),
+}
+
+/// Which index a subscript location applies, for [`Context::element_location`].
+#[derive(Clone, Copy)]
+enum ElementIndex<'n> {
+    /// The subscript's own index expression, lowered (for its effects too) in place.
+    Node(Node<'n>),
+    /// A re-rooted place's recorded index (spec 049).
+    Constant(Option<i64>),
 }
 
 /// The outcome of lowering a C++ instance-method (or chained) call in [`Context::dispatch_call`].
@@ -966,6 +997,9 @@ struct DispatchOut {
     /// member for a method returning a bare member by reference (spec 036). What
     /// `call() = x` stores to and `T& r = call()` binds.
     location: Option<RawPath>,
+    /// When the result may name any of several locations instead (spec 049): written weakly,
+    /// never bound.
+    several_locations: Vec<RawPath>,
     /// The class of the object the method returns by value, if it does (spec 041).
     returns_object: Option<String>,
 }
@@ -1327,17 +1361,19 @@ struct Context<'a> {
     /// `@pN.deref`. Reset per function; empty for C.
     reference_cells: HashSet<String>,
     /// Copies back out of the temps [`Context::pass_reference_args`] passed, as `(argument
-    /// location, temp cell)`, made by [`Context::emit_post_call_copies`] right after the call.
-    reference_copies_out: Vec<(RawPath, RawPath)>,
+    /// location, temp cell, weak)`, made by [`Context::emit_post_call_copies`] right after the
+    /// call. A copy into one of several candidate locations is weak (spec 049).
+    reference_copies_out: Vec<(RawPath, RawPath, bool)>,
     /// The place each reference-returning definition's result names, in its own terms, by the IR
     /// name a call site resolves to (spec 048). Filled by the C++ `collect_aux` hook before any
     /// body is lowered; empty for C.
-    returned_places: HashMap<String, ReturnedPlace>,
-    /// The location each call lowered in the current function denotes as an lvalue, by the call
-    /// node's id: a reference result's place re-rooted at the call site (spec 048), or a method's
-    /// [`DispatchOut::location`] (spec 036). Recorded when the call is emitted, so a consumer never
+    returned_places: HashMap<String, Vec<ReturnedPlace>>,
+    /// The locations each call lowered in the current function denotes as an lvalue, by the call
+    /// node's id: a reference result's places re-rooted at the call site (specs 048, 049), or a
+    /// method's [`DispatchOut::location`] (spec 036). One location is written strongly, several
+    /// weakly ([`Self::weak_assign`]). Recorded when the call is emitted, so a consumer never
     /// lowers the call a second time to find it. Reset per function; empty for C.
-    result_locations: HashMap<usize, RawPath>,
+    result_locations: HashMap<usize, Vec<RawPath>>,
     /// The class type each free function returns by value, by its base IR name (spec 041); see
     /// [`ClassInfo::returns_object`]. Filled by the C++ `collect_aux` hook; empty for C.
     function_returns_object: HashMap<String, String>,
@@ -3282,8 +3318,19 @@ impl<'a> Context<'a> {
         expr_node: Node<'_>,
         operator_node: Option<Node<'_>>,
     ) -> Result<Exp, Error> {
-        let target_ap = self.flatten_lvalue(program, target_node, source, scope_view)?;
+        let mut targets = self.lvalue_locations(program, target_node, source, scope_view)?;
         let rhs_var = self.flatten_expr(program, expr_node, source, scope_view)?;
+        // A target that may be any of several locations (spec 049) is written weakly at each:
+        // `L := rhs, L`, which for a compound assignment is exactly its usual blend.
+        if targets.len() > 1 {
+            for target in &targets {
+                self.weak_assign(program, scope_view, target, &rhs_var);
+            }
+            return Ok(rhs_var);
+        }
+        let target_ap = targets
+            .pop()
+            .expect("an lvalue names at least one location");
 
         // A compound assignment (`y += expr`) needs the current value of the target as a second
         // operand; read it (a field target lowers to loads) before the write.
@@ -6215,26 +6262,34 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        // The location being updated (`x`, `p->f`, `a[i]`, ...).
+        // The location being updated (`x`, `p->f`, `a[i]`, ...), or each of several (spec 049):
+        // `L := L + 1` keeps what `L` held, so updating every candidate is already sound.
         let argument = node.child_by_field_name("argument").expect("missing left");
-        let loc = self.flatten_lvalue(program, argument, source, scope_view)?;
-        // Its current value (a field location lowers to loads).
-        let cur = Exp::access_path(self.emit_loads(program, scope_view, loc.clone()));
-        let one = Exp::Str(ArcIntern::<str>::from("1"));
-        // temp = cur + 1
-        let temp_name = self.allocator.next_temp();
-        let target = self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-            &mut program[scope_view.fidx].locals,
-        );
-        self.add_assign_to_program(program, scope_view, &target, &cur, Some(&one));
-        // loc = temp
-        let new_val = Exp::Variable(target.base.clone());
-        self.add_assign_to_program(program, scope_view, &loc, &new_val, None);
+        let locations = self.lvalue_locations(program, argument, source, scope_view)?;
+        let mut values = Vec::with_capacity(locations.len());
+        for loc in locations {
+            // Its current value (a field location lowers to loads).
+            let cur = Exp::access_path(self.emit_loads(program, scope_view, loc.clone()));
+            let one = Exp::Str(ArcIntern::<str>::from("1"));
+            // temp = cur + 1
+            let temp_name = self.allocator.next_temp();
+            let target = self.build_access_path(
+                temp_name.as_str(),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            self.add_assign_to_program(program, scope_view, &target, &cur, Some(&one));
+            // loc = temp
+            let new_val = Exp::Variable(target.base.clone());
+            self.add_assign_to_program(program, scope_view, &loc, &new_val, None);
+            values.push(new_val);
+        }
         // The value of the update expression is the updated location's value.
-        Ok(new_val)
+        match values.as_slice() {
+            [value] => Ok(value.clone()),
+            _ => Ok(self.blend_into_temp(program, scope_view, &values)),
+        }
     }
 
     fn flatten_subscript(
@@ -6837,6 +6892,7 @@ impl<'a> Context<'a> {
             value: Exp::Variable(ret),
             aliased: None,
             location: None,
+            several_locations: Vec::new(),
             returns_object: None,
         }))
     }
@@ -6909,6 +6965,7 @@ impl<'a> Context<'a> {
             value: Exp::Variable(ret),
             aliased: None,
             location: None,
+            several_locations: Vec::new(),
             returns_object: None,
         }))
     }
@@ -6975,59 +7032,169 @@ impl<'a> Context<'a> {
             }
             let cell = self.reference_cell_arg(program, scope_view, arg);
             if let Some(&node) = arg_nodes.get(i)
-                && let Some(location) = self.argument_location(program, node, source, scope_view)?
+                && let Some(locations) =
+                    self.argument_locations(program, node, source, scope_view)?
             {
-                self.reference_copies_out.push((location, cell));
+                self.push_copy_back(locations, cell);
             }
         }
         Ok(())
     }
 
-    /// The location an argument node names, to copy a reference cell back into or to re-root a
-    /// reference result at: a plain lvalue through [`Self::flatten_lvalue`] (side-effect free), or
-    /// a call whose result location was recorded when it was lowered
-    /// ([`Self::result_locations`], spec 048). `None` for a value that names no location.
-    fn argument_location(
+    /// Queue the copy of a reference `cell` back into the argument's `locations` after the call:
+    /// strong into one location, weak into each of several (spec 049), since only one of them is
+    /// the referent and a strong copy would overwrite the others.
+    fn push_copy_back(&mut self, locations: Vec<RawPath>, cell: RawPath) {
+        let weak = locations.len() > 1;
+        for location in locations {
+            self.reference_copies_out
+                .push((location, cell.clone(), weak));
+        }
+    }
+
+    /// The locations an already-lowered argument node names, to copy a reference cell back into
+    /// or to re-root a reference result at (specs 048, 049). `None` for a value that names no
+    /// location. The cases:
+    /// - a plain lvalue: one location through [`Self::flatten_lvalue`], which is side-effect
+    ///   free;
+    /// - a call whose result locations were recorded when it was lowered
+    ///   ([`Self::result_locations`]);
+    /// - a conditional: both branches' locations, when both name some.
+    fn argument_locations(
         &mut self,
         program: &mut Program,
         node: Node<'_>,
         source: &'a str,
         scope_view: &mut ScopeView,
-    ) -> Result<Option<RawPath>, Error> {
+    ) -> Result<Option<Vec<RawPath>>, Error> {
         if is_plain_lvalue(node, source) {
-            return Ok(Some(
+            return Ok(Some(vec![
                 self.flatten_lvalue(program, node, source, scope_view)?,
-            ));
+            ]));
         }
-        let call = unparenthesize(node).unwrap_or(node);
-        Ok(self.result_locations.get(&call.id()).cloned())
+        let inner = unparenthesized_callee(node);
+        if inner.kind() == "conditional_expression" {
+            let (Some(cons), Some(alt)) = (
+                inner.child_by_field_name("consequence"),
+                inner.child_by_field_name("alternative"),
+            ) else {
+                return Ok(None);
+            };
+            let Some(mut locations) = self.argument_locations(program, cons, source, scope_view)?
+            else {
+                return Ok(None);
+            };
+            let Some(more) = self.argument_locations(program, alt, source, scope_view)? else {
+                return Ok(None);
+            };
+            extend_locations(&mut locations, more);
+            return Ok(Some(locations));
+        }
+        Ok(self.result_locations.get(&inner.id()).cloned())
     }
 
-    /// The place every one of `targets` returns, when they all return the same one (spec 048).
-    /// `None` when any target has no recorded place, or two disagree: the call then keeps its
-    /// result temp.
-    fn common_returned_place(&self, targets: &[String]) -> Option<ReturnedPlace> {
-        let (first, rest) = targets.split_first()?;
-        let place = self.returned_places.get(first)?;
-        rest.iter()
-            .all(|t| self.returned_places.get(t) == Some(place))
-            .then(|| place.clone())
+    /// The locations an lvalue that is about to be written names, lowering its effects once
+    /// (spec 049). It returns several locations in two cases:
+    /// - a call whose reference result may name any of several places;
+    /// - `c ? x : y` whose arms are both side-effect-free lvalues. The condition is lowered for
+    ///   its effects, and each arm is resolved as an lvalue.
+    ///
+    /// Anything else is the one location [`Self::flatten_lvalue`] names. Only a write may use the
+    /// set, weakly: a reference binding keeps `flatten_lvalue`.
+    fn lvalue_locations(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Vec<RawPath>, Error> {
+        let inner = unparenthesized_callee(node);
+        match inner.kind() {
+            "conditional_expression" if is_location_choice(inner, source) => {
+                let condition = inner
+                    .child_by_field_name("condition")
+                    .expect("conditional_expression always has a condition");
+                self.flatten_expr(program, condition, source, scope_view)?;
+                let (Some(cons), Some(alt)) = (
+                    inner.child_by_field_name("consequence"),
+                    inner.child_by_field_name("alternative"),
+                ) else {
+                    unreachable!("`is_location_choice` requires both arms");
+                };
+                let mut locations = self.lvalue_locations(program, cons, source, scope_view)?;
+                let more = self.lvalue_locations(program, alt, source, scope_view)?;
+                extend_locations(&mut locations, more);
+                Ok(locations)
+            }
+            "call_expression" => {
+                let one = self.flatten_lvalue(program, inner, source, scope_view)?;
+                match self.result_locations.get(&inner.id()) {
+                    Some(several) if several.len() > 1 => Ok(several.clone()),
+                    _ => Ok(vec![one]),
+                }
+            }
+            _ => Ok(vec![
+                self.flatten_lvalue(program, node, source, scope_view)?,
+            ]),
+        }
     }
 
-    /// The location `place` denotes at a call whose explicit arguments are `arg_list`'s named
-    /// children (spec 048): the argument's own location for a parameter
-    /// ([`Self::argument_location`], so nested reference results compose), the global's path for a
-    /// global, then the members. `None` when the argument names no location.
-    fn returned_place_location(
+    /// The places `targets` may return: the union of their place sets (spec 049). `None` when any
+    /// target has no recorded place, and the call then keeps its result temp.
+    fn common_returned_places(&self, targets: &[String]) -> Option<Vec<ReturnedPlace>> {
+        if targets.is_empty() {
+            return None;
+        }
+        let mut places: Vec<ReturnedPlace> = Vec::new();
+        for target in targets {
+            places.extend(self.returned_places.get(target)?.iter().cloned());
+        }
+        places.sort();
+        places.dedup();
+        Some(places)
+    }
+
+    /// The locations `places` denote at a call whose explicit arguments are `arg_list`'s named
+    /// children (specs 048, 049), deduplicated. `None` when any place names no location there.
+    fn returned_places_locations(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        source: &'a str,
+        places: &[ReturnedPlace],
+        arg_list: Node<'_>,
+    ) -> Result<Option<Vec<RawPath>>, Error> {
+        let mut locations: Vec<RawPath> = Vec::new();
+        for place in places {
+            let Some(more) =
+                self.returned_place_locations(program, scope_view, source, place, arg_list)?
+            else {
+                return Ok(None);
+            };
+            extend_locations(&mut locations, more);
+        }
+        Ok(Some(locations))
+    }
+
+    /// The locations one `place` denotes at a call. The root comes first:
+    /// - a parameter with no op: the argument's own locations ([`Self::argument_locations`]), so
+    ///   nested reference results compose;
+    /// - a parameter with a pointer op: what `flatten_lvalue` gives for that expression written
+    ///   here with the argument as its operand (spec 049). The argument must be side-effect free,
+    ///   because it is lowered again;
+    /// - a global: the global's path.
+    ///
+    /// The `.` members are appended to each location.
+    fn returned_place_locations(
         &mut self,
         program: &mut Program,
         scope_view: &mut ScopeView,
         source: &'a str,
         place: &ReturnedPlace,
         arg_list: Node<'_>,
-    ) -> Result<Option<RawPath>, Error> {
-        let (mut path, fields) = match place {
-            ReturnedPlace::Param { index, fields } => {
+    ) -> Result<Option<Vec<RawPath>>, Error> {
+        let mut locations = match &place.root {
+            PlaceRoot::Param(index) => {
                 let mut cursor = arg_list.walk();
                 let Some(arg) = arg_list
                     .children(&mut cursor)
@@ -7036,24 +7203,73 @@ impl<'a> Context<'a> {
                 else {
                     return Ok(None);
                 };
-                let Some(path) = self.argument_location(program, arg, source, scope_view)? else {
-                    return Ok(None);
-                };
-                (path, fields)
+                match &place.op {
+                    None => match self.argument_locations(program, arg, source, scope_view)? {
+                        Some(locations) => locations,
+                        None => return Ok(None),
+                    },
+                    Some(op) => {
+                        if !is_side_effect_free(arg) {
+                            return Ok(None);
+                        }
+                        vec![self.root_op_location(program, arg, op, source, scope_view)?]
+                    }
+                }
             }
-            ReturnedPlace::Global { name, fields } => (
-                self.build_access_path(
-                    name,
-                    Default::default(),
-                    scope_view,
-                    &mut program[scope_view.fidx].locals,
-                ),
-                fields,
-            ),
+            PlaceRoot::Global(name) => vec![self.build_access_path(
+                name,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            )],
         };
-        path.fields
-            .extend(fields.iter().map(|f| PathSegment::symbol(f.as_str())));
-        Ok(Some(path))
+        for location in &mut locations {
+            location
+                .fields
+                .extend(place.fields.iter().map(|f| PathSegment::symbol(f.as_str())));
+        }
+        Ok(Some(locations))
+    }
+
+    /// The location `op` names with `operand` as its operand, lowered by the same code
+    /// `flatten_lvalue` uses for `*e`, `e[k]` and `e->f` (spec 049).
+    fn root_op_location(
+        &mut self,
+        program: &mut Program,
+        operand: Node<'_>,
+        op: &RootOp,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<RawPath, Error> {
+        match op {
+            RootOp::Deref => self.deref_location(program, operand, source, scope_view),
+            RootOp::Element(index) => self.element_location(
+                program,
+                operand,
+                ElementIndex::Constant(*index),
+                source,
+                scope_view,
+            ),
+            RootOp::Arrow(field) => {
+                let base = self.member_base(program, operand, true, source, scope_view)?;
+                Ok(self.push_member(base, field))
+            }
+        }
+    }
+
+    /// `dst := value, dst`: a weak update, which adds `value`'s taint to whatever `dst` holds
+    /// (spec 049). It has the shape compound assignment emits. It is the only sound write into
+    /// one of several locations, where a strong store would kill the ones that are not the
+    /// referent.
+    fn weak_assign(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        dst: &RawPath,
+        value: &Exp,
+    ) {
+        let old = Exp::access_path(self.emit_loads(program, scope_view, dst.clone()));
+        self.add_assign_to_program(program, scope_view, dst, value, Some(&old));
     }
 
     /// Which of `arity` explicit argument positions any of `targets` takes as a reference cell.
@@ -7090,12 +7306,18 @@ impl<'a> Context<'a> {
     /// (spec 040), after a call. Nothing for C.
     fn emit_post_call_copies(&mut self, program: &mut Program, scope_view: &ScopeView) {
         let reference_copies = std::mem::take(&mut self.reference_copies_out);
-        for (dst, src) in reference_copies
+        let slot_copies = self
+            .post_call_copies
+            .clone()
             .into_iter()
-            .chain(self.post_call_copies.clone())
-        {
+            .map(|(dst, src)| (dst, src, false));
+        for (dst, src, weak) in reference_copies.into_iter().chain(slot_copies) {
             let value = Exp::access_path(self.emit_loads(program, scope_view, src));
-            self.add_assign_to_program(program, scope_view, &dst, &value, None);
+            if weak {
+                self.weak_assign(program, scope_view, &dst, &value);
+            } else {
+                self.add_assign_to_program(program, scope_view, &dst, &value, None);
+            }
         }
     }
 
@@ -7342,8 +7564,8 @@ impl<'a> Context<'a> {
         }
         let mut method_args: ThinVec<Exp> = ctadl_ir::thin_vec![recv.exp.clone()];
         method_args.extend(explicit_args);
-        // The place the method's reference result names, when every target agrees (spec 048).
-        let place = self.common_returned_place(&targets);
+        // The places the method's reference result may name (specs 048, 049).
+        let places = self.common_returned_places(&targets);
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -7395,14 +7617,21 @@ impl<'a> Context<'a> {
             }
             _ => None,
         };
-        // Otherwise a reference result naming one of the method's parameters or a global is that
-        // place, re-rooted at this call's arguments (spec 048). Spec 036's locations win.
-        let location = match (location, place, arg_list) {
-            (Some(location), _, _) => Some(location),
-            (None, Some(place), Some(arg_list)) => {
-                self.returned_place_location(program, scope_view, source, &place, arg_list)?
+        // Otherwise a reference result naming the method's parameters or globals is those places,
+        // re-rooted at this call's arguments: one location, or several (specs 048, 049). Spec
+        // 036's locations win.
+        let (location, several_locations) = match (location, places, arg_list) {
+            (Some(location), _, _) => (Some(location), Vec::new()),
+            (None, Some(places), Some(arg_list)) => {
+                match self
+                    .returned_places_locations(program, scope_view, source, &places, arg_list)?
+                {
+                    Some(mut locations) if locations.len() == 1 => (locations.pop(), Vec::new()),
+                    Some(locations) => (None, locations),
+                    None => (None, Vec::new()),
+                }
             }
-            (None, _, _) => None,
+            (None, _, _) => (None, Vec::new()),
         };
         let aliased = match (returns_self, recv_loc) {
             (true, Some(loc)) => {
@@ -7443,6 +7672,7 @@ impl<'a> Context<'a> {
             value,
             aliased,
             location,
+            several_locations,
             returns_object,
         }))
     }
@@ -7625,9 +7855,14 @@ impl<'a> Context<'a> {
             self.dispatch_call(program, node, source, scope_view, temp_name.clone())?
         {
             // What the call denotes as an lvalue, for a consumer that meets it as an argument
-            // (spec 048).
-            if let Some(location) = out.location {
-                self.result_locations.insert(node.id(), location);
+            // (specs 048, 049).
+            let locations: Vec<RawPath> = out
+                .location
+                .into_iter()
+                .chain(out.several_locations)
+                .collect();
+            if !locations.is_empty() {
+                self.result_locations.insert(node.id(), locations);
             }
             return Ok(out.value);
         }
@@ -7707,8 +7942,8 @@ impl<'a> Context<'a> {
             &mut args,
         )?;
 
-        // The place the callee's reference result names, when every target agrees (spec 048).
-        let place = self.common_returned_place(&callees);
+        // The places the callee's reference result may name (specs 048, 049).
+        let places = self.common_returned_places(&callees);
         let call_edges = CallEdges::Explicit(callees.into_iter().collect());
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
@@ -7816,11 +8051,12 @@ impl<'a> Context<'a> {
         // A reference result re-rooted at this call's arguments is the location the call denotes
         // (spec 048), recorded for `flatten_lvalue` and the copy-back consumers.
         if direct
-            && let Some(place) = place
-            && let Some(location) =
-                self.returned_place_location(program, scope_view, source, &place, arg_node)?
+            && let Some(places) = places
+            && let Some(locations) =
+                self.returned_places_locations(program, scope_view, source, &places, arg_node)?
+            && !locations.is_empty()
         {
-            self.result_locations.insert(node.id(), location);
+            self.result_locations.insert(node.id(), locations);
         }
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
@@ -8321,38 +8557,10 @@ impl<'a> Context<'a> {
                 let field = node
                     .child_by_field_name("field")
                     .expect("field_expression always has a field");
-                // `(*p).f` is `p->f`.
-                let object = unparenthesized_callee(argument);
-                let argument = if node
+                let arrow = node
                     .child_by_field_name("operator")
-                    .is_some_and(|op| to_str(&op, source) == ".")
-                    && object.kind() == "pointer_expression"
-                    && object
-                        .child_by_field_name("operator")
-                        .is_some_and(|op| to_str(&op, source) == "*")
-                    && let Some(pointer) = object.child_by_field_name("argument")
-                {
-                    pointer
-                } else {
-                    argument
-                };
-                // C++ `w->f` on an object whose class declares `operator->` reads `f` through the
-                // pointer that operator returns (spec 032); the hook declines every built-in `->`.
-                let overloaded_arrow = if node
-                    .child_by_field_name("operator")
-                    .is_some_and(|op| to_str(&op, source) == "->")
-                {
-                    let arrow_operator = self.hooks.arrow_operator;
-                    arrow_operator(self, program, argument, source, scope_view)?
-                } else {
-                    None
-                };
-                let mut base = match overloaded_arrow {
-                    Some(Exp::Variable(pointer)) => RawPath::new(pointer, ThinVec::new()),
-                    Some(Exp::AccessPath(pointer)) => raw_path_of(&pointer),
-                    Some(_) => self.dead_temp_path(program, scope_view),
-                    None => self.flatten_lvalue(program, argument, source, scope_view)?,
-                };
+                    .is_some_and(|op| to_str(&op, source) == "->");
+                let base = self.member_base(program, argument, arrow, source, scope_view)?;
                 // `p->` with the member name missing: tree-sitter inserted the
                 // `field_identifier`, so it quotes to the empty string and cannot be a path
                 // segment. Appending nothing would silently alias the whole access to `p`, so
@@ -8361,45 +8569,15 @@ impl<'a> Context<'a> {
                     self.report_missing_name(field, scope_view)?;
                     return Ok(self.dead_temp_path(program, scope_view));
                 }
-                // Collapse a union member access to the shared `$union` field so a write to one
-                // member is observed at a read of another (union members alias). Only the
-                // access *on the union variable itself* collapses -- detected by the resolved
-                // base being the bare union variable -- so a struct field nested inside a union
-                // member (`u.a.b`) keeps its own name.
-                let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
-                    PathSegment::symbol(UNION_FIELD)
-                } else {
-                    PathSegment::symbol(to_str(&field, source))
-                };
-                base.fields.push(seg);
-                Ok(base)
+                Ok(self.push_member(base, to_str(&field, source)))
             }
             "subscript_expression" => {
                 let argument = node.child_by_field_name("argument").unwrap();
-                // `(a + K)[N]` is `a[K + N]`.
-                let (argument, offset) = self
-                    .constant_pointer_offset(argument, source, scope_view)
-                    .unwrap_or((argument, 0));
-                let base = self.flatten_lvalue(program, argument, source, scope_view)?;
                 // Grammar-shape hook: C exposes the index directly on an `index` field, C++
                 // nests it under `indices` (it allows multi-arg `a[i, j]`). Reading it through
                 // the hook keeps this arm language-neutral.
-                let index = self.flatten_expr(
-                    program,
-                    (self.hooks.subscript_index)(node),
-                    source,
-                    scope_view,
-                )?;
-                // `a[N]` is `*(a + N)`: the index is pointer arithmetic on the address and the
-                // element itself is the memory read/written there (see `DEREF_FIELD`). A
-                // non-constant `N` reads as 0 (see `push_element`).
-                let mut ap = base;
-                let index = match constant_index(&index) {
-                    Some(n) => offset.checked_add(n),
-                    None => Some(offset),
-                };
-                push_element(&mut ap.fields, index);
-                Ok(ap)
+                let index = ElementIndex::Node((self.hooks.subscript_index)(node));
+                self.element_location(program, argument, index, source, scope_view)
             }
             // A GNU statement expression in lvalue position -- a macro expansion like
             // `({ ... })->f = v`. The location it names is the location its value expression
@@ -8446,32 +8624,45 @@ impl<'a> Context<'a> {
             }
             // A C++ method call whose result is a reference names a location (spec 036):
             // `b.ref() = x` stores to the member `ref` returns. Any other call is the catch-all's.
+            //
+            // A result that may name any of several locations (spec 049) is recorded for
+            // [`Self::lvalue_locations`], and as a single location this arm returns the result
+            // temp, so a reference bound to it keeps today's binding.
             "call_expression" => {
                 let temp = self.allocator.next_temp();
-                match self.dispatch_call(program, node, source, scope_view, temp)? {
-                    Some(DispatchOut {
-                        location: Some(location),
-                        ..
-                    }) => Ok(location),
-                    Some(DispatchOut {
-                        value: Exp::Variable(v),
-                        ..
-                    }) => Ok(RawPath::new(v, ThinVec::new())),
-                    Some(_) => self.not_a_location(program, node, scope_view),
-                    // Any other call: the place its reference result names, recorded as it was
-                    // lowered (spec 048), else the value it returns, held in a variable (or an
-                    // address).
-                    None => {
-                        let value = self.flatten_expr(program, node, source, scope_view)?;
-                        if let Some(location) = self.result_locations.get(&node.id()) {
-                            return Ok(location.clone());
-                        }
-                        match value {
-                            Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                            Exp::AccessPath(ap) => Ok(raw_path_of(&ap)),
-                            _ => self.not_a_location(program, node, scope_view),
-                        }
+                if let Some(out) = self.dispatch_call(program, node, source, scope_view, temp)? {
+                    let locations: Vec<RawPath> = out
+                        .location
+                        .iter()
+                        .chain(&out.several_locations)
+                        .cloned()
+                        .collect();
+                    if !locations.is_empty() {
+                        self.result_locations.insert(node.id(), locations);
                     }
+                    return match out {
+                        DispatchOut {
+                            location: Some(location),
+                            ..
+                        } => Ok(location),
+                        DispatchOut {
+                            value: Exp::Variable(v),
+                            ..
+                        } => Ok(RawPath::new(v, ThinVec::new())),
+                        _ => self.not_a_location(program, node, scope_view),
+                    };
+                }
+                // Any other call: the place its reference result names, recorded as it was
+                // lowered (spec 048), else the value it returns, held in a variable (or an
+                // address).
+                let value = self.flatten_expr(program, node, source, scope_view)?;
+                if let Some([location]) = self.result_locations.get(&node.id()).map(Vec::as_slice) {
+                    return Ok(location.clone());
+                }
+                match value {
+                    Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                    Exp::AccessPath(ap) => Ok(raw_path_of(&ap)),
+                    _ => self.not_a_location(program, node, scope_view),
                 }
             }
             // A cast in lvalue position. The cast is value-preserving, so the location it
@@ -8497,6 +8688,93 @@ impl<'a> Context<'a> {
                 _ => self.not_a_location(program, node, scope_view),
             },
         }
+    }
+
+    /// The object a member access `argument.f` / `argument->f` reads its member from, before
+    /// the member is appended ([`Self::push_member`]). `(*p).f` is `p->f`, and C++ `w->f` on an
+    /// object whose class declares `operator->` reads through the pointer that operator returns
+    /// (spec 032); the hook declines every built-in `->`. Shared by `flatten_lvalue`'s
+    /// `field_expression` arm and a re-rooted `p->f` place (spec 049).
+    fn member_base(
+        &mut self,
+        program: &mut Program,
+        argument: Node<'_>,
+        arrow: bool,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<RawPath, Error> {
+        // `(*p).f` is `p->f`.
+        let object = unparenthesized_callee(argument);
+        let argument = if !arrow
+            && object.kind() == "pointer_expression"
+            && object
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == "*")
+            && let Some(pointer) = object.child_by_field_name("argument")
+        {
+            pointer
+        } else {
+            argument
+        };
+        let overloaded_arrow = if arrow {
+            let arrow_operator = self.hooks.arrow_operator;
+            arrow_operator(self, program, argument, source, scope_view)?
+        } else {
+            None
+        };
+        Ok(match overloaded_arrow {
+            Some(Exp::Variable(pointer)) => RawPath::new(pointer, ThinVec::new()),
+            Some(Exp::AccessPath(pointer)) => raw_path_of(&pointer),
+            Some(_) => self.dead_temp_path(program, scope_view),
+            None => self.flatten_lvalue(program, argument, source, scope_view)?,
+        })
+    }
+
+    /// `base` with the member `field` appended. A union member access collapses to the shared
+    /// `$union` field, so a write to one member is observed at a read of another (union members
+    /// alias). Only the access *on the union variable itself* collapses, detected by the resolved
+    /// base being the bare union variable, so a struct field nested inside a union member
+    /// (`u.a.b`) keeps its own name.
+    fn push_member(&self, mut base: RawPath, field: &str) -> RawPath {
+        let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
+            PathSegment::symbol(UNION_FIELD)
+        } else {
+            PathSegment::symbol(field)
+        };
+        base.fields.push(seg);
+        base
+    }
+
+    /// The location `argument[index]` names. `(a + K)[N]` is `a[K + N]`. `a[N]` is `*(a + N)`:
+    /// the index is pointer arithmetic on the address, and the element itself is the memory read
+    /// or written there (see `DEREF_FIELD`). A non-constant `N` reads as 0 (see
+    /// `push_element`). Shared by `flatten_lvalue`'s `subscript_expression` arm and a re-rooted
+    /// `p[k]` place (spec 049).
+    fn element_location(
+        &mut self,
+        program: &mut Program,
+        argument: Node<'_>,
+        index: ElementIndex<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<RawPath, Error> {
+        let (argument, offset) = self
+            .constant_pointer_offset(argument, source, scope_view)
+            .unwrap_or((argument, 0));
+        let mut ap = self.flatten_lvalue(program, argument, source, scope_view)?;
+        let constant = match index {
+            ElementIndex::Node(index) => {
+                let index = self.flatten_expr(program, index, source, scope_view)?;
+                constant_index(&index)
+            }
+            ElementIndex::Constant(constant) => constant,
+        };
+        let index = match constant {
+            Some(n) => offset.checked_add(n),
+            None => Some(offset),
+        };
+        push_element(&mut ap.fields, index);
+        Ok(ap)
     }
 
     /// The location `*e` names, as `e[0]`; `*(T *)K` is the object at address `K`.
@@ -9050,22 +9328,50 @@ fn names_template_parameter(node: Node<'_>, name: &str, source: &str) -> bool {
 
 /// Whether an argument names a location that can be lowered again without side effects: a
 /// variable, member, element or dereference whose subexpressions call and assign nothing.
-fn is_plain_lvalue(mut node: Node<'_>, source: &str) -> bool {
-    fn side_effect_free(node: Node<'_>) -> bool {
-        if matches!(
-            node.kind(),
-            "call_expression"
-                | "update_expression"
-                | "assignment_expression"
-                | "comma_expression"
-                | "new_expression"
-                | "lambda_expression"
-        ) {
-            return false;
+/// Whether `node` is `c ? a : b` whose arms are both side-effect-free lvalues, or such choices
+/// themselves: a choice of locations (spec 049).
+fn is_location_choice(node: Node<'_>, source: &str) -> bool {
+    let (Some(cons), Some(alt)) = (
+        node.child_by_field_name("consequence"),
+        node.child_by_field_name("alternative"),
+    ) else {
+        return false;
+    };
+    [cons, alt].into_iter().all(|arm| {
+        let arm = unparenthesized_callee(arm);
+        is_plain_lvalue(arm, source)
+            || (arm.kind() == "conditional_expression" && is_location_choice(arm, source))
+    })
+}
+
+/// Append `more` to `locations`, skipping any already there.
+fn extend_locations(locations: &mut Vec<RawPath>, more: Vec<RawPath>) {
+    for location in more {
+        if !locations.contains(&location) {
+            locations.push(location);
         }
-        let mut cursor = node.walk();
-        node.named_children(&mut cursor).all(side_effect_free)
     }
+}
+
+/// Whether lowering `node` again has no effect: no call, assignment, increment, `new`, lambda or
+/// comma anywhere in it.
+fn is_side_effect_free(node: Node<'_>) -> bool {
+    if matches!(
+        node.kind(),
+        "call_expression"
+            | "update_expression"
+            | "assignment_expression"
+            | "comma_expression"
+            | "new_expression"
+            | "lambda_expression"
+    ) {
+        return false;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).all(is_side_effect_free)
+}
+
+fn is_plain_lvalue(mut node: Node<'_>, source: &str) -> bool {
     while node.kind() == "parenthesized_expression" {
         let Some(inner) = first_named_child(node) else {
             return false;
@@ -9079,7 +9385,7 @@ fn is_plain_lvalue(mut node: Node<'_>, source: &str) -> bool {
             .is_some_and(|op| to_str(&op, source) == "*"),
         _ => false,
     };
-    location && side_effect_free(node)
+    location && is_side_effect_free(node)
 }
 
 fn declared_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<String> {

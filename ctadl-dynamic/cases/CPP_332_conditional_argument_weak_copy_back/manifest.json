@@ -1,0 +1,6 @@
+{
+  "name": "CPP_332_conditional_argument_weak_copy_back",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `y = source(); clear(c ? x : y); sink(y)` with `c = 1`, where `clear` writes 0: the copy back is weak, so `y` keeps its taint. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

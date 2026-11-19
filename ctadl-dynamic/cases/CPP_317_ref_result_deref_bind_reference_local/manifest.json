@@ -1,0 +1,6 @@
+{
+  "name": "CPP_317_ref_result_deref_bind_reference_local",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& deref(int* p) { return *p; }`; `int& r = deref(&x); r = source()`: `r` aliases `x`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

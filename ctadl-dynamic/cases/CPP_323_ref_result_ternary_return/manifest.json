@@ -1,0 +1,6 @@
+{
+  "name": "CPP_323_ref_result_ternary_return",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& tern(int& a, int& b, int c) { return c ? a : b; }`; `tern(x, y, 1) = source(); sink(x)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
