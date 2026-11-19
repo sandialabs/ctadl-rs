@@ -265,10 +265,5 @@ that printed form, not by atom numbers, so the output does not depend on interni
 
 ## Concerns
 
-- C1. **How much is proved.** Verifying the whole canonical core, including the
-  end-to-end theorem over nested raw runs and a verified merge sort, is a larger proof than
-  `multiset-diff`. Options: (a) as specified: the core and its composition are verified,
-  only parsing is not; (b) verify the primitives (P-ref, P-bag, P-seq, P-end, P-ord) and
-  leave their composition in `canon_run` to review and tests. (b) is cheaper, and the
-  composition is mechanical, but a missed `canon_bag` there is exactly the kind of mistake
-  the intent fears. The spec assumes (a).
+None open. The canonical core and its composition are both verified (R14, D4's end-to-end
+theorem); only the parser is left to tests.
