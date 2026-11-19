@@ -257,20 +257,14 @@ that printed form, not by atom numbers, so the output does not depend on interni
 
 ## Concerns
 
-- C1. **`artifactLocation.index` is named in the intent but never emitted.** ctadl writes no
-  `run.artifacts` and resolves artifacts by `uri` + `uriBaseId` (F:981-1007). Options:
-  (a) resolve it anyway through the same verified `resolve`, a few lines more in each
-  crate; (b) reject it as an unexpected reference. (a) keeps the tool correct if ctadl ever
-  emits an artifacts table (docs/spec.md §6 plans artifact hashes); (b) is less code. The
-  spec assumes (a).
-- C2. **Instruction ids inside vertex strings.** `taintVertex` and `taintVertices` contain
+- C1. **Instruction ids inside vertex strings.** `taintVertex` and `taintVertices` contain
   `call-arg(<insn id>, <formal>)`, a per-run number in a string (`ctadl-index/src/facts.rs:1431`).
   Options: (a) the parser rewrites the id to `_`, as above: unverified string surgery, but
   the call site is already identified by the result's location; (b) drop both properties
   entirely: simpler, loses the access path (`.deref`, fields) that distinguishes two
   endpoints on one variable (F:3322-3328); (c) compare them as written: two runs of
   different indexes then differ on nearly every C0003/C0004 result. The spec assumes (a).
-- C3. **Witness-dependent parts of C0001 are compared by default.** The primary location is
+- C2. **Witness-dependent parts of C0001 are compared by default.** The primary location is
   the first span in numeric order where the pair was found (F:2666-2671), and the steps are
   one shortest path, which an unrelated edge can change. Two indexes that find the same
   flows can differ there, and the default mode reports it. Options: (a) as specified:
@@ -279,14 +273,14 @@ that printed form, not by atom numbers, so the output does not depend on interni
   "same multiset of source-sink findings" for the flag and keeps the default strict. The
   spec assumes (a), and needs confirming that the flag's key (rule, kind, level, labels,
   source and sink functions, endpoints) is the "source-sink finding" the intent means.
-- C4. **Unknown fields.** `serde` ignores fields the parser does not name, so a field ctadl
+- C3. **Unknown fields.** `serde` ignores fields the parser does not name, so a field ctadl
   adds later would be ignored silently until `diff-sarif` learns it. Options: (a) as
   specified: ignore unknown fields, compare unknown `properties` as canonical JSON;
   (b) compare every unknown field as canonical JSON, which reports new fields but also any
   per-run number they carry; (c) reject unknown fields, which forces `diff-sarif` to be
   updated with the formatter. The spec assumes (a); (c) plus a formatter test that runs
   `diff-sarif` on every profile's output would catch drift at build time.
-- C5. **How much is proved.** Verifying the whole canonical core, including the
+- C4. **How much is proved.** Verifying the whole canonical core, including the
   end-to-end theorem over nested raw runs and a verified merge sort, is a larger proof than
   `multiset-diff`. Options: (a) as specified: the core and its composition are verified,
   only parsing is not; (b) verify the primitives (P-ref, P-bag, P-seq, P-end, P-ord) and
