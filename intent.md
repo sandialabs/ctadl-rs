@@ -8,15 +8,16 @@ run. Microsoft's `sarif diff` compares counts per rule, not results: a result
 that moves is reported as no change, and reordering a file can report a new
 issue.
 
-Ship `ctadl diff-sarif A B`, which compares the results of two SARIF files as
-multisets, matched by content: references replaced by what they name,
+Ship `ctadl diff-sarif A B`, which compares the results of two ctadl SARIF files by content: references replaced by what they name,
 per-run ids dropped, order ignored where SARIF gives it no meaning (results,
 locations, code flows) and kept where it does (the steps of a thread flow).
-Like `ctadl diff-index`, it uses `multiset-diff` and writes output meant for
-an agent.
 
-Open questions:
+One flag `--endpoints-only` will ignore the actual steps of a threadFlow, showing no difference as long as it has the same multiset of source-sink findings: two flows with the same endpoints count twice.
 
-- Only ctadl's SARIF, or any tool's?
-- Does message text count? The `machine` profile truncates it.
-- Refuse two different `--sarif-profile`s, or compare what both emit?
+The comparison is `multiset-diff`, proved with Verus. The risk is
+canonicalizing results before it: a mistake there makes the proved merge
+report a wrong answer. Keep canonicalization small and separate, and check it
+with metamorphic tests (shuffled or renumbered input reports nothing; a
+deleted result or swapped steps are reported).
+
+Message text is ignored.
