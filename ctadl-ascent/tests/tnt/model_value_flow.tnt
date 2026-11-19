@@ -1,8 +1,7 @@
 // OBJECT FLOW AND TAINT FLOW IN A MODEL -- the idiom the default models use for a builder:
 // `sb.append(x)` hands back `sb` itself (`return <- arg(0)`), and what it appends is only taint
 // (`return.#value <- arg(1)`, `arg(0).#value <- arg(1)`), written a second time at
-// a field held in memory, which reaches a caller one call up. The defaults name that field
-// `"#contents"`, which flowy cannot spell; here it is `contents`. The model is
+// a field held in memory, `contents`, which reaches a caller one call up. The model is
 // `model_value_flow.models.ctadl`.
 def append(sb, x): 1
 {

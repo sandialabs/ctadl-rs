@@ -40,11 +40,8 @@
 // PRIORITY. Every `skip_analysis` here is claimed at `priority = -100`, below the 0 a rule gets
 // when it names none, so a user's plain `analyze(F)` keeps a body this file would skip.
 //
-// OBJECT FLOW AND TAINT FLOW. A bare pair is object flow: the output IS the input, so everything
-// reachable through the input is reachable through the output. An output ending in `#value` is
-// taint flow only: computed from the input, sharing nothing reachable through it (docs/ir.md,
-// `value`). A byte copy (`memcpy`, `strcpy`) and a pointer into an argument (`strchr`) are object
-// flow; a length, a number, and text formatted or converted from its inputs are taint flow.
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"): each section below says
+// which its models are.
 //
 // ---- copying: object flow, and each returns `dst` ----
 propagation(F::arg(0).deref <- F::arg(1).deref),

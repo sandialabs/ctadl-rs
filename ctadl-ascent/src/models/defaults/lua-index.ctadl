@@ -17,13 +17,10 @@
 //   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument, which a
 //     propagation model cannot express.
 //
-// OBJECT FLOW AND TAINT FLOW. A bare pair is object flow: the output IS the input, so everything
-// reachable through the input is reachable through the output. An output ending in `#value` is
-// taint flow only: computed from the input, sharing nothing reachable through it (docs/ir.md,
-// `value`). Strings and numbers computed by a library function are taint flow; a value handed
-// back as it is (`assert`, an element out of a table) is object flow. A file a `write` changes
-// holds the taint at `arg(0).#value` and at `arg(0)."#contents".#value`, a field no script can
-// name, which reaches a caller one call up as `arg(0).#value` does not; `read` reads both.
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"). Strings and numbers computed
+// by a library function are taint flow; a value handed back as it is (`assert`, an element out
+// of a table) is object flow. A file a `write` changes holds the taint at `arg(0).#value` and at
+// `arg(0)."#contents".#value`, and `read` reads both.
 //
 // TABLES are element-level: the frontend emits `PathSegment::Symbol("[_elem_]")` for an element,
 // which a port spells as the quoted field `."[_elem_]"`. A read is `return <- arg(0)."[_elem_]"`
@@ -121,7 +118,6 @@ propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"cjson.encode", "cjson.safe.encode"};
 
-// A new object built from the text: taint flow. A field read of the result finds nothing either way.
 propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"cjson.decode", "cjson.safe.decode"});
 propagation(F::return.#value <- F::arg(0)) :-

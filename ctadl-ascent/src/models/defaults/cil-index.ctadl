@@ -25,18 +25,14 @@
 //   object: a `StringBuilder`, a `Uri`, a reader. ValueTuple is the exception, because C# reads its
 //   public fields directly.
 //
-// OBJECT FLOW AND TAINT FLOW. A bare pair is object flow: the output IS the input, so everything
-// reachable through the input is reachable through the output. An output ending in `#value` is
-// taint flow only: computed from the input, sharing nothing reachable through it (docs/ir.md,
-// `value`). Containers, enumerators, tasks, tuples and a method returning `this` are object flow;
-// strings, numbers, parsed, encoded and formatted results are taint flow. A method that changes
-// what a receiver holds (`StringBuilder.Append`, `Stream.Write`) writes the taint at
-// `arg(0).#value` and at `arg(0)."#contents".#value`, a field no program can name, which reaches
-// a caller one call up, as field-held values do and `arg(0).#value` does not (S8 of
-// docs/ir.md). A method reading the receiver's state reads both, and a sink, wildcard by
-// default, sees both.
 // Overloads that differ in where the data is (a `String` or a `String[]`) are split by a
 // `regex_match` over the signature, e.g. `(System.String[])->System.String`.
+//
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"). Containers, enumerators, tasks,
+// tuples and a method returning `this` are object flow; strings, numbers, parsed, encoded and
+// formatted results are taint flow. A method that changes what a receiver holds
+// (`StringBuilder.Append`, `Stream.Write`) writes the taint at `arg(0).#value` and at
+// `arg(0)."#contents".#value`, and a method reading the receiver's state reads both.
 
 // ---- System.Object ----
 // A string computed from the object. Taint held in the object's fields does not reach it.
@@ -616,7 +612,6 @@ propagation(F::arg(0).#value <- F::arg(1)),
 propagation(F::return."[]".#value <- F::arg(0)) :-
   fun(F, name in {"SerializeToUtf8Bytes", "SerializeToUtf8Bytes``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
 
-// A new object built from the text: taint flow. A field read of the result finds nothing either way.
 propagation(F::return.#value <- F::arg(0)),
   propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"Deserialize", "Deserialize``1", "DeserializeAsync", "DeserializeAsync``1", "DeserializeAsyncEnumerable``1"}, parent = "[System.Text.Json]System.Text.Json.JsonSerializer");
@@ -663,7 +658,6 @@ propagation(F::return.#value <- F::arg(0).deref) :-
 propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name = "SerializeObject", parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
 
-// A new object built from the text: taint flow. A field read of the result finds nothing either way.
 propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"DeserializeObject", "DeserializeObject``1"}, parent = "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert");
 

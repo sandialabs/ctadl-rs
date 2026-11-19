@@ -17,25 +17,17 @@
 // `arg(0)."[]" <- arg(1)` adds one. See docs/portcullis.md §6 and the fixtures in
 // `tests/tnt/port_*.tnt`.
 //
-// OBJECT FLOW AND TAINT FLOW. A bare pair (`return <- arg(0)`) is object flow: the output IS the
-// input, so everything reachable through the input is reachable through the output. A pair whose
-// output ends in `#value` (`return.#value <- arg(1)`) is taint flow only: the output was computed
-// from the input, and nothing reachable through the input becomes reachable through the output
-// (docs/ir.md, `value`). Object flow implies taint flow, not the reverse. Use object flow only
-// where the method really hands back the object it was given -- `this` from a builder, an
-// element from a container -- and taint flow for everything computed: strings, numbers, parsed
-// and encoded results.
-//
-// MUTATED RECEIVERS. A method that changes what a receiver holds (`StringBuilder.append`,
-// `OutputStream.write`, `MessageDigest.update`) writes the taint twice: at `arg(0).#value`, which
-// the caller's own variable sees, and at `arg(0)."#contents".#value`, a field no source program
-// can name, which reaches a caller one call up, as field-held values do and `arg(0).#value` does
-// not (S8 of docs/ir.md). A method that reads the receiver's state reads
-// both. A sink is wildcard by default, so a sink on the receiver sees `."#contents"` as well.
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"). Object flow only where the
+// method hands back the object it was given -- `this` from a builder, an element from a
+// container -- and taint flow for everything computed: strings, numbers, parsed and encoded
+// results. A method that changes what a receiver holds (`StringBuilder.append`,
+// `OutputStream.write`, `MessageDigest.update`) writes the taint at `arg(0).#value` and at
+// `arg(0)."#contents".#value`, and a method that reads the receiver's state reads both.
 //
 // ARRAYS carry their taint bare: a model producing a `byte[]` or `char[]` writes `return.#value`,
 // not `return."[]"`. A model reading one reads both `arg(n)` and `arg(n)."[]"`, since a source on
 // an array return labels only the bare array, while `a[i] = x` stores at the element.
+
 // A string computed from the object. Taint held in the object's fields does not reach it.
 propagation(F::return.#value <- F::arg(_)) :-
   fun(F, name = "toString"),
@@ -278,7 +270,7 @@ propagation(F::return <- F::arg(0)."[]") :-
 // A read is `return <- arg(0)."[]"` and a write is `arg(0)."[]" <- ...`, the two
 // halves of one prefix substitution. Mixing a bare read with an element-level write (or the
 // reverse) silently composes to nothing: the write would put taint one level below where the
-// read looks for it. These are object flow: a container hands back the very object put in it.
+// read looks for it.
 // Writers carry BOTH `arg(1)` and `arg(2)` because these methods are overloaded on arity --
 // `add(E)` and `add(int, E)`, `put(K, V)`, `set(int, E)` -- and a rule matches by name, so it
 // sees every overload. `arg(_)` would cover them too but would also add a self-edge
@@ -440,7 +432,6 @@ propagation(F::return.#value <- F::arg(0)),
 propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name = "toJson", parent = "Lcom/google/gson/Gson;");
 
-// A new object built from the text: taint flow. A field read of the result finds nothing either way.
 propagation(F::return.#value <- F::arg(1)) :-
   fun(F, name = "fromJson", parent = "Lcom/google/gson/Gson;");
 
@@ -512,8 +503,7 @@ K::dispatch(return <- arg(_)) :-
   regex_match(Sig0, "^\\(\\)Ljava/lang/String;$");
 
 // hashCode and equals are models, not skips: the primitive is derived from the receiver's
-// CONTENTS, and a configuration that follows an integer is entitled to. The primitive is
-// computed, not handed back, so it is taint flow only.
+// CONTENTS, and a configuration that follows an integer is entitled to.
 K::dispatch(return.#value <- arg(_)) :-
   callsig(K, name = "hashCode"),
   callsig(K, signature = Sig0),
