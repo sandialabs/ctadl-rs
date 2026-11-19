@@ -932,8 +932,10 @@ propagation(F::return.#value <- F::arg(0)) :-
 // A constrained call on a type parameter passes the receiver by address, so the Object contract
 // reads `arg(0).deref` as well as `arg(0)`; for a class receiver that port is empty.
 // ---- the Object contract ----
-K::dispatch(return.#value <- arg(_)),
-  K::dispatch(return.#value <- arg(0).deref) :-
+// ToString is object flow, not taint flow, as in Java: an override that returns a field
+// (`ToString() => text`) hands back what the receiver holds.
+K::dispatch(return <- arg(_)),
+  K::dispatch(return <- arg(0).deref) :-
   callsig(K, name = "ToString"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)->System\\.String$");

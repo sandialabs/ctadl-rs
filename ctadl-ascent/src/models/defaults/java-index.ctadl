@@ -503,7 +503,10 @@ propagation(F::return <- F::arg(0)),
 // field, 13 into an object allocated in the body, 10 unattributed, and none into an argument or
 // a static.
 // ---- the Object contract ----
-K::dispatch(return.#value <- arg(_)) :-
+// toString is object flow, not taint flow. The model stands in for every override, and an
+// override that returns a field (`toString() { return name; }`) hands back what the receiver
+// holds; a summary in `return.#value` would drop that field's taint.
+K::dispatch(return <- arg(_)) :-
   callsig(K, name = "toString"),
   callsig(K, signature = Sig0),
   regex_match(Sig0, "^\\(\\)Ljava/lang/String;$");

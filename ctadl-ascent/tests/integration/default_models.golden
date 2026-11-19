@@ -26,7 +26,7 @@
 == java-index.ctadl on java
     closure_shaped: Ljava/lang/Runnable;->run()V
     dispatch: Ljava/io/Closeable;->close()V: inline[]
-    dispatch: Ljava/lang/Object;->toString()Ljava/lang/String;: model[Return.#value <- AnyArgument]
+    dispatch: Ljava/lang/Object;->toString()Ljava/lang/String;: model[Return <- AnyArgument]
     dispatch: Ljava/util/Collection;->size()I: skip
     dispatch: Ljava/util/Iterator;->next()Ljava/lang/Object;: model[Return <- Index(0).\[]]
     dispatch: Ljava/util/Map;->put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;: model[Index(0).\[] <- Index(1), Index(0).\[] <- Index(2)]
