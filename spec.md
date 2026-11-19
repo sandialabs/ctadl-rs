@@ -259,23 +259,14 @@ that printed form, not by atom numbers, so the output does not depend on interni
 
 ## Concerns
 
-- C1. **Witness-dependent parts of C0001 are compared by default.** The primary location is
-  the first span in numeric order where the pair was found (F:2666-2671), and the steps are
-  one shortest path, which an unrelated edge can change. Two indexes that find the same
-  flows can differ there, and the default mode reports it. Options: (a) as specified:
-  default is exact, `--endpoints-only` drops primary location, interior steps and
-  `taintVertices`; (b) also drop the primary location by default. (a) matches the intent's
-  "same multiset of source-sink findings" for the flag and keeps the default strict. The
-  spec assumes (a), and needs confirming that the flag's key (rule, kind, level, labels,
-  source and sink functions, endpoints) is the "source-sink finding" the intent means.
-- C2. **Unknown fields.** `serde` ignores fields the parser does not name, so a field ctadl
+- C1. **Unknown fields.** `serde` ignores fields the parser does not name, so a field ctadl
   adds later would be ignored silently until `diff-sarif` learns it. Options: (a) as
   specified: ignore unknown fields, compare unknown `properties` as canonical JSON;
   (b) compare every unknown field as canonical JSON, which reports new fields but also any
   per-run number they carry; (c) reject unknown fields, which forces `diff-sarif` to be
   updated with the formatter. The spec assumes (a); (c) plus a formatter test that runs
   `diff-sarif` on every profile's output would catch drift at build time.
-- C3. **How much is proved.** Verifying the whole canonical core, including the
+- C2. **How much is proved.** Verifying the whole canonical core, including the
   end-to-end theorem over nested raw runs and a verified merge sort, is a larger proof than
   `multiset-diff`. Options: (a) as specified: the core and its composition are verified,
   only parsing is not; (b) verify the primitives (P-ref, P-bag, P-seq, P-end, P-ord) and
