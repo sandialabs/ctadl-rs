@@ -1404,6 +1404,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctadl-sarif-diff"
+version = "0.1.7"
+dependencies = [
+ "rustc-hash",
+ "sarif-canon",
+ "serde",
+ "serde-sarif",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

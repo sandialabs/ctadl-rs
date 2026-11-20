@@ -6,6 +6,7 @@ members = [
     "ctadl-import",
     "ctadl-index",
     "ctadl-index-diff",
+    "ctadl-sarif-diff",
     "ctadl-index/engines/lsm",
     "ctadl-index/engines/par",
     "ctadl-index/engines/serial",
@@ -42,6 +43,7 @@ default-members = [
     "ctadl-import",
     "ctadl-index",
     "ctadl-index-diff",
+    "ctadl-sarif-diff",
     "ctadl-index/engines/lsm",
     "ctadl-index/engines/par",
     "ctadl-index/engines/serial",
@@ -91,6 +93,7 @@ ctadl-ir = { path = "ctadl-ir" }
 ctadl-jvm = { path = "frontends/ctadl-jvm" }
 ctadl-lua = { path = "frontends/ctadl-lua" }
 ctadl-pcode = { path = "frontends/ctadl-pcode" }
+ctadl-sarif-diff = { path = "ctadl-sarif-diff" }
 diff-report = { path = "diff-report" }
 dex-reader = { path = "readers/dex-reader" }
 immortal = { path = "immortal" }

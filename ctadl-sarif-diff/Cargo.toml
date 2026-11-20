@@ -1,0 +1,19 @@
+[package]
+name = "ctadl-sarif-diff"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+rustc-hash = "2"
+sarif-canon.workspace = true
+# The crate `ctadl query` writes its SARIF with, so reader and writer share one schema.
+serde-sarif = "0.8"
+# Not used here: `serde-sarif` derives with serde's macros but does not turn them on itself.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

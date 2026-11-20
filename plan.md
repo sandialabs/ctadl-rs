@@ -428,6 +428,30 @@ strings:
     cargo test -p ctadl-sarif-diff
     cargo clippy --workspace -- -Dwarnings
 
+**As built.**
+- `ctadl-sarif-diff` joins the workspace (`members`, `default-members`,
+  `[workspace.dependencies]`) here rather than in Phase 7, so this phase's gate can build it.
+- Also depends on `serde` with `derive` (`serde-sarif` 0.8 uses the derive macros without
+  enabling the feature) and, for tests, `tempfile`.
+- `atoms` and `parse` are private modules re-exported with `pub use`. `Atoms` also has
+  `get_id(&str) -> Option<u32>`, a lookup that does not intern.
+- `Error` is `Read`, `Sarif` (not JSON, not SARIF, unknown `kind`/`level`), `Property { key,
+  expected }`, `NegativeIndex`, `UnnamedLogical`. A `run.logicalLocations` entry with no
+  name is an error even when nothing refers to it.
+- `serde-sarif` deserializes the whole document, so a dropped field that breaks the SARIF
+  schema still fails to parse; it is never read into the result.
+- Absent `level` becomes `warning` whatever the `kind` (SARIF's own default is `none` when
+  `kind` is not `fail`); ctadl always writes both.
+- The `call-arg` rewrite fires only on `call-arg(<digits>, <-?digits>)` at the start of the
+  string.
+- More tests than listed: `reads_kept_fields` (every kept field, exact parse),
+  `kept_fields_matter` (changing any of 31 kept fields changes the parse),
+  `drops_unread_fields` over 25 dropped fields, `absent_and_empty_differ`,
+  `reads_file_and_pools_runs`, `intern_is_injective_and_stable`. Checked by hand that the
+  four profiles' SARIF for `ties.c` parse.
+- The rule ids ctadl writes are `C0001.tainted-path`, `C0003.taint-source`, ... (F:151), not
+  `C0001`; Phases 6a and 7 above now name `C0001.tainted-path`.
+
 ## Phase 6a: `canon_run` (R5-R12, D3, D4)
 
 Depends on: 3, 4.
@@ -446,7 +470,7 @@ The controller checks the diff against Phase 1b's commit for this.
 **Files.**
 - `sarif-canon/src/canon.rs` — bodies of `canon_run(run: &RawRun<A>, endpoints_rule:
   Option<A>, cmp, Ghost(oa))` and `canon_runs(runs: &[RawRun<A>], ..)` (all runs' results
-  pooled, then one `canon_bag`). `endpoints_rule` is the atom of `C0001` when
+  pooled, then one `canon_bag`). `endpoints_rule` is the atom of `C0001.tainted-path` (the rule id ctadl writes, F:151) when
   `--endpoints-only` is set; a result whose `rule` equals it drops its locations,
   `taintVertex` and `taintVertices`, and keeps the `endpoints` of each thread flow (R11).
   Logical references resolve to the entry's `fqn`. `executionOrder` goes through
@@ -507,7 +531,7 @@ Adds the dependency to `ctadl-ascent` but no subcommand yet.
   `pub fn diff_sarif(a: &Path, b: &Path, &Options) -> Result<Report, Error>`; `Error`
   carries the file and what failed (parse, `OutOfRange`, `NotIncreasing`, `EmptyFlow`).
 - `ctadl-sarif-diff/src/driver.rs` (new) — `read_runs` for A then B into one `Atoms`;
-  `canon_runs` per file with `endpoints_rule = atoms.get_id("C0001")` when
+  `canon_runs` per file with `endpoints_rule = atoms.get_id("C0001.tainted-path")` when
   `--endpoints-only`; `multiset_diff(&a, &b, |x, y| sarif_canon::order::cmp_result(x, y,
   &u32::cmp))` (the same `cmp` `canon_runs` sorted by, so its proved sortedness is the
   precondition `multiset_diff` needs); each `Delta` to `more_in_a` or `more_in_b`
