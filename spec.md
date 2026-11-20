@@ -120,7 +120,7 @@ share the descriptor, don't share a cursor, and need no lock. Cloning the `ZipAr
 still shares the parsed central directory, as it does today. The OS page cache holds the file,
 not the process heap.
 
-`import_apk` (`frontends/ctadl-dex/src/lib.rs:91`) calls `APKParser::open(file)` and drops its
+`import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) calls `APKParser::open(file)` and drops its
 `std::fs::read`. The error contexts "reading APK" and "parsing APK", each with the path, stay.
 
 ### D3. `is_cli_image` over a memory map (R8, R9)
@@ -131,8 +131,8 @@ which gives R8 by construction. Only the pages that the header and metadata chec
 read in, and file-backed clean pages don't count toward the process's footprint (R9).
 
 - A file that cannot be opened or mapped gives `false`, as a failed read does today.
-- An empty file gives `false`. It cannot be mapped, and `PeImage::parse` rejects anything under
-  128 bytes.
+- An empty file gives `false`. It maps to an empty slice, which `PeImage::parse` rejects, as it
+  does anything under 128 bytes.
 
 The mapping lives only for the call. `Module` borrows from it and is dropped before the call
 returns.
