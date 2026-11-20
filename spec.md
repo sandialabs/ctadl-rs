@@ -151,14 +151,9 @@ loki messenger and osmand.
 
 ## Concerns
 
-- C1. **SIGBUS from the memory map (D3).** If another process truncates a mapped file while
-  `is_cli_image` reads it, the process gets `SIGBUS` instead of an error.
-  - Option A: a header-only reader that reads exactly the regions `Module::read` checks through
-    positioned reads. It needs no map, but duplicates the PE parsing and its edge cases, and R8
-    then rests on tests instead of on shared code.
-  - Option B: keep the map. The window is one small parse.
-
-  The spec assumes B: the import already reads artifacts that it assumes are stable.
+- C1. **SIGBUS from the memory map (D3).** Accepted: keep the map. If another process
+  truncates the file during the parse, the process gets `SIGBUS`. The window is one small
+  parse, and keeping a single PE parser is worth more than a header-only copy of it.
 - C2. **Hashing errors on a changing file (R3).** Today a file that changes while it is hashed
   gives a digest of some mixture, silently.
   - Option A: error (R3), which surfaces a race and can fail an import that today succeeds.
