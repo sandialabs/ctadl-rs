@@ -147,7 +147,8 @@ Depends on: 0.
 
 **What.** Move the bounded-sample buffer and the per-side sample block out of
 `ctadl-index-diff` into a small new crate `diff-report`, so `ctadl-sarif-diff` can use them
-without linking `ctadl-index`. `diff-index`'s text and JSON output do not change.
+without linking `ctadl-index`. `diff-index`'s text and JSON output do not change. A new crate rather than a `pub mod` in `ctadl-index-diff` was chosen so that
+`cargo test -p ctadl-sarif-diff` does not build `ctadl-index` and `name-by-facts`.
 
 **Files.**
 - `diff-report/Cargo.toml`, `diff-report/src/lib.rs` (new) — depends on `multiset-diff`
