@@ -154,12 +154,9 @@ loki messenger and osmand.
 - C1. **SIGBUS from the memory map (D3).** Accepted: keep the map. If another process
   truncates the file during the parse, the process gets `SIGBUS`. The window is one small
   parse, and keeping a single PE parser is worth more than a header-only copy of it.
-- C2. **Hashing errors on a changing file (R3).** Today a file that changes while it is hashed
-  gives a digest of some mixture, silently.
-  - Option A: error (R3), which surfaces a race and can fail an import that today succeeds.
-  - Option B: hash whatever is read, as today.
-
-  The spec assumes A, since a digest of a mixture would later mark a stale import as up to date.
+- C2. **Hashing errors on a changing file (R3).** Accepted: error. A digest of a mixture could
+  later mark a stale import as up to date. The metadata length is the only one that streams
+  without changing digests, and checking it costs nothing.
 - C3. **`read_at` is Unix-only (D2).** Windows has `seek_read`, which has the same effect.
   The spec assumes CTADL builds only on macOS and Linux. If Windows matters, `SharedFile` uses a
   `cfg` for each platform.
