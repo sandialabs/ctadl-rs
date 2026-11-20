@@ -38,7 +38,9 @@ pub fn diff_sarif(a: &Path, b: &Path, opts: &Options) -> Result<Report, Error> {
     diff_with(a, b, opts, Atoms::new())
 }
 
-/// [`diff_sarif`], interning into `atoms`, which may already hold strings.
+/// Compares the results of the SARIF files `a` and `b` as [`diff_sarif`] does, interning
+/// their strings into `atoms`, which may already hold some. The report does not depend on
+/// which atom each string gets.
 pub(crate) fn diff_with(
     a: &Path,
     b: &Path,
