@@ -61,9 +61,11 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 - R1. **Command.** `ctadl diff-sarif A B` compares the results of two SARIF files by
   content and prints `IDENTICAL` or the results that occur more often in A and in B, each
   with its count on both sides.
-- R2. **Exit codes.** 0 when identical, 1 when different, 2 on error (unreadable file,
-  malformed SARIF, a reference out of range, a per-run reference the design does not
-  resolve, an unknown field in a result), as `diff-index` does.
+- R2. **The exit status is the alert.** 1 exactly when the multisets of canonical results
+  differ, 0 exactly when they are equal, as `diff-index` does. Whatever it cannot
+  canonicalize fully exits 2, never 0: an unreadable file, malformed SARIF, a reference out
+  of range, a per-run reference the design does not resolve, an unknown field in a result.
+  The status does not depend on `--limit`, `--json` or how the report is printed.
 - R3. **Flags.** `--limit N` bounds the results printed per side (default 20); counts are
   always complete. `--json` writes one JSON document instead of text. `--endpoints-only`
   is R11.

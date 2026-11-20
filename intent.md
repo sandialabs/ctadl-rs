@@ -3,10 +3,12 @@
 Comparing two `ctadl query` outputs is as common as comparing two index runs,
 and every way of doing it today is wrong. `diff` and `jq` compare arrays in
 the order they were written, and compare index references
-(`logicalLocations[].index`, `artifactLocation.index`) that are numbered per
+(`logicalLocations[].index`) that are numbered per
 run. Microsoft's `sarif diff` compares counts per rule, not results: a result
 that moves is reported as no change, and reordering a file can report a new
 issue.
+
+The goal is to alert when the results are different.
 
 Ship `ctadl diff-sarif A B`, which compares the results of two ctadl SARIF files by content: references replaced by what they name,
 per-run ids dropped, order ignored where SARIF gives it no meaning (results,
