@@ -1131,7 +1131,7 @@ proof fn lemma_chain<A>(
 /// errors.
 ///
 /// The proof walks the chain of edits from `xs` to `ys`; `lemma_one_step` shows each edit
-/// preserves the SARIF's meaning.
+/// leaves the canonical form, or its absence, unchanged.
 pub proof fn theorem_canon_invariant<A>(
     oa: spec_fn(A, A) -> Ordering,
     xs: Seq<RawRunV<A>>,
