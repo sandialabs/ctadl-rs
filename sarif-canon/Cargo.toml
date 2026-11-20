@@ -10,6 +10,7 @@ vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features 
 verus_builtin = "=0.0.0-2026-11-01-0251"
 verus_builtin_macros = "=0.0.0-2026-11-01-0251"
 multiset-diff.workspace = true
+order-laws.workspace = true
 
 [lints]
 workspace = true

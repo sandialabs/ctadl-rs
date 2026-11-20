@@ -6,7 +6,9 @@ use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use crate::order::equal_means_eq;
 #[cfg(verus_keep_ghost)]
-use multiset_diff::{computes, le, sorted, total_order};
+use multiset_diff::sorted;
+#[cfg(verus_keep_ghost)]
+use order_laws::{computes, le, total_order};
 
 verus! {
 

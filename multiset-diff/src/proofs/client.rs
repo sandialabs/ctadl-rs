@@ -104,7 +104,6 @@ proof fn lemma_client_properties<'a>(a: &'a [u8], b: &'a [u8])
     assert(sorted(ord, a@));
     assert(sorted(ord, b@));
     theorem_reports_exactly_count_differences(ord, a, b);
-    theorem_no_value_twice(ord, a, b);
     assert forall|v: u8| #[trigger] count_all(ord, a@, v) == count_u8(a@, v) by {
         lemma_u8_count(a@, v);
     }
@@ -133,6 +132,7 @@ proof fn lemma_client_properties<'a>(a: &'a [u8], b: &'a [u8])
     }
     assert forall|k1: int, k2: int| 0 <= k1 < k2 < out.len() implies (#[trigger] out[k1]).0 < (
     #[trigger] out[k2]).0 by {
+        theorem_no_value_twice(ord, a, b);
         assert(out[k1].0 == *all[k1].row);
         assert(out[k2].0 == *all[k2].row);
         assert(lt(ord, *all[k1].row, *all[k2].row));

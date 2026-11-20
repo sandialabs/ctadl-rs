@@ -9,7 +9,9 @@ use std::cmp::Ordering;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
-use multiset_diff::{computes, sorted, total_order};
+use multiset_diff::sorted;
+#[cfg(verus_keep_ghost)]
+use order_laws::{computes, total_order};
 
 use crate::canon::canon_runs;
 #[cfg(verus_keep_ghost)]

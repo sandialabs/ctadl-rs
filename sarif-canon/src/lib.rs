@@ -6,18 +6,9 @@
 //! references by what they name, drop per-run numbers, and sort every collection whose order
 //! SARIF gives no meaning, keeping the order of a thread flow's steps.
 //!
-//! The code is verified with Verus, for inputs of any size, against `multiset-diff`'s specs
-//! and theorems, so verifying it needs that crate's exported specs:
-//!
-//! ```text
-//! verus --crate-type=lib --edition=2024 --crate-name multiset_diff \
-//!   --export $T/md.vir --compile -o $T/libmultiset_diff.rlib multiset-diff/src/lib.rs
-//! verus --crate-type=lib --edition=2024 --crate-name sarif_canon \
-//!   --import multiset_diff=$T/md.vir --extern multiset_diff=$T/libmultiset_diff.rlib \
-//!   sarif-canon/src/lib.rs
-//! ```
-//!
-//! or `nix build .#checks.<system>.verus`. A plain `cargo build` erases the specs and proofs,
+//! The code is verified with Verus, for inputs of any size, against the specs and theorems of
+//! `order-laws` and `multiset-diff`, so verifying it imports those crates' exported specs, as
+//! `nix build .#checks.<system>.verus` does. A plain `cargo build` erases the specs and proofs,
 //! leaving the code.
 //!
 //! What is proved:
@@ -48,7 +39,10 @@ use vstd::prelude::*;
 // The specs exist only when Verus compiles the crate.
 #[cfg(verus_keep_ghost)]
 #[allow(unused_imports)]
-use multiset_diff::{computes, eqv, le, lt, sorted, total_order};
+use multiset_diff::sorted;
+#[cfg(verus_keep_ghost)]
+#[allow(unused_imports)]
+use order_laws::{computes, eqv, le, lt, total_order};
 
 pub mod canon;
 pub mod order;

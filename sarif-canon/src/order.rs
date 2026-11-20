@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
-use multiset_diff::{computes, eqv, le, lt, total_order};
+use order_laws::{computes, eqv, le, lt, total_order};
 
 verus! {
 
