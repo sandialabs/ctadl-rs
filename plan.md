@@ -14,14 +14,18 @@ plan's numbers (R*, D*, P-*, phase numbers).
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
 | 1 | 1, 2 | 1 is the Verus plumbing and the `sarif-canon` skeleton with its types; 2 moves the report's sample code into a shared crate. Independent code. |
-| 2 | 3, 4, 5 | 3 is the order on canonical types, 4 the sort and the other primitives, 5 the parser. All need only 1's types; disjoint files. |
-| 3 | 6a | `canon_run` needs 3's order and 4's primitives |
-| 4 | 6b, 7 | 6b proves the theorems about 6a; 7, the driver and report, needs 2's shared code, 5's parser and 6a's `canon_run`. Disjoint files. |
-| 5 | 8, 9 | 8 wires the subcommand; 9 adds the metamorphic tests on real SARIF. Both call 7's API. |
-| 6 | 10 | docs and comments close, after 6b's proofs and 8, 9 |
+| 2 | 1b, 5 | 1b states and smoke-tests every verified property; 5 is the parser. Both need only 1's types; disjoint files. |
+| 3 | 3, 4 | 3 proves the order and writes `cmp_*`, 4 the sort and the other primitives, against 1b's statements; disjoint files |
+| 4 | 6a | `canon_run` needs 3's order and 4's primitives |
+| 5 | 6b, 7 | 6b proves the theorems about 6a; 7, the driver and report, needs 2's shared code, 5's parser and 6a's `canon_run`. Disjoint files. |
+| 6 | 8, 9 | 8 wires the subcommand; 9 adds the metamorphic tests on real SARIF. Both call 7's API. |
+| 7 | 10 | docs and comments close, after 6b's proofs and 8, 9 |
 
-The verified core is built bottom-up (types, then order and primitives, then their
-composition) so each Verus phase proves one layer against stubs that already exist.
+Every verified property is stated, and smoke-tested for vacuity and for simple passes and
+fails, in its own phase (1b) before any of it is proved or implemented. The phases that
+prove (3, 4, 6a, 6b) fill in bodies and do not change those statements, so a hard proof
+cannot quietly weaken what is proved. The proofs are built bottom-up: order and primitives,
+then their composition.
 `canon_run`'s code (6a) is split from the theorems about it (6b), so the driver, CLI and
 real-SARIF tests (7-9) do not wait on the hardest proofs; 10 closes only after 6b. The
 parser (5) is written against the raw types alone, so it runs beside the proofs. The report
@@ -35,10 +39,10 @@ Shared files between parallel phases:
   `diff-report`, on different lines of `members`, `default-members` and
   `[workspace.dependencies]`. Phase 1 commits first; Phase 2 rebases onto it and lets cargo
   regenerate `Cargo.lock`.
-- `sarif-canon/src/lib.rs` (wave 2): owned by Phase 1, which declares every module. Phases 3
-  and 4 edit only their own module files. If either needs a re-export in `lib.rs`, it adds
-  one line and the controller merges.
-- `ctadl-ascent/tests/integration/main.rs` (wave 5): owned by Phase 9 (adds
+- `sarif-canon/src/lib.rs`: Phase 1 declares the modules and Phase 1b adds `theorems` and
+  `smoke`. Phases 3 and 4 (wave 3) edit only their own module files. If either needs a
+  re-export in `lib.rs`, it adds one line and the controller merges.
+- `ctadl-ascent/tests/integration/main.rs` (wave 6): owned by Phase 9 (adds
   `mod diff_sarif;`). Phase 8 adds its tests to `cli.rs`, which is already listed.
 
 Test commands used throughout (from the dev shell, `use flake`):
@@ -143,6 +147,85 @@ changes; nothing calls the new crate yet.
     cargo clippy --workspace -- -Dwarnings
     nix build .#checks.aarch64-darwin.verus
 
+## Phase 1b: statements of the verified properties (R13, R14, D3, D4)
+
+Depends on: 1.
+
+**What.** Write down every property the core is to prove, as Verus statements, before any of
+it is proved or implemented, and smoke-test the statements for vacuity and for simple
+passes and fails. The statements are the specification Phases 3, 4, 6a and 6b serve; those
+phases fill in bodies and do not change what this phase states. No executable behavior: exec
+functions are stubs.
+
+A statement here is: a `spec fn` that defines what something means (an order, a canonical
+form, a renumbering, a permutation at a P-bag position); an exec function's signature with
+its `requires` and `ensures`; or a `proof fn`'s signature with its `requires` and `ensures`.
+Exec stubs are `#[verifier::external_body]` with `unimplemented!()` bodies; lemma and theorem
+bodies are `admit()`. Both are removed by the phases that fill them, and Acceptance checks
+that none are left.
+
+**Files.**
+- `sarif-canon/src/order.rs`:
+  - `spec fn equal_means_eq<T>(ord) -> bool`: `ord(x, y) == Equal <==> x == y` for all `x`,
+    `y`;
+  - one `spec fn ord_*` per canonical type, in terms of an atom order `oa`: lexicographic
+    over fields in a fixed field order, `None` before `Some`, sequences lexicographic with a
+    proper prefix first;
+  - one exec `fn cmp_*` per canonical type, `requires computes(cmp, oa)`,
+    `ensures o == ord_*(oa)(*x, *y)`;
+  - one lemma per type: `total_order(oa) && equal_means_eq(oa) ==>
+    total_order(ord_*(oa)) && equal_means_eq(ord_*(oa))` (P-ord).
+- `sarif-canon/src/sort.rs`: `sort_by`'s contract (`sorted(ord, r@)` and
+  `r@.to_multiset() == v@.to_multiset()`, given `total_order(ord)` and
+  `computes(cmp, ord)`); `lemma_sorted_unique` (two sequences sorted by an `ord` with
+  `total_order` and `equal_means_eq`, with equal multisets, are equal).
+- `sarif-canon/src/prims.rs`: the contracts of `resolve`, `canon_bag`, `canon_seq`,
+  `endpoints` and `check_increasing`, each ensuring its result equals a `spec fn` of its
+  inputs (`spec_canon_bag`: the unique sorted permutation of `xs.map(f)`; `spec_canon_seq`;
+  `spec_endpoints`; `spec_increasing`); the P-ref, P-bag, P-seq and P-end lemmas, with
+  `spec fn is_permutation(pi: Seq<int>, n: nat)` and the renumbered table `t∘π⁻¹`.
+- `sarif-canon/src/canon.rs`: `spec fn spec_canon_result` and `spec_canon_runs`, written out
+  row by row from D4's table (this is the definition of the canonical form, including what
+  `--endpoints-only` keeps and when each `Error` arises); the contracts of `canon_run` and
+  `canon_runs`: `Ok(r)` exactly when the spec form is defined, then `r@ ==
+  spec_canon_runs(..)` and `sorted(ord_result(oa), r@)`.
+- `sarif-canon/src/theorems.rs` (new), `#[cfg(verus_keep_ghost)]`: `spec fn renumbered(ra,
+  rb)` (a table permuted and every reference into it rewritten) and `spec fn
+  permuted_bags(ra, rb)` (any P-bag collection of D4's table permuted, at any depth);
+  `theorem_canon_invariant` (their reflexive-transitive closure leaves `spec_canon_runs`
+  unchanged) and `theorem_diff_empty_iff_equal` (D4's end-to-end theorem, stated with
+  `multiset_diff::diff_from` and plain `==` counts).
+- `sarif-canon/src/smoke.rs` (new), `#[cfg(verus_keep_ghost)]`: the smoke tests below.
+- `sarif-canon/src/lib.rs` — `#[cfg(verus_keep_ghost)] mod theorems;` and
+  `#[cfg(verus_keep_ghost)] mod smoke;`.
+
+**Tests.** In `smoke.rs`, all verified by Verus, none using an admitted lemma or theorem (they
+reason about the `spec fn`s directly):
+- Not vacuous: for every lemma and theorem, a proof that its `requires` hold on a concrete
+  instance: `u32` under its usual order satisfies `total_order` and `equal_means_eq`; a
+  two-entry `logical` table with the swap permutation satisfies `renumbered`; a run with two
+  results and its results reversed satisfies `permuted_bags`; a run with one well-formed
+  C0001 result has a defined canonical form.
+- Passes: `spec_canon_bag` of `[2, 1]` is `[1, 2]`; of `[1, 1]` is `[1, 1]` (duplicates
+  kept); `spec_endpoints` of `[a, b, c]` equals that of `[a, d, c]`; renumbering the
+  two-entry table leaves `spec_canon_result` unchanged.
+- Fails, as proved negations of a too-strong statement: `spec_canon_seq` is not invariant
+  under swapping two differing steps; removing one of two equal results changes
+  `spec_canon_runs`; with `--endpoints-only`, two results with equal endpoints do not
+  collapse into one; an out-of-range index has no canonical form; `ord_result` is not
+  `Equal` on two results that differ only in one region line.
+- Plain cargo: `cargo test -p sarif-canon` still builds (the stubs compile, nothing calls
+  them).
+
+**Review.** Before wave 3 starts, the user reviews this phase's statements against D4. A
+statement changes after this only by the same route: the user agrees, and the smoke tests
+are updated and pass.
+
+**Gate.**
+
+    cargo test -p sarif-canon
+    nix build .#checks.aarch64-darwin.verus
+
 ## Phase 2: shared report pieces in `diff-report` (D1, D5)
 
 Depends on: 0.
@@ -193,31 +276,27 @@ without linking `ctadl-index`. `diff-index`'s text and JSON output do not change
 
 ## Phase 3: the order on canonical types (R14, D3, P-ord)
 
-Depends on: 1.
+Depends on: 1b.
 
-**What.** `cmp_canon` for every canonical type, executable and verified: lexicographic over
-fields, over `Option` (`None` first) and over sequences, built from an atom `cmp` that
-computes a total order `oa` in which `Equal` means `==`. Proves each is a total order
-(multiset-diff's `total_order`) and returns `Equal` exactly when its arguments are equal.
-No callers yet.
+**What.** Prove Phase 1b's order lemmas and write the `cmp_*` bodies. No callers yet.
+
+**Statements are fixed.** This phase does not change any statement Phase 1b wrote (a `spec
+fn`, or a signature, `requires` or `ensures`). It may add helper `spec fn`s and lemmas,
+`proof { }` blocks, loop invariants, and replace stub bodies. If a statement turns out false
+or unprovable, stop and report it; changing it is the user's decision (Phase 1b's Review).
+The controller checks the diff against Phase 1b's commit for this.
 
 **Files.**
-- `sarif-canon/src/order.rs` — owned by this phase:
-  - generic lemmas, stated with `multiset_diff`'s `total_order`, `eqv`, `le`: lex order on
-    `Seq<T>` is a total order and is `Equal` iff `==` when the element order is
-    (port `name-by-facts/src/order.rs:48-229` and `name-by-facts/src/lib.rs:795-822`,
-    which are stated over name-by-facts's own copies of these definitions,
-    `name-by-facts/src/order.rs:9-35`); the same for pairs/records (product order) and
-    `Option`;
-  - one `spec fn ord_*` and one exec `fn cmp_*` per canonical type, with
-    `ensures o == ord_*(*x, *y)`, and a lemma per type: `total_order(ord_*)` and
-    `ord_*(x, y) == Equal <==> x == y`;
-  - integers in regions and addresses (`u64`/`i64`) compared by their own order.
-  `name-by-facts` is not changed.
+- `sarif-canon/src/order.rs`:
+  - helper lemmas, stated with `multiset_diff`'s `total_order`, `eqv`, `le`: lexicographic
+    order on `Seq<T>`, product order and `Option` order preserve `total_order` and
+    `equal_means_eq`. Port `name-by-facts/src/order.rs:48-229` and
+    `name-by-facts/src/lib.rs:795-822`, which are stated over name-by-facts's own copies of
+    these definitions (`name-by-facts/src/order.rs:9-35`). `name-by-facts` is not changed;
+  - bodies of every `cmp_*` and of every per-type lemma, replacing the stubs and `admit()`s.
 
 **Tests.**
-- Verus: the lemmas above, for the top type `CanonResult` in particular:
-  `lemma_result_order_total` and `lemma_result_order_equal_iff_eq`.
+- Verus: Phase 1b's order lemmas, now with bodies; the smoke tests still pass.
 - New, plain cargo, `sarif-canon/src/order.rs` `#[cfg(test)]`: `cmp_result` on hand-built
   `CanonResult<u32>`s agrees with a reference `Ord` derived on a mirror type, over a few
   hundred generated pairs (a deterministic generator, no new dependency): antisymmetric,
@@ -227,37 +306,35 @@ No callers yet.
 
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
+    grep -nE 'admit|external_body' sarif-canon/src/order.rs   # empty
 
 ## Phase 4: verified primitives (R13, D3, P-ref, P-bag, P-seq, P-end)
 
-Depends on: 1.
+Depends on: 1b.
 
-**What.** The primitives of D3, generic over any element type and any `cmp`/`ord` with
-`total_order(ord)` and `ord(x, y) == Equal <==> x == y` as preconditions (so this phase
-does not wait for Phase 3's concrete orders). No callers yet.
+**What.** Write the bodies of Phase 1b's sort and primitives and prove their contracts and
+lemmas. Generic over any element order with `total_order` and `equal_means_eq`, so this phase
+does not wait for Phase 3's concrete orders. No callers yet.
+
+**Statements are fixed.** This phase does not change any statement Phase 1b wrote (a `spec
+fn`, or a signature, `requires` or `ensures`). It may add helper `spec fn`s and lemmas,
+`proof { }` blocks, loop invariants, and replace stub bodies. If a statement turns out false
+or unprovable, stop and report it; changing it is the user's decision (Phase 1b's Review).
+The controller checks the diff against Phase 1b's commit for this.
 
 **Files.**
-- `sarif-canon/src/sort.rs` — a verified merge sort `sort_by(v: Vec<T>, cmp, Ghost(ord)) ->
-  Vec<T>`, ensuring `sorted(ord, r@)` and `r@.to_multiset() == v@.to_multiset()`. Not
-  `std`'s sort. Plus `lemma_sorted_unique`: two sequences sorted by such an `ord` with equal
-  multisets are equal (what turns P-bag's permutation into equality of outputs).
-- `sarif-canon/src/prims.rs`:
-  - `resolve(table, i) -> Result<T, Error>` with P-ref (renumbering by a permutation `π`
-    and `π⁻¹`, and errs exactly when `i >= table.len()`);
-  - `canon_bag(xs, f) -> Vec<C>`: `map` then `sort_by`; P-bag, including the corollary for
-    any permutation `ys` of `xs`;
-  - `canon_seq(xs, f) -> Vec<C>`: P-seq;
-  - `endpoints(xs, f) -> Result<(C, C), Error>`: P-end; errs exactly on an empty `xs`;
-  - `check_increasing(orders: &[Option<i64>]) -> Result<(), Error>`: `Ok` exactly when the
-    `Some` values are strictly increasing along the array. Absent values are allowed; ctadl
-    always writes them (F:2861). The spec does not say what to do with absent values; this
-    is the least strict choice that cannot make two different flows compare equal, since
-    the order compared is the array order.
-  `f` is an exec closure with `f.requires` for all inputs and its result named by a spec
-  function, as `computes` does for `cmp`.
+- `sarif-canon/src/sort.rs` — a merge sort for `sort_by` (not `std`'s sort: its output is not
+  specified to Verus), and the proof of `lemma_sorted_unique`.
+- `sarif-canon/src/prims.rs` — bodies of `resolve`, `canon_bag` (`map`, then `sort_by`),
+  `canon_seq`, `endpoints` and `check_increasing`, and the proofs of P-ref, P-bag, P-seq
+  and P-end. `check_increasing` accepts absent `executionOrder` values and requires the
+  present ones to increase strictly along the array; ctadl always writes them (F:2861). The
+  spec does not say what to do with absent values; this is the least strict choice that
+  cannot make two different flows compare equal, since the order compared is the array
+  order. Phase 1b states `spec_increasing` this way.
 
 **Tests.**
-- Verus: one lemma per property above.
+- Verus: Phase 1b's lemmas for this phase, now with bodies; the smoke tests still pass.
 - New, plain cargo, `sarif-canon/src/prims.rs` `#[cfg(test)]`: `sort_by` against
   `slice::sort` on generated `u32` vectors with duplicates (lengths 0..=64);
   `check_increasing` on `[Some(1), Some(2)]` (ok), `[Some(2), Some(2)]` (err), `[]` (ok);
@@ -267,6 +344,7 @@ does not wait for Phase 3's concrete orders). No callers yet.
 
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
+    grep -nE 'admit|external_body' sarif-canon/src/sort.rs sarif-canon/src/prims.rs   # empty
 
 ## Phase 5: the SARIF parser (R15, D2)
 
@@ -322,28 +400,28 @@ strings:
 
 Depends on: 3, 4.
 
-**What.** Compose the primitives into `canon_run`, element by element as D4's table says. The
-code verifies against the primitives' contracts and ensures its output is sorted, which is
-what `multiset_diff` needs. The invariance and end-to-end theorems are Phase 6b, so the
-library and CLI (Phases 7-9) do not wait on them. No callers yet.
+**What.** Write `canon_run` and `canon_runs`, composing the primitives element by element as
+D4's table says, and prove their Phase 1b contracts (the result is the spec canonical form,
+sorted by `ord_result`). The invariance and end-to-end theorems are Phase 6b, so the library
+and CLI (Phases 7-9) do not wait on them.
+
+**Statements are fixed.** This phase does not change any statement Phase 1b wrote (a `spec
+fn`, or a signature, `requires` or `ensures`). It may add helper `spec fn`s and lemmas,
+`proof { }` blocks, loop invariants, and replace stub bodies. If a statement turns out false
+or unprovable, stop and report it; changing it is the user's decision (Phase 1b's Review).
+The controller checks the diff against Phase 1b's commit for this.
 
 **Files.**
-- `sarif-canon/src/canon.rs` — owned by this phase:
-  - `canon_run(run: &RawRun<A>, endpoints_rule: Option<A>, cmp, Ghost(oa)) ->
-    Result<Vec<CanonResult<A>>, Error>`, ensuring `sorted(ord_result, r@)` (Phase 3's
-    `ord_result`, from `canon_bag`'s ensures). `endpoints_rule` is the atom of `C0001` when
-    `--endpoints-only` is set; a result whose `rule` equals it drops its locations,
-    `taintVertex` and `taintVertices`, and keeps the `endpoints` of each thread flow (R11).
-    Logical references resolve to the entry's `fqn`. `executionOrder` goes through
-    `check_increasing` and is then dropped.
-  - `canon_runs(runs: &[RawRun<A>], ..)`: all runs' results pooled, then one `canon_bag`
-    (the `sarifLog.runs` row), with the same ensures.
-  - A `spec fn` for each, naming its result in terms of the primitives' spec functions, for
-    Phase 6b to reason about.
-  No `assume`, `admit` or `external_body`: everything this phase ensures is proved here.
+- `sarif-canon/src/canon.rs` — bodies of `canon_run(run: &RawRun<A>, endpoints_rule:
+  Option<A>, cmp, Ghost(oa))` and `canon_runs(runs: &[RawRun<A>], ..)` (all runs' results
+  pooled, then one `canon_bag`). `endpoints_rule` is the atom of `C0001` when
+  `--endpoints-only` is set; a result whose `rule` equals it drops its locations,
+  `taintVertex` and `taintVertices`, and keeps the `endpoints` of each thread flow (R11).
+  Logical references resolve to the entry's `fqn`. `executionOrder` goes through
+  `check_increasing` and is then dropped.
 
 **Tests.**
-- Verus: `canon_run` and `canon_runs` verify, including the sortedness ensures.
+- Verus: the contracts of `canon_run` and `canon_runs`; the smoke tests still pass.
 - New, plain cargo, `sarif-canon/src/canon.rs` `#[cfg(test)]`, on hand-built `RawRun<u32>`s:
   `renumbered_table_same`; `shuffled_results_same`; `swapped_steps_differ`;
   `endpoints_only_ignores_interior` and `endpoints_only_counts_twice` (two flows with equal
@@ -354,25 +432,30 @@ library and CLI (Phases 7-9) do not wait on them. No callers yet.
 
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
+    grep -nE 'admit|external_body' sarif-canon/src/canon.rs   # empty
 
 ## Phase 6b: the invariance and end-to-end theorems (R13, R14, D4)
 
 Depends on: 6a.
 
-**What.** Proofs only, about 6a's spec functions; no executable code changes.
+**What.** Prove Phase 1b's `theorem_canon_invariant` and `theorem_diff_empty_iff_equal`.
+Proofs only; no executable code changes.
+
+**Statements are fixed.** This phase does not change any statement Phase 1b wrote (a `spec
+fn`, or a signature, `requires` or `ensures`). It may add helper `spec fn`s and lemmas,
+`proof { }` blocks, loop invariants, and replace stub bodies. If a statement turns out false
+or unprovable, stop and report it; changing it is the user's decision (Phase 1b's Review).
+The controller checks the diff against Phase 1b's commit for this.
 
 **Files.**
-- `sarif-canon/src/theorems.rs` (new), `#[cfg(verus_keep_ghost)]`:
-  - `theorem_canon_invariant`: renumbering `logical` and every index into it, and permuting
-    any P-bag collection, at any depth, leaves `canon_runs` unchanged (P-ref and P-bag
-    lifted through every row of D4's table);
-  - `theorem_diff_empty_iff_equal`: the end-to-end theorem as D4 states it, using
-    `multiset_diff::proofs::theorem_reports_exactly_count_differences` and Phase 3's
-    `Equal <==> ==` lemma to restate counts with `==`.
-- `sarif-canon/src/lib.rs` — one line, `#[cfg(verus_keep_ghost)] mod theorems;`, and the
-  crate doc's "what is proved" names the two theorems.
+- `sarif-canon/src/theorems.rs` — the two proofs: P-ref and P-bag lifted through every row
+  of D4's table for the first; for the second,
+  `multiset_diff::proofs::theorem_reports_exactly_count_differences` with Phase 3's
+  `equal_means_eq` lemma to restate counts with `==`. Helper lemmas go in this file.
+- `sarif-canon/src/lib.rs` — the crate doc's "what is proved" names the two theorems.
 
-**Tests.** Verus: the two theorems. Existing `sarif-canon` tests unchanged.
+**Tests.** Verus: the two theorems; the smoke tests still pass. Existing `sarif-canon` tests
+unchanged.
 
 **Gate.**
 
@@ -535,10 +618,11 @@ cite spec or plan numbers.
 | --- | --- | --- |
 | `multiset-diff/src/lib.rs` | `pub mod proofs`; doc | 1 |
 | `sarif-canon/Cargo.toml`, `src/lib.rs`, `src/types.rs` | new crate, types | 1 |
-| `sarif-canon/src/order.rs` | order and its proofs | 3 (stub in 1) |
-| `sarif-canon/src/sort.rs`, `src/prims.rs` | merge sort, primitives, proofs | 4 (stubs in 1) |
-| `sarif-canon/src/canon.rs` | `canon_run` | 6a (stub in 1) |
-| `sarif-canon/src/theorems.rs`, `src/lib.rs` | invariance and end-to-end theorems; `mod theorems;` | 6b |
+| `sarif-canon/src/order.rs` | order: statements; proofs and `cmp_*` | 1b; 3 (stub in 1) |
+| `sarif-canon/src/sort.rs`, `src/prims.rs` | merge sort, primitives: statements; code and proofs | 1b; 4 (stubs in 1) |
+| `sarif-canon/src/canon.rs` | `canon_run`: spec canonical form and contract; code | 1b; 6a (stub in 1) |
+| `sarif-canon/src/theorems.rs` | invariance and end-to-end theorems: statements; proofs | 1b; 6b |
+| `sarif-canon/src/smoke.rs`, `src/lib.rs` | smoke tests of the statements; `mod theorems; mod smoke;`; crate doc | 1b; 6b |
 | `flake.nix` | cross-crate `verus` check; comments | 1, 10 |
 | `Cargo.toml` | workspace entries; comment at :110 | 1, 2, 7 |
 | `diff-report/*` | new crate: `Sample`, `Samples`, `Smallest`, `write_samples` | 2 |
