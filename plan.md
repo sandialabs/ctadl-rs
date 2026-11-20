@@ -636,6 +636,28 @@ Adds the dependency to `ctadl-ascent` but no subcommand yet.
     cargo build -p ctadl-ascent
     cargo clippy --workspace -- -Dwarnings
 
+**As built.**
+- `sarif-canon/src/u32_atoms.rs` (verified) gives unverified callers `canon_runs_u32` and
+  `cmp_result_u32`, which call the generic forms with `u32`'s order and a proved `computes`
+  fact, and ensure the output is sorted by exactly the order `cmp_result_u32` computes. So
+  the driver's `multiset_diff(&a, &b, cmp_result_u32)` meets `multiset_diff`'s sortedness
+  precondition by proof, not by convention, and no ghost value is made up outside Verus.
+- `ENDPOINTS_RULE = "C0001.tainted-path"`, looked up with `get_id` after both files are
+  read; `None` if neither has it.
+- `Error { file, kind: ErrorKind::{Parse(ParseError), Canon(CanonError)} }`; its message
+  starts with the file.
+- `Report` also has `results_a`/`results_b`, printed as `results: A n, B m`; the flag prints
+  as `flag: --endpoints-only`. `results_differ()` counts shown and not shown, so `--limit`
+  never changes it.
+- A printed result uses SARIF's key names; absent fields and empty collections are omitted,
+  a present empty property is kept; an endpoints flow prints `{"endpoints":[first,last]}`;
+  `taintVertices`/`taintedFormals` print as `[key, [values]]` pairs.
+- Samples go through `diff_report::Smallest` with a comparator that renders both sides, so a
+  result may be rendered more than once (CPU), keeping memory at `2 * limit` references.
+  `Smallest` holds references; rendering once would mean changing `diff-report`.
+- Extra tests: `reordered_and_renumbered_is_identical`, `small_diff_text` (exact text),
+  `endpoints_only`, and `errors_are_errors` covering an empty flow on either side.
+
 ## Phase 8: the `ctadl diff-sarif` subcommand (R1-R3)
 
 Depends on: 7.

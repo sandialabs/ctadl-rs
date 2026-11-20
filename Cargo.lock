@@ -1085,6 +1085,7 @@ dependencies = [
  "ctadl-jvm",
  "ctadl-lua",
  "ctadl-pcode",
+ "ctadl-sarif-diff",
  "datafusion",
  "derive_builder",
  "dex-reader",
@@ -1407,6 +1408,8 @@ dependencies = [
 name = "ctadl-sarif-diff"
 version = "0.1.7"
 dependencies = [
+ "diff-report",
+ "multiset-diff",
  "rustc-hash",
  "sarif-canon",
  "serde",

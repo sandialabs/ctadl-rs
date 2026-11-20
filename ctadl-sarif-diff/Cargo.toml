@@ -4,6 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+diff-report.workspace = true
+multiset-diff.workspace = true
 rustc-hash = "2"
 sarif-canon.workspace = true
 # The crate `ctadl query` writes its SARIF with, so reader and writer share one schema.

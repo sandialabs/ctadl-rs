@@ -41,6 +41,7 @@ pub mod order;
 pub mod prims;
 pub mod sort;
 pub mod types;
+pub mod u32_atoms;
 
 // Statements and proofs only, which a plain build erases.
 #[cfg(verus_keep_ghost)]
