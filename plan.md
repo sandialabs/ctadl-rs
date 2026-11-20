@@ -702,6 +702,16 @@ Depends on: 7.
     cargo test -p ctadl-ascent --test integration diff_sarif
     cargo clippy --workspace -- -Dwarnings
 
+**As built.**
+- `run_diff_sarif` takes any argument list, so the flag test can pass `--limit 0` and
+  `--json`. The SARIF fixture is `cli::query` on the indexed `xfer.c` project, once per test
+  binary in a `OnceLock`; the edited copy drops the first result with `serde_json`.
+- `diff_sarif_malformed_exit_2` also covers a bad A side and a missing file;
+  `diff_sarif_exit_independent_of_limit_and_json` checks every combination of the two flags
+  on an identical and a differing pair.
+- The help text states what is compared and ignored and the exit codes, as `diff-index`'s
+  does.
+
 ## Phase 9: metamorphic tests on real SARIF (R15)
 
 Depends on: 7.
