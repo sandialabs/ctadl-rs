@@ -26,8 +26,13 @@
 //! sorted permutation is unique (`sort`); and the primitives meet their contracts and are
 //! unchanged by renumbering a table or permuting a bag (`prims`); and `canon_run` and
 //! `canon_runs` return exactly the canonical form `spec_canon_runs` defines, error included,
-//! sorted by the order on results (`canon`). The end-to-end `theorems` are stated, checked by
-//! `smoke` against concrete runs, with their proofs admitted.
+//! sorted by the order on results (`canon`). End to end (`theorems`):
+//! `theorem_canon_invariant`, that any number of steps each permuting unordered collections
+//! or renumbering a run's `logicalLocations` with every reference into it leaves the canonical
+//! form, or its absence, unchanged; and `theorem_diff_empty_iff_equal`, that on sorted
+//! canonical results `multiset_diff` reports exactly the results whose numbers of occurrences
+//! differ, so nothing exactly when the two multisets are equal. `smoke` checks the statements
+//! against concrete runs. Every proof is complete.
 
 use vstd::prelude::*;
 

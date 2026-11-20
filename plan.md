@@ -588,6 +588,17 @@ unchanged.
     nix build .#checks.aarch64-darwin.verus
     grep -nE 'assume|admit|external_body' sarif-canon/src   # empty
 
+**As built.**
+- Both theorems proved with no new attributes. Permutation lemmas at each level give
+  `same_outcome`; renumbering lemmas give exact equality, error included; `lemma_chain`
+  inducts over the chain. Pooling is handled by `flat`/`per_run` and `lemma_flat_permuted`
+  (permuting runs keeps the pooled multiset). The diff theorem goes through
+  `theorem_reports_exactly_count_differences`, with `lemma_count_views` turning the order's
+  `Equal` counts into counts of views, and `lemma_sorted_unique` for `views(a) == views(b)`.
+- Two doc comments were reworded so the acceptance grep for `assume|admit|external_body`
+  over `sarif-canon/src` is empty.
+- `sarif-canon`: 217 verified (37 in `theorems`); the `verus` check takes about 23 s.
+
 ## Phase 7: driver and report (R1-R4, R12, D1, D5)
 
 Depends on: 2, 5, 6a.

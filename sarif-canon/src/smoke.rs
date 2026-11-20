@@ -1,4 +1,4 @@
-//! Checks of the statements, proved from the `spec fn`s alone (no admitted lemma, no stub):
+//! Checks of the statements, proved from the `spec fn`s alone (no unproved lemma, no stub):
 //! that each lemma's and theorem's `requires` can hold, that simple cases come out as they
 //! should, and that statements too strong to be true are false.
 
