@@ -9,6 +9,7 @@ edition = "2024"
 vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features = ["std"] }
 verus_builtin = "=0.0.0-2026-11-01-0251"
 verus_builtin_macros = "=0.0.0-2026-11-01-0251"
+order-laws.workspace = true
 
 [lints]
 workspace = true
