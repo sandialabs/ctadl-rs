@@ -79,7 +79,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
   are not compared.
 - R6. **Message text is ignored**, on results and on thread-flow steps.
 - R7. **References by content.** A result is compared by what its references name, not by
-  their numbers: renumbering `run.logicalLocations` (or `run.artifacts`), with every
+  their numbers: renumbering `run.logicalLocations`, with every
   reference updated to match, reports nothing.
 - R8. **No per-run numbers.** Canonical results contain no table index, `executionOrder`,
   instruction, function or span id, and no `uriBaseId` value.
@@ -160,7 +160,8 @@ unknown field fails the parse (R13). Run-level structs ignore unknown fields. It
   location; the formal and access path stay, since they tell apart two endpoints on one
   variable (F:3322-3328);
 - rejects (exit 2) a reference D4 does not resolve: `ruleIndex` without `ruleId`,
-  `logicalLocation.parentIndex`, `threadFlowLocation.index`, `result.rule.index`;
+  `logicalLocation.parentIndex`, `threadFlowLocation.index`, `result.rule.index`,
+  `artifactLocation.index`;
 - rejects a property key the table does not list.
 
 The parser holds no ordering, resolution or dropping logic beyond discarding a field, so
@@ -174,7 +175,7 @@ which `Equal` means `==` (`u32::cmp` in practice), stated with `multiset-diff`'s
 `total_order` and `computes` (`multiset-diff/src/lib.rs:55-67`).
 
 - **Raw types** mirror the SARIF the parser reads: `RawRun { logical: Vec<RawLogical>,
-  artifacts: Vec<RawArtifactLoc>, results: Vec<RawResult> }`, with references as `usize`.
+  results: Vec<RawResult> }`, with references as `usize`.
 - **Canonical types** have no index, id or order-number field at all, so R8 holds by
   construction. Unordered collections are `Vec`s the core keeps sorted.
 - **Primitives**, each verified once and used at every element:
@@ -218,7 +219,7 @@ Properties named here:
 | `sarifLog.runs` | Results of all runs pooled; each run's references resolved against its own tables. | P-bag (pooling is a bag) |
 | `run.results` | `canon_bag` of canonical results: the multiset compared. | P-bag; output sorted, discharging `multiset_diff`'s `sorted` precondition (R15) |
 | `run.logicalLocations` | Not compared itself; the table references resolve through. | P-ref |
-| `run.artifacts` (not emitted today) | Not compared itself; resolves `artifactLocation.index`. | P-ref |
+| `run.artifacts` (not emitted) | Ignored, as run-level data. | P-drop |
 | `run.tool`, `invocations`, `originalUriBaseIds`, `properties`, notifications | Dropped. | P-drop |
 | `result.ruleId` | Atom. `ruleIndex` dropped when `ruleId` is present, rejected otherwise. | P-drop |
 | `result.kind`, `result.level` | Atoms, with SARIF's defaults filled in when absent (`fail`, `warning`), so absent and default compare equal. | none (total function on atoms) |
@@ -233,7 +234,7 @@ Properties named here:
 | `location` | Record of optional canonical physical location and `canon_bag` of logical locations. `location.message` dropped. | P-bag |
 | `logicalLocations[]` reference (`index`) | Resolved to the entry's `fullyQualifiedName` (else `name`) atom. `kind` and `name` are dropped: the table entry for a name is whichever use came first (F:2309-2322), so they can change under reordering. | P-ref |
 | Inline `logicalLocation` (no index) | Its `fullyQualifiedName` (else `name`) atom. | none |
-| `physicalLocation.artifactLocation` | `(uriBaseId name, uri)` atoms; the base's value is not consulted. With `index`, resolved through `run.artifacts`; with both `uri` and `index`, they must agree (exit 2 otherwise). | P-ref |
+| `physicalLocation.artifactLocation` | `(uriBaseId name, uri)` atoms; the base's value is not consulted. An `index` is rejected (exit 2), like the other references ctadl does not emit. | none |
 | `physicalLocation.region` | `startLine`, `startColumn`, `endLine`, `endColumn`, `byteOffset`, `byteLength`, each optional, as numbers. `region.message`/`snippet` dropped. | none |
 | `physicalLocation.address` | `absoluteAddress`, `relativeAddress`, `kind`. | none |
 | `properties.taintLabels` | `canon_bag` of atoms. | P-bag |
