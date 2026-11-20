@@ -103,7 +103,7 @@ pub enum Command {
     /// unreadable file, malformed SARIF, or a result with no canonical form (a logical location
     /// index out of range, a thread flow with no steps, or `executionOrder` values that do not
     /// increase). Neither `--limit` nor `--json` changes the exit code.
-    DiffSarif(DiffSarifArgs),
+    DiffQuery(DiffQueryArgs),
 
     /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
     ///
@@ -141,7 +141,7 @@ pub struct DiffIndexArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct DiffSarifArgs {
+pub struct DiffQueryArgs {
     /// The first SARIF file.
     #[arg(value_name = "A")]
     pub a: PathBuf,
@@ -803,7 +803,7 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
         Command::DiffIndex(args) => std::process::exit(diff_index(args)),
-        Command::DiffSarif(args) => std::process::exit(diff_sarif(args)),
+        Command::DiffQuery(args) => std::process::exit(diff_query(args)),
         Command::Report(args) => {
             report_project(args)
                 .with_context(|| format!("running 'report' project: {:?}", args.name))?;
@@ -1005,16 +1005,16 @@ fn diff_index(args: &DiffIndexArgs) -> i32 {
     if report.identical() { 0 } else { 1 }
 }
 
-/// Runs `ctadl diff-sarif` and returns its exit code, as [`Command::DiffSarif`] documents it.
+/// Runs `ctadl diff-query` and returns its exit code, as [`Command::DiffQuery`] documents it.
 /// An error goes to stderr. The report is flushed before this returns.
-fn diff_sarif(args: &DiffSarifArgs) -> i32 {
+fn diff_query(args: &DiffQueryArgs) -> i32 {
     use std::io::Write;
 
-    let opts = ctadl_sarif_diff::Options {
+    let opts = ctadl_query_diff::Options {
         limit: args.limit,
         endpoints_only: args.endpoints_only,
     };
-    let report = match ctadl_sarif_diff::diff_sarif(&args.a, &args.b, &opts) {
+    let report = match ctadl_query_diff::diff_query(&args.a, &args.b, &opts) {
         Ok(report) => report,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -1551,10 +1551,10 @@ mod tests {
     }
 
     #[test]
-    fn diff_sarif_parses() {
+    fn diff_query_parses() {
         let cli = Cli::try_parse_from([
             "ctadl",
-            "diff-sarif",
+            "diff-query",
             "a.sarif",
             "some/b.sarif",
             "--limit",
@@ -1563,8 +1563,8 @@ mod tests {
             "--endpoints-only",
         ])
         .expect("must parse");
-        let Command::DiffSarif(args) = cli.cmd else {
-            panic!("expected the diff-sarif subcommand");
+        let Command::DiffQuery(args) = cli.cmd else {
+            panic!("expected the diff-query subcommand");
         };
         assert_eq!(
             (args.a.as_path(), args.b.as_path()),
@@ -1573,15 +1573,15 @@ mod tests {
         assert_eq!(args.limit, 0);
         assert!(args.json && args.endpoints_only);
 
-        let cli = Cli::try_parse_from(["ctadl", "diff-sarif", "a", "b"]).expect("must parse");
-        let Command::DiffSarif(args) = cli.cmd else {
-            panic!("expected the diff-sarif subcommand");
+        let cli = Cli::try_parse_from(["ctadl", "diff-query", "a", "b"]).expect("must parse");
+        let Command::DiffQuery(args) = cli.cmd else {
+            panic!("expected the diff-query subcommand");
         };
         assert_eq!(args.limit, 20);
         assert!(!args.json && !args.endpoints_only);
 
         assert!(
-            Cli::try_parse_from(["ctadl", "diff-sarif", "a"]).is_err(),
+            Cli::try_parse_from(["ctadl", "diff-query", "a"]).is_err(),
             "two files are required"
         );
     }

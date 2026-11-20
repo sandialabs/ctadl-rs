@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 pub use atoms::Atoms;
 pub use diff_report::{Sample, Samples};
-pub use driver::{ENDPOINTS_RULE, Options, diff_sarif};
+pub use driver::{ENDPOINTS_RULE, Options, diff_query};
 pub use parse::{Error as ParseError, read_runs};
 pub use report::Report;
 pub use sarif_canon::types::Error as CanonError;

@@ -1,4 +1,4 @@
-//! [`diff_sarif`]: the comparison of two SARIF files.
+//! [`diff_query`]: the comparison of two SARIF files.
 
 use std::path::Path;
 
@@ -34,11 +34,11 @@ impl Default for Options {
 
 /// Compares the results of the SARIF files `a` and `b`, pooled over each file's runs, as
 /// multisets of canonical results. An error names the file it is about.
-pub fn diff_sarif(a: &Path, b: &Path, opts: &Options) -> Result<Report, Error> {
+pub fn diff_query(a: &Path, b: &Path, opts: &Options) -> Result<Report, Error> {
     diff_with(a, b, opts, Atoms::new())
 }
 
-/// Compares the results of the SARIF files `a` and `b` as [`diff_sarif`] does, interning
+/// Compares the results of the SARIF files `a` and `b` as [`diff_query`] does, interning
 /// their strings into `atoms`, which may already hold some. The report does not depend on
 /// which atom each string gets.
 pub(crate) fn diff_with(

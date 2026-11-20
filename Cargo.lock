@@ -1085,7 +1085,7 @@ dependencies = [
  "ctadl-jvm",
  "ctadl-lua",
  "ctadl-pcode",
- "ctadl-sarif-diff",
+ "ctadl-query-diff",
  "datafusion",
  "derive_builder",
  "dex-reader",
@@ -1405,7 +1405,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctadl-sarif-diff"
+name = "ctadl-query-diff"
 version = "0.1.7"
 dependencies = [
  "diff-report",

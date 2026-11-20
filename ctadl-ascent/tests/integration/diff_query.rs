@@ -1,4 +1,4 @@
-//! `diff-sarif` on SARIF from real `ctadl query` runs. An edit that changes nothing a result
+//! `diff-query` on SARIF from real `ctadl query` runs. An edit that changes nothing a result
 //! means (order where SARIF gives it none, the numbering of `run.logicalLocations`, instruction
 //! and function ids, message text) reports nothing, and an edit that does is reported as
 //! exactly what it changed.
@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use ctadl_ascent::cli;
 use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
-use ctadl_sarif_diff::{ENDPOINTS_RULE, Options, Report, diff_sarif};
+use ctadl_query_diff::{ENDPOINTS_RULE, Options, Report, diff_query};
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
 
@@ -27,7 +27,7 @@ const PROFILES: [(SarifProfile, &str); 4] = [
     (SarifProfile::Debug, "debug"),
 ];
 
-const IMPORT: &str = "diff_sarif_ties";
+const IMPORT: &str = "diff_query_ties";
 
 fn fixture(name: &str) -> PathBuf {
     [env!("CARGO_MANIFEST_DIR"), "tests", "c", name]
@@ -56,11 +56,11 @@ fn ties() -> &'static Path {
             ArtifactImport::try_create(IMPORT, ArtifactLanguage::C, &fixture("ties.c")).unwrap();
         cli::import(&import, cli::ImportOptions::default()).unwrap();
         let project =
-            AnalysisProject::try_create("diff_sarif_ties_proj", &[IMPORT], SubImports::All)
+            AnalysisProject::try_create("diff_query_ties_proj", &[IMPORT], SubImports::All)
                 .unwrap();
         let models = [fixture("ties.json")];
         cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
-        query_all(&project, "diff_sarif_ties")
+        query_all(&project, "diff_query_ties")
     })
 }
 
@@ -85,20 +85,20 @@ fn renumbered() -> &'static Path {
     DIR.get_or_init(|| {
         // Imports `ties.c`.
         ties();
-        let pad = "diff_sarif_aaa_pad";
-        let src = store_dir().join("diff_sarif_aaa_pad.c");
+        let pad = "diff_query_aaa_pad";
+        let src = store_dir().join("diff_query_aaa_pad.c");
         std::fs::write(&src, PAD_C).unwrap();
         let import = ArtifactImport::try_create(pad, ArtifactLanguage::C, &src).unwrap();
         cli::import(&import, cli::ImportOptions::default()).unwrap();
         let project = AnalysisProject::try_create(
-            "diff_sarif_ties_renumbered_proj",
+            "diff_query_ties_renumbered_proj",
             &[pad, IMPORT],
             SubImports::All,
         )
         .unwrap();
         let models = [fixture("ties.json")];
         cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
-        query_all(&project, "diff_sarif_ties_renumbered")
+        query_all(&project, "diff_query_ties_renumbered")
     })
 }
 
@@ -172,7 +172,7 @@ fn diff(a: &Path, b: &Path, endpoints_only: bool) -> Report {
         limit: usize::MAX,
         endpoints_only,
     };
-    diff_sarif(a, b, &opts).unwrap_or_else(|e| panic!("{e}"))
+    diff_query(a, b, &opts).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Asserts `a` and `b` are identical, with and without the endpoints rule.
@@ -200,7 +200,7 @@ fn assert_reported(report: &Report, in_a: usize, in_b: usize, what: &str) -> (Co
         "{what}:\n{text}"
     );
     let counts =
-        |s: &ctadl_sarif_diff::Samples| s.rows.iter().map(|r| (r.count_a, r.count_b)).collect();
+        |s: &ctadl_query_diff::Samples| s.rows.iter().map(|r| (r.count_a, r.count_b)).collect();
     (counts(&report.more_in_a), counts(&report.more_in_b))
 }
 

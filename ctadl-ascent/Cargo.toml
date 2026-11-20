@@ -26,7 +26,7 @@ ctadl-cil.workspace = true
 ctadl-frontends = { workspace = true, features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
 ctadl-index.workspace = true
 ctadl-index-diff.workspace = true
-ctadl-sarif-diff.workspace = true
+ctadl-query-diff.workspace = true
 ctadl-index-lsm.workspace = true
 ctadl-index-par.workspace = true
 ctadl-index-serial.workspace = true

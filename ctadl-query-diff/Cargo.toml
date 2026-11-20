@@ -1,5 +1,5 @@
 [package]
-name = "ctadl-sarif-diff"
+name = "ctadl-query-diff"
 version.workspace = true
 edition = "2024"
 

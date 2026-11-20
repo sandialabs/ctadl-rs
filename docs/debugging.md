@@ -178,7 +178,7 @@ Consequences for measurement:
   whether a code flow connects a source and a sink --- never the shape of a
   rendered flow.
   The `nightly` harness does this today; keep it that way. To compare two query outputs
-  this way, use `ctadl diff-sarif --endpoints-only` (see *Comparing two query outputs*).
+  this way, use `ctadl diff-query --endpoints-only` (see *Comparing two query outputs*).
 
 # Comparing two index runs
 
@@ -235,16 +235,16 @@ SELECT
 # Comparing two query outputs
 
 To check whether two `ctadl query` runs found the same things (before and after a model change
-or an engine change, two builds), use `ctadl diff-sarif`. Do not compare the files with `diff`
+or an engine change, two builds), use `ctadl diff-query`. Do not compare the files with `diff`
 or `jq`: they compare arrays in the order they were written, and logical location indexes that
 each run numbers for itself. Microsoft's `sarif diff` is no better: it counts results per rule,
 so a result that moves is no change.
 
 ```
-ctadl diff-sarif before.sarif after.sarif
-ctadl diff-sarif A.sarif B.sarif --limit 50
-ctadl diff-sarif A.sarif B.sarif --endpoints-only
-ctadl diff-sarif A.sarif B.sarif --json
+ctadl diff-query before.sarif after.sarif
+ctadl diff-query A.sarif B.sarif --limit 50
+ctadl diff-query A.sarif B.sarif --endpoints-only
+ctadl diff-query A.sarif B.sarif --json
 ```
 
 The results of every run in a file are compared as one multiset, each by its content: its rule,
@@ -314,7 +314,7 @@ A result is compared by the locations ctadl writes. Where ctadl writes a source 
 and no physical location at its call site, results at different call sites of one function
 compare equal, since the call site's instruction id is not compared either, and are counted by
 multiplicity. Adding or removing such a call is reported, as the `[A 1, B 2]` line above shows;
-moving one is not. A field ctadl starts writing later is not compared until `diff-sarif` reads
+moving one is not. A field ctadl starts writing later is not compared until `diff-query` reads
 it.
 
 # Comparing every relation: `scripts/fact-dump-diff.sh`

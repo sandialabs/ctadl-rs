@@ -1,4 +1,4 @@
-# `ctadl diff-sarif`: implementation plan - DO-NOT-MERGE
+# `ctadl diff-query`: implementation plan - DO-NOT-MERGE
 
 Source: `intent.md`, `spec.md`. This plans the order of the work, the files each step changes
 and the tests that prove it. R*, D* and P-* names are the spec's; the spec wins where the two
@@ -43,7 +43,7 @@ Shared files between parallel phases:
   `smoke`. Phases 3 and 4 (wave 3) edit only their own module files. If either needs a
   re-export in `lib.rs`, it adds one line and the controller merges.
 - `ctadl-ascent/tests/integration/main.rs` (wave 6): owned by Phase 9 (adds
-  `mod diff_sarif;`). Phase 8 adds its tests to `cli.rs`, which is already listed.
+  `mod diff_query;`). Phase 8 adds its tests to `cli.rs`, which is already listed.
 
 Test commands used throughout (from the dev shell, `use flake`):
 
@@ -280,9 +280,9 @@ are updated and pass.
 Depends on: 0.
 
 **What.** Move the bounded-sample buffer and the per-side sample block out of
-`ctadl-index-diff` into a small new crate `diff-report`, so `ctadl-sarif-diff` can use them
+`ctadl-index-diff` into a small new crate `diff-report`, so `ctadl-query-diff` can use them
 without linking `ctadl-index`. `diff-index`'s text and JSON output do not change. A new crate rather than a `pub mod` in `ctadl-index-diff` was chosen so that
-`cargo test -p ctadl-sarif-diff` does not build `ctadl-index` and `name-by-facts`.
+`cargo test -p ctadl-query-diff` does not build `ctadl-index` and `name-by-facts`.
 
 **Files.**
 - `diff-report/Cargo.toml`, `diff-report/src/lib.rs` (new) — depends on `multiset-diff`
@@ -439,18 +439,18 @@ The controller checks the diff against Phase 1b's commit for this.
 
 Depends on: 1.
 
-**What.** Create `ctadl-sarif-diff` with its parser: SARIF file → `RawRun<u32>`s over an atom
+**What.** Create `ctadl-query-diff` with its parser: SARIF file → `RawRun<u32>`s over an atom
 table shared by A and B. Nothing calls it yet.
 
 **Files.**
-- `ctadl-sarif-diff/Cargo.toml` (new) — `serde-sarif = "0.8"` (as
+- `ctadl-query-diff/Cargo.toml` (new) — `serde-sarif = "0.8"` (as
   `ctadl-ascent/Cargo.toml:62`), `serde_json`, `sarif-canon`, `rustc-hash`.
-- `ctadl-sarif-diff/src/lib.rs` (new) — crate doc; `mod atoms; mod parse;`. Phase 7 adds
+- `ctadl-query-diff/src/lib.rs` (new) — crate doc; `mod atoms; mod parse;`. Phase 7 adds
   the rest.
-- `ctadl-sarif-diff/src/atoms.rs` (new) — `Atoms`: `FxHashMap<Box<str>, u32>` plus
+- `ctadl-query-diff/src/atoms.rs` (new) — `Atoms`: `FxHashMap<Box<str>, u32>` plus
   `Vec<Box<str>>`; `intern`, `get(u32) -> &str`. Injective by construction (D2's one
   assumption).
-- `ctadl-sarif-diff/src/parse.rs` (new) — `read_runs(path, &mut Atoms) ->
+- `ctadl-query-diff/src/parse.rs` (new) — `read_runs(path, &mut Atoms) ->
   Result<Vec<RawRun<u32>>, Error>`:
   - reads with `serde_sarif::sarif::Sarif`; a read or deserialize error is an error (exit 2
     later); unknown `kind`/`level` values already fail to deserialize (serde-sarif's
@@ -469,7 +469,7 @@ table shared by A and B. Nothing calls it yet.
   - The parsed `Sarif` is dropped as soon as its runs are built, so one file's document is
     in memory at a time.
 
-**Tests.** New, `ctadl-sarif-diff/src/parse.rs` `#[cfg(test)]`, on small hand-written SARIF
+**Tests.** New, `ctadl-query-diff/src/parse.rs` `#[cfg(test)]`, on small hand-written SARIF
 strings:
 - `call_arg_rewrite`: `call-arg(123, 0).f` → `call-arg(_, 0).f`; `call-arg(7, -2)` →
   `call-arg(_, -2)`; `local(call-arg(1, 0))` unchanged; `formal(1).x` unchanged.
@@ -482,11 +482,11 @@ strings:
 
 **Gate.**
 
-    cargo test -p ctadl-sarif-diff
+    cargo test -p ctadl-query-diff
     cargo clippy --workspace -- -Dwarnings
 
 **As built.**
-- `ctadl-sarif-diff` joins the workspace (`members`, `default-members`,
+- `ctadl-query-diff` joins the workspace (`members`, `default-members`,
   `[workspace.dependencies]`) here rather than in Phase 7, so this phase's gate can build it.
 - Also depends on `serde` with `derive` (`serde-sarif` 0.8 uses the derive macros without
   enabling the feature) and, for tests, `tempfile`.
@@ -603,32 +603,32 @@ unchanged.
 
 Depends on: 2, 5, 6a.
 
-**What.** The `ctadl-sarif-diff` library API: read both files, canonicalize, diff, report.
+**What.** The `ctadl-query-diff` library API: read both files, canonicalize, diff, report.
 Adds the dependency to `ctadl-ascent` but no subcommand yet.
 
 **Files.**
-- `ctadl-sarif-diff/src/lib.rs` — `pub struct Options { limit, endpoints_only }`;
-  `pub fn diff_sarif(a: &Path, b: &Path, &Options) -> Result<Report, Error>`; `Error`
+- `ctadl-query-diff/src/lib.rs` — `pub struct Options { limit, endpoints_only }`;
+  `pub fn diff_query(a: &Path, b: &Path, &Options) -> Result<Report, Error>`; `Error`
   carries the file and what failed (parse, `OutOfRange`, `NotIncreasing`, `EmptyFlow`).
-- `ctadl-sarif-diff/src/driver.rs` (new) — `read_runs` for A then B into one `Atoms`;
+- `ctadl-query-diff/src/driver.rs` (new) — `read_runs` for A then B into one `Atoms`;
   `canon_runs` per file with `endpoints_rule = atoms.get_id("C0001.tainted-path")` when
   `--endpoints-only`; `multiset_diff(&a, &b, |x, y| sarif_canon::order::cmp_result(x, y,
   &u32::cmp))` (the same `cmp` `canon_runs` sorted by, so its proved sortedness is the
   precondition `multiset_diff` needs); each `Delta` to `more_in_a` or `more_in_b`
   (as `ctadl-index-diff/src/table.rs:505-509`) through `diff_report::Smallest`, keyed by the
   rendered string so samples do not depend on atom numbers.
-- `ctadl-sarif-diff/src/report.rs` (new) — `Report { a, b, endpoints_only, limit,
+- `ctadl-query-diff/src/report.rs` (new) — `Report { a, b, endpoints_only, limit,
   more_in_a: Samples, more_in_b: Samples }`; `identical()`; `write_text`: `IDENTICAL`, or
   `DIFFERENT`, `A: <path>`, `B: <path>`, the flags in force, then
   `diff_report::write_samples(.., "results", "")` for A then B; `write_json`:
   `{result, results_differ, more_in_a, more_in_b, ...}`; a canonical result renders as
   compact JSON with atoms resolved to strings.
-- `ctadl-sarif-diff/Cargo.toml` — add `multiset-diff` and `diff-report`.
-- `ctadl-ascent/Cargo.toml:28` — add `ctadl-sarif-diff.workspace = true`.
-- `Cargo.toml` — `ctadl-sarif-diff` in `members`, `default-members`,
+- `ctadl-query-diff/Cargo.toml` — add `multiset-diff` and `diff-report`.
+- `ctadl-ascent/Cargo.toml:28` — add `ctadl-query-diff.workspace = true`.
+- `Cargo.toml` — `ctadl-query-diff` in `members`, `default-members`,
   `[workspace.dependencies]`.
 
-**Tests.** New, `ctadl-sarif-diff/src/tests.rs`, on small SARIF files written to a tempdir:
+**Tests.** New, `ctadl-query-diff/src/tests.rs`, on small SARIF files written to a tempdir:
 - `identical_self`: A against A is `IDENTICAL`, `identical()` true.
 - `deleted_result`: one result fewer in B → `more in A: 1 results`, `[A 1, B 0]`.
 - `duplicate_counts` (R12): a result duplicated in A → `[A 2, B 1]`.
@@ -643,7 +643,7 @@ Adds the dependency to `ctadl-ascent` but no subcommand yet.
 
 **Gate.**
 
-    cargo test -p ctadl-sarif-diff
+    cargo test -p ctadl-query-diff
     cargo build -p ctadl-ascent
     cargo clippy --workspace -- -Dwarnings
 
@@ -669,45 +669,45 @@ Adds the dependency to `ctadl-ascent` but no subcommand yet.
 - Extra tests: `reordered_and_renumbered_is_identical`, `small_diff_text` (exact text),
   `endpoints_only`, and `errors_are_errors` covering an empty flow on either side.
 
-## Phase 8: the `ctadl diff-sarif` subcommand (R1-R3)
+## Phase 8: the `ctadl diff-query` subcommand (R1-R3)
 
 Depends on: 7.
 
 **What.** Wire the library into the CLI, beside `diff-index`, with the same exit codes.
 
 **Files.**
-- `ctadl-ascent/src/main.rs:68-85` — a `DiffSarif(DiffSarifArgs)` variant after
+- `ctadl-ascent/src/main.rs:68-85` — a `DiffQuery(DiffQueryArgs)` variant after
   `DiffIndex`, its doc stating exits 0/1/2 as `ctadl-ascent/src/main.rs:83-84` does.
-- `ctadl-ascent/src/main.rs:94-120` — `DiffSarifArgs` after `DiffIndexArgs`: positional
+- `ctadl-ascent/src/main.rs:94-120` — `DiffQueryArgs` after `DiffIndexArgs`: positional
   `a`, `b` as `PathBuf`; `--limit N` (default 20); `--json`; `--endpoints-only`.
 - `ctadl-ascent/src/main.rs:759` — dispatch arm,
-  `Command::DiffSarif(args) => std::process::exit(diff_sarif(args))`.
-- `ctadl-ascent/src/main.rs:931-959` — `fn diff_sarif(&DiffSarifArgs) -> i32` beside
+  `Command::DiffQuery(args) => std::process::exit(diff_query(args))`.
+- `ctadl-ascent/src/main.rs:931-959` — `fn diff_query(&DiffQueryArgs) -> i32` beside
   `diff_index`, the same shape: error → stderr, 2; write error → 2; else 0 or 1.
 
 **Tests.**
-- New, `ctadl-ascent/src/main.rs` beside `diff_index_parses` (:1437): `diff_sarif_parses`
+- New, `ctadl-ascent/src/main.rs` beside `diff_index_parses` (:1437): `diff_query_parses`
   (all flags).
-- New, `ctadl-ascent/tests/integration/cli.rs` after :1525, with a `run_diff_sarif` helper
-  copied from `run_diff_index` (:1434): `diff_sarif_same_file_exit_0`;
-  `diff_sarif_deleted_result_exit_1` (stdout starts `DIFFERENT`);
-  `diff_sarif_malformed_exit_2` (stdout empty, stderr names the file);
-  `diff_sarif_exit_independent_of_limit_and_json` (`--limit 0`, `--json`: same exit code).
+- New, `ctadl-ascent/tests/integration/cli.rs` after :1525, with a `run_diff_query` helper
+  copied from `run_diff_index` (:1434): `diff_query_same_file_exit_0`;
+  `diff_query_deleted_result_exit_1` (stdout starts `DIFFERENT`);
+  `diff_query_malformed_exit_2` (stdout empty, stderr names the file);
+  `diff_query_exit_independent_of_limit_and_json` (`--limit 0`, `--json`: same exit code).
   The SARIF comes from `ctadl query` on `xfer.c` (as `test_cli_query_c_sources_and_sinks`,
   `cli.rs:107`) and an edited copy.
 
 **Gate.**
 
-    cargo test -p ctadl-ascent --bin ctadl diff_sarif_parses
-    cargo test -p ctadl-ascent --test integration diff_sarif
+    cargo test -p ctadl-ascent --bin ctadl diff_query_parses
+    cargo test -p ctadl-ascent --test integration diff_query
     cargo clippy --workspace -- -Dwarnings
 
 **As built.**
-- `run_diff_sarif` takes any argument list, so the flag test can pass `--limit 0` and
+- `run_diff_query` takes any argument list, so the flag test can pass `--limit 0` and
   `--json`. The SARIF fixture is `cli::query` on the indexed `xfer.c` project, once per test
   binary in a `OnceLock`; the edited copy drops the first result with `serde_json`.
-- `diff_sarif_malformed_exit_2` also covers a bad A side and a missing file;
-  `diff_sarif_exit_independent_of_limit_and_json` checks every combination of the two flags
+- `diff_query_malformed_exit_2` also covers a bad A side and a missing file;
+  `diff_query_exit_independent_of_limit_and_json` checks every combination of the two flags
   on an identical and a differing pair.
 - The help text states what is compared and ignored and the exit codes, as `diff-index`'s
   does.
@@ -720,18 +720,18 @@ Depends on: 7.
 every profile. Test-only.
 
 **Files.**
-- `ctadl-ascent/tests/integration/diff_sarif.rs` (new) — owns the tests below. Fixture: the
+- `ctadl-ascent/tests/integration/diff_query.rs` (new) — owns the tests below. Fixture: the
   pipeline of `ctadl-ascent/tests/integration/determinism.rs:173-196` (import `ties.c`, index
   with `ties.json`), queried in Human, Agent, Machine and Debug (`cli::query(..,
   SarifProfile::*, None)`); once per test binary, in a `OnceLock` as `cli.rs:1418` does.
   `ties.c` gives C0001 with equal-length paths, field paths, C0003/C0004, and (in Agent)
   C0007; Machine gives C0002; Debug adds the debug properties.
-- `ctadl-ascent/tests/integration/main.rs:13` — add `mod diff_sarif;`.
+- `ctadl-ascent/tests/integration/main.rs:13` — add `mod diff_query;`.
 - `ctadl-ascent/tests/integration/diff_index.rs:346` — make `remap_index` and the remap
   helpers it needs `pub(super)`, so renumbered ids come from a genuinely renumbered index,
   not from editing SARIF text.
 
-**Tests.** Each in every profile, through `ctadl_sarif_diff::diff_sarif`, asserting
+**Tests.** Each in every profile, through `ctadl_query_diff::diff_query`, asserting
 `identical()` or the exact `more_in_a`/`more_in_b` counts:
 - Report nothing: `self_identical`; `shuffled_arrays` (shuffle `results`, `locations`,
   `codeFlows`, `threadFlows`, `logicalLocations` of a location, and the set- and map-valued
@@ -751,7 +751,7 @@ every profile. Test-only.
 
 **Gate.**
 
-    cargo test -p ctadl-ascent --test integration diff_sarif
+    cargo test -p ctadl-ascent --test integration diff_query
     cargo test -p ctadl-ascent --test integration diff_index
     cargo clippy --workspace -- -Dwarnings
 
@@ -785,16 +785,16 @@ Depends on: 6b, 8, 9.
 cite spec or plan numbers.
 
 **Files.**
-- `docs/spec.md:88-90` (F12) — name `ctadl diff-sarif`: compare the results of two SARIF
+- `docs/spec.md:88-90` (F12) — name `ctadl diff-query`: compare the results of two SARIF
   files by content.
 - `docs/spec.md:244-248` (§5) — add `sarif-canon` to the verified cores with
-  `multiset-diff` and `name-by-facts`; after :249-251 add a bullet for `diff-sarif`'s
+  `multiset-diff` and `name-by-facts`; after :249-251 add a bullet for `diff-query`'s
   metamorphic tests.
 - `docs/debugging.md` — a section `# Comparing two query outputs` after the `diff-index`
   section (:182-219, before :221): usage, what is compared and ignored, `--endpoints-only`,
   output and exit codes. Mention it where :173-180 says regressions should not compare the
   shape of a rendered flow.
-- `nightly/README.md:31-37` — the `verus` check also proves `diff-sarif`'s canonical core.
+- `nightly/README.md:31-37` — the `verus` check also proves `diff-query`'s canonical core.
 - `flake.nix:350` — the dev shell comment names the verified crates, not only
   `multiset-diff` (stale today; Phase 1 already fixed `flake.nix:292` and `Cargo.toml:110`).
 
@@ -817,12 +817,12 @@ cite spec or plan numbers.
 | `Cargo.toml` | workspace entries; comment at :110 | 1, 2, 7 |
 | `diff-report/*` | new crate: `Sample`, `Samples`, `Smallest`, `write_samples` | 2 |
 | `ctadl-index-diff/src/{report,table,lib}.rs`, `Cargo.toml` | use `diff-report` | 2 |
-| `ctadl-sarif-diff/Cargo.toml`, `src/{lib,atoms,parse}.rs` | new crate, parser | 5 |
-| `ctadl-sarif-diff/src/{driver,report,tests}.rs`, `Cargo.toml` | driver, report; depend on `multiset-diff`, `diff-report` | 7 |
-| `ctadl-ascent/Cargo.toml` | depend on `ctadl-sarif-diff` | 7 |
-| `ctadl-ascent/src/main.rs` | `DiffSarif` subcommand | 8 |
+| `ctadl-query-diff/Cargo.toml`, `src/{lib,atoms,parse}.rs` | new crate, parser | 5 |
+| `ctadl-query-diff/src/{driver,report,tests}.rs`, `Cargo.toml` | driver, report; depend on `multiset-diff`, `diff-report` | 7 |
+| `ctadl-ascent/Cargo.toml` | depend on `ctadl-query-diff` | 7 |
+| `ctadl-ascent/src/main.rs` | `DiffQuery` subcommand | 8 |
 | `ctadl-ascent/tests/integration/cli.rs` | process tests | 8 |
-| `ctadl-ascent/tests/integration/{diff_sarif,main}.rs` | metamorphic tests | 9 |
+| `ctadl-ascent/tests/integration/{diff_query,main}.rs` | metamorphic tests | 9 |
 | `ctadl-ascent/tests/integration/diff_index.rs` | `remap_index` `pub(super)` | 9 |
 | `docs/spec.md`, `docs/debugging.md`, `nightly/README.md` | docs | 10 |
 | `Cargo.lock` | new crates | 1, 2, 5, 7 |
@@ -852,7 +852,7 @@ Not touched:
 - No spec or plan numbers in code or docs:
   `git diff main -- . ':!spec.md' ':!plan.md' ':!intent.md' | grep -nE '\b(R[0-9]+|D[0-9]|P-[a-z]+|Phase [0-9])\b'`
   is empty.
-- By hand: `ctadl diff-sarif` on a regression case's SARIF against itself prints `IDENTICAL`
+- By hand: `ctadl diff-query` on a regression case's SARIF against itself prints `IDENTICAL`
   and exits 0; against the same case after a model change prints the changed results.
 
 **As built (acceptance, at `f22c98124`).** `fmt`, `clippy -Dwarnings` and `cargo test
@@ -878,7 +878,7 @@ atom table.
 
 ## Deferred
 
-- Run `ctadl diff-sarif` in `cargo xtask regression`, e.g. each case's SARIF against a run
+- Run `ctadl diff-query` in `cargo xtask regression`, e.g. each case's SARIF against a run
   on a renumbered index (`xtask/src/sarif.rs` already handles each case's SARIF).
 - Share one copy of the order definitions and lemmas among `multiset-diff`,
   `name-by-facts` and `sarif-canon`.

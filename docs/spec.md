@@ -87,7 +87,7 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 
 - F12. Inspect the store, print imported IR, report call-graph statistics, and dump the index
   and taint graphs (Graphviz). Compare two index runs table by table, by content
-  (`ctadl diff-index`), and the results of two SARIF files, by content (`ctadl diff-sarif`).
+  (`ctadl diff-index`), and the results of two SARIF files, by content (`ctadl diff-query`).
 - F13. Run import, index and query in one command (`ctadl go`).
 
 ### 3.2 Non-functional
@@ -242,7 +242,7 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   After the cases, it checks `ctadl diff-index`'s per-table counts on the indexes they wrote
   against an independent DuckDB query.
 - Machine-checked proofs (Verus, the `verus` flake check, run nightly) of the cores of
-  `ctadl diff-index` and `ctadl diff-sarif`, for inputs of any length: the merge that compares
+  `ctadl diff-index` and `ctadl diff-query`, for inputs of any length: the merge that compares
   two sorted sequences as multisets reports exactly the values whose counts differ, with those
   counts, once each (`multiset-diff`); two instructions, on either side, get one name exactly
   when they have one set of input facts (`name-by-facts`); and a SARIF run's canonical
@@ -252,7 +252,7 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
 - Metamorphic tests of `ctadl diff-index` on real indexes: shuffled rows, split row groups,
   renumbered function, instruction, span and import ids, and opposite interning orders report
   no difference; a deleted row or two swapped call targets are reported as exactly that.
-- Metamorphic tests of `ctadl diff-sarif` on real `ctadl query` output in every SARIF profile:
+- Metamorphic tests of `ctadl diff-query` on real `ctadl query` output in every SARIF profile:
   shuffled arrays, renumbered logical locations, renumbered instruction and function ids, and
   changed message text report no difference; a deleted or duplicated result, two swapped steps
   of a flow and a changed line are reported as exactly that.

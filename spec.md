@@ -1,4 +1,4 @@
-# `ctadl diff-sarif`: requirements and design - DO-NOT-MERGE
+# `ctadl diff-query`: requirements and design - DO-NOT-MERGE
 
 Source: `intent.md`. This refines it into requirements and a design, consistent with
 [docs/spec.md](docs/spec.md) (F12, §4.5, §5), which it extends. It does not sequence the work.
@@ -57,7 +57,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 
 ### Command
 
-- R1. **Command.** `ctadl diff-sarif A B` compares the results of two SARIF files by
+- R1. **Command.** `ctadl diff-query A B` compares the results of two SARIF files by
   content and prints `IDENTICAL` or the results that occur more often in A and in B, each
   with its count on both sides.
 - R2. **The exit status is the alert.** 1 exactly when the multisets of canonical results
@@ -70,7 +70,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
   always complete. `--json` writes one JSON document instead of text. `--endpoints-only`
   is R11.
 - R4. **Deterministic output.** The same pair of files gives byte-identical output, and
-  `diff-sarif B A` is `diff-sarif A B` with the sides swapped.
+  `diff-query B A` is `diff-query A B` with the sides swapped.
 
 ### What is compared
 
@@ -114,7 +114,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 ### Unchanged and documented
 
 - R17. **`ctadl query`'s SARIF does not change**, and neither does `ctadl diff-index`.
-- R18. **Docs.** docs/spec.md F12 names `ctadl diff-sarif`, and §5 lists its verified core
+- R18. **Docs.** docs/spec.md F12 names `ctadl diff-query`, and §5 lists its verified core
   with `multiset-diff` and `name-by-facts`; docs/debugging.md documents its use and output
   beside `diff-index` (docs/debugging.md:182-219); `nightly/README.md:31-37` and the comments
   at `flake.nix:292` and `Cargo.toml:110` name the new crate.
@@ -129,11 +129,11 @@ Two crates and a subcommand.
   `vstd` pinned to the same version, no serde). It defines the raw run and canonical result
   types over an atom type, and the functions from one to the other (D3). It knows nothing
   of JSON.
-- **`ctadl-sarif-diff`** (new, unverified, the sibling of `ctadl-index-diff`). It parses
+- **`ctadl-query-diff`** (new, unverified, the sibling of `ctadl-index-diff`). It parses
   SARIF into raw runs (D2), calls `sarif-canon`, sorts nothing itself, runs
   `multiset_diff`, and renders the report. It reuses `ctadl-index-diff`'s report layout
   and bounded-sample buffer, moved or shared rather than copied.
-- **`ctadl diff-sarif`** in `ctadl-ascent/src/main.rs`, beside `DiffIndex`, with the same
+- **`ctadl diff-query`** in `ctadl-ascent/src/main.rs`, beside `DiffIndex`, with the same
   exit-code handling as `ctadl-ascent/src/main.rs:931-959`.
 
 Data flow: JSON → (D2, unverified) raw runs over atoms → (D3, verified) sorted
@@ -247,7 +247,7 @@ table marked P-bag) and renumbering a table with its references (P-ref), then
 results are equal. The theorem is about `diff_from`, a spec function, so it needs
 `multiset-diff`'s theorems, not an exec call: `mod proofs` (`multiset-diff/src/lib.rs:24`)
 becomes `pub mod proofs`, and `multiset_diff_by` is unchanged. The exec call to
-`multiset_diff` stays in the unverified `ctadl-sarif-diff`, with the `cmp` `sarif-canon`
+`multiset_diff` stays in the unverified `ctadl-query-diff`, with the `cmp` `sarif-canon`
 sorted by. The `verus` check verifies `multiset-diff` with `--export` and `--compile`, and
 `sarif-canon` with `--import` and `--extern` of it, so the theorems are used across crates,
 not copied.

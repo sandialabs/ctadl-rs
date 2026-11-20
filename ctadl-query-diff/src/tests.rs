@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 use crate::driver::diff_with;
-use crate::{Atoms, CanonError, ErrorKind, Options, Report, diff_sarif, read_runs};
+use crate::{Atoms, CanonError, ErrorKind, Options, Report, diff_query, read_runs};
 
 /// A step at `line` of `a.c`, in the function at `index` of the run's table.
 fn step(order: i64, line: i64, index: usize) -> Value {
@@ -97,7 +97,7 @@ impl Files {
 }
 
 fn diff(a: &Path, b: &Path) -> Report {
-    diff_sarif(a, b, &Options::default()).unwrap()
+    diff_query(a, b, &Options::default()).unwrap()
 }
 
 fn counts(r: &Report) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
@@ -254,7 +254,7 @@ fn limit_bounds_samples() {
     let a = f.write("a.sarif", &doc((100..130).map(source).collect()));
     let b = f.write("b.sarif", &doc(Vec::new()));
     let with = |limit| {
-        diff_sarif(
+        diff_query(
             &a,
             &b,
             &Options {
@@ -275,7 +275,7 @@ fn limit_bounds_samples() {
         assert_eq!(r.more_in_a.rows.len(), limit.min(30));
     }
     for limit in [0, 1, 20] {
-        let r = diff_sarif(
+        let r = diff_query(
             &a,
             &a,
             &Options {
@@ -320,21 +320,21 @@ fn endpoints_only() {
         ..Options::default()
     };
     assert!(!diff(&a, &b).identical());
-    let r = diff_sarif(&a, &b, &ends).unwrap();
+    let r = diff_query(&a, &b, &ends).unwrap();
     assert!(r.identical());
     assert!(r.to_text().contains("\nflag: --endpoints-only\n"));
 
     // Two flows with the same endpoints still count twice.
     let two = f.write("two.sarif", &doc(vec![flow(&[3, 5, 7]), flow(&[3, 6, 7])]));
     let one = f.write("one.sarif", &doc(vec![flow(&[3, 4, 7])]));
-    let r = diff_sarif(&two, &one, &ends).unwrap();
+    let r = diff_query(&two, &one, &ends).unwrap();
     assert_eq!(counts(&r), (vec![(2, 1)], vec![]));
     assert!(r.more_in_a.rows[0].row.contains("\"endpoints\":["));
 
     // Other rules are compared in full.
     let a = f.write("sa.sarif", &doc(vec![source(3)]));
     let b = f.write("sb.sarif", &doc(vec![source(4)]));
-    assert!(!diff_sarif(&a, &b, &ends).unwrap().identical());
+    assert!(!diff_query(&a, &b, &ends).unwrap().identical());
 }
 
 #[test]
@@ -372,7 +372,7 @@ fn errors_are_errors() {
             (&empty, Some(CanonError::EmptyFlow)),
         ] {
             for (x, y) in [(&good, bad), (bad, &good)] {
-                let e = diff_sarif(x, y, &opts).unwrap_err();
+                let e = diff_query(x, y, &opts).unwrap_err();
                 assert_eq!(&e.file, bad);
                 match (&e.kind, canon) {
                     (ErrorKind::Parse(_), None) => {}

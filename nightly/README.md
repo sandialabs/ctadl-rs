@@ -29,7 +29,7 @@ dev shell and the flake check provide it), or with fewer than two indexes, the c
 reports `SKIP`.
 
 The nightly workflow also builds `checks.<system>.verus`, the Verus proofs at the core of
-`ctadl diff-index` and `ctadl diff-sarif`: the merge, the naming of instructions by their
+`ctadl diff-index` and `ctadl diff-query`: the merge, the naming of instructions by their
 facts, and the canonical form of SARIF results. A failed proof fails the night:
 
 ```sh

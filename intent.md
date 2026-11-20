@@ -10,7 +10,7 @@ issue.
 
 The goal is to alert when the results are different.
 
-Ship `ctadl diff-sarif A B`, which compares the results of two ctadl SARIF files by content: references replaced by what they name,
+Ship `ctadl diff-query A B`, which compares the results of two ctadl SARIF files by content: references replaced by what they name,
 per-run ids dropped, order ignored where SARIF gives it no meaning (results,
 locations, code flows) and kept where it does (the steps of a thread flow).
 
