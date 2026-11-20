@@ -115,7 +115,7 @@ their contents, so it needs them whole, and model files are small.
 `Cursor<&[u8]>` already meets that bound, so `new` keeps its signature (R6).
 
 For `open`, the reader is a small `SharedFile` in `dex-reader`: an `Arc<File>` and its own
-position. It reads with positioned reads (`std::os::unix::fs::FileExt::read_at`), so clones
+position. It reads with positioned reads (`FileExt::read_at` on Unix, `seek_read` on Windows), so clones
 share the descriptor, don't share a cursor, and need no lock. Cloning the `ZipArchive` per task
 still shares the parsed central directory, as it does today. The OS page cache holds the file,
 not the process heap.
@@ -157,6 +157,5 @@ loki messenger and osmand.
 - C2. **Hashing errors on a changing file (R3).** Accepted: error. A digest of a mixture could
   later mark a stale import as up to date. The metadata length is the only one that streams
   without changing digests, and checking it costs nothing.
-- C3. **`read_at` is Unix-only (D2).** Windows has `seek_read`, which has the same effect.
-  The spec assumes CTADL builds only on macOS and Linux. If Windows matters, `SharedFile` uses a
-  `cfg` for each platform.
+- C3. **`read_at` is Unix-only (D2).** Accepted: support both. `SharedFile` uses `read_at` on
+  Unix and `seek_read` on Windows, so a Windows build still compiles. Nothing tests it there.
