@@ -21,10 +21,12 @@
 //! or `nix build .#checks.<system>.verus`. A plain `cargo build` erases the specs and proofs,
 //! leaving the code.
 //!
-//! What is proved: nothing yet beyond that `multiset-diff`'s specs and theorems can be used
-//! here. The statements to be proved are in place (`order`, `sort`, `prims`, `canon`, and the
-//! end-to-end `theorems`), checked by `smoke` against concrete runs, with their proofs
-//! admitted and their code unimplemented.
+//! What is proved: the order on each canonical type is total and `Equal` exactly on equal
+//! values (`order`); the merge sort's output is a sorted permutation of its input, and the
+//! sorted permutation is unique (`sort`); and the primitives meet their contracts and are
+//! unchanged by renumbering a table or permuting a bag (`prims`). `canon_run` and the
+//! end-to-end `theorems` are stated, checked by `smoke` against concrete runs, with their code
+//! unimplemented and their proofs admitted.
 
 use vstd::prelude::*;
 
@@ -72,3 +74,17 @@ proof fn smoke_imports_multiset_diff(a: &[u32], b: &[u32])
 }
 
 } // verus!
+
+#[cfg(test)]
+mod test_util {
+    use vstd::prelude::*;
+
+    verus! {
+
+    /// A ghost argument for tests, which a plain build erases.
+    pub fn ghost<T>() -> Ghost<T> {
+        Ghost(arbitrary())
+    }
+
+    } // verus!
+}

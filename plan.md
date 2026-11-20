@@ -368,6 +368,18 @@ The controller checks the diff against Phase 1b's commit for this.
     nix build .#checks.aarch64-darwin.verus
     grep -nE 'admit|external_body' sarif-canon/src/order.rs   # empty
 
+**As built.**
+- Each type's lemma maps a value to a nested tuple of its fields and compares that with
+  generic pair, `Option` and lexicographic orders (`ord_pair`, `ord_opt`, `ord_lex`), each
+  proved to keep `total_order` and `equal_means_eq`, then pulls the result back through the
+  key (`lemma_pull`). `Steps` sorts before `Endpoints` by the key `(None, Some(steps))` versus
+  `(Some((a, b)), None)`. Of `name-by-facts`'s lemmas, reflexivity, symmetry, transitivity
+  and the lexicographic equal/antisymmetry/transitivity lemmas were ported; its
+  `lemma_lex_trans` and `lemma_lex_total` were not needed as such.
+- The plain test compares `cmp_result` with a derived `Ord` on mirror types over 600
+  generated pairs (independent, equal, and differing in one field), and checks that each of
+  `Less`, `Equal`, `Greater` occurs.
+
 ## Phase 4: verified primitives (R13, D3, P-ref, P-bag, P-seq, P-end)
 
 Depends on: 1b.
@@ -405,6 +417,23 @@ The controller checks the diff against Phase 1b's commit for this.
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
     grep -nE 'admit|external_body' sarif-canon/src/sort.rs sarif-canon/src/prims.rs   # empty
+
+**As built.**
+- `sort_by` is a top-down merge sort that moves elements and never clones; `canon_bag` is
+  `sort_by` under `by_view(view, ord)`, proved equal to `spec_canon_bag` by
+  `lemma_sorted_unique`.
+- `endpoints` takes the last step with `pop` and the first with `swap_remove(0)`; a one-step
+  flow copies its step with `copy_step`, a verified copy (derived `Clone` has no spec).
+- `decreases` clauses were added to the recursive `sort_by`, `lemma_sorted_unique`,
+  `lemma_canon_bag` and `lemma_all_ok`.
+- The plain tests pass ghost arguments with a `ghost()` helper (`Ghost(arbitrary())`) shared
+  in `lib.rs`'s `test_util`, not `Ghost::assume_new()`, so the acceptance grep for `assume`
+  stays empty; the order phase's test uses it too. Extra tests cover `canon_bag`, `canon_seq`
+  stopping at the first error, absent `executionOrder` values, and `endpoints` on one and
+  three steps.
+- An exec `!=` on `Ordering` has no spec in Verus; code matches on `cmp`'s result.
+- With the order phase merged: `sarif-canon` 149 verified; the `verus` check takes about 25 s
+  (11 s at baseline).
 
 ## Phase 5: the SARIF parser (R15, D2)
 

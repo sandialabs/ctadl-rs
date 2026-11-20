@@ -789,15 +789,7 @@ proof fn lemma_permuted_multiset<T>(xs: Seq<T>, ys: Seq<T>, pi: Seq<int>)
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    verus! {
-
-    /// A ghost argument, which a plain build erases.
-    fn ghost<T>() -> Ghost<T> {
-        Ghost(arbitrary())
-    }
-
-    } // verus!
+    use crate::test_util::ghost;
 
     fn by_value(a: &u32, b: &u32) -> Ordering {
         a.cmp(b)

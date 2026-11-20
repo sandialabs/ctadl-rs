@@ -1506,6 +1506,7 @@ pub fn cmp_result<A, F: Fn(&A, &A) -> Ordering>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::ghost;
 
     // Mirrors of the canonical types whose derived `Ord` is the documented order: fields in
     // declaration order, `None` first, sequences lexicographic with a proper prefix first,
@@ -1722,7 +1723,7 @@ mod tests {
     }
 
     fn cmp(x: &CanonResult<u32>, y: &CanonResult<u32>) -> Ordering {
-        cmp_result(x, y, &|a: &u32, b: &u32| a.cmp(b), Ghost::assume_new())
+        cmp_result(x, y, &|a: &u32, b: &u32| a.cmp(b), ghost())
     }
 
     /// `cmp_result` agrees with the mirror's derived `Ord`, is antisymmetric, and is `Equal`
