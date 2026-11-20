@@ -64,7 +64,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 - R2. **The exit status is the alert.** 1 exactly when the multisets of canonical results
   differ, 0 exactly when they are equal, as `diff-index` does. Whatever it cannot
   canonicalize fully exits 2, never 0: an unreadable file, malformed SARIF, a reference out
-  of range, a per-run reference the design does not resolve, an unknown field in a result.
+  of range, a non-increasing `executionOrder`.
   The status does not depend on `--limit`, `--json` or how the report is printed.
 - R3. **Flags.** `--limit N` bounds the results printed per side (default 20); counts are
   always complete. `--json` writes one JSON document instead of text. `--endpoints-only`
@@ -96,31 +96,25 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 - R12. **Duplicates count.** Two equal canonical results in one file count twice; deleting
   one is reported as a count difference.
 
-- R13. **Unknown fields rejected.** A field or property key within a result that the design
-  does not list as kept, resolved or dropped is an error, not ignored. Fields outside
-  results (run, tool, invocations) are ignored, as R5 says.
-
 ### Correctness
 
-- R14. **Proved canonical core.** The canonical core (D3) is verified with Verus: for
+- R13. **Proved canonical core.** The canonical core (D3) is verified with Verus: for
   inputs of any size, the properties in D4 hold of the code that runs.
-- R15. **Proved comparison, end to end.** The order on canonical results is proved a total
+- R14. **Proved comparison, end to end.** The order on canonical results is proved a total
   order under which `Equal` means equal, and the core proves its output sorted by it, so
   `multiset_diff`'s theorems apply with their preconditions discharged.
-- R16. **Metamorphic tests** cover what Verus does not (the parser and atom rewriting, D2),
+- R15. **Metamorphic tests** cover what Verus does not (the parser and atom rewriting, D2),
   on SARIF from real `ctadl query` runs in every profile: shuffled arrays, a renumbered
   `logicalLocations` table, renumbered `call-arg` instruction ids and debug ids, changed
   message text, and A against itself report nothing; a deleted result, a duplicated
-  result, two swapped steps and a changed line are reported as exactly that. A test runs
-  `diff-sarif` on the formatter's output in every profile, so a field the formatter adds
-  fails it until `diff-sarif` lists the field.
-- R17. **Verus check.** The new verified crate is in the `verus` flake check
+  result, two swapped steps and a changed line are reported as exactly that.
+- R16. **Verus check.** The new verified crate is in the `verus` flake check
   (`flake.nix:292-306`) and runs nightly with the others.
 
 ### Unchanged and documented
 
-- R18. **`ctadl query`'s SARIF does not change**, and neither does `ctadl diff-index`.
-- R19. **Docs.** docs/spec.md F12 names `ctadl diff-sarif`, and §5 lists its verified core
+- R17. **`ctadl query`'s SARIF does not change**, and neither does `ctadl diff-index`.
+- R18. **Docs.** docs/spec.md F12 names `ctadl diff-sarif`, and §5 lists its verified core
   with `multiset-diff` and `name-by-facts`; docs/debugging.md documents its use and output
   beside `diff-index` (docs/debugging.md:183-215); `nightly/README.md:31-36` and the comments
   at `flake.nix:292` and `Cargo.toml:110` name the new crate.
@@ -147,26 +141,23 @@ Data flow: JSON → (D2, unverified) raw runs over atoms → (D3, verified) sort
 
 ### D2. Parser (unverified)
 
-Reads each file with `serde_json` into a small set of `Deserialize` structs that name only
-the fields the table in D4 keeps, resolves or drops. Structs from `result` down are
-`deny_unknown_fields`, and a dropped field is named and discarded, not left unread, so an
-unknown field fails the parse (R13). Run-level structs ignore unknown fields. It:
+Reads each file with `serde-sarif` (`serde_sarif::sarif::Sarif`), the crate `ctadl query`
+writes with (`ctadl-ascent/Cargo.toml:62`), so reader and writer share one schema. It takes
+out the fields D4 lists as kept and builds a raw run from them; every other field is not
+read, whatever it holds. It:
 
 - interns every kept string into one atom table shared by A and B, so equal strings get
   equal atoms in both files (the one assumption the proofs rest on: interning is
   injective);
 - rewrites `call-arg(<n>, <f>)` to `call-arg(_, <f>)` inside vertex strings before
-  interning, and drops the debug ids. The call site is already named by the result's
-  location; the formal and access path stay, since they tell apart two endpoints on one
-  variable (F:3322-3328);
-- rejects (exit 2) a reference D4 does not resolve: `ruleIndex` without `ruleId`,
-  `logicalLocation.parentIndex`, `threadFlowLocation.index`, `result.rule.index`,
-  `artifactLocation.index`;
-- rejects a property key the table does not list.
+  interning. The call site is already named by the result's location; the formal and access
+  path stay, since they tell apart two endpoints on one variable (F:3322-3328);
+- turns each `logicalLocations[].index` into a raw reference, leaving resolution and its
+  range check to the core.
 
-The parser holds no ordering, resolution or dropping logic beyond discarding a field, so
-what it can get wrong is limited to the field list and the `call-arg` rewrite. The
-metamorphic tests (R16) target exactly that.
+The parser holds no ordering, resolution or comparison logic, so what it can get wrong is
+the choice of fields and the `call-arg` rewrite. The metamorphic tests (R15) target exactly
+that. A field ctadl starts writing later is not compared until the parser reads it.
 
 ### D3. Canonical core (verified)
 
@@ -210,18 +201,18 @@ Properties named here:
   empty flow. Hence it is unchanged by any change to `xs[1..last]`.
 - **P-ord (order).** `cmp_canon` computes a total order on each canonical type, and returns
   `Equal` exactly when its arguments are equal.
-- **P-drop (by construction).** A field the raw type does not have cannot affect the
-  output. This is a fact about the types, not a Verus theorem; R16 checks that the parser
+- **P-drop (by construction).** A field the parser does not read, and the raw type does
+  not have, cannot affect the output. This is a fact about the types, not a Verus theorem; R15 checks that the parser
   drops the right fields.
 
 | SARIF element | Canonical form | Verus property |
 | --- | --- | --- |
 | `sarifLog.runs` | Results of all runs pooled; each run's references resolved against its own tables. | P-bag (pooling is a bag) |
-| `run.results` | `canon_bag` of canonical results: the multiset compared. | P-bag; output sorted, discharging `multiset_diff`'s `sorted` precondition (R15) |
+| `run.results` | `canon_bag` of canonical results: the multiset compared. | P-bag; output sorted, discharging `multiset_diff`'s `sorted` precondition (R14) |
 | `run.logicalLocations` | Not compared itself; the table references resolve through. | P-ref |
 | `run.artifacts` (not emitted) | Ignored, as run-level data. | P-drop |
 | `run.tool`, `invocations`, `originalUriBaseIds`, `properties`, notifications | Dropped. | P-drop |
-| `result.ruleId` | Atom. `ruleIndex` dropped when `ruleId` is present, rejected otherwise. | P-drop |
+| `result.ruleId` | Atom. `ruleIndex` is not read. | P-drop |
 | `result.kind`, `result.level` | Atoms, with SARIF's defaults filled in when absent (`fail`, `warning`), so absent and default compare equal. | none (total function on atoms) |
 | `result.message` | Dropped (R6). | P-drop |
 | `result.locations` | `canon_bag` of canonical locations. With `--endpoints-only`, dropped for C0001. | P-bag |
@@ -234,7 +225,7 @@ Properties named here:
 | `location` | Record of optional canonical physical location and `canon_bag` of logical locations. `location.message` dropped. | P-bag |
 | `logicalLocations[]` reference (`index`) | Resolved to the entry's `fullyQualifiedName` (else `name`) atom. `kind` and `name` are dropped: the table entry for a name is whichever use came first (F:2309-2322), so they can change under reordering. | P-ref |
 | Inline `logicalLocation` (no index) | Its `fullyQualifiedName` (else `name`) atom. | none |
-| `physicalLocation.artifactLocation` | `(uriBaseId name, uri)` atoms; the base's value is not consulted. An `index` is rejected (exit 2), like the other references ctadl does not emit. | none |
+| `physicalLocation.artifactLocation` | `(uriBaseId name, uri)` atoms; the base's value is not consulted. `index` is not read. | none |
 | `physicalLocation.region` | `startLine`, `startColumn`, `endLine`, `endColumn`, `byteOffset`, `byteLength`, each optional, as numbers. `region.message`/`snippet` dropped. | none |
 | `physicalLocation.address` | `absoluteAddress`, `relativeAddress`, `kind`. | none |
 | `properties.taintLabels` | `canon_bag` of atoms. | P-bag |
@@ -245,9 +236,9 @@ Properties named here:
 | `properties.taintedFormals` | `canon_bag` of `(formal, canon_bag of labels)`. | P-bag |
 | `properties.import` (debug) | Atom (an import name). | none |
 | `properties.fileSpanId`, `funcId`, `insnId` (debug) | Dropped. | P-drop |
-| Other `properties`, other fields within a result | Rejected (exit 2). | none |
+| Other `properties`, other fields within a result | Not read. | P-drop |
 
-**End-to-end theorem** (R14, R15), stated in `sarif-canon` over raw runs: if `ra'` is
+**End-to-end theorem** (R13, R14), stated in `sarif-canon` over raw runs: if `ra'` is
 obtained from `ra` by any composition of permuting an unordered collection (rows of the
 table marked P-bag) and renumbering a table with its references (P-ref), then
 `canon_run(ra') == canon_run(ra)`; and with `multiset_diff`'s
@@ -268,5 +259,5 @@ that printed form, not by atom numbers, so the output does not depend on interni
 
 ## Concerns
 
-None open. The canonical core and its composition are both verified (R14, D4's end-to-end
+None open. The canonical core and its composition are both verified (R13, D4's end-to-end
 theorem); only the parser is left to tests.
