@@ -1,12 +1,12 @@
 //! Each table's canonical row, and the comparison of one table's two sides.
 
 use std::any::Any;
-use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path as FsPath;
 
-use multiset_diff::{Delta, multiset_diff};
+use diff_report::Smallest;
+use multiset_diff::multiset_diff;
 use rustc_hash::FxHashMap;
 
 use ctadl_index::facts::schema::{self, Table};
@@ -21,7 +21,7 @@ use crate::canon::{CanonEdge, CanonEndpoint, CanonTarget, CanonVar, ContentOrd, 
 use crate::insn::{CanonInsn, InsnMap};
 use crate::names::{FunctionNames, ImportNames};
 use crate::render::{Cx, Row};
-use crate::report::{Sample, Samples, TableReport};
+use crate::report::TableReport;
 use crate::{Error, Side, error_chain};
 
 /// Loads `table` from `dir` with `load`, its schema module's `try_load`. An error, or a panic in
@@ -428,57 +428,6 @@ fn load_canon<T: DiffTable>(
     drop(raw);
     rows.shrink_to_fit();
     Ok(rows)
-}
-
-/// The first `limit` of the values pushed, by `cmp`, kept in a buffer of at most `2 * limit`.
-struct Smallest<'r, T> {
-    limit: usize,
-    buf: Vec<Delta<'r, T>>,
-    total: usize,
-}
-
-impl<'r, T> Smallest<'r, T> {
-    fn new(limit: usize) -> Self {
-        Smallest {
-            limit,
-            buf: Vec::new(),
-            total: 0,
-        }
-    }
-
-    fn push(&mut self, d: Delta<'r, T>, cmp: impl Fn(&T, &T) -> Ordering) {
-        self.total += 1;
-        if self.limit == 0 {
-            return;
-        }
-        self.buf.push(d);
-        if self.buf.len() >= self.limit.saturating_mul(2) {
-            self.buf
-                .select_nth_unstable_by(self.limit, |x, y| cmp(x.row, y.row));
-            self.buf.truncate(self.limit);
-        }
-    }
-
-    fn finish(
-        mut self,
-        cmp: impl Fn(&T, &T) -> Ordering,
-        render: impl Fn(&T) -> String,
-    ) -> Samples {
-        self.buf.sort_unstable_by(|x, y| cmp(x.row, y.row));
-        self.buf.truncate(self.limit);
-        Samples {
-            not_shown: self.total - self.buf.len(),
-            rows: self
-                .buf
-                .iter()
-                .map(|d| Sample {
-                    row: render(d.row),
-                    count_a: d.count_a,
-                    count_b: d.count_b,
-                })
-                .collect(),
-        }
-    }
 }
 
 /// Compares the two sides of `T`.

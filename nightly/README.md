@@ -29,8 +29,8 @@ dev shell and the flake check provide it), or with fewer than two indexes, the c
 reports `SKIP`.
 
 The nightly workflow also builds `checks.<system>.verus`, the Verus proofs at the core of
-`ctadl diff-index`: the merge, and the naming of instructions by their facts. A failed proof
-fails the night:
+`ctadl diff-index` and `ctadl diff-query`: the merge, the naming of instructions by their
+facts, and the canonical form of SARIF results. A failed proof fails the night:
 
 ```sh
 nix build .#checks.aarch64-darwin.verus

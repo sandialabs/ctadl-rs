@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 ctadl-index.workspace = true
+diff-report.workspace = true
 multiset-diff.workspace = true
 name-by-facts.workspace = true
 rustc-hash = "2"

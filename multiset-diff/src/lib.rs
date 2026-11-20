@@ -14,6 +14,10 @@
 //!   same when `ord` calls them `Equal`; counts count those.
 //! - `proofs::client` restates the properties with `==` and plain counts, for `u8` under
 //!   `Ord::cmp`, over what the iterator yields.
+//!
+//! The specs and `proofs` are public so that another verified crate can use the theorems
+//! about its own calls: verify this crate with `--export <file> --compile`, and that one with
+//! `--import multiset_diff=<file> --extern multiset_diff=<rlib>`, as `checks.verus` does.
 
 use std::cmp::Ordering;
 use vstd::prelude::*;
@@ -21,7 +25,7 @@ use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use vstd::std_specs::iter::{IteratorSpec, IteratorSpecImpl};
 
-mod proofs;
+pub mod proofs;
 
 verus! {
 

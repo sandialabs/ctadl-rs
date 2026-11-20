@@ -11,6 +11,7 @@ mod cli;
 mod default_models;
 mod determinism;
 mod diff_index;
+mod diff_query;
 mod dispatch_models;
 mod flowy_tests;
 mod global_ports;

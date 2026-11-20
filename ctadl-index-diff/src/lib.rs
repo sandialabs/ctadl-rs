@@ -30,9 +30,10 @@ mod tests;
 use std::fmt;
 
 pub use canon::{CanonEdge, CanonEndpoint, CanonTarget, CanonVar, FnName};
+pub use diff_report::{Sample, Samples};
 pub use driver::{Options, diff_index};
 pub use insn::{CanonInsn, SigRow, SigVar, SignatureId, Signatures};
-pub use report::{Filters, Report, Sample, Samples, TableReport, UnknownFile};
+pub use report::{Filters, Report, TableReport, UnknownFile};
 
 /// One of the two index directories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
