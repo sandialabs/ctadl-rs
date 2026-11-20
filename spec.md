@@ -244,9 +244,13 @@ table marked P-bag) and renumbering a table with its references (P-ref), then
 `canon_run(ra') == canon_run(ra)`; and with `multiset_diff`'s
 `theorem_reports_exactly_count_differences` (`multiset-diff/src/proofs.rs:604`), the diff of
 `canon_run(ra)` and `canon_run(rb)` is empty exactly when the two multisets of canonical
-results are equal. `multiset-diff` is called through `multiset_diff_by`
-(`multiset-diff/src/lib.rs:258`), which becomes `pub` under `verus_keep_ghost` so a
-verified caller can name `ord`.
+results are equal. The theorem is about `diff_from`, a spec function, so it needs
+`multiset-diff`'s theorems, not an exec call: `mod proofs` (`multiset-diff/src/lib.rs:24`)
+becomes `pub mod proofs`, and `multiset_diff_by` is unchanged. The exec call to
+`multiset_diff` stays in the unverified `ctadl-sarif-diff`, with the `cmp` `sarif-canon`
+sorted by. The `verus` check verifies `multiset-diff` with `--export` and `--compile`, and
+`sarif-canon` with `--import` and `--extern` of it, so the theorems are used across crates,
+not copied.
 
 ### D5. Report
 
