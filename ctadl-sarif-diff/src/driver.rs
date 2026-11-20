@@ -64,7 +64,6 @@ pub(crate) fn diff_with(
     let ca = canon(a, runs_a)?;
     let cb = canon(b, runs_b)?;
 
-    // Both sides are sorted by `cmp_result_u32`, the order `multiset_diff` needs them in.
     // Samples are chosen and ordered by their printed form, which does not depend on which
     // atom a string got.
     let render = |r: &CanonResult<u32>| render::result(r, &atoms);

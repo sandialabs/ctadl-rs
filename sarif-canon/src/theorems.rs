@@ -1,13 +1,5 @@
-//! What the canonical form is for, end to end.
-//!
-//! `theorem_canon_invariant`: rewriting a file's runs by any number of steps, each permuting
-//! unordered collections or renumbering a run's `logicalLocations` with every reference into
-//! it, does not change the canonical form, or whether there is one.
-//!
-//! `theorem_diff_empty_iff_equal`: on two sorted sequences of canonical results, such as
-//! `canon_runs` returns, `multiset_diff` reports exactly the results whose numbers of
-//! occurrences differ, with those numbers, so it reports nothing exactly when the two
-//! multisets are equal.
+//! What the canonical form is for, end to end: `theorem_canon_invariant` and
+//! `theorem_diff_empty_iff_equal`.
 
 use crate::canon::*;
 use crate::order::*;
@@ -1157,6 +1149,9 @@ pub open spec fn views<A>(s: Seq<CanonResult<A>>) -> Seq<CanonResultV<A>> {
     s.map_values(|c: CanonResult<A>| c@)
 }
 
+/// On two sorted sequences of canonical results, such as `canon_runs` returns, `multiset_diff`
+/// reports exactly the results whose numbers of occurrences differ, with those numbers, so it
+/// reports nothing exactly when the two multisets are equal.
 pub proof fn theorem_diff_empty_iff_equal<'a, A>(
     oa: spec_fn(A, A) -> Ordering,
     a: &'a [CanonResult<A>],

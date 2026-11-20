@@ -5,17 +5,15 @@
 //! locations, kinds and the set- and map-valued properties) are sorted; a thread flow's steps
 //! keep their order, after a check that their `executionOrder` values increase.
 //!
-//! With an endpoints rule, a result of that rule is compared by its rule, kind, level, labels,
-//! source and sink functions, and the first and last step of each thread flow: its locations,
-//! interior steps and other properties are dropped. Its full form is still built first, so an
-//! input that cannot be canonicalized is an error with or without the endpoints rule.
+//! With an endpoints rule, a result of that rule is cut to what `spec_endpoints_result` keeps.
+//! Its full form is still built first, so an input that cannot be canonicalized is an error
+//! with or without the endpoints rule.
 //!
 //! The errors, the first in the order the form is built (results in order; within a result,
 //! its locations, then its code flows; within a thread flow, the empty check, the
 //! `executionOrder` check, then its steps): a reference past the end of the table
-//! (`OutOfRange`); a thread flow with no steps, which SARIF does not allow (`EmptyFlow`); and
-//! `executionOrder` values that do not increase (`NotIncreasing`). The endpoints rule changes
-//! what is compared, never whether an input is accepted.
+//! (`OutOfRange`); a thread flow with no steps (`EmptyFlow`); and `executionOrder` values that
+//! do not increase (`NotIncreasing`).
 
 use crate::types::*;
 use std::cmp::Ordering;

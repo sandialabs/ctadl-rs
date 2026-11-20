@@ -286,20 +286,18 @@ fn keyed(
     atoms: &mut Atoms,
     rw: Rewrite,
 ) -> Result<Vec<Keyed<u32>>, Error> {
+    let err = || Error::Property {
+        key,
+        expected: "an object of arrays of strings",
+    };
     let Value::Object(m) = v else {
-        return Err(Error::Property {
-            key,
-            expected: "an object of arrays of strings",
-        });
+        return Err(err());
     };
     m.iter()
         .map(|(k, xs)| {
             Ok(Keyed {
                 key: atoms.intern(k),
-                values: strings(xs, key, atoms, rw).map_err(|_| Error::Property {
-                    key,
-                    expected: "an object of arrays of strings",
-                })?,
+                values: strings(xs, key, atoms, rw).map_err(|_| err())?,
             })
         })
         .collect()

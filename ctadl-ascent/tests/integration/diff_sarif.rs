@@ -456,7 +456,7 @@ fn widened(doc: &Value) -> Value {
     doc
 }
 
-/// The rule each profile's SARIF is expected to hold results of, by the rule id's prefix.
+/// The rules each profile's SARIF is expected to hold results of, by the rule id's prefix.
 fn expected_rules(profile: &str) -> &'static [&'static str] {
     match profile {
         "human" => &["C0001", "C0003", "C0004"],

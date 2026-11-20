@@ -89,10 +89,11 @@ pub enum Command {
     /// Use this to check whether two query runs found the same things. The results of every run
     /// in a file are compared as one multiset. Run metadata, tool, rules, invocations and message
     /// text are not compared, nor the order of anything SARIF leaves unordered (results,
-    /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that are local to
-    /// a run (logical location indexes, `executionOrder`, instruction, function and span ids). A
-    /// logical location is compared by what it names. The steps of a thread flow are compared in
-    /// order. Equal results count separately, so a duplicated or deleted one is a difference.
+    /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that
+    /// are local to a run (logical location indexes, `executionOrder`, instruction, function and
+    /// span ids). A logical location is compared by what it names. The steps of a thread flow
+    /// are compared in order. Equal results count separately, so a duplicated or deleted one is
+    /// a difference.
     ///
     /// The first line of output is `IDENTICAL` or `DIFFERENT`. Then how many results each file
     /// holds, and at most `--limit` results per side that occur more often there, ordered by
