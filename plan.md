@@ -2,30 +2,11 @@
 
 Source: `intent.md`, `spec.md`. This plans the order of the work, the files each step changes
 and the tests that prove it. R*, D* and P-* names are the spec's; the spec wins where the two
-disagree, except for the corrections listed below. Each phase builds, passes the gate named
-in it, and is one commit.
+disagree. Each phase builds, passes the gate named in it, and is one commit. F is
+`ctadl-ascent/src/query_engine/formatter.rs`.
 
 Code, comments, help text and docs written by these phases must not cite the spec's or the
 plan's numbers (R*, D*, P-*, phase numbers).
-
-## Corrections to the spec
-
-- P1. **Stale or wrong citations in the spec's Background and Design.** None changes the
-  design. The spec says:
-  - "`results` is ordered by rule" (F:3027-3276). It is not: C0002 by span, then C0003 and
-    C0004 interleaved in endpoint order (F:2588-2591, F:3136-3145), then C0007 by function
-    id (F:3147-3153), then C0001 by path node ids (F:2618-2621, F:3158), and the C0001
-    status result last, appended at F:1932.
-  - "`--sarif-profile` selects which rules appear (F:1043)". F:1043-1059 is
-    `disabled_rules`, which only feeds `ruleConfigurationOverrides`. The gates are F:3027
-    (C0002), F:3147 (C0007) and F:3157 with `profile_finds_paths` (F:1033-1038).
-  - F:3043 should be F:3045; F:3328 should be F:3329; F:3322-3328 should be F:3323-3328.
-    C0001's own `taintVertices` is built at F:3178-3187 and is not cited.
-  - `multiset-diff/src/lib.rs:421` is the `fn` line; the `debug_assert!`s are at :422-423.
-  - `ctadl-ascent/src/main.rs:933-960` is `fn diff_index` at :931-959; dispatch is at :759.
-  - `docs/debugging.md:183-215` is :182-219; `nightly/README.md:31-36` is :31-37.
-
-  (F is `ctadl-ascent/src/query_engine/formatter.rs`.) This plan uses the corrected lines.
 
 ## Order
 
