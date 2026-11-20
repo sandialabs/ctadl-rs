@@ -5,6 +5,6 @@ them only as a stream. On a 180 MB APK with 7.6 MB of Dex, that costs ~225 MB of
 
 - Hash artifacts by streaming them, with every digest unchanged.
 - Import an APK from the file, decompressing only its `classes*.dex` entries.
-- Decide whether a `.dll`/`.exe` is .NET from its PE headers alone.
+- Decide whether a `.dll`/`.exe` is .NET without reading the whole file.
 
 Import output must not change.
