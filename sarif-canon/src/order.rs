@@ -11,7 +11,9 @@ use std::cmp::Ordering;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
-use order_laws::{computes, eqv, le, lt, total_order};
+use order_laws::{
+    computes, eqv, le, lemma_lex_equal, lemma_lex_total, lemma_trans, lex, lex_ord, lt, total_order,
+};
 
 verus! {
 
@@ -49,25 +51,6 @@ pub open spec fn ord_option<T>(ord: spec_fn(T, T) -> Ordering, x: Option<T>, y: 
         (None, Some(_)) => Ordering::Less,
         (Some(_), None) => Ordering::Greater,
         (Some(a), Some(b)) => ord(a, b),
-    }
-}
-
-/// The lexicographic order `ord` induces: element by element, a proper prefix first.
-pub open spec fn lex<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>, t: Seq<T>) -> Ordering
-    decreases s.len(),
-{
-    if s.len() == 0 {
-        if t.len() == 0 {
-            Ordering::Equal
-        } else {
-            Ordering::Less
-        }
-    } else if t.len() == 0 {
-        Ordering::Greater
-    } else if ord(s[0], t[0]) == Ordering::Equal {
-        lex(ord, s.drop_first(), t.drop_first())
-    } else {
-        ord(s[0], t[0])
     }
 }
 
@@ -260,68 +243,12 @@ pub open spec fn ord_opt<T>(ord: spec_fn(T, T) -> Ordering) -> spec_fn(Option<T>
     |x: Option<T>, y: Option<T>| ord_option(ord, x, y)
 }
 
-pub open spec fn ord_lex<T>(ord: spec_fn(T, T) -> Ordering) -> spec_fn(Seq<T>, Seq<T>) -> Ordering {
-    |s: Seq<T>, t: Seq<T>| lex(ord, s, t)
-}
-
 /// Pairs, by their first components, then their second.
 pub open spec fn ord_pair<U, V>(o1: spec_fn(U, U) -> Ordering, o2: spec_fn(V, V) -> Ordering) -> spec_fn(
     (U, V),
     (U, V),
 ) -> Ordering {
     |p: (U, V), q: (U, V)| then(o1(p.0, q.0), o2(p.1, q.1))
-}
-
-// ---------------------------------------------------------------------------
-// Consequences of the order laws.
-
-proof fn lemma_refl<T>(ord: spec_fn(T, T) -> Ordering, x: T)
-    requires
-        total_order(ord),
-    ensures
-        eqv(ord, x, x),
-{
-    assert(ord(x, x) == Ordering::Less <==> ord(x, x) == Ordering::Greater);
-}
-
-proof fn lemma_eqv_symm<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T)
-    requires
-        total_order(ord),
-        eqv(ord, x, y),
-    ensures
-        eqv(ord, y, x),
-{
-    assert(ord(x, y) == Ordering::Equal);
-}
-
-/// `le` and `lt` chain, and `eqv` is transitive.
-proof fn lemma_trans<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T, z: T)
-    requires
-        total_order(ord),
-    ensures
-        le(ord, x, y) && le(ord, y, z) ==> le(ord, x, z),
-        lt(ord, x, y) && le(ord, y, z) ==> lt(ord, x, z),
-        le(ord, x, y) && lt(ord, y, z) ==> lt(ord, x, z),
-        eqv(ord, x, y) && eqv(ord, y, z) ==> eqv(ord, x, z),
-{
-    assert(le(ord, x, y) && le(ord, y, z) ==> le(ord, x, z));
-    assert(le(ord, z, x) && le(ord, x, y) ==> le(ord, z, y));
-    assert(le(ord, y, z) && le(ord, z, x) ==> le(ord, y, x));
-    assert(ord(x, y) == Ordering::Less <==> ord(y, x) == Ordering::Greater);
-    assert(ord(y, z) == Ordering::Less <==> ord(z, y) == Ordering::Greater);
-    assert(ord(x, z) == Ordering::Less <==> ord(z, x) == Ordering::Greater);
-    assert(ord(z, x) == Ordering::Less <==> ord(x, z) == Ordering::Greater);
-    assert(ord(y, x) == Ordering::Less <==> ord(x, y) == Ordering::Greater);
-    assert(ord(z, y) == Ordering::Less <==> ord(y, z) == Ordering::Greater);
-    if eqv(ord, x, y) && eqv(ord, y, z) {
-        lemma_eqv_symm(ord, x, y);
-        lemma_eqv_symm(ord, y, z);
-        assert(le(ord, x, y) && le(ord, y, z));
-        assert(le(ord, x, z));
-        assert(le(ord, z, y) && le(ord, y, x));
-        assert(le(ord, z, x));
-        assert(ord(x, z) != Ordering::Less);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,96 +351,14 @@ proof fn lemma_pull<T, K>(o: spec_fn(K, K) -> Ordering, key: spec_fn(T) -> K, or
 // ---------------------------------------------------------------------------
 // The lexicographic order keeps `strict`.
 
-/// `lex` is `Equal` exactly when the sequences have one length and are equivalent element by
-/// element.
-proof fn lemma_lex_equal<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>, t: Seq<T>)
-    ensures
-        lex(ord, s, t) == Ordering::Equal <==> (s.len() == t.len() && forall|k: int|
-            0 <= k < s.len() ==> eqv(ord, #[trigger] s[k], t[k])),
-    decreases s.len(),
-{
-    if s.len() > 0 && t.len() > 0 {
-        lemma_lex_equal(ord, s.drop_first(), t.drop_first());
-        if s.len() == t.len() && forall|k: int| 0 <= k < s.len() ==> eqv(ord, #[trigger] s[k], t[k]) {
-            assert(eqv(ord, s[0], t[0]));
-            assert forall|k: int| 0 <= k < s.drop_first().len() implies eqv(
-                ord,
-                #[trigger] s.drop_first()[k],
-                t.drop_first()[k],
-            ) by {
-                assert(eqv(ord, s[k + 1], t[k + 1]));
-            }
-        }
-        if lex(ord, s, t) == Ordering::Equal {
-            assert forall|k: int| 0 <= k < s.len() implies eqv(ord, #[trigger] s[k], t[k]) by {
-                if k > 0 {
-                    assert(eqv(ord, s.drop_first()[k - 1], t.drop_first()[k - 1]));
-                }
-            }
-        }
-    }
-}
-
-proof fn lemma_lex_antisym<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>, t: Seq<T>)
-    requires
-        total_order(ord),
-    ensures
-        lex(ord, s, t) == Ordering::Less <==> lex(ord, t, s) == Ordering::Greater,
-        lex(ord, s, t) == Ordering::Equal ==> lex(ord, t, s) == Ordering::Equal,
-    decreases s.len(),
-{
-    if s.len() > 0 && t.len() > 0 {
-        assert(ord(s[0], t[0]) == Ordering::Less <==> ord(t[0], s[0]) == Ordering::Greater);
-        assert(ord(t[0], s[0]) == Ordering::Less <==> ord(s[0], t[0]) == Ordering::Greater);
-        if ord(s[0], t[0]) == Ordering::Equal {
-            lemma_eqv_symm(ord, s[0], t[0]);
-        }
-        if ord(t[0], s[0]) == Ordering::Equal {
-            lemma_eqv_symm(ord, t[0], s[0]);
-        }
-        lemma_lex_antisym(ord, s.drop_first(), t.drop_first());
-    }
-}
-
-proof fn lemma_lex_le_trans<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>, t: Seq<T>, u: Seq<T>)
-    requires
-        total_order(ord),
-        lex(ord, s, t) != Ordering::Greater,
-        lex(ord, t, u) != Ordering::Greater,
-    ensures
-        lex(ord, s, u) != Ordering::Greater,
-    decreases s.len(),
-{
-    if s.len() > 0 && t.len() > 0 && u.len() > 0 {
-        let (a, b, c) = (s[0], t[0], u[0]);
-        lemma_trans(ord, a, b, c);
-        assert(le(ord, a, b));
-        assert(le(ord, b, c));
-        if eqv(ord, a, c) {
-            // `a <= b <= c` and `a` equivalent to `c` pin `b` between them.
-            lemma_eqv_symm(ord, a, c);
-            lemma_trans(ord, c, a, b);
-            lemma_trans(ord, b, c, a);
-            assert(ord(a, b) == Ordering::Less <==> ord(b, a) == Ordering::Greater);
-            assert(ord(b, c) == Ordering::Less <==> ord(c, b) == Ordering::Greater);
-            assert(eqv(ord, a, b));
-            assert(eqv(ord, b, c));
-            lemma_lex_le_trans(ord, s.drop_first(), t.drop_first(), u.drop_first());
-        }
-    }
-}
-
 proof fn lemma_strict_lex<T>(ord: spec_fn(T, T) -> Ordering)
     requires
         strict(ord),
     ensures
-        strict(ord_lex(ord)),
+        strict(lex_ord(ord)),
 {
-    let l = ord_lex(ord);
-    assert forall|s: Seq<T>, t: Seq<T>|
-        (#[trigger] l(s, t) == Ordering::Less) <==> l(t, s) == Ordering::Greater by {
-        lemma_lex_antisym(ord, s, t);
-    }
+    lemma_lex_total(ord);
+    let l = lex_ord(ord);
     assert forall|s: Seq<T>, t: Seq<T>| #[trigger] l(s, t) == Ordering::Equal <==> s == t by {
         lemma_lex_equal(ord, s, t);
         if l(s, t) == Ordering::Equal {
@@ -527,10 +372,6 @@ proof fn lemma_strict_lex<T>(ord: spec_fn(T, T) -> Ordering)
                 assert(ord(s[k], s[k]) == Ordering::Equal);
             }
         }
-    }
-    assert forall|s: Seq<T>, t: Seq<T>, u: Seq<T>|
-        #[trigger] le(l, s, t) && #[trigger] le(l, t, u) implies le(l, s, u) by {
-        lemma_lex_le_trans(ord, s, t, u);
     }
 }
 
@@ -608,9 +449,9 @@ pub proof fn lemma_ord_keyed<A>(oa: spec_fn(A, A) -> Ordering)
         equal_means_eq(ord_keyed(oa)),
 {
     lemma_strict_lex(oa);
-    lemma_strict_pair(oa, ord_lex(oa));
+    lemma_strict_pair(oa, lex_ord(oa));
     let key = |x: KeyedV<A>| (x.key, x.values);
-    lemma_pull(ord_pair(oa, ord_lex(oa)), key, ord_keyed(oa));
+    lemma_pull(ord_pair(oa, lex_ord(oa)), key, ord_keyed(oa));
 }
 
 pub proof fn lemma_ord_props<A>(oa: spec_fn(A, A) -> Ordering)
@@ -625,9 +466,9 @@ pub proof fn lemma_ord_props<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_strict_lex(oa);
     lemma_strict_lex(ord_keyed(oa));
     lemma_strict_opt(oa);
-    lemma_strict_opt(ord_lex(oa));
-    lemma_strict_opt(ord_lex(ord_keyed(oa)));
-    let (o1, os, ok) = (ord_opt(oa), ord_opt(ord_lex(oa)), ord_opt(ord_lex(ord_keyed(oa))));
+    lemma_strict_opt(lex_ord(oa));
+    lemma_strict_opt(lex_ord(ord_keyed(oa)));
+    let (o1, os, ok) = (ord_opt(oa), ord_opt(lex_ord(oa)), ord_opt(lex_ord(ord_keyed(oa))));
     lemma_strict_pair(ok, o1);
     lemma_strict_pair(os, ord_pair(ok, o1));
     lemma_strict_pair(os, ord_pair(os, ord_pair(ok, o1)));
@@ -654,9 +495,9 @@ pub proof fn lemma_ord_location<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_ord_physical(oa);
     lemma_strict_opt(ord_physical(oa));
     lemma_strict_lex(oa);
-    lemma_strict_pair(ord_opt(ord_physical(oa)), ord_lex(oa));
+    lemma_strict_pair(ord_opt(ord_physical(oa)), lex_ord(oa));
     let key = |x: CanonLocationV<A>| (x.physical, x.logical);
-    lemma_pull(ord_pair(ord_opt(ord_physical(oa)), ord_lex(oa)), key, ord_location(oa));
+    lemma_pull(ord_pair(ord_opt(ord_physical(oa)), lex_ord(oa)), key, ord_location(oa));
 }
 
 pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
@@ -670,9 +511,9 @@ pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_ord_location(oa);
     lemma_strict_opt(ord_location(oa));
     lemma_strict_lex(oa);
-    lemma_strict_pair(ord_lex(oa), ord_opt(ord_location(oa)));
+    lemma_strict_pair(lex_ord(oa), ord_opt(ord_location(oa)));
     let key = |x: CanonStepV<A>| (x.kinds, x.location);
-    lemma_pull(ord_pair(ord_lex(oa), ord_opt(ord_location(oa))), key, ord_step(oa));
+    lemma_pull(ord_pair(lex_ord(oa), ord_opt(ord_location(oa))), key, ord_step(oa));
 }
 
 pub proof fn lemma_ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering)
@@ -689,9 +530,9 @@ pub proof fn lemma_ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_strict_pair(st, st);
     lemma_strict_opt(ord_pair(st, st));
     lemma_strict_lex(st);
-    lemma_strict_opt(ord_lex(st));
-    lemma_strict_pair(ord_opt(ord_pair(st, st)), ord_opt(ord_lex(st)));
-    let o = ord_pair(ord_opt(ord_pair(st, st)), ord_opt(ord_lex(st)));
+    lemma_strict_opt(lex_ord(st));
+    lemma_strict_pair(ord_opt(ord_pair(st, st)), ord_opt(lex_ord(st)));
+    let o = ord_pair(ord_opt(ord_pair(st, st)), ord_opt(lex_ord(st)));
     let key = |x: CanonThreadFlowV<A>|
         match x {
             CanonThreadFlowV::Steps(s) => (None, Some(s)),
@@ -717,7 +558,7 @@ pub proof fn lemma_ord_code_flow<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_ord_thread_flow(oa);
     lemma_strict_lex(ord_thread_flow(oa));
     let key = |x: CanonCodeFlowV<A>| x.thread_flows;
-    lemma_pull(ord_lex(ord_thread_flow(oa)), key, ord_code_flow(oa));
+    lemma_pull(lex_ord(ord_thread_flow(oa)), key, ord_code_flow(oa));
 }
 
 pub proof fn lemma_ord_result<A>(oa: spec_fn(A, A) -> Ordering)
@@ -734,7 +575,7 @@ pub proof fn lemma_ord_result<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_strict_opt(oa);
     lemma_strict_lex(ord_location(oa));
     lemma_strict_lex(ord_code_flow(oa));
-    let (ol, oc, op) = (ord_lex(ord_location(oa)), ord_lex(ord_code_flow(oa)), ord_props(oa));
+    let (ol, oc, op) = (lex_ord(ord_location(oa)), lex_ord(ord_code_flow(oa)), ord_props(oa));
     lemma_strict_pair(oc, op);
     lemma_strict_pair(ol, ord_pair(oc, op));
     lemma_strict_pair(oa, ord_pair(ol, ord_pair(oc, op)));

@@ -8,7 +8,7 @@ use crate::prims::*;
 use crate::theorems::*;
 use crate::types::*;
 use multiset_diff::sorted;
-use order_laws::total_order;
+use order_laws::{lex, total_order};
 use std::cmp::Ordering;
 use vstd::prelude::*;
 
