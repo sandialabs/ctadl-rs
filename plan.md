@@ -547,6 +547,18 @@ The controller checks the diff against Phase 1b's commit for this.
     nix build .#checks.aarch64-darwin.verus
     grep -nE 'admit|external_body' sarif-canon/src/canon.rs   # empty
 
+**As built.**
+- One verified exec function per element (`canon_ref`, `canon_location`, `canon_step`,
+  `canon_thread_flow`, `canon_code_flow`, `canon_props`, `canon_result_full`,
+  `endpoints_*`, `canon_result`, `run_results`), each proved equal to its `spec_*`, and one
+  `canon_bag` wrapper per bag type. `canon_runs` pools every run's results, then sorts once.
+- `map_owned` maps over a consumed `Vec` (the endpoints cut owns its flows, and nothing is
+  cloned). `copy_atoms` and `copy_physical` in `prims.rs` became `pub`.
+- The rule test `is_endpoints_rule` matches on `cmp`'s result.
+- An extra test, `runs_pooled`: each run resolves against its own table, run order does not
+  matter, an error in any run is returned. `empty_flow_errs` checks both with and without
+  the endpoints rule. `sarif-canon`: 178 verified.
+
 ## Phase 6b: the invariance and end-to-end theorems (R13, R14, D4)
 
 Depends on: 6a.

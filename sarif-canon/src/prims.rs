@@ -532,7 +532,7 @@ fn copy_location<A: Copy>(l: &CanonLocation<A>) -> (r: CanonLocation<A>)
     CanonLocation { physical, logical: copy_atoms(&l.logical) }
 }
 
-fn copy_physical<A: Copy>(p: &Physical<A>) -> (r: Physical<A>)
+pub fn copy_physical<A: Copy>(p: &Physical<A>) -> (r: Physical<A>)
     ensures
         r == *p,
 {
@@ -556,7 +556,7 @@ fn copy_physical<A: Copy>(p: &Physical<A>) -> (r: Physical<A>)
     }
 }
 
-fn copy_atoms<A: Copy>(v: &[A]) -> (r: Vec<A>)
+pub fn copy_atoms<A: Copy>(v: &[A]) -> (r: Vec<A>)
     ensures
         r@ == v@,
 {

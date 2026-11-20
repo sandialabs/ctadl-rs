@@ -24,9 +24,10 @@
 //! What is proved: the order on each canonical type is total and `Equal` exactly on equal
 //! values (`order`); the merge sort's output is a sorted permutation of its input, and the
 //! sorted permutation is unique (`sort`); and the primitives meet their contracts and are
-//! unchanged by renumbering a table or permuting a bag (`prims`). `canon_run` and the
-//! end-to-end `theorems` are stated, checked by `smoke` against concrete runs, with their code
-//! unimplemented and their proofs admitted.
+//! unchanged by renumbering a table or permuting a bag (`prims`); and `canon_run` and
+//! `canon_runs` return exactly the canonical form `spec_canon_runs` defines, error included,
+//! sorted by the order on results (`canon`). The end-to-end `theorems` are stated, checked by
+//! `smoke` against concrete runs, with their proofs admitted.
 
 use vstd::prelude::*;
 
