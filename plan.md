@@ -15,13 +15,15 @@ plan's numbers (R*, D*, P-*, phase numbers).
 | 0 | 0 | baseline on the unchanged tree |
 | 1 | 1, 2 | 1 is the Verus plumbing and the `sarif-canon` skeleton with its types; 2 moves the report's sample code into a shared crate. Independent code. |
 | 2 | 3, 4, 5 | 3 is the order on canonical types, 4 the sort and the other primitives, 5 the parser. All need only 1's types; disjoint files. |
-| 3 | 6 | `canon_run` and the end-to-end theorem need 3's order and 4's primitives |
-| 4 | 7 | the driver and report need 2's shared code, 5's parser and 6's `canon_run` |
+| 3 | 6a | `canon_run` needs 3's order and 4's primitives |
+| 4 | 6b, 7 | 6b proves the theorems about 6a; 7, the driver and report, needs 2's shared code, 5's parser and 6a's `canon_run`. Disjoint files. |
 | 5 | 8, 9 | 8 wires the subcommand; 9 adds the metamorphic tests on real SARIF. Both call 7's API. |
-| 6 | 10 | docs and comments close |
+| 6 | 10 | docs and comments close, after 6b's proofs and 8, 9 |
 
 The verified core is built bottom-up (types, then order and primitives, then their
-composition) so each Verus phase proves one layer against stubs that already exist. The
+composition) so each Verus phase proves one layer against stubs that already exist.
+`canon_run`'s code (6a) is split from the theorems about it (6b), so the driver, CLI and
+real-SARIF tests (7-9) do not wait on the hardest proofs; 10 closes only after 6b. The
 parser (5) is written against the raw types alone, so it runs beside the proofs. The report
 refactor (2) changes no output of `diff-index` and lands before anything uses it, so a
 `diff-index` regression has one cause. Wiring (8) and real-SARIF tests (9) come after the
@@ -316,31 +318,32 @@ strings:
     cargo test -p ctadl-sarif-diff
     cargo clippy --workspace -- -Dwarnings
 
-## Phase 6: `canon_run` and the end-to-end theorem (R5-R14, D3, D4)
+## Phase 6a: `canon_run` (R5-R12, D3, D4)
 
 Depends on: 3, 4.
 
-**What.** Compose the primitives into `canon_run`, element by element as D4's table says,
-and prove the end-to-end theorem. No callers yet.
+**What.** Compose the primitives into `canon_run`, element by element as D4's table says. The
+code verifies against the primitives' contracts and ensures its output is sorted, which is
+what `multiset_diff` needs. The invariance and end-to-end theorems are Phase 6b, so the
+library and CLI (Phases 7-9) do not wait on them. No callers yet.
 
 **Files.**
 - `sarif-canon/src/canon.rs` — owned by this phase:
   - `canon_run(run: &RawRun<A>, endpoints_rule: Option<A>, cmp, Ghost(oa)) ->
-    Result<Vec<CanonResult<A>>, Error>`, sorted by `ord_result` (Phase 3).
-    `endpoints_rule` is the atom of `C0001` when `--endpoints-only` is set; a result whose
-    `rule` equals it drops its locations, `taintVertex` and `taintVertices`, and keeps the
-    `endpoints` of each thread flow (R11). Logical references resolve to the entry's
-    `fqn`. `executionOrder` goes through `check_increasing` and is then dropped.
+    Result<Vec<CanonResult<A>>, Error>`, ensuring `sorted(ord_result, r@)` (Phase 3's
+    `ord_result`, from `canon_bag`'s ensures). `endpoints_rule` is the atom of `C0001` when
+    `--endpoints-only` is set; a result whose `rule` equals it drops its locations,
+    `taintVertex` and `taintVertices`, and keeps the `endpoints` of each thread flow (R11).
+    Logical references resolve to the entry's `fqn`. `executionOrder` goes through
+    `check_increasing` and is then dropped.
   - `canon_runs(runs: &[RawRun<A>], ..)`: all runs' results pooled, then one `canon_bag`
-    (the `sarifLog.runs` row).
-  - Proofs: the output is `sorted(ord_result, ..)`; renumbering `logical` and every index
-    into it leaves the output unchanged; permuting any P-bag collection leaves it unchanged;
-    and the end-to-end theorem as D4 states it, using
-    `multiset_diff::proofs::theorem_reports_exactly_count_differences` and Phase 3's
-    `Equal <==> ==` lemma to restate counts with `==`.
+    (the `sarifLog.runs` row), with the same ensures.
+  - A `spec fn` for each, naming its result in terms of the primitives' spec functions, for
+    Phase 6b to reason about.
+  No `assume`, `admit` or `external_body`: everything this phase ensures is proved here.
 
 **Tests.**
-- Verus: the theorems above, `theorem_canon_invariant` and `theorem_diff_empty_iff_equal`.
+- Verus: `canon_run` and `canon_runs` verify, including the sortedness ensures.
 - New, plain cargo, `sarif-canon/src/canon.rs` `#[cfg(test)]`, on hand-built `RawRun<u32>`s:
   `renumbered_table_same`; `shuffled_results_same`; `swapped_steps_differ`;
   `endpoints_only_ignores_interior` and `endpoints_only_counts_twice` (two flows with equal
@@ -352,9 +355,34 @@ and prove the end-to-end theorem. No callers yet.
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
 
+## Phase 6b: the invariance and end-to-end theorems (R13, R14, D4)
+
+Depends on: 6a.
+
+**What.** Proofs only, about 6a's spec functions; no executable code changes.
+
+**Files.**
+- `sarif-canon/src/theorems.rs` (new), `#[cfg(verus_keep_ghost)]`:
+  - `theorem_canon_invariant`: renumbering `logical` and every index into it, and permuting
+    any P-bag collection, at any depth, leaves `canon_runs` unchanged (P-ref and P-bag
+    lifted through every row of D4's table);
+  - `theorem_diff_empty_iff_equal`: the end-to-end theorem as D4 states it, using
+    `multiset_diff::proofs::theorem_reports_exactly_count_differences` and Phase 3's
+    `Equal <==> ==` lemma to restate counts with `==`.
+- `sarif-canon/src/lib.rs` — one line, `#[cfg(verus_keep_ghost)] mod theorems;`, and the
+  crate doc's "what is proved" names the two theorems.
+
+**Tests.** Verus: the two theorems. Existing `sarif-canon` tests unchanged.
+
+**Gate.**
+
+    cargo test -p sarif-canon
+    nix build .#checks.aarch64-darwin.verus
+    grep -nE 'assume|admit|external_body' sarif-canon/src   # empty
+
 ## Phase 7: driver and report (R1-R4, R12, D1, D5)
 
-Depends on: 2, 5, 6.
+Depends on: 2, 5, 6a.
 
 **What.** The `ctadl-sarif-diff` library API: read both files, canonicalize, diff, report.
 Adds the dependency to `ctadl-ascent` but no subcommand yet.
@@ -478,7 +506,7 @@ every profile. Test-only.
 
 ## Phase 10: docs and comments (R18), and acceptance
 
-Depends on: 8, 9.
+Depends on: 6b, 8, 9.
 
 **What.** Document the command and the new verified crate. No code changes. Docs must not
 cite spec or plan numbers.
@@ -509,7 +537,8 @@ cite spec or plan numbers.
 | `sarif-canon/Cargo.toml`, `src/lib.rs`, `src/types.rs` | new crate, types | 1 |
 | `sarif-canon/src/order.rs` | order and its proofs | 3 (stub in 1) |
 | `sarif-canon/src/sort.rs`, `src/prims.rs` | merge sort, primitives, proofs | 4 (stubs in 1) |
-| `sarif-canon/src/canon.rs` | `canon_run`, end-to-end theorem | 6 (stub in 1) |
+| `sarif-canon/src/canon.rs` | `canon_run` | 6a (stub in 1) |
+| `sarif-canon/src/theorems.rs`, `src/lib.rs` | invariance and end-to-end theorems; `mod theorems;` | 6b |
 | `flake.nix` | cross-crate `verus` check; comments | 1, 10 |
 | `Cargo.toml` | workspace entries; comment at :110 | 1, 2, 7 |
 | `diff-report/*` | new crate: `Sample`, `Samples`, `Smallest`, `write_samples` | 2 |
