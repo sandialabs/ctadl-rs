@@ -376,6 +376,7 @@ Adds the dependency to `ctadl-ascent` but no subcommand yet.
   `diff_report::write_samples(.., "results", "")` for A then B; `write_json`:
   `{result, results_differ, more_in_a, more_in_b, ...}`; a canonical result renders as
   compact JSON with atoms resolved to strings.
+- `ctadl-sarif-diff/Cargo.toml` — add `multiset-diff` and `diff-report`.
 - `ctadl-ascent/Cargo.toml:28` — add `ctadl-sarif-diff.workspace = true`.
 - `Cargo.toml` — `ctadl-sarif-diff` in `members`, `default-members`,
   `[workspace.dependencies]`.
@@ -514,7 +515,7 @@ cite spec or plan numbers.
 | `diff-report/*` | new crate: `Sample`, `Samples`, `Smallest`, `write_samples` | 2 |
 | `ctadl-index-diff/src/{report,table,lib}.rs`, `Cargo.toml` | use `diff-report` | 2 |
 | `ctadl-sarif-diff/Cargo.toml`, `src/{lib,atoms,parse}.rs` | new crate, parser | 5 |
-| `ctadl-sarif-diff/src/{driver,report,tests}.rs` | driver, report | 7 |
+| `ctadl-sarif-diff/src/{driver,report,tests}.rs`, `Cargo.toml` | driver, report; depend on `multiset-diff`, `diff-report` | 7 |
 | `ctadl-ascent/Cargo.toml` | depend on `ctadl-sarif-diff` | 7 |
 | `ctadl-ascent/src/main.rs` | `DiffSarif` subcommand | 8 |
 | `ctadl-ascent/tests/integration/cli.rs` | process tests | 8 |
