@@ -247,6 +247,31 @@ are updated and pass.
     cargo test -p sarif-canon
     nix build .#checks.aarch64-darwin.verus
 
+**As built.**
+- Statements are about `Seq`-based views (`RawRunV`, ..., `CanonResultV`, `PropsV`,
+  `KeyedV`), with a `view` on each type that holds a `Vec`; Verus's `==` on `Vec`s is not
+  content equality. Exec `cmp_*` ensure `ord_X(oa)(x@, y@)`; `lemma_ord_result_exec` gives
+  `Equal` exactly when the views are equal.
+- `spec_canon_bag` is a recursive spec insertion sort, so smoke tests compute it.
+- `canon_bag` sorts an already-mapped `Vec`; the fallible map is `canon_seq` with a closure
+  returning `Result`. P-bag is stated as `spec_canon_bag(ord, spec_canon_seq(xs, f))`.
+  `check_increasing` takes `&[RawStep<A>]`; `endpoints` takes `Vec<CanonStep<A>>` by value;
+  `resolve` returns `Result<&T, Error>`.
+- Errors: the canonical form is a `Result` whose error is the first in build order, and
+  `canon_run`/`canon_runs` equal it exactly. `theorem_canon_invariant` concludes
+  `same_outcome` (both fail, or both succeed with equal results), since permuting the input
+  can change which error is first.
+- With the endpoints rule, the full form is built first and then cut, so a malformed
+  dropped location or interior step is still an error; only `EmptyFlow` depends on the flag.
+  Without it an empty thread flow is `Steps([])`, not an error. The cut follows the
+  requirement's list of what is kept, so it also drops `taintedFormals` and `import` (C0001
+  writes neither).
+- Extra statements: `lemma_canon_bag_unique`, `lemma_all_ok`, `lemma_ord_result_exec`;
+  `theorem_diff_empty_iff_equal` also states each delta's counts and `views(a) == views(b)`.
+- The smoke check that `theorem_diff_empty_iff_equal`'s requirements can hold covers only
+  slices of length 0 and 1, since proof code cannot build exec slices.
+- Verified: `sarif-canon` 86, including the admitted and stubbed items.
+
 ## Phase 2: shared report pieces in `diff-report` (D1, D5)
 
 Depends on: 0.

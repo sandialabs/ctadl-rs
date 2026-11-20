@@ -22,7 +22,9 @@
 //! leaving the code.
 //!
 //! What is proved: nothing yet beyond that `multiset-diff`'s specs and theorems can be used
-//! here.
+//! here. The statements to be proved are in place (`order`, `sort`, `prims`, `canon`, and the
+//! end-to-end `theorems`), checked by `smoke` against concrete runs, with their proofs
+//! admitted and their code unimplemented.
 
 use vstd::prelude::*;
 
@@ -36,6 +38,12 @@ pub mod order;
 pub mod prims;
 pub mod sort;
 pub mod types;
+
+// Statements and proofs only, which a plain build erases.
+#[cfg(verus_keep_ghost)]
+mod smoke;
+#[cfg(verus_keep_ghost)]
+mod theorems;
 
 verus! {
 

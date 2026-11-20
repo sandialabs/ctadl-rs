@@ -204,7 +204,8 @@ pub struct CanonResult<A> {
     pub locations: Vec<CanonLocation<A>>,
     /// A bag.
     pub code_flows: Vec<CanonCodeFlow<A>>,
-    /// Its bags sorted; `vertex` and `vertices` are `None` when only endpoints are compared.
+    /// Its bags sorted. When only endpoints are compared, only `labels`, `source_fns` and
+    /// `sink_fns` are kept; the rest are `None`.
     pub props: Props<A>,
 }
 
@@ -217,6 +218,227 @@ pub enum Error {
     NotIncreasing,
     /// A thread flow with no steps, when only endpoints are compared.
     EmptyFlow,
+}
+
+// ---------------------------------------------------------------------------
+// Views: the same values with every `Vec` replaced by its `Seq`, for the specs.
+//
+// Verus's `==` on a type that holds a `Vec` is not equality of contents, and specs cannot
+// build a `Vec`, so every statement about these types is made of their views. A type with no
+// `Vec` in it (`Region`, `Address`, `Physical`, `RawLogical`, `RawLogicalRef`, `Error`) is its
+// own view.
+
+pub struct KeyedV<A> {
+    pub key: A,
+    pub values: Seq<A>,
+}
+
+pub struct PropsV<A> {
+    pub labels: Option<Seq<A>>,
+    pub vertex: Option<A>,
+    pub vertices: Option<Seq<KeyedV<A>>>,
+    pub source_fns: Option<Seq<A>>,
+    pub sink_fns: Option<Seq<A>>,
+    pub tainted_formals: Option<Seq<KeyedV<A>>>,
+    pub import: Option<A>,
+}
+
+pub struct RawRunV<A> {
+    pub logical: Seq<RawLogical<A>>,
+    pub results: Seq<RawResultV<A>>,
+}
+
+pub struct RawLocationV<A> {
+    pub physical: Option<Physical<A>>,
+    pub logical: Seq<RawLogicalRef<A>>,
+}
+
+pub struct RawStepV<A> {
+    pub order: Option<i64>,
+    pub kinds: Seq<A>,
+    pub location: Option<RawLocationV<A>>,
+}
+
+pub struct RawThreadFlowV<A> {
+    pub steps: Seq<RawStepV<A>>,
+}
+
+pub struct RawCodeFlowV<A> {
+    pub thread_flows: Seq<RawThreadFlowV<A>>,
+}
+
+pub struct RawResultV<A> {
+    pub rule: Option<A>,
+    pub kind: A,
+    pub level: A,
+    pub locations: Seq<RawLocationV<A>>,
+    pub code_flows: Seq<RawCodeFlowV<A>>,
+    pub props: PropsV<A>,
+}
+
+pub struct CanonLocationV<A> {
+    pub physical: Option<Physical<A>>,
+    pub logical: Seq<A>,
+}
+
+pub struct CanonStepV<A> {
+    pub kinds: Seq<A>,
+    pub location: Option<CanonLocationV<A>>,
+}
+
+pub enum CanonThreadFlowV<A> {
+    Steps(Seq<CanonStepV<A>>),
+    Endpoints(CanonStepV<A>, CanonStepV<A>),
+}
+
+pub struct CanonCodeFlowV<A> {
+    pub thread_flows: Seq<CanonThreadFlowV<A>>,
+}
+
+pub struct CanonResultV<A> {
+    pub rule: Option<A>,
+    pub kind: A,
+    pub level: A,
+    pub locations: Seq<CanonLocationV<A>>,
+    pub code_flows: Seq<CanonCodeFlowV<A>>,
+    pub props: PropsV<A>,
+}
+
+pub open spec fn opt_seq<T>(v: Option<Vec<T>>) -> Option<Seq<T>> {
+    match v {
+        Some(v) => Some(v@),
+        None => None,
+    }
+}
+
+pub open spec fn opt_keyed<A>(v: Option<Vec<Keyed<A>>>) -> Option<Seq<KeyedV<A>>> {
+    match v {
+        Some(v) => Some(v@.map_values(|k: Keyed<A>| k@)),
+        None => None,
+    }
+}
+
+impl<A> Keyed<A> {
+    pub open spec fn view(&self) -> KeyedV<A> {
+        KeyedV { key: self.key, values: self.values@ }
+    }
+}
+
+impl<A> Props<A> {
+    pub open spec fn view(&self) -> PropsV<A> {
+        PropsV {
+            labels: opt_seq(self.labels),
+            vertex: self.vertex,
+            vertices: opt_keyed(self.vertices),
+            source_fns: opt_seq(self.source_fns),
+            sink_fns: opt_seq(self.sink_fns),
+            tainted_formals: opt_keyed(self.tainted_formals),
+            import: self.import,
+        }
+    }
+}
+
+impl<A> RawRun<A> {
+    pub open spec fn view(&self) -> RawRunV<A> {
+        RawRunV {
+            logical: self.logical@,
+            results: self.results@.map_values(|r: RawResult<A>| r@),
+        }
+    }
+}
+
+impl<A> RawLocation<A> {
+    pub open spec fn view(&self) -> RawLocationV<A> {
+        RawLocationV { physical: self.physical, logical: self.logical@ }
+    }
+}
+
+impl<A> RawStep<A> {
+    pub open spec fn view(&self) -> RawStepV<A> {
+        RawStepV {
+            order: self.order,
+            kinds: self.kinds@,
+            location: match self.location {
+                Some(l) => Some(l@),
+                None => None,
+            },
+        }
+    }
+}
+
+impl<A> RawThreadFlow<A> {
+    pub open spec fn view(&self) -> RawThreadFlowV<A> {
+        RawThreadFlowV { steps: self.steps@.map_values(|s: RawStep<A>| s@) }
+    }
+}
+
+impl<A> RawCodeFlow<A> {
+    pub open spec fn view(&self) -> RawCodeFlowV<A> {
+        RawCodeFlowV { thread_flows: self.thread_flows@.map_values(|t: RawThreadFlow<A>| t@) }
+    }
+}
+
+impl<A> RawResult<A> {
+    pub open spec fn view(&self) -> RawResultV<A> {
+        RawResultV {
+            rule: self.rule,
+            kind: self.kind,
+            level: self.level,
+            locations: self.locations@.map_values(|l: RawLocation<A>| l@),
+            code_flows: self.code_flows@.map_values(|c: RawCodeFlow<A>| c@),
+            props: self.props@,
+        }
+    }
+}
+
+impl<A> CanonLocation<A> {
+    pub open spec fn view(&self) -> CanonLocationV<A> {
+        CanonLocationV { physical: self.physical, logical: self.logical@ }
+    }
+}
+
+impl<A> CanonStep<A> {
+    pub open spec fn view(&self) -> CanonStepV<A> {
+        CanonStepV {
+            kinds: self.kinds@,
+            location: match self.location {
+                Some(l) => Some(l@),
+                None => None,
+            },
+        }
+    }
+}
+
+impl<A> CanonThreadFlow<A> {
+    pub open spec fn view(&self) -> CanonThreadFlowV<A> {
+        match self {
+            CanonThreadFlow::Steps(s) => CanonThreadFlowV::Steps(
+                s@.map_values(|x: CanonStep<A>| x@),
+            ),
+            CanonThreadFlow::Endpoints(a, b) => CanonThreadFlowV::Endpoints(a@, b@),
+        }
+    }
+}
+
+impl<A> CanonCodeFlow<A> {
+    pub open spec fn view(&self) -> CanonCodeFlowV<A> {
+        CanonCodeFlowV {
+            thread_flows: self.thread_flows@.map_values(|t: CanonThreadFlow<A>| t@),
+        }
+    }
+}
+
+impl<A> CanonResult<A> {
+    pub open spec fn view(&self) -> CanonResultV<A> {
+        CanonResultV {
+            rule: self.rule,
+            kind: self.kind,
+            level: self.level,
+            locations: self.locations@.map_values(|l: CanonLocation<A>| l@),
+            code_flows: self.code_flows@.map_values(|c: CanonCodeFlow<A>| c@),
+            props: self.props@,
+        }
+    }
 }
 
 } // verus!
