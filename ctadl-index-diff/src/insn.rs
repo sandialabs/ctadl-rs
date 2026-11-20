@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::path::Path as FsPath;
 
-use name_by_facts::Names;
+use index_canon::Names;
 
 use ctadl_index::facts::schema::{Table, actual_param, call, call_target_assign, callee_info};
 use ctadl_index::facts::{
@@ -137,7 +137,7 @@ impl SigRow {
 }
 
 /// Both sides' distinct instruction signatures, each stored once, with the ids
-/// [`name_by_facts::Names`] gives them: equal exactly when the facts are, and ordered as the
+/// [`index_canon::Names`] gives them: equal exactly when the facts are, and ordered as the
 /// signatures are by content.
 pub struct Signatures {
     rows: Vec<SigRow>,

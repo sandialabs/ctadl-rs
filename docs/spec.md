@@ -245,7 +245,7 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   `ctadl diff-index` and `ctadl diff-query`, for inputs of any length: the merge that compares
   two sorted sequences as multisets reports exactly the values whose counts differ, with those
   counts, once each (`multiset-diff`); two instructions, on either side, get one name exactly
-  when they have one set of input facts (`name-by-facts`); and a SARIF run's canonical
+  when they have one set of input facts (`index-canon`); and a SARIF run's canonical
   results are unchanged by reordering what SARIF leaves unordered or renumbering its logical
   locations, and are sorted by a total order, so the merge reports nothing exactly when two
   files hold the same canonical results (`sarif-canon`).

@@ -290,7 +290,7 @@
             };
 
             # Runs the Verus proofs of the verified crates: order-laws, multiset-diff,
-            # name-by-facts and sarif-canon. A crate another one uses has its specs exported and
+            # index-canon and sarif-canon. A crate another one uses has its specs exported and
             # its library compiled, so the other can use its theorems.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
@@ -299,7 +299,7 @@
                 }
                 ''
                   export HOME="$TMPDIR"
-                  for crate in order-laws:${./order-laws/src} multiset-diff:${./multiset-diff/src} name-by-facts:${./name-by-facts/src} sarif-canon:${./sarif-canon/src}; do
+                  for crate in order-laws:${./order-laws/src} multiset-diff:${./multiset-diff/src} index-canon:${./index-canon/src} sarif-canon:${./sarif-canon/src}; do
                     mkdir -p "''${crate%%:*}"
                     cp -r "''${crate#*:}" "''${crate%%:*}/src"
                   done
@@ -310,7 +310,7 @@
                   verus --crate-type=lib --edition=2024 --no-report-long-running $ol \
                     --crate-name multiset_diff --export md.vir --compile -o libmultiset_diff.rlib \
                     multiset-diff/src/lib.rs
-                  verus --crate-type=lib --edition=2024 --no-report-long-running $ol name-by-facts/src/lib.rs
+                  verus --crate-type=lib --edition=2024 --no-report-long-running $ol index-canon/src/lib.rs
                   verus --crate-type=lib --edition=2024 --no-report-long-running $ol \
                     --crate-name sarif_canon \
                     --import multiset_diff=md.vir --extern multiset_diff=libmultiset_diff.rlib \

@@ -1,5 +1,5 @@
 //! Total orders stated as spec functions, the laws they obey, and the lexicographic order they
-//! induce on sequences: the vocabulary the verified crates (`multiset-diff`, `name-by-facts`,
+//! induce on sequences: the vocabulary the verified crates (`multiset-diff`, `index-canon`,
 //! `sarif-canon`) state their specs in.
 //!
 //! An order is a `spec_fn(T, T) -> Ordering` that the caller names and an exec `cmp` must

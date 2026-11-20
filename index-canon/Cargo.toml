@@ -1,5 +1,5 @@
 [package]
-name = "name-by-facts"
+name = "index-canon"
 version.workspace = true
 edition = "2024"
 

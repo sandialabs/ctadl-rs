@@ -1291,8 +1291,8 @@ dependencies = [
  "ctadl-index",
  "ctadl-ir",
  "diff-report",
+ "index-canon",
  "multiset-diff",
- "name-by-facts",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -2798,6 +2798,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "index-canon"
+version = "0.1.7"
+dependencies = [
+ "order-laws",
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3159,16 +3169,6 @@ dependencies = [
 
 [[package]]
 name = "multiset-diff"
-version = "0.1.7"
-dependencies = [
- "order-laws",
- "verus_builtin",
- "verus_builtin_macros",
- "vstd",
-]
-
-[[package]]
-name = "name-by-facts"
 version = "0.1.7"
 dependencies = [
  "order-laws",
