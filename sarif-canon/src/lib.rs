@@ -1,8 +1,8 @@
 //! The canonical form of the results of a SARIF run, so that two SARIF files can be compared
-//! result by result with `multiset-diff`.
+//! result by result with [`multiset-diff`].
 //!
-//! A raw run (`types::RawRun`) is what a parser keeps of one SARIF run, over an atom type `A`
-//! that stands for interned strings. Its canonical results (`types::CanonResult`) replace
+//! A raw run ([`types::RawRun`]) is what a parser keeps of one SARIF run, over an atom type `A`
+//! that stands for interned strings. Its canonical results ([`types::CanonResult`]) replace
 //! references by what they name, drop per-run numbers, and sort every collection whose order
 //! SARIF gives no meaning, keeping the order of a thread flow's steps. The crate knows nothing
 //! of JSON.
@@ -22,17 +22,21 @@
 //! leaving the code.
 //!
 //! What is proved: the order on each canonical type is total and `Equal` exactly on equal
-//! values (`order`); the merge sort's output is a sorted permutation of its input, and the
-//! sorted permutation is unique (`sort`); and the primitives meet their contracts and are
-//! unchanged by renumbering a table or permuting a bag (`prims`); and `canon_run` and
-//! `canon_runs` return exactly the canonical form `spec_canon_runs` defines, error included,
-//! sorted by the order on results (`canon`). End to end (`theorems`):
+//! values ([`order`]); the merge sort's output is a sorted permutation of its input, and the
+//! sorted permutation is unique ([`sort`]); and the primitives meet their contracts and are
+//! unchanged by renumbering a table or permuting a bag ([`prims`]); and [`canon_run`] and
+//! [`canon_runs`] return exactly the canonical form `spec_canon_runs` defines, error included,
+//! sorted by the order on results ([`canon`]). End to end (`theorems`):
 //! `theorem_canon_invariant`, that any number of steps each permuting unordered collections
 //! or renumbering a run's `logicalLocations` with every reference into it leaves the canonical
 //! form, or its absence, unchanged; and `theorem_diff_empty_iff_equal`, that on sorted
 //! canonical results `multiset_diff` reports exactly the results whose numbers of occurrences
 //! differ, so nothing exactly when the two multisets are equal. `smoke` checks the statements
 //! against concrete runs. Every proof is complete.
+//!
+//! [`multiset-diff`]: ::multiset_diff
+//! [`canon_run`]: canon::canon_run
+//! [`canon_runs`]: canon::canon_runs
 
 use vstd::prelude::*;
 
