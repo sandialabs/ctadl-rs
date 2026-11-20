@@ -194,7 +194,7 @@ pub struct CanonCodeFlow<A> {
     pub thread_flows: Vec<CanonThreadFlow<A>>,
 }
 
-/// What a result is compared by.
+/// What a result is compared by. `A` stands for a string, such as an interned `u32`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonResult<A> {
     pub rule: Option<A>,
