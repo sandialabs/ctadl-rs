@@ -126,6 +126,12 @@ fn line_array(array: &Value, key: &str, config: &Path) -> Result<Vec<i64>> {
 /// `expected_lines`, and would let it trip `unexpected_lines` for a case whose point is
 /// that a modeled endpoint stays clean.
 pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
+    collect_non_endpoint_ints(sarif, "byteOffset")
+}
+
+/// Every integer `key` in a SARIF document's results other than the endpoint results, for
+/// the reason [`collect_byte_offsets`] gives.
+fn collect_non_endpoint_ints(sarif: &Path, key: &str) -> Result<BTreeSet<i64>> {
     let value = read_json(sarif)?;
     let mut out = BTreeSet::new();
     for run in value
@@ -144,7 +150,7 @@ pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
             if matches!(rule_id, "C0003.taint-source" | "C0004.taint-sink") {
                 continue;
             }
-            collect_int_values(result, "byteOffset", &mut out);
+            collect_int_values(result, key, &mut out);
         }
     }
     Ok(out)
@@ -326,22 +332,18 @@ pub fn collect_codeflow_start_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
     Ok(out)
 }
 
-/// Collect every `absoluteAddress` value in a SARIF document (the pcode tests'
-/// tainted-instruction addresses).
+/// Collect every `absoluteAddress` value in a SARIF document's results but the endpoint
+/// results (the pcode tests' tainted-instruction addresses).
 pub fn collect_absolute_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {
-    let mut out = BTreeSet::new();
-    collect_int_values(&read_json(sarif)?, "absoluteAddress", &mut out);
-    Ok(out)
+    collect_non_endpoint_ints(sarif, "absoluteAddress")
 }
 
-/// Collect every `relativeAddress` value in a SARIF document: the
-/// tainted-instruction addresses with the disassembler's image base already
-/// subtracted, i.e. the section-relative offsets `addr2line` expects. This is
-/// robust to whatever base Ghidra chose for the artifact.
+/// Collect every `relativeAddress` value in a SARIF document's results but the endpoint
+/// results: the tainted-instruction addresses with the disassembler's image base already
+/// subtracted, i.e. the section-relative offsets `addr2line` expects. This is robust to
+/// whatever base Ghidra chose for the artifact.
 pub fn collect_relative_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {
-    let mut out = BTreeSet::new();
-    collect_int_values(&read_json(sarif)?, "relativeAddress", &mut out);
-    Ok(out)
+    collect_non_endpoint_ints(sarif, "relativeAddress")
 }
 
 fn collect_int_values(value: &Value, key: &str, out: &mut BTreeSet<i64>) {

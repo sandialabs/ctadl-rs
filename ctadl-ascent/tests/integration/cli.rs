@@ -95,7 +95,8 @@ fn c_fixture(name: &str) -> PathBuf {
 /// source (no body), so the importer must register them as external functions for the
 /// model's `signature` patterns to match them; the query must then find the
 /// source -> sink flow through `transfer`. Also confirms imported C carries source
-/// locations: the reported result resolves to a line in `xfer.c`.
+/// locations: the reported result, and the source and sink results, resolve to their lines in
+/// `xfer.c`.
 ///
 /// This is also the end-to-end check on element-address composition: `transfer(&x[1], s)`
 /// passes the *address* `x.[1]`, `transfer` writes its parameter at `@p0.[1].deref`, and
@@ -194,6 +195,21 @@ fn test_cli_query_c_sources_and_sinks() {
                 step_lines.contains(&line),
                 "code flow is missing line {line} (steps at lines {step_lines:?}); \
                  line 12 is the summarized `transfer(&x[1], s)` call: {text}"
+            );
+        }
+
+        // The source and sink results are located at their calls: `s = source()` on line 11
+        // and `sink(x[2])` on line 13.
+        for (rule, line) in [("C0003.taint-source", 11), ("C0004.taint-sink", 13)] {
+            let endpoint_lines: Vec<_> = results
+                .iter()
+                .filter(|r| r["ruleId"].as_str() == Some(rule))
+                .map(|r| r["locations"][0]["physicalLocation"]["region"]["startLine"].as_u64())
+                .collect();
+            assert_eq!(
+                endpoint_lines,
+                [Some(line)],
+                "expected one {rule} result, at line {line}: {text}"
             );
         }
     });
