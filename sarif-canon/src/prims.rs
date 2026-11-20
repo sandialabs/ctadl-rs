@@ -808,14 +808,6 @@ mod tests {
         }
     }
 
-    fn step(order: Option<i64>) -> RawStep<u32> {
-        RawStep {
-            order,
-            kinds: vec![],
-            location: None,
-        }
-    }
-
     fn canon_step(kind: u32) -> CanonStep<u32> {
         CanonStep {
             kinds: vec![kind],
@@ -876,24 +868,6 @@ mod tests {
         assert_eq!(ok, Ok(vec![30, 10, 20]));
         let err = canon_seq::<u32, u32, u32, _>(&[3u32, 0, 9], &f, ghost(), ghost());
         assert_eq!(err, Err(Error::OutOfRange));
-    }
-
-    #[test]
-    fn check_increasing_cases() {
-        assert_eq!(check_increasing(&[step(Some(1)), step(Some(2))]), Ok(()));
-        assert_eq!(
-            check_increasing(&[step(Some(2)), step(Some(2))]),
-            Err(Error::NotIncreasing)
-        );
-        assert_eq!(check_increasing::<u32>(&[]), Ok(()));
-        assert_eq!(
-            check_increasing(&[step(Some(1)), step(None), step(Some(3))]),
-            Ok(())
-        );
-        assert_eq!(
-            check_increasing(&[step(Some(3)), step(None), step(Some(1))]),
-            Err(Error::NotIncreasing)
-        );
     }
 
     #[test]

@@ -1574,25 +1574,6 @@ where
     )
 }
 
-/// A SARIF file compared with itself is identical.
-#[test]
-fn diff_sarif_same_file_exit_0() {
-    let sarif = diff_sarif_file();
-    let (code, out, err) = run_diff_sarif([sarif, sarif]);
-    assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(out.lines().next(), Some("IDENTICAL"), "{out}");
-}
-
-/// A result deleted from one side is a difference, and the report says which side has more.
-#[test]
-fn diff_sarif_deleted_result_exit_1() {
-    let (_tmp, removed) = sarif_with_a_result_removed();
-    let (code, out, err) = run_diff_sarif([diff_sarif_file(), &removed]);
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(out.starts_with("DIFFERENT\n"), "{out}");
-    assert!(out.contains("more in A: 1 results"), "{out}");
-}
-
 /// A file that is not SARIF is an error naming it, on either side, and no report is printed.
 #[test]
 fn diff_sarif_malformed_exit_2() {

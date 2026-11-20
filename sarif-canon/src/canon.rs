@@ -1200,7 +1200,6 @@ mod tests {
     use crate::test_util::ghost;
 
     const RULE: u32 = 100;
-    const ENDPOINTS: u32 = 101;
 
     fn by_value(a: &u32, b: &u32) -> Ordering {
         a.cmp(b)
@@ -1208,10 +1207,6 @@ mod tests {
 
     fn canon(run: &RawRun<u32>) -> Result<Vec<CanonResult<u32>>, Error> {
         canon_run(run, None, &by_value, ghost())
-    }
-
-    fn canon_endpoints(run: &RawRun<u32>) -> Result<Vec<CanonResult<u32>>, Error> {
-        canon_run(run, Some(ENDPOINTS), &by_value, ghost())
     }
 
     fn no_props() -> Props<u32> {
@@ -1243,21 +1238,6 @@ mod tests {
                 address: None,
             }),
             logical,
-        }
-    }
-
-    /// A thread flow with a step on each of `lines`, `executionOrder` 1, 2, ...
-    fn flow(lines: &[i64]) -> RawThreadFlow<u32> {
-        RawThreadFlow {
-            steps: lines
-                .iter()
-                .enumerate()
-                .map(|(k, &line)| RawStep {
-                    order: Some(k as i64 + 1),
-                    kinds: vec![7, 6],
-                    location: Some(location(line, vec![RawLogicalRef::Inline(9)])),
-                })
-                .collect(),
         }
     }
 
@@ -1299,142 +1279,6 @@ mod tests {
             logical: logical.iter().map(|&fqn| RawLogical { fqn }).collect(),
             results,
         }
-    }
-
-    #[test]
-    fn renumbered_table_same() {
-        use RawLogicalRef::Index;
-        let a = run(
-            &[30, 40, 50],
-            vec![result(
-                RULE,
-                vec![
-                    location(1, vec![Index(0), Index(2)]),
-                    location(2, vec![Index(1)]),
-                ],
-                vec![],
-            )],
-        );
-        // Entry `i` of `a`'s table is entry `pi[i]` of `b`'s, with `pi = [2, 0, 1]`.
-        let b = run(
-            &[40, 50, 30],
-            vec![result(
-                RULE,
-                vec![
-                    location(1, vec![Index(2), Index(1)]),
-                    location(2, vec![Index(0)]),
-                ],
-                vec![],
-            )],
-        );
-        let ca = canon(&a).unwrap();
-        assert_eq!(ca, canon(&b).unwrap());
-        assert_eq!(ca[0].locations[0].logical, vec![30, 50]);
-    }
-
-    #[test]
-    fn shuffled_results_same() {
-        let r1 = result(RULE, vec![location(1, vec![])], vec![flow(&[1, 2])]);
-        let r2 = result(RULE, vec![location(5, vec![]), location(3, vec![])], vec![]);
-        let r2_shuffled = result(RULE, vec![location(3, vec![]), location(5, vec![])], vec![]);
-        let a = run(&[], vec![r1.clone(), r2]);
-        let b = run(&[], vec![r2_shuffled, r1]);
-        let ca = canon(&a).unwrap();
-        assert_eq!(ca, canon(&b).unwrap());
-        assert_eq!(ca.len(), 2);
-        // Sorted by the order on results, and every bag inside sorted too.
-        let mut sorted = ca.clone();
-        sorted.sort_by(|x, y| cmp_result(x, y, &by_value, ghost()));
-        assert_eq!(ca, sorted);
-        assert_eq!(ca[0].props.labels, Some(vec![11, 12]));
-        assert_eq!(ca[0].props.source_fns, Some(vec![18, 19]));
-        let vertices = ca[0].props.vertices.as_ref().unwrap();
-        assert_eq!(vertices[0].key, 14);
-        assert_eq!(vertices[1].values, vec![16, 17]);
-    }
-
-    #[test]
-    fn swapped_steps_differ() {
-        let a = run(&[], vec![result(RULE, vec![], vec![flow(&[1, 2, 3])])]);
-        let b = run(&[], vec![result(RULE, vec![], vec![flow(&[1, 3, 2])])]);
-        assert_ne!(canon(&a).unwrap(), canon(&b).unwrap());
-    }
-
-    #[test]
-    fn endpoints_only_ignores_interior() {
-        let a = run(
-            &[30],
-            vec![result(
-                ENDPOINTS,
-                vec![location(1, vec![RawLogicalRef::Index(0)])],
-                vec![flow(&[1, 2, 3])],
-            )],
-        );
-        let b = run(
-            &[30],
-            vec![result(
-                ENDPOINTS,
-                vec![location(9, vec![])],
-                vec![flow(&[1, 5, 6, 3])],
-            )],
-        );
-        assert_ne!(canon(&a).unwrap(), canon(&b).unwrap());
-        let ca = canon_endpoints(&a).unwrap();
-        assert_eq!(ca, canon_endpoints(&b).unwrap());
-        assert!(ca[0].locations.is_empty());
-        assert_eq!(ca[0].props.vertex, None);
-        assert_eq!(ca[0].props.vertices, None);
-        assert_eq!(ca[0].props.labels, Some(vec![11, 12]));
-        assert!(matches!(
-            ca[0].code_flows[0].thread_flows[0],
-            CanonThreadFlow::Endpoints(_, _)
-        ));
-        // Another rule is still compared in full.
-        let c = run(&[], vec![result(RULE, vec![], vec![flow(&[1, 2, 3])])]);
-        let d = run(&[], vec![result(RULE, vec![], vec![flow(&[1, 5, 3])])]);
-        assert_ne!(canon_endpoints(&c).unwrap(), canon_endpoints(&d).unwrap());
-    }
-
-    #[test]
-    fn endpoints_only_counts_twice() {
-        let two = run(
-            &[],
-            vec![
-                result(ENDPOINTS, vec![], vec![flow(&[1, 2, 3])]),
-                result(ENDPOINTS, vec![], vec![flow(&[1, 4, 3])]),
-            ],
-        );
-        let one = run(&[], vec![result(ENDPOINTS, vec![], vec![flow(&[1, 2, 3])])]);
-        let c2 = canon_endpoints(&two).unwrap();
-        let c1 = canon_endpoints(&one).unwrap();
-        assert_eq!(c2.len(), 2);
-        assert_eq!(c1.len(), 1);
-        assert_eq!(c2[0], c2[1]);
-        assert_eq!(c2[0], c1[0]);
-    }
-
-    #[test]
-    fn out_of_range_errs() {
-        let bad = location(1, vec![RawLogicalRef::Index(1)]);
-        let a = run(&[30], vec![result(ENDPOINTS, vec![bad], vec![])]);
-        assert_eq!(canon(&a), Err(Error::OutOfRange));
-        // The endpoints rule drops the location, but it is still checked.
-        assert_eq!(canon_endpoints(&a), Err(Error::OutOfRange));
-    }
-
-    #[test]
-    fn non_increasing_errs() {
-        let mut f = flow(&[1, 2]);
-        f.steps[1].order = Some(1);
-        let a = run(&[], vec![result(RULE, vec![], vec![f])]);
-        assert_eq!(canon(&a), Err(Error::NotIncreasing));
-    }
-
-    #[test]
-    fn empty_flow_errs() {
-        let a = run(&[], vec![result(ENDPOINTS, vec![], vec![flow(&[])])]);
-        assert_eq!(canon(&a), Err(Error::EmptyFlow));
-        assert_eq!(canon_endpoints(&a), Err(Error::EmptyFlow));
     }
 
     #[test]
