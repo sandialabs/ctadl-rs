@@ -855,6 +855,16 @@ Not touched:
 - By hand: `ctadl diff-sarif` on a regression case's SARIF against itself prints `IDENTICAL`
   and exits 0; against the same case after a model change prints the changed results.
 
+**As built (acceptance, at `f22c98124`).** `fmt`, `clippy -Dwarnings` and `cargo test
+--workspace` pass (2106 passed, 0 failed, 4 ignored; 2048 at baseline). The `verus` check
+passes with `multiset-diff` 34, `name-by-facts` 38, `sarif-canon` 217 verified, in 22 s
+(11 s at baseline: 11 s added). `cargo xtask regression`: 255 passed, 5 xfail, as at
+baseline; `diff-index` agrees with SQL. The unchanged-files diff, the `assume|admit|
+external_body` grep and the spec/plan-number grep are empty. By hand, on `pointers.c` with
+`pointers.json`: against itself, `IDENTICAL`, exit 0; against a run with the `source_byte`/
+`source_int` generator removed, `DIFFERENT`, exit 1, 25 results against 13, 8 distinct
+results more in A.
+
 ### Complexity and memory
 
 No phase touches an existing hot path; the only moved code (`Smallest`, Phase 2) is
