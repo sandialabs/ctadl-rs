@@ -1516,6 +1516,116 @@ fn unreadable_table() {
 }
 
 // ---------------------------------------------------------------------------
+// `ctadl diff-query`: run as a process, since what it answers with is its exit code (0 the
+// same, 1 different, 2 an error).
+// ---------------------------------------------------------------------------
+
+/// The SARIF `ctadl query` writes for `xfer.c`, once, for the `diff-query` tests.
+fn diff_query_file() -> &'static PathBuf {
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    static SARIF: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    SARIF.get_or_init(|| {
+        crate::common::store_dir();
+        let project = index_xfer_project("diff_query_xfer", "diff_query_xfer_proj");
+        let sarif = project.dir().join("diff_query.sarif");
+        cli::query(
+            &project,
+            &[c_fixture("xfer.json")],
+            &sarif,
+            SarifProfile::default(),
+            None,
+        )
+        .unwrap();
+        sarif
+    })
+}
+
+/// A copy of the `diff-query` SARIF with its first result removed, in a temporary directory.
+fn sarif_with_a_result_removed() -> (tempfile::TempDir, PathBuf) {
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(diff_query_file()).unwrap()).unwrap();
+    let results = doc["runs"][0]["results"].as_array_mut().unwrap();
+    assert!(results.len() > 1, "the fixture has results to remove");
+    results.remove(0);
+    let tmp = tempdir().unwrap();
+    let path = tmp.path().join("removed.sarif");
+    std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    (tmp, path)
+}
+
+/// Runs `ctadl diff-query` with `args`, and returns its exit code, stdout and stderr.
+fn run_diff_query<I, S>(args: I) -> (i32, String, String)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let out = Command::new(env!("CARGO_BIN_EXE_ctadl"))
+        .arg("--store")
+        .arg(crate::common::store_dir())
+        .arg("diff-query")
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        out.status.code().expect("exited, not killed"),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// A file that is not SARIF is an error naming it, on either side, and no report is printed.
+#[test]
+fn diff_query_malformed_exit_2() {
+    let tmp = tempdir().unwrap();
+    let bad = tmp.path().join("bad.sarif");
+    std::fs::write(&bad, "not json").unwrap();
+    let missing = tmp.path().join("missing.sarif");
+    for (a, b, named) in [
+        (diff_query_file(), &bad, &bad),
+        (&bad, diff_query_file(), &bad),
+        (diff_query_file(), &missing, &missing),
+    ] {
+        let (code, out, err) = run_diff_query([a, b]);
+        assert_eq!(code, 2, "{out}{err}");
+        assert!(out.is_empty(), "no report is printed: {out}");
+        assert!(
+            err.contains(named.to_str().unwrap()),
+            "the error names the file: {err}"
+        );
+    }
+}
+
+/// `--limit 0` and `--json` change what is printed, never the exit code.
+#[test]
+fn diff_query_exit_independent_of_limit_and_json() {
+    let (_tmp, removed) = sarif_with_a_result_removed();
+    let sarif = diff_query_file().to_str().unwrap();
+    let removed = removed.to_str().unwrap();
+    for (b, expected, first) in [(sarif, 0, "IDENTICAL"), (removed, 1, "DIFFERENT")] {
+        for flags in [
+            &[][..],
+            &["--limit", "0"],
+            &["--json"],
+            &["--limit", "0", "--json"],
+        ] {
+            let args: Vec<&str> = [sarif, b]
+                .into_iter()
+                .chain(flags.iter().copied())
+                .collect();
+            let (code, out, err) = run_diff_query(&args);
+            assert_eq!(code, expected, "{args:?}: {out}{err}");
+            if flags.contains(&"--json") {
+                let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+                assert_eq!(doc["result"], first, "{out}");
+            } else {
+                assert_eq!(out.lines().next(), Some(first), "{out}");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // `inspect --dump-index-graph`: rendering the index graph from a finished index.
 //
 // `inspect` reads the two tables the graph needs back from the index directory, so what these

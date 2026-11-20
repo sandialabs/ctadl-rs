@@ -84,6 +84,27 @@ pub enum Command {
     /// or unreadable index, or an index in a format other than the one this build reads.
     DiffIndex(DiffIndexArgs),
 
+    /// Compare the results of two SARIF files written by `ctadl query`, by content.
+    ///
+    /// Use this to check whether two query runs found the same things. The results of every run
+    /// in a file are compared as one multiset. Run metadata, tool, rules, invocations and message
+    /// text are not compared, nor the order of anything SARIF leaves unordered (results,
+    /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that
+    /// are local to a run (logical location indexes, `executionOrder`, instruction, function and
+    /// span ids). A logical location is compared by what it names. The steps of a thread flow
+    /// are compared in order. Equal results count separately, so a duplicated or deleted one is
+    /// a difference.
+    ///
+    /// The first line of output is `IDENTICAL` or `DIFFERENT`. Then how many results each file
+    /// holds, and at most `--limit` results per side that occur more often there, ordered by
+    /// content, each with how many times A and B hold it, and how many were not shown.
+    ///
+    /// Exits 0 when the results are the same, 1 when they differ, and 2 on an error: an
+    /// unreadable file, malformed SARIF, or a result with no canonical form (a logical location
+    /// index out of range, a thread flow with no steps, or `executionOrder` values that do not
+    /// increase). Neither `--limit` nor `--json` changes the exit code.
+    DiffQuery(DiffQueryArgs),
+
     /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
     ///
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
@@ -117,6 +138,31 @@ pub struct DiffIndexArgs {
     /// Print the report as one JSON document.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DiffQueryArgs {
+    /// The first SARIF file.
+    #[arg(value_name = "A")]
+    pub a: PathBuf,
+
+    /// The second SARIF file.
+    #[arg(value_name = "B")]
+    pub b: PathBuf,
+
+    /// The most differing results printed per side.
+    #[arg(long, value_name = "N", default_value_t = 20)]
+    pub limit: usize,
+
+    /// Print the report as one JSON document.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Compare `C0001.tainted-path` results by the endpoints of their thread flows only,
+    /// ignoring interior steps, primary locations and taint vertices. Other rules are compared
+    /// in full.
+    #[arg(long)]
+    pub endpoints_only: bool,
 }
 
 #[derive(Debug, Args)]
@@ -757,6 +803,7 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
         Command::DiffIndex(args) => std::process::exit(diff_index(args)),
+        Command::DiffQuery(args) => std::process::exit(diff_query(args)),
         Command::Report(args) => {
             report_project(args)
                 .with_context(|| format!("running 'report' project: {:?}", args.name))?;
@@ -942,6 +989,35 @@ fn diff_index(args: &DiffIndexArgs) -> i32 {
         Ok(report) => report,
         Err(e) => {
             eprintln!("Error: {e:#}");
+            return 2;
+        }
+    };
+    let mut out = std::io::stdout().lock();
+    let written = if args.json {
+        report.write_json(&mut out).map_err(std::io::Error::from)
+    } else {
+        report.write_text(&mut out)
+    };
+    if let Err(e) = written.and_then(|()| out.flush()) {
+        eprintln!("Error: writing the report: {e}");
+        return 2;
+    }
+    if report.identical() { 0 } else { 1 }
+}
+
+/// Runs `ctadl diff-query` and returns its exit code, as [`Command::DiffQuery`] documents it.
+/// An error goes to stderr. The report is flushed before this returns.
+fn diff_query(args: &DiffQueryArgs) -> i32 {
+    use std::io::Write;
+
+    let opts = ctadl_query_diff::Options {
+        limit: args.limit,
+        endpoints_only: args.endpoints_only,
+    };
+    let report = match ctadl_query_diff::diff_query(&args.a, &args.b, &opts) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("Error: {e}");
             return 2;
         }
     };
@@ -1471,6 +1547,42 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ctadl", "diff-index", "a"]).is_err(),
             "two indexes are required"
+        );
+    }
+
+    #[test]
+    fn diff_query_parses() {
+        let cli = Cli::try_parse_from([
+            "ctadl",
+            "diff-query",
+            "a.sarif",
+            "some/b.sarif",
+            "--limit",
+            "0",
+            "--json",
+            "--endpoints-only",
+        ])
+        .expect("must parse");
+        let Command::DiffQuery(args) = cli.cmd else {
+            panic!("expected the diff-query subcommand");
+        };
+        assert_eq!(
+            (args.a.as_path(), args.b.as_path()),
+            (Path::new("a.sarif"), Path::new("some/b.sarif"))
+        );
+        assert_eq!(args.limit, 0);
+        assert!(args.json && args.endpoints_only);
+
+        let cli = Cli::try_parse_from(["ctadl", "diff-query", "a", "b"]).expect("must parse");
+        let Command::DiffQuery(args) = cli.cmd else {
+            panic!("expected the diff-query subcommand");
+        };
+        assert_eq!(args.limit, 20);
+        assert!(!args.json && !args.endpoints_only);
+
+        assert!(
+            Cli::try_parse_from(["ctadl", "diff-query", "a"]).is_err(),
+            "two files are required"
         );
     }
 

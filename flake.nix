@@ -289,7 +289,9 @@
               PROPTEST_CASES = "4096";
             };
 
-            # Runs the Verus proofs in multiset-diff/src/lib.rs and name-by-facts/src/lib.rs.
+            # Runs the Verus proofs of the verified crates: multiset-diff, name-by-facts and
+            # sarif-canon. multiset-diff's specs are exported and its library compiled, so
+            # sarif-canon can use its theorems.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
                 {
@@ -297,11 +299,18 @@
                 }
                 ''
                   export HOME="$TMPDIR"
-                  for crate in multiset-diff:${./multiset-diff/src} name-by-facts:${./name-by-facts/src}; do
+                  for crate in multiset-diff:${./multiset-diff/src} name-by-facts:${./name-by-facts/src} sarif-canon:${./sarif-canon/src}; do
                     mkdir -p "''${crate%%:*}"
                     cp -r "''${crate#*:}" "''${crate%%:*}/src"
-                    verus --crate-type=lib --edition=2024 --no-report-long-running "''${crate%%:*}/src/lib.rs"
                   done
+                  verus --crate-type=lib --edition=2024 --no-report-long-running \
+                    --crate-name multiset_diff --export md.vir --compile -o libmultiset_diff.rlib \
+                    multiset-diff/src/lib.rs
+                  verus --crate-type=lib --edition=2024 --no-report-long-running name-by-facts/src/lib.rs
+                  verus --crate-type=lib --edition=2024 --no-report-long-running \
+                    --crate-name sarif_canon \
+                    --import multiset_diff=md.vir --extern multiset_diff=libmultiset_diff.rlib \
+                    sarif-canon/src/lib.rs
                   mkdir -p "$out"
                 '';
 
@@ -347,7 +356,7 @@
               jadx
               scrcpy
               android.androidLldb
-              # `verus`, for multiset-diff's Verus proof.
+              # `verus`, to run the proofs `checks.verus` runs.
               verus
             ];
             packages = [ testEnv ];
