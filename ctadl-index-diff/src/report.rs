@@ -3,6 +3,7 @@
 
 use std::io::{self, Write};
 
+use diff_report::{Samples, write_samples};
 use serde::Serialize;
 
 /// What two indexes differ in.
@@ -37,7 +38,8 @@ pub struct UnknownFile {
     pub in_b: bool,
 }
 
-/// One table's comparison. Counts are of canonical rows.
+/// One table's comparison. Counts are of canonical rows; a sampled row prints its columns
+/// separated by tabs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TableReport {
     pub table: String,
@@ -56,29 +58,6 @@ pub struct TableReport {
     pub more_in_a: Samples,
     /// Rows B has more of than A, the first by content.
     pub more_in_b: Samples,
-}
-
-/// The first differing rows by content, and how many more there are.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Samples {
-    pub rows: Vec<Sample>,
-    pub not_shown: usize,
-}
-
-/// A row, printed by content with its columns separated by tabs, and how many times each side
-/// holds it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Sample {
-    pub row: String,
-    pub count_a: usize,
-    pub count_b: usize,
-}
-
-impl Samples {
-    /// How many rows differ this way, shown or not.
-    pub fn total(&self) -> usize {
-        self.rows.len() + self.not_shown
-    }
 }
 
 impl TableReport {
@@ -156,20 +135,8 @@ impl Report {
                 t.only_in_b,
                 t.count_differs
             )?;
-            for (side, samples) in [("A", &t.more_in_a), ("B", &t.more_in_b)] {
-                if samples.total() == 0 {
-                    continue;
-                }
-                writeln!(
-                    w,
-                    "  more in {side}: {} rows, {} not shown",
-                    samples.total(),
-                    samples.not_shown
-                )?;
-                for s in &samples.rows {
-                    writeln!(w, "    [A {}, B {}] {}", s.count_a, s.count_b, s.row)?;
-                }
-            }
+            write_samples(w, "A", &t.more_in_a, "rows", "  ")?;
+            write_samples(w, "B", &t.more_in_b, "rows", "  ")?;
         }
         Ok(())
     }

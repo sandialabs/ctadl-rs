@@ -295,6 +295,17 @@ without linking `ctadl-index`. `diff-index`'s text and JSON output do not change
     cargo clippy --workspace -- -Dwarnings
     cargo xtask regression
 
+**As built.**
+- `write_samples` writes nothing for a side with no differences (the old inline loop's
+  `continue`), so both callers get that for free.
+- The "columns separated by tabs" sentence moved from `Sample`'s doc to `TableReport`'s,
+  since `Sample` is now generic.
+- The `diff_index` test filter does not select the `diff-index` CLI tests in `cli.rs`
+  (`same_project_is_identical`, `refuses_old_format`, `refuses_missing_config`,
+  `unreadable_table`); they were run by name and pass.
+- Built in a separate worktree from Phase 1's parent and cherry-picked onto Phase 1; the
+  root `Cargo.toml` and `Cargo.lock` merged without conflict.
+
 ## Phase 3: the order on canonical types (R14, D3, P-ord)
 
 Depends on: 1b.

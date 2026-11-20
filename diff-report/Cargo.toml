@@ -1,0 +1,11 @@
+[package]
+name = "diff-report"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+multiset-diff.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+
+[lints]
+workspace = true

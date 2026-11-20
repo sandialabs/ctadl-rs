@@ -1289,6 +1289,7 @@ version = "0.1.7"
 dependencies = [
  "ctadl-index",
  "ctadl-ir",
+ "diff-report",
  "multiset-diff",
  "name-by-facts",
  "rustc-hash",
@@ -2201,6 +2202,14 @@ dependencies = [
  "tempfile",
  "thiserror",
  "zip",
+]
+
+[[package]]
+name = "diff-report"
+version = "0.1.7"
+dependencies = [
+ "multiset-diff",
+ "serde",
 ]
 
 [[package]]
