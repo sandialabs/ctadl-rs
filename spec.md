@@ -19,8 +19,7 @@ the formatter (`ctadl-ascent/src/query_engine/formatter.rs`, "F" below) and asse
   `call-arg(<insn id>, <formal>)` (`ctadl-index/src/facts.rs:1431`; F:3045, F:3181, F:3329). The
   debug profile adds `fileSpanId`, `funcId`, `insnId` (F:3080-3091). Messages embed span,
   function and import ids (`span {n}`, `func#N`, `import#N`).
-- **Order.** `results` is ordered by numeric span, function and path node ids
-  (F:3027-3276). It is deterministic for one index, not a content order.
+- **Order.** The order of `results` is unspecified.
 - **Machine and run data.** Times, command line, `parquet_dir(s)`, `originalUriBaseIds`
   values (F:2104-2133), absolute `file:` URIs for files outside an import's root
   (F:981-1007), and tool version.
