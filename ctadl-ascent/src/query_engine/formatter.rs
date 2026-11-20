@@ -2590,16 +2590,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     endpoints.sort_unstable_by(|a, b| a.content_cmp(b));
     endpoints.dedup();
 
-    // Map each node to an instruction for location info
-    let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
-        BTreeMap::new();
-    for (site, _, v, _) in &ctx.facts.actual_param {
-        let site_unpacked = InsnSiteId::unpack(site).unwrap();
-        site_by_var
-            .entry((site_unpacked.func_id, *v))
-            .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
-    }
-
     // 1. Find all paths
     let has_sinks = node_to_endpoint.iter().any(|(_, ends)| {
         ends.iter()
@@ -2731,6 +2721,14 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     path_sites.insert((site.func_id, site.insn_id));
                 }
             }
+        }
+    }
+    // Every source and sink result is located at its call, on a path or not.
+    for ep in &endpoints {
+        if let Some(site) = call_arg_site(&(ep.infunc, ep.vertex.0, ep.vertex.1))
+            && seen_sites.insert((site.func_id.id, site.insn_id.id))
+        {
+            path_sites.insert((site.func_id, site.insn_id));
         }
     }
 
@@ -3140,7 +3138,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         &global_declarations,
         &source_data.id_to_name,
         &call_callee,
-        &site_by_var,
         &source_data.all_locations,
     ));
 
@@ -3302,7 +3299,6 @@ fn format_source_sink_results(
     global_declarations: &BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>>,
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
-    site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
     let mut source_sink_results = Vec::new();
@@ -3394,9 +3390,11 @@ fn format_source_sink_results(
                             .build()
                     })
                     .collect();
-            } else if let Some(&site) = site_by_var.get(&(node.0, node.1))
-                && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
+            } else if let Some(packed) = node.1.as_call_arg()
+                && let Ok(CallArgId { insn_id, .. }) = CallArgId::try_from(packed)
+                && let Some(physical_loc) = all_locations.get(&(node.0.id, insn_id.id))
             {
+                // A call-arg vertex is at its call, an instruction of the vertex's function.
                 let mut loc_with_phys = physical_loc.clone();
                 loc_with_phys.logical_locations = Some(vec![logical_location]);
                 locations = vec![loc_with_phys];
