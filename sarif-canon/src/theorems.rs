@@ -1122,6 +1122,16 @@ proof fn lemma_chain<A>(
     }
 }
 
+/// Two SARIF files that differ only in how they were written have the same canonical form,
+/// so the diff reports no difference between them. "How they were written" means any mix of
+/// two edits, applied any number of times: listing an unordered collection (the runs, a run's
+/// results, a result's locations, ...; not a thread flow's steps) in another order, and
+/// reordering a run's `logicalLocations` while rewriting every `index` into it to match. If
+/// one file has no canonical form, neither does the other, though they may report different
+/// errors.
+///
+/// The proof walks the chain of edits from `xs` to `ys`; `lemma_one_step` shows each edit
+/// keeps the outcome.
 pub proof fn theorem_canon_invariant<A>(
     oa: spec_fn(A, A) -> Ordering,
     xs: Seq<RawRunV<A>>,
