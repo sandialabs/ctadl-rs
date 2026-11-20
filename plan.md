@@ -10,27 +10,7 @@ plan's numbers (R*, D*, P-*, phase numbers).
 
 ## Corrections to the spec
 
-- P1. **Cross-crate proofs need more than a `pub` function.** D4's last paragraph says
-  `multiset_diff_by` "becomes `pub` under `verus_keep_ghost` so a verified caller can name
-  `ord`". That is not enough, and not needed:
-  - The theorems the end-to-end theorem uses, `theorem_reports_exactly_count_differences`
-    (`multiset-diff/src/proofs.rs:604`) and `theorem_no_value_twice`
-    (`multiset-diff/src/proofs.rs:633`), live in the private `mod proofs`
-    (`multiset-diff/src/lib.rs:24`). Another crate cannot name them.
-  - The `verus` check verifies each crate alone, copying only its `src`
-    (`flake.nix:300-303`). A crate that uses another's specs must be verified with
-    `--import multiset_diff=<vir> --extern multiset_diff=<rlib>`, after `multiset-diff` is
-    verified with `--export <vir> --compile`. I ran this on the current tree with the pinned
-    Verus: `multiset-diff` exports (34 verified), and a client that imports it and uses
-    `total_order`/`sorted` verifies.
-  - The end-to-end theorem is a proof about `diff_from`, a spec function, so it needs the
-    theorems, not the exec `multiset_diff_by`. The exec call to `multiset_diff` is in the
-    unverified `ctadl-sarif-diff` (D1).
-
-  This plan assumes: `mod proofs` becomes `pub mod proofs`; `multiset_diff_by` stays as it
-  is; the `verus` check exports `multiset-diff` and imports it into `sarif-canon` (Phase 1).
-
-- P2. **Stale or wrong citations in the spec's Background and Design.** None changes the
+- P1. **Stale or wrong citations in the spec's Background and Design.** None changes the
   design. The spec says:
   - "`results` is ordered by rule" (F:3027-3276). It is not: C0002 by span, then C0003 and
     C0004 interleaved in endpoint order (F:2588-2591, F:3136-3145), then C0007 by function
@@ -118,7 +98,7 @@ the repo.
     nix build .#checks.aarch64-darwin.verus
     cargo xtask regression
 
-## Phase 1: Verus plumbing and the `sarif-canon` skeleton (R13, R16, D1, D3, P1)
+## Phase 1: Verus plumbing and the `sarif-canon` skeleton (R13, R16, D1, D3, D4)
 
 Depends on: 0.
 
@@ -129,7 +109,7 @@ changes; nothing calls the new crate yet.
 **Files.**
 - `multiset-diff/src/lib.rs:24` — `mod proofs;` becomes `pub mod proofs;`. Update the
   module doc (`multiset-diff/src/lib.rs:1-16`) to say the theorems are public for verified
-  callers. `multiset_diff_by` (`multiset-diff/src/lib.rs:257-275`) is not changed (P1).
+  callers. `multiset_diff_by` (`multiset-diff/src/lib.rs:257-275`) is not changed (D4).
 - `sarif-canon/Cargo.toml` (new) — as `multiset-diff/Cargo.toml:1-14`: the same exact
   `vstd`, `verus_builtin`, `verus_builtin_macros` pins, plus `multiset-diff` from the
   workspace. No serde.
@@ -568,7 +548,7 @@ Not touched:
   only moves code.
 - `name-by-facts`: Phase 3 ports its order lemmas into `sarif-canon` rather than sharing
   them.
-- `multiset_diff_by` (P1).
+- `multiset_diff_by` (D4).
 - `.github/workflows/nightly.yml`: it already builds `checks.<system>.verus`, which now
   includes `sarif-canon` (R16).
 
