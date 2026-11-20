@@ -262,15 +262,18 @@ are updated and pass.
   `same_outcome` (both fail, or both succeed with equal results), since permuting the input
   can change which error is first.
 - With the endpoints rule, the full form is built first and then cut, so a malformed
-  dropped location or interior step is still an error; only `EmptyFlow` depends on the flag.
-  Without it an empty thread flow is `Steps([])`, not an error. The cut follows the
-  requirement's list of what is kept, so it also drops `taintedFormals` and `import` (C0001
-  writes neither).
+  dropped location or interior step is still an error. The cut follows the requirement's
+  list of what is kept, so it also drops `taintedFormals` and `import` (C0001 writes
+  neither).
+- After the user's review: a thread flow with no steps is `EmptyFlow` with or without the
+  endpoints rule (SARIF requires at least one step), so the flag never changes whether an
+  input is accepted; `smoke_empty_flow_errs` checks both. The spec's element table now says
+  the endpoints cut drops `taintedFormals` and `import`, matching the requirement.
 - Extra statements: `lemma_canon_bag_unique`, `lemma_all_ok`, `lemma_ord_result_exec`;
   `theorem_diff_empty_iff_equal` also states each delta's counts and `views(a) == views(b)`.
 - The smoke check that `theorem_diff_empty_iff_equal`'s requirements can hold covers only
   slices of length 0 and 1, since proof code cannot build exec slices.
-- Verified: `sarif-canon` 86, including the admitted and stubbed items.
+- Verified: `sarif-canon` 85, including the admitted and stubbed items.
 
 ## Phase 2: shared report pieces in `diff-report` (D1, D5)
 
@@ -507,7 +510,7 @@ The controller checks the diff against Phase 1b's commit for this.
   `renumbered_table_same`; `shuffled_results_same`; `swapped_steps_differ`;
   `endpoints_only_ignores_interior` and `endpoints_only_counts_twice` (two flows with equal
   endpoints vs one: the outputs have lengths 2 and 1); `out_of_range_errs`;
-  `non_increasing_errs`; `empty_flow_with_endpoints_only_errs`.
+  `non_increasing_errs`; `empty_flow_errs` (with and without the endpoints rule).
 
 **Gate.**
 

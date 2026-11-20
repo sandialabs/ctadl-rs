@@ -63,7 +63,8 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 - R2. **The exit status is the alert.** 1 exactly when the multisets of canonical results
   differ, 0 exactly when they are equal, as `diff-index` does. Whatever it cannot
   canonicalize fully exits 2, never 0: an unreadable file, malformed SARIF, a reference out
-  of range, a non-increasing `executionOrder`.
+  of range, a thread flow with no steps, a non-increasing `executionOrder`. `--endpoints-only`
+  changes what is compared, never whether an input is accepted.
   The status does not depend on `--limit`, `--json` or how the report is printed.
 - R3. **Flags.** `--limit N` bounds the results printed per side (default 20); counts are
   always complete. `--json` writes one JSON document instead of text. `--endpoints-only`
@@ -217,7 +218,7 @@ Properties named here:
 | `result.locations` | `canon_bag` of canonical locations. With `--endpoints-only`, dropped for C0001. | P-bag |
 | `result.codeFlows` | `canon_bag` of canonical code flows. | P-bag |
 | `codeFlow.threadFlows` | `canon_bag` of canonical thread flows. | P-bag |
-| `threadFlow.locations` | `canon_seq` of canonical steps; with `--endpoints-only`, `endpoints` of them instead. | P-seq; P-end |
+| `threadFlow.locations` | `canon_seq` of canonical steps; with `--endpoints-only`, `endpoints` of them instead. An empty array is an error (exit 2), with or without the flag: SARIF requires at least one step. | P-seq; P-end |
 | `threadFlowLocation.executionOrder` | Checked strictly increasing along the array (exit 2 if not), then dropped: array order is the order. | `check_increasing` returns `Ok` exactly when increasing; P-drop |
 | `threadFlowLocation.kinds` | `canon_bag` of atoms (`taint`, `call`, `return`). | P-bag |
 | `threadFlowLocation.location` | Canonical location; its `message` dropped. | as `location` |
@@ -232,8 +233,8 @@ Properties named here:
 | `properties.taintVertices` | `canon_bag` of `(label, canon_bag of vertex)`. Dropped with `--endpoints-only` on C0001. | P-bag |
 | `properties.sourceFunctions`, `sinkFunctions` | `canon_bag` of atoms. | P-bag |
 | `properties.sourceCallee`, `sinkCallee` | Dropped: each is the first of the list above (F:3235-3247). | P-drop |
-| `properties.taintedFormals` | `canon_bag` of `(formal, canon_bag of labels)`. | P-bag |
-| `properties.import` (debug) | Atom (an import name). | none |
+| `properties.taintedFormals` | `canon_bag` of `(formal, canon_bag of labels)`. Dropped with `--endpoints-only` on C0001 (which does not write it). | P-bag |
+| `properties.import` (debug) | Atom (an import name). Dropped with `--endpoints-only` on C0001 (which does not write it). | none |
 | `properties.fileSpanId`, `funcId`, `insnId` (debug) | Dropped. | P-drop |
 | Other `properties`, other fields within a result | Not read. | P-drop |
 

@@ -231,7 +231,7 @@ proof fn calc_flow(t: Seq<RawLogical<u32>>, steps: Seq<RawStepV<u32>>, kinds: Se
     requires
         steps.len() == kinds.len(),
         forall|k: int| 0 <= k < steps.len() ==> #[trigger] steps[k] == step((k + 1) as i64, kinds[k]),
-        steps.len() < 100,
+        0 < steps.len() < 100,
     ensures
         spec_canon_thread_flow(ou(), t, RawThreadFlowV { steps }) == Ok::<
             CanonThreadFlowV<u32>,
@@ -312,7 +312,7 @@ proof fn calc_result_full(t: Seq<RawLogical<u32>>, i: usize, name: u32, steps: S
         t[i as int].fqn == name,
         steps.len() == kinds.len(),
         forall|k: int| 0 <= k < steps.len() ==> #[trigger] steps[k] == step((k + 1) as i64, kinds[k]),
-        steps.len() < 100,
+        0 < steps.len() < 100,
     ensures
         spec_canon_result_full(ou(), t, result(i, steps)) == Ok::<CanonResultV<u32>, Error>(
             canon_result(name, kinds),
@@ -465,17 +465,6 @@ proof fn smoke_endpoints_ignore_interior()
     calc_example(30, 32, 33);
 }
 
-/// Without the endpoints rule an empty thread flow is a flow of no steps.
-proof fn smoke_empty_flow_in_full()
-    ensures
-        spec_canon_result(ou(), table(), None, result(0, Seq::empty())) == Ok::<
-            CanonResultV<u32>,
-            Error,
-        >(canon_result(20, Seq::empty())),
-{
-    calc_result_full(table(), 0, 20, Seq::empty(), Seq::empty());
-}
-
 // ---------------------------------------------------------------------------
 // Errors.
 
@@ -539,22 +528,29 @@ proof fn smoke_not_increasing_errs()
     assert(o[0] is Some && o[1] is Some && !(o[0]->Some_0 < o[1]->Some_0));
 }
 
-proof fn smoke_empty_flow_errs_by_endpoints()
+/// A thread flow with no steps is not SARIF: an error, with or without the endpoints rule.
+proof fn smoke_empty_flow_errs()
     ensures
+        spec_canon_result(ou(), table(), None, result(0, Seq::empty())) == Err::<
+            CanonResultV<u32>,
+            Error,
+        >(Error::EmptyFlow),
         spec_canon_result(ou(), table(), Some(rule()), result(0, Seq::empty())) == Err::<
             CanonResultV<u32>,
             Error,
         >(Error::EmptyFlow),
 {
-    calc_result_full(table(), 0, 20, Seq::empty(), Seq::empty());
-    let c = canon_result(20, Seq::empty());
-    let steps = Seq::<u32>::empty().map_values(|k: u32| canon_step(k));
-    assert(steps.len() == 0);
-    let cf = c.code_flows[0];
-    let flows = spec_canon_seq(cf.thread_flows, |f: CanonThreadFlowV<u32>| spec_endpoints_flow(f));
+    let steps = Seq::<RawStepV<u32>>::empty();
+    let r = result(0, steps);
+    let f = RawThreadFlowV { steps };
+    assert(spec_canon_thread_flow(ou(), table(), f) == Err::<CanonThreadFlowV<u32>, Error>(Error::EmptyFlow));
+    let flows = spec_canon_seq(seq![f], |x: RawThreadFlowV<u32>| spec_canon_thread_flow(ou(), table(), x));
     calc_all_ok_err(flows, 0, Error::EmptyFlow);
-    let cfs = spec_canon_seq(c.code_flows, |f: CanonCodeFlowV<u32>| spec_endpoints_code_flow(ou(), f));
+    let cfs = spec_canon_seq(r.code_flows, |c: RawCodeFlowV<u32>| spec_canon_code_flow(ou(), table(), c));
     calc_all_ok_err(cfs, 0, Error::EmptyFlow);
+    calc_location(1, 0, table(), 20);
+    let locs = spec_canon_seq(r.locations, |x: RawLocationV<u32>| spec_canon_location(ou(), table(), x));
+    calc_all_ok(locs, seq![CanonLocationV { physical: Some(physical(1)), logical: seq![20u32] }]);
 }
 
 

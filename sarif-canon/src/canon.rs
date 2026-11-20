@@ -11,11 +11,11 @@
 //! input that cannot be canonicalized is an error with or without the endpoints rule.
 //!
 //! The errors, the first in the order the form is built (results in order; within a result,
-//! its locations, then its code flows; within a thread flow, the `executionOrder` check, then
-//! its steps; then, for the endpoints rule, its flows): a reference past the end of the table
-//! (`OutOfRange`); `executionOrder` values that do not increase (`NotIncreasing`); and, only
-//! for a result of the endpoints rule, a thread flow with no steps (`EmptyFlow`). Without the
-//! endpoints rule an empty thread flow is a flow of no steps, not an error.
+//! its locations, then its code flows; within a thread flow, the empty check, the
+//! `executionOrder` check, then its steps): a reference past the end of the table
+//! (`OutOfRange`); a thread flow with no steps, which SARIF does not allow (`EmptyFlow`); and
+//! `executionOrder` values that do not increase (`NotIncreasing`). The endpoints rule changes
+//! what is compared, never whether an input is accepted.
 
 use crate::types::*;
 use std::cmp::Ordering;
@@ -74,7 +74,9 @@ pub open spec fn spec_canon_thread_flow<A>(
     t: Seq<RawLogical<A>>,
     f: RawThreadFlowV<A>,
 ) -> Result<CanonThreadFlowV<A>, Error> {
-    if !spec_increasing(f.steps.map_values(|s: RawStepV<A>| step_order(s))) {
+    if f.steps.len() == 0 {
+        Err(Error::EmptyFlow)
+    } else if !spec_increasing(f.steps.map_values(|s: RawStepV<A>| step_order(s))) {
         Err(Error::NotIncreasing)
     } else {
         match spec_all_ok(spec_canon_seq(f.steps, |s: RawStepV<A>| spec_canon_step(oa, t, s))) {

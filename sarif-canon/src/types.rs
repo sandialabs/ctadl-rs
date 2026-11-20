@@ -216,7 +216,7 @@ pub enum Error {
     OutOfRange,
     /// A thread flow whose `executionOrder` values do not increase along its steps.
     NotIncreasing,
-    /// A thread flow with no steps, when only endpoints are compared.
+    /// A thread flow with no steps, which SARIF does not allow.
     EmptyFlow,
 }
 
