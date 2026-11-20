@@ -16,10 +16,10 @@ the formatter (`ctadl-ascent/src/query_engine/formatter.rs`, "F" below) and asse
   `ruleIndex`, `parentIndex` or `threadFlowLocation.index` is emitted.
 - **Per-run numbers in content.** `executionOrder` is 1..n per flow (F:2861).
   `taintVertex` and `taintVertices` strings render call-argument vertices as
-  `call-arg(<insn id>, <formal>)` (`ctadl-index/src/facts.rs:1431`; F:3043, F:3328). The
+  `call-arg(<insn id>, <formal>)` (`ctadl-index/src/facts.rs:1431`; F:3045, F:3181, F:3329). The
   debug profile adds `fileSpanId`, `funcId`, `insnId` (F:3080-3091). Messages embed span,
   function and import ids (`span {n}`, `func#N`, `import#N`).
-- **Order.** `results` is ordered by rule, then by numeric span, function or node ids
+- **Order.** `results` is ordered by numeric span, function and path node ids
   (F:3027-3276). It is deterministic for one index, not a content order.
 - **Machine and run data.** Times, command line, `parquet_dir(s)`, `originalUriBaseIds`
   values (F:2104-2133), absolute `file:` URIs for files outside an import's root
@@ -29,7 +29,7 @@ the formatter (`ctadl-ascent/src/query_engine/formatter.rs`, "F" below) and asse
   location (F:915). C0002 has one instruction location. C0003/C0004 have a logical location,
   plus a physical one at a call site or one per declaration of a global (F:3365-3419). C0007
   has a logical location only (F:3455-3497). `--sarif-profile` selects which rules appear
-  (F:1043).
+  (F:3027, F:3147, F:3157).
 - **Witness choices.** A C0001 result's primary location is the first span, in
   (import id, span id) order, where its source/sink pair was found (F:2666-2671), and its
   steps are one shortest path, ties broken in a content order (docs/debugging.md:163-171).
@@ -37,13 +37,13 @@ the formatter (`ctadl-ascent/src/query_engine/formatter.rs`, "F" below) and asse
   or in an edge elsewhere that changes which path is shortest.
 
 `ctadl diff-index` (`ctadl-index-diff`, wired at `ctadl-ascent/src/main.rs:85` and
-`ctadl-ascent/src/main.rs:933`) is the model: canonicalize rows, sort, compare with
+`ctadl-ascent/src/main.rs:931`) is the model: canonicalize rows, sort, compare with
 `multiset_diff` (`ctadl-index-diff/src/table.rs:485-509`), print bounded samples, exit 0/1/2.
 `multiset_diff` (`multiset-diff/src/lib.rs:287`) is proved to report exactly the values whose
 counts differ, provided `cmp` computes a total order and both inputs are sorted by it
 (`multiset-diff/src/proofs.rs:604`, `multiset-diff/src/proofs.rs:633`). Today neither
 precondition is proved at any call site: callers pass a derived `Ord` and sort with
-`sort_unstable`, and sortedness is only a `debug_assert` (`multiset-diff/src/lib.rs:421`).
+`sort_unstable`, and sortedness is only a `debug_assert` (`multiset-diff/src/lib.rs:422-423`).
 
 ## Terms
 
@@ -116,7 +116,7 @@ precondition is proved at any call site: callers pass a derived `Ord` and sort w
 - R17. **`ctadl query`'s SARIF does not change**, and neither does `ctadl diff-index`.
 - R18. **Docs.** docs/spec.md F12 names `ctadl diff-sarif`, and §5 lists its verified core
   with `multiset-diff` and `name-by-facts`; docs/debugging.md documents its use and output
-  beside `diff-index` (docs/debugging.md:183-215); `nightly/README.md:31-36` and the comments
+  beside `diff-index` (docs/debugging.md:182-219); `nightly/README.md:31-37` and the comments
   at `flake.nix:292` and `Cargo.toml:110` name the new crate.
 
 ## Design
@@ -134,7 +134,7 @@ Two crates and a subcommand.
   `multiset_diff`, and renders the report. It reuses `ctadl-index-diff`'s report layout
   and bounded-sample buffer, moved or shared rather than copied.
 - **`ctadl diff-sarif`** in `ctadl-ascent/src/main.rs`, beside `DiffIndex`, with the same
-  exit-code handling as `ctadl-ascent/src/main.rs:933-960`.
+  exit-code handling as `ctadl-ascent/src/main.rs:931-959`.
 
 Data flow: JSON → (D2, unverified) raw runs over atoms → (D3, verified) sorted
 `Vec<CanonResult>` per file → `multiset_diff` (verified) → report (unverified).
@@ -151,7 +151,7 @@ read, whatever it holds. It:
   injective);
 - rewrites `call-arg(<n>, <f>)` to `call-arg(_, <f>)` inside vertex strings before
   interning. The call site is already named by the result's location; the formal and access
-  path stay, since they tell apart two endpoints on one variable (F:3322-3328);
+  path stay, since they tell apart two endpoints on one variable (F:3323-3328);
 - turns each `logicalLocations[].index` into a raw reference, leaving resolution and its
   range check to the core.
 
