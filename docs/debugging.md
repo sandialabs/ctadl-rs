@@ -177,7 +177,8 @@ Consequences for measurement:
 - Regression cases must still assert set-level properties --- reached lines,
   whether a code flow connects a source and a sink --- never the shape of a
   rendered flow.
-  The `nightly` harness does this today; keep it that way.
+  The `nightly` harness does this today; keep it that way. To compare two query outputs
+  this way, use `ctadl diff-sarif --endpoints-only` (see *Comparing two query outputs*).
 
 # Comparing two index runs
 
@@ -230,6 +231,91 @@ SELECT
   (SELECT count(*) FROM (SELECT * FROM read_parquet('B/assign.parquet')
                          EXCEPT SELECT * FROM read_parquet('A/assign.parquet'))) AS only_in_b;
 ```
+
+# Comparing two query outputs
+
+To check whether two `ctadl query` runs found the same things (before and after a model change
+or an engine change, two builds), use `ctadl diff-sarif`. Do not compare the files with `diff`
+or `jq`: they compare arrays in the order they were written, and logical location indexes that
+each run numbers for itself. Microsoft's `sarif diff` is no better: it counts results per rule,
+so a result that moves is no change.
+
+```
+ctadl diff-sarif before.sarif after.sarif
+ctadl diff-sarif A.sarif B.sarif --limit 50
+ctadl diff-sarif A.sarif B.sarif --endpoints-only
+ctadl diff-sarif A.sarif B.sarif --json
+```
+
+The results of every run in a file are compared as one multiset, each by its content: its rule,
+kind and level (absent compares equal to SARIF's default), its locations, its code flows, and
+the properties ctadl writes (`taintLabels`, `taintVertex`, `taintVertices`, `sourceFunctions`,
+`sinkFunctions`, `taintedFormals`, `import`). A logical location is compared by the name it
+resolves to, not by its index; a physical location by its `uriBaseId` name, `uri`, region and
+address. The order of results, of a result's locations and code flows, of a code flow's thread
+flows, of a location's logical locations and of the set- and map-valued properties does not
+matter. The steps of a thread flow are compared in order. Not compared: run metadata, the tool
+and its rules, invocations, message text, `executionOrder` (checked to increase, then
+dropped), `sourceCallee` and `sinkCallee`, the debug profile's `fileSpanId`, `funcId` and
+`insnId`, the value a `uriBaseId` stands for, and the instruction id in a
+`call-arg(<id>, <formal>)` vertex. Equal results count separately: a result written twice in A
+and once in B is a difference. The canonical form and the merge that compares the two
+multisets are proved with Verus (`sarif-canon`, `multiset-diff`); the parser that picks the
+fields out of a file is tested on real `ctadl query` output in every profile.
+
+`--endpoints-only` compares a `C0001.tainted-path` result by its rule, kind, level,
+`taintLabels`, `sourceFunctions`, `sinkFunctions`, and the first and last step of each thread
+flow. Its primary location, its interior steps, `taintVertex`, `taintVertices`,
+`taintedFormals` and `import` are left out, so two runs that pick different witness paths for
+one source/sink pair (see above) compare equal. Results with equal endpoints still count
+separately: two such flows in A and one in B is a difference. Other rules are compared in full.
+The flag changes what is compared, never whether a file is accepted.
+
+The first line is `IDENTICAL` or `DIFFERENT`. Then the two files, `flag: --endpoints-only` when
+it is given, and how many results each file holds. Then, for each side that holds some results
+more often than the other, `more in A: N results, K not shown` (N distinct results) and at most
+`--limit` of them (20 by default), first by their printed form, each as `[A n, B m]` followed by
+the result as one line of JSON: SARIF's key names, logical locations as their names, absent
+fields and empty collections left out, and a flow cut to its endpoints as
+`{"endpoints":[first,last]}`. For example, with `xfer.c` from `ctadl-ascent/tests/c` as A, and
+as B the same file with a second sink call, `sink(s);`, added at line 14:
+
+```
+DIFFERENT
+A: a.sarif
+B: b.sarif
+results: A 3, B 5
+more in B: 2 results, 0 not shown
+  [A 0, B 1] {"ruleId":"C0001.tainted-path","kind":"fail","level":"warning","locations":[{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":14,"startColumn":3,"endLine":14,"endColumn":10}},"logicalLocations":["main"]}],"codeFlows":[{"threadFlows":[{"locations":[{"kinds":["taint"],"location":{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":11,"startColumn":3,"endLine":11,"endColumn":15}},"logicalLocations":["main"]}},{"kinds":["taint"],"location":{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":14,"startColumn":3,"endLine":14,"endColumn":10}},"logicalLocations":["main"]}}]}]}],"properties":{"taintLabels":["xfer"],"taintVertices":[["xfer",["call-arg(_, 0)"]]],"sourceFunctions":["source"],"sinkFunctions":["sink"]}}
+  [A 1, B 2] {"ruleId":"C0004.taint-sink","kind":"informational","level":"none","locations":[{"logicalLocations":["sink"]}],"properties":{"taintLabels":["xfer"],"taintVertex":"call-arg(_, 0)"}}
+```
+
+B has one new flow, to line 14, and one more `C0004.taint-sink` result for `sink`.
+
+`--json` prints the same report as one JSON document, a result's printed form as a string:
+
+```
+{"result":"DIFFERENT","results_differ":2,"a":"a.sarif","b":"b.sarif","endpoints_only":false,
+ "limit":20,"results_a":3,"results_b":5,"more_in_a":{"rows":[],"not_shown":0},
+ "more_in_b":{"rows":[{"row":"{\"ruleId\":\"C0001.tainted-path\",...}","count_a":0,"count_b":1},
+ ...],"not_shown":0}}
+```
+
+`results_differ` counts the distinct results that differ, shown or not. The exit code is 0 when
+the two multisets are equal, 1 when they differ, and 2 on an error, which goes to stderr with
+nothing on stdout: a missing or unreadable file; a file that is not SARIF 2.1.0 (an unknown
+`kind` or `level` included); a result property of a shape ctadl does not write; a logical
+location with neither `fullyQualifiedName` nor `name`; a logical location `index` that is
+negative or past the end of the run's `logicalLocations`; a thread flow with no steps; or
+`executionOrder` values that do not increase. Neither `--limit`, even 0, nor `--json` changes the exit code.
+
+A result is compared by the locations ctadl writes. Where ctadl writes a source or sink result
+(`C0003.taint-source`, `C0004.taint-sink`) with only a logical location, naming the function,
+and no physical location at its call site, results at different call sites of one function
+compare equal, since the call site's instruction id is not compared either, and are counted by
+multiplicity. Adding or removing such a call is reported, as the `[A 1, B 2]` line above shows;
+moving one is not. A field ctadl starts writing later is not compared until `diff-sarif` reads
+it.
 
 # Comparing every relation: `scripts/fact-dump-diff.sh`
 

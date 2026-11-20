@@ -356,7 +356,7 @@
               jadx
               scrcpy
               android.androidLldb
-              # `verus`, for multiset-diff's Verus proof.
+              # `verus`, for the Verus proofs of multiset-diff, name-by-facts and sarif-canon.
               verus
             ];
             packages = [ testEnv ];
