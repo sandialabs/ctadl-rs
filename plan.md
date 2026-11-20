@@ -755,7 +755,29 @@ every profile. Test-only.
     cargo test -p ctadl-ascent --test integration diff_index
     cargo clippy --workspace -- -Dwarnings
 
-## Phase 10: docs and comments (R18), and acceptance
+**As built.**
+- `renumbered_ids` does not use `remap_index`: `ctadl query` on an index renumbered alone
+  gives different results (it also looks ids up in the imports, so callee names became
+  `unknown`, `sourceFunctions`/`sinkFunctions` dropped, and tie-breaks changed). Instead
+  `ties.c` is indexed in a second project after a small import with no sources or sinks,
+  which shifts every function, instruction and `call-arg` id (span ids are per import, so
+  `fileSpanId` is unchanged). `diff_index.rs` is not changed.
+- `ties.c`'s longest flows have three steps, so `endpoints_only` replaces the interior step
+  with a differing one from another flow, and also builds a four-step flow and swaps its two
+  interior steps.
+- In the real files every location, code-flow, thread-flow, logical-location and `kinds`
+  array has one element, so `shuffled_arrays` also shuffles a widened copy with a second,
+  different element at each level, and checks every level was reordered.
+- Edits are per result: `deleted_result`, `duplicated_result`, `swapped_steps` and
+  `changed_line` apply to every result (or flow) in turn. `profiles_have_expected_rules`
+  pins each profile's rules: Human C0001/C0003/C0004; Agent adds C0007; Machine
+  C0002/C0003/C0004 (no flows); Debug C0001-C0004, with the debug ids only on C0002.
+  Every "reports nothing" test runs with and without `--endpoints-only`.
+- Observed: on `ties.c`, C0003/C0004 results carry only a logical location (no call-site
+  physical location; the formatter writes one only when it finds the site), so after the
+  `call-arg` rewrite results at different call sites of one callee compare equal and count
+  by multiplicity.
+: docs and comments (R18), and acceptance
 
 Depends on: 6b, 8, 9.
 
