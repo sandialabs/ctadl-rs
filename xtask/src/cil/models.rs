@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use ctadl_ascent::facts::{FormalIndex, RETURN_INDEX};
 use ctadl_ascent::models::portcullis::ast::{BodyItem, Literal, Rhs, Rule, Term};
 use ctadl_ascent::models::{
     DEFAULT_DSL_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort,
@@ -66,10 +67,8 @@ const SEED: u32 = 1;
 /// Failures listed in the outcome before the rest are counted.
 const MAX_LISTED: usize = 12;
 
-/// A port as a model numbers it: `Argument(n)` is `n`, `Return` is -1.
-type Port = i32;
-/// A port and a path, the path as segments: `["deref", "[]"]`.
-type Loc = (Port, Vec<String>);
+/// A port and a path: `Argument(n)` is `n`, `Return` is [`RETURN_INDEX`].
+type Loc = (FormalIndex, Vec<PathSegment>);
 
 #[derive(Deserialize)]
 struct Row {
@@ -92,13 +91,35 @@ struct Run {
     #[serde(default)]
     flows: Vec<Flow>,
     #[serde(default)]
-    depends: Vec<(Port, Port)>,
+    depends: Vec<(FormalIndex, FormalIndex)>,
 }
 
 #[derive(Deserialize)]
 struct Flow {
+    #[serde(deserialize_with = "wire_locs")]
     from: Vec<Loc>,
+    #[serde(deserialize_with = "wire_loc")]
     to: Loc,
+}
+
+/// A location as `model-run` writes it, the path in the path grammar: `[0, ".deref.\\[]"]`.
+type WireLoc = (FormalIndex, String);
+
+fn wire_loc<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Loc, D::Error> {
+    from_wire(WireLoc::deserialize(d)?)
+}
+
+fn wire_locs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Loc>, D::Error> {
+    Vec::<WireLoc>::deserialize(d)?
+        .into_iter()
+        .map(from_wire)
+        .collect()
+}
+
+fn from_wire<E: serde::de::Error>((port, path): WireLoc) -> Result<Loc, E> {
+    let path = ctadl_ir::cir::path_syntax::parse_path(&path)
+        .map_err(|e| E::custom(format!("path `{path}`: {e}")))?;
+    Ok((port, path))
 }
 
 #[derive(Deserialize, Default)]
@@ -431,8 +452,9 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         }
         for pair in pairs {
             let (s, d) = pair;
-            let n = arity.get(run.fid.as_str()).copied().unwrap_or(0) as Port;
-            if s.0 >= n || d.0 >= n {
+            let n = arity.get(run.fid.as_str()).copied().unwrap_or(0);
+            let beyond = |l: &Loc| usize::try_from(*l.0).is_ok_and(|i| i >= n);
+            if beyond(s) || beyond(d) {
                 continue;
             }
             if used.contains(pair) || run.depends.contains(&(s.0, d.0)) {
@@ -598,54 +620,43 @@ fn program(rows: &[Row]) -> ProgramInfo {
 
 /// A model port as the locations it names; `Argument(*)` is every argument.
 fn expand(port: &ModelPort, arity: usize) -> Vec<Loc> {
-    let path: Vec<String> = port
-        .path
-        .iter()
-        .map(|seg| match seg {
-            PathSegment::Field(s) => {
-                let s: &str = s.as_ref();
-                s.to_string()
-            }
-            other => other.to_string(),
-        })
-        .collect();
+    let path: Vec<PathSegment> = port.path.iter().cloned().collect();
     match port.tag {
-        FormalIndexTypeTag::Return => vec![(-1, path)],
-        FormalIndexTypeTag::Index => vec![(port.index.unwrap_or(0) as Port, path)],
-        FormalIndexTypeTag::AnyArgument => (0..arity as Port).map(|i| (i, path.clone())).collect(),
+        FormalIndexTypeTag::Return => vec![(FormalIndex::new(RETURN_INDEX), path)],
+        FormalIndexTypeTag::Index => vec![(FormalIndex::new(port.index.unwrap_or(0)), path)],
+        FormalIndexTypeTag::AnyArgument => (0..arity)
+            .filter_map(|i| FormalIndex::try_from(i).ok())
+            .map(|i| (i, path.clone()))
+            .collect(),
         _ => Vec::new(),
     }
 }
 
 /// Whether the pair `(s, d)` covers the flow `f -> t`: the same ports, and the flow's paths are
-/// the pair's extended by one suffix.
+/// the pair's extended by one suffix. A pair into `q.#value` (taint flow) covers the flow from
+/// exactly `s` into `q`, as in `cil:taint`: observing `q` observes `q.#value` (S17 of
+/// docs/ir.md), and `#value` is terminal, so no suffix rides along.
 fn covers(s: &Loc, d: &Loc, f: &Loc, t: &Loc) -> bool {
-    s.0 == f.0
-        && d.0 == t.0
-        && f.1.starts_with(&s.1)
-        && t.1.starts_with(&d.1)
-        && f.1[s.1.len()..] == t.1[d.1.len()..]
+    if s.0 != f.0 || d.0 != t.0 {
+        return false;
+    }
+    let suffix_rides =
+        f.1.starts_with(&s.1) && t.1.starts_with(&d.1) && f.1[s.1.len()..] == t.1[d.1.len()..];
+    let into_value = f.1 == s.1
+        && d.1
+            .split_last()
+            .is_some_and(|(last, init)| *last == PathSegment::Value && init == t.1.as_slice());
+    suffix_rides || into_value
 }
 
 /// A location in port spelling: `Argument(0).\[]`, `Return.deref`.
 fn show(l: &Loc) -> String {
-    let mut s = if l.0 < 0 {
+    let port = if *l.0 < 0 {
         "Return".to_string()
     } else {
         format!("Argument({})", l.0)
     };
-    for seg in &l.1 {
-        s.push('.');
-        // A `Loc` spells `deref` as the string `deref`; CIL field names are `<cls::name>`,
-        // so no field collides with it.
-        let seg = match seg.as_str() {
-            ctadl_ir::cir::path_syntax::DEREF => PathSegment::Deref,
-            ctadl_ir::cir::path_syntax::VALUE => PathSegment::Value,
-            name => PathSegment::field(name),
-        };
-        s.push_str(&ctadl_ir::cir::path_syntax::segment_to_string(&seg));
-    }
-    s
+    port + &ctadl_ir::cir::path_syntax::path_to_string(&l.1)
 }
 
 pub fn resolve_xtask_dir() -> PathBuf {
@@ -656,43 +667,95 @@ pub fn resolve_xtask_dir() -> PathBuf {
 mod tests {
     use super::*;
 
-    fn loc(port: Port, path: &[&str]) -> Loc {
-        (port, path.iter().map(|s| s.to_string()).collect())
+    /// `path` in the path grammar: `.deref.\[]`.
+    fn loc(port: i16, path: &str) -> Loc {
+        (
+            FormalIndex::new(port),
+            ctadl_ir::cir::path_syntax::parse_path(path).unwrap(),
+        )
     }
 
     #[test]
     fn a_pair_covers_its_extensions_by_one_suffix() {
         // `Argument(0) -> Return` covers the elements too ...
         assert!(covers(
-            &loc(0, &[]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &["[]"])
+            &loc(0, ""),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, r".\[]")
         ));
         // ... but does not take an element out of its collection.
         assert!(!covers(
-            &loc(0, &[]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, ""),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, "")
         ));
         assert!(covers(
-            &loc(0, &["[]"]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, r".\[]"),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, "")
         ));
         assert!(!covers(
-            &loc(0, &["[]"]),
-            &loc(-1, &[]),
-            &loc(1, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, r".\[]"),
+            &loc(-1, ""),
+            &loc(1, r".\[]"),
+            &loc(-1, "")
         ));
     }
 
     #[test]
+    fn a_value_pair_covers_exactly_its_source() {
+        // `Return.#value <- Argument(1)` covers the flow into `Return` from `Argument(1)` ...
+        assert!(covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, ""),
+            &loc(-1, "")
+        ));
+        assert!(covers(
+            &loc(1, r".\[]"),
+            &loc(0, ".deref.#value"),
+            &loc(1, r".\[]"),
+            &loc(0, ".deref")
+        ));
+        // ... but carries nothing reachable through `Argument(1)`.
+        assert!(!covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, r".\[]"),
+            &loc(-1, r".\[]")
+        ));
+        assert!(!covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, r".\[]"),
+            &loc(-1, "")
+        ));
+    }
+
+    #[test]
+    fn a_model_run_flow_reads_its_paths_in_the_path_grammar() {
+        let flow: Flow = serde_json::from_str(
+            r#"{"from": [[1, ".deref.\\[]"]],
+                "to": [-1, ".<[System\\.Private\\.CoreLib]System\\.ValueTuple`2::Item1>"]}"#,
+        )
+        .unwrap();
+        assert_eq!(flow.from, vec![loc(1, r".deref.\[]")]);
+        assert_eq!(
+            flow.to.1,
+            vec![PathSegment::field(
+                "<[System.Private.CoreLib]System.ValueTuple`2::Item1>"
+            )]
+        );
+        // A path out of the grammar is an error, not a guess.
+        assert!(serde_json::from_str::<Flow>(r#"{"from": [], "to": [-1, ".[]"]}"#).is_err());
+    }
+
+    #[test]
     fn locations_print_in_port_spelling() {
-        assert_eq!(show(&loc(0, &["deref", "[]"])), r"Argument(0).deref.\[]");
-        assert_eq!(show(&loc(-1, &[])), "Return");
+        assert_eq!(show(&loc(0, r".deref.\[]")), r"Argument(0).deref.\[]");
+        assert_eq!(show(&loc(-1, "")), "Return");
     }
 }

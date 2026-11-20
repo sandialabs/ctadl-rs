@@ -496,8 +496,9 @@ Each output relation takes exactly one port, flow or path. Several are written a
 comma-separated heads:
 
 ```
-propagation(F::arg(0) <- F::arg(1)),
-  propagation(F::return <- F::arg(1)) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)) :-
   fun(F, name = "append", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
 ```
 
@@ -535,6 +536,35 @@ it is a store or a copy follows from the output path, as for any assignment. Whe
 
 One asymmetry: a **sink** port covers the paths reachable at its vertex, so a sink on `return`
 also sees `return.f`. A sink cannot say "the object itself, but not its fields".
+
+#### Object flow and taint flow
+
+A bare pair is **object flow**: the output *is* the input, so everything reachable through the
+input is reachable through the output. An output ending in `#value` is **taint flow**: the output
+was computed from the input, and nothing reachable through the input becomes reachable through it.
+It is the model form of `y = value(x)` ([ir.md](ir.md#assignment)): `y.#value` gets the labels at
+`x` and `x.#value`, and no suffix rides along. Object flow implies taint flow; the reverse does not
+hold.
+
+```
+// `sb.append(x)` hands back `sb` itself, and what it appends is only taint.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return.#value <- F::arg(1)),
+  propagation(F::arg(0).#value <- F::arg(1)) :-
+  fun(F, name = "append", parent = "Ljava/lang/StringBuilder;");
+```
+
+With `x.f` tainted, the bare `return <- arg(1)` would taint `return.f`; the `#value` port does
+not. Use object flow where a function hands back the object it was
+given (`this` from a builder, an element out of a container) and taint flow for anything computed:
+strings, numbers, parsed, encoded and formatted results. A sink on `p` observes `p.#value`, so a
+taint-flow result is reported like any other.
+
+A value written into a receiver's own `#value` reaches the caller's variable, but not a caller one
+call up: a formal's `p.#value` does not flow back to the actual ([ir.md](ir.md#assignment), S8).
+A value held in memory does. So the default models write a mutated receiver's taint twice, at
+`arg(0).#value` and at `arg(0)."#contents".#value`, a field no source program can name, and read
+both back. A sink is wildcard by default, so it sees `."#contents"` too.
 
 ### Bridges
 

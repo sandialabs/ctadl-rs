@@ -40,20 +40,27 @@
 // PRIORITY. Every `skip_analysis` here is claimed at `priority = -100`, below the 0 a rule gets
 // when it names none, so a user's plain `analyze(F)` keeps a body this file would skip.
 //
-// ---- copying ----
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"): each section below says
+// which its models are.
+//
+// ---- copying: object flow, and each returns `dst` ----
 propagation(F::arg(0).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+  propagation(F::return.deref <- F::arg(1).deref),
+  propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"strcpy", "wcscpy", "strncpy", "wcsncpy", "stpcpy", "wcpcpy", "stpncpy", "wcpncpy", "strcat", "wcscat", "strncat", "wcsncat", "strcpy_chk", "strncpy_chk", "stpcpy_chk", "stpncpy_chk", "strcat_chk", "strncat_chk", "wcscpy_chk", "wcsncpy_chk", "wcscat_chk", "wcsncat_chk"});
 propagation(F::arg(0).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+  propagation(F::return.deref <- F::arg(1).deref),
+  propagation(F::return <- F::arg(0)) :-
   fun(F),
   F in {"strcpy", "wcscpy", "strncpy", "wcsncpy", "stpcpy", "wcpcpy", "stpncpy", "wcpncpy", "strcat", "wcscat", "strncat", "wcsncat", "strcpy_chk", "strncpy_chk", "stpcpy_chk", "stpncpy_chk", "strcat_chk", "strncat_chk", "wcscpy_chk", "wcsncpy_chk", "wcscat_chk", "wcsncat_chk"};
 
 propagation(F::arg(0).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+  propagation(F::return.deref <- F::arg(1).deref),
+  propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"});
 propagation(F::arg(0).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+  propagation(F::return.deref <- F::arg(1).deref),
+  propagation(F::return <- F::arg(0)) :-
   fun(F),
   F in {"memcpy", "memmove", "mempcpy", "memccpy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk", ".pic.memcpy"};
 
@@ -65,9 +72,11 @@ propagation(F::arg(1).deref <- F::arg(0).deref) :-
   F = "bcopy";
 
 // `memset(s, c, n)` returns `s`.
-propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).deref.#value <- F::arg(1)) :-
   fun(F, name in {"memset", "memset_chk", ".pic.memset"});
-propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).deref.#value <- F::arg(1)) :-
   fun(F),
   F in {"memset", "memset_chk", ".pic.memset"};
 
@@ -96,20 +105,35 @@ propagation(F::arg(0).deref <- F::arg(1).deref) :-
   fun(F),
   F in {"strlcpy", "strlcat", "strlcpy_chk", "strlcat_chk"};
 
-// ---- formatting and parsing ----
-propagation(F::arg(0).deref <- F::arg(_).deref),
-  propagation(F::return.deref <- F::arg(_).deref) :-
-  fun(F, name in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "asprintf", "vasprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk", "asprintf_chk", "vasprintf_chk"});
-propagation(F::arg(0).deref <- F::arg(_).deref),
-  propagation(F::return.deref <- F::arg(_).deref) :-
+// ---- formatting and parsing: taint flow ----
+// A `%d` argument is passed by value and a `%s` argument by pointer, so the output reads both
+// `arg(_)` and `arg(_).deref`. The return is a count.
+propagation(F::arg(0).deref.#value <- F::arg(_)),
+  propagation(F::arg(0).deref.#value <- F::arg(_).deref),
+  propagation(F::return.#value <- F::arg(_).deref) :-
+  fun(F, name in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk"});
+propagation(F::arg(0).deref.#value <- F::arg(_)),
+  propagation(F::arg(0).deref.#value <- F::arg(_).deref),
+  propagation(F::return.#value <- F::arg(_).deref) :-
   fun(F),
-  F in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "asprintf", "vasprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk", "asprintf_chk", "vasprintf_chk"};
+  F in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk"};
 
-propagation(F::arg(_).deref <- F::arg(0).deref),
-  propagation(F::return.deref <- F::arg(0).deref) :-
+// `asprintf(char **strp, fmt, ...)` allocates the buffer and returns it through `strp`.
+propagation(F::arg(0).deref.deref.#value <- F::arg(_)),
+  propagation(F::arg(0).deref.deref.#value <- F::arg(_).deref),
+  propagation(F::return.#value <- F::arg(_).deref) :-
+  fun(F, name in {"asprintf", "vasprintf", "asprintf_chk", "vasprintf_chk"});
+propagation(F::arg(0).deref.deref.#value <- F::arg(_)),
+  propagation(F::arg(0).deref.deref.#value <- F::arg(_).deref),
+  propagation(F::return.#value <- F::arg(_).deref) :-
+  fun(F),
+  F in {"asprintf", "vasprintf", "asprintf_chk", "vasprintf_chk"};
+
+propagation(F::arg(_).deref.#value <- F::arg(0).deref),
+  propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"sscanf", "swscanf", "vsscanf", "vswscanf", "isoc99_sscanf", "isoc99_swscanf", "isoc99_vsscanf", "isoc99_vswscanf"});
-propagation(F::arg(_).deref <- F::arg(0).deref),
-  propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::arg(_).deref.#value <- F::arg(0).deref),
+  propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"sscanf", "swscanf", "vsscanf", "vswscanf", "isoc99_sscanf", "isoc99_swscanf", "isoc99_vsscanf", "isoc99_vswscanf"};
 
@@ -120,155 +144,168 @@ propagation(F::return.deref <- F::arg(0).deref) :-
   fun(F),
   F in {"strdup", "strndup", "wcsdup"};
 
-// ---- search: a pointer INTO the argument comes back ----
-propagation(F::return.deref <- F::arg(0).deref) :-
-  fun(F, name in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strsep", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"});
-propagation(F::return.deref <- F::arg(0).deref) :-
+// ---- search: a pointer INTO the argument comes back, so it is object flow ----
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"});
+propagation(F::return <- F::arg(0)) :-
   fun(F),
-  F in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strsep", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"};
+  F in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"};
+
+// `strsep(char **stringp, delim)` returns the old `*stringp`, a pointer into the string.
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name = "strsep");
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F),
+  F = "strsep";
 
 // `strtok_r(str, delim, saveptr)`: the state pointer keeps a pointer into `str`, so the taint
-// has to survive to the next call. `arg(2).deref.deref` is a two-level shift -- see
-// `tests/tnt/port_two_segment.tnt`.
-propagation(F::return.deref <- F::arg(0).deref),
-  propagation(F::arg(2).deref.deref <- F::arg(0).deref) :-
+// has to survive to the next call: it stores a pointer into `str` at `*saveptr`, and a later
+// call, passed `NULL` for `str`, returns a pointer it loads from there.
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(2).deref),
+  propagation(F::arg(2).deref <- F::arg(0)) :-
   fun(F, name in {"strtok_r", "wcstok_r"});
-propagation(F::return.deref <- F::arg(0).deref),
-  propagation(F::arg(2).deref.deref <- F::arg(0).deref) :-
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(2).deref),
+  propagation(F::arg(2).deref <- F::arg(0)) :-
   fun(F),
   F in {"strtok_r", "wcstok_r"};
 
-propagation(F::return.deref <- F::arg(1).deref) :-
+propagation(F::return <- F::arg(1)) :-
   fun(F, name in {"bsearch", "lsearch", "lfind"});
-propagation(F::return.deref <- F::arg(1).deref) :-
+propagation(F::return <- F::arg(1)) :-
   fun(F),
   F in {"bsearch", "lsearch", "lfind"};
 
-// ---- length and numeric conversion: the RESULT is a scalar, so no `.deref` on the output ----
-propagation(F::return <- F::arg(0).deref) :-
+// ---- length and numeric conversion: the RESULT is a scalar computed from the input ----
+propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"strlen", "wcslen", "strnlen", "wcsnlen"});
-propagation(F::return <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"strlen", "wcslen", "strnlen", "wcsnlen"};
 
-propagation(F::return <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F, name in {"atoi", "atol", "atoll", "atof", "strtol", "strtoll", "strtoul", "strtoull", "strtof", "strtod", "strtold", "wcstol", "wcstoll", "wcstoul", "wcstoull", "wcstof", "wcstod", "wcstold"});
-propagation(F::return <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"atoi", "atol", "atoll", "atof", "strtol", "strtoll", "strtoul", "strtoull", "strtof", "strtod", "strtold", "wcstol", "wcstoll", "wcstoul", "wcstoull", "wcstof", "wcstod", "wcstold"};
 
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"toupper", "tolower", "toascii"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"toupper", "tolower", "toascii"};
 
 // Byte-order swaps are pure scalar transforms. Firmware parsers are full of them, and dropping
 // taint at one silently ends a flow that a length or offset field is driving.
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F, name in {"ntohl", "ntohs", "ntohll", "htonl", "htons", "htonll", "bswap_16", "bswap_32", "bswap_64"});
-propagation(F::return <- F::arg(0)) :-
+propagation(F::return.#value <- F::arg(0)) :-
   fun(F),
   F in {"ntohl", "ntohs", "ntohll", "htonl", "htons", "htonll", "bswap_16", "bswap_32", "bswap_64"};
 
 // ---- line readers: a `char **` out-parameter, so the destination is two levels deep ----
-propagation(F::arg(0).deref.deref <- F::arg(2).deref) :-
+propagation(F::arg(0).deref.deref.#value <- F::arg(2).deref) :-
   fun(F, name = "getline");
-propagation(F::arg(0).deref.deref <- F::arg(2).deref) :-
+propagation(F::arg(0).deref.deref.#value <- F::arg(2).deref) :-
   fun(F),
   F = "getline";
 
-propagation(F::arg(0).deref.deref <- F::arg(3).deref) :-
+propagation(F::arg(0).deref.deref.#value <- F::arg(3).deref) :-
   fun(F, name = "getdelim");
-propagation(F::arg(0).deref.deref <- F::arg(3).deref) :-
+propagation(F::arg(0).deref.deref.#value <- F::arg(3).deref) :-
   fun(F),
   F = "getdelim";
 
 // ---- paths ----
-propagation(F::return.deref <- F::arg(0).deref) :-
+// `basename` and `dirname` return a pointer into their argument (`dirname` cuts it in place), so
+// they are object flow, like the search functions.
+propagation(F::return <- F::arg(0)) :-
   fun(F, name in {"basename", "dirname"});
-propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::return <- F::arg(0)) :-
   fun(F),
   F in {"basename", "dirname"};
 
-propagation(F::arg(1).deref <- F::arg(0).deref),
-  propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::arg(1).deref.#value <- F::arg(0).deref),
+  propagation(F::return.deref.#value <- F::arg(0).deref),
+  propagation(F::return <- F::arg(1)) :-
   fun(F, name in {"realpath", "realpath_chk"});
-propagation(F::arg(1).deref <- F::arg(0).deref),
-  propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::arg(1).deref.#value <- F::arg(0).deref),
+  propagation(F::return.deref.#value <- F::arg(0).deref),
+  propagation(F::return <- F::arg(1)) :-
   fun(F),
   F in {"realpath", "realpath_chk"};
 
-propagation(F::arg(1).deref <- F::arg(0).deref) :-
+propagation(F::arg(1).deref.#value <- F::arg(0).deref) :-
   fun(F, name in {"readlink", "readlink_chk"});
-propagation(F::arg(1).deref <- F::arg(0).deref) :-
+propagation(F::arg(1).deref.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"readlink", "readlink_chk"};
 
 // `readlinkat(dirfd, path, buf, bufsiz)` -- one argument to the right of `readlink`.
-propagation(F::arg(2).deref <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref) :-
   fun(F, name in {"readlinkat", "readlinkat_chk"});
-propagation(F::arg(2).deref <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref) :-
   fun(F),
   F in {"readlinkat", "readlinkat_chk"};
 
 // ---- addresses ----
 // `inet_ntoa(struct in_addr)` takes its argument BY VALUE, so the input port is bare.
-propagation(F::return.deref <- F::arg(0)) :-
+propagation(F::return.deref.#value <- F::arg(0)) :-
   fun(F, name = "inet_ntoa");
-propagation(F::return.deref <- F::arg(0)) :-
+propagation(F::return.deref.#value <- F::arg(0)) :-
   fun(F),
   F = "inet_ntoa";
 
-propagation(F::arg(2).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref),
+  propagation(F::return <- F::arg(2)) :-
   fun(F, name = "inet_ntop");
-propagation(F::arg(2).deref <- F::arg(1).deref),
-  propagation(F::return.deref <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref),
+  propagation(F::return <- F::arg(2)) :-
   fun(F),
   F = "inet_ntop";
 
-propagation(F::return <- F::arg(0).deref),
-  propagation(F::arg(1).deref <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref),
+  propagation(F::arg(1).deref.#value <- F::arg(0).deref) :-
   fun(F, name in {"inet_addr", "inet_network", "inet_aton"});
-propagation(F::return <- F::arg(0).deref),
-  propagation(F::arg(1).deref <- F::arg(0).deref) :-
+propagation(F::return.#value <- F::arg(0).deref),
+  propagation(F::arg(1).deref.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"inet_addr", "inet_network", "inet_aton"};
 
 // `inet_pton(af, src, dst)` -- one argument to the right of `inet_aton`.
-propagation(F::arg(2).deref <- F::arg(1).deref),
-  propagation(F::return <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref),
+  propagation(F::return.#value <- F::arg(1).deref) :-
   fun(F, name = "inet_pton");
-propagation(F::arg(2).deref <- F::arg(1).deref),
-  propagation(F::return <- F::arg(1).deref) :-
+propagation(F::arg(2).deref.#value <- F::arg(1).deref),
+  propagation(F::return.#value <- F::arg(1).deref) :-
   fun(F),
   F = "inet_pton";
 
 // ---- time ----
-propagation(F::arg(0).deref <- F::arg(3).deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(3).deref) :-
   fun(F, name in {"strftime", "wcsftime", "strftime_chk"});
-propagation(F::arg(0).deref <- F::arg(3).deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(3).deref) :-
   fun(F),
   F in {"strftime", "wcsftime", "strftime_chk"};
 
-propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::return.deref.#value <- F::arg(0).deref) :-
   fun(F, name in {"ctime", "asctime", "ctime_r", "asctime_r"});
-propagation(F::return.deref <- F::arg(0).deref) :-
+propagation(F::return.deref.#value <- F::arg(0).deref) :-
   fun(F),
   F in {"ctime", "asctime", "ctime_r", "asctime_r"};
 
 // ---- wide / multibyte ----
-propagation(F::arg(0).deref <- F::arg(1).deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(1).deref) :-
   fun(F, name in {"mbstowcs", "wcstombs", "mbstowcs_chk", "wcstombs_chk"});
-propagation(F::arg(0).deref <- F::arg(1).deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(1).deref) :-
   fun(F),
   F in {"mbstowcs", "wcstombs", "mbstowcs_chk", "wcstombs_chk"};
 
 // `mbsrtowcs(dest, &src, len, ps)` -- `src` is a `char **`, one level deeper than `mbstowcs`.
-propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(1).deref.deref) :-
   fun(F, name in {"mbsrtowcs", "wcsrtombs"});
-propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
+propagation(F::arg(0).deref.#value <- F::arg(1).deref.deref) :-
   fun(F),
   F in {"mbsrtowcs", "wcsrtombs"};
 
