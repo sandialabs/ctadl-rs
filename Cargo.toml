@@ -27,6 +27,7 @@ members = [
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
     "name-by-facts",
+    "sarif-canon",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -61,6 +62,7 @@ default-members = [
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
     "name-by-facts",
+    "sarif-canon",
     "trie",
     "rustc_graphviz",
     "source-info",
@@ -95,6 +97,7 @@ multiset-diff = { path = "multiset-diff" }
 name-by-facts = { path = "name-by-facts" }
 pcode-reader = { path = "readers/pcode-reader" }
 rustc_graphviz = { path = "rustc_graphviz" }
+sarif-canon = { path = "sarif-canon" }
 source-info = { path = "source-info" }
 trie = { path = "trie" }
 
@@ -107,7 +110,7 @@ version = "0.1.7"
 
 [workspace.lints.rust]
 rust-2018-idioms = "deny"
-# Set by Verus when it compiles multiset-diff, to keep specs and proofs.
+# Set by Verus when it compiles the verified crates, to keep specs and proofs.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
 
 [workspace.lints.clippy]

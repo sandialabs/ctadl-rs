@@ -147,6 +147,27 @@ changes; nothing calls the new crate yet.
     cargo clippy --workspace -- -Dwarnings
     nix build .#checks.aarch64-darwin.verus
 
+**As built.**
+- Types with no reference or order number are shared by the raw and canonical forms:
+  `Region`, `Address<A>`, `Physical<A>`, `Keyed<A> { key, values }` (for `taintVertices`
+  and `taintedFormals`) and `Props<A>`. Only location, step, thread flow, code flow and
+  result have separate `Raw*`/`Canon*` types. The result properties are grouped in
+  `RawResult.props: Props<A>`.
+- Property collections are `Option<Vec<..>>` and `vertex`/`import` are `Option<A>`, so an
+  absent key and an empty one stay distinct. `rule` is `Option<A>` (SARIF's `ruleId` is
+  optional); `kind` and `level` are plain `A`, defaults filled by the parser.
+  `RawStep.location` and `CanonStep.location` are `Option`. `region` is not optional; an
+  absent region reads as all fields `None`.
+- `CanonThreadFlow` is an enum `Steps(Vec<CanonStep>) | Endpoints(CanonStep, CanonStep)`,
+  so a flow cut to its endpoints never equals a full two-step flow.
+- Types derive `Clone` with Verus's `autoderive_clone_without_spec` allowed, so verified
+  code must not rely on `clone()`.
+- The `multiset_diff` import in `lib.rs` is `#[cfg(verus_keep_ghost)]` (the specs are erased
+  in a plain build). The smoke proof takes slices as parameters, since `theorem_no_value_twice`
+  takes slices. `types_build` lives in `types.rs`.
+- The flake check's loop only copies sources; the three `verus` calls follow in a fixed
+  order. Verified: `multiset-diff` 34, `name-by-facts` 38, `sarif-canon` 20.
+
 ## Phase 1b: statements of the verified properties (R13, R14, D3, D4)
 
 Depends on: 1.
