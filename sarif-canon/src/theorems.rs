@@ -7,7 +7,8 @@ use crate::prims::*;
 use crate::sort::lemma_sorted_unique;
 use crate::types::*;
 use multiset_diff::proofs::theorem_reports_exactly_count_differences;
-use multiset_diff::{count, count_all, diff_from, eqv, le, sorted, total_order};
+use multiset_diff::{count, count_all, diff_from, sorted};
+use order_laws::{eqv, le, total_order};
 use std::cmp::Ordering;
 use vstd::prelude::*;
 

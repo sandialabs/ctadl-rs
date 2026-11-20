@@ -1,6 +1,8 @@
 //! The four properties of `diff_from`, and a `u8` client that restates them.
 
 use super::*;
+#[cfg(verus_keep_ghost)]
+use order_laws::{lemma_eqv_symm, lemma_refl, lemma_trans};
 
 #[cfg(verus_keep_ghost)]
 mod client;
@@ -9,57 +11,6 @@ verus! {
 
 // ---------------------------------------------------------------------------
 // Consequences of the order laws.
-
-proof fn lemma_refl<T>(ord: spec_fn(T, T) -> Ordering, x: T)
-    requires
-        total_order(ord),
-    ensures
-        eqv(ord, x, x),
-{
-    assert(ord(x, x) == Ordering::Less <==> ord(x, x) == Ordering::Greater);
-}
-
-proof fn lemma_eqv_symm<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T)
-    requires
-        total_order(ord),
-        eqv(ord, x, y),
-    ensures
-        eqv(ord, y, x),
-{
-    assert(ord(x, y) == Ordering::Equal);
-}
-
-/// `le` and `lt` chain, and `eqv` is transitive.
-proof fn lemma_trans<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T, z: T)
-    requires
-        total_order(ord),
-    ensures
-        le(ord, x, y) && le(ord, y, z) ==> le(ord, x, z),
-        lt(ord, x, y) && le(ord, y, z) ==> lt(ord, x, z),
-        le(ord, x, y) && lt(ord, y, z) ==> lt(ord, x, z),
-        eqv(ord, x, y) && eqv(ord, y, z) ==> eqv(ord, x, z),
-{
-    // Each conclusion: `le(x, z)` by transitivity; the converse `le(z, x)` would give
-    // `le(z, y)` or `le(y, x)` and so contradict a strict step, or establish `eqv`.
-    assert(le(ord, x, y) && le(ord, y, z) ==> le(ord, x, z));
-    assert(le(ord, z, x) && le(ord, x, y) ==> le(ord, z, y));
-    assert(le(ord, y, z) && le(ord, z, x) ==> le(ord, y, x));
-    assert(ord(x, y) == Ordering::Less <==> ord(y, x) == Ordering::Greater);
-    assert(ord(y, z) == Ordering::Less <==> ord(z, y) == Ordering::Greater);
-    assert(ord(x, z) == Ordering::Less <==> ord(z, x) == Ordering::Greater);
-    assert(ord(z, x) == Ordering::Less <==> ord(x, z) == Ordering::Greater);
-    assert(ord(y, x) == Ordering::Less <==> ord(x, y) == Ordering::Greater);
-    assert(ord(z, y) == Ordering::Less <==> ord(y, z) == Ordering::Greater);
-    if eqv(ord, x, y) && eqv(ord, y, z) {
-        lemma_eqv_symm(ord, x, y);
-        lemma_eqv_symm(ord, y, z);
-        assert(le(ord, x, y) && le(ord, y, z));
-        assert(le(ord, x, z));
-        assert(le(ord, z, y) && le(ord, y, x));
-        assert(le(ord, z, x));
-        assert(ord(x, z) != Ordering::Less);
-    }
-}
 
 /// `run_end` depends on `v` only up to `eqv`.
 proof fn lemma_run_end_congr<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>, i: int, v: T, w: T)

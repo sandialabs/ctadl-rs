@@ -1,8 +1,7 @@
 //! The difference of two sorted sequences, taken as multisets.
 //!
-//! The merge is verified with Verus, for inputs of any length: run
-//! `verus --crate-type=lib --edition=2024 src/lib.rs`, or `nix build .#checks.<system>.verus`.
-//! A plain `cargo build` erases the specs and proofs, leaving the code.
+//! The merge is verified with Verus, for inputs of any length: `nix build
+//! .#checks.<system>.verus`. A plain `cargo build` erases the specs and proofs, leaving the code.
 //!
 //! What is proved:
 //!
@@ -15,15 +14,20 @@
 //! - `proofs::client` restates the properties with `==` and plain counts, for `u8` under
 //!   `Ord::cmp`, over what the iterator yields.
 //!
-//! The specs and `proofs` are public so that another verified crate can use the theorems
-//! about its own calls: verify this crate with `--export <file> --compile`, and that one with
-//! `--import multiset_diff=<file> --extern multiset_diff=<rlib>`, as `checks.verus` does.
+//! The specs are stated over the orders of `order-laws`, so verifying this crate imports that
+//! crate's exported specs. The specs and `proofs` are public so that another verified crate can
+//! use the theorems about its own calls: verify this crate with `--export <file> --compile`, and
+//! that one with `--import multiset_diff=<file> --extern multiset_diff=<rlib>`, as
+//! `checks.verus` does.
 
 use std::cmp::Ordering;
 use vstd::prelude::*;
 // The iterator specs exist only when Verus compiles the crate.
 #[cfg(verus_keep_ghost)]
 use vstd::std_specs::iter::{IteratorSpec, IteratorSpecImpl};
+// The order specs, likewise.
+#[cfg(verus_keep_ghost)]
+use order_laws::{computes, eqv, le, lt, total_order};
 
 pub mod proofs;
 
@@ -38,37 +42,8 @@ pub struct Delta<'a, T> {
 }
 
 // ---------------------------------------------------------------------------
-// The order. The specs are stated over a spec-level order `ord`, which the caller names and
-// `cmp` must compute (`computes`): Verus knows of a closure only that what it returns meets
-// its `ensures`, which cannot pin down an order by itself.
-
-pub open spec fn eqv<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T) -> bool {
-    ord(x, y) == Ordering::Equal
-}
-
-pub open spec fn lt<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T) -> bool {
-    ord(x, y) == Ordering::Less
-}
-
-pub open spec fn le<T>(ord: spec_fn(T, T) -> Ordering, x: T, y: T) -> bool {
-    ord(x, y) != Ordering::Greater
-}
-
-/// `ord` is a total order: antisymmetric and transitive (reflexivity follows). Values it
-/// calls `Equal` need not be identical.
-pub open spec fn total_order<T>(ord: spec_fn(T, T) -> Ordering) -> bool {
-    &&& forall|x: T, y: T|
-        (#[trigger] ord(x, y) == Ordering::Less) <==> ord(y, x) == Ordering::Greater
-    &&& forall|x: T, y: T| (#[trigger] ord(x, y) == Ordering::Equal) ==> ord(y, x) == Ordering::Equal
-    &&& forall|x: T, y: T, z: T|
-        #[trigger] le(ord, x, y) && #[trigger] le(ord, y, z) ==> le(ord, x, z)
-}
-
-/// `cmp` can be called on any two values, and what it returns is `ord` of them.
-pub open spec fn computes<T, F: Fn(&T, &T) -> Ordering>(cmp: F, ord: spec_fn(T, T) -> Ordering) -> bool {
-    &&& forall|x: &T, y: &T| #[trigger] cmp.requires((x, y))
-    &&& forall|x: &T, y: &T, o: Ordering| #[trigger] cmp.ensures((x, y), o) ==> o == ord(*x, *y)
-}
+// The specs are stated over a spec-level order `ord` (`order_laws`), which the caller names and
+// `cmp` must compute.
 
 pub open spec fn sorted<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>) -> bool {
     forall|p: int, q: int| 0 <= p < q < s.len() ==> le(ord, #[trigger] s[p], #[trigger] s[q])

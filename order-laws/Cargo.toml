@@ -1,0 +1,14 @@
+[package]
+name = "order-laws"
+version.workspace = true
+edition = "2024"
+
+# Verus's crates, at the version of the Verus that `checks.verus` runs (nix/verus.nix),
+# whose source is that release's. A plain build erases the specs and proofs they carry.
+[dependencies]
+vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features = ["std"] }
+verus_builtin = "=0.0.0-2026-11-01-0251"
+verus_builtin_macros = "=0.0.0-2026-11-01-0251"
+
+[lints]
+workspace = true

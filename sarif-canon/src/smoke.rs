@@ -7,7 +7,8 @@ use crate::order::*;
 use crate::prims::*;
 use crate::theorems::*;
 use crate::types::*;
-use multiset_diff::{sorted, total_order};
+use multiset_diff::sorted;
+use order_laws::{lex, total_order};
 use std::cmp::Ordering;
 use vstd::prelude::*;
 
@@ -181,7 +182,7 @@ proof fn calc_bag_sorted<T>(ord: spec_fn(T, T) -> Ordering, s: Seq<T>)
     } else {
         let d = s.drop_first();
         assert(sorted(ord, d)) by {
-            assert forall|p: int, q: int| 0 <= p < q < d.len() implies multiset_diff::le(
+            assert forall|p: int, q: int| 0 <= p < q < d.len() implies order_laws::le(
                 ord,
                 #[trigger] d[p],
                 #[trigger] d[q],

@@ -1291,8 +1291,8 @@ dependencies = [
  "ctadl-index",
  "ctadl-ir",
  "diff-report",
+ "index-canon",
  "multiset-diff",
- "name-by-facts",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -2798,6 +2798,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "index-canon"
+version = "0.1.7"
+dependencies = [
+ "order-laws",
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3161,15 +3171,7 @@ dependencies = [
 name = "multiset-diff"
 version = "0.1.7"
 dependencies = [
- "verus_builtin",
- "verus_builtin_macros",
- "vstd",
-]
-
-[[package]]
-name = "name-by-facts"
-version = "0.1.7"
-dependencies = [
+ "order-laws",
  "verus_builtin",
  "verus_builtin_macros",
  "vstd",
@@ -3296,6 +3298,15 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "order-laws"
+version = "0.1.7"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
 
 [[package]]
 name = "packed_struct"
@@ -3857,6 +3868,7 @@ name = "sarif-canon"
 version = "0.1.7"
 dependencies = [
  "multiset-diff",
+ "order-laws",
  "verus_builtin",
  "verus_builtin_macros",
  "vstd",

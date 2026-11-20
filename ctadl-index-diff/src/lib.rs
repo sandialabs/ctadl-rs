@@ -9,7 +9,7 @@
 //! An instruction is named by its function and its input facts ([`CanonInsn`]); instructions
 //! of one function with the same facts share a name, and the diff counts how many rows
 //! collapse onto it. Which instructions share a signature is computed by
-//! [`name_by_facts::Names`], proved with Verus to give two instructions, on either side, one
+//! [`index_canon::Names`], proved with Verus to give two instructions, on either side, one
 //! signature exactly when they have one set of facts.
 //!
 //! Each side is sorted by intern id, which is consistent across the two sides because both are

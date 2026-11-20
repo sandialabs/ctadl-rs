@@ -25,10 +25,11 @@ members = [
     "readers/cil-reader/crates/cil-reader",
     "readers/cil-reader/crates/cil-dump",
     "immortal",
+    "index-canon",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
-    "name-by-facts",
+    "order-laws",
     "sarif-canon",
     "trie",
     "rustc_graphviz",
@@ -62,10 +63,11 @@ default-members = [
     "readers/cil-reader/crates/cil-reader",
     "readers/cil-reader/crates/cil-dump",
     "immortal",
+    "index-canon",
     "lsm",
     "lsm/crates/ascent-tc-lsm-bench",
     "multiset-diff",
-    "name-by-facts",
+    "order-laws",
     "sarif-canon",
     "trie",
     "rustc_graphviz",
@@ -97,10 +99,11 @@ ctadl-query-diff = { path = "ctadl-query-diff" }
 diff-report = { path = "diff-report" }
 dex-reader = { path = "readers/dex-reader" }
 immortal = { path = "immortal" }
+index-canon = { path = "index-canon" }
 jvm-reader = { path = "readers/jvm-reader" }
 lsm = { path = "lsm" }
 multiset-diff = { path = "multiset-diff" }
-name-by-facts = { path = "name-by-facts" }
+order-laws = { path = "order-laws" }
 pcode-reader = { path = "readers/pcode-reader" }
 rustc_graphviz = { path = "rustc_graphviz" }
 sarif-canon = { path = "sarif-canon" }

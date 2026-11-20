@@ -3,8 +3,8 @@
 //! [`Names::build`] takes the rows of two sides, each sorted by key and then by fact, and gives
 //! every key a name: a `u32` that is 0 for a key with no facts and otherwise the rank, among the
 //! distinct sets of facts of both sides, of the key's set. The code is verified with Verus, for
-//! inputs of any length: run `verus --crate-type=lib --edition=2024 src/lib.rs`, or
-//! `nix build .#checks.<system>.verus`. A plain `cargo build` erases the specs and proofs.
+//! inputs of any length, against the orders of `order-laws`: `nix build .#checks.<system>.verus`.
+//! A plain `cargo build` erases the specs and proofs.
 //!
 //! What is proved (`Names::theorem_names`): for any keys `i` and `j`, on either side, the names
 //! are equal exactly when `i` and `j` have the same set of facts. Keys and facts are the same
@@ -21,6 +21,8 @@ pub mod order;
 
 #[cfg(verus_keep_ghost)]
 use order::*;
+#[cfg(verus_keep_ghost)]
+use order_laws::*;
 
 verus! {
 
