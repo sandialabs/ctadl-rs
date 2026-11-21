@@ -1035,23 +1035,27 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
 /// Parse the C source in `source` -- one in-memory translation unit -- into a CTADL IR
 /// program. Returns the program, whether tree-sitter reported syntax errors, and the
 /// marked-up dump. No spans are recorded and no extern stubs are created: this is the
-/// unit-test path, and a test that needs the stubs goes through [`parse_c_files`].
+/// unit-test path, and a test that needs the stubs goes through [`parse_c_files`]. Unlike
+/// [`import_c`], whose program is verified when the store saves it, this verifies the program,
+/// since nothing else will.
 pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
     let units = [TranslationUnit::new(None, source.to_string())];
     let lowered = lower_units(&units, false, false, true)?;
+    lowered.program.verify()?;
     Ok((lowered.program, lowered.has_error, lowered.marked_up))
 }
 
 /// Parse several named C files, each a translation unit of its own, into one program -- the
 /// shape [`import_c`] produces for a directory. Unlike [`parse_c_program`] it records spans
 /// and creates the extern stubs, which is what a test about several units meeting in one
-/// program needs.
+/// program needs. Like [`parse_c_program`], it verifies the program.
 pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Error> {
     let units: Vec<TranslationUnit> = files
         .iter()
         .map(|(path, contents)| TranslationUnit::new(Some(path.clone()), contents.clone()))
         .collect();
     let lowered = lower_units(&units, true, true, true)?;
+    lowered.program.verify()?;
     Ok((lowered.program, lowered.marked_up))
 }
 
@@ -1198,7 +1202,6 @@ fn lower_units(
     if extern_stubs {
         define_extern_functions(&mut program);
     }
-    program.verify()?;
     let marked_up = if dump {
         inject_explainers_into_ir(&program.to_string(), &views)
     } else {

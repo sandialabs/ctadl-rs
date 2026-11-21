@@ -2,10 +2,9 @@
 //! control. Two parts:
 //!
 //! - **sweep**: every corpus assembly (Cecil's and the compiled fixtures) imported on its own,
-//!   which runs `Program::verify`, and then put through the SSA pipeline `ctadl index` runs
-//!   (`Pipeline::index_default`). Neither may panic, and an assembly cil-reader reads must
-//!   import. `ssa::transform` asserts `FunctionData::verify` itself, so this also checks every
-//!   function the frontend makes is well formed.
+//!   checked with `Program::verify` as `ctadl import` does when it saves one, and then put
+//!   through the SSA pipeline `ctadl index` runs (`Pipeline::index_default`). Neither may
+//!   panic, and an assembly cil-reader reads must import and verify.
 //! - **goldens**: the IR of the frontend fixtures against `xtask/cil-goldens/cir`, reviewed
 //!   when blessed with `cargo xtask cil bless-cir`.
 //!
@@ -128,6 +127,10 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     })
     .map_err(|p| format!("the frontend panicked: {}", panic_message(&p)))?;
     let (mut info, stats) = imported.map_err(|e| format!("import failed: {e:#}"))?;
+    // `ctadl import` verifies the program when it saves it, before any pass runs.
+    info.program
+        .verify()
+        .map_err(|e| format!("the program does not verify: {e:?}"))?;
     check_global_spans(path, &data, &info)?;
     let functions = info.program.functions.len();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

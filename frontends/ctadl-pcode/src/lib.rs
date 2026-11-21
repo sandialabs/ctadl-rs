@@ -938,8 +938,6 @@ impl Context {
         }
         drop_in_background(self);
         log::trace!("final program: {}", builders.program);
-        // Verify the program
-        builders.program.verify()?;
         builders.vmt.finish_names();
 
         Ok(ProgramInfo {
