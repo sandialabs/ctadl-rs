@@ -85,7 +85,7 @@ establishes_direct(f, d, g, insn) <--
 
 The join is on `(g, arg, key)`, so it reuses `critical_arg_indices_0_1_2` and `call_target_assign_like_indices_0_1_2`. For the split with an empty rest, `key` is `p`: `prefix_keys` builds `key` from all of `p`'s components, and `p` is already normalized. Each semi-naive variant iterates its delta side and probes the other.
 
-**Invariant D2 relies on:** every `critical_summary` path is a `path_set` member. The current 2.1 does not consult `path_set`, but `critical_arg` has no row for a non-member. 1.2 and `concat` produce only members, and 1.1 produces `locals` paths, which are members or ε. ε is a member whenever some `actual_param` passes a whole variable (`mod.rs:2536` adds those paths before `compute_paths`). A debug assertion over `critical_summary` at the end of the fixpoint states the invariant.
+**Invariant D2 relies on:** every non-empty `critical_summary` path is a `path_set` member. The current 2.1 does not consult `path_set`, but `critical_arg` has no row for a non-member. 1.2 and `concat` produce only members, and 1.1 produces `locals` paths, which are members or ε. ε need not be a member: it joins the set only through an ε `actual_param` or `callee_info` path, or through `#value` (`mod.rs:2536-2552`). When it is not, D2 loses nothing, because the old 2.1 at ε needs `call_target_assign_like(g, arg, ε, _)`, which the edge rules derive only through `ps.concat(ε, None, ε)`, that is, only when ε is a member (`path_set.rs:316`). A debug assertion over `critical_summary` at the end of the fixpoint states the invariant: each path is a member or ε.
 
 ### D3. Termination (R5)
 
