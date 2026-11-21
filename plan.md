@@ -75,7 +75,7 @@ the repack) is unchanged and still reachable. Other departures:
 - The source info is a directory, `imports/<imp>/source-info/` (five `.parquet` files). Its
   digest is a sha256 over the sorted (path, sha256) list of its files.
 - An XAPK's Dex lands in sub-imports `imports/app__<split>`, so digests are kept per import
-  directory: 50 rows for 25 inputs.
+  directory: 49 rows for 25 inputs.
 - `source-info/artifacts.parquet` records the artifact path, which for an XAPK split is inside
   the store. Each import runs in a fixed staging store, then moves, so base and after compare.
 - The steps are scripted in `$TMPDIR/read-bytes/run-suite.sh` and `time-five.sh`, which
@@ -345,6 +345,27 @@ Depends on: phases 1, 3, 4.
   binaries, and
   `IMPORT_FORMAT_VERSION` (`ctadl-import/src/project.rs:129`) is unchanged.
 - `cargo test --workspace` and `cargo xtask regression` pass.
+
+**As built.** At `c32f59b59`. Every gate passes. Medians of three runs, MB = 10^6 B of peak
+footprint. "Base rerun" is the base binary timed again in the same session, to control for
+machine load; the plan does not ask for it.
+
+| app | base MB / s | base rerun MB / s | after MB / s |
+| --- | --- | --- | --- |
+| Immich | 909.2 / 0.81 | 863.8 / 0.84 | 504.3 / 0.87 |
+| Dex-only repack | 543.2 / 0.47 | 542.5 / 0.47 | 536.4 / 0.48 |
+| schildi | 1463.9 / 1.70 | 1497.6 / 1.72 | 1239.8 / 1.74 |
+| loki messenger | 1287.7 / 1.23 | 1284.5 / 1.27 | 887.8 / 1.34 |
+| osmand | 2268.2 / 3.06 | 2253.6 / 3.09 | 1881.6 / 3.30 |
+
+- R5: Immich 504.3 MB, at most 600 MB, and 6.0% under the repack's 536.4 MB.
+- R10: all 25 imports succeed; the 49 digest rows (IR, VMT, source info, config hash) are
+  identical.
+- R11: help output identical; `IMPORT_FORMAT_VERSION` unchanged.
+- `cargo test --workspace` (2109 passed), `cargo xtask regression` (255 passed, 5 xfail of
+  260, with `CTADL_MODEL_RUN` as in phase 4's note), and clippy pass. The greps hold.
+- Wall time is a little higher than the base rerun: Immich +0.03 s, loki +0.07 s, osmand
+  +0.21 s (about 7%). No requirement covers it.
 
 ## Files that change
 
