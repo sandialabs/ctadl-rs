@@ -2619,6 +2619,7 @@ mod tests {
         ctx.process(dir.path(), key, &mut builders, &PhaseTimer::start())
             .expect("the facts lower");
         let info = ctx.finish(builders).expect("the program finishes");
+        info.program.verify().expect("the program verifies");
         let memory = info
             .program
             .globals

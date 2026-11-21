@@ -1,4 +1,11 @@
-use super::import_class;
+use ctadl_ir::ProgramInfo;
+
+/// [`super::import_class`], with its program verified, as the store does when it saves one.
+fn import_class(path: &std::path::Path) -> Result<ProgramInfo, ctadl_import::error::Error> {
+    let info = super::import_class(path)?;
+    info.program.verify()?;
+    Ok(info)
+}
 use ctadl_ir::cir::TerminatorKind;
 use ctadl_ir::cir::call::Dispatch;
 
@@ -461,6 +468,7 @@ fn write_jar(path: &std::path::Path, entries: &[(&str, Vec<u8>)]) {
 /// The names of the functions of a jar's import.
 fn function_names(path: &std::path::Path) -> Vec<String> {
     let info = super::import_jar(path).expect("the jar imports");
+    info.program.verify().expect("the jar's program verifies");
     info.program
         .functions
         .iter()

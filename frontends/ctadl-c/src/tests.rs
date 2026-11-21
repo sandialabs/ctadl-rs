@@ -3130,6 +3130,7 @@ fn import_c_registers_externs_and_spans() {
     .unwrap();
 
     let info = super::import_c(&file).unwrap();
+    info.program.verify().unwrap();
 
     // `source` and `sink` are only declared, so they must appear as empty-body externs.
     let find = |name: &str| info.program.functions.iter().find(|func| func.name == name);
