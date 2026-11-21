@@ -1360,6 +1360,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "jvm-reader",
  "log",
+ "memmap2",
  "rayon",
  "smallvec",
  "source-info",

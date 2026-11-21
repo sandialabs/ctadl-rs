@@ -9,6 +9,7 @@ ctadl-ir = { workspace = true, features = ["serde"] }
 hashbrown = "0.16"
 jvm-reader.workspace = true
 log = "0.4"
+memmap2 = "0.9"
 rayon = "1.10"
 smallvec = "1"
 source-info = { workspace = true, features = ["serde"] }
