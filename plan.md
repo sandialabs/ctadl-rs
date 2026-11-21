@@ -518,6 +518,30 @@ base binary timed in the same session.
 - `/Volumes/Shampoo` dropped once, during `cargo test`, after every import and timing run had
   finished; the test run was redone.
 
+**As built, final: phases 1, 4, 6 and 7.** At `5d553a811`. No interruptions. Medians of three
+runs, MB / s; "base rerun" is the base binary in the same session (noisy this time: loki's runs
+were 955, 1298, 925 MB).
+
+| app | base | base rerun | after |
+| --- | --- | --- | --- |
+| Immich | 909.2 / 0.81 | 905.3 / 0.81 | 539.6 / 0.81 |
+| Dex-only repack | 543.2 / 0.47 | 545.9 / 0.47 | 547.3 / 0.48 |
+| schildi | 1463.9 / 1.70 | 1501.6 / 1.69 | 1246.9 / 1.78 |
+| loki messenger | 1287.7 / 1.23 | 955.5 / 1.27 | 925.4 / 1.29 |
+| osmand | 2268.2 / 3.06 | 2262.0 / 3.04 | 1943.2 / 3.22 |
+| `plain.jar` | 565.7 / 0.45 | | 558.9 / 0.44 |
+| `fat.jar` | 684.2 / 0.54 | | 508.7 / 0.53 |
+
+- R5, Immich: pass, 539.6 MB, 1.4% under the repack. R5, no increase: fails as written for the
+  repack only, 4.1 MB (0.75%) over base, runs overlapping base's, as in the previous rerun.
+- R10: 49 digest rows identical. R11: help identical, `IMPORT_FORMAT_VERSION` unchanged.
+- R13: `fat.jar` within 10% of `plain.jar` (9.0% under; runs 506, 509, 553 MB). R15: JAR
+  digests identical to base.
+- `cargo test --workspace` (2107 passed), `cargo xtask regression` (255 passed, 5 xfail of
+  260), clippy: pass. Greps hold; `readers/dex-reader` and `readers/jvm-reader` unchanged.
+- Wall time against the base rerun: osmand +0.18 s (6%), schildi +0.09 s; the others within
+  0.02 s. No requirement covers it.
+
 ## Files that change
 
 | File | Change | Phase |
