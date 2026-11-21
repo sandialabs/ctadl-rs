@@ -1304,7 +1304,8 @@ mod tests {
         assert!(config.import_hashes.is_empty());
     }
 
-    /// The whole-file `hash_artifact` that streaming replaced, kept to check digests against.
+    /// Hashes an artifact as `hash_artifact` does, but reads each file whole: the reference
+    /// digest the streaming hash must match.
     fn whole_file_hash_artifact(path: &Path) -> String {
         let mut hasher = source_info::ContentHasher::new();
         if path.is_dir() {
@@ -1429,6 +1430,9 @@ mod tests {
         let missing = dir.path().join("no-such-artifact");
         let err = hash_artifact(&missing).expect_err("missing file hashed");
         let message = err.to_string();
-        assert!(message.contains(&missing.display().to_string()), "{message}");
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
     }
 }

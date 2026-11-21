@@ -216,7 +216,11 @@ fn is_cli_image_matches_whole_file_read() {
                 .filter(|p| p.extension().is_some_and(|e| e == "dll"))
                 .collect();
             dlls.sort();
-            assert!(!dlls.is_empty(), "no *.dll in {}", Path::new(&fixtures).display());
+            assert!(
+                !dlls.is_empty(),
+                "no *.dll in {}",
+                Path::new(&fixtures).display()
+            );
             for dll in &dlls {
                 check(dll, Some(true));
             }
