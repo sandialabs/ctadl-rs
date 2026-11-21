@@ -437,6 +437,30 @@ phase 0. Median peak MB / real s: Immich 724.4 / 0.83, repack 539.2 / 0.49, schi
 1269.1 / 1.82, loki 1010.9 / 1.27, osmand 1912.1 / 3.07. Streaming the hash alone takes ~185 MB
 off Immich, about one APK copy.
 
+**As built, phases 1, 4 and 6.** At `2a7c6ef48`. Medians of three runs; "base rerun" is the
+base binary timed in the same session.
+
+| app | base MB / s | base rerun MB / s | after MB / s |
+| --- | --- | --- | --- |
+| Immich | 909.2 / 0.81 | 773.5 / 0.86 | 539.3 / 0.82 |
+| Dex-only repack | 543.2 / 0.47 | 540.4 / 0.54 | 545.8 / 0.51 |
+| schildi | 1463.9 / 1.70 | 1477.5 / 1.82 | 1253.1 / 1.79 |
+| loki messenger | 1287.7 / 1.23 | 1289.4 / 1.28 | 936.1 / 1.27 |
+| osmand | 2268.2 / 3.06 | 2257.0 / 3.28 | 1911.8 / 3.16 |
+
+- R5, Immich: pass. 539.3 MB, at most 600 MB, 1.2% under the repack's 545.8 MB.
+- R5, no timed app above base: fails as written, for the repack only. Its median is 545.8 MB,
+  2.6 MB (0.5%) over base. Its runs (542.0–552.9) overlap base's (515.6–549.2), and its import
+  path is unchanged in effect: mapping a 3.6 MB APK saves only 3.6 MB. The clause has no noise
+  tolerance.
+- R10: all 25 imports succeed; the 49 digest rows are identical. R11: help identical,
+  `IMPORT_FORMAT_VERSION` unchanged.
+- `cargo test --workspace` (2104 passed), `cargo xtask regression` (255 passed, 5 xfail of
+  260, with `CTADL_MODEL_RUN`), and clippy pass. The greps hold; `readers/dex-reader` is
+  unchanged.
+- `/Volumes/Shampoo` dropped once, during `cargo test`, after every import and timing run had
+  finished; the test run was redone.
+
 ## Files that change
 
 | File | Change | Phase |
