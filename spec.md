@@ -5,7 +5,9 @@ Source: `intent.md`. This spec refines that intent, and must stay consistent wit
 
 ## Background
 
-Three steps of `ctadl import` read a whole artifact into memory with `std::fs::read`:
+Three steps of `ctadl import` read a whole artifact into memory with `std::fs::read`. This work
+changes the first and the third. The second is how the dex frontend reads the APK it imports,
+which is out of scope (`intent.md`); it is listed because it sets the APK baseline.
 
 - `hash_artifact` (`ctadl-import/src/project.rs:641`) reads a single-file artifact whole
   (`:665`), and reads each file of a directory whole (`:658`), before hashing it.
@@ -30,10 +32,11 @@ Three steps of `ctadl import` read a whole artifact into memory with `std::fs::r
   (`frontends/ctadl-cil/src/lib.rs:448`), and the CIL directory import, once per candidate file
   (`frontends/ctadl-cil/src/lib.rs:171`).
 
-Baseline (`ctadl import --no-native-libs`, median of three runs): Immich
-(`fdroid/app.alextran.immich_3030699.apk` in ct-bench) is a 180 MB APK with 7.6 MB of Dex. Its
-import peaks at 775 MB of physical footprint and takes 0.79 s. The same Dex repacked alone into
-a 3.6 MB APK peaks at 550 MB and takes 0.45 s.
+Baseline (`ctadl import --no-native-libs`, median of three runs, measured in plan phase 0):
+Immich (`fdroid/app.alextran.immich_3030699.apk` in ct-bench) is a 180 MB APK with 7.6 MB of
+Dex. Its import peaks at 909 MB of physical footprint and takes 0.81 s. The same Dex repacked
+alone into a 3.6 MB APK peaks at 543 MB and takes 0.47 s. Of the ~366 MB gap, one APK-sized
+copy is the hashing thread's; the other is `import_apk`'s, which stays.
 
 ## Requirements
 
@@ -48,17 +51,15 @@ a 3.6 MB APK peaks at 550 MB and takes 0.45 s.
   number of bytes the hash reads, hashing fails with an error naming the file. It does not
   return a digest.
 
-**APK import**
+**Memory**
 
-- R4. **APK read from the file.** `import_apk` does not hold the APK's bytes in memory. It
-  decompresses only the `classes*.dex` entries, and inflates them in parallel as it does today.
-- R5. **APK memory.** On Immich with `--no-native-libs`, the median peak footprint over three
-  runs is at most 600 MB, within 10% of the Dex-only repack.
-- R6. **In-memory callers still work.** Code that already holds an APK's bytes, such as the tests,
-  `xtask/src/dex.rs:413` and `xtask/src/dex.rs:439`, can still parse them without writing a
-  file.
-- R7. **APK errors kept.** A file that is not a ZIP, a missing file, and a corrupt Dex entry
-  still fail the import, with the file's path in the error.
+- R4. Withdrawn: reading the APK from the file is out of scope.
+- R5. **Hashing no longer copies the artifact.** On Immich with `--no-native-libs`, the median
+  peak footprint over three runs falls from the base by at least 100 MB, about half the APK's
+  size, since only the hashing thread's copy goes. No other app timed in D4 has a higher median
+  peak than at base.
+- R6. Withdrawn with R4.
+- R7. Withdrawn with R4.
 
 **.NET detection**
 
@@ -102,27 +103,10 @@ exactly the bytes fed today. R1 rests on this.
 `hash_file_contents` (`ctadl-import/src/project.rs:608`) is unchanged. It sorts model files by
 their contents, so it needs them whole, and model files are small.
 
-### D2. APK archive over a shared file handle (R4, R6, R7)
+### D2. Withdrawn
 
-`APKParser` gets a constructor that takes an open file, `APKParser::from_file(File)`. It and
-`APKParser::new(&[u8])` share one private generic constructor over a reader
-`R: Read + Seek + Clone + Send + Sync`, which keeps today's logic:
-
-- list and sort the Dex entry names;
-- clone the archive per rayon task;
-- inflate the entry and validate its header.
-
-`Cursor<&[u8]>` already meets that bound, so `new` keeps its signature (R6).
-
-For `from_file`, the reader is a small `SharedFile` in `dex-reader`: an `Arc<File>` and its own
-position. It reads with positioned reads (`FileExt::read_at` on Unix, `seek_read` on Windows), so clones
-share the descriptor, don't share a cursor, and need no lock. Cloning the `ZipArchive` per task
-still shares the parsed central directory, as it does today. The OS page cache holds the file,
-not the process heap.
-
-`import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) drops its `std::fs::read`. It opens the file
-itself under "reading APK", which keeps the OS error, and calls `APKParser::from_file` under
-"parsing APK". Each context names the path, as today.
+Reading the APK from the file was withdrawn with R4. `import_apk` and `APKParser` are
+unchanged.
 
 ### D3. `is_cli_image` over a memory map (R8, R9)
 
@@ -147,8 +131,8 @@ suites into separate stores, and compares:
 - the VMT, source info, and import config digests;
 - median peak footprint and wall time over three runs (`/usr/bin/time -l`).
 
-Immich and its Dex-only repack are the R5 pair. Report the resource-heavy APKs too: schildi,
-loki messenger and osmand.
+Immich is the R5 app; its Dex-only repack shows the floor the APK copy in `import_apk` keeps
+it above. Report the resource-heavy APKs too: schildi, loki messenger and osmand.
 
 ## Concerns
 
@@ -158,5 +142,4 @@ loki messenger and osmand.
 - C2. **Hashing errors on a changing file (R3).** Accepted: error. A digest of a mixture could
   later mark a stale import as up to date. The metadata length is the only one that streams
   without changing digests, and checking it costs nothing.
-- C3. **`read_at` is Unix-only (D2).** Accepted: support both. `SharedFile` uses `read_at` on
-  Unix and `seek_read` on Windows, so a Windows build still compiles. Nothing tests it there.
+- C3. Withdrawn with D2.

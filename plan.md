@@ -7,6 +7,10 @@ passes the gate named in it, and is one commit.
 
 ## Order
 
+**Scope change.** Phases 2 and 3 were built, then withdrawn with R4, R6 and R7: how the dex
+frontend reads an APK is out of scope (`intent.md`). `fc4f38762` reverts both. The branch is
+phases 1 and 4, and phase 5 was rerun on it (its second "As built" note).
+
 | Wave | Phases | Why |
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
@@ -209,6 +213,8 @@ Existing, still passing: every `dex-reader` test, including `a_non_zip_is_still_
 - `from_file_matches_new` also asserts that `com.noto_54.apk` has two Dex entries.
 - The `cfg(windows)` branch is not type-checked: no Windows target is installed here.
 
+**Withdrawn.** Reverted in `fc4f38762` with phase 3; see the scope change under Order.
+
 ## Phase 3: `import_apk` reads the APK from the file (R4, R5, R7, D2)
 
 Depends on: phase 2.
@@ -259,6 +265,8 @@ real 0.88–0.89 s on the warm runs (base 0.81 s). Departures:
 - The tests read the whole error chain through a small `error_chain` helper, since the error's
   message shows only the outer context. They use `let ... else`, since `ApkImport` is not
   `Debug`.
+
+**Withdrawn.** Reverted in `fc4f38762`; see the scope change under Order.
 
 ## Phase 4: `is_cli_image` over a memory map (R8, R9, D3)
 
@@ -325,7 +333,7 @@ directories through `import_directory` (`frontends/ctadl-cil/src/lib.rs:171`).
 
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
-Depends on: phases 1, 3, 4.
+Depends on: phases 1 and 4 (and 3, before the scope change).
 
 **What.** Runs phase 0's steps 3–5 with a release build of the branch, and compares.
 
@@ -339,14 +347,15 @@ Depends on: phases 1, 3, 4.
    wall time, before and after.
 
 **Gate.**
-- R5: Immich median peak at most 600 MB, and within 10% of the repack's median.
+- R5: Immich median peak at least 100 MB under phase 0's, and no timed app's median peak above
+  phase 0's. (Before the scope change: at most 600 MB, within 10% of the repack's median.)
 - R10: no output or digest difference.
 - R11: `ctadl import --help` and `ctadl --help` print the same for the phase 0 and phase 5
   binaries, and
   `IMPORT_FORMAT_VERSION` (`ctadl-import/src/project.rs:129`) is unchanged.
 - `cargo test --workspace` and `cargo xtask regression` pass.
 
-**As built.** At `c32f59b59`. Every gate passes. Medians of three runs, MB = 10^6 B of peak
+**As built, with phases 2 and 3 (superseded).** At `c32f59b59`. Every gate passes. Medians of three runs, MB = 10^6 B of peak
 footprint. "Base rerun" is the base binary timed again in the same session, to control for
 machine load; the plan does not ask for it.
 
@@ -372,11 +381,6 @@ machine load; the plan does not ask for it.
 | File | Change | Phase |
 | --- | --- | --- |
 | `ctadl-import/src/project.rs` | streaming `hash_artifact`; `hash_file`, `hash_reader`; tests | 1 |
-| `readers/dex-reader/src/shared_file.rs` | new: `SharedFile` and its tests | 2 |
-| `readers/dex-reader/src/lib.rs` | `mod shared_file` | 2 |
-| `readers/dex-reader/src/apk.rs` | `from_reader`, `from_file`; comment; tests | 2 |
-| `frontends/ctadl-dex/src/lib.rs` | `import_apk` opens the file | 3 |
-| `frontends/ctadl-dex/src/tests.rs` | error and output-identity tests | 3 |
 | `frontends/ctadl-cil/Cargo.toml` | `memmap2` | 4 |
 | `Cargo.lock` | `memmap2` edge | 4 |
 | `frontends/ctadl-cil/src/lib.rs` | `is_cli_image` maps the file | 4 |
@@ -384,8 +388,8 @@ machine load; the plan does not ask for it.
 
 Not touched:
 - `ctadl-ascent/src/main.rs:1113`, the hashing thread. Its memory falls with phase 1.
-- `xtask/src/dex.rs:413` and `:439`, and `readers/dex-reader/examples/dex-reader.rs:73`: they
-  keep `APKParser::new` (R6).
+- `import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) and `APKParser`: out of scope since phases
+  2 and 3 were withdrawn.
 - `ctadl-frontends/src/apk_native.rs`, which already reads native libraries from the file.
 - `import_files_with_stats` (`frontends/ctadl-cil/src/lib.rs:188`), which reads the selected
   assemblies whole to import them. The spec does not cover it.
@@ -398,8 +402,6 @@ Not touched:
 - `cargo test --workspace`, `cargo xtask regression`, and `cargo clippy --workspace
   --all-targets -- -D warnings` pass.
 - Greps:
-  - `grep -n 'fs::read' frontends/ctadl-dex/src/lib.rs` shows no read of the APK in
-    `import_apk`;
   - `grep -n 'fs::read' frontends/ctadl-cil/src/lib.rs` shows none in `is_cli_image`;
   - in `hash_artifact` (`ctadl-import/src/project.rs`), none.
 
