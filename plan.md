@@ -8,8 +8,16 @@ passes the gate named in it, and is one commit.
 ## Order
 
 **Scope change.** Phases 2 and 3 were built, then withdrawn with R4, R6 and R7: how the dex
-frontend reads an APK is out of scope (`intent.md`). `fc4f38762` reverts both. The branch is
-phases 1 and 4, and phase 5 was rerun on it (its second "As built" note).
+frontend reads an APK is out of scope (`intent.md`). `fc4f38762` reverts both. The intent then took the APK back,
+scoped to mapping it for the unchanged reader: phase 6 (R4, R5, R7, D2 as restated). The
+branch is phases 1, 4 and 6, and phase 5 is rerun on it.
+
+| Wave | Phases | Why |
+| --- | --- | --- |
+| 4 | 6 | `import_apk` maps the APK |
+| 5 | 5 | acceptance rerun on phases 1, 4 and 6 |
+
+The waves before the scope change:
 
 | Wave | Phases | Why |
 | --- | --- | --- |
@@ -331,9 +339,47 @@ directories through `import_directory` (`frontends/ctadl-cil/src/lib.rs:171`).
   xfail) with `CTADL_MODEL_RUN` set to this tree's `frontends/ctadl-cil/tools/ModelRun`, built
   into `$TMPDIR/p4-model-run`. Later full regression runs set it the same way.
 
+## Phase 6: `import_apk` over a memory map (R4, R5, R7, D2)
+
+Depends on: phases 1 and 4 (on the branch; phases 2 and 3 reverted).
+
+**What.** `import_apk` maps the APK instead of reading it, and hands the map to the unchanged
+`APKParser::new`. Peak memory drops; output does not change.
+
+**Files.**
+- `frontends/ctadl-dex/Cargo.toml` — add `memmap2 = "0.9"`, as phase 4 did for `ctadl-cil`.
+- `Cargo.lock` — the new edge from `ctadl-dex` to `memmap2`, and nothing else.
+- `frontends/ctadl-dex/src/lib.rs:94` — replace `std::fs::read(file)` with `File::open` and
+  `unsafe { memmap2::Mmap::map(&file) }`, both under "reading APK: <path>". The `// SAFETY:`
+  comment says the map is read-only, dropped once `APKParser::new` returns, and that
+  truncation by another process during the inflate is the accepted SIGBUS risk (spec C3).
+  `APKParser::new(&map)` under "parsing APK: <path>" as today. `drop(map)` where `drop(data)`
+  is; keep its comment's point. The `PhaseTimer` label "read APK" becomes "map APK".
+- `readers/dex-reader`: unchanged.
+
+**Tests.** New, in `frontends/ctadl-dex/src/tests.rs`, with temp files under
+`std::env::temp_dir()` and a test-unique name (`ctadl-dex` has no `tempfile`):
+- `import_apk_of_a_missing_file_names_it` — the error chain has "reading APK" and the path.
+- `import_apk_of_a_non_zip_names_it` — a text file: the chain has "parsing APK" and the path.
+- `import_apk_of_an_empty_file_fails` — an empty file is an error naming the path (R7).
+
+Output identity is not retested here: `APKParser::new` gets the same bytes. The dex goldens and
+phase 5 check the IR.
+
+**Measure.** Three imports of Immich with `--no-native-libs` under `memguard.sh 16
+/usr/bin/time -l`, from a copy of the release binary. Median peak should be near the repack
+(543 MB), well under 600 MB. If not, stop and report.
+
+**Gate.**
+
+    cargo test -p ctadl-dex
+    cargo clippy -p ctadl-dex --all-targets -- -D warnings
+    cargo xtask regression --frontend dex
+    git diff b3dd10cf0 -- readers/dex-reader   # empty
+
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
-Depends on: phases 1 and 4 (and 3, before the scope change).
+Depends on: phases 1, 4 and 6 (1, 3 and 4 before the scope change).
 
 **What.** Runs phase 0's steps 3–5 with a release build of the branch, and compares.
 
@@ -347,8 +393,8 @@ Depends on: phases 1 and 4 (and 3, before the scope change).
    wall time, before and after.
 
 **Gate.**
-- R5: Immich median peak at least 100 MB under phase 0's, and no timed app's median peak above
-  phase 0's. (Before the scope change: at most 600 MB, within 10% of the repack's median.)
+- R5: Immich median peak at most 600 MB, and within 10% of the repack's median. No timed app's
+  median peak above phase 0's.
 - R10: no output or digest difference.
 - R11: `ctadl import --help` and `ctadl --help` print the same for the phase 0 and phase 5
   binaries, and
@@ -376,6 +422,12 @@ machine load; the plan does not ask for it.
 - Wall time is a little higher than the base rerun: Immich +0.03 s, loki +0.07 s, osmand
   +0.21 s (about 7%). No requirement covers it.
 
+**As built, phases 1 and 4 only (stopped).** Rerun at `5890686da`, stopped after the imports
+and the branch's timing; no control rerun, tests or regression. All 49 digest rows match
+phase 0. Median peak MB / real s: Immich 724.4 / 0.83, repack 539.2 / 0.49, schildi
+1269.1 / 1.82, loki 1010.9 / 1.27, osmand 1912.1 / 3.07. Streaming the hash alone takes ~185 MB
+off Immich, about one APK copy.
+
 ## Files that change
 
 | File | Change | Phase |
@@ -385,11 +437,15 @@ machine load; the plan does not ask for it.
 | `Cargo.lock` | `memmap2` edge | 4 |
 | `frontends/ctadl-cil/src/lib.rs` | `is_cli_image` maps the file | 4 |
 | `frontends/ctadl-cil/src/tests.rs` | verdict equivalence test | 4 |
+| `frontends/ctadl-dex/Cargo.toml` | `memmap2` | 6 |
+| `Cargo.lock` | `memmap2` edge from `ctadl-dex` | 6 |
+| `frontends/ctadl-dex/src/lib.rs` | `import_apk` maps the APK | 6 |
+| `frontends/ctadl-dex/src/tests.rs` | error tests | 6 |
 
 Not touched:
 - `ctadl-ascent/src/main.rs:1113`, the hashing thread. Its memory falls with phase 1.
-- `import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) and `APKParser`: out of scope since phases
-  2 and 3 were withdrawn.
+- `APKParser` and the rest of `readers/dex-reader`: out of scope since phases 2 and 3 were
+  withdrawn. `xtask/src/dex.rs:413` and `:439` keep `APKParser::new`.
 - `ctadl-frontends/src/apk_native.rs`, which already reads native libraries from the file.
 - `import_files_with_stats` (`frontends/ctadl-cil/src/lib.rs:188`), which reads the selected
   assemblies whole to import them. The spec does not cover it.
@@ -402,6 +458,7 @@ Not touched:
 - `cargo test --workspace`, `cargo xtask regression`, and `cargo clippy --workspace
   --all-targets -- -D warnings` pass.
 - Greps:
+  - `grep -n 'fs::read' frontends/ctadl-dex/src/lib.rs` shows none in `import_apk`;
   - `grep -n 'fs::read' frontends/ctadl-cil/src/lib.rs` shows none in `is_cli_image`;
   - in `hash_artifact` (`ctadl-import/src/project.rs`), none.
 

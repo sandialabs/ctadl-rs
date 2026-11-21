@@ -6,8 +6,8 @@ Source: `intent.md`. This spec refines that intent, and must stay consistent wit
 ## Background
 
 Three steps of `ctadl import` read a whole artifact into memory with `std::fs::read`. This work
-changes the first and the third. The second is how the dex frontend reads the APK it imports,
-which is out of scope (`intent.md`); it is listed because it sets the APK baseline.
+changes all three. For the second it changes only where the APK's bytes live: the APK reader
+itself is out of scope (`intent.md`).
 
 - `hash_artifact` (`ctadl-import/src/project.rs:641`) reads a single-file artifact whole
   (`:665`), and reads each file of a directory whole (`:658`), before hashing it.
@@ -36,7 +36,7 @@ Baseline (`ctadl import --no-native-libs`, median of three runs, measured in pla
 Immich (`fdroid/app.alextran.immich_3030699.apk` in ct-bench) is a 180 MB APK with 7.6 MB of
 Dex. Its import peaks at 909 MB of physical footprint and takes 0.81 s. The same Dex repacked
 alone into a 3.6 MB APK peaks at 543 MB and takes 0.47 s. Of the ~366 MB gap, one APK-sized
-copy is the hashing thread's; the other is `import_apk`'s, which stays.
+copy is the hashing thread's; the other is `import_apk`'s.
 
 ## Requirements
 
@@ -51,15 +51,18 @@ copy is the hashing thread's; the other is `import_apk`'s, which stays.
   number of bytes the hash reads, hashing fails with an error naming the file. It does not
   return a digest.
 
-**Memory**
+**APK import**
 
-- R4. Withdrawn: reading the APK from the file is out of scope.
-- R5. **Hashing no longer copies the artifact.** On Immich with `--no-native-libs`, the median
-  peak footprint over three runs falls from the base by at least 100 MB, about half the APK's
-  size, since only the hashing thread's copy goes. No other app timed in D4 has a higher median
-  peak than at base.
-- R6. Withdrawn with R4.
-- R7. Withdrawn with R4.
+- R4. **APK mapped, not read.** `import_apk` does not copy the APK into the heap. It maps the
+  file read-only and gives the mapping to `APKParser::new`. `APKParser` and the rest of
+  `dex-reader` do not change.
+- R5. **APK memory.** On Immich with `--no-native-libs`, the median peak footprint over three
+  runs is at most 600 MB, within 10% of the Dex-only repack. No other app timed in D4 has a
+  higher median peak than at base.
+- R6. Withdrawn: `APKParser::new(&[u8])` does not change, so code that holds an APK's bytes is
+  untouched.
+- R7. **APK errors kept.** A missing file, an empty file, a file that is not a ZIP, and a
+  corrupt Dex entry still fail the import, with the file's path in the error.
 
 **.NET detection**
 
@@ -103,10 +106,22 @@ exactly the bytes fed today. R1 rests on this.
 `hash_file_contents` (`ctadl-import/src/project.rs:608`) is unchanged. It sorts model files by
 their contents, so it needs them whole, and model files are small.
 
-### D2. Withdrawn
+### D2. `import_apk` over a memory map (R4, R5, R7)
 
-Reading the APK from the file was withdrawn with R4. `import_apk` and `APKParser` are
-unchanged.
+`import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) replaces its `std::fs::read` with:
+
+- open the file, and map it read-only (`memmap2`, as D3), both under the context
+  "reading APK: <path>", which keeps the OS error;
+- `APKParser::new(&map)` under "parsing APK: <path>", as today;
+- drop the map once `APKParser::new` returns, where it drops the bytes today. The parser keeps
+  only the inflated Dex buffers.
+
+`APKParser::new` reads the central directory and the `classes*.dex` entries through the map, so
+only those pages are read in, and file-backed clean pages don't count toward the footprint.
+Its parallel inflate is unchanged: each task's `Cursor` clone borrows the same mapping.
+
+An empty file still fails (R7): either the map fails, under "reading APK", or it gives an
+empty slice, which `APKParser::new` rejects as not a ZIP, as it rejects an empty buffer today.
 
 ### D3. `is_cli_image` over a memory map (R8, R9)
 
@@ -142,4 +157,7 @@ it above. Report the resource-heavy APKs too: schildi, loki messenger and osmand
 - C2. **Hashing errors on a changing file (R3).** Accepted: error. A digest of a mixture could
   later mark a stale import as up to date. The metadata length is the only one that streams
   without changing digests, and checking it costs nothing.
-- C3. Withdrawn with D2.
+- C3. **SIGBUS from the APK map (D2).** Accepted, as C1. If another process truncates the APK
+  while `APKParser::new` inflates it, the process gets `SIGBUS`. The window is the inflate of
+  the Dex entries, longer than D3's. Reading through a file handle instead
+  would avoid it, but changes the APK reader, which is out of scope.
