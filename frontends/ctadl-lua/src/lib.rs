@@ -245,6 +245,7 @@ fn lower_lua_units(units: Vec<SourceUnit>) -> Result<ProgramInfo, Error> {
 
     let vmt = std::mem::take(&mut lowerer.vmt);
     let program = std::mem::take(&mut lowerer.program);
+    program.verify()?;
     let source_info = lowerer.sib.finish();
     Ok(ProgramInfo {
         program,
