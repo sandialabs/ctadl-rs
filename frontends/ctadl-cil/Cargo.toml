@@ -9,6 +9,7 @@ ctadl-import = { workspace = true, features = ["cil"] }
 ctadl-ir = { workspace = true, features = ["serde"] }
 hashbrown = "0.16"
 log = "0.4"
+memmap2 = "0.9"
 rayon = "1.10"
 sha1 = "0.10"
 smallvec = "1"

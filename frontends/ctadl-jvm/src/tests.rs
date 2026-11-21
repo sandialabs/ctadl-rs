@@ -505,3 +505,50 @@ fn class_defined_twice_imports_one_definition() {
     );
     assert_eq!(function_names(&path), ["LDemo;->second()V"]);
 }
+
+/// The error and each of its sources, outermost first, joined into one string.
+fn error_chain(err: &ctadl_import::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        parts.push(e.to_string());
+        source = e.source();
+    }
+    parts.join(": ")
+}
+
+/// Imports `path`, which must fail; returns the error chain.
+fn import_jar_fails(path: &std::path::Path) -> String {
+    let Err(err) = super::import_jar(path) else {
+        panic!("{} imports", path.display());
+    };
+    error_chain(&err)
+}
+
+#[test]
+fn import_jar_of_a_missing_file_names_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("missing.jar");
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains("reading jar"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_jar_of_a_non_zip_names_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("non-zip.jar");
+    std::fs::write(&path, b"not a zip at all").unwrap();
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains("reading jar"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_jar_of_an_empty_file_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("empty.jar");
+    std::fs::write(&path, b"").unwrap();
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
