@@ -109,6 +109,10 @@ global the program does not declare; a versioned global; a copy into a global, a
 bound to one, or a phi over one (G4); a field named `#value`; and, in SSA form, a store whose
 base is a version nothing defines (a store treated as a definition).
 
+The store holds only well-formed programs: `ctadl_import::save_program_info` verifies a program
+before writing it, so no front end has to, and the passes `open_import` runs never see one that
+fails.
+
 ### Textual form
 
 An IR dump prints a copy as `assign y = e, ...` and a store as `store y.d := e, ...`, an

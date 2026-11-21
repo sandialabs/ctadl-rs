@@ -736,8 +736,6 @@ impl Importer {
             .guardrail_notifications(self.clone_statements, || {
                 program.functions.iter().map(statement_count).sum()
             });
-        // Verify the generated program.
-        program.verify()?;
         let mut ext: Vec<_> = self.ext.drain().collect();
         // Sort for determinism
         ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));

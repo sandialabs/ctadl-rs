@@ -766,8 +766,6 @@ impl Importer {
         }
 
         log::trace!("program: {program}");
-        // Verify the generated program.
-        program.verify()?;
 
         builders.vmt.finish_names();
         let source_info = builders.source_info_builder.finish();

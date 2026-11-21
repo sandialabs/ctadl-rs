@@ -1001,7 +1001,6 @@ impl Context {
                 program.globals.declare(&cls, Some(span));
             }
         }
-        program.verify()?;
         let Table {
             names: mut function_names,
             mut methods,
