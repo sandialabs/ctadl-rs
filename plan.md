@@ -73,6 +73,12 @@ any committed file.
 **Gate.** All four apps report `reached_fixpoint: true`; the regression scratch root, the four
 index directories, the four profiles and the two dumps exist.
 
+**As built.** "Dex only" is a property of the stores, which were imported with
+`--no-native-libs`; `ctadl index` itself takes only `-j 1 -m <suite>`, as in the spec's runs.
+The sweep used one 3600 s timeout step, which no run approached. Regression: 256 passed,
+5 xfail, 0 failed. Iteration counts match the spec's runs exactly; fixpoint times are within
+a few percent (DuckDuckGo 179.2 s, Nextcloud 139.8 s, Wikipedia 33.2 s, NewPipe 29.3 s).
+
 ## Phase 1: `critical_reach` as a simple join (D4, R9, R8)
 
 Depends on: 0.
