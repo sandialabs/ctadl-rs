@@ -13,7 +13,9 @@ The measured cost of each join is in `spec.md`.
 
 Derive `critical_summary` propagation from `critical_reach`, and `establishes_direct` from `critical_arg` (the split with an empty rest), so the call/argument pairing and the `locals` probe happen once.
 
-Measure the rule profiles of the affected rules, `critical_reach` included, before and after on a workload where hybrid inlining is busy. Keep the change only if it reduces work.
+Also reorder `critical_reach`'s body so that `critical_arg` and `locals` come first and adjacent. Ascent then compiles it as a simple join and stops scanning all of `locals` on every iteration with a new `critical_arg` row.
+
+Measure four configurations on workloads where hybrid inlining is busy: baseline, the derivation alone, the reorder alone, and both together. Report the rule profiles of the affected rules, `critical_reach` included. Keep the configuration that reduces work the most, or none if none reduces it.
 
 ## Out of scope
 

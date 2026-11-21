@@ -1,6 +1,6 @@
 # Critical-call join once: requirements and design - DO-NOT-MERGE
 
-Source: `intent.md`. This spec refines that intent's single change: derive the hybrid-inlining rules 1.2 and 2.1 from `critical_arg` and `critical_reach`. It must stay consistent with `docs/spec.md` §4.2, which describes call resolution. It does not sequence the work.
+Source: `intent.md`. This spec refines that intent's change: derive the hybrid-inlining rules 1.2 and 2.1 from `critical_arg` and `critical_reach`, and make `critical_reach` a simple join. It must stay consistent with `docs/spec.md` §4.2, which describes call resolution. It does not sequence the work.
 
 ## Background
 
@@ -43,13 +43,21 @@ Logs and profiles: `/Volumes/Shampoo/blowups/critjoins/run-*/t*/{index.log,profi
 
 ## Requirements
 
-- R1. **Results unchanged.** On each of the four apps above and on the index test suite, `index-diff` finds no difference between the index written before the change and the one written after.
-- R2. **1.2 reads `critical_reach`.** Every `critical_summary` row that is not a base row (1.1) comes from `critical_reach`. No rule pairs `call` or `fnptr_call` with `critical_summary` to derive `critical_summary`.
-- R3. **2.1 reads `critical_arg`.** `establishes_direct` comes from the `critical_arg` rows with an empty `rest`, joined with `call_target_assign_like`. No rule pairs `call` or `fnptr_call` with `critical_summary` to derive `establishes_direct`.
+- R1. **Results unchanged.** For every configuration in R6, `index-diff` finds no difference from baseline, on each of the four apps above and on the index test suite.
+- R2. **1.2 reads `critical_reach`.** In the *derive* and *both* configurations, every `critical_summary` row that is not a base row (1.1) comes from `critical_reach`. No rule pairs `call` or `fnptr_call` with `critical_summary` to derive `critical_summary`.
+- R3. **2.1 reads `critical_arg`.** In the *derive* and *both* configurations, `establishes_direct` comes from the `critical_arg` rows with an empty `rest`, joined with `call_target_assign_like`. No rule pairs `call` or `fnptr_call` with `critical_summary` to derive `establishes_direct`.
 - R4. **Keys kept.** `critical_arg`, `critical_reach` and `establishes_direct` keep every column they have now: call site, formal, path and decision.
 - R5. **Termination.** All four apps reach the fixpoint (`reached_fixpoint: true`) under the measurement setup.
-- R6. **Less work.** Under the measurement setup, the summed time of `critical_summary`, `establishes_direct`, `critical_arg` and `critical_reach` falls on DuckDuckGo and Nextcloud. `fixpoint_secs` rises on none of the four apps by more than run-to-run noise. Otherwise the change is not kept.
-- R7. **Scope.** Rules 1.1, 2.2 (`establishes_via`, `resolvent`) and 3.1 (`call_site`, `resolved_call`) keep their text.
+- R6. **Measured in four configurations.** Each of the four apps is measured under the measurement setup in four configurations:
+  - *baseline*: eef8b971e;
+  - *derive*: D1 and D2;
+  - *reorder*: D4 alone;
+  - *both*: D1, D2 and D4.
+
+  Each configuration reports `fixpoint_secs`, SCC iterations, and the summed time of `critical_summary`, `establishes_direct`, `critical_arg` and `critical_reach`.
+- R7. **Less work.** The configuration kept is the one with the lowest `fixpoint_secs` on DuckDuckGo and Nextcloud, provided its `fixpoint_secs` rises on none of the four apps by more than run-to-run noise. If no configuration beats baseline, none is kept.
+- R8. **Scope.** Rules 1.1, `establishes_via`, `resolvent` and 3.1 (`call_site`, `resolved_call`) keep their text. `critical_reach` changes only in the order of its body (D4).
+- R9. **`critical_reach` is a simple join.** In the *reorder* and *both* configurations, Ascent's rule summary marks `critical_reach` `[SIMPLE JOIN]`, and no variant of it scans `locals_indices_none`.
 
 ## Design
 
@@ -81,12 +89,24 @@ The join is on `(g, arg, key)`, so it reuses `critical_arg_indices_0_1_2` and `c
 
 ### D3. Termination (R5)
 
-D1 and D2 keep the same least model, because each new rule derives exactly the rows of the rules it replaces. The relations stay finite (they are bounded by functions × formals × `path_set` members), so the fixpoint is still reached. What changes is the iteration count: one hop up the call graph now takes three rounds (`critical_summary` → `critical_arg` → `critical_reach` → `critical_summary`) instead of one. More rounds mean more iterations with a `critical_arg` delta, and each pays `critical_reach`'s full `locals` scan. See C1.
+D1 and D2 keep the same least model, because each new rule derives exactly the rows of the rules it replaces. The relations stay finite (they are bounded by functions × formals × `path_set` members), so the fixpoint is still reached. What changes is the iteration count: one hop up the call graph now takes three rounds (`critical_summary` → `critical_arg` → `critical_reach` → `critical_summary`) instead of one. More rounds mean more iterations with a `critical_arg` delta. Without D4, each of those iterations pays `critical_reach`'s full `locals` scan.
+
+### D4. `critical_reach` as a simple join (R9)
+
+Reorder `critical_reach` (`mod.rs:1994`) so that its first two body items are the two clauses, adjacent, with every filter after them:
+
+```
+critical_reach(g, n2, p2r, f, insn, n, p) <--
+    critical_arg(g, arg, key, rest, p, f, insn, n),
+    locals(g, arg, key, r2, p2, c),
+    if c.is_always(),
+    if let Some(n2) = r2.as_formal(),
+    path_set(ps),
+    if let Some(p2r) = ps.concat(p2, None, rest);
+```
+
+Ascent then joins on `(g, arg, key)` and iterates the smaller of the two relations in each variant. The indices it needs, `critical_arg_indices_0_1_2` and `locals_indices_0_1_2`, already exist. The rule derives the same rows, since only the order of its body changes. D4 is independent of D1 and D2, so each can be measured alone (R6).
 
 ## Concerns
 
-- C1. **`critical_reach`'s full scan of `locals`.** D1 moves all of 1.2's work into `critical_reach`, whose `critical_arg`-delta variant already scans the whole of `locals` (48 s on DuckDuckGo). A hop now takes three rounds instead of one, so that variant may run in more iterations. It could then cost more than the 35 s that D1 saves, and R6 would fail. Options:
-  - (a) Leave `critical_reach` as it is and rely on R6's measurement.
-  - (b) Also reorder `critical_reach`'s body to `critical_arg(g, arg, key, rest, p, f, insn, n), locals(g, arg, key, r2, p2, c), if …`, which makes it a simple join on `(g, arg, key)`. Each variant then iterates its delta and probes the other through indices both relations already have (`critical_arg_indices_0_1_2`, `locals_indices_0_1_2`). This touches a rule outside the intent's literal change. It derives the same rows, and it likely removes most of `critical_reach`'s 25–32% share regardless of D1.
-
-  The spec assumes (b), with R6 covering the reordered rule, and records it in the intent if accepted.
+None open. C1 (`critical_reach`'s full scan of `locals`) was settled: reorder it as D4, and measure it alone and combined with D1–D3 (R6).
