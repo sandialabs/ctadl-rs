@@ -9,6 +9,7 @@ ctadl-ir = { workspace = true, features = ["serde"] }
 dex-reader.workspace = true
 hashbrown = "0.16"
 log = "0.4"
+memmap2 = "0.9"
 rayon = "1.10"
 serde_json = "1"
 smallvec = "1"

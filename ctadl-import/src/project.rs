@@ -126,7 +126,10 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   `ir-program.bitcode`, and every front end's global lowering changed.
 /// - `15`: `ir-program.bitcode` is a sequence of frames, the globals and then the functions a
 ///   few thousand at a time, each its own bitcode value (`ctadl_ir::encode::encode_program`).
-pub const IMPORT_FORMAT_VERSION: &str = "15";
+/// - `16`: [`crate::save_program_info`] verifies every program before writing it. The file format
+///   is unchanged, but the C and Lua front ends did not verify their output, so an older import
+///   of theirs may hold IR that fails verification.
+pub const IMPORT_FORMAT_VERSION: &str = "16";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -642,6 +645,7 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
     let mut hasher = ContentHasher::new();
+    let mut buf = vec![0u8; HASH_BUF_LEN];
     let metadata = std::fs::symlink_metadata(path)
         .err_context(|| format!("reading artifact metadata: {}", path.display()))?;
     if metadata.is_dir() {
@@ -655,19 +659,63 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
             // concatenation.
             hasher.update(&(rel_bytes.len() as u64).to_le_bytes());
             hasher.update(rel_bytes.as_bytes());
-            let data = std::fs::read(file)
-                .map_err(Error::Io)
-                .err_context(|| format!("hashing artifact file: {}", file.display()))?;
-            hasher.update(&(data.len() as u64).to_le_bytes());
-            hasher.update(&data);
+            hash_file(&mut hasher, file, true, &mut buf)?;
         }
     } else {
-        let data = std::fs::read(path)
-            .map_err(Error::Io)
-            .err_context(|| format!("hashing artifact: {}", path.display()))?;
-        hasher.update(&data);
+        hash_file(&mut hasher, path, false, &mut buf)?;
     }
     Ok(to_hex(&hasher.finalize()))
+}
+
+/// Size of the buffer [`hash_artifact`] reads files through.
+const HASH_BUF_LEN: usize = 64 * 1024;
+
+/// Feeds the file at `path` to `hasher` as [`hash_reader`] does, with the length taken from the
+/// open file's metadata. Errors name `path`.
+fn hash_file(
+    hasher: &mut source_info::ContentHasher,
+    path: &Path,
+    framed: bool,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    File::open(path)
+        .and_then(|file| {
+            let len = file.metadata()?.len();
+            hash_reader(hasher, file, len, framed, buf)
+        })
+        .err_context(|| format!("hashing artifact file: {}", path.display()))
+}
+
+/// Feeds `reader` to `hasher` through `buf`, preceded by `len` as a little-endian `u64` when
+/// `framed`. Fails if `reader` does not yield exactly `len` bytes.
+fn hash_reader(
+    hasher: &mut source_info::ContentHasher,
+    mut reader: impl std::io::Read,
+    len: u64,
+    framed: bool,
+    buf: &mut [u8],
+) -> std::io::Result<()> {
+    if framed {
+        hasher.update(&len.to_le_bytes());
+    }
+    let mut total: u64 = 0;
+    loop {
+        let n = match reader.read(buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        hasher.update(&buf[..n]);
+        total += n as u64;
+    }
+    if total != len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("file changed while hashing: expected {len} bytes, read {total}"),
+        ));
+    }
+    Ok(())
 }
 
 /// Recursively collects regular files under `dir` into `out`.
@@ -1257,5 +1305,137 @@ mod tests {
         .expect("old index config");
         assert_eq!(config.version, INDEX_FORMAT_VERSION);
         assert!(config.import_hashes.is_empty());
+    }
+
+    /// Hashes an artifact as `hash_artifact` does, but reads each file whole: the reference
+    /// digest the streaming hash must match.
+    fn whole_file_hash_artifact(path: &Path) -> String {
+        let mut hasher = source_info::ContentHasher::new();
+        if path.is_dir() {
+            let mut files = Vec::new();
+            collect_files(path, &mut files).expect("collect files");
+            files.sort();
+            for file in &files {
+                let rel = file.strip_prefix(path).unwrap_or(file);
+                let rel_bytes = rel.to_string_lossy();
+                hasher.update(&(rel_bytes.len() as u64).to_le_bytes());
+                hasher.update(rel_bytes.as_bytes());
+                let data = std::fs::read(file).expect("read file");
+                hasher.update(&(data.len() as u64).to_le_bytes());
+                hasher.update(&data);
+            }
+        } else {
+            hasher.update(&std::fs::read(path).expect("read file"));
+        }
+        to_hex(&hasher.finalize())
+    }
+
+    /// `len` bytes that do not repeat with the buffer's period.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn hash_artifact_digest_unchanged() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for len in [0, 1, 65_535, 65_536, 65_537, 200_000] {
+            let path = dir.path().join(format!("file-{len}"));
+            std::fs::write(&path, pattern(len)).expect("write file");
+            assert_eq!(
+                hash_artifact(&path).expect("hash"),
+                whole_file_hash_artifact(&path),
+                "single file of {len} bytes"
+            );
+        }
+
+        let tree = dir.path().join("tree");
+        std::fs::create_dir_all(tree.join("a/b/c")).expect("mkdir");
+        std::fs::create_dir_all(tree.join("d")).expect("mkdir");
+        std::fs::write(tree.join("top.txt"), b"top").expect("write");
+        std::fs::write(tree.join("a/empty"), b"").expect("write");
+        std::fs::write(tree.join("a/b/exact"), pattern(HASH_BUF_LEN)).expect("write");
+        std::fs::write(tree.join("a/b/c/big"), pattern(3 * HASH_BUF_LEN + 7)).expect("write");
+        std::fs::write(tree.join("d/small"), b"small").expect("write");
+        assert_eq!(
+            hash_artifact(&tree).expect("hash"),
+            whole_file_hash_artifact(&tree),
+            "directory tree"
+        );
+
+        let empty = dir.path().join("empty-dir");
+        std::fs::create_dir(&empty).expect("mkdir");
+        assert_eq!(
+            hash_artifact(&empty).expect("hash"),
+            whole_file_hash_artifact(&empty),
+            "empty directory"
+        );
+    }
+
+    #[test]
+    fn hash_artifact_known_digests() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let hello = dir.path().join("hello");
+        std::fs::write(&hello, b"hello").expect("write");
+        assert_eq!(
+            hash_artifact(&hello).expect("hash"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        let empty = dir.path().join("empty");
+        std::fs::write(&empty, b"").expect("write");
+        assert_eq!(
+            hash_artifact(&empty).expect("hash"),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// Returns `Interrupted` on its first read, then reads from `inner`.
+    struct InterruptOnce<R> {
+        interrupted: bool,
+        inner: R,
+    }
+
+    impl<R: std::io::Read> std::io::Read for InterruptOnce<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    #[test]
+    fn hash_reader_rejects_length_mismatch() {
+        use std::io::Cursor;
+        let bytes = pattern(10);
+        let mut buf = vec![0u8; 4];
+        for len in [9, 11] {
+            let mut hasher = source_info::ContentHasher::new();
+            let err = hash_reader(&mut hasher, Cursor::new(&bytes), len, true, &mut buf)
+                .expect_err("length mismatch accepted");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "len {len}");
+        }
+
+        let mut plain = source_info::ContentHasher::new();
+        hash_reader(&mut plain, Cursor::new(&bytes), 10, false, &mut buf).expect("hash");
+        let mut interrupted = source_info::ContentHasher::new();
+        let reader = InterruptOnce {
+            interrupted: false,
+            inner: Cursor::new(&bytes),
+        };
+        hash_reader(&mut interrupted, reader, 10, false, &mut buf).expect("hash");
+        assert_eq!(interrupted.finalize(), plain.finalize());
+    }
+
+    #[test]
+    fn hash_artifact_missing_file_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("no-such-artifact");
+        let err = hash_artifact(&missing).expect_err("missing file hashed");
+        let message = err.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
     }
 }

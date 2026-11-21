@@ -26,6 +26,7 @@ fn a_model_can_name_a_lua_external() {
     )
     .expect("writing the module");
     let info = ctadl_lua::import_lua(&path).expect("lua lowering failed");
+    info.program.verify().expect("the program verifies");
 
     for port in ["getenv", "os.getenv"] {
         let mut matches = ProgramModelMatches::default();

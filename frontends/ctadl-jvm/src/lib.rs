@@ -72,8 +72,16 @@ mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     let timer = PhaseTimer::start();
-    let parser =
-        JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
+    let parser = std::fs::File::open(file)
+        .and_then(|f| {
+            // SAFETY: the map is read-only and dropped once `JarFileParser::from_bytes` returns. If
+            // another process truncates the file during the inflate, the access faults (SIGBUS);
+            // that risk is accepted.
+            unsafe { memmap2::Mmap::map(&f) }
+        })
+        .map_err(ClassFileError::Io)
+        .and_then(|map| JarFileParser::from_bytes(&map))
+        .err_context(|| format!("reading jar: {}", file.display()))?;
     timer.done("read and parse jar");
     log::info!(
         "{}: {} class file(s)",
@@ -766,8 +774,6 @@ impl Importer {
         }
 
         log::trace!("program: {program}");
-        // Verify the generated program.
-        program.verify()?;
 
         builders.vmt.finish_names();
         let source_info = builders.source_info_builder.finish();

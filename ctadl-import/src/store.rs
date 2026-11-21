@@ -36,6 +36,10 @@ pub enum SourceInfoMode {
 /// program, the virtual method table, and the source info. [`crate::project`] describes the
 /// layout they are written in.
 ///
+/// The program must pass [`Program::verify`], or nothing is written and the errors come back as
+/// [`Error::Verify`]. This is the one place a program enters the store, so every program the
+/// passes in [`open_import`] read has been verified, whichever front end made it.
+///
 /// The three are independent, so each is encoded and written on its own thread, and each is freed
 /// as soon as it has been written rather than when the last one is.
 pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> Result<(), Error> {
@@ -44,6 +48,7 @@ pub fn save_program_info(program_info: ProgramInfo, import: &ArtifactImport) -> 
         vmt,
         source_info,
     } = program_info;
+    program.verify()?;
     vmt.check_names(program.functions.iter().map(|f| f.name.as_str()))
         .map_err(Error::Names)?;
     if log::log_enabled!(log::Level::Debug) {

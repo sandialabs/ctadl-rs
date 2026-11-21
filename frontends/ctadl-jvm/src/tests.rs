@@ -1,4 +1,11 @@
-use super::import_class;
+use ctadl_ir::ProgramInfo;
+
+/// [`super::import_class`], with its program verified, as the store does when it saves one.
+fn import_class(path: &std::path::Path) -> Result<ProgramInfo, ctadl_import::error::Error> {
+    let info = super::import_class(path)?;
+    info.program.verify()?;
+    Ok(info)
+}
 use ctadl_ir::cir::TerminatorKind;
 use ctadl_ir::cir::call::Dispatch;
 
@@ -461,6 +468,7 @@ fn write_jar(path: &std::path::Path, entries: &[(&str, Vec<u8>)]) {
 /// The names of the functions of a jar's import.
 fn function_names(path: &std::path::Path) -> Vec<String> {
     let info = super::import_jar(path).expect("the jar imports");
+    info.program.verify().expect("the jar's program verifies");
     info.program
         .functions
         .iter()
@@ -496,4 +504,51 @@ fn class_defined_twice_imports_one_definition() {
         ],
     );
     assert_eq!(function_names(&path), ["LDemo;->second()V"]);
+}
+
+/// The error and each of its sources, outermost first, joined into one string.
+fn error_chain(err: &ctadl_import::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        parts.push(e.to_string());
+        source = e.source();
+    }
+    parts.join(": ")
+}
+
+/// Imports `path`, which must fail; returns the error chain.
+fn import_jar_fails(path: &std::path::Path) -> String {
+    let Err(err) = super::import_jar(path) else {
+        panic!("{} imports", path.display());
+    };
+    error_chain(&err)
+}
+
+#[test]
+fn import_jar_of_a_missing_file_names_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("missing.jar");
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains("reading jar"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_jar_of_a_non_zip_names_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("non-zip.jar");
+    std::fs::write(&path, b"not a zip at all").unwrap();
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains("reading jar"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_jar_of_an_empty_file_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("empty.jar");
+    std::fs::write(&path, b"").unwrap();
+    let chain = import_jar_fails(&path);
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
 }

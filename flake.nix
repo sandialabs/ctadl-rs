@@ -155,6 +155,9 @@
         packages.default = naersk-lib.buildPackage {
           src = ./.;
           version = workspaceVersion;
+          # `default-members` leaves out `xtask`, which the `regression` check
+          # runs from this package.
+          cargoBuildOptions = x: x ++ [ "--workspace" ];
         };
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cil.cecilDump;
@@ -289,9 +292,8 @@
               PROPTEST_CASES = "4096";
             };
 
-            # Runs the Verus proofs of the verified crates: order-laws, multiset-diff,
-            # index-canon and sarif-canon. A crate another one uses has its specs exported and
-            # its library compiled, so the other can use its theorems.
+            # The Verus proofs, as ./scripts/verus.sh runs them. Only the four crates' sources
+            # are copied in, so an edit elsewhere in the tree does not rerun the proofs.
             verusCheck =
               pkgs.runCommand "ctadl-checks-verus"
                 {
@@ -303,18 +305,7 @@
                     mkdir -p "''${crate%%:*}"
                     cp -r "''${crate#*:}" "''${crate%%:*}/src"
                   done
-                  ol="-L dependency=. --import order_laws=ol.vir --extern order_laws=liborder_laws.rlib"
-                  verus --crate-type=lib --edition=2024 --no-report-long-running \
-                    --crate-name order_laws --export ol.vir --compile -o liborder_laws.rlib \
-                    order-laws/src/lib.rs
-                  verus --crate-type=lib --edition=2024 --no-report-long-running $ol \
-                    --crate-name multiset_diff --export md.vir --compile -o libmultiset_diff.rlib \
-                    multiset-diff/src/lib.rs
-                  verus --crate-type=lib --edition=2024 --no-report-long-running $ol index-canon/src/lib.rs
-                  verus --crate-type=lib --edition=2024 --no-report-long-running $ol \
-                    --crate-name sarif_canon \
-                    --import multiset_diff=md.vir --extern multiset_diff=libmultiset_diff.rlib \
-                    sarif-canon/src/lib.rs
+                  bash ${./scripts/verus.sh} . verus-out
                   mkdir -p "$out"
                 '';
 
@@ -324,6 +315,33 @@
             verus = verusCheck;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
+
+        # `nix run .#check-all` runs ./scripts/check-all.sh -- the `test` workflow's checks and
+        # the nightly suite -- against the working tree, outside the sandbox, with the
+        # regression toolchain and the dev shell's settings for it.
+        apps.check-all = {
+          type = "app";
+          program = "${
+            pkgs.writeShellApplication {
+              name = "check-all";
+              runtimeInputs = [
+                testEnv
+                verus
+                pkgs.git
+              ];
+              text = ''
+                export PATH="${android.androidSdkBuildTools}:$PATH"
+                export ANDROID_SDK_ROOT="${android.androidSdk.androidsdk}/libexec/android-sdk"
+                export GHIDRA_HOME="${pkgs.ghidra-bin}/lib/ghidra"
+                export CECIL_SRC="${cecil}"
+                export CIL_READER_FIXTURES="${cil.cilFixtures}"
+                export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
+                export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+                exec bash "$(git rev-parse --show-toplevel)/scripts/check-all.sh" "$@"
+              '';
+            }
+          }/bin/check-all";
+        };
 
         formatter = pkgs.nixfmt;
         # One shell for everything: the day-to-day Rust/Nix tooling plus testEnv,
