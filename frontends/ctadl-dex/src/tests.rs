@@ -794,3 +794,50 @@ fn a_class_global_is_declared_at_its_class_def_item() {
         "every global is located"
     );
 }
+
+/// The error and each of its sources, outermost first, joined into one string.
+fn error_chain(err: &Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        parts.push(e.to_string());
+        source = e.source();
+    }
+    parts.join(": ")
+}
+
+/// Imports a temp file holding `contents`, which must fail; returns the path and error chain.
+fn import_apk_of_bytes_fails(name: &str, contents: &[u8]) -> (String, String) {
+    let path = std::env::temp_dir().join(format!("ctadl_dex_{name}_{}.apk", std::process::id()));
+    std::fs::write(&path, contents).unwrap();
+    let result = import_apk(&path);
+    let _ = std::fs::remove_file(&path);
+    let Err(err) = result else {
+        panic!("{name} APK imports");
+    };
+    (path.display().to_string(), error_chain(&err))
+}
+
+#[test]
+fn import_apk_of_a_missing_file_names_it() {
+    let path = std::env::temp_dir().join(format!("ctadl_dex_missing_{}.apk", std::process::id()));
+    let Err(err) = import_apk(&path) else {
+        panic!("a missing APK imports");
+    };
+    let chain = error_chain(&err);
+    assert!(chain.contains("reading APK"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_apk_of_a_non_zip_names_it() {
+    let (path, chain) = import_apk_of_bytes_fails("non_zip", b"not a zip at all");
+    assert!(chain.contains("parsing APK"), "{chain}");
+    assert!(chain.contains(&path), "{chain}");
+}
+
+#[test]
+fn import_apk_of_an_empty_file_fails() {
+    let (path, chain) = import_apk_of_bytes_fails("empty", b"");
+    assert!(chain.contains(&path), "{chain}");
+}

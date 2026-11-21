@@ -1181,6 +1181,7 @@ dependencies = [
  "dex-reader",
  "hashbrown 0.16.1",
  "log",
+ "memmap2",
  "rayon",
  "serde_json",
  "smallvec",

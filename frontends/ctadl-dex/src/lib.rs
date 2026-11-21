@@ -91,12 +91,18 @@ pub struct ApkImport {
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
     let timer = PhaseTimer::start();
-    let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
-    timer.done("read APK");
-    let parser =
-        APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
+    let map = std::fs::File::open(file)
+        .and_then(|f| {
+            // SAFETY: the map is read-only and dropped once `APKParser::new` returns. If another
+            // process truncates the file during the inflate, the access faults (SIGBUS); that
+            // risk is accepted.
+            unsafe { memmap2::Mmap::map(&f) }
+        })
+        .err_context(|| format!("reading APK: {}", file.display()))?;
+    timer.done("map APK");
+    let parser = APKParser::new(&map).err_context(|| format!("parsing APK: {}", file.display()))?;
     // The dex files are inflated out of it; the rest of the APK is not needed again.
-    drop(data);
+    drop(map);
     let dex_count = parser.dex_count();
     let parsers = parser.dex_parsers_with_filenames();
     timer.done("unpack and parse dex files");
