@@ -168,7 +168,7 @@ change (D3: same least model). `critical_arg`, `critical_reach`, `establishes_di
 - `ctadl-index/src/index_engine/mod.rs:1966-1979` — the comment above `critical_arg`, which
   says "as in 1.2": point it at its new role (it feeds 1.2, 2.1 and 2.2). Comment only.
 - `ctadl-index/src/index_engine/mod.rs:2740` (`run_engine!`, right after `run_timeout`) — the
-  D2 invariant, as corrected by P1: under `debug_assertions`, iterate
+  D2 invariant as the spec states it (a member or ε): under `debug_assertions`, iterate
   `prog.critical_summary.iter()` (a plain relation, so this works for both `Vec` and
   `boxcar::Vec`; don't use the `Rows` trait, whose `StreamingIterator` import is private to
   `ctadl-index` and absent from the engine crates that expand the macro) and assert every
