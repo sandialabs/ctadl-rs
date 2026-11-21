@@ -2,20 +2,8 @@
 
 Source: `intent.md`, `spec.md`. This plans the order of the work, the files each step
 changes, and the tests that prove it. R* and D* numbers are the spec's. Where this plan and
-the spec disagree, the spec wins, except for a correction listed below. Each phase builds,
+the spec disagree, the spec wins. Each phase builds,
 passes the gate named in it, and is one commit.
-
-## Corrections to the spec
-
-- P1. **One call can't carry both APK error contexts.** D2 has `import_apk` call
-  `APKParser::open(path)` and keep both contexts, "reading APK" and "parsing APK". With one
-  call, an open failure and a parse failure come out of the same call, so only one context can
-  wrap them. `DexError` (`readers/dex-reader/src/error.rs:4`) also has no I/O variant, so
-  `open` would flatten the `io::Error` of a missing file into a `&'static str`, as
-  `native_lib_entries_of_file` does (`readers/dex-reader/src/apk.rs:101`). This plan assumes,
-  until settled: `APKParser::from_file(std::fs::File)` in place of `open(path)`. `import_apk`
-  opens the file itself under "reading APK: <path>", which keeps the `io::Error`. It then calls
-  `from_file` under "parsing APK: <path>".
 
 ## Order
 
@@ -131,7 +119,7 @@ are unaffected: `collect_files` keeps only regular files (`ctadl-import/src/proj
 
 Depends on: phase 0.
 
-**What.** Adds `APKParser::from_file(File)` (see P1) and the `SharedFile` reader. It has no
+**What.** Adds `APKParser::from_file(File)` and the `SharedFile` reader. It has no
 callers yet. `APKParser::new(&[u8])` keeps its signature and behavior.
 
 **Files.**
