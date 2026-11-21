@@ -104,7 +104,7 @@ their contents, so it needs them whole, and model files are small.
 
 ### D2. APK archive over a shared file handle (R4, R6, R7)
 
-`APKParser` gets a constructor that takes a path, `APKParser::open(path)`. It and
+`APKParser` gets a constructor that takes an open file, `APKParser::from_file(File)`. It and
 `APKParser::new(&[u8])` share one private generic constructor over a reader
 `R: Read + Seek + Clone + Send + Sync`, which keeps today's logic:
 
@@ -114,14 +114,15 @@ their contents, so it needs them whole, and model files are small.
 
 `Cursor<&[u8]>` already meets that bound, so `new` keeps its signature (R6).
 
-For `open`, the reader is a small `SharedFile` in `dex-reader`: an `Arc<File>` and its own
+For `from_file`, the reader is a small `SharedFile` in `dex-reader`: an `Arc<File>` and its own
 position. It reads with positioned reads (`FileExt::read_at` on Unix, `seek_read` on Windows), so clones
 share the descriptor, don't share a cursor, and need no lock. Cloning the `ZipArchive` per task
 still shares the parsed central directory, as it does today. The OS page cache holds the file,
 not the process heap.
 
-`import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) calls `APKParser::open(file)` and drops its
-`std::fs::read`. The error contexts "reading APK" and "parsing APK", each with the path, stay.
+`import_apk` (`frontends/ctadl-dex/src/lib.rs:94`) drops its `std::fs::read`. It opens the file
+itself under "reading APK", which keeps the OS error, and calls `APKParser::from_file` under
+"parsing APK". Each context names the path, as today.
 
 ### D3. `is_cli_image` over a memory map (R8, R9)
 
