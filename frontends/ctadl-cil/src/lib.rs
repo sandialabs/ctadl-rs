@@ -440,8 +440,17 @@ impl ctadl_ir::cir::visit::MutVisitor for Resolve<'_> {
 }
 
 /// Whether the file is a PE image with CLI metadata, as opposed to a native one.
+/// Reads only the pages the PE and metadata checks touch, through a read-only memory map.
 pub fn is_cli_image(path: &Path) -> bool {
-    std::fs::read(path).is_ok_and(|data| Module::read(&data).is_ok())
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    // SAFETY: the map is read-only and dropped before return. If another process truncates
+    // the file during the parse, the access faults (SIGBUS); that risk is accepted.
+    let Ok(map) = (unsafe { memmap2::Mmap::map(&file) }) else {
+        return false;
+    };
+    Module::read(&map).is_ok()
 }
 
 /// Whether a directory holds an assembly with CLI metadata.
