@@ -284,6 +284,75 @@ phase 0's exits 0 (use the release `ctadl` of phase 2; the index format is uncha
 **Gate.** All 4 × 4 × 2 runs reach the fixpoint (R5); every diff-index exits 0 (R1); R9 holds
 for *reorder* and *both*; the table is complete.
 
+**As built.** *derive* is phase 2's `mod.rs` and `path_set.rs` diff cherry-picked onto
+eef8b971e in a detached throwaway worktree, which was removed after the build. The runs were
+interleaved as planned: round 1 was baseline, derive, reorder, both, and round 2 repeated that
+order. Each configuration ran DuckDuckGo with Nextcloud, then Wikipedia with NewPipe. All
+32 runs reached the fixpoint (R5). All 32 app indexes diff identical to phase 0's (R1, using
+phase 2's release `ctadl`). SCC iterations were the same in every configuration and run.
+The largest SCC took 1627, 787, 475 and 320 iterations, and the totals were 1640, 800, 488 and
+333. D3's extra rounds did not appear on these apps either. Rule times are seconds summed
+over all semi-naive variants and averaged over the two runs. 1.1 is in the
+`critical_summary` sum. Peak footprint is in GiB, shown as run 1 / run 2.
+
+| config | app | `fixpoint_secs` mean (run 1, run 2) | `critical_summary` | `establishes_direct` | `critical_arg` | `critical_reach` | peak |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | DuckDuckGo | 173.6 (179.2, 168.1) | 29.32 | 9.27 | 0.08 | 49.24 | 16.31 / 16.09 |
+| baseline | Nextcloud | 138.2 (138.4, 138.1) | 10.51 | 3.12 | 0.06 | 33.97 | 17.00 / 17.02 |
+| baseline | Wikipedia | 32.7 (32.8, 32.6) | 1.10 | 0.31 | 0.02 | 9.97 | 4.98 / 5.00 |
+| baseline | NewPipe | 29.2 (29.6, 28.8) | 1.05 | 0.33 | 0.01 | 9.77 | 4.31 / 4.30 |
+| derive | DuckDuckGo | 140.2 (140.2, 140.3) | 0.52 | 0.16 | 0.08 | 51.40 | 16.11 / 16.31 |
+| derive | Nextcloud | 131.7 (132.5, 130.8) | 0.56 | 0.13 | 0.06 | 39.21 | 17.08 / 17.04 |
+| derive | Wikipedia | 33.5 (33.4, 33.5) | 0.07 | 0.06 | 0.02 | 12.07 | 4.99 / 4.99 |
+| derive | NewPipe | 29.6 (30.0, 29.3) | 0.10 | 0.04 | 0.01 | 11.52 | 4.28 / 4.28 |
+| reorder | DuckDuckGo | 131.1 (132.1, 130.0) | 32.39 | 10.38 | 0.08 | 1.35 | 16.09 / 16.05 |
+| reorder | Nextcloud | 107.5 (107.4, 107.5) | 10.77 | 3.22 | 0.06 | 1.38 | 17.01 / 17.05 |
+| reorder | Wikipedia | 23.5 (23.6, 23.3) | 1.06 | 0.29 | 0.02 | 0.44 | 4.93 / 4.95 |
+| reorder | NewPipe | 19.8 (19.8, 19.7) | 1.04 | 0.32 | 0.01 | 0.30 | 4.28 / 4.32 |
+| both | DuckDuckGo | 87.0 (85.8, 88.2) | 0.49 | 0.14 | 0.08 | 0.95 | 16.03 / 16.06 |
+| both | Nextcloud | 93.1 (92.5, 93.7) | 0.56 | 0.12 | 0.06 | 0.96 | 16.97 / 16.80 |
+| both | Wikipedia | 21.9 (21.8, 22.0) | 0.07 | 0.05 | 0.02 | 0.32 | 4.93 / 4.91 |
+| both | NewPipe | 18.4 (18.3, 18.4) | 0.09 | 0.04 | 0.01 | 0.23 | 4.27 / 4.33 |
+
+Noise, the largest `|run1 − run2|` of `fixpoint_secs` over the four configurations, was
+11.1 s on DuckDuckGo (from baseline: its 1.2 took 32.6 s in run 1 and 26.0 s in run 2),
+1.7 s on Nextcloud, 0.3 s on Wikipedia and 0.8 s on NewPipe.
+
+The full-scan rules moved little. Each pair below gives the 3.2 `assign_like` rules under
+`ContextJoin::Sets` (`set_establishes_direct` and `set_establishes_via` forms), then 3.1
+`call_site` and `resolved_call` (the `resolvent` joins), as two-run means in seconds:
+
+| config | DuckDuckGo | Nextcloud | Wikipedia | NewPipe |
+| --- | --- | --- | --- | --- |
+| baseline | 1.49, 1.73; 2.54, 2.62 | 1.14, 1.19; 2.25, 2.37 | 0.20, 0.18; 0.37, 0.37 | 0.12, 0.12; 0.35, 0.34 |
+| derive | 1.66, 1.95; 2.66, 2.70 | 1.15, 1.19; 2.29, 2.35 | 0.15, 0.13; 0.36, 0.37 | 0.11, 0.12; 0.34, 0.36 |
+| reorder | 1.30, 1.47; 2.49, 2.73 | 1.18, 1.22; 2.33, 2.51 | 0.18, 0.16; 0.38, 0.32 | 0.12, 0.12; 0.35, 0.28 |
+| both | 1.28, 1.46; 2.40, 2.37 | 1.16, 1.20; 2.28, 2.35 | 0.16, 0.14; 0.37, 0.33 | 0.12, 0.12; 0.34, 0.30 |
+
+R9 holds in every *reorder* and *both* run. Both `critical_reach` variants are
+`[SIMPLE JOIN]`, and neither names `locals_indices_none`. The variant that can iterate
+`locals_indices_0_1_2_total` is `critical_arg_indices_0_1_2_delta × locals_indices_0_1_2_total+delta`,
+the one driven by the `critical_arg` delta. Its time, as run 1 / run 2 in seconds:
+
+| config | DuckDuckGo | Nextcloud | Wikipedia | NewPipe |
+| --- | --- | --- | --- | --- |
+| reorder | 0.157 / 0.160 | 0.104 / 0.105 | 0.033 / 0.033 | 0.017 / 0.018 |
+| both | 0.156 / 0.160 | 0.094 / 0.096 | 0.032 / 0.032 | 0.017 / 0.018 |
+
+The `locals`-delta variant takes the rest of `critical_reach`'s time: 1.19–1.28 s on the big
+apps under *reorder* and 0.77–0.88 s under *both*. Peak footprint does not move, so the
+copy risk does not show.
+
+*derive* alone keeps the old full scan of `locals` in
+`locals_indices_none_total × critical_arg_indices_0_1_2_delta`. That variant took 50.2–51.4 s
+on DuckDuckGo and 38.5–38.6 s on Nextcloud, and `critical_reach` grew 4–21% over baseline.
+D3 predicted this cost. It comes from more iterations with a `critical_arg` delta, not from
+more iterations in total.
+
+There were two departures from the plan. The summaries sum rule time by head relation
+instead of using the spec's `summ.py`, which does not recognize the new 1.2 rule. Each index
+copy was deleted once it had diffed identical.
+
 ## Phase 4: keep the winner (R7)
 
 Depends on: 3.
