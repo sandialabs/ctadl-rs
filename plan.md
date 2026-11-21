@@ -138,6 +138,16 @@ are unaffected: `collect_files` keeps only regular files (`ctadl-import/src/proj
     cargo clippy -p ctadl-import --all-targets -- -D warnings
     grep -n 'fs::read(' ctadl-import/src/project.rs   # only hash_file_contents and unrelated loads
 
+**As built.** `584277e48`. Gates pass; the grep shows only `hash_file_contents` and the
+test's reference function. Departures:
+- The buffer size is a named constant, `HASH_BUF_LEN`. `hash_reader` returns
+  `std::io::Result`, and a length mismatch is an `InvalidData` error. `hash_file` adds the path.
+- A single-file artifact's read error now says "hashing artifact file: <path>", as a directory
+  member's always did, instead of "hashing artifact: <path>".
+- `hash_artifact_missing_file_errors` fails at the existing metadata read ("reading artifact
+  metadata: <path>"), before `hash_file`. It checks that the path is named, not
+  `hash_file`'s message.
+
 ## Phase 2: file-backed `APKParser` (R4, R6, R7, D2; additive)
 
 Depends on: phase 0.
