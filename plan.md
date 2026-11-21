@@ -375,6 +375,16 @@ Record the decision and the reason in an "As built" note on this phase.
     cargo test --workspace
     cargo xtask regression --release      # then the regression index-diff loop against phase 0
 
+**As built.** Kept *both* (D1, D2 and D4); nothing reverted. It has the lowest mean
+`fixpoint_secs` on DuckDuckGo (87.0 s vs 173.6 s baseline) and Nextcloud (93.1 s vs
+138.2 s), so the tie-break was not needed, and it is faster than baseline on all four apps by
+far more than the noise (−86.6, −45.1, −10.8, −10.8 s against noise of 11.1, 1.7, 0.3,
+0.8 s). *Derive* alone was not a candidate: it keeps `critical_reach`'s full scan of `locals`,
+and Wikipedia and NewPipe get slightly slower. Because nothing was reverted, the branch's code
+is that of phase 2's commit, whose gate already passed `cargo test --workspace` and the
+regression with the index-diff loop identical to phase 0 (225 of 225). Phases 3 and 4 changed
+only `plan.md`, so the gate was not run again.
+
 ## Files that change
 
 | File | Change | Phase |
