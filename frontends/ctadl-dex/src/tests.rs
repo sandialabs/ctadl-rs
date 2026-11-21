@@ -764,6 +764,7 @@ fn a_class_global_is_declared_at_its_class_def_item() {
     let info = crate::import_apk(&apk)
         .expect("the APK imports")
         .program_info;
+    info.program.verify().expect("the APK's program verifies");
 
     let mut located = 0;
     for (_, global) in info.program.globals.iter_enumerated() {

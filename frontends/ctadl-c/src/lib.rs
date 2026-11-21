@@ -283,7 +283,7 @@ const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
 /// The terminator to close a block with when the frontend, not the source, decides it
 /// returns -- emitted by [`link_blocks`] (falling off the end of a body),
 /// [`finalize_terminators`] (patching an unterminated block), and `walk_return` (a bare
-/// `return;` in a non-`void` function).
+/// `return;` in a non-`void` function, or `return f();` in a `void` one).
 ///
 /// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
 /// arity ([`ctadl_ir::cir::VerifyError::InconsistentReturns`]), so the synthesized return
@@ -1035,23 +1035,27 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
 /// Parse the C source in `source` -- one in-memory translation unit -- into a CTADL IR
 /// program. Returns the program, whether tree-sitter reported syntax errors, and the
 /// marked-up dump. No spans are recorded and no extern stubs are created: this is the
-/// unit-test path, and a test that needs the stubs goes through [`parse_c_files`].
+/// unit-test path, and a test that needs the stubs goes through [`parse_c_files`]. Unlike
+/// [`import_c`], whose program is verified when the store saves it, this verifies the program,
+/// since nothing else will.
 pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
     let units = [TranslationUnit::new(None, source.to_string())];
     let lowered = lower_units(&units, false, false, true)?;
+    lowered.program.verify()?;
     Ok((lowered.program, lowered.has_error, lowered.marked_up))
 }
 
 /// Parse several named C files, each a translation unit of its own, into one program -- the
 /// shape [`import_c`] produces for a directory. Unlike [`parse_c_program`] it records spans
 /// and creates the extern stubs, which is what a test about several units meeting in one
-/// program needs.
+/// program needs. Like [`parse_c_program`], it verifies the program.
 pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Error> {
     let units: Vec<TranslationUnit> = files
         .iter()
         .map(|(path, contents)| TranslationUnit::new(Some(path.clone()), contents.clone()))
         .collect();
     let lowered = lower_units(&units, true, true, true)?;
+    lowered.program.verify()?;
     Ok((lowered.program, lowered.marked_up))
 }
 
@@ -2861,9 +2865,16 @@ impl<'a> Context<'a> {
             && ret_val_node.kind() != ";"
         {
             let ret_exp = self.flatten_expr(program, ret_val_node, source, scope_view)?;
-            let term = Terminator::new_kind(TerminatorKind::Return {
-                args: vec![ret_exp].into(),
-            });
+            // `return f();` in a `void` function (a GNU extension when `f` is `void`) returns
+            // nothing: the expression is kept for its effects and its value dropped, since a
+            // `void` function has return arity 0.
+            let term = if program.functions[scope_view.fidx].return_type.arity == 0 {
+                implicit_return(program, scope_view.fidx)
+            } else {
+                Terminator::new_kind(TerminatorKind::Return {
+                    args: vec![ret_exp].into(),
+                })
+            };
             program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         } else {
             // A bare `return;`. Legal in a non-`void` function (and common in `int` error

@@ -126,7 +126,10 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   `ir-program.bitcode`, and every front end's global lowering changed.
 /// - `15`: `ir-program.bitcode` is a sequence of frames, the globals and then the functions a
 ///   few thousand at a time, each its own bitcode value (`ctadl_ir::encode::encode_program`).
-pub const IMPORT_FORMAT_VERSION: &str = "15";
+/// - `16`: [`crate::save_program_info`] verifies every program before writing it. The file format
+///   is unchanged, but the C and Lua front ends did not verify their output, so an older import
+///   of theirs may hold IR that fails verification.
+pub const IMPORT_FORMAT_VERSION: &str = "16";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";

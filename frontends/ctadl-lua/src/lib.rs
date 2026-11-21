@@ -2609,7 +2609,9 @@ mod tests {
                 source: (*src).to_string(),
             })
             .collect();
-        lower_lua_units(units).expect("lua lowering failed")
+        let info = lower_lua_units(units).expect("lua lowering failed");
+        info.program.verify().expect("the program verifies");
+        info
     }
 
     /// The names of every function in the imported program, sorted.
@@ -3177,6 +3179,7 @@ mod tests {
         std::fs::write(&file, &bytes).expect("writing source");
 
         let info = import_lua(dir.path()).expect("import of a non-UTF-8 file failed");
+        info.program.verify().expect("the program verifies");
         assert!(function_names(&info).contains(&"m.hello".to_string()));
     }
 
