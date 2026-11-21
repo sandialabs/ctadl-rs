@@ -5,14 +5,6 @@ derivation of rules 1.2 and 2.1 from `critical_arg`/`critical_reach` (D1, D2), a
 four-configuration measurement (R6, R7). R*/D* numbers are the spec's; the spec wins where the
 two disagree. Each phase builds, passes the gate named in it, and is one commit.
 
-## Corrections to the spec
-
-- P2. **Why `critical_reach` is not a simple join today.** Spec Background says the `if`s
-  between `locals` and `critical_arg` prevent it. Ascent attaches an `if`/`if let` that
-  follows a clause to that clause (`ascent_syntax.rs:362-365` in the patched macro), so the
-  actual reason is the `if let` on the first clause (`ascent_hir.rs:348-352`). D4's fix is
-  the same; only the explanation changes.
-
 ## Order
 
 | Wave | Phases | Why |
