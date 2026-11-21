@@ -132,6 +132,8 @@ on.
   asymptotically than today's full scan, but allocates in proportion to `locals` (12.3 M rows
   on DuckDuckGo). On the NewPipe run, compare `critical_reach`'s per-variant times with
   phase 0's and record peak footprint from `sweep.tsv`; phase 3 does the same on all apps.
+  Decided: measure only. This phase does not change `cond_trie.rs`; the streaming fix
+  stays under Deferred.
 
 **Gate.**
 
