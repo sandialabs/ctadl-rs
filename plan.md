@@ -147,6 +147,28 @@ on.
     cargo xtask regression --release      # then the regression index-diff loop against phase 0
     grep 'critical_reach <--' <newpipe-index.log>   # [SIMPLE JOIN]; no locals_indices_none
 
+**As built.** Two commits, not one: the guard test first, on the unchanged rules, then the
+reorder, so the history shows it passing before and after. The guard is a flowy fixture,
+`ctadl-ascent/tests/tnt/hybrid_forwarder_two_decisions.tnt`, not the C snapshot of relation
+sizes planned above: pinning index behavior is flowy's job, and it asserts summaries rather
+than counts. It has `SRC_PREFIX`'s shape: two callers store different targets in a field of a
+struct they pass whole through a forwarder to a callee that calls through the field, so the
+critical summary crosses a split with a non-empty rest and the forwarder gets two decisions.
+One target passes its argument on and the other does not, so a decision leaked between the
+forwarder's callers fails a summary check; inverting 2.1's empty-rest filter fails it. Regression
+and app indexes are identical to phase 0. Wikipedia and NewPipe ran as a pair, as in phase 0.
+Every `critical_reach` variant is a `[SIMPLE JOIN]`, and none reads `locals_indices_none`.
+
+| app | `critical_reach`, phase 0 → 1 | `fixpoint_secs`, phase 0 → 1 | SCC iterations | peak footprint |
+| --- | ---: | ---: | ---: | ---: |
+| NewPipe | 10.00 s → 0.30 s | 29.3 s → 19.6 s | 488 (unchanged) | 4.32 → 4.31 GiB |
+| Wikipedia | 10.44 s → 0.43 s | 33.2 s → 23.3 s | 333 (unchanged) | 4.99 → 4.96 GiB |
+
+Most of what remains is the `locals`-delta variant (0.28 s and 0.40 s). The only variant that
+can iterate `locals_indices_0_1_2_total`, the one driven by the `critical_arg` delta, takes
+0.02 s and 0.03 s. The profile does not say which side a simple join iterated, but at that
+cost the copy risk does not show here.
+
 ## Phase 2: 1.2 and 2.1 from `critical_reach` and `critical_arg` (D1, D2, R2, R3, R4)
 
 Depends on: 1.

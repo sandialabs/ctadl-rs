@@ -1992,10 +1992,10 @@ ascent_source! {
         for (key, rest) in ps.splits(p).exact;
     relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
     critical_reach(g, n2, p2r, f, insn, n, p) <--
+        critical_arg(g, arg, key, rest, p, f, insn, n),
         locals(g, arg, key, r2, p2, c),
         if c.is_always(),
         if let Some(n2) = r2.as_formal(),
-        critical_arg(g, arg, key, rest, p, f, insn, n),
         path_set(ps),
         if let Some(p2r) = ps.concat(p2, None, rest);
     establishes_via(f, d, g, insn, up) <--
