@@ -58,6 +58,29 @@ Depends on: nothing.
 **Gate.** The baseline table exists: for Immich, about 775 MB and 0.79 s; for the repack, about
 550 MB and 0.45 s. If not, report the numbers before going on: R5's threshold rests on them.
 
+**As built.** Base `b3dd10cf0`. All 25 imports succeeded. Medians of three runs (MB = 10^6 B
+of `peak memory footprint`):
+
+| app | peak MB | real s |
+| --- | --- | --- |
+| Immich | 909.2 | 0.81 |
+| Dex-only repack (3.6 MB, one `classes.dex`) | 543.2 | 0.47 |
+| schildi | 1463.9 | 1.70 |
+| loki messenger | 1287.7 | 1.23 |
+| osmand | 2268.2 | 3.06 |
+
+Immich peaks at 909 MB, not the 775 MB in the spec's Background (four runs, 888–911 MB), so
+the gap to the repack is ~366 MB, not ~225 MB. R5's threshold (at most 600 MB, within 10% of
+the repack) is unchanged and still reachable. Other departures:
+- The source info is a directory, `imports/<imp>/source-info/` (five `.parquet` files). Its
+  digest is a sha256 over the sorted (path, sha256) list of its files.
+- An XAPK's Dex lands in sub-imports `imports/app__<split>`, so digests are kept per import
+  directory: 50 rows for 25 inputs.
+- `source-info/artifacts.parquet` records the artifact path, which for an XAPK split is inside
+  the store. Each import runs in a fixed staging store, then moves, so base and after compare.
+- The steps are scripted in `$TMPDIR/read-bytes/run-suite.sh` and `time-five.sh`, which
+  phase 5 reruns with the branch binary.
+
 ## Phase 1: streaming `hash_artifact` (R1, R2, R3, D1)
 
 Depends on: phase 0.
