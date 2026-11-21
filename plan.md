@@ -305,6 +305,17 @@ directories through `import_directory` (`frontends/ctadl-cil/src/lib.rs:171`).
     cargo xtask regression --frontend cil
     grep -n 'fs::read' frontends/ctadl-cil/src/lib.rs   # none in is_cli_image
 
+**As built.** `cdb44113b`. Gates pass; the test ran the fixture cases on all 68 fixture
+`.dll`s. Departures:
+- The test makes its temp files under `std::env::temp_dir()`, in a directory named with the
+  process id: `ctadl-cil` has no `tempfile`, and adding one would change `Cargo.lock` beyond the
+  one edge.
+- `cargo xtask regression --frontend cil` fails its `cil:models` check with the `model-run` on
+  PATH (the nix test env's, which writes paths as lists where `xtask/src/cil/models.rs:107`
+  expects strings). That is not this change. It passes (23 of 24, one expected `Cil:delegates`
+  xfail) with `CTADL_MODEL_RUN` set to this tree's `frontends/ctadl-cil/tools/ModelRun`, built
+  into `$TMPDIR/p4-model-run`. Later full regression runs set it the same way.
+
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
 Depends on: phases 1, 3, 4.
