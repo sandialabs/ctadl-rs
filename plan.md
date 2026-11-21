@@ -424,6 +424,25 @@ report.
     cargo xtask regression --frontend jvm
     git diff b3dd10cf0 -- readers/jvm-reader   # empty
 
+**As built.** `0c943adb0`. Gates pass (jvm regression: 66 passed, 1 xfail of 67;
+`readers/jvm-reader` unchanged). `plain.jar` is Ghidra's `Base.jar` (23.1 MB, 5,501 classes,
+about half its compressed size non-class data); `fat.jar` adds a 150 MB stored random entry.
+Median peak MB / real s:
+
+| | plain.jar | fat.jar |
+| --- | --- | --- |
+| base | 565.7 / 0.45 | 684.2 / 0.54 |
+| branch | 545.5 / 0.44 | 544.7 / 0.54 |
+
+R13: `fat.jar` is 0.1% under `plain.jar` on the branch (on base it costs ~118 MB more). R15:
+IR, VMT, source info and config hash identical between base and branch for both JARs.
+Departures:
+- Open, map and `from_bytes` share one chain under "reading jar: <path>"; an open or map error
+  becomes `ClassFileError::Io` first. The `// SAFETY:` comment matches phase 6's and does not
+  name C4.
+- The tests use `tempfile`, which the crate already has, with `error_chain` and
+  `import_jar_fails` helpers as in phase 6.
+
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
 Depends on: phases 1, 4 and 6 (1, 3 and 4 before the scope change).
