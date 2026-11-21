@@ -1,27 +1,14 @@
-# Intent: Pull a small relation out of a large self-join
+# Intent: Run the serial index engine on small inputs
 
 ## Problem
 
-For code like
-
-```text
-object = Global.session
-object.address = input
-```
-
-the function summary must record that `input` reaches `Global.session.address`. The current rule finds this by joining `locals` with itself and then filtering for rows whose base was loaded from the global heap. Most `locals` rows are irrelevant to that question, yet they are scanned repeatedly. On one large application the early baseline had 16.7 million local-flow rows, against a much smaller set of global bases.
+`-j N` with N > 1 (or `-j 0`, every core) always runs the parallel index engine. On a small program the parallel engine is slower than the serial one, because thread scheduling and the concurrent data structures cost more than they save. In one comparison a small browser took 0.077 s serially and 0.129 s on four workers, while a large application took 117.7 s serially and 45.2 s on four workers. Earlier notes put the crossover between about 45,000 assignments (serial faster and smaller) and 160,000 (parallel useful).
 
 ## Change
 
-Derive a filtered relation first:
-
-```text
-global_base(function, variable, global_parameter, global_path)
-```
-
-A row belongs there when a whole local variable comes from a nonempty path of the global parameter. The summary rule starts from `global_base` and probes `locals` by function and variable to find writes through the base, then combines the global path and stored path using the existing path rules. `global_base` must come first in the join, because an equivalent-looking rule can otherwise generate a full scan.
+When the caller asks for several index workers, run the serial engine anyway if the input has fewer than a cutoff number of assignment facts, and log that choice. The starting cutoff is 50,000 assignment facts. Re-measure it on the current engine before fixing the number. `-j 1` stays serial, and the parallel engine runs unchanged above the cutoff.
 
 ## Constraints
 
-- Keep the original aliasing switch, path filters, store checks and result tuple.
-- Results must not change. Any change to which stores are summarized is out of scope and needs its own correctness review. Use `index-diff` as a gate that must pass.
+- The index results must be the same whichever engine runs. Use `index-diff` as a gate that must pass.
+- The cutoff selects an engine. It does not change how many threads import or decoding use.
