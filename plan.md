@@ -377,6 +377,15 @@ phase 5 check the IR.
     cargo xtask regression --frontend dex
     git diff b3dd10cf0 -- readers/dex-reader   # empty
 
+**As built.** `ac0ef1f0e`. Gates pass (dex regression: 71 passed of 71; `readers/dex-reader`
+unchanged). Immich peak 517.7, 534.4, 534.0 MB, median 534.0 MB, 1.7% under the repack (base
+909 MB; phases 1 and 4 alone 724 MB); real 0.86–0.87 s warm. Departures:
+- The open and the map share one closure, so one "reading APK" context covers both.
+- memmap2 0.9 maps an empty file to an empty slice, so an empty APK fails in `APKParser::new`
+  under "parsing APK". The test checks only that the path is named.
+- The tests read the whole error chain through an `error_chain` helper, and share an
+  `import_apk_of_bytes_fails` helper for the temp file.
+
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
 Depends on: phases 1, 4 and 6 (1, 3 and 4 before the scope change).
