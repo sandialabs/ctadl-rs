@@ -226,6 +226,30 @@ code's own and may stay).
     cargo xtask regression --release      # then the regression index-diff loop against phase 0
     # dumps of Wikipedia and NewPipe equal phase 0's for the six relations
 
+**As built.** As planned. Tests, the flowy fixture of phase 1 and the debug-build invariant
+pass; regression is 256 passed, 5 xfail, 0 failed, and all 225 regression indexes
+diff identical to phase 0. The six dumped relations equal phase 0's as row sets on both apps,
+and both app indexes diff identical. Both new rules compile as `[SIMPLE JOIN]`. The SCC
+iteration counts did not rise as D3 expected: 333 (Wikipedia) and 488 (NewPipe) in total,
+as in phases 0 and 1, so the longest hybrid chain does not set the count on these apps.
+Dump runs, paired as in phase 0 (dumping slows the run; phase 0's dump run took 32.4 s and
+29.2 s):
+
+| app | `fixpoint_secs` | 1.2 | 2.1 | `critical_reach` | `critical_arg` | peak footprint |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Wikipedia | 22.1 s | 1.02 s → 0.002 s | 0.29 s → 0.05 s | 0.33 s | 0.02 s | 5.04 GiB |
+| NewPipe | 18.8 s | 0.95 s → 0.002 s | 0.31 s → 0.04 s | 0.24 s | 0.01 s | 4.43 GiB |
+
+The 1.2 and 2.1 columns compare with phase 0's non-dump runs; 1.1 (0.07 s and 0.10 s) is not
+in them.
+
+`exact_splits_end_with_whole_path` was folded into the existing
+`splits_are_precomputed_per_member` instead of standing alone: that test already checks that a
+member's exact splits are its `prefix_keys`, and that a non-member has none, and
+`prefix_keys_agree_with_match_prefix` (`ctadl-index/src/facts.rs`) already pins `(p, ε)`. It
+gains two assertions: the last exact split is the whole path with an empty rest, and an ε
+member splits only into `(ε, ε)`.
+
 ## Phase 3: measure four configurations (R1, R5, R6, R9)
 
 Depends on: 2.

@@ -1920,44 +1920,24 @@ ascent_source! {
         if c.is_always(),
         if let Some(n) = r.as_formal();
 
-    // 1.2: Propagate Critical Summary (context-free) up the stack. The caller may pass only a
-    // prefix `key` of the callee's path (`fwd(s) { call(s); }` never touches `s->op`), so the
-    // argument is matched at every split `p_tgt = key · rest` and `rest` is put back on.
-    critical_summary(caller_func_id, n, p_nr) <--
-        call(caller_func_id, caller_insn_id, tgt),
-        critical_summary(tgt, n_tgt, p_tgt),
-        let arg = call_arg!(*caller_insn_id, *n_tgt),
-        path_set(ps),
-        for (key, rest) in ps.splits(p_tgt).exact,
-        locals(caller_func_id, arg, key, r, p_n, c),
-        if c.is_always(),
-        if let Some(n) = r.as_formal(),
-        if let Some(p_nr) = ps.concat(p_n, None, rest);
-    critical_summary(caller_func_id, n, p_nr) <--
-        fnptr_call(caller_func_id, caller_insn_id, tgt),
-        critical_summary(tgt, n_tgt, p_tgt),
-        let arg = call_arg!(*caller_insn_id, *n_tgt),
-        path_set(ps),
-        for (key, rest) in ps.splits(p_tgt).exact,
-        locals(caller_func_id, arg, key, r, p_n, c),
-        if c.is_always(),
-        if let Some(n) = r.as_formal(),
-        if let Some(p_nr) = ps.concat(p_n, None, rest);
+    // 1.2: Propagate Critical Summary (context-free) up the stack. `critical_reach` below
+    // already holds every caller formal path that reaches a callee's critical summary through
+    // a `call` or `fnptr_call` edge, under the `Always` filter, with the unmatched `rest` of
+    // the callee's path put back on; this is its projection to the caller.
+    critical_summary(g, n2, p2r) <-- critical_reach(g, n2, p2r, _, _, _, _);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
     // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
-    establishes_direct(f, d, caller, call_insn) <--
-        critical_summary(f, n, p),
-        call(caller, call_insn, f),
-        let arg = call_arg!(*call_insn, *n),
-        call_target_assign_like(caller, arg, p, cto),
-        let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
-    establishes_direct(f, d, caller, call_insn) <--
-        critical_summary(f, n, p),
-        fnptr_call(caller, call_insn, f),
-        let arg = call_arg!(*call_insn, *n),
-        call_target_assign_like(caller, arg, p, cto),
+    // The target must be stored at the whole path `p`, so only the split with an empty `rest`
+    // matches; its `key` is then `p` itself. `critical_arg` has no split for a path outside
+    // `path_set`, so this relies on every non-empty `critical_summary` path being a member,
+    // which `run_engine!` checks in debug builds. The empty path needs no split here: a target
+    // is stored at it only if it is a member.
+    establishes_direct(f, d, g, insn) <--
+        critical_arg(g, arg, key, rest, p, f, insn, n),
+        call_target_assign_like(g, arg, key, cto),
+        if rest.is_empty(),
         let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
     resolvent(f, dec.formal, dec.path, dec.target.clone(), d) <--
         establishes_direct(f, d, _, _),
@@ -1969,14 +1949,17 @@ ascent_source! {
     //
     // Two exact two-way joins. `critical_arg` names, in the caller `g`, the call-arg vertex
     // `arg` (of site `insn`, formal `n`) whose callee `f` has a critical summary at `n.p`: the
-    // only vertices a resolvent can be passed on through. `critical_reach` is those vertices'
-    // rows of `locals`, joined on `(g, arg, p)`, which is an index `locals` already has for the
-    // field rules; and only it meets `resolvent`. Joining `resolvent` with `locals` on the
+    // only vertices a resolvent can be passed on through, and the only ones 1.2 lifts a
+    // critical summary through and 2.1 finds a stored target at. `critical_reach` is those
+    // vertices' rows of `locals`, joined on `(g, arg, p)`, which is an index `locals` already
+    // has for the field rules; and only it meets `resolvent`. Joining `resolvent` with `locals` on the
     // formal and testing `as_call_arg` and `critical_summary` afterwards would pair every local
     // reaching a formal with every resolvent at it and keep a few percent of the pairs.
     // Materializing the call-arg rows of `locals` instead would copy a large share of
     // `locals`; keying the filter by the vertex needs nothing new.
-    // Keyed by every split `p = key · rest`, as in 1.2: the caller may reach only a prefix.
+    // Keyed by every split `p = key · rest`: the caller may pass only a prefix `key` of the
+    // callee's path (`fwd(s) { call(s); }` never touches `s->op`), so the argument is matched
+    // at every split, and `critical_reach` puts `rest` back on.
     relation critical_arg(FunctionId, FlowVariable, Path, Path, Path, FunctionId, InsnId, FormalIndex);
     critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
@@ -2739,6 +2722,14 @@ macro_rules! run_engine {
         let fixpoint_start = std::time::Instant::now();
         let reached_fixpoint = prog.run_timeout(index_timeout);
         let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
+        // 2.1 finds a stored target only through a split, and a path outside `path_set` has none.
+        #[cfg(debug_assertions)]
+        for (f, n, p) in prog.critical_summary.iter() {
+            assert!(
+                path_set.contains(p) || p.is_empty(),
+                "critical_summary({f:?}, {n:?}, {p}) has a path outside the path set"
+            );
+        }
         let interned_after = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
         if path_set.split_misses() > 0 {
             log::warn!(

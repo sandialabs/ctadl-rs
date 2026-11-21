@@ -543,6 +543,8 @@ mod tests {
         let q = p(".x.[4]");
         assert_eq!(set.splits(&q).exact, q.prefix_keys().as_slice());
         assert_eq!(set.splits(&q).wild, q.prefix_keys_wild().as_slice());
+        // The last exact split is the whole path with an empty rest; 2.1 reads only that one.
+        assert_eq!(set.splits(&q).exact.last(), Some(&(q, Path::empty())));
         assert_eq!(set.split_trailing_offset(&q), Some((p(".x"), 4)));
         assert_eq!(set.split_trailing_offset(&p(".[2].y")), None);
         assert!(set.splits(&p(".z")).exact.is_empty());
@@ -551,5 +553,8 @@ mod tests {
         assert_eq!(set.split_trailing_offset(&Path::empty()), None);
         assert_eq!(set.split_misses(), 0);
         assert!(set.bytes() > 0);
+        // An empty member splits only into itself.
+        let empty = PathSet::from_paths([Path::empty()]);
+        assert_eq!(empty.splits(&Path::empty()).exact, [(Path::empty(), Path::empty())]);
     }
 }
