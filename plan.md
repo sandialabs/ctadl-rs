@@ -16,6 +16,8 @@ branch is phases 1, 4 and 6, and phase 5 is rerun on it.
 | --- | --- | --- |
 | 4 | 6 | `import_apk` maps the APK |
 | 5 | 5 | acceptance rerun on phases 1, 4 and 6 |
+| 6 | 7 | `import_jar` maps the JAR (added after wave 5) |
+| 7 | 5 | final acceptance rerun on phases 1, 4, 6 and 7 |
 
 The waves before the scope change:
 
@@ -386,6 +388,42 @@ unchanged). Immich peak 517.7, 534.4, 534.0 MB, median 534.0 MB, 1.7% under the 
 - The tests read the whole error chain through an `error_chain` helper, and share an
   `import_apk_of_bytes_fails` helper for the temp file.
 
+## Phase 7: `import_jar` over a memory map (R12–R15, D5)
+
+Depends on: phase 6 (same pattern; disjoint files).
+
+**What.** `import_jar` maps the JAR instead of reading it, and hands the map to the unchanged
+`JarFileParser::from_bytes`. Peak memory on a resource-heavy JAR drops; output does not change.
+
+**Files.**
+- `frontends/ctadl-jvm/Cargo.toml` — add `memmap2 = "0.9"`.
+- `Cargo.lock` — the new edge from `ctadl-jvm` to `memmap2`, and nothing else.
+- `frontends/ctadl-jvm/src/lib.rs:73` — replace `JarFileParser::open(file)` with `File::open`,
+  `unsafe { memmap2::Mmap::map(&file) }` (with a `// SAFETY:` comment as in phase 6, citing
+  C4), and `JarFileParser::from_bytes(&map)`, all under "reading jar: <path>". Drop the map
+  right after `from_bytes`. The timer label stays.
+- `readers/jvm-reader`: unchanged.
+
+**Tests.** New, in `frontends/ctadl-jvm/src/tests.rs`, temp files under
+`std::env::temp_dir()` with a test-unique name unless the crate already has `tempfile`:
+- `import_jar_of_a_missing_file_names_it`;
+- `import_jar_of_a_non_zip_names_it`;
+- `import_jar_of_an_empty_file_fails` (names the path).
+
+**Measure.** Make `$TMPDIR/read-bytes/jar/plain.jar` (a real JAR, as D5) and `fat.jar` (the
+same plus a 150 MB stored random resource). For each, with both `base/ctadl` and a copy of the
+branch's release binary: three imports under `memguard.sh 16 /usr/bin/time -l`, fresh stores,
+median peak and real. Then compare IR, VMT, source info and config hash between base and branch
+for both JARs (R15). If `fat.jar`'s branch median isn't within 10% of `plain.jar`'s, stop and
+report.
+
+**Gate.**
+
+    cargo test -p ctadl-jvm
+    cargo clippy -p ctadl-jvm --all-targets -- -D warnings
+    cargo xtask regression --frontend jvm
+    git diff b3dd10cf0 -- readers/jvm-reader   # empty
+
 ## Phase 5: acceptance (R5, R10, R11, D4; no code change)
 
 Depends on: phases 1, 4 and 6 (1, 3 and 4 before the scope change).
@@ -474,6 +512,10 @@ base binary timed in the same session.
 | `Cargo.lock` | `memmap2` edge from `ctadl-dex` | 6 |
 | `frontends/ctadl-dex/src/lib.rs` | `import_apk` maps the APK | 6 |
 | `frontends/ctadl-dex/src/tests.rs` | error tests | 6 |
+| `frontends/ctadl-jvm/Cargo.toml` | `memmap2` | 7 |
+| `Cargo.lock` | `memmap2` edge from `ctadl-jvm` | 7 |
+| `frontends/ctadl-jvm/src/lib.rs` | `import_jar` maps the JAR | 7 |
+| `frontends/ctadl-jvm/src/tests.rs` | error tests | 7 |
 
 Not touched:
 - `ctadl-ascent/src/main.rs:1113`, the hashing thread. Its memory falls with phase 1.

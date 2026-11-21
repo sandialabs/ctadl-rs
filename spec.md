@@ -5,9 +5,9 @@ Source: `intent.md`. This spec refines that intent, and must stay consistent wit
 
 ## Background
 
-Three steps of `ctadl import` read a whole artifact into memory with `std::fs::read`. This work
-changes all three. For the second it changes only where the APK's bytes live: the APK reader
-itself is out of scope (`intent.md`).
+Four steps of `ctadl import` read a whole artifact into memory with `std::fs::read`. This work
+changes all four. For the APK and the JAR it changes only where the package's bytes live: the
+readers themselves are out of scope (`intent.md`).
 
 - `hash_artifact` (`ctadl-import/src/project.rs:641`) reads a single-file artifact whole
   (`:665`), and reads each file of a directory whole (`:658`), before hashing it.
@@ -31,6 +31,10 @@ itself is out of scope (`intent.md`).
   Callers: autodetection (`ctadl-ascent/src/main.rs:1391`), `dir_has_cli_image`
   (`frontends/ctadl-cil/src/lib.rs:448`), and the CIL directory import, once per candidate file
   (`frontends/ctadl-cil/src/lib.rs:171`).
+- `ctadl_jvm::import_jar` (`frontends/ctadl-jvm/src/lib.rs:73`) calls `JarFileParser::open`
+  (`readers/jvm-reader/src/jar.rs:24`), which reads the whole JAR and passes the bytes to
+  `JarFileParser::from_bytes`. That uses only the ZIP central directory and the `.class`
+  entries, inflated in parallel, each task over a clone of the archive.
 
 Baseline (`ctadl import --no-native-libs`, median of three runs, measured in plan phase 0):
 Immich (`fdroid/app.alextran.immich_3030699.apk` in ct-bench) is a 180 MB APK with 7.6 MB of
@@ -63,6 +67,18 @@ copy is the hashing thread's; the other is `import_apk`'s.
   untouched.
 - R7. **APK errors kept.** A missing file, an empty file, a file that is not a ZIP, and a
   corrupt Dex entry still fail the import, with the file's path in the error.
+
+**JAR import**
+
+- R12. **JAR mapped, not read.** `import_jar` does not copy the JAR into the heap. It maps the
+  file read-only and gives the mapping to `JarFileParser::from_bytes`. `jvm-reader` does not
+  change.
+- R13. **JAR memory.** For a JAR that is a real JAR plus one large stored resource, the median
+  peak footprint of its import over three runs is within 10% of the real JAR's alone.
+- R14. **JAR errors kept.** A missing file, an empty file, a file that is not a ZIP, and a
+  corrupt class entry still fail the import, with the file's path in the error.
+- R15. **JAR output unchanged.** For the JARs of D5's measurement, serialized IR, VMT, source
+  info and artifact digest match the base build.
 
 **.NET detection**
 
@@ -137,6 +153,19 @@ read in, and file-backed clean pages don't count toward the process's footprint 
 The mapping lives only for the call. `Module` borrows from it and is dropped before the call
 returns.
 
+### D5. `import_jar` over a memory map (R12–R15)
+
+`import_jar` replaces `JarFileParser::open(file)` with: open the file and map it read-only
+(`memmap2`), then `JarFileParser::from_bytes(&map)`, all under today's single context
+"reading jar: <path>", so error messages read as today. The map is dropped once `from_bytes`
+returns; the parser keeps only the parsed classes. The other callers of `JarFileParser::open`
+(xtask, the jvm-reader example and tests) keep it.
+
+Measurement: a real JAR with little besides classes (Ghidra's `Base.jar` or one like it), and
+the same JAR with a 150 MB stored resource of random bytes added. The pair plays the role of
+Immich and its Dex-only repack. Both are imported with the base and the branch binaries, three
+runs each, and their outputs compared as in D4.
+
 ### D4. Measurement (R5, R10)
 
 The before/after comparison imports each app in the ct-bench `apps.json` and `fdroid.json`
@@ -157,6 +186,8 @@ it above. Report the resource-heavy APKs too: schildi, loki messenger and osmand
 - C2. **Hashing errors on a changing file (R3).** Accepted: error. A digest of a mixture could
   later mark a stale import as up to date. The metadata length is the only one that streams
   without changing digests, and checking it costs nothing.
+- C4. **SIGBUS from the JAR map (D5).** Accepted, as C3: the window is the inflate of the
+  `.class` entries.
 - C3. **SIGBUS from the APK map (D2).** Accepted, as C1. If another process truncates the APK
   while `APKParser::new` inflates it, the process gets `SIGBUS`. The window is the inflate of
   the Dex entries, longer than D3's. Reading through a file handle instead
