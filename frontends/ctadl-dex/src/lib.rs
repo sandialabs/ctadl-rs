@@ -91,11 +91,12 @@ pub struct ApkImport {
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
     let timer = PhaseTimer::start();
-    let apk =
-        std::fs::File::open(file).err_context(|| format!("reading APK: {}", file.display()))?;
-    timer.done("open APK");
+    let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    timer.done("read APK");
     let parser =
-        APKParser::from_file(apk).err_context(|| format!("parsing APK: {}", file.display()))?;
+        APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
+    // The dex files are inflated out of it; the rest of the APK is not needed again.
+    drop(data);
     let dex_count = parser.dex_count();
     let parsers = parser.dex_parsers_with_filenames();
     timer.done("unpack and parse dex files");

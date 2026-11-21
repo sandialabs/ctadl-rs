@@ -1,12 +1,10 @@
 //! APK parsing: read APK (ZIP) files, extract DEX entries, and expose a unified API over all DEXes.
 
-use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::Read;
 
 use crate::error::DexResult;
 use crate::parser::DecodedCodeItem;
 use crate::parser::{DexParser, parse_dex_header};
-use crate::shared_file::SharedFile;
 use crate::types::{ClassData, ClassDef, CodeItem, EncodedMethod, MethodId, TypeList};
 use zip::ZipArchive;
 
@@ -49,8 +47,8 @@ fn dex_entry_sort_key(name: &str) -> (bool, u32) {
 // ---------------------------------------------------------------------------
 //
 // These are free functions over the APK bytes rather than methods on `APKParser`:
-// both `APKParser` constructors keep only the decompressed DEX buffers and drop the
-// archive, so by the time they have returned the `lib/<abi>/` entries are gone.
+// `APKParser::new` keeps only the decompressed DEX buffers and drops the archive, so
+// by the time it has returned the `lib/<abi>/` entries are gone.
 
 /// One `lib/<abi>/<file_name>.so` entry in an APK.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,19 +488,7 @@ impl APKParser {
     /// only native libraries or only resources. Every class-level accessor below is then
     /// simply empty. A caller that has no use for such an APK checks [`Self::dex_count`].
     pub fn new(apk_bytes: &[u8]) -> DexResult<Self> {
-        Self::from_reader(std::io::Cursor::new(apk_bytes))
-    }
-
-    /// Like [`Self::new`], but reads the APK from `file` instead of from memory. Only the
-    /// central directory and the `classes*.dex` entries are read.
-    pub fn from_file(file: File) -> DexResult<Self> {
-        let reader = SharedFile::new(file)
-            .map_err(|_| crate::error::DexError::InvalidDex("cannot read APK"))?;
-        Self::from_reader(reader)
-    }
-
-    fn from_reader<R: Read + Seek + Clone + Send + Sync>(reader: R) -> DexResult<Self> {
-        let archive = ZipArchive::new(reader)
+        let archive = ZipArchive::new(std::io::Cursor::new(apk_bytes))
             .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
 
         let mut names: Vec<String> = archive
@@ -747,57 +733,6 @@ mod native_lib_tests {
     #[test]
     fn a_non_zip_is_still_rejected() {
         assert!(APKParser::new(b"not a zip at all").is_err());
-    }
-
-    /// Writes `bytes` to a temp file and parses it with `from_file`.
-    fn from_file_of(bytes: &[u8]) -> DexResult<APKParser> {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(bytes).unwrap();
-        tmp.flush().unwrap();
-        APKParser::from_file(tmp.reopen().unwrap())
-    }
-
-    /// The names and buffers of every Dex entry, in order.
-    fn dex_entries(parser: &APKParser) -> Vec<(String, Vec<u8>)> {
-        parser
-            .dex_parsers_with_filenames()
-            .into_iter()
-            .map(|(name, p)| (name.to_string(), p.data.to_vec()))
-            .collect()
-    }
-
-    #[test]
-    fn from_file_matches_new() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../xtask/tests/dex/com.noto_54.apk");
-        let bytes = std::fs::read(&path).unwrap();
-        let from_bytes = APKParser::new(&bytes).unwrap();
-        let from_file = APKParser::from_file(std::fs::File::open(&path).unwrap()).unwrap();
-
-        assert_eq!(from_bytes.dex_count(), 2);
-        assert_eq!(from_file.dex_count(), from_bytes.dex_count());
-        assert_eq!(dex_entries(&from_file), dex_entries(&from_bytes));
-    }
-
-    #[test]
-    fn from_file_of_an_apk_with_no_dex_is_empty() {
-        let apk = zip_of(&[
-            ("AndroidManifest.xml", b"\x03\x00\x08\x00"),
-            ("lib/arm64-v8a/libfoo.so", ELF),
-        ]);
-        assert_eq!(from_file_of(&apk).unwrap().dex_count(), 0);
-    }
-
-    #[test]
-    fn from_file_rejects_a_non_zip() {
-        assert!(from_file_of(b"not a zip at all").is_err());
-    }
-
-    #[test]
-    fn from_file_rejects_a_corrupt_dex_entry() {
-        let apk = zip_of(&[("classes.dex", b"garbage")]);
-        assert!(APKParser::new(&apk).is_err());
-        assert!(from_file_of(&apk).is_err());
     }
 
     /// The ABI `preferred_abi` picked, dropping the "what it passed over" half.

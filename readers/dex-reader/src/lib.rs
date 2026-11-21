@@ -12,8 +12,6 @@ pub mod basic_blocks;
 
 pub mod apk;
 
-mod shared_file;
-
 pub mod axml;
 
 pub mod smali;
