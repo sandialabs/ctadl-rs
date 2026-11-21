@@ -1,14 +1,21 @@
-# Intent: Run the serial index engine on small inputs
+# Intent: Do each critical-call and site-resolution join once
 
 ## Problem
 
-`-j N` with N > 1 (or `-j 0`, every core) always runs the parallel index engine. On a small program the parallel engine is slower than the serial one, because thread scheduling and the concurrent data structures cost more than they save. In one comparison a small browser took 0.077 s serially and 0.129 s on four workers, while a large application took 117.7 s serially and 45.2 s on four workers. Earlier notes put the crossover between about 45,000 assignments (serial faster and smaller) and 160,000 (parallel useful).
+Two hybrid-inlining joins in `ctadl-index/src/index_engine/mod.rs` are computed more than once, and each copy pairs multi-relation scans that a materialized helper would do once.
+
+1. **Critical-summary propagation.** The two rules that lift `critical_summary` from a callee to its callers (over `call` and `fnptr_call`) re-pair calls with argument vertices, split the path, and probe `locals`. That is the same join `critical_arg` and `critical_reach` already compute for rule 2.2, with the same `Always` filter and the same path concatenation. Rule 2.1 (`establishes_direct`) also rebuilds the call/argument pairing that `critical_arg` holds.
+2. **Site resolution.** Rule 3.1's `call_site` and the `resolved_call` rule beside it run the same four-way join, `callee_info` × `locals` × `resolvent` × `callee_resolvents`. Every new `locals` row at a receiver or new resolvent pays for that join twice.
 
 ## Change
 
-When the caller asks for several index workers, run the serial engine anyway if the input has fewer than a cutoff number of assignment facts, and log that choice. The starting cutoff is 50,000 assignment facts. Re-measure it on the current engine before fixing the number. `-j 1` stays serial, and the parallel engine runs unchanged above the cutoff.
+1. Derive `critical_summary` propagation from `critical_reach`, and `establishes_direct` from `critical_arg` (the split with an empty rest), so the call/argument pairing and the `locals` probe happen once.
+2. Add a `site_resolution(caller, insn, target, decision)` helper holding the result of the 3.1 join. `call_site` and `resolved_call` both read it.
+
+Measure the rule profiles of the affected rules before and after on a workload where hybrid inlining is busy. Keep a change only if it reduces work.
 
 ## Constraints
 
-- The index results must be the same whichever engine runs. Use `index-diff` as a gate that must pass.
-- The cutoff selects an engine. It does not change how many threads import or decoding use.
+- The index results must not change. Use `index-diff` as a gate that must pass.
+- Keep every key that distinguishes call sites, formals, paths and decisions, so that a conditional callback's effect never becomes unconditional for every caller of its builder.
+- Do not regress fixpoint termination. `critical_reach` grows with `critical_summary`, so check that feeding one from the other converges.
