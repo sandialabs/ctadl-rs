@@ -193,14 +193,21 @@ pub fn run(opts: &Options) -> Result<bool> {
         cases.retain(|c| c.name.contains(filter));
     }
 
-    // The Ghidra existing-project check is selected before it runs: a headless
+    // The Ghidra checks that are not taint cases are selected before they run: a headless
     // Ghidra analysis is far too expensive to run only to drop from the report.
     // Decided up front because preflight needs to know whether Ghidra is in play.
-    let ghidra_selected = opts.frontends.contains(&Frontend::Pcode)
-        && opts
-            .filter
-            .as_ref()
-            .is_none_or(|f| GHIDRA_PROJECT_CASE.contains(f));
+    let ghidra_checks: Vec<Task<'_>> = [
+        (GHIDRA_PROJECT_CASE, Task::GhidraProject),
+        (NO_DECOMPILER_CASE, Task::NoDecompiler),
+    ]
+    .into_iter()
+    .filter(|(name, _)| {
+        opts.frontends.contains(&Frontend::Pcode)
+            && opts.filter.as_ref().is_none_or(|f| name.contains(f))
+    })
+    .map(|(_, task)| task)
+    .collect();
+    let ghidra_selected = !ghidra_checks.is_empty();
 
     // The `apk:*` checks drive `ctadl`, so preflight has to build it for them as
     // well -- `--filter apk` selects no taint cases at all, and without this the
@@ -270,13 +277,9 @@ pub fn run(opts: &Options) -> Result<bool> {
         tasks.push(Task::ApkChecks { apk });
         tasks.push(Task::ApkIndexCheck { apk });
     }
-    // Ghidra existing-project smoke check: drive the pcode importer against an
-    // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
-    // and a target binary are available (guaranteed under the Nix regression env),
-    // and self-skips otherwise, so it is cheap to always attempt.
-    if ghidra_selected {
-        tasks.push(Task::GhidraProject);
-    }
+    // Each self-skips when Ghidra or a C compiler is unavailable (both are guaranteed
+    // under the Nix regression env), so they are cheap to always attempt.
+    tasks.extend(ghidra_checks);
     // Always queued when `cil` is selected, so a missing corpus or CecilDump
     // reports as a Skip rather than vanishing from the report.
     if wants_cil {
@@ -481,7 +484,11 @@ enum Task<'a> {
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
     },
+    /// Ghidra existing-project smoke check: drive the pcode importer against an
+    /// *existing* Ghidra project (not a fresh binary).
     GhidraProject,
+    /// `Pcode:NoDecompiler`; see [`run_no_decompiler_check`].
+    NoDecompiler,
 }
 
 impl Task<'_> {
@@ -502,6 +509,7 @@ impl Task<'_> {
             Task::CilChecks { .. } => "cil checks".to_string(),
             Task::CilFrontend { .. } => "cil:frontend".to_string(),
             Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
+            Task::NoDecompiler => NO_DECOMPILER_CASE.to_string(),
         }
     }
 
@@ -589,6 +597,11 @@ impl Task<'_> {
                     )
                 });
                 vec![(name, outcome)]
+            }
+            Task::NoDecompiler => {
+                let outcome = run_no_decompiler_check(worker)
+                    .unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
+                vec![(NO_DECOMPILER_CASE.to_string(), outcome)]
             }
         }
     }
@@ -2835,6 +2848,136 @@ fn find_analyze_headless() -> Option<PathBuf> {
     ["ghidra-analyzeHeadless", "analyzeHeadless"]
         .into_iter()
         .find_map(exec::which)
+}
+
+// --- Ghidra without a decompiler ---------------------------------------------
+
+/// Reporting name for the check that a Ghidra with no decompiler fails the import.
+const NO_DECOMPILER_CASE: &str = "Pcode:NoDecompiler";
+
+/// Check that `ctadl import -l pcode` fails, naming the decompiler, when Ghidra's decompiler
+/// cannot start.
+///
+/// That happens where the Ghidra build ships no decompiler executable for the host (the
+/// `ghidra-bin` package on aarch64-linux). Without the check in `ExportPcode.java` every function
+/// comes back without a body and the import succeeds with nothing in it. The check imports
+/// [`SMOKE_C`] through [`ghidra_without_decompiler`], so it runs on any host.
+///
+/// Self-skips when `GHIDRA_HOME` is unset or no C compiler is available.
+fn run_no_decompiler_check(worker: &Worker) -> Result<Outcome> {
+    let Some(ghidra_home) = std::env::var_os("GHIDRA_HOME") else {
+        return Ok(Outcome::Skip("GHIDRA_HOME not set".to_string()));
+    };
+    let (cc, _addr2line) = pick_toolchain("x86_64");
+    if exec::which(&cc).is_none() {
+        return Ok(Outcome::Skip(format!("`{cc}` not on PATH")));
+    }
+
+    let work = scratch_dir("Pcode_NoDecompiler")?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let src = work.join("smoke.c");
+    std::fs::write(&src, SMOKE_C)?;
+    let obj = work.join("smoke.o");
+    let mut compile = Command::new(&cc);
+    compile
+        .current_dir(&work)
+        .args(["-g", "-O0", "-c"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&obj);
+    exec::run_checked(compile, &cc)?;
+
+    let ghidra = work.join("ghidra");
+    ghidra_without_decompiler(&std::fs::canonicalize(ghidra_home)?, &ghidra)?;
+
+    let mut cmd = ctadl_command(&["import", "-l", "pcode", "-n", "no_decompiler"])?;
+    cmd.arg(&obj)
+        .current_dir(&work)
+        .env("XDG_STATE_HOME", &state)
+        .envs(worker.ghidra_env.iter().map(|(k, v)| (k, v)))
+        .env("GHIDRA_HOME", &ghidra);
+    let output = cmd.output().context("failed to spawn `ctadl import`")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(if output.status.success() {
+        Outcome::Fail("ctadl import succeeded with no decompiler".to_string())
+    } else if stderr.contains("decompiler did not start") {
+        Outcome::Pass
+    } else {
+        Outcome::Fail(format!(
+            "ctadl import failed without naming the decompiler:\n{}",
+            stderr.trim_end()
+        ))
+    })
+}
+
+/// Builds at `to` the Ghidra install at `from` without the decompiler's executables, mostly as
+/// links into `from`.
+///
+/// Ghidra finds its install through real paths: `launch.sh` takes it from `support/..`, the
+/// launcher from the real path of `Utility.jar`, and the decompiler from its module's `os`. So
+/// those directories, and every directory above them, are real; the files in them are copies;
+/// everything else is a link. A wrapper script that names `from/support` (as Nix's
+/// `launch.sh` does, to exec the real one) has that rewritten to `to/support`.
+fn ghidra_without_decompiler(from: &Path, to: &Path) -> Result<()> {
+    const REAL: [&str; 3] = [
+        "support",
+        "Ghidra/Framework/Utility/lib",
+        "Ghidra/Features/Decompiler",
+    ];
+    const LEFT_OUT: &str = "Ghidra/Features/Decompiler/os";
+
+    fn build(from: &Path, to: &Path, rel: &Path, root: (&Path, &Path)) -> Result<()> {
+        std::fs::create_dir_all(to).with_context(|| format!("creating {}", to.display()))?;
+        for entry in
+            std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))?
+        {
+            let entry = entry?;
+            let rel = rel.join(entry.file_name());
+            let (src, dst) = (entry.path(), to.join(entry.file_name()));
+            let is_dir = src.is_dir();
+            if rel == Path::new(LEFT_OUT) {
+                continue;
+            } else if is_dir && REAL.iter().any(|real| Path::new(real).starts_with(&rel)) {
+                build(&src, &dst, &rel, root)?;
+            } else if !is_dir
+                && REAL
+                    .iter()
+                    .any(|real| rel.parent() == Some(Path::new(real)))
+            {
+                copy_relocated(&src, &dst, root)?;
+            } else {
+                std::os::unix::fs::symlink(&src, &dst)
+                    .with_context(|| format!("linking {}", dst.display()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Copies `src` to `dst`, writable, with `root.0/support` in it replaced by `root.1/support`.
+    fn copy_relocated(src: &Path, dst: &Path, root: (&Path, &Path)) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = std::fs::read(src).with_context(|| format!("reading {}", src.display()))?;
+        let (old, new) = (root.0.join("support"), root.1.join("support"));
+        let (old, new) = (
+            old.as_os_str().as_encoded_bytes(),
+            new.as_os_str().as_encoded_bytes(),
+        );
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut rest = &bytes[..];
+        while let Some(at) = rest.windows(old.len()).position(|w| w == old) {
+            out.extend_from_slice(&rest[..at]);
+            out.extend_from_slice(new);
+            rest = &rest[at + old.len()..];
+        }
+        out.extend_from_slice(rest);
+        std::fs::write(dst, out).with_context(|| format!("writing {}", dst.display()))?;
+        let mode = std::fs::metadata(src)?.permissions().mode() | 0o200;
+        std::fs::set_permissions(dst, std::fs::Permissions::from_mode(mode))?;
+        Ok(())
+    }
+
+    build(from, to, Path::new(""), (from, to))
 }
 
 // --- shared ----------------------------------------------------------------

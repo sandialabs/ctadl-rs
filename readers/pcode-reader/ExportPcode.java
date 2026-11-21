@@ -813,6 +813,13 @@ class HighFunctionExporter {
 
 public class ExportPcode extends GhidraScript {
 
+	/**
+	 * Begins the message of an error that ends the export. analyzeHeadless only logs what a
+	 * script throws and exits 0, so ctadl finds the error in the log by this; it is
+	 * {@code EXPORT_ERROR} in ctadl-pcode's ghidra.rs.
+	 */
+	static final String EXPORT_ERROR = "CTADL export error: ";
+
 	File outputDirectory;
 
 	@Override
@@ -830,6 +837,19 @@ public class ExportPcode extends GhidraScript {
 		}
 
 		long startTime = System.nanoTime();
+
+		// ParallelDecompiler does not report a decompiler that cannot start (its executable
+		// missing, as on a platform the Ghidra build has none for): every function then
+		// comes back with no body, and the export would succeed with no flows in it.
+		DecompInterface probe = new DecompInterface();
+		try {
+			if (!probe.openProgram(currentProgram)) {
+				throw new IllegalStateException(EXPORT_ERROR
+						+ "Ghidra's decompiler did not start: " + probe.getLastMessage());
+			}
+		} finally {
+			probe.dispose();
+		}
 
 		HighFunctionExporter ex = new HighFunctionExporter(outputDirectory.getAbsolutePath());
 		ex.getDatabase().add(PredicateFile.FACTS_VERSION, HighFunctionExporter.FACTS_VERSION);
