@@ -201,6 +201,14 @@ Existing, still passing: every `dex-reader` test, including `a_non_zip_is_still_
     cargo clippy -p dex-reader --all-targets -- -D warnings
     cargo xtask regression --frontend dex
 
+**As built.** `5c3c2b58e`. Gates pass (dex regression: 71 passed of 71). Departures:
+- `apk.rs` has no `tests` module; the four APK tests are in `native_lib_tests`, next to
+  `zip_of`. They make temp files with `tempfile::NamedTempFile`.
+- `SharedFile::new(File)` returns `io::Result`, since it reads the length.
+  `SeekFrom::End`/`Current` that would go below 0 or overflow `u64` is `InvalidInput`.
+- `from_file_matches_new` also asserts that `com.noto_54.apk` has two Dex entries.
+- The `cfg(windows)` branch is not type-checked: no Windows target is installed here.
+
 ## Phase 3: `import_apk` reads the APK from the file (R4, R5, R7, D2)
 
 Depends on: phase 2.
