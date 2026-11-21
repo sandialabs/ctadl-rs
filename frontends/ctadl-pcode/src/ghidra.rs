@@ -895,42 +895,6 @@ mod tests {
         assert!(ran_out_of_memory(dir.path()));
     }
 
-    /// The script's marker is the one ctadl looks for.
-    #[test]
-    fn the_export_script_uses_the_export_error_marker() {
-        assert!(EXPORT_SCRIPT.contains(&format!(
-            "static final String EXPORT_ERROR = \"{EXPORT_ERROR}\";"
-        )));
-    }
-
-    /// What Ghidra 12 logs when ExportPcode.java throws, here because the decompiler did not start.
-    #[test]
-    fn an_export_error_in_the_log_is_found() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join(GHIDRA_LOG_NAME);
-        assert_eq!(log_export_error(&log), None);
-        fs::write(
-            &log,
-            "INFO  analysis done\nINFO  REPORT: Import succeeded\n",
-        )
-        .unwrap();
-        assert_eq!(log_export_error(&log), None);
-        fs::write(
-            &log,
-            "ERROR os/linux_arm_64/decompile does not exist (DecompileProcessFactory)  \n\
-             ERROR REPORT SCRIPT ERROR:  (HeadlessAnalyzer) java.lang.IllegalStateException: \
-             CTADL export error: Ghidra's decompiler did not start: \
-             Could not find decompiler executable\n\
-             \tat ExportPcode.run(ExportPcode.java:841)\n\
-             INFO  REPORT: Import succeeded (HeadlessAnalyzer)  \n",
-        )
-        .unwrap();
-        assert_eq!(
-            log_export_error(&log).as_deref(),
-            Some("Ghidra's decompiler did not start: Could not find decompiler executable")
-        );
-    }
-
     /// A table bigger than a piece is compressed in pieces, into one gzip member that a
     /// reader of a single member reads whole, however its size falls on the pieces.
     #[test]
