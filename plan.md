@@ -253,6 +253,13 @@ and report: phase 5 would fail R5.
     cargo clippy -p ctadl-dex --all-targets -- -D warnings
     cargo xtask regression --frontend dex
 
+**As built.** `af1776352`. Gates pass (dex regression: 71 passed of 71). Immich, three runs
+instead of one because the first was a cold launch: 498.5, 540.3, 487.0 MB peak (base 909 MB);
+real 0.88–0.89 s on the warm runs (base 0.81 s). Departures:
+- The tests read the whole error chain through a small `error_chain` helper, since the error's
+  message shows only the outer context. They use `let ... else`, since `ApkImport` is not
+  `Debug`.
+
 ## Phase 4: `is_cli_image` over a memory map (R8, R9, D3)
 
 Depends on: phase 0.
