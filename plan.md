@@ -7,18 +7,6 @@ two disagree. Each phase builds, passes the gate named in it, and is one commit.
 
 ## Corrections to the spec
 
-- P1. **D2's invariant is too strong as an assertion.** Spec D2 says every `critical_summary`
-  path is a `path_set` member and asks for a debug assertion of that. Rule 1.1
-  (`ctadl-index/src/index_engine/mod.rs:1917`) copies the formal-side path of a `locals` row
-  without a membership test, and `locals` rows at ε are seeded unconditionally
-  (`mod.rs:1625`, `:1645`), while ε joins the path set only through an ε `actual_param` or
-  `callee_info` path or `#value` (`mod.rs:2536-2552`, `with_value_paths` at `:1484`). So
-  `critical_summary(f, n, ε)` with ε a non-member is possible, and the assertion would fire
-  on it. No row is lost there: old 2.1 needs `call_target_assign_like(g, arg, ε, _)`, which
-  the edge rules derive only through `ps.concat(ε, None, ε)`, i.e. only when ε is a member
-  (`path_set.rs:316`). Until settled, this plan asserts `ps.contains(p) || p.is_empty()`, and
-  the spec's sentence should say that every *non-empty* `critical_summary` path is a member,
-  and that ε matters to 2.1 only when it is a member.
 - P2. **Why `critical_reach` is not a simple join today.** Spec Background says the `if`s
   between `locals` and `critical_arg` prevent it. Ascent attaches an `if`/`if let` that
   follows a clause to that clause (`ascent_syntax.rs:362-365` in the patched macro), so the
