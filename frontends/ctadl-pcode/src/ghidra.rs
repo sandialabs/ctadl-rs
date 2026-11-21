@@ -216,11 +216,8 @@ pub fn run_ghidra_export_source(
     // Write ExportPcode.java to a temporary directory
     let script_temp_dir = tempfile::Builder::new().prefix("ctadl-ghidra").tempdir()?;
     let export_script_path = script_temp_dir.path().join("ExportPcode.java");
-    fs::write(
-        &export_script_path,
-        include_str!("../../../readers/pcode-reader/ExportPcode.java"),
-    )
-    .err_context(|| format!("writing export script: {}", export_script_path.display()))?;
+    fs::write(&export_script_path, EXPORT_SCRIPT)
+        .err_context(|| format!("writing export script: {}", export_script_path.display()))?;
     let script_path = export_script_path.parent().unwrap().to_path_buf();
 
     // A throwaway project directory is only needed to `-import` a binary; bind it
@@ -317,6 +314,13 @@ pub fn run_ghidra_export_source(
         )));
     }
 
+    if let Some(error) = log_export_error(&log_path).or_else(|| log_script_error(&log_path)) {
+        return Err(Error::PcodeConversion(format!(
+            "Ghidra's ExportPcode.java failed: {error}\nGhidra output is in {}",
+            log_path.display()
+        )));
+    }
+
     // Ghidra's analyzeHeadless exits 0 even when the import itself fails (e.g. no
     // load spec for the artifact), leaving the facts directory empty. Detect that
     // here and propagate it, otherwise the failure only surfaces later as a
@@ -398,6 +402,41 @@ fn log_reports_out_of_memory(log_path: &Path) -> bool {
 
 /// What the JVM prints when a heap (or metaspace) allocation fails.
 const OUT_OF_MEMORY: &str = "java.lang.OutOfMemoryError";
+
+/// The error that ended `ExportPcode.java`'s export, from the first line of the Ghidra log at
+/// `log_path` that has one: what follows [`EXPORT_ERROR`] there.
+fn log_export_error(log_path: &Path) -> Option<String> {
+    let contents = fs::read(log_path).ok()?;
+    let text = String::from_utf8_lossy(&contents);
+    text.lines()
+        .find_map(|line| line.split_once(EXPORT_ERROR))
+        .map(|(_, error)| error.trim().to_string())
+}
+
+/// The exception a script threw, from the first line of the Ghidra log at `log_path` that
+/// reports one. This catches what the script throws without [`EXPORT_ERROR`]; it relies on the
+/// wording of Ghidra's log, which ctadl does not control.
+fn log_script_error(log_path: &Path) -> Option<String> {
+    let contents = fs::read(log_path).ok()?;
+    let text = String::from_utf8_lossy(&contents);
+    let line = text.lines().find(|line| line.contains(SCRIPT_ERROR))?;
+    // `ERROR REPORT SCRIPT ERROR:  (HeadlessAnalyzer) <exception>`: keep the exception.
+    let error = line
+        .split_once(SCRIPT_ERROR_SOURCE)
+        .map_or(line, |(_, e)| e);
+    Some(error.trim().to_string())
+}
+
+/// What analyzeHeadless (Ghidra 12) logs when a script throws, and the logger name after it.
+const SCRIPT_ERROR: &str = "REPORT SCRIPT ERROR";
+const SCRIPT_ERROR_SOURCE: &str = "(HeadlessAnalyzer)";
+
+/// The export script, which ctadl writes out for Ghidra to run.
+const EXPORT_SCRIPT: &str = include_str!("../../../readers/pcode-reader/ExportPcode.java");
+
+/// Begins the message of an error that ends `ExportPcode.java`'s export: its `EXPORT_ERROR`.
+/// analyzeHeadless only logs what a script throws and exits 0, so the log is where it is found.
+const EXPORT_ERROR: &str = "CTADL export error: ";
 
 /// The last [`GHIDRA_LOG_TAIL_LINES`] lines of `log_path`, formatted for
 /// inclusion in an error message. Best-effort: an unreadable or empty log yields
@@ -854,6 +893,42 @@ mod tests {
         )
         .unwrap();
         assert!(ran_out_of_memory(dir.path()));
+    }
+
+    /// The script's marker is the one ctadl looks for.
+    #[test]
+    fn the_export_script_uses_the_export_error_marker() {
+        assert!(EXPORT_SCRIPT.contains(&format!(
+            "static final String EXPORT_ERROR = \"{EXPORT_ERROR}\";"
+        )));
+    }
+
+    /// What Ghidra 12 logs when ExportPcode.java throws, here because the decompiler did not start.
+    #[test]
+    fn an_export_error_in_the_log_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join(GHIDRA_LOG_NAME);
+        assert_eq!(log_export_error(&log), None);
+        fs::write(
+            &log,
+            "INFO  analysis done\nINFO  REPORT: Import succeeded\n",
+        )
+        .unwrap();
+        assert_eq!(log_export_error(&log), None);
+        fs::write(
+            &log,
+            "ERROR os/linux_arm_64/decompile does not exist (DecompileProcessFactory)  \n\
+             ERROR REPORT SCRIPT ERROR:  (HeadlessAnalyzer) java.lang.IllegalStateException: \
+             CTADL export error: Ghidra's decompiler did not start: \
+             Could not find decompiler executable\n\
+             \tat ExportPcode.run(ExportPcode.java:841)\n\
+             INFO  REPORT: Import succeeded (HeadlessAnalyzer)  \n",
+        )
+        .unwrap();
+        assert_eq!(
+            log_export_error(&log).as_deref(),
+            Some("Ghidra's decompiler did not start: Could not find decompiler executable")
+        );
     }
 
     /// A table bigger than a piece is compressed in pieces, into one gzip member that a
