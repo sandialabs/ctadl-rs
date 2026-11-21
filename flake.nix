@@ -155,6 +155,9 @@
         packages.default = naersk-lib.buildPackage {
           src = ./.;
           version = workspaceVersion;
+          # `default-members` leaves out `xtask`, which the `regression` check
+          # runs from this package.
+          cargoBuildOptions = x: x ++ [ "--workspace" ];
         };
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cil.cecilDump;
