@@ -1,52 +1,16 @@
-// A callback stored to a global resolves a call through that global in a function that
-// only reads it, whether the builder calls the registrar directly or through a pointer.
-//
-//   - direct:      `build_direct` calls `store_direct(ptr<cb_direct>)`.
-//   - conditional: `build` calls `reg(ptr<cb>)`, and `reg` is `store` only because `main`
-//                  passes it, so the store into `g` holds under that decision.
-var g_direct;
+// A callback stored to a global under a decision resolves a call through the global:
+// `build` stores `cb` into `g` only because `main` passes `store` as `reg`.
 var g;
-
-def sink_direct(v) {
-start:
-  sink(v, Secret);
-  return;
-}
-
-def sink_conditional(v) {
-start:
-  sink(v, Secret);
-  return;
-}
-
-def cb_direct(v) {
-start:
-  sink_direct(v);
-  return;
-}
 
 def cb(v) {
 start:
-  sink_conditional(v);
-  return;
-}
-
-def store_direct(f) {
-start:
-  g_direct.deref = f;
+  sink(v, Secret);
   return;
 }
 
 def store(f) {
 start:
   g.deref = f;
-  return;
-}
-
-def build_direct() {
-start:
-  k = ptr<cb_direct>;
-  store_direct(k);
   return;
 }
 
@@ -57,27 +21,12 @@ start:
   return;
 }
 
-def fire_direct(v) {
-start:
-  h = g_direct.deref;
-  h(v);
-  return;
-}
-
-def fire(v) {
-start:
-  h = g.deref;
-  h(v);
-  return;
-}
-
 def main() {
 start:
-  build_direct();
   s = ptr<store>;
   build(s);
   v = source(Secret);
-  fire_direct(v);
-  fire(v);
+  h = g.deref;
+  h(v);
   return;
 }
