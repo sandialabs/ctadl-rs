@@ -2193,15 +2193,12 @@ ascent_source! {
         if isout(&n, *formal_ty, p),
         call(caller, _, callee);
 
-    // A class tag resolves a call only by joining `callee_resolvents` on its object, so one
-    // no row names can resolve nothing, and is not propagated. A function tag always is:
-    // a registered callback is invoked directly. `call_target_assign` itself stays whole,
-    // since `global_mention` reads it.
+    // A call target resolves a call only by joining `callee_resolvents` on its object, so one
+    // no row names can resolve nothing, and is not propagated. Codegen names every function
+    // tag (the identity `C` row); a class tag is named only if some site defers its method.
+    // `call_target_assign` itself stays whole, since `global_mention` reads it.
     relation resolvable_target(CallTargetObject);
     resolvable_target(o) <-- callee_resolvents(o, _, _);
-    resolvable_target(o) <--
-        call_target_assign(_, _, o),
-        if matches!(o.kind(), CallTargetObjectKind::FunctionId(_));
 
     // Call Target Propagation (every kind of target alike). The stored
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
@@ -2616,9 +2613,9 @@ pub mod rules_prelude {
     };
     pub use crate::call_arg;
     pub use crate::facts::{
-        CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVertex,
-        FormalIndex, FormalType, FunctionId, GLOBAL_FRAME, GlobalId, InsnId, InsnSiteId,
-        IntentKind, IntentPairKind, PackedInsnSiteId, Path, Root, Str, isout,
+        CallDispatchKey, CallTargetObject, FlowVariable, FlowVertex, FormalIndex, FormalType,
+        FunctionId, GLOBAL_FRAME, GlobalId, InsnId, InsnSiteId, IntentKind, IntentPairKind,
+        PackedInsnSiteId, Path, Root, Str, isout,
     };
     pub use crate::index_engine::path_set::PathSetRef;
     pub use packed_struct::PackedStructSlice;

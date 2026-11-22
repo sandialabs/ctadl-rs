@@ -657,9 +657,8 @@ read(setmetatable({}, Acct))
 read(setmetatable({}, Plain))
 "#;
 
-/// A class tag resolves a call only through a `callee_resolvents` row naming it, so a tag no
-/// row names is wasted work: it is copied through every frame it reaches, and rule 2.1 seeds
-/// a decision for it at `read`'s receiver. `Acct`'s call must still resolve.
+/// A target no `callee_resolvents` row names is not propagated, and dropping it loses no
+/// resolution: `Plain`'s tag goes nowhere, and `Acct`'s call still resolves.
 #[test_log::test]
 fn class_tags_nothing_resolves_are_not_propagated() {
     let dir = tempfile::tempdir().unwrap();
@@ -677,12 +676,9 @@ fn class_tags_nothing_resolves_are_not_propagated() {
         &Default::default(),
     );
 
-    let is_class = |o: &crate::facts::CallTargetObject| {
-        !matches!(o.kind(), crate::facts::CallTargetObjectKind::FunctionId(_))
-    };
     let named: std::collections::BTreeSet<_> =
         facts.callee_resolvents.iter().map(|r| r.0).collect();
-    let unnamed = |o: &crate::facts::CallTargetObject| is_class(o) && !named.contains(o);
+    let unnamed = |o: &crate::facts::CallTargetObject| !named.contains(o);
     assert!(
         facts.call_target_assign.iter().any(|r| unnamed(&r.2)),
         "`Plain` must be tagged"
