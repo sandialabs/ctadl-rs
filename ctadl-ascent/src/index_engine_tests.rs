@@ -661,7 +661,6 @@ read(setmetatable({}, Plain))
 /// row names is wasted work: it is copied through every frame it reaches, and rule 2.1 seeds
 /// a decision for it at `read`'s receiver. `Acct`'s call must still resolve.
 #[test_log::test]
-#[ignore = "the engine still propagates class tags nothing resolves"]
 fn class_tags_nothing_resolves_are_not_propagated() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("m.lua");
