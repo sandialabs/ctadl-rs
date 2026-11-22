@@ -555,6 +555,9 @@ mod tests {
         assert!(set.bytes() > 0);
         // An empty member splits only into itself.
         let empty = PathSet::from_paths([Path::empty()]);
-        assert_eq!(empty.splits(&Path::empty()).exact, [(Path::empty(), Path::empty())]);
+        assert_eq!(
+            empty.splits(&Path::empty()).exact,
+            [(Path::empty(), Path::empty())]
+        );
     }
 }
