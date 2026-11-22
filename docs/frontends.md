@@ -9,7 +9,7 @@ A typical frontend has to make the following design decisions:
 - How to generate IR functions from the constructs in the source language.
 - How to name variables and translate individual instructions into data flow IR instructions.
 
-This document covers principles for writing good frontends that any new frontends should follow, and that existing frontends ought to follow. It doesn't cover the constraints of the IR or how data structures should be defined; just look at the code for that.
+This document covers principles for writing good frontends that any new frontends should follow, and that existing frontends ought to follow. It doesn't cover the constraints of the IR or how to use it; look at [ir.md](ir.md) and the code for that.
 
 ## Avoid external dependencies
 
