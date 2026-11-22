@@ -2737,7 +2737,9 @@ macro_rules! run_engine {
                 path_set.split_misses()
             );
         }
-        if !reached_fixpoint {
+        if reached_fixpoint {
+            log::info!("index fixpoint reached in {fixpoint_secs:.1} s");
+        } else {
             log::warn!(
                 "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
                 index_timeout
