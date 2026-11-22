@@ -2193,11 +2193,19 @@ ascent_source! {
         if isout(&n, *formal_ty, p),
         call(caller, _, callee);
 
+    // A call target resolves a call only by joining `callee_resolvents` on its object, so one
+    // no row names can resolve nothing, and is not propagated. Codegen names every function
+    // tag (the identity `C` row); a class tag is named only if some site defers its method.
+    // `call_target_assign` itself stays whole, since `global_mention` reads it.
+    relation resolvable_target(CallTargetObject);
+    resolvable_target(o) <-- callee_resolvents(o, _, _);
+
     // Call Target Propagation (every kind of target alike). The stored
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
     // downstream, where the call is actually resolved.
     call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
         call_target_assign(func_id, vx, tgt), let FlowVertex(v, p, ..) = vx,
+        resolvable_target(tgt),
         tag_closure_func(func_id);
 
     // An edge `v1.p1 = v2.p2` carries a tag on `v2.(p2·rest)` to `v1.(p1·rest)`. As with
