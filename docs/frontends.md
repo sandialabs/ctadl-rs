@@ -7,8 +7,7 @@ A typical frontend has to make the following design decisions:
 - How to parse the language.
 - How to represent the space of functions or methods.
 - How to generate IR functions from the constructs in the source language.
-- How to translate individual instructions into data flow IR instructions.
-- How to emit function calls so as to preserve data flow.
+- How to name variables and translate individual instructions into data flow IR instructions.
 
 This document covers principles for writing good frontends that any new frontends should follow, and that existing frontends ought to follow. It doesn't cover the constraints of the IR or how data structures should be defined; just look at the code for that.
 
