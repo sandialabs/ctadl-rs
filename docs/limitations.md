@@ -27,6 +27,16 @@
   every call, but the JVM and Dex front ends do not pass a callee's escaping exception on to the
   caller's handler, so taint carried by an exception thrown in a callee and caught in a caller is
   lost, a false negative. The CIL front end accumulates them (`excout`) and is not affected.
+- **JVM drops a whole method body that fails to decode.** When `jvm-reader` cannot decode a
+  method, the JVM front end imports the method without a body, so the flows through any part of
+  it are lost, a false negative. Calls to it still resolve. This breaks the "Never fail hard"
+  principle in [frontends.md](frontends.md), which asks for the flow translated before the error.
+- **C and CIL report gaps outside the notifications log.** The C front end logs one warning per
+  construct it cannot parse, and the CIL front end logs its counts of what it left out
+  (conservatively lowered effects, lost address writes, unreadable metadata) at the end of the
+  import. Neither reaches `notifications.sarif`, so the gaps never show up in the SARIF that
+  `ctadl query` writes. This breaks the "Record what you leave out" principle in
+  [frontends.md](frontends.md).
 - **A Java method handle resolves only to the method its constant names.** `mh.invoke(..)` and
   `mh.invokeExact(..)` call through the handle's function reference, which only a method-handle
   constant (`ldc`, `const-method-handle`) supplies. A handle built at run time
@@ -60,6 +70,7 @@ passes only where a row says so. "Loses" means a flow the semantics derives may 
 |  | front ends | Conventions (S19 of [ir.md](ir.md)); C `&s.f`; CIL value types; Lua `err` never filled | both | the list above |
 |  | front ends | pcode `merge` arithmetic | adds | config recorded |
 |  | front ends | C: a file-scope initializer is not lowered | loses | the list above |
+|  | front ends | JVM: a method body that fails to decode is dropped whole | loses | warning per method |
 |  | front ends | pcode: the address of a global is an inert constant, not `$<import>::ram.[A]`; a write through it is lost | loses | the list above |
 |  | front ends | CIL: a delegate is lowered as its target, so delegates over one target share their method; the target of every non-capturing lambda of a class is the one static `<>c.<>9`, so their call targets merge | adds | the list above |
 
