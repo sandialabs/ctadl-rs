@@ -2204,6 +2204,11 @@ ascent_source! {
     // Every step is a two-way join, so whichever side is new probes the other by its key.
     // Splitting paths rather than tags keeps the split relation small: a vertex often holds
     // several targets.
+    //
+    // A `call_target_assign_like` row holds in every context of its function, so an edge
+    // carries tags only if it holds unconditionally, except an edge into a global: a label at a
+    // global path holds in every instance (G6), and a conditional edge exists only once some
+    // caller establishes its decision, so the label holds there in some execution.
     relation call_target_vp(FunctionId, FlowVariable, Path);
     call_target_vp(f, v, p) <--
         tag_closure_func(f),
@@ -2222,14 +2227,14 @@ ascent_source! {
     call_target_edge(f, v1, p13, v2, p23) <--
         call_target_key(f, v2, key, rest, p23),
         assign_like(f, v1, p1, v2, key, c),
-        if c.is_always(),
+        if c.is_always() || v1.is_global(),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, None, rest);
     // The wild half: the edge reads `key.[m]`, the tag sits on `key.[n]·tail`.
     call_target_edge(f, v1, p13, v2, p23) <--
         call_target_key_wild(f, v2, key, rest, p23),
         assign_wild(f, v2, key, m, v1, p1, c),
-        if c.is_always(),
+        if c.is_always() || v1.is_global(),
         if let Some((adj, tail)) = rest.wild_rest(*m),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, Some(adj), &tail);
