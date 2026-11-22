@@ -1573,7 +1573,8 @@ ascent_source! {
     //
     // Every fact of `locals`, `assign_like` and `summary` carries a [`Cond`]. The rules that do
     // not reason about context (call-target propagation, the critical summaries and resolvents,
-    // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts.
+    // the aliasing summary, `const_reaches`) and the outputs read only `Always` facts, except
+    // that call targets also cross a conditional edge into a global.
     #[ds($crate::index_engine::cond_trie::locals)]
     relation locals(FunctionId, FlowVariable, Path, Root, Path, Cond);
     #[ds($crate::index_engine::cond_trie::assign)]
@@ -1585,7 +1586,8 @@ ascent_source! {
     // out inter-procedural / summary-derived copies and the write-backs onto the formal at the
     // return. Feeds the aliasing summary rule.
     relation alias_of_formal(FunctionId, FlowVariable, Root);
-    // Call targets propagated across `assign_like` to the receiver vertices of critical calls.
+    // Call targets propagated across `assign_like` to the receiver vertices of critical calls. A
+    // row holds in every context of its function.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
     relation const_reaches(FunctionId, FlowVariable, Path, Str);
 
@@ -2204,6 +2206,11 @@ ascent_source! {
     // Every step is a two-way join, so whichever side is new probes the other by its key.
     // Splitting paths rather than tags keeps the split relation small: a vertex often holds
     // several targets.
+    //
+    // An edge carries tags only if it holds unconditionally, since a tag holds in every context
+    // of its function; except an edge into a global: a tag at a global path holds in every
+    // instance (G6), and a conditional edge exists only once some caller establishes its
+    // decision, so the tag holds there in some execution.
     relation call_target_vp(FunctionId, FlowVariable, Path);
     call_target_vp(f, v, p) <--
         tag_closure_func(f),
@@ -2222,14 +2229,14 @@ ascent_source! {
     call_target_edge(f, v1, p13, v2, p23) <--
         call_target_key(f, v2, key, rest, p23),
         assign_like(f, v1, p1, v2, key, c),
-        if c.is_always(),
+        if c.is_always() || v1.is_global(),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, None, rest);
     // The wild half: the edge reads `key.[m]`, the tag sits on `key.[n]·tail`.
     call_target_edge(f, v1, p13, v2, p23) <--
         call_target_key_wild(f, v2, key, rest, p23),
         assign_wild(f, v2, key, m, v1, p1, c),
-        if c.is_always(),
+        if c.is_always() || v1.is_global(),
         if let Some((adj, tail)) = rest.wild_rest(*m),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, Some(adj), &tail);
