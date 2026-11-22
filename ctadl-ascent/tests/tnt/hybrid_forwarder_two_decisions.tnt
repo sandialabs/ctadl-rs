@@ -1,0 +1,55 @@
+// Two callers store different targets in the field `.op` of a struct they pass whole through the
+// forwarder `fwd` to `call`, which calls through that field. `funcptr_field_forward.tnt` has one
+// such caller; this one has two whose targets disagree.
+//
+// `call`'s critical summary is on `s.op`. Lifting it to `fwd` splits that path at `s` with the
+// rest `.op`, and each caller then establishes its own decision for `fwd` from what it stored in
+// `o.op`. `keep` passes its argument on and `drop` does not, so a decision that leaked from one
+// caller of `fwd` to the other would show as a wrong summary on `with_keep` or `with_drop`.
+
+def keep(x): 1
+where summaries [return <- x]
+{
+start:
+  return x;
+}
+
+def drop(x): 1
+where summaries [return </- x]
+{
+start:
+  return "hi";
+}
+
+def call(s, b): 1
+{
+start:
+  f = s.op;
+  t = f(b);
+  return t;
+}
+
+def fwd(s, b): 1
+{
+start:
+  t = call(s, b);
+  return t;
+}
+
+def with_keep(b): 1
+where summaries [return <- b]
+{
+start:
+  o.op = ptr<keep>;
+  t = fwd(o, b);
+  return t;
+}
+
+def with_drop(b): 1
+where summaries [return </- b]
+{
+start:
+  o.op = ptr<drop>;
+  t = fwd(o, b);
+  return t;
+}
