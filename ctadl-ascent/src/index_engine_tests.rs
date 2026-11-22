@@ -645,6 +645,74 @@ fn resolved_call_covers_both_dispatch_arms() {
     );
 }
 
+/// Only `Acct` defines `get`, so `callee_resolvents` names `Acct` and nothing names `Plain`.
+const TWO_CLASSES_LUA: &str = r#"
+local Acct = {}
+Acct.__index = Acct
+function Acct:get() return self end
+local Plain = {}
+Plain.__index = Plain
+local function read(o) return o:get() end
+read(setmetatable({}, Acct))
+read(setmetatable({}, Plain))
+"#;
+
+/// A class tag resolves a call only through a `callee_resolvents` row naming it, so a tag no
+/// row names is wasted work: it is copied through every frame it reaches, and rule 2.1 seeds
+/// a decision for it at `read`'s receiver. `Acct`'s call must still resolve.
+#[test_log::test]
+#[ignore = "the engine still propagates class tags nothing resolves"]
+fn class_tags_nothing_resolves_are_not_propagated() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.lua");
+    std::fs::write(&path, TWO_CLASSES_LUA).unwrap();
+    let mut info = ctadl_lua::import_lua(&path).unwrap();
+    ctadl_ir::ssa::transform_program(&mut info.program, true);
+    let (mut facts, mut si) = (IndexFacts::default(), IndexSourceInfo::default());
+    codegen_program(
+        info,
+        &mut facts,
+        &mut si,
+        CallResolutionStrategy::Mixed,
+        Default::default(),
+        &Default::default(),
+    );
+
+    let is_class = |o: &crate::facts::CallTargetObject| {
+        !matches!(o.kind(), crate::facts::CallTargetObjectKind::FunctionId(_))
+    };
+    let named: std::collections::BTreeSet<_> =
+        facts.callee_resolvents.iter().map(|r| r.0).collect();
+    let unnamed = |o: &crate::facts::CallTargetObject| is_class(o) && !named.contains(o);
+    assert!(
+        facts.call_target_assign.iter().any(|r| unnamed(&r.2)),
+        "`Plain` must be tagged"
+    );
+
+    let result = taint_index_with_config(facts, IndexConfig::default(), Some(&si.sites));
+    let (read, get) = (
+        func_id(&si.sites, "m.read"),
+        func_id(&si.sites, "m.Acct.get"),
+    );
+    assert!(
+        result
+            .resolved_call
+            .iter()
+            .any(|r| (r.0, r.2) == (read, get)),
+        "`o:get()` resolves"
+    );
+    let wasted: Vec<_> = result
+        .call_target_assign_like
+        .iter()
+        .filter(|r| unnamed(&r.3))
+        .map(|(f, v, p, o)| format!("{}: {v:?}{p} {o}", func_name(Some(&si.sites), *f)))
+        .collect();
+    assert!(
+        wasted.is_empty(),
+        "unresolvable tags propagated: {wasted:#?}"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Globals (G2, G5, G6 of `docs/ir.md`). A C global
 // `g` is the global `$g`, whose storage is `$g.deref`.
