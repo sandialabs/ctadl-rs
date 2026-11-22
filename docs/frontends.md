@@ -10,14 +10,6 @@ A typical frontend has to make the following design decisions:
 - How to translate individual instructions into data flow IR instructions.
 - How to emit function calls so as to preserve data flow.
 
-Dex, for instance:
-
-- The language is parsed as bytecode using our `dex-reader` crate.
-- The methods are represented as in the Dex language, where a virtual method table understands that methods live inside classes, that they have signatures, a simple name, and exist inside a class hierarchy that can override them according to an algorithm.
-- One function is generated per method; code whose method structure is typically implicit, like static initializers and constructor `.<init>` methods are translated uniformly into functions.
-- All instructions parsed are evaluated as data flow, sometimes directly (just looking at the instruction), sometimes in concert with other things (e.g., exceptions are modeled by adding an extra return value, the exceptional return value, to functions, and all such returns have to know about this exceptional slot for the function to be well-formed).
-- Functions are called with a uniform naming scheme so that method invocation resolves, at analysis time, to the appropriate functions. Given the dynamic nature of virtual calls, the analysis can't resolve every virtual call perfectly.
-
 This document covers principles for writing good frontends that any new frontends should follow, and that existing frontends ought to follow. It doesn't cover the constraints of the IR or how data structures should be defined; just look at the code for that.
 
 ## Avoid external dependencies
