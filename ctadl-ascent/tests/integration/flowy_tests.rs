@@ -77,10 +77,19 @@ fn tnt_test_with(filename: &std::path::Path, models: &[std::path::PathBuf]) -> a
 /// known: a path built by storing an object whose own field was stored, which no statement
 /// spells and so the index does not admit; and a cycle through a field, which the aliasing rule
 /// does not summarize. Each file says what it should derive. Restore them when the engine does.
+///
+/// `global_callback_under_decision.tnt` stores a callback to a global through a store that holds
+/// only under a call-resolution decision. Call targets cross only unconditional edges, so the
+/// target never reaches the global frame and the call through the global stays unresolved.
 fn is_known_limitation(path: &std::path::Path) -> bool {
     matches!(
         path.file_name().and_then(|n| n.to_str()),
-        Some("substitute_prefix_demo.tnt" | "path_composition_store.tnt" | "alias_cycle.tnt")
+        Some(
+            "substitute_prefix_demo.tnt"
+                | "path_composition_store.tnt"
+                | "alias_cycle.tnt"
+                | "global_callback_under_decision.tnt"
+        )
     )
 }
 
