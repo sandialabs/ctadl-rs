@@ -289,6 +289,13 @@ Decisions the spec leaves to the plan:
     cargo test -p ctadl-ascent --test integration diff_query
     cargo fmt --all -- --check && cargo clippy --workspace -- -Dwarnings
 
+**As built** (`bbf499417`). The driver's sampling loop became one generic `differing` helper
+used for results, notifications and statuses. `doc()` in `tests.rs` keeps its signature; a
+new `invoked(doc, invocations)` adds invocations. In `reordered_and_renumbered_is_identical`,
+A also has two invocations (the second with no notifications), since splitting B's
+notifications over two invocations would otherwise make the status counts differ. The real
+outputs of `renumbered_ids` and `self_identical` show no notification or status difference.
+
 ## Phase 4: step properties in the parser and the printer (R1–R3, R8, R12; D1)
 
 Depends on: 2, 3.
