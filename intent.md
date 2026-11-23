@@ -6,3 +6,5 @@ default, and on the first and last step under `--endpoints-only`, so a path's so
 are compared down to the argument.
 
 Also compare `invocation.toolExecutionNotifications`, but not their message text.
+
+Also compare the invocation's `executionSuccessful` and `exitCode`.
