@@ -123,8 +123,11 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
   every profile. This holds for a program whose source or sink is at a call site with
   several callees.
-- R16. **Theorems.** The statements of `sarif-canon`'s Verus theorems do not change, and they
-  still verify. Its code and proofs may change.
+- R16. **Theorems.** `sarif-canon`'s canonical step holds `callees` and `summarized` in
+  place of `callee`, and its Verus theorems are restated for them: a step's `callees` is one
+  of the unordered collections `theorem_canon_invariant` lets a rewrite permute, and
+  `summarized` is compared by equality. Nothing else in the statements changes, and they
+  verify.
 
 **Tests and documents**
 
@@ -201,19 +204,29 @@ endpoint's step does not repeat it (R3).
 
 ### D3. `callees` and `summarized` in `diff-query` (R12–R14, R16)
 
-The canonical step keeps its one optional atom for the callee
-(`sarif-canon/src/types.rs:134`, `:186`); only what the parser puts in it changes. `step`
-(`ctadl-query-diff/src/parse.rs:228`) reads `callees` and `summarized` in place of `callee`.
-When the step has neither, the atom is absent. Otherwise the atom is the text of a JSON
-object with the keys the step has: `callees` as the list sorted with duplicates dropped,
-`summarized` as written. So the canonical step needs no new field and no new sorting proof
-(R16); its field is renamed and its comment (`types.rs:133`) restated for what the atom now
-holds. The set comparison of R12 is
-the parser's, covered by its tests, not by the proofs; the execution notifications are
-canonicalized the same way. `render.rs:99` prints the object's keys back under `properties`.
+The raw and the canonical step (`sarif-canon/src/types.rs:134`, `:186`, and their views at
+`:267`, `:296`) get two fields in place of `callee`:
 
-Invariant: the canonical text is a function of the set of names and the flag only, so equal
-content gives one atom and unequal content gives two.
+- `callees`, an optional list of atoms. It is a bag, as a result's `sourceFunctions` is
+  (`types.rs:79`): the canonical form sorts it (`spec_canon_atoms`,
+  `sarif-canon/src/canon.rs:144`), and the order on steps compares it as the other optional
+  bags are compared (`sarif-canon/src/order.rs:147`).
+- `summarized`, an optional boolean, copied as is and compared by equality, absent first.
+
+The theorems' definitions follow. `step_permuted` (`sarif-canon/src/theorems.rs:91`) relates
+two steps whose `callees` are permutations of each other and whose `summarized` are equal;
+`step_renumbered` (`theorems.rs:162`) asks both to be equal. So a reordered `callees` is
+proved not to change the canonical form, by the lemma that already covers a result's bags
+(`theorems.rs:665`).
+
+`step` (`ctadl-query-diff/src/parse.rs:228`) reads `callees` and `summarized` in place of
+`callee`. It drops a repeated name from `callees` before it hands the list over, so the list
+is compared as a set (R12) while the verified code keeps comparing bags; dropping duplicates
+is the parser's, covered by its tests, not by the proofs. `render.rs:99` prints both under
+`properties`.
+
+Invariant: the canonical step is a function of the set of names and the flag only, so equal
+content gives equal steps and unequal content gives unequal ones.
 
 ### D4. Tests (R15, R17, R18)
 
