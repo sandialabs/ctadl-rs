@@ -101,6 +101,9 @@ change, and is not specified here.
 `step_permuted` and `step_renumbered` (`sarif-canon/src/theorems.rs:86`, `:151`) require them
 equal. They are plain atoms, not bags, so no new sorting is proved.
 
+Each property is a single string. If `intent2.md` settles on a list for either (several
+callees at one call site, several endpoints at one instruction), the reader changes with it.
+
 Invariant: `endpoints_result` is not changed. It keeps whole steps, so R2 follows from the
 step's new fields.
 
@@ -149,12 +152,7 @@ ignored; it changes to match R4, R5 and R7. `step_key`
 
 ## Concerns
 
-- C1. **The shape of the step properties is fixed before anything writes them.** R1 makes
-  each a single string. The open questions of `intent2.md` could change that: a call site with
-  several callees, or several endpoints at one instruction, may want a list, compared as a
-  bag. Options: (a) single strings now, and change the reader with `intent2.md` if it decides
-  on lists; (b) settle those questions now. The spec assumes (a).
-- C2. **`message.arguments` of a notification.** R4 leaves out only `message.text`, so
+- C1. **`message.arguments` of a notification.** R4 leaves out only `message.text`, so
   `message.id` and `message.arguments` are compared. Arguments are the values the text is
   rendered from. Some index notifications put an example in them, such as one vertex of the
   first unresolved indirect call in a function (`ctadl-ascent/src/cli/mod.rs:306`), which may
