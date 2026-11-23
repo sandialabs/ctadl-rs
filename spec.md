@@ -78,8 +78,10 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
   `executionOrder` are what they were. A step that was not written is still not written, and
   its vertex appears nowhere. (C3.)
 - R7. **Nothing else changes.** Results, their properties, notifications, invocations and
-  message text are byte for byte what they were, except the function named in a message at a
-  call site with several callees (R5). The `machine` profile's output does not change at all.
+  message text are byte for byte what they were, with one exception: at a call site with
+  several callees, everything that names the site's callee names the one R4 picks. That is a
+  step's message, a `C0003`/`C0004` result's message and logical location, and a `C0001`
+  result's `sourceFunctions`, `sinkFunctions`, `sourceCallee` and `sinkCallee`.
 
 **What `diff-query` then sees**
 
@@ -137,10 +139,12 @@ by the names in `facts.id_to_name`; a function with no name sorts by the `func#<
 message already uses. Two callees with one name give one string, so no further tie-break is
 observable. The map stays one entry per call site.
 
-`endpoint_callee` (`formatter.rs:3286`) and the source and sink results that use it
-(`formatter.rs:3328`) read the same map, so a `C0003`/`C0004` result and the step for the
-same endpoint name one function. Its fallback to `infunc` stays for results; a step takes
-`None` instead (R2).
+`endpoint_callee` (`formatter.rs:3286`) reads the same map, and so do its other users: the
+source and sink results (`formatter.rs:3328`) and a path result's `sourceFunctions` and
+`sinkFunctions` (`formatter.rs:3210`). A result and the step for the same endpoint then name
+one function. `diff-query` compares `sourceFunctions` and `sinkFunctions` already, so today
+two indexes that order the calls differently can differ there; with this they do not (R8).
+`endpoint_callee`'s fallback to `infunc` stays for results; a step takes `None` instead (R2).
 
 ### D3. Tests (R8, R10, R11)
 
